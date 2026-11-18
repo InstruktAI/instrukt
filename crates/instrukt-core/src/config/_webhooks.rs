@@ -82,6 +82,29 @@ pub struct SigningSecrets {
 pub struct Ingress {
     pub computer: MachineId,
     pub port: u16,
+    /// The computer that reacts to external facts, when another than the
+    /// ingress.
+    #[serde(default)]
+    pub reactions: Option<MachineId>,
+}
+
+impl Ingress {
+    /// The one computer that activates procedures for external facts.
+    pub fn reacting(&self) -> &MachineId {
+        self.reactions.as_ref().unwrap_or(&self.computer)
+    }
+}
+
+/// The computer that reacts to external facts as `raw`, a global layer's
+/// `ingress` value, names it: `ingress.reactions`, or else
+/// `ingress.computer`; `None` when it names neither.
+pub(super) fn reacting(raw: Option<&Value>) -> Option<MachineId> {
+    let raw = raw?;
+    ["reactions", "computer"].into_iter().find_map(|key| {
+        raw.get(key)
+            .and_then(Value::as_str)
+            .and_then(MachineId::parse)
+    })
 }
 
 fn invalid(key: &str, message: &str) -> ConfigError {

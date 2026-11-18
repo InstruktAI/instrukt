@@ -161,7 +161,7 @@ pub(super) fn read(
 
             let features = if todos {
                 vec![Feature::TodoDispatch, Feature::RecurringTasks]
-            } else if events {
+            } else if events && !config.receives_only(home) {
                 vec![Feature::StandingAgents]
             } else {
                 vec![]
@@ -232,7 +232,9 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
                 "webhook sources with the machine's events off; explicitly enable events or remove sources"
             );
             let features = [Feature::StandingAgents];
-            if let Some(unavailable) = global.unavailable(&features)? {
+            if !global.receives_only(home)
+                && let Some(unavailable) = global.unavailable(&features)?
+            {
                 anyhow::bail!("{}", unavailable.describe(&features));
             }
             demand.events.push(label.clone());

@@ -341,6 +341,23 @@ impl Configuration {
         super::_webhooks::ingress(self.value.get("ingress"))
     }
 
+    /// Whether this computer only receives external facts: it is the ingress
+    /// and another computer reacts to them, so its events need no runtime.
+    /// Reading this computer's ID creates none.
+    pub fn receives_only(&self, home: &Home) -> bool {
+        let this = crate::machine::existing_machine_id(home).ok().flatten();
+        super::_validate::receiving_only(&self.value, this.as_ref())
+    }
+
+    /// The computer that reacts to external facts: the one
+    /// `ingress.reactions` names, else the ingress; `None` when no ingress is
+    /// named.
+    pub fn reacting_computer(&self) -> Option<crate::machine::MachineId> {
+        let ingress = self.value.get("ingress")?;
+        ingress.get("computer")?;
+        super::_webhooks::reacting(Some(ingress))
+    }
+
     pub(super) fn redis_raw(&self) -> Option<&Value> {
         self.value.get("redis")
     }

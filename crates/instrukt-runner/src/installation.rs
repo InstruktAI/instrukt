@@ -270,6 +270,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         runner_service(request, &mut owned, &demand, &mut report);
     }
     if request.conversations {
+        boot_prerequisite(request, &owned, &demand, &mut report);
         return Ok(report);
     }
     if request.module != Some(Module::History)
@@ -324,7 +325,45 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             report.finding("receiver", error);
         }
     }
+    boot_prerequisite(request, &owned, &demand, &mut report);
     Ok(report)
+}
+
+/// On Linux every owned unit is a systemd user unit that has to run without
+/// a login; one finding names those that need the user's service manager to
+/// start at boot when it does not. A wake-up registered with cron needs no
+/// such setting, and instrukt never changes it.
+fn boot_prerequisite(
+    request: &Request<'_>,
+    owned: &_services::Owned,
+    demand: &_demand::Demand,
+    report: &mut Report,
+) {
+    if request.scheduler != Scheduler::SystemdUser {
+        return;
+    }
+    let units: Vec<&str> = [
+        (ResourceKind::Runner, "the runner service"),
+        (ResourceKind::Receiver, "the receiver's socket and service"),
+        (ResourceKind::Redis, "the private local Redis service"),
+        (ResourceKind::WakeUp, "the minute timer"),
+    ]
+    .into_iter()
+    .filter(|(kind, _)| {
+        owned.registered(*kind)
+            || (*kind == ResourceKind::Runner && !demand.conversations.is_empty())
+    })
+    .map(|(_, unit)| unit)
+    .collect();
+    if units.is_empty() {
+        return;
+    }
+    if let Err(cause) = lingering() {
+        report.finding(
+            "user service manager",
+            format!("{cause}; it is needed by {}", units.join(", ")),
+        );
+    }
 }
 /// The owned service that keeps `instrukt run` running while a company
 /// home declares a connector; withdrawn when that
@@ -384,14 +423,13 @@ fn runner_service(
     } else {
         // The boot prerequisite is a cause of the service's status beside
         // whatever its process shows.
+        // The boot prerequisite is reported once for every owned unit; here
+        // it is only a cause of the service's status.
         let boot = if request.scheduler == Scheduler::SystemdUser {
             lingering().err()
         } else {
             None
         };
-        if let Some(cause) = &boot {
-            report.finding(ResourceKind::Runner, cause);
-        }
         let (state, cause) =
             match owned.runner_service(request, &desired, &demand.conversations, report) {
                 Ok(None) => (ServiceState::Running, None),
@@ -415,7 +453,7 @@ fn runner_service(
 /// from the user's linger state; instrukt never changes it.
 fn lingering() -> Result<(), String> {
     let uid = rustix::process::getuid().as_raw().to_string();
-    let door = "the user's systemd manager does not start at boot without a login, so the runner service waits for one; enable it with `loginctl enable-linger`";
+    let door = "the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`";
     match crate::process::Invocation::program(
         "loginctl",
         &["show-user", &uid, "--property=Linger", "--value"],
@@ -628,8 +666,22 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         let rows=stmt.query_map([],|row| Ok(serde_json::json!({"id":row.get::<_,String>(0)?,"state":row.get::<_,String>(1)?,"failure":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
         rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
+    // This computer's own machine ID and its own two ingress settings, as it
+    // reads them, for comparison with the other computers; reading creates
+    // no ID.
+    let computer = instrukt_core::machine::existing_machine_id(request.home)
+        .map_err(|e| inspection_error("machine ID", e))?
+        .map(|id| id.as_str().to_owned());
+    let global = Configuration::load_global(request.home)?.get(None, request.env)?;
+    let setting = |key: &str| {
+        global
+            .get("ingress")
+            .and_then(|ingress| ingress.get(key))
+            .and_then(serde_yaml_ng::Value::as_str)
+            .map(str::to_owned)
+    };
     Ok(
-        serde_json::json!({"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?,"runner_service":runner_service}),
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?,"runner_service":runner_service}),
     )
 }
 

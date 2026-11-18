@@ -30,6 +30,7 @@ pub enum ReferenceKind {
     MemoryScope,
     CiRun,
     Commit,
+    RepositoryRef,
     Install,
     Release,
 }
@@ -56,6 +57,7 @@ impl ReferenceKind {
             Self::MemoryScope => "memory_scope",
             Self::CiRun => "ci_run",
             Self::Commit => "commit",
+            Self::RepositoryRef => "repository_ref",
             Self::Install => "install",
             Self::Release => "release",
         }

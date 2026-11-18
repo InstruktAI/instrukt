@@ -2,6 +2,53 @@
 
 ## 0.1.0
 
+### One computer reacts to external facts; watched refs are repository refs
+
+`runner.upstream_changed` and `runner.main_failing` now name their ref with a
+`repository_ref` subject; an older instrukt named it with the `inbound_source`
+kind, which now marks an external fact and is selected only on the computer
+that reacts to external facts. An older entry of either event that is still
+unread when a computer is upgraded is therefore treated as an external fact:
+on a computer that is not the reacting computer, or where no ingress is named,
+it is settled without activating anything, and since the ref's observation is
+already recorded, the same revision is not reported again; only the ref's next
+change wakes the agent. On the reacting computer it can activate for a project
+another computer emitted it for, and fails there when that project is absent.
+An activation already accepted before the upgrade is delivered as before.
+
+Upgrade every participating computer together, in these steps:
+
+1. **End every older producer, a tick already running included.** On every
+   computer stop what starts ticks and the runner, and keep it stopped until
+   all computers are upgraded: on macOS
+   `launchctl unload ~/Library/LaunchAgents/ai.instrukt.tick.plist` (and
+   `ai.instrukt.runner.plist` where it exists), on Linux
+   `systemctl --user stop instrukt-tick.timer instrukt-tick.service instrukt-runner.service`,
+   or the `instrukt tick` line in the crontab where the wake-up is cron; also
+   stop any `instrukt run` started by hand. Then run `instrukt tick` by hand:
+   while a tick or run started earlier still holds the runner lock, it prints
+   `the runner is busy; this wake-up was skipped` and does nothing. Repeat
+   until it no longer prints that line; from then on, no earlier tick or run
+   is still working, and ticks run only by hand.
+2. **Let the consumers catch up.** The older build has no command that shows
+   entries it has recorded but not yet published. Run `instrukt tick` by hand
+   on every computer until `instrukt events status` shows no pending entries
+   and no lag for every procedure-activation consumer. This reduces what is
+   left; it does not prove that nothing is. An older entry still unpublished
+   or unread at the upgrade is treated as described above, and the ref's next
+   change raises a new one.
+3. **Upgrade every computer** without running another tick in between, then
+   run `instrukt install` on each; it registers the stopped wake-up and runner
+   service again.
+
+On Linux every owned unit that has to run without a login (the runner service,
+the receiver's socket and service, the private local Redis service and the
+minute timer) needs the user's service manager to start at boot.
+`instrukt install --check` now reports one finding naming
+`loginctl enable-linger` when it does not; instrukt never changes it. Run
+`loginctl enable-linger` once for the user that runs instrukt, then
+`instrukt install --check` again.
+
 ### T3 release contract and failure routing
 
 Instrukt's own project enables events with an empty watch list and selects

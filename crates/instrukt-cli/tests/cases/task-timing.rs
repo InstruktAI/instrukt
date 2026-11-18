@@ -40,6 +40,14 @@ fn registrar_stubs(env: &mut TestEnv) -> PathBuf {
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    // The user's systemd manager starts at boot without a login.
+    let loginctl = dir.join("loginctl");
+    std::fs::write(
+        &loginctl,
+        "#!/bin/sh\nif [ \"$1\" = show-user ]; then echo yes; fi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&loginctl, std::fs::Permissions::from_mode(0o755)).unwrap();
     // The developer is signed in to GitHub's CLI; the scheduler's wake-up
     // carries no token of its own.
     let gh = dir.join("gh");

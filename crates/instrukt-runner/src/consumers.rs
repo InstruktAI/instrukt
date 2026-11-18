@@ -31,14 +31,26 @@ pub const TICK_ENTRY_BUDGET: usize = 50;
 #[derive(Debug, Clone)]
 pub struct Interest {
     pub patterns: Vec<TypePattern>,
+    /// For an event that is not an external fact: only one this computer
+    /// emitted.
     pub own_computer_only: bool,
+    /// An external fact, recognised by its inbound-source subject, is
+    /// selected only on the computer that reacts to external facts.
+    pub external_on_reacting: bool,
     pub subject_kinds: Vec<ReferenceKind>,
     pub home_kinds: Vec<HomeKind>,
 }
 
 impl Interest {
-    pub fn matches(&self, event: &EventEnvelope, computer: &str) -> bool {
-        (!self.own_computer_only || event.source == computer)
+    /// Whether `event` is selected on `computer`, where `reacting` is the
+    /// computer that reacts to external facts, if any.
+    pub fn matches(&self, event: &EventEnvelope, computer: &str, reacting: Option<&str>) -> bool {
+        let reach = if self.external_on_reacting && is_external(event) {
+            reacting == Some(computer)
+        } else {
+            !self.own_computer_only || event.source == computer
+        };
+        reach
             && self
                 .patterns
                 .iter()
@@ -54,6 +66,12 @@ impl Interest {
                     .kind()
                     .is_some_and(|kind| self.home_kinds.contains(&kind)))
     }
+}
+
+/// Whether `event` is an external fact: one the ingress receiver verified and
+/// published, recognised by its inbound-source subject.
+pub fn is_external(event: &EventEnvelope) -> bool {
+    event.subject.kind() == crate::events::ReferenceKind::InboundSource.as_str()
 }
 
 /// The reaction owns idempotent acceptance at its effect boundary. Its returned
@@ -97,6 +115,8 @@ pub enum ConsumerError {
     NotPrepared,
     #[error("cannot start retained consumer reader: {0}")]
     Thread(#[from] std::io::Error),
+    #[error("cannot read which computer reacts to external facts: {0}")]
+    Reacting(#[from] instrukt_core::config::ConfigError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

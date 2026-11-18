@@ -93,6 +93,15 @@ impl Unattended {
                 .success();
         }
         computer.tick();
+        // The companies' facts are external: this computer is the ingress, so
+        // it reacts to them.
+        let global = computer.env.instrukt_home().join("instrukt.yaml");
+        let mut settings = std::fs::read_to_string(&global).unwrap();
+        settings.push_str(&format!(
+            "ingress: {{computer: '{}', port: 8787}}\n",
+            computer.computer()
+        ));
+        std::fs::write(&global, settings).unwrap();
         Self {
             computer,
             redis,

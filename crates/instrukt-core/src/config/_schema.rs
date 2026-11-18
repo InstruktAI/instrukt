@@ -226,6 +226,7 @@ fn schema() -> Node {
             map(vec![
                 ("computer", Leaf(GlobalOnly, Shape::MachineId)),
                 ("port", Leaf(GlobalOnly, Shape::Port)),
+                ("reactions", Leaf(GlobalOnly, Shape::MachineId)),
             ]),
         ),
         (

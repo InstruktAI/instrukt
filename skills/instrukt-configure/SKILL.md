@@ -37,7 +37,8 @@ infrastructure readiness.
 Keep the developer's existing choices unless their requested outcome changes
 them. Ask only for unresolved facts or intent instrukt cannot supply. Settle
 participating computers, each project's placement, intended module enablement (blueprint, todos, events and history),
-the one ingress computer and operator-supplied cluster endpoint. Preserve an
+the one ingress computer, the one computer that reacts to external facts, and
+the operator-supplied cluster endpoint. Preserve an
 existing runtime choice; an unset `runner.runtime` stays unset until the
 developer chooses one for runtime-dependent work.
 
@@ -47,18 +48,35 @@ Redis, even when events are off. For an explicitly core-only setup, record
 `modules.history: false`; existing history remains stored when disabled.
 
 Prepare one brief for the participating agents containing the agreed facts and
-each computer's intended result. Read existing identities and project paths
-from available instrukt reports and local project metadata; report a missing
-identity discovery surface as a prerequisite instead of inventing an ID.
+each computer's intended result. Read each computer's machine ID, and its own
+`ingress.computer` and `ingress.reactions`, from its `instrukt events status`,
+and project paths from local project metadata; never invent an ID.
 
 - `ingress.computer` is the same existing stable instrukt machine ID everywhere.
   Runtime environment identity and hostname are separate facts.
+- `ingress.reactions` is the same machine ID everywhere for the one computer
+  that reacts to external facts, or left out everywhere so the ingress reacts.
+  instrukt does not detect computers that disagree, so compare what each
+  computer's `instrukt events status` reads.
 - `redis.cluster.url` reaches the same logical database and stream namespace on
   every events or merged-history participant. Equivalent URLs and machine-local credential
   references may differ; verify their common destination and required access.
 - Record project identities and computer-local checkouts as placement facts.
-  Ensure ingress holds each source-declaring adopted project, since external
-  procedure activation occurs there. Existing todo claims retain their meaning.
+  Ensure the ingress holds each source-declaring adopted project and company
+  home's settings, with their signing values, for verification; it needs no
+  runtime when another computer reacts. Ensure the reacting computer holds the
+  project checkouts and company homes external procedures run in, with their
+  published procedures and a chosen runtime. Existing todo claims retain their
+  meaning.
+- When the reacting computer is another computer than the ingress, configure
+  and install it, with its consumer prepared, before the ingress starts
+  receiving: a consumer prepared later starts at the stream's end and misses
+  the facts published before it.
+- Change `ingress.reactions` or `ingress.computer` only while nothing is in
+  flight: no participating computer's procedure consumer has entries from
+  before the change left to read or settle, and the computer that reacted so
+  far has settled what it accepted. Stopping intake keeps new entries from
+  arriving; it does not satisfy that alone.
 - Align `ingress.port` with the ingress edge. Keep local Redis endpoints,
   runtime, credentials, ticks and project overrides specific to each computer.
   Record signing and Redis material through `instrukt secrets set` or
@@ -169,7 +187,7 @@ readiness, relevant status findings and remaining repair doors. Include only
 masked endpoints and credential references. Existing consumer positions and
 durable work are retained by the installation contract.
 
-Compare participating reports for agreement on ingress, logical Redis store
-and project placement. Mark a computer complete only with its own verification;
+Compare participating reports for agreement on the ingress, the reacting
+computer, the logical Redis store and project placement. Mark a computer complete only with its own verification;
 name inaccessible computers and operator prerequisites as incomplete. Report
 configuration-management distribution work separately from instrukt changes.

@@ -36,7 +36,8 @@ fn findings_in_scope(
         LayerKind::Global => None,
         LayerKind::Project | LayerKind::Company => read_usable(home, &Layer::Global)?,
     };
-    let mut found = judge(value, layer.kind(), global.as_ref());
+    let this = crate::machine::existing_machine_id(home).ok().flatten();
+    let mut found = judge(value, layer.kind(), global.as_ref(), this.as_ref());
     if let Layer::Company(name) = layer {
         found.extend(company_identity(name, value));
         if let Some(profiles) = value.get("profiles") {
@@ -64,6 +65,17 @@ fn findings_in_scope(
             &effective,
             value,
             &super::SecretSource::Machine,
+        ));
+    }
+    if layer.kind() == LayerKind::Global
+        && let Some(ingress) = value.get("ingress")
+        && ingress.get("reactions").is_some()
+        && ingress.get("computer").is_none()
+    {
+        found.push(KeyFinding::new(
+            "ingress.reactions",
+            FindingKind::Missing,
+            "names the computer that reacts to external facts, and there are none without ingress.computer; set ingress.computer or remove ingress.reactions",
         ));
     }
     if layer.kind() == LayerKind::Global
@@ -314,7 +326,12 @@ fn schema_version_finding(found: u64) -> Option<KeyFinding> {
 
 /// The findings of a layer document of kind `kind`; a project layer is
 /// judged together with the machine's `global` layer.
-pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> Vec<KeyFinding> {
+pub(crate) fn judge(
+    value: &Value,
+    kind: LayerKind,
+    global: Option<&Value>,
+    this: Option<&crate::machine::MachineId>,
+) -> Vec<KeyFinding> {
     let mut found = _schema::check(value, kind);
     found.extend(
         value
@@ -347,7 +364,7 @@ pub(crate) fn judge(value: &Value, kind: LayerKind, global: Option<&Value>) -> V
         }
         LayerKind::Company => {}
     }
-    feature_capabilities(value, &effective, &mut found);
+    feature_capabilities(value, &effective, this, &mut found);
     references(value, kind, &effective, &mut found);
     if let Some(sources) = value.get("webhooks").and_then(Value::as_mapping)
         && !sources.is_empty()
@@ -406,7 +423,12 @@ fn connector_capabilities(effective: &Value, out: &mut Vec<KeyFinding>) {
 /// need empty (`session-continuity`, "Verb-gated features"). A
 /// `runner.runtime` naming no entry is its own finding and is not judged
 /// again here.
-fn feature_capabilities(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>) {
+fn feature_capabilities(
+    value: &Value,
+    effective: &Value,
+    this: Option<&crate::machine::MachineId>,
+    out: &mut Vec<KeyFinding>,
+) {
     let name = effective
         .get("runner")
         .and_then(|r| r.get("runtime"))
@@ -425,6 +447,11 @@ fn feature_capabilities(value: &Value, effective: &Value, out: &mut Vec<KeyFindi
         if !on || features.is_empty() {
             continue;
         }
+        // Receiving and publishing need no agent: events on the ingress that
+        // is not the reacting computer need no runtime.
+        if module == "events" && receiving_only(effective, this) {
+            continue;
+        }
         let Some(unavailable) = availability(chosen, features) else {
             continue;
         };
@@ -438,6 +465,23 @@ fn feature_capabilities(value: &Value, effective: &Value, out: &mut Vec<KeyFindi
             unavailable.describe(features),
         ));
     }
+}
+
+/// Whether this computer is the ingress and another computer reacts to
+/// external facts, as the effective global settings name them.
+pub(super) fn receiving_only(effective: &Value, this: Option<&crate::machine::MachineId>) -> bool {
+    let Some(this) = this else {
+        return false;
+    };
+    let ingress = effective.get("ingress");
+    let named = |key: &str| {
+        ingress
+            .and_then(|ingress| ingress.get(key))
+            .and_then(Value::as_str)
+            .and_then(crate::machine::MachineId::parse)
+    };
+    named("computer").as_ref() == Some(this)
+        && super::_webhooks::reacting(ingress).is_some_and(|reacting| &reacting != this)
 }
 
 /// `requires`: every module it names is switched on in the effective
@@ -614,14 +658,14 @@ mod tests {
     #[test]
     fn retired_runtime_configuration_is_unknown() {
         let doc = current_document("runtimes: []");
-        let found = judge(&doc, LayerKind::Global, None);
+        let found = judge(&doc, LayerKind::Global, None, None);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, FindingKind::InvalidValue);
     }
     #[test]
     fn t3_supports_todos_and_queued_event_delivery() {
         let doc = current_document("runner: {runtime: t3}\nmodules: {todos: true, events: true}");
-        let found = judge(&doc, LayerKind::Global, None);
+        let found = judge(&doc, LayerKind::Global, None, None);
         assert!(found.is_empty());
     }
     #[test]
@@ -630,7 +674,7 @@ mod tests {
             "company: acme\nconnectors: {slack: {app_token: '${A}', bot_token: '${B}'}}",
         );
         let found = |global: &Value| {
-            judge(&company, LayerKind::Company, Some(global))
+            judge(&company, LayerKind::Company, Some(global), None)
                 .iter()
                 .map(|f| (f.key.clone(), f.kind))
                 .collect::<Vec<_>>()
@@ -645,7 +689,7 @@ mod tests {
     fn references_still_detect_cycles_and_missing_keys() {
         let doc = current_document("runner: {notify: '{runner.notify}'}");
         assert!(
-            judge(&doc, LayerKind::Global, None)
+            judge(&doc, LayerKind::Global, None, None)
                 .iter()
                 .any(|f| f.kind == FindingKind::ReferenceCycle)
         );

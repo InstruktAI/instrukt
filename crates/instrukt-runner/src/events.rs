@@ -62,7 +62,7 @@ macro_rules! acquisition_events {
 }
 
 acquisition_events! {
-    UpstreamChanged, "runner.upstream_changed", "A watched upstream ref changed.", State, InboundSource {
+    UpstreamChanged, "runner.upstream_changed", "A watched upstream ref changed.", State, RepositoryRef {
         project: ProjectSlug, remote: String, r#ref: String, revision: CommitSha
     };
     CiCompleted, "runner.ci_completed", "The integrate candidate CI completed, including a no-CI observation.", State, Commit {
@@ -71,7 +71,7 @@ acquisition_events! {
     DependencyFailing, "runner.dependency_failing", "A check run on a current dependency-update head failed.", Occurrence, Commit {
         project: ProjectSlug, branch: String, head: CommitSha, check_run_id: u64, check_name: String, conclusion: Option<String>
     };
-    MainFailing, "runner.main_failing", "Remote canonical main head completed CI red.", State, InboundSource {
+    MainFailing, "runner.main_failing", "Remote canonical main head completed CI red.", State, RepositoryRef {
         project: ProjectSlug, head: CommitSha
     };
     PreparationReviewed, "workflow.preparation_reviewed", "Reviewed preparation documentation is ready for immediate integration.", Occurrence, Todo {

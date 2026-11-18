@@ -259,16 +259,29 @@ impl<'a> Reader<'a> {
             .ok()
             .map(|event| _store::materialize(&self.runtime.state, event, &coordinate, now))
             .transpose()?;
+        // The reacting computer is read as each external fact is read, so a
+        // fact read after a change is handled under the new setting.
+        let reacting = match &decoded {
+            Ok(event)
+                if self.consumer.interest.external_on_reacting && super::is_external(event) =>
+            {
+                instrukt_core::config::Configuration::load_global(self.runtime.state.home())?
+                    .reacting_computer()
+                    .map(|computer| computer.to_string())
+            }
+            _ => None,
+        };
         let _gate = self
             .gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let outcome = match &decoded {
             Ok(event)
-                if !self
-                    .consumer
-                    .interest
-                    .matches(event, &self.runtime.computer) =>
+                if !self.consumer.interest.matches(
+                    event,
+                    &self.runtime.computer,
+                    reacting.as_deref(),
+                ) =>
             {
                 Some(SettledOutcome::Uninterested)
             }
