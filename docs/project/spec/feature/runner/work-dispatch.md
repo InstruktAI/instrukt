@@ -37,7 +37,11 @@ layer or `agents.yaml` refuses the start, with the finding — and again at ever
 wake. A valid result replaces the current generation for every part of the runner at
 once; an invalid one leaves the current generation in force and its findings are
 reported in `instrukt events status`. A project layer with a finding against a
-module is not admitted for that module; its other modules are unaffected. No part
+module withholds only that module's own work: with a `modules.todos` finding (for
+example, a project whose code is not on GitHub) the project gets no todo dispatch.
+Whether the runner considers the project, and its canonical checkout
+synchronization (the `main` fast-forward that feeds the blueprint), still follow
+its switches; its other work is unaffected. No part
 of the runner reads those files on its own
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters; nothing running handles a missing one).
@@ -48,7 +52,8 @@ Redis) and history's extraction (on T3's database) and query responder (on clust
 Redis) each retry inside themselves until their service returns, and report their
 state in `instrukt events status`; a part never ends the runner because its
 service is away. A wake that cannot take the runtime-dispatch lock within its wait
-is skipped and the next wake tries again; lock waits are measured on the clock that
+is skipped and the next wake tries again; `instrukt events status` shows the last
+skipped wake with its time and cause until a wake that is not skipped. Lock waits are measured on the clock that
 measures the limits of started programs
 (`project/instrukt/spec/feature/configuration/layered-configuration`). The
 runner ends only when it cannot start: no home, the runner lock held by another
