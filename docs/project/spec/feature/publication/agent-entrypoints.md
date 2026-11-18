@@ -24,9 +24,10 @@ and there are no addenda.
 
 The root `AGENTS.md` also lists the project's own procedures that declare
 subscriptions, under “Configured Responsibilities”, whether or not events is
-enabled on the computer that renders it. No branding line is emitted. For a
-supported runtime that reads a separate project override instruction file,
-that file is retained alongside the ordinary entrypoint.
+enabled on the computer that renders it. No branding line is emitted.
+instrukt writes no project override instruction file, such as Codex's
+`AGENTS.override.md`: the `AGENTS.md` beside a master is the only file
+generated there (`general/policy/agent-artifact-governance`).
 
 ### Rendering a selection
 
@@ -257,6 +258,21 @@ publishes. They are the computer's own, never committed anywhere.
   that instance and says its home was not reported. Instances that share a
   home share one file; an instance with a home of its own receives its file
   there.
+- **Links where an instance reads through another folder.** Besides the home
+  that receives the file, the runtime reports, per instance, each folder in
+  which a link to that file must exist for the instance to read it
+  (`project/instrukt/spec/feature/runner/session-continuity`). Publication
+  makes there the link the runtime itself makes: the file's name, pointing at
+  the file in the home. It writes no file of its own into such a folder, and
+  leaves a file that is not a link there as it is and names it
+  (`general/policy/agent-artifact-governance`: a runtime's folders are
+  deployment targets; `general/principle/trust-and-guardrails`: what
+  instrukt did not make is not overwritten). A link there that points
+  elsewhere is replaced, as the runtime replaces it. A link is removed only
+  when it points at the file being removed, whoever made it, so the link
+  itself shows whether it is instrukt's to remove; the written record holds
+  the link's path and the file it points at, which is where to look and what
+  to compare.
 - **Removing a file written earlier.** A global file instrukt wrote earlier
   for a runtime is removed only when instrukt establishes that no enabled
   instance of that runtime uses that home: the runtime has no enabled
@@ -445,6 +461,14 @@ Then every global instruction file is left as it was and the developer is told w
   runtime are kept while it reports no home; where it actually runs from
   another home, that home's file is current only up to the last sync that
   could write it.
+- On a T3 release newer than the pinned one, a Codex instance with an
+  overlay home and a `CODEX_HOME` in its instance environment but no home
+  setting is read as the pinned release reads it: its file is written in the
+  default home and the overlay is linked to it. Such a release takes that
+  `CODEX_HOME` as the shared home instead; when that folder holds an
+  `AGENTS.md` of its own, T3 points the overlay's link at it when it next
+  creates the provider, and the instance reads that file until the next sync
+  links it again.
 - After a sync during which the selected runtime could not be asked, the
   global files stay as they were until the next sync that publishes them: a
   new revision of main in the project that owns `docs/general/`, or

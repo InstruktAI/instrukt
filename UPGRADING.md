@@ -26,6 +26,19 @@ order:
    `instrukt docs render --check` until it reports no finding; it reports the
    existing files as differing, which step 4 resolves.
 3. Remove the `AGENTS.md` lines `instrukt init` wrote to `.gitignore`.
+   instrukt no longer writes Codex's `AGENTS.override.md`, which Codex reads
+   in place of `AGENTS.md`, so a copy left behind would hide every committed
+   update. The first sync of this release that publishes removes the copy
+   its publication record lists, beside the primary checkout's root master;
+   a refused sync removes nothing until one publishes. Delete the copies no
+   record reaches:
+   - in each linked worktree, the `AGENTS.override.md` checkout rendering
+     wrote there, and the `instrukt-entrypoints.json` it kept in that
+     worktree's git directory (`git rev-parse --git-dir`);
+   - in the primary checkout, an `AGENTS.override.md` checkout rendering
+     wrote after the last sync that published, such as when Codex was
+     installed since;
+   - and keep an `AGENTS.override.md` you wrote yourself.
 4. Delete the untracked `AGENTS.md` beside each master; earlier renderings
    carry no generated line and are not replaced. Commit through the hook: the
    commit carries the new renderings.
@@ -87,7 +100,18 @@ earlier files are kept and `instrukt status` shows them as kept. An
 existing file in a new destination that instrukt did not write stops that
 sync: move its content into documentation or the file out of the way.
 `agents` keys in `docs/general/index.yaml` name the runtimes instrukt deploys
-to; `instrukt docs validate` names them when a key is not one.
+to; `instrukt docs validate` names them when a key is not one. Two keys are
+retired. In a `docs/general/index.yaml` you publish, rename `agents: gemini`
+to `antigravity` (its file was Antigravity's, so the same sessions read it)
+and remove `agents: deepseek` or move its snippets to a runtime that remains;
+then validate and sync. Until then `instrukt docs validate` and the sync
+report `index-agent-unsupported` for each of the two keys, naming the runtimes
+instrukt deploys to, and the sync publishes nothing.
+
+Hook-run outcomes recorded before this release are not carried over: the
+first hook run removes `~/.instrukt/state/hooks/`, and `instrukt hooks status`
+shows each hook's outcome again after its next run, now for the repository
+and all its worktrees.
 
 ### One computer reacts to external facts; watched refs are repository refs
 

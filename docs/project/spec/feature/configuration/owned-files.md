@@ -87,7 +87,24 @@ Hook-run records carry a shape version and an optional checkout or staging
 outcome. Older records convert in memory with no invented checkout or staging
 result, a record newer than the binary is refused, and the
 next recorded hook run persists the versioned shape. Inspection never rewrites
-these records and a newer shape requires a newer binary.
+these records and a newer shape requires a newer binary. A record belongs to
+the repository, keyed by a digest of its git common directory and naming the
+repository's path, so it is found without reading the repository's
+configuration (`sdlc/principle/design-fundamentals`: an outcome is never lost
+to a file that cannot be read). Records kept under the project-keyed folder
+`state/hooks/` are not converted: the first hook run that finds that folder
+removes it, and the next run of each hook writes its outcome under the
+repository's key (`sdlc/policy/state-storage`: an entry retires with its
+scope).
+
+The publication record converts its list of repository files a sync wrote:
+a project override instruction file it lists becomes an output to retract,
+which the next sync that publishes removes, as a sync retracts any output it
+no longer yields; an `AGENTS.md` it lists is the repository's and is dropped
+from the record without being touched; a listed path whose file is gone is
+dropped (`project/instrukt/spec/feature/publication/agent-entrypoints`:
+instrukt writes no override file, and the `AGENTS.md` beside a master is
+committed).
 
 ### Blueprint tool ownership
 
