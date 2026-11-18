@@ -7,8 +7,8 @@
 A repository's `AGENTS.md` files are now committed. instrukt's `pre-commit`
 section renders them from what the commit holds and stages them into it; a
 sync no longer writes them and a checkout no longer renders them. Each
-rendering opens with a line naming it as generated, and a file beside a
-master without that line is never overwritten. A committed rendering holds
+rendering opens with a line naming it as generated, and is written over
+whatever the `AGENTS.md` beside its master held. A committed rendering holds
 only the repository's own content: a required read of doctrine another
 repository publishes becomes a line naming `instrukt docs get <id>
 --closure`, and a `@config` directive in a master or in a document a
@@ -28,20 +28,15 @@ order:
 3. Remove the `AGENTS.md` lines `instrukt init` wrote to `.gitignore`.
    instrukt no longer writes Codex's `AGENTS.override.md`, which Codex reads
    in place of `AGENTS.md`, so a copy left behind would hide every committed
-   update. The first sync of this release that publishes removes the copy
-   its publication record lists, beside the primary checkout's root master;
-   a refused sync removes nothing until one publishes. Delete the copies no
-   record reaches:
-   - in each linked worktree, the `AGENTS.override.md` checkout rendering
-     wrote there, and the `instrukt-entrypoints.json` it kept in that
-     worktree's git directory (`git rev-parse --git-dir`);
-   - in the primary checkout, an `AGENTS.override.md` checkout rendering
-     wrote after the last sync that published, such as when Codex was
-     installed since;
-   - and keep an `AGENTS.override.md` you wrote yourself.
-4. Delete the untracked `AGENTS.md` beside each master; earlier renderings
-   carry no generated line and are not replaced. Commit through the hook: the
-   commit carries the new renderings.
+   update. instrukt deletes none: the hook and `instrukt docs render --check`
+   report an `AGENTS.override.md` beside a root master as a finding. Delete
+   each copy an earlier release rendered, beside the primary checkout's root
+   master and in each linked worktree, and the `instrukt-entrypoints.json`
+   checkout rendering kept in each worktree's git directory
+   (`git rev-parse --git-dir`). An `AGENTS.override.md` you wrote yourself
+   stays a finding for as long as it is there.
+4. Commit through the hook: the commit carries the new renderings, written
+   over the untracked `AGENTS.md` beside each master.
 5. Add `instrukt docs render --check` to the repository's CI, so a commit made
    without the hook (a web editor, a cloud agent) fails naming the stale file;
    repair with `instrukt docs render` and a commit. Pin the instrukt release
@@ -64,22 +59,20 @@ is a plain folder, in this order:
    remove every required read or reference to `general`, a domain or other
    doctrine, and every `@config`, `@exec` and `@include`. Run
    `instrukt config validate --company <name>` until it reports no finding.
-3. Delete an `AGENTS.md` the runner rendered in the home before this release,
-   or one another tool rendered: it carries no instrukt generated line and is
-   not replaced.
-4. Make the home folder, in place, the working tree of the company's
+3. Make the home folder, in place, the working tree of the company's
    repository, so that its main is checked out there. The local-only material
    stays in the folder, untracked and ignored; nothing of it is moved or
    committed. Where the repository already holds knowledge, the home's
    documents and the repository's are reconciled into one master and one
    `docs/`.
-5. Confirm that the repository tracks none of the local-only material:
+4. Confirm that the repository tracks none of the local-only material:
    `instrukt config validate --company <name>` reports none of it, and the
    repository's status lists none of it.
-6. Run `instrukt docs render` in the home and commit the master, the
-   documents, the ignore file and the rendered `AGENTS.md` together; deliver
-   that commit to the repository's main.
-7. Have the company repository's workflow run `instrukt docs render` on main
+5. Run `instrukt docs render` in the home, which writes the rendering over
+   any `AGENTS.md` the home held, and commit the master, the documents, the
+   ignore file and the rendered `AGENTS.md` together; deliver that commit to
+   the repository's main.
+6. Have the company repository's workflow run `instrukt docs render` on main
    and commit when the rendering changed.
 
 The operator ends with: the home at its usual location, the checkout of the
@@ -92,13 +85,15 @@ The global agent files go to the agent runtimes the selected runtime reports
 as configured, in each one's own home, instead of to every agent program
 whose user directory exists. With `runner.runtime: t3` these are T3's enabled
 provider instances; T3 must be running when the `docs/general/` owner syncs,
-or the files stay as they were. The next such sync writes new files for the
-newly supported runtimes and removes the file of a runtime that no enabled
-instance uses any more, DeepSeek's among them unless the runtime reports it;
-while an enabled instance of a runtime reports no home, that runtime's
-earlier files are kept and `instrukt status` shows them as kept. An
-existing file in a new destination that instrukt did not write stops that
-sync: move its content into documentation or the file out of the way.
+or that sync writes no global file. Each file is written whole by every sync
+that publishes it, over whatever the destination holds, a file TeleClaude or
+you wrote included: move instructions you want to keep into documentation
+before the first sync of this release that publishes. instrukt removes no
+global file: the file of a runtime no enabled instance uses any more,
+DeepSeek's among them unless the runtime reports it, stays until you delete
+it. The record of written files an earlier release kept under
+`~/.instrukt/state/publication/outputs/` is deleted by the first sync that
+publishes.
 `agents` keys in `docs/general/index.yaml` name the runtimes instrukt deploys
 to; `instrukt docs validate` names them when a key is not one. Two keys are
 retired. In a `docs/general/index.yaml` you publish, rename `agents: gemini`

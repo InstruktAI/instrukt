@@ -97,14 +97,12 @@ removes it, and the next run of each hook writes its outcome under the
 repository's key (`sdlc/policy/state-storage`: an entry retires with its
 scope).
 
-The publication record converts its list of repository files a sync wrote:
-a project override instruction file it lists becomes an output to retract,
-which the next sync that publishes removes, as a sync retracts any output it
-no longer yields; an `AGENTS.md` it lists is the repository's and is dropped
-from the record without being touched; a listed path whose file is gone is
-dropped (`project/instrukt/spec/feature/publication/agent-entrypoints`:
-instrukt writes no override file, and the `AGENTS.md` beside a master is
-committed).
+Publication keeps no record of the files a sync wrote outside the home. The
+record an earlier release kept under `state/publication/outputs/` is not
+read: the first sync that publishes deletes it, whatever its shape, and
+touches none of the files it lists
+(`general/principle/trust-and-guardrails`: a record kept to authorize a later
+overwrite or removal is a guard on what every sync rebuilds).
 
 ### Blueprint tool ownership
 

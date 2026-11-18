@@ -35,12 +35,13 @@ removed once nothing in it is left unplaced.
 
 The root `AGENTS.md` is generated from then on, and it stays committed: the
 commit that adopts the project carries its rendering
-(`project/instrukt/spec/feature/publication/agent-entrypoints`). A rendering
-never replaces a file instrukt did not write, so init reports the kept copy,
-that the file is now generated, and that the hand-written file is to be
-deleted; the next commit through the hook renders it in its place. Init
-never deletes or edits the file itself. User-scope agent files are the adopter's decision:
-sync refuses one instrukt did not write and names it
+(`project/instrukt/spec/feature/publication/agent-entrypoints`). Init reports
+the kept copy and that the file is now generated; the next commit through the
+hook writes the rendering over the hand-written file. Init never deletes or
+edits the file itself
+(`general/principle/trust-and-guardrails`: the copy, not a refusal, is what
+keeps the developer's words). The global agent files are instrukt's own, and
+the sync of the project that owns `docs/general/` writes them whole
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 ### What init establishes
@@ -52,7 +53,7 @@ sync refuses one instrukt did not write and names it
 | Project index | `docs/project/index.yaml`, with empty `expanded` and `listed` | absent |
 | Project schema | `docs/project/schema.yaml`, a copy of the published `sdlc` domain's `schema.yaml` | absent and `sdlc` is published on the computer with a `schema.yaml` |
 | Master | `AGENTS.master.md` at the repository root, holding only `## Purpose` with the project name | absent |
-| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists, instrukt did not write it, and there is no master |
+| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists that does not open with instrukt's generated line, and there is no master |
 | Editor schemas and modelines | `.instrukt/schemas/` and the first line of each file they describe | as `project/instrukt/spec/feature/publication/editor-schemas` |
 | Ignores | `.gitignore`: `.instrukt/` | the line is missing; it is appended, every other line kept |
 | Hook sections | the hooks directory | as `instrukt hooks install` (`project/instrukt/spec/feature/repository/hook-sections`) |
@@ -84,9 +85,9 @@ In a repository whose working tree holds `docs/general/` or any
   owner, since the sync would be refused);
 - each `docs/domain/general/` or `docs/domain/project/`, as refused because
   the names are reserved;
-- whether the sync will render the global agent files, for which agent
-  runtimes the selected runtime reports as configured, and each existing
-  global file instrukt did not write, which would stop that sync
+- whether the sync will write the global agent files and, for the agent
+  runtimes the selected runtime reports as configured, each file it will
+  write, whatever that file holds now
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 The report claims nothing and writes nothing; ownership is taken by the sync
@@ -111,10 +112,10 @@ And nothing has been committed
 Given a developer's repository has a hand-written root agent instruction file and no instrukt configuration
 When the developer initializes instrukt in it
 Then everything the file said is kept aside for them, and the project's master holds only the purpose
-And the developer is told that the instruction file is generated from now on and to delete the hand-written one
+And the developer is told that the instruction file is generated from now on
 And the file itself is left as it was
-When the developer deletes it and commits
-Then the commit carries the rendered instruction file in its place
+When the developer commits
+Then the commit carries the rendered instruction file in its place, and the kept copy still holds what they wrote
 When their agent goes through the kept instructions with them
 Then each lands in the project's documentation and index, and the published instruction file carries them
 ```
@@ -139,7 +140,7 @@ And a repository holding always-on doctrine, a free domain and that owned domain
 When the developer initializes instrukt in the repository
 Then they are told it will claim the always-on doctrine and the free domain
 And that the owned domain belongs to the other project and its publication would be refused
-And whether publication will write global agent instructions, for which configured agent runtimes
+And which global agent instruction files publication will write, for which configured agent runtimes
 And nothing has been published
 ```
 

@@ -40,7 +40,6 @@ every visit with it.
 | `repository` | outside a repository: none. Inside one: the project layer's presence and `project` slug, whether instrukt's hook sections are installed (`instrukt hooks status`), whether its code is on GitHub (the GitHub repository it resolves to, or the remote that is not one; `project/instrukt/spec/feature/work/github-record`), the positions the working tree holds (`docs/general/`, each `docs/domain/<x>/`, `docs/project/`), the commit last published for it and whether its main is ahead of that commit |
 | `published` | each published position on the computer (`general` and each domain): its owner project, the owner's checkout path, the commit published, and for a domain its `index.yaml` description or that it has none |
 | `projects` | every other project publication state records: its slug, checkout path and published commit |
-| `global_files` | each global agent file the written record holds: its agent runtime and path, and whether the last sync that wrote global files kept it without being able to establish it is unused, with the reason it recorded — an enabled instance that reported no home, or a runtime that could not be asked (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
 
 - The repository is **adopted** when its project layer names a `project` and
   its hook sections are installed; the report states adopted, partly adopted

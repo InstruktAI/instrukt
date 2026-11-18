@@ -127,11 +127,6 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 :  The one key in an agent runtime's user settings that makes it load
    `AGENTS.md` files.
 
-**Written record**
-:  What publication state records about each user-scope instruction file it
-   wrote: its path and the content it left there. A file is one instrukt
-   wrote only while its content is the content recorded.
-
 **Eval fingerprint**
 :  The digest of every published snippet that declares `eval: true`, recorded
    per published commit; the current digest is available to work
@@ -149,9 +144,8 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   index patching by owner with its duplicate-id refusal; retraction;
   rendering of the committed entrypoints — a project's `AGENTS.md` files and
   each company home's — and of the global agent files; the choice of global
-  file targets from the configured agent runtimes;
-  the written record and the refusal to overwrite or remove a user-scope
-  instruction file, or a committed entrypoint, instrukt did not write;
+  file targets from the configured agent runtimes; writing those files whole,
+  with no record of what was written;
   merging the entrypoint-loading keys; the editor
   schemas in a repository's `.instrukt/schemas/` and their modelines, which
   sync and `instrukt init` write; the eval
@@ -176,7 +170,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
   `index.yaml` and `schema.yaml` when the position has them); the global
   index `~/.instrukt/state/index.yaml`; the ownership record, published
-  commits, checkout paths and written records under
+  commits and checkout paths under
   `~/.instrukt/state/publication/`; the eval fingerprint per published commit
   under `~/.instrukt/state/eval-fingerprint/`; the committed `AGENTS.md`
   files of a repository and `instrukt docs render [--check]`; the global
@@ -236,17 +230,18 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   runtimes.
 - **Contains:** one rendered file per configured agent runtime that has a
   user-scope file, per home its instances run with; one entrypoint-loading key
-  per agent runtime that needs one; the written record of each file.
+  per agent runtime that needs one. Nothing records which files were written.
 - **Invariants:**
   - Written only by the sync of the project that owns `docs/general/`.
-  - Never written over a file instrukt did not write.
+  - Written whole by every sync that publishes them, whatever the destination
+    held; never removed.
   - A settings merge changes the entrypoint-loading key and no other key.
   - Targets only the agent runtimes the selected runtime reports as
     configured; when it cannot be asked, nothing in the set changes.
 - **Identifier:** one per computer.
 - **Lifecycle:** written by the `docs/general/` owner's sync; replaced on its
-  next sync that publishes; a file is retracted when its runtime is no longer
-  configured, and all are when that project stops publishing `docs/general/`.
+  next sync that publishes; left where it is when its runtime is no longer
+  configured or that project stops publishing `docs/general/`.
 
 #### Committed entrypoint (aggregate)
 
@@ -260,8 +255,8 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
     layer and no environment enters it.
   - Changes only in a commit, or in the working tree through
     `instrukt docs render`; no sync, checkout, start or tick writes it.
-  - Written, replaced or removed only while the file is absent or opens with
-    the generated line.
+  - Written over whatever the file holds; removed, when its master no longer
+    exists, only while it opens with the generated line.
   - A company home's rendering is its master's own content and references
     nothing outside the company's own documents.
   - It has no published commit, no claim and no index entry, and belongs to

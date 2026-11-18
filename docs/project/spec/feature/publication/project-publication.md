@@ -66,7 +66,7 @@ refuse publication and preserve the previous publication.
 | Project position and entries | `~/.instrukt/docs/project/<slug>/…` and the global index | committed `docs/project/` content, including pending companions and its position files; entries owned by that project, ids `project/<slug>/…`, resolving to published files with source checkout provenance |
 | Global agent files | the homes of the configured agent runtimes | only from the owner of `docs/general/` (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
 | Editor schemas and modelines | the project's primary worktree | `project/instrukt/spec/feature/publication/editor-schemas` |
-| Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path, and the written record of every user-scope instruction file it wrote |
+| Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path; no record of the files a sync wrote outside the home |
 | Eval fingerprint | `~/.instrukt/state/eval-fingerprint/` | digest associated with the published commit; `project/instrukt/spec/feature/publication/eval-fingerprint` |
 
 - Snippets are published raw: their `@config` directives resolve when they are
@@ -145,17 +145,18 @@ sync retracts it. No name is reserved beyond `general` and `project`, besides
 Everything the project published before and its committed main no longer
 yields is removed by the same sync: a position it stopped publishing (its
 directory under `~/.instrukt/docs/`, its claim, its entries), snippets deleted
-or moved within a published position, its index entries without a source,
-the global agent file of an agent runtime no longer configured, and, when it
-stops publishing `docs/general/`, every global agent file it wrote. Retraction touches nothing
-another project owns.
+or moved within a published position, and its index entries without a
+source. Retraction touches nothing another project owns, and no global agent file:
+those are written whole by every sync that publishes them and never removed
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 ### Failure
 
 A sync that fails after it started writing leaves the project's previous
 publication readable and records no commit. Rendering that cannot resolve a
-required read, or leaves a reference unresolved, fails the sync and names the
-file and the reference.
+required read fails the sync and names the file and the read. A reference a
+global agent file keeps unresolved is a finding of that sync, not a failure
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 A path the project's repository controls (a rendered output's location, or a
 directory publication writes into) that is a symbolic link refuses the sync
