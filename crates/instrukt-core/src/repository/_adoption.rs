@@ -13,7 +13,7 @@ use crate::fsx::atomic_write;
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
 use crate::publication::{
-    self, ClaimsPreview, EditorChange, EditorChangeKind, OnLink, PublishedSchema, SCHEMAS_DIR,
+    self, ClaimsPreview, EditorChange, EditorChangeKind, PublishedSchema, SCHEMAS_DIR,
 };
 
 use super::_contain::Bounds;
@@ -176,7 +176,7 @@ pub fn init(
         None
     };
     let schemas_existed = root.join(SCHEMAS_DIR).is_dir();
-    let editor = publication::refresh_editor_schemas(&root, OnLink::Report)?;
+    let editor = publication::refresh_editor_schemas(home.root(), &root)?;
     parts.push((
         InitPart::EditorSchemas,
         editor_outcome(schemas_existed, &editor),

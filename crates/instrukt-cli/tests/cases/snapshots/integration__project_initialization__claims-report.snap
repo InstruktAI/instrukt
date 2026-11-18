@@ -30,4 +30,3 @@ claims of the first sync (nothing is published until it runs):
   docs/domain/project/: refused: a reserved name; no domain may be called `general`, `project` or `third-party`
   global agent file of claude: the sync writes [TMP]/home/.claude/CLAUDE.md
   global agent file of codex: the sync writes [TMP]/home/.codex/AGENTS.md
-  [TMP]/home/.claude/CLAUDE.md: not written by instrukt; it stops the sync until its content moves into docs or the file moves out of the way

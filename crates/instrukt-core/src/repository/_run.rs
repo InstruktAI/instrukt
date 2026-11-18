@@ -239,7 +239,6 @@ pub fn run_hook(
         let outcome = crate::publication::checkout_entrypoints(&crate::publication::SyncRequest {
             home,
             cwd: &root,
-            force: false,
             wiring,
             now: jiff::Timestamp::now(),
         });
