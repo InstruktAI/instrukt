@@ -28,12 +28,27 @@ while grown:
         if name not in selected and any(d["name"] in selected for d in crate["dependencies"]):
             selected.add(name)
             grown = True
-for name in sorted(selected):
-    print("-p", name)
+# Three lines: every selected crate, those with a library, those with binaries.
+def flags(names):
+    return " ".join(f"-p {n}" for n in sorted(names))
+def kinds(name):
+    return {k for t in crates[name]["targets"] for k in t["kind"]}
+print(flags(selected))
+print(flags(n for n in selected if "lib" in kinds(n)))
+print(flags(n for n in selected if "bin" in kinds(n)))
 PY
 )
-[ -n "$packages" ] || exit 0
+all=$(printf '%s\n' "$packages" | sed -n 1p)
+libs=$(printf '%s\n' "$packages" | sed -n 2p)
+bins=$(printf '%s\n' "$packages" | sed -n 3p)
+[ -n "$all" ] || exit 0
 # shellcheck disable=SC2086 # one word per argument
-cargo clippy $packages --all-targets --locked -- -D warnings
-# shellcheck disable=SC2086
-cargo test $packages --locked --lib --bins
+cargo clippy $all --all-targets --locked -- -D warnings
+if [ -n "$libs" ]; then
+    # shellcheck disable=SC2086
+    cargo test $libs --locked --lib
+fi
+if [ -n "$bins" ]; then
+    # shellcheck disable=SC2086
+    cargo test $bins --locked --bins
+fi
