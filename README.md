@@ -36,9 +36,21 @@ One Cargo workspace, one binary `instrukt` (`crates/instrukt-cli`), with
 `instrukt-connector` beside it.
 
 ```sh
-make hooks   # once per clone: pre-commit runs fmt, clippy and test
-make check   # the same checks by hand
+make hooks          # once per clone: pre-commit runs the checks the staged files need
+make commit-checks  # every commit check over every file, as CI runs it
+make check          # lint, the whole test suite, coverage and the audit by hand
 ```
+
+The commit check uses the pre-commit framework at the version pinned in
+`scripts/test-tools.env` (`uv tool install pre-commit==<version>`).
+`.pre-commit-config.yaml` assigns each check the files it applies to; the
+functional suite runs in CI on every pull request. The Python lint and type
+check are the framework's own hooks for ruff and mypy at pinned commits.
+`make hooks` installs them into the framework's cache (`~/.cache/pre-commit`),
+which needs network access. A commit made before that, or after a pinned tool
+changes, installs what it needs itself; `make commit-checks` and CI do the
+same. A newly installed tool's first run is slower too, once per installation
+and not once per checkout, so a commit takes longer that one time.
 
 Command-line tests run the built binary against a temporary `HOME` and
 temporary git repositories (`crates/instrukt-cli/tests/common`); they never

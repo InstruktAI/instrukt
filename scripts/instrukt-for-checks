@@ -1,0 +1,34 @@
+#!/bin/sh
+# Runs instrukt for the commit checks without building it, so a document or
+# configuration check waits for no build and no lock. The program is
+# INSTRUKT_CHECK_BIN when set (scripts/commit-checks.sh --all-files sets it to
+# a build of the revision under check), else this checkout's development build
+# when no file a crate is built from is newer than it, else the installed
+# instrukt. It runs under a
+# throwaway HOME, so no live home is read or written.
+#   scripts/instrukt-for-checks <instrukt arguments>
+#   scripts/instrukt-for-checks --script <script> [arguments]
+#     runs the script with INSTRUKT_CHECK_BIN set to that program.
+set -eu
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+dev="$root/.instrukt-home/bin/instrukt"
+if [ -n "${INSTRUKT_CHECK_BIN:-}" ]; then
+    bin=$INSTRUKT_CHECK_BIN
+elif [ -x "$dev" ] && [ -z "$(find "$root/crates" "$root/Cargo.toml" "$root/Cargo.lock" -newer "$dev" -type f -print 2>/dev/null | head -n 1)" ]; then
+    bin=$dev
+elif bin=$(command -v instrukt); then
+    :
+else
+    echo "No instrukt for the commit checks: build this checkout's with scripts/dev-instrukt --version, or install instrukt" >&2
+    exit 1
+fi
+if [ "${1:-}" = "--script" ]; then
+    shift
+    INSTRUKT_CHECK_BIN=$bin
+    export INSTRUKT_CHECK_BIN
+    exec "$@"
+fi
+home=$(mktemp -d)
+trap 'rm -rf "$home"' EXIT
+unset XDG_STATE_HOME INSTRUKT_HOME
+HOME="$home" "$bin" "$@"
