@@ -2,6 +2,56 @@
 
 ## 0.1.0
 
+### Agent instructions are committed, and reach the runtimes you configured
+
+A repository's `AGENTS.md` files are now committed. instrukt's `pre-commit`
+section renders them from what the commit holds and stages them into it; a
+sync no longer writes them and a checkout no longer renders them. Each
+rendering opens with a line naming it as generated, and a file beside a
+master without that line is never overwritten. In each adopted repository:
+
+1. Run `instrukt hooks install` (or add the line `instrukt hooks status`
+   prints to the hook manager), so the `pre-commit` section renders.
+2. Remove the `AGENTS.md` lines `instrukt init` wrote to `.gitignore`.
+3. Delete the untracked `AGENTS.md` beside each master; earlier renderings
+   carry no generated line and are not replaced. Commit through the hook: the
+   commit carries the new renderings.
+4. Add `instrukt docs render --check` to the repository's CI, so a commit made
+   without the hook (a web editor, a cloud agent) fails naming the stale file;
+   repair with `instrukt docs render` and a commit. Pin the instrukt release
+   CI installs to the one the hooks run.
+
+A committed rendering holds only the repository's own content. A required
+read of doctrine another repository publishes becomes a line naming
+`instrukt docs get <id> --closure`, and a `@config` directive in what the root
+`AGENTS.md` renders in full is a finding: list that snippet instead.
+
+A company home is the checkout of the company's repository, and its
+`AGENTS.md` is committed there. Run `instrukt config init --company <name>` in
+each home so its ignore lines keep the settings document, the secrets file,
+`projects/` and local state out of the repository, and `instrukt config validate --company <name>`
+to confirm nothing of them is tracked. The company's master references only
+the company's own documents: remove any required read or reference to
+`general`, a domain or other doctrine before rendering. The runner no longer
+renders the file before a start. Have the company repository's workflow run
+`instrukt docs render` on main and commit when the rendering changed. An
+`AGENTS.md` another tool rendered carries no instrukt generated line and is
+not replaced: delete it once, then render. The
+company's agent may now change the company's documents in its home and commit
+them.
+
+The global agent files go to the agent runtimes the selected runtime reports
+as configured, in each one's own home, instead of to every agent program
+whose user directory exists. With `runner.runtime: t3` these are T3's enabled
+provider instances; T3 must be running when the `docs/general/` owner syncs,
+or the files stay as they were. The next such sync removes the file of a
+runtime no longer configured, DeepSeek's among them unless the runtime
+reports it, and writes new files for the newly supported runtimes. An
+existing file in a new destination that instrukt did not write stops that
+sync: move its content into documentation or the file out of the way.
+`agents` keys in `docs/general/index.yaml` name the runtimes instrukt deploys
+to; `instrukt docs validate` names them when a key is not one.
+
 ### One computer reacts to external facts; watched refs are repository refs
 
 `runner.upstream_changed` and `runner.main_failing` now name their ref with a
@@ -48,6 +98,8 @@ minute timer) needs the user's service manager to start at boot.
 `loginctl enable-linger` when it does not; instrukt never changes it. Run
 `loginctl enable-linger` once for the user that runs instrukt, then
 `instrukt install --check` again.
+
+||||||| parent of 32ae4f9 (Specs: instructions reach every agent — committed AGENTS.md, global files for the configured runtimes)
 
 ### T3 release contract and failure routing
 

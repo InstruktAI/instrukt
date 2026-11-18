@@ -38,7 +38,8 @@ commands.
 
 **Hook run**
 :  What a section calls: `instrukt hooks run <hook>`, which hands the hook
-   point to the context that acts on it and completes checkout entrypoint rendering before returning, and otherwise returns without waiting.
+   point to the context that acts on it; the `pre-commit` run completes its
+   staging before returning, and every other run returns without waiting.
 
 **Hook manager**
 :  A tool that generates the project's hook files itself and may drop
@@ -47,13 +48,14 @@ commands.
 **Adoption**
 :  The state `instrukt init` establishes in a repository: project layer,
    `docs/project/` with its `index.yaml` and, when sdlc is published, its
-   `schema.yaml`, the root master, the ignore lines, the editor schemas and
-   modelines publication generates, and the hook sections.
+   `schema.yaml`, the root master, the ignore line for `.instrukt/`, the
+   editor schemas and modelines publication generates, and the hook sections.
 
 **Claims report**
 :  What `instrukt init` reports in a repository holding `docs/general/` or a
    `docs/domain/<x>/`: the positions its first sync will claim, their current
-   owners, and whether that sync will render the global agent files.
+   owners, and whether that sync will render the global agent files, for
+   which configured agent runtimes.
 
 **Attributed commit**
 :  A commit made through `instrukt repo commit`: authored by the acting
@@ -126,9 +128,8 @@ commands.
     ends the hook early, so every section after it runs; a redirection-only
     `exec` is allowed, and the pre-push section uses one to give the sections
     after it the full ref list on stdin.
-  - A section in a post-hook never fails the git operation. Checkout waits for
-    entrypoint rendering and any first-publication bootstrap; other publication
-    triggers remain detached.
+  - A section never fails the git operation. The `pre-commit` section waits
+    for its staging; publication triggers remain detached.
 - **Identifier:** the hook name within the repository's hooks directory.
 - **Lifecycle:** written by `instrukt hooks install` or `instrukt init`;
   removed by `instrukt hooks remove`; lost when a hook manager regenerates the
@@ -139,7 +140,8 @@ commands.
 - **Root:** the adopted repository.
 - **Contains:** the project layer `instrukt.yaml`, `docs/project/` with its
   `index.yaml` and `schema.yaml`, the root `AGENTS.master.md`, the ignore
-  lines, `.instrukt/schemas/` and the modelines, the hook sections.
+  line for `.instrukt/`, `.instrukt/schemas/` and the modelines, the hook
+  sections.
 - **Invariants:**
   - Adoption never overwrites a file that exists, apart from the modeline
     publication keeps at the top of the files it describes.

@@ -544,8 +544,6 @@ fn publication_bytes(env: &TestEnv) -> Vec<u8> {
     std::fs::read(env.instrukt_home().join("state/publication/checkout.yaml")).unwrap()
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE6
-// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK5
 #[test]
 fn linked_checkout_renders_published_baseline_before_return_without_publication() {
     let env = checkout_machine();
@@ -604,8 +602,6 @@ fn linked_checkout_renders_published_baseline_before_return_without_publication(
     );
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE7
-// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK5
 #[test]
 fn primary_checkout_bootstraps_once_and_later_renders_published_state() {
     let env = checkout_machine();
@@ -629,8 +625,6 @@ fn primary_checkout_bootstraps_once_and_later_renders_published_state() {
     assert_eq!(publication_bytes(&env), published);
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE7
-// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK5
 #[test]
 fn unpublished_linked_checkout_reports_prerequisite_without_publishing_or_failing_git() {
     let env = checkout_machine();
@@ -668,7 +662,6 @@ fn unpublished_linked_checkout_reports_prerequisite_without_publishing_or_failin
     insta::assert_snapshot!(stdout(&env, &status));
 }
 
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE6
 #[test]
 fn a_linked_checkout_retracts_its_own_withdrawn_generated_instructions() {
     let env = checkout_machine();
@@ -704,7 +697,6 @@ fn a_linked_checkout_retracts_its_own_withdrawn_generated_instructions() {
 }
 
 // spec: project/instrukt/spec/feature/configuration/owned-files UC-OF3
-// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE6
 #[test]
 fn development_checkout_rendering_preserves_the_installed_checkouts_instructions() {
     let mut env = checkout_machine();

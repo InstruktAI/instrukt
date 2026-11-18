@@ -24,7 +24,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
 | configuration | Layered settings, company homes with their own settings and secrets, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
-| publication | Committed-state publication, index patching, rendering of the global agent files and project `AGENTS.md`, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
+| publication | Committed-state publication, index patching, rendering of the global agent files and of committed `AGENTS.md` files, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
@@ -79,7 +79,8 @@ not permission for an upstream module to depend on its consumer.
 | docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
 | publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval |
 | publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
-| publication → repository | Customer / Supplier | Sync invoked by repository hook sections |
+| publication → repository | Customer / Supplier | Sync and committed-entrypoint rendering invoked by repository hook sections |
+| runner → publication | Customer / Supplier | Configured agent runtimes and their homes from the selected runtime's adapter, for the global agent files; core-declared interface wired by the CLI |
 | blueprint → repository | Customer / Supplier | Graph generation invoked by hooks for a push or pull advancing main; CLI wires the core-declared interface |
 | docs → specs | Customer / Supplier | Feature-spec use-case inventory and pending markers |
 | specs → blueprint | Customer / Supplier | Use-case inventory and test bindings joined to the graph for traces (trace is blueprint's) |

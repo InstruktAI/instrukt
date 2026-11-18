@@ -43,7 +43,7 @@ check documentation before committing, and it changes nothing.
 | Schema | a `schema.yaml` finding as `project/instrukt/spec/feature/docs/snippet-schema` lists |
 | Pending | `delivered_by` is not a non-empty list of slugs; a companion, planned or change marker names a slug of invalid form; planned markers are inline, nested, unbalanced or overlapping |
 | Third-party | `description` missing; a `## Sources` entry that is neither a web URL nor a documentation-service identifier |
-| Directives | an `@exec` or `@include` directive in a snippet, companion, third-party doc or master, naming its command or path; a `@config` directive with a `runtime.*` path in an `AGENTS.master.md` or in a snippet rendered into an agent file — reached through an `index.yaml`'s `expanded` closure or `agents` |
+| Directives | an `@exec` or `@include` directive in a snippet, companion, third-party doc or master, naming its command or path; a `@config` directive with a `runtime.*` path in a snippet rendered into a global agent file — reached through `docs/general/index.yaml`'s `expanded` closure or `agents`; any `@config` directive in an `AGENTS.master.md` or in a snippet the repository's committed `AGENTS.md` renders in full (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
 
 A todo slug is checked for form only. Whether it names an existing todo is
 checked as well when the `todos` module is on, by asking that module.
