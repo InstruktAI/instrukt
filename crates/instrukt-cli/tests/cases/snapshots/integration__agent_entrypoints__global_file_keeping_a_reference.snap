@@ -44,56 +44,37 @@ Care: Enforcement.
 
 Care: Exceptions.
 
-# Sdlc
+# Ops
 
-## Tests — Policy
+## House — Policy
 
 ### Rules
 
-Tests: Rules.
+Read it (@notes/house.md) first.
 
 ### Rationale
 
-Tests: Rationale.
+House: Rationale.
 
 ### Scope
 
-Tests: Scope.
+House: Scope.
 
 ### Enforcement
 
-Tests: Enforcement.
+House: Enforcement.
 
 ### Exceptions
 
-Tests: Exceptions.
+House: Exceptions.
 
 # General
 
-## Kind — Policy
-
-### Rules
-
-Kind: Rules.
-
-### Rationale
-
-Kind: Rationale.
-
-### Scope
-
-Kind: Scope.
-
-### Enforcement
-
-Kind: Enforcement.
-
-### Exceptions
-
-Kind: Exceptions.
-
-- general/policy/style: About Style. — `instrukt docs get general/policy/style`
 - general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+
+# Ops
+
+Operations — `instrukt docs get --domain ops`
 
 # Sdlc
 

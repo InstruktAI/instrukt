@@ -89,6 +89,14 @@ pub fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
     std::fs::remove_dir_all(path)
 }
 
+/// [`std::os::unix::fs::symlink`], admitted at the fence where the link is
+/// made.
+#[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
+pub fn symlink(points_to: impl AsRef<Path>, link: impl AsRef<Path>) -> io::Result<()> {
+    _fence::admit(link.as_ref())?;
+    std::os::unix::fs::symlink(points_to, link)
+}
+
 /// [`std::fs::rename`], admitted at the fence on both ends.
 #[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
 pub fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {

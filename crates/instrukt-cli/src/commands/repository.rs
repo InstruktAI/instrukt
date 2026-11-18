@@ -100,6 +100,9 @@ pub(crate) fn editor_lines(changes: &[EditorChange]) -> Vec<String> {
                 EditorChangeKind::ModelineInserted => "modeline inserted",
                 EditorChangeKind::ModelineReplaced => "modeline updated",
                 EditorChangeKind::Linked => "not written: a symbolic link",
+                EditorChangeKind::LinkReplaced => {
+                    "a symbolic link, replaced; what it pointed to is left as it is"
+                }
             };
             format!("{}: {what}", change.path.display())
         })
@@ -144,7 +147,7 @@ fn claims_lines(claims: &ClaimsPreview) -> Vec<String> {
         GlobalFiles::OwnedElsewhere(owner) => lines.push(format!(
             "  global agent files: not written; docs/general/ is owned by project `{owner}`"
         )),
-        GlobalFiles::Rendered { agents, foreign } => {
+        GlobalFiles::Rendered { agents } => {
             if agents.is_empty() {
                 lines.push(
                     "  global agent files: none; no supported agent CLI is installed on this computer"
@@ -154,12 +157,6 @@ fn claims_lines(claims: &ClaimsPreview) -> Vec<String> {
             for (agent, path) in agents {
                 lines.push(format!(
                     "  global agent file of {agent}: the sync writes {}",
-                    path.display()
-                ));
-            }
-            for path in foreign {
-                lines.push(format!(
-                    "  {}: not written by instrukt; it stops the sync until its content moves into docs or the file moves out of the way",
                     path.display()
                 ));
             }

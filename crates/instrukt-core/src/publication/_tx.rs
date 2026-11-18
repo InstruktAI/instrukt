@@ -2,12 +2,15 @@
 //! replaced, so a sync that fails part-way puts the previous publication
 //! back instead of leaving a mix of two.
 //!
-//! Targets a repository or instrukt controls — outputs in the project's
-//! primary worktree and the home's own tree — are [`confined`]: no
-//! existing component between the root and the target may be a symbolic
-//! link, so a committed link never aliases another file. Agent-CLI files
-//! in the user's home are [`resolved`] through the user's own links and
-//! written at their real target, so those links stay links.
+//! Nothing is written through a link. A symbolic link at one of
+//! publication's own destinations is removed and the file or directory
+//! written in its place, as an undoable step: a failed sync puts the link
+//! back. Targets a repository or instrukt controls — outputs in the
+//! project's primary worktree and the home's own tree — are
+//! [`own_destination`]s: no component on the way to them may be a link.
+//! An agent CLI's file in the user's home is a [`destination`]: the
+//! directories on the way are the user's and are used as they resolve,
+//! while a link at the file itself is replaced.
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +41,11 @@ enum Step {
     },
     /// A file was removed; it held `previous`.
     RemovedFile { target: PathBuf, previous: Vec<u8> },
+    /// A symbolic link at `target`, pointing at `points_to`, was removed so
+    /// a file or directory could take its place.
+    Link { target: PathBuf, points_to: PathBuf },
+    /// The directory `target` was created where nothing stood.
+    CreatedDir { target: PathBuf },
 }
 
 /// The pending writes of one sync.
@@ -46,6 +54,8 @@ pub(super) struct Transaction {
     trash: TempDir,
     steps: Vec<Step>,
     moved: usize,
+    /// The links this transaction replaced, by where they stood.
+    replaced: Vec<PathBuf>,
 }
 
 impl Transaction {
@@ -67,26 +77,97 @@ impl Transaction {
             trash,
             steps: Vec::new(),
             moved: 0,
+            replaced: Vec::new(),
         })
     }
 
+    /// The links this transaction replaced so far, by where they stood.
+    pub(super) fn replaced_links(&self) -> &[PathBuf] {
+        &self.replaced
+    }
+
+    /// Whether anything was written, replaced or removed so far.
+    pub(super) fn changed(&self) -> bool {
+        !self.steps.is_empty()
+    }
+
+    /// Removes a symbolic link standing at `target`, dangling or not, so a
+    /// file or directory can take its place; the file it points to is left
+    /// as it is. Undone by making the link again. Whether a link stood there.
+    pub(super) fn unlink(&mut self, target: &Path) -> Result<bool, PublicationError> {
+        let io = |source| PublicationError::Io {
+            path: target.to_path_buf(),
+            source,
+        };
+        match std::fs::symlink_metadata(target) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let points_to = std::fs::read_link(target).map_err(io)?;
+                crate::fsx::remove_file(target).map_err(io)?;
+                self.steps.push(Step::Link {
+                    target: target.to_path_buf(),
+                    points_to,
+                });
+                self.replaced.push(target.to_path_buf());
+                Ok(true)
+            }
+            Ok(_) => Ok(false),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(io(source)),
+        }
+    }
+
     /// Writes `contents` to `target` atomically, unless it already holds
-    /// exactly that.
-    pub(super) fn write(&mut self, target: &Path, contents: &[u8]) -> Result<(), PublicationError> {
+    /// exactly that; a link at `target` is replaced by the file. Whether it
+    /// wrote.
+    pub(super) fn write(
+        &mut self,
+        target: &Path,
+        contents: &[u8],
+    ) -> Result<bool, PublicationError> {
+        self.unlink(target)?;
         let previous = read_existing(target)?;
         if previous.as_deref() == Some(contents) {
-            return Ok(());
+            return Ok(false);
         }
         atomic_write(target, contents)?;
         self.steps.push(Step::File {
             target: target.to_path_buf(),
             previous,
         });
+        Ok(true)
+    }
+
+    /// Makes `target` a directory: a link there is replaced, and a missing
+    /// directory is created, with its parents. Undone by removing what was
+    /// created and making the link again.
+    pub(super) fn ensure_dir(&mut self, target: &Path) -> Result<(), PublicationError> {
+        self.unlink(target)?;
+        match std::fs::symlink_metadata(target) {
+            Ok(_) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PublicationError::Io {
+                    path: target.to_path_buf(),
+                    source,
+                });
+            }
+        }
+        crate::fsx::create_dir_all(target).map_err(|source| PublicationError::Io {
+            path: target.to_path_buf(),
+            source,
+        })?;
+        self.steps.push(Step::CreatedDir {
+            target: target.to_path_buf(),
+        });
         Ok(())
     }
 
-    /// Removes the file `target` when it exists.
+    /// Removes the file `target` when it exists; a link there is removed
+    /// and the file it points to left as it is.
     pub(super) fn remove_file(&mut self, target: &Path) -> Result<(), PublicationError> {
+        if self.unlink(target)? {
+            return Ok(());
+        }
         let Some(previous) = read_existing(target)? else {
             return Ok(());
         };
@@ -102,12 +183,18 @@ impl Transaction {
     }
 
     /// Puts the directory `staged` in the place of `target`, keeping the
-    /// earlier `target` in the trash. Both lie on the home's filesystem.
+    /// earlier `target` in the trash, unless `target` already holds exactly
+    /// the same files with the same bytes; a link at `target` is replaced by
+    /// the directory. Both lie on the home's filesystem. Whether it wrote.
     pub(super) fn replace_dir(
         &mut self,
         staged: &Path,
         target: &Path,
-    ) -> Result<(), PublicationError> {
+    ) -> Result<bool, PublicationError> {
+        self.unlink(target)?;
+        if same_tree(staged, target)? {
+            return Ok(false);
+        }
         let saved = self.stash(target)?;
         if let Some(parent) = target.parent() {
             crate::fsx::create_dir_all(parent).map_err(|source| PublicationError::Io {
@@ -128,11 +215,15 @@ impl Transaction {
             target: target.to_path_buf(),
             saved,
         });
-        Ok(())
+        Ok(true)
     }
 
-    /// Removes the directory `target`, keeping it in the trash.
+    /// Removes the directory `target`, keeping it in the trash; a link there
+    /// is removed and the directory it points to left as it is.
     pub(super) fn remove_dir(&mut self, target: &Path) -> Result<(), PublicationError> {
+        if self.unlink(target)? {
+            return Ok(());
+        }
         if let Some(saved) = self.stash(target)? {
             // Undone like a replacement whose new directory is absent.
             self.steps.push(Step::Dir {
@@ -207,6 +298,18 @@ impl Transaction {
                         restore_dir(&saved, &target);
                     }
                 }
+                Step::CreatedDir { target } => {
+                    if let Err(error) = remove_any(&target) {
+                        tracing::error!(event = "sync_rollback_failed", path = %target.display(), %error);
+                    }
+                }
+                Step::Link { target, points_to } => {
+                    let relinked =
+                        remove_any(&target).and_then(|()| crate::fsx::symlink(&points_to, &target));
+                    if let Err(error) = relinked {
+                        tracing::error!(event = "sync_rollback_failed", path = %target.display(), %error);
+                    }
+                }
             }
         }
     }
@@ -225,6 +328,62 @@ fn remove_any(path: &Path) -> std::io::Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
     }
+}
+
+/// Whether the directory `target` holds exactly the files `staged` holds,
+/// each with the same bytes, and nothing else: no link, no other file.
+fn same_tree(staged: &Path, target: &Path) -> Result<bool, PublicationError> {
+    match std::fs::symlink_metadata(target) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Ok(false),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(PublicationError::Io {
+                path: target.to_path_buf(),
+                source,
+            });
+        }
+    }
+    Ok(tree(staged)? == tree(target)?)
+}
+
+/// Every entry below `root` by its path relative to `root`: a file with its
+/// bytes, a directory, or a link with where it points.
+fn tree(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Entry>, PublicationError> {
+    let mut entries = std::collections::BTreeMap::new();
+    for entry in walkdir::WalkDir::new(root).min_depth(1) {
+        let entry = entry.map_err(|err| PublicationError::Io {
+            path: root.to_path_buf(),
+            source: err.into(),
+        })?;
+        let io = |source| PublicationError::Io {
+            path: entry.path().to_path_buf(),
+            source,
+        };
+        let kind = entry.file_type();
+        let value = if kind.is_symlink() {
+            Entry::Link(std::fs::read_link(entry.path()).map_err(io)?)
+        } else if kind.is_dir() {
+            Entry::Dir
+        } else {
+            Entry::File(std::fs::read(entry.path()).map_err(io)?)
+        };
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        entries.insert(rel, value);
+    }
+    Ok(entries)
+}
+
+/// One entry of a compared tree.
+#[derive(Debug, PartialEq, Eq)]
+enum Entry {
+    File(Vec<u8>),
+    Dir,
+    Link(PathBuf),
 }
 
 /// The content of the regular file `target`; `None` when absent. A
@@ -285,6 +444,34 @@ pub(super) fn confined(root: &Path, rel: &Path) -> Result<PathBuf, PublicationEr
         }
     }
     Ok(path)
+}
+
+/// The declared output `root/rel` publication writes, replaces or removes,
+/// with `root` resolved: refused when `rel` climbs out, or when a component
+/// on the way to it is a symbolic link. A link at the output itself is no
+/// refusal: the transaction replaces it.
+pub(super) fn own_destination(root: &Path, rel: &Path) -> Result<PathBuf, PublicationError> {
+    let Some(name) = rel.file_name() else {
+        return Err(PublicationError::Unconfined {
+            path: root.join(rel),
+        });
+    };
+    let parent = rel.parent().unwrap_or(Path::new(""));
+    Ok(confined(root, parent)?.join(name))
+}
+
+/// Where the global agent file or settings file `root/rel` is written: the
+/// directories on the way are the user's, resolved through their links as
+/// [`resolved`] does; the file itself is never followed, so a link there,
+/// dangling or not, is what the transaction replaces.
+pub(super) fn destination(root: &Path, rel: &Path) -> Result<PathBuf, PublicationError> {
+    let Some(name) = rel.file_name() else {
+        return Err(PublicationError::Unconfined {
+            path: root.join(rel),
+        });
+    };
+    let parent = rel.parent().unwrap_or(Path::new(""));
+    Ok(resolved(root, parent)?.join(name))
 }
 
 /// Where the user-owned file `root/rel` really lives: every existing

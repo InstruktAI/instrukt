@@ -1,37 +1,36 @@
-//! Publication command: `instrukt sync [--force]`.
+//! Publication command: `instrukt sync`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use instrukt_core::publication::{self, Refusal, SyncError, SyncOutcome, SyncReport, SyncRequest};
+use instrukt_core::publication::{
+    self, GlobalDestination, Refusal, SyncError, SyncFinding, SyncOutcome, SyncReport, SyncRequest,
+};
 
 use crate::context::Ctx;
 use crate::wiring::publication_wiring;
 
 #[derive(Debug, clap::Args)]
-pub struct SyncArgs {
-    /// Republish even when main equals the commit last published.
-    #[arg(long)]
-    force: bool,
-}
+pub struct SyncArgs {}
 
 /// Publishes the project the caller stands in from its canonical main.
 ///
 /// Prints one line naming the outcome, then one `notice:` line per notice
 /// of a publishing sync (a domain without `index.yaml`, a root master
-/// without `docs/project/index.yaml`), one line per global agent file a
-/// retraction left in place because its content is not what instrukt
-/// wrote, one line per editor schema a publishing sync changed
+/// without `docs/project/index.yaml`), one line per global agent file it
+/// wrote or found current with the program that reads it, one per symbolic
+/// link it replaced at one of its own destinations, one per finding about
+/// an agent file (a settings file left untouched, a reference a global file
+/// keeps), one line per editor schema a publishing sync changed
 /// in the primary worktree, then one line per leftover copy of an earlier publication that could not be
 /// removed (a later sync removes it; it does not fail this one). A refusal or a failure exits non-zero:
 /// validation findings are printed one per line, the leftovers likewise,
 /// then the refusal or failure is reported on stderr.
-pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+pub fn run(_args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let wiring = publication_wiring(ctx)?;
     let synced = publication::sync(&SyncRequest {
         home: &ctx.home,
         cwd: &ctx.cwd,
-        force: args.force,
         wiring: &wiring,
         now: ctx.clock.now(),
     });
@@ -40,7 +39,9 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         leftovers,
         editor,
         notices,
-        kept,
+        global_files,
+        replaced_links,
+        findings,
     } = match synced {
         Ok(report) => report,
         Err(SyncError { error, leftovers }) => {
@@ -54,8 +55,9 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             None
         }
         SyncOutcome::Unchanged { project, commit } => {
-            ctx.out
-                .line(&format!("{project} is already published at {commit}"))?;
+            ctx.out.line(&format!(
+                "published {project} at {commit}, nothing to change"
+            ))?;
             None
         }
         SyncOutcome::Refused {
@@ -74,11 +76,8 @@ pub fn run(args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     for notice in &notices {
         ctx.out.line(&format!("notice: {notice}"))?;
     }
-    for path in &kept {
-        ctx.out.line(&format!(
-            "kept {}: its content is no longer what instrukt wrote; move it out of the way",
-            path.display()
-        ))?;
+    for line in global_lines(&global_files, &replaced_links, &findings) {
+        ctx.out.line(&line)?;
     }
     for line in crate::commands::repository::editor_lines(&editor) {
         ctx.out.line(&line)?;
@@ -99,4 +98,40 @@ fn report_leftovers(ctx: &mut Ctx, leftovers: &[PathBuf]) -> anyhow::Result<()> 
         ))?;
     }
     Ok(())
+}
+
+/// One line per global agent file a sync wrote or found current, per link
+/// it replaced, and per finding about an agent file.
+fn global_lines(
+    global_files: &[GlobalDestination],
+    replaced_links: &[PathBuf],
+    findings: &[SyncFinding],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for file in global_files {
+        let state = if file.written { "written" } else { "current" };
+        lines.push(format!(
+            "{} ({}): {state}",
+            file.path.display(),
+            file.runtime
+        ));
+    }
+    for link in replaced_links {
+        lines.push(format!(
+            "{}: a symbolic link, replaced; what it pointed to is left as it is",
+            link.display()
+        ));
+    }
+    for finding in findings {
+        lines.push(match finding {
+            SyncFinding::SettingsLeft { path, reason } => {
+                format!("{}: left untouched: {reason}", path.display())
+            }
+            SyncFinding::ReferenceKept { path, reference } => format!(
+                "{}: keeps {reference} for an agent program to resolve",
+                path.display()
+            ),
+        });
+    }
+    lines
 }

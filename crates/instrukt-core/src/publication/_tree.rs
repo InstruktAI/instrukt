@@ -108,55 +108,18 @@ pub(super) fn stage_position(
 }
 
 /// What one project's last publication wrote outside the home, so the next
-/// sync can retract what it no longer yields.
+/// sync can retract what it no longer yields: the rendered `AGENTS.md`
+/// files. Nothing records the global agent files; a record holding an older
+/// `entrypoints` list still loads, the key ignored, and the next write
+/// drops it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Outputs {
     /// Rendered `AGENTS.md` files, relative to the primary worktree.
     #[serde(default)]
     pub agents: Vec<PathBuf>,
-    /// The written record of the global agent files.
-    #[serde(default)]
-    pub entrypoints: Vec<Written>,
-}
-
-/// One user-scope instruction file publication wrote: its path, relative to
-/// the user's home directory, and the digest of the content it left there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Written {
-    pub path: PathBuf,
-    pub sha256: String,
-}
-
-impl Written {
-    pub(super) fn of(path: &Path, content: &[u8]) -> Self {
-        Self {
-            path: path.to_path_buf(),
-            sha256: digest(content),
-        }
-    }
-}
-
-fn digest(content: &[u8]) -> String {
-    use sha2::Digest;
-    hex::encode(sha2::Sha256::digest(content))
 }
 
 impl Outputs {
-    /// Whether the user-scope instruction file `rel` exists holding content
-    /// other than what this record says publication left there: a file
-    /// instrukt never wrote, or one changed since. Read through the user's
-    /// links.
-    pub(super) fn foreign(&self, user_home: &Path, rel: &Path) -> Result<bool, PublicationError> {
-        let path = super::_tx::resolved(user_home, rel)?;
-        let content = match std::fs::read(&path) {
-            Ok(content) => content,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(source) => return Err(PublicationError::Io { path, source }),
-        };
-        let recorded = self.entrypoints.iter().find(|w| w.path == rel);
-        Ok(recorded.is_none_or(|w| w.sha256 != digest(&content)))
-    }
-
     pub(super) fn record_path(home: &Home, project: &ProjectSlug) -> PathBuf {
         home.publication_outputs_dir()
             .join(format!("{}.yaml", project.as_str()))
