@@ -134,7 +134,7 @@ composition is:
 
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
-the company-assistance procedure (`project/instrukt/spec/feature/runner/conversations`).
+the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
 They share the model `order`/`tier` defaults of agent-selection; the table's App
 column names the identity reference, not another model/provider choice.
 

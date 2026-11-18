@@ -86,8 +86,8 @@ runner's recorded assignment for that session.
 A recognized session working in a company home is not served as any other
 caller while its assignment is not recorded: `list-tools` and `call` are
 refused there, before any secret is read or any server contacted, naming the
-company and the missing binding, until the session's conversation binding
-records it as that company's. A session without an assignment outside company homes, and
+company and the missing binding, until the session's recorded assignment names
+that company. A session without an assignment outside company homes, and
 the local operator outside any session, are served as the table says. The
 working directory only withholds access; it never gives a session a company,
 a role or a login.
@@ -490,7 +490,7 @@ process of the same operating-system user is trusted: a caller presenting
 another session's identity is served as that session, and that user can read a
 company home's files, its secrets file among them. Closing that takes
 confining the agent, which this contract does not provide
-(`project/instrukt/spec/feature/runner/conversations`). The `--company` path
+(`project/instrukt/spec/feature/company/conversations`). The `--company` path
 is the local operator's.
 
 ### Commands
@@ -700,7 +700,7 @@ And a call for that person starts a new sign-in
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
-- [project/instrukt/spec/feature/runner/conversations](conversations.md)
+- [project/instrukt/spec/feature/company/conversations](../company/conversations.md)
 - [project/instrukt/spec/feature/runner/single-ingress-webhook-termination](single-ingress-webhook-termination.md) — the receiver that serves the sign-in return.
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md) — where logins, clients and pending sign-ins are kept.
 - https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization — MCP authorization: protected resource metadata, authorization server discovery order, client registration, PKCE with `S256` required, `resource` in authorization and token requests, scope selection, the bearer header.

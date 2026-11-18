@@ -137,7 +137,7 @@ One wake proves neither delivered activation nor completed task.
 ### Runner service
 
 A connector is served only by a running `instrukt run`
-(`project/instrukt/spec/feature/runner/conversations`). While a company home
+(`project/instrukt/spec/feature/company/conversations`). While a company home
 on the computer declares a valid connector, installation keeps one owned
 service that runs
 `instrukt run`: a launchd job on macOS, a systemd user service on Linux. The

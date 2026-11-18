@@ -33,7 +33,7 @@ state database's file and migrations (work).
 - **Lifecycle:** The first addressed message from a member starts the session
   by key; later ones wake it. The binding outlives a settled thread and ends
   with nothing instrukt does. Its contract is
-  `project/instrukt/spec/feature/runner/conversations`.
+  `project/instrukt/spec/feature/company/conversations`.
 
 #### Connector
 
@@ -42,7 +42,7 @@ state database's file and migrations (work).
 - **Invariants:** A connector carries messages for the one company home that
   declares it. What it supplies for each addressed message, and what it does
   with an answer, is the connector contract of
-  `project/instrukt/spec/feature/runner/conversations`; which messages count as
+  `project/instrukt/spec/feature/company/conversations`; which messages count as
   addressed, who counts as the company's own and how an answer is rendered are
   its kind's own contract.
 - **Identifier:** Company and kind.
@@ -89,7 +89,7 @@ state database's file and migrations (work).
 - **Published contracts:**
   - The connector interface: every connector implements it, and the
     conversation core reaches a channel only through it. What it carries is the
-    connector contract of `project/instrukt/spec/feature/runner/conversations`.
+    connector contract of `project/instrukt/spec/feature/company/conversations`.
   - Each connector kind's declaration: the fields its `connectors.<kind>` entry
     takes, published as data, against which configuration validates a company
     home (`project/instrukt/spec/domain/configuration`).
@@ -122,17 +122,16 @@ The company context emits no events.
 
 ## Use cases
 
-- **Conversations** — [project/instrukt/spec/feature/runner/conversations](../feature/runner/conversations.md)
+- **Conversations** — [project/instrukt/spec/feature/company/conversations](../feature/company/conversations.md)
   — ask a company's agent where the team talks, be answered there by the one session that knows the conversation.
-- **Slack connector** — [project/instrukt/spec/feature/runner/slack-connector](../feature/runner/slack-connector.md)
+- **Slack connector** — [project/instrukt/spec/feature/company/slack-connector](../feature/company/slack-connector.md)
   — connect a company's Slack workspace without a public address; only a tag reaches the agent.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — a call carries the login of the person being answered; this context supplies who that person is.
 
 ## Governing designs and decisions
 
-- `project/instrukt/design/architecture/overview` — the crates that realize
-  this context and their dependency order.
+The company context has no governing design or decision record of its own.
 
 ## Context map position
 
@@ -154,5 +153,3 @@ The company context emits no events.
 ## Known caveats
 
 - Slack is the one connector. Other channels and help desks stay in TeleClaude.
-- This context's feature specs keep their ids under `spec/feature/runner/`,
-  where their use-case bindings name them.

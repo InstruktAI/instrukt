@@ -605,7 +605,7 @@ transactions stated below; no other context reads them, and other contexts
 obtain conversation facts through that context's published contracts
 (`project/instrukt/spec/domain/company`). They keep what conversations through
 connectors keep, under
-`project/instrukt/spec/feature/runner/conversations`. A conversation's address
+`project/instrukt/spec/feature/company/conversations`. A conversation's address
 is `(company, connector, conversation)`.
 
 **`connected_conversations`** — one row per conversation. Key: the address.
@@ -640,7 +640,7 @@ when the connector accepted its post, `NULL` while outstanding; `failure`, the
 cause of its last failed post, `NULL` once posted.
 
 **`conversation_refusals`** — the one fixed reply owed to a sender the agent
-does not answer (`project/instrukt/spec/feature/runner/conversations`). Key: the address and `sender`. Columns: `received_at`; `replied_at`,
+does not answer (`project/instrukt/spec/feature/company/conversations`). Key: the address and `sender`. Columns: `received_at`; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`.
 
 **`connector_states`** — one row per declared connector. Key:

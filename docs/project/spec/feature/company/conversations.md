@@ -45,7 +45,7 @@ nowhere else, starts no turn and accompanies no later message. Which messages
 count as
 addressed, who counts as the company's own, and what accompanies a message is
 each connector's own contract
-(`project/instrukt/spec/feature/runner/slack-connector`). Everything else on this
+(`project/instrukt/spec/feature/company/slack-connector`). Everything else on this
 path is the same for every connector, whichever channel it speaks to
 (`project/instrukt/spec/domain/company`).
 
@@ -220,8 +220,8 @@ And no subscribed procedure is activated by that message
 
 - [project/instrukt/spec/domain/company](../../domain/company.md)
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
-- [project/instrukt/spec/feature/runner/slack-connector](slack-connector.md)
-- [project/instrukt/spec/feature/runner/conversation-links](conversation-links.md)
-- [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
-- [project/instrukt/spec/feature/runner/mcp-access](mcp-access.md)
+- [project/instrukt/spec/feature/company/slack-connector](slack-connector.md)
+- [project/instrukt/spec/feature/runner/conversation-links](../runner/conversation-links.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
+- [project/instrukt/spec/feature/runner/mcp-access](../runner/mcp-access.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)

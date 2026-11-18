@@ -61,7 +61,7 @@ members:
 ```
 
 A company's people reach its agent through its connectors, which know them
-from their providers (`project/instrukt/spec/feature/runner/conversations`).
+from their providers (`project/instrukt/spec/feature/company/conversations`).
 `members` in the company home's settings holds what a provider cannot supply:
 a person's own stored logins for the company's tools. A person working for two
 companies is a member entry in each, and nothing links the two. A tool whose

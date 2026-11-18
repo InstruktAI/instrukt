@@ -19,7 +19,7 @@ fn destinations(c: &Company) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
-// spec: project/instrukt/spec/feature/runner/conversations UC-CV1
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
 #[test]
 fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // History is off, so the conversation relay is the stand-in's only
@@ -183,7 +183,7 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     }
 }
 
-// spec: project/instrukt/spec/feature/runner/conversations UC-CV3
+// spec: project/instrukt/spec/feature/company/conversations UC-CV3
 #[test]
 fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
     let mut c = Company::new("");
@@ -253,7 +253,7 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
     assert_eq!(c.sessions().len(), 1);
 }
 
-// spec: project/instrukt/spec/feature/runner/conversations UC-CV4
+// spec: project/instrukt/spec/feature/company/conversations UC-CV4
 #[test]
 fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_session_starts() {
     let mut c = Company::new("");
@@ -333,7 +333,7 @@ fn a_person_who_is_not_one_of_the_companys_own_receives_one_fixed_reply_and_no_s
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/conversations UC-CV5
+// spec: project/instrukt/spec/feature/company/conversations UC-CV5
 #[test]
 fn a_conversation_message_activates_no_subscribed_procedure() {
     let env = common::TestEnv::new();

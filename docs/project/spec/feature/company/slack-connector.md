@@ -10,7 +10,7 @@ opens the connection to Slack itself, so the computer needs no public address
 and no webhook. In a channel the agent hears only what is addressed to it: a
 message that tags it, with the conversation around that message. The
 conversation contract it serves is
-`project/instrukt/spec/feature/runner/conversations`; it is a connector of the
+`project/instrukt/spec/feature/company/conversations`; it is a connector of the
 company context and implements the connector interface that context defines
 (`project/instrukt/spec/domain/company`).
 
@@ -324,7 +324,7 @@ And an answer longer than Slack takes in one message arrives in parts, in order,
 
 ## See Also
 
-- [project/instrukt/spec/feature/runner/conversations](conversations.md)
+- [project/instrukt/spec/feature/company/conversations](conversations.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - https://docs.slack.dev/apis/events-api/using-socket-mode/ — Slack's Socket Mode: the app opens the connection and acknowledges each envelope.
 - https://docs.slack.dev/reference/events/app_mention/ — the mention event the app subscribes to.

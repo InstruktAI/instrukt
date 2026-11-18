@@ -165,7 +165,7 @@ commands. Docs name `-h`.
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
-| Slack | runner | a Socket Mode connection `instrukt run` opens outward per company home that declares the connector; its history and posting calls with the bot token (`project/instrukt/spec/feature/runner/slack-connector`) |
+| Slack | company, through its Slack connector | a Socket Mode connection opened outward per company home that declares the connector, hosted in `instrukt run` by the runner; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 

@@ -9,7 +9,7 @@ use instrukt_core::ids::ProjectSlug;
 use instrukt_runner::connectors::{API_URL_SETTING, WORKING};
 use instrukt_runner::conversations::{ConnectionState, Status};
 
-// spec: project/instrukt/spec/feature/runner/slack-connector UC-SL1
+// spec: project/instrukt/spec/feature/company/slack-connector UC-SL1
 #[test]
 fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_visible() {
     let mut c = Company::new("");
@@ -92,7 +92,7 @@ fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_
     }
 }
 
-// spec: project/instrukt/spec/feature/runner/slack-connector UC-SL2
+// spec: project/instrukt/spec/feature/company/slack-connector UC-SL2
 #[test]
 fn in_a_channel_only_a_tag_reaches_the_agent_with_the_most_recent_messages_since_the_previous_tag()
 {
@@ -170,7 +170,7 @@ fn in_a_channel_only_a_tag_reaches_the_agent_with_the_most_recent_messages_since
     insta::assert_snapshot!("second-tag-delivered", c.input(&session, 1));
 }
 
-// spec: project/instrukt/spec/feature/runner/slack-connector UC-SL3
+// spec: project/instrukt/spec/feature/company/slack-connector UC-SL3
 #[test]
 fn a_first_tag_brings_the_most_recent_messages_before_it() {
     let mut c = Company::new(", context_messages: 2");
@@ -209,7 +209,7 @@ fn a_first_tag_brings_the_most_recent_messages_before_it() {
     insta::assert_snapshot!("first-tag-in-a-thread-delivered", c.input(&second, 0));
 }
 
-// spec: project/instrukt/spec/feature/runner/slack-connector UC-SL4
+// spec: project/instrukt/spec/feature/company/slack-connector UC-SL4
 #[test]
 fn every_direct_message_reaches_the_agent_without_a_tag() {
     let mut c = Company::new("");
@@ -301,7 +301,7 @@ fn every_direct_message_reaches_the_agent_without_a_tag() {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/slack-connector UC-SL5
+// spec: project/instrukt/spec/feature/company/slack-connector UC-SL5
 #[test]
 fn the_agents_answer_is_posted_as_markdown_it_wrote_and_a_long_one_in_parts() {
     let mut c = Company::new("");

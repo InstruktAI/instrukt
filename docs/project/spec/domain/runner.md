@@ -268,7 +268,7 @@ Conversations carry a person talking to a company's agent and belong to the
 company context (`project/instrukt/spec/domain/company`). A connector emits no
 event and activates no subscribed
 procedure: the conversation's session starts from the company-assistance procedure
-(`project/instrukt/spec/feature/runner/conversations`), and an event never
+(`project/instrukt/spec/feature/company/conversations`), and an event never
 reaches a conversation session.
 
 ### Event-platform boundary
