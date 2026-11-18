@@ -76,9 +76,12 @@ projects keep their own tooling.
   did so.
 - **A file with the section:** replaces the section's content when it
   differs; otherwise changes nothing. Reinstalling is idempotent.
-- Never overwrites a file and never touches a line outside its section.
+- Never overwrites a file and never touches a line outside its section, except
+  a damaged instrukt marker line, kept as a comment as the repository context's
+  hook-section invariants state (`project/instrukt/spec/domain/repository`).
 - Reports per hook whether the section was written, updated or already
-  current.
+  current; for a repaired file, the lines it changed and kept, and each run line
+  of instrukt's left outside the section, named as a duplicate.
 
 ### `instrukt hooks remove`
 
@@ -95,6 +98,8 @@ projects keep their own tooling.
   without reading the repository's configuration, so a finding about a root
   `instrukt.yaml` that cannot be read is shown
   (`project/instrukt/spec/feature/configuration/owned-files`).
+- Names each damaged marker kept as a comment in a hook file, for as long as it
+  is there.
 - For an absent section, prints the one line to add to the tool that manages
   that hook file — the hook-run call — so a hook manager that regenerates the
   file keeps instrukt's behaviour.
@@ -150,6 +155,18 @@ Then the commit carries the re-rendered agent instruction file
 And the developer's own pre-commit hook still runs
 But when the rendering reports a finding
 Then the commit is made without the changed instruction file and the finding is reported
+```
+
+### UC-HK7: A developer whose hook file has damaged instrukt markers gets one working section
+
+```gherkin
+Given a developer's hook file has an instrukt marker without its pair, a second instrukt section and their own lines, some identical to instrukt's
+When they install instrukt's hooks
+Then the file has one working instrukt section
+And every line they wrote is kept, the damaged marker kept as a comment
+And they are told which lines were changed and which were kept, with a run line of instrukt's left among theirs named as a duplicate
+And their hook status names the kept damaged marker until they remove it
+And their other hook files are installed as usual
 ```
 
 ## Known caveats

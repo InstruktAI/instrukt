@@ -62,7 +62,7 @@ enable events. Installation and withdrawal are owned by
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
-| `runner.runtime` (compiled adapter name, no default; initially `t3`) | global only | runner |
+| `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
 | `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
@@ -81,12 +81,20 @@ there is no project-layer `actions` key. CI required checks remain the merge gat
 
 ### Event configuration values and cross-computer agreement
 
-`redis.cluster.url` is required for enabled transport and identifies one shared
+`redis.cluster.url` is required where event responses are on and identifies one shared
 logical database/stream namespace, not a sharded Redis Cluster client. Local URL
 is Unix-socket-only; absence uses cluster visibly. `max_connections` and
 `socket_timeout` follow the port's connection settings, with timeout outlasting
 the blocking read. Credentials remain references and expanded values are masked
 in reads and findings. An unavailable configured local endpoint is not absence.
+
+Where the effective configuration turns event responses on and the machine layer
+has no `redis.cluster.url`, that is a finding at `modules.events`: `config patch`
+refuses it, `config validate` and `install --check` report it, and a project layer
+that arrives with it through a commit is not admitted for event responses on that
+computer; its todos and history are unaffected
+(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
+enters, never discovered by the running runner).
 
 `ingress.computer` is the existing stable instrukt machine ID. `ingress.reactions`
 names, by the same kind of ID, the one computer that activates procedures for
@@ -152,10 +160,10 @@ installer toggle, shared configuration layer or runtime detection is added.
 
 ### Runtime choice
 
-The developer chooses global `runner.runtime` by compiled adapter name. `t3`
+The developer may choose global `runner.runtime` by compiled adapter name. `t3`
 selects the shipped T3 implementation; an unknown name is a validation finding.
-An unset value selects no runtime, even when T3 is installed or a caller is
-inside a T3 session. There is no first-entry default or detection.
+An unset value selects the one runtime compiled into this instrukt. No runtime is
+detected from installed tools or from a caller inside a runtime's session.
 
 `runtimes` is a map keyed by runtime name. Each entry holds the named nonempty
 agent-action instruction values below. `runner.runtime` selects that entry;
@@ -284,8 +292,8 @@ with `--global` answers from the global layer alone. Writes address one layer
 - a missing `schema_version`;
 - `ingress.reactions` set while `ingress.computer` is not;
 - a feature switched on whose required capabilities the chosen adapter lacks,
-  or switched on with no runtime chosen, naming each missing capability and
-  the selected runtime
+  or switched on while `runner.runtime` names no compiled adapter, naming each
+  missing capability and the selected runtime
   (`project/instrukt/spec/feature/runner/session-continuity`). A write
   that would switch such a feature on is refused with the same naming. Events
   on a computer that is the ingress and not the reacting computer need no
@@ -329,8 +337,11 @@ refuses the command; it never falls back to the system clock.
 RFC 3339 time and is read again each time the command asks for the time, so a
 verification can move the clock while a command runs. In this form the time
 limits instrukt gives the programs it starts are measured on that clock as
-well. A file that is missing or holds no RFC 3339 time refuses the command at
-that moment.
+well. A file that is missing or holds no RFC 3339 time when the command starts
+refuses the command. One that becomes unreadable later keeps time running from the
+last value read, advanced by the time elapsed since, for the command's clock and
+for the limits of the programs it starts alike, with one warning. Lock waits are measured on the same
+clock as those limits.
 
 ### External state declarations
 
@@ -381,7 +392,7 @@ And the commands that read it work as before
 ```gherkin
 Given a developer's configuration was written by a newer instrukt than the one they run
 When they read, change or validate that configuration
-Then each command refuses and tells them to upgrade instrukt
+Then each command refuses and prints the command that installs the current instrukt
 And the configuration is unchanged
 ```
 
@@ -390,7 +401,7 @@ And the configuration is unchanged
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
-| `runner.runtime` | compiled runtime adapter name (`t3`) | absent; no runtime is chosen |
+| `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
@@ -426,12 +437,14 @@ But a cloned project cannot replace the machine's agent-action values
   editor schema; it is a comment and never a setting
   (`project/instrukt/spec/feature/publication/editor-schemas`).
 - Every entry path migrates older configuration before refusal or skip. All
-  commands refuse a newer schema version and direct the caller to upgrade instrukt.
+  commands refuse a newer schema version and print the command that installs the
+  current instrukt, `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`.
 - Unresolved and cyclic references are validation findings.
-- With `INSTRUKT_NOW=@<path>` real time bounds no started program: its limit
-  runs out only when the time in the file moves past it, so a program that
-  never ends waits until the file's time is moved or the command is
-  interrupted.
+- With `INSTRUKT_NOW=@<path>` real time bounds no started program while the
+  file is readable: its limit runs out only when the time in the file moves past
+  it, so a program that never ends waits until the file's time is moved or the
+  command is interrupted. Once the file becomes unreadable mid-run, time runs on
+  from the last value read and the limit runs out as elapsed time reaches it.
 - `requires` naming a switched-off module is a validation finding.
 - Runtime capability metadata belongs to the shipped integration; adapter
   behavior requires code. Agent instruction prose remains configuration.

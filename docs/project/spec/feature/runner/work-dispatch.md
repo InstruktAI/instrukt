@@ -29,6 +29,38 @@ events and react to them; the scheduled tick supplies time-based wake-ups.
 These are execution forms of the
 same runner, not separate services per module.
 
+**Admitted configuration.** The runner works from one admitted generation of its
+configuration: the machine layer, `agents.yaml`, each company home's document with
+the secrets its connector references resolved, and each considered project's layer,
+validated together. It is built when `run` or `tick` starts — an invalid machine
+layer or `agents.yaml` refuses the start, with the finding — and again at every
+wake. A valid result replaces the current generation for every part of the runner at
+once; an invalid one leaves the current generation in force and its findings are
+reported in `instrukt events status`. A project layer with a finding against a
+module withholds only that module's own work: with a `modules.todos` finding (for
+example, a project whose code is not on GitHub) the project gets no todo dispatch.
+Whether the runner considers the project, and its canonical checkout
+synchronization (the `main` fast-forward that feeds the blueprint), still follow
+its switches; its other work is unaffected. No part
+of the runner reads those files on its own
+(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
+enters; nothing running handles a missing one).
+
+**Parts that depend on a service outside instrukt.** The conversation relay (on
+T3's conversation source), the connectors (on the provider), the event readers (on
+Redis) and history's extraction (on T3's database) and query responder (on cluster
+Redis) each retry inside themselves until their service returns, and report their
+state in `instrukt events status`; a part never ends the runner because its
+service is away. A wake that cannot take the runtime-dispatch lock within its wait
+is skipped and the next wake tries again; `instrukt events status` shows the last
+skipped wake with its time and cause until a wake that is not skipped. Lock waits are measured on the clock that
+measures the limits of started programs
+(`project/instrukt/spec/feature/configuration/layered-configuration`). The
+runner ends only when it cannot start: no home, the runner lock held by another
+runner, a state database it cannot open or one newer than it knows
+(`project/instrukt/policy/checks-and-guards`: an outside failure is retried, a
+defect is fixed in the code).
+
 | Capability | Runner responsibility |
 | --- | --- |
 | `core` | Always available; documentation, configuration and publication do not require background work. |
@@ -122,9 +154,11 @@ Dispatch resolves the procedure's role through `agents.yaml`, with per-task
 overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
 Walk each ready profile's tier chain before moving to the next profile. Report
 skipped profiles/models and reasons; skip unavailable/degraded marks until
-expiry. Before instrukt's own starts, use the adapter's version-gated local T3
-provider snapshot to check installation, enablement, login, reported models and
-quota windows; failed or unknown readiness evidence refuses the start. Runner
+expiry. instrukt's own starts use the last known local T3 provider snapshot, kept
+current in the background (`project/instrukt/spec/feature/runner/session-continuity`),
+to check installation, enablement, login, reported models and quota windows; a
+failed or slow refresh never refuses a start, and the runtime's own refusal at
+the start is the signal. Runner
 starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
 effort/options cannot be expressed there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
@@ -211,6 +245,15 @@ When they ask the runner to run, to wake up, or to start a session
 Then the command refuses and names what would enable it
 But when a company declares a connector
 Then the runner runs with work tracking and event responses off
+```
+
+### UC-RD3: A developer's todos are picked up while their project's event responses are not admitted
+
+```gherkin
+Given a developer has switched on automatic pickup and event responses for their project on a computer without the event transport
+When their project has a todo ready for pickup
+Then the todo is picked up
+And the developer sees in status that the project's event responses are not admitted, with the setting they need
 ```
 
 ## Known caveats

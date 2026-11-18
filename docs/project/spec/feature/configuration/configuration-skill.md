@@ -58,9 +58,10 @@ coordination carries references and verification findings.
 The skill reads configuration before asking questions and asks the developer
 only for unresolved intent or facts instrukt cannot answer: participating
 computers, desired module enablement (blueprint, todos, events and default-on history), ingress and reacting computer choice, operator-supplied cluster
-endpoint, project placement and an unset runtime choice. Existing choices are
-kept unless the requested outcome changes them. An unset runtime means no
-runtime; the agent's host does not select one.
+endpoint and project placement. Existing choices are kept unless the requested
+outcome changes them. An unset runtime is the one compiled into instrukt, so the
+skill does not ask for it; the agent's host does not select one, and an unknown
+name is a finding.
 
 The selected `runner.runtime` chooses the configured action values rendered
 by `general/procedure/ai-to-ai-operations`, retrieved on demand by the skill. Each target still retains its own runtime

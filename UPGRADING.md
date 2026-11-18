@@ -415,11 +415,13 @@ repository has no worktree-removal hook: remove its ignored `.instrukt-home`
 when cleaning up a development worktree (before removing that worktree). No
 machine home needs removal or reseeding.
 
-Unattended starts require the adapter's supported WebSocket protocol and
-readiness response shapes. CLI/server release strings are diagnostic; a different
-compatible release remains usable. Unknown protocols or response shapes refuse startup
-with a repair reason. The adapter obtains and revokes a five-minute read-scoped
-session for each new start's provider snapshot. Quota restrictions now come from
+The provider snapshot unattended starts select from requires the adapter's
+supported WebSocket protocol and readiness response shapes. CLI/server release
+strings are diagnostic; a different compatible release remains usable. The runner
+obtains one read-scoped session when it starts, renews it before it expires, and
+refreshes the snapshot in the background; a start uses the last known snapshot.
+An unknown protocol or response shape, or a T3 CLI that is slow or fails, makes
+a refresh fail, shown in `instrukt events status`; it never refuses a start. Quota restrictions now come from
 reported usage windows, with a recorded one-hour expiry when no reset is reported;
 launch-error text supplies no quota or no-start evidence.
 
@@ -428,3 +430,50 @@ Every harness uses the same neutral `effort` input; only the adapter emits nativ
 option identifiers. Existing effort settings are preserved. Conflicting retired
 fields refuse conversion with the source intact until reconciled. Runtime start
 requests migrate to the same neutral representation before current consumers load.
+
+### Prerequisites are checked where they enter; outside failures are retried
+
+In this order:
+
+1. Update each company's Slack app from the manifest in
+   `docs/project/spec/feature/company/slack-connector.md`: it now also requires
+   `channels:read`, `groups:read` and `im:read`, which reading back missed messages
+   needs. Reinstall the app to its workspace so its bot token carries them; a
+   connector missing a required scope is withheld with a finding naming it.
+2. Make sure every secret a company's connector references has a value in that
+   home's `secrets.env` (`instrukt secrets set NAME --company <name>`, which now
+   asks at a terminal with echo off). A missing or blank one now withholds that
+   connector.
+3. Make sure the procedure declaring the role `company-agent` is published on each
+   computer that serves a company; without it the company's connector is withheld
+   with a finding.
+4. Install this release and run `instrukt install` once. It writes every service
+   definition under instrukt's names and restarts the services, and deletes
+   `~/.instrukt/state/installation/owned.json` and the runner service's identity
+   record. A second instrukt home on the computer (an `INSTRUKT_HOME` other than
+   `~/.instrukt`) now has units with its own suffix: run `instrukt install` from
+   that home too, which withdraws its earlier units that carried no suffix.
+
+Then:
+
+- Switching on event responses now needs `redis.cluster.url` in the machine
+  layer: `config patch` refuses it without, and a project whose committed layer
+  switches them on is not admitted for event responses on a computer without it
+  (its todos and history run as before). Set the URL and run `instrukt install`.
+- `agents.yaml` now holds only your overrides; the defaults are in the program.
+  An unedited copy an earlier release wrote is removed by the first writing
+  command. An edited one is kept and overrides everything it names: delete the
+  entries you never changed to receive new defaults.
+- `runner.runtime` may be left unset: it is then the one runtime compiled in.
+- A home or `state/` folder reached through a symbolic link works. A link at
+  `state/instrukt.db` itself is refused; link the home or `state/` instead.
+- `instrukt sessions resolve-start` stays the operator's way to settle a start
+  whose confirmation was lost; such starts, key conflicts and archived threads now
+  also appear in `instrukt events status`.
+- Messages written to a company's agent while it was offline are read back and
+  answered when they are less than a day old; older ones are listed in
+  `instrukt events status` for the operator.
+- A later release stops converting configuration and agents files written before
+  their current schemas. Run a writing command of this release once on every
+  computer, and commit each adopted project once through its hooks, so every file
+  is stored at the current schema before that release.

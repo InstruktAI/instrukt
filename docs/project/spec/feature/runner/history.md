@@ -12,7 +12,8 @@ query responder. Existing stored history and source positions survive disable.
 
 instrukt makes past conversations searchable through a store on each computer.
 An extract-and-load step reads T3's local state into instrukt's own history;
-TeleClaude's existing mirrors are imported once. A search across computers
+TeleClaude's existing mirrors are imported idempotently: importing a mirror
+again adds what it gained since. A search across computers
 merges results from their local stores. History needs no central service or
 Postgres deployment and does not replace the runtime's live conversations.
 
@@ -75,6 +76,17 @@ search also catch up before reading the local index. Each remote participant
 performs its own catch-up before answering. There is no tick-driven
 extraction, no periodic reading of T3's state and no scheduled reconciliation
 fallback.
+
+Extraction and the query responder each retry inside themselves when their
+source or transport fails after they started, and report their state in
+`instrukt events status`; their failure ends neither the other nor the runner.
+An adopted project whose configuration does not validate is not admitted when
+deciding whether history is on (`project/instrukt/spec/feature/runner/work-dispatch`:
+the runner works from its admitted configuration).
+
+The conversation source also reads one session's whole thread from no position;
+conversations use it after the source's identity changed
+(`project/instrukt/spec/feature/company/conversations`).
 
 Local extraction, import, lookup and search require no Redis. Installation
 counts enabled history independently as demand for cluster Redis for merged

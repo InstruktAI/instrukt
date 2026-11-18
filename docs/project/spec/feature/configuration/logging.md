@@ -48,8 +48,8 @@ diagnostics would otherwise be gone with them.
   (`project/instrukt/spec/feature/runner/mcp-access`,
   `sdlc/policy/security-awareness`).
 - The logging crate owns open and write failures. instrukt initialises it
-  before any other work and never continues when initialisation fails;
-  there is no degraded mode.
+  before any other work. When initialisation fails, records go to standard
+  error and the command continues; the failure is the first record.
 
 ## Use cases
 

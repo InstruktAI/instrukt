@@ -18,12 +18,12 @@ caller-bound values are never written back or stored in published snippets.
 | --- | --- |
 | `{other.key}` | The value at that dotted configuration path, itself expanded. |
 | `${VAR}` | The caller's environment variable `VAR`; an unset variable is an error. |
-| `{runtime.session_id}` | The caller id recognised by the explicitly selected runtime adapter. |
+| `{runtime.session_id}` | The caller id recognised by the selected runtime adapter. |
 | `{runtime.<operation>}` | The string at `runtimes.<selected runner.runtime>.<operation>`. |
 
 Expansion occurs on every read. A self-reference or cycle fails and names the
 cycle. The selected-runtime instruction alias and caller identity are distinct
-read-time values. Instruction lookup needs explicit runtime selection but no
+read-time values. Instruction lookup needs the selected runtime but no
 caller id. The stored instruction is returned as data. Code performs only named lookup
 and ordinary interpolation; it embeds no agent-native instruction, fallback
 command, default wording or tool-selection branch. Unattended adapter operations
