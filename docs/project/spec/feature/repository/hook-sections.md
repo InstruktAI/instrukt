@@ -40,11 +40,11 @@ projects keep their own tooling.
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 - A checkout receives its `AGENTS.md` files from git, committed at its
   revision; no section renders them after a checkout.
-- A started sync runs under the publication lock and does nothing when main
-  equals the published commit
+- A started sync runs under the publication lock and converges: it writes
+  only what is missing or different
   (`project/instrukt/spec/feature/publication/project-publication`), so
-  repeated publication triggers do not republish an unchanged revision, and
-  a primary checkout whose project was never published publishes it once.
+  repeated publication triggers rewrite nothing that is current, and a
+  primary checkout whose project was never published publishes it.
 - Publication and graph generation stay detached. No hook ever fails the git
   operation: a missing `instrukt` binary, a refused sync or a failed start
   leaves git's result unchanged.

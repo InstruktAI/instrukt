@@ -39,8 +39,8 @@ and the report procedure itself are outside this shipped process set.
   than only overwriting a current digest. The current fingerprint remains
   available to work; no separate eval log is maintained.
 - **When.** Written by every sync that publishes, as part of the same
-  publication. A sync that does nothing (main equals the published commit)
-  leaves it as it is.
+  publication. A sync of a commit already published computes the same
+  fingerprint and leaves the record as it is.
 
 ## Use cases
 

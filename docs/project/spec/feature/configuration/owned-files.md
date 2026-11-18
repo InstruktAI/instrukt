@@ -142,13 +142,13 @@ And no output discloses its value
 But an unreadable or insufficiently protected required file refuses the dependent operation
 ```
 
-### UC-OF2: Migrate before an unchanged-publication skip
+### UC-OF2: Migrate before publication, even when main has not moved
 
 ```gherkin
 Given the machine and project configurations use an older owned schema
 And canonical main equals the last published commit
 When sync runs after an instrukt upgrade
-Then configuration migrates before the unchanged-publication decision
+Then configuration migrates before anything is published
 And the machine configuration is written at the current schema while the project configuration stays as committed
 And ordinary reads inspect the converted configuration without writing it and report the pending migration
 And ticks persist the machine migration before schema-based refusal or skip

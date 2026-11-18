@@ -80,12 +80,15 @@ one of these generated repository schemas.
   (`project/instrukt/spec/feature/repository/project-initialization`).
 - Every `instrukt sync` that publishes regenerates the schemas in the
   project's primary worktree and writes no committed file. After an upgrade of
-  instrukt, the next sync that publishes brings the schemas to the installed
-  version; `instrukt sync --force` does so at once.
+  instrukt, the next sync brings the schemas to the installed version, whether
+  or not main has moved.
 - A schema file already holding the generated content is left untouched.
-- A path the refresh writes that is a symbolic link is never written through:
-  `init` reports it, and `sync` refuses as for any location publication writes
-  (`project/instrukt/spec/feature/publication/project-publication`).
+- Nothing is written through a symbolic link. A schema path that is a link
+  is replaced by the schema file, by `init` and by `sync`, as for any of
+  publication's own destinations
+  (`project/instrukt/spec/feature/publication/project-publication`). A file
+  that would take a modeline and is a link is the developer's: it is left as
+  it is and named, and the operation goes on.
 - A refresh that cannot write a schema, or `init` a modeline, for another
   reason fails the operation, naming the file: `init` reports the failure and exits
   non-zero, and a sync fails as any failed sync does — it records no

@@ -1,5 +1,5 @@
 ---
-description: A project publishes only its own general, domain and project positions from committed canonical main, claimed by owner, index entries patched into the global index by owner, with duplicate-id, ownership and reserved-name refusals, retraction of what it no longer owns, and a no-op when main equals the published commit.
+description: A project publishes only its own general, domain and project positions from committed canonical main, claimed by owner, index entries patched into the global index by owner, with duplicate-id, ownership and reserved-name refusals, retraction of what it no longer owns, and a sync that always converges, writing what is missing or different whether or not main has moved.
 ---
 # Project Publication — Spec
 
@@ -11,14 +11,19 @@ committed state of the project's canonical main, into the home. Each project
 publishes only its own part: every position it publishes is claimed by it
 alone, the global index is patched by owner, so two projects publishing in
 turn never take each other's entries, and no command reads another project's
-repository. Unless `--force` is supplied, a sync whose main equals the commit
-it last published does nothing, so it is cheap to trigger as often as git
-changes main (`project/instrukt/spec/feature/repository/hook-sections`).
+repository. Every sync converges: it writes what is missing or different
+from what the committed main yields, whether or not main has moved since the
+commit it last published, so it is triggered as often as git changes main
+(`project/instrukt/spec/feature/repository/hook-sections`) and an output
+deleted or changed by hand is restored by the next sync
+(`general/principle/trust-and-guardrails`: what can be rebuilt is rebuilt, and
+a remembered commit is never a reason to skip it).
 
 ## Canonical fields
 
-`instrukt sync --force` republishes when main is unchanged. Validation findings
-refuse publication and preserve the previous publication.
+Validation findings refuse publication and preserve the previous
+publication. `instrukt sync` takes no `--force`: a sync already does
+everything a forced one did.
 
 ### Source
 
@@ -35,24 +40,25 @@ refuse publication and preserve the previous publication.
   `docs/project/` is published under `~/.instrukt/docs/project/<slug>/…`,
   where its ids remain `project/<slug>/…`.
 - **Configuration first.** Before publishing, sync brings both configuration
-  layers to the current schema version before any refusal or
-  unchanged-publication skip
+  layers to the current schema version before any refusal or publication
   (`project/instrukt/spec/domain/configuration`).
 
-### The no-op
+### Convergence
 
 - Every successful sync records the commit it published beside the project's
   checkout path under `~/.instrukt/state/publication/`. The runner consumes
-  this existing state (`project/instrukt/spec/domain/runner`).
-- After configuration migration, unless `--force` is supplied, when canonical
-  main equals the published commit, sync changes nothing in the home or the
-  project, except removing
-  leftovers a previous sync reported, and exits zero.
+  this existing state (`project/instrukt/spec/domain/runner`), and status
+  shows it. It never makes a sync skip anything.
+- After configuration migration, every sync validates and renders canonical
+  main, compares each output with what is in place, and writes only what is
+  missing or different. When main equals the published commit and every
+  output is current, sync changes nothing in the home or the project, except
+  removing leftovers a previous sync reported, and exits zero.
 - A sync that is refused or fails records no commit, so the next trigger
   tries again.
 - Concurrent syncs never interleave: every write to the home's publication
-  runs under the docs lock. A sync waiting for the lock compares main with the
-  published commit once it holds it.
+  runs under the docs lock. A sync waiting for the lock reads main once it
+  holds it.
 
 ### What a sync writes
 
@@ -158,12 +164,20 @@ required read fails the sync and names the file and the read. A reference a
 global agent file keeps unresolved is a finding of that sync, not a failure
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
-A path the project's repository controls (a rendered output's location, or a
-directory publication writes into) that is a symbolic link refuses the sync
-before anything is written; the link's target, the previous publication and
-the published commit are untouched. Files in the user's own agent-CLI
-directories are written through the user's links, because the repository
-cannot create those.
+Nothing is written through a link. A symbolic link found at one of
+publication's own destinations — a published file, a global agent file, an
+editor schema, or a directory only publication creates, such as the
+published tree or `.instrukt/schemas/` — is removed and the file or directory
+written in its place; the file the link pointed to is never written, and the
+sync reports the replaced link. A directory publication does not own on the
+way to a destination, such as an agent runtime's home or the repository's
+own folders, is used as it resolves. The one place where a link is the
+content is a runtime's link folder, where publication makes the link to the
+global file the runtime reads
+(`project/instrukt/spec/feature/publication/agent-entrypoints`;
+`general/principle/trust-and-guardrails`: the destination is instrukt's own
+and rebuilt by every sync, so a link there is replaced rather than guarded
+against).
 
 Once the new publication is in place and its commit recorded, failing to
 remove the replaced publication's leftover copy does not fail the sync: the
@@ -214,14 +228,14 @@ And instructions rendered from masters that still exist are unchanged
 And another project's published documentation is unchanged
 ```
 
-### UC-PUB4: Publishing again changes nothing until something new is committed
+### UC-PUB4: Publishing again restores what is missing without a new commit
 
 ```gherkin
 Given a developer's project whose committed main is already published
 When publication runs for the project again
 Then after any required configuration migration, nothing in the published corpus, the index or the project changes
-When the developer asks for the project to be republished regardless
-Then its documentation is published again from its committed main
+When a published snippet is deleted by hand and publication runs again with main unchanged
+Then the snippet is published again from its committed main and nothing else changes
 ```
 
 ### UC-PUB5: A developer who commits invalid docs keeps the last good publication
@@ -251,9 +265,9 @@ And the previously published documentation is unchanged
 Given a developer's project whose documentation is published
 When a commit replaces a location publication writes with a link to a file elsewhere
 And publication runs for the project
-Then publication is refused and names that location
-And the file the link points to is unchanged
-And the previously published documentation is unchanged
+Then publication writes its own file at that location in place of the link and names the location
+And the file the link pointed to is unchanged
+And the documentation is published
 ```
 
 ### UC-PUB8: A leftover that cannot be removed does not undo a publication

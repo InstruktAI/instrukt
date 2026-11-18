@@ -311,8 +311,8 @@ publishes. They are the computer's own, never committed anywhere.
 - **No runtime, no files.** Without a selected runtime, no agent runtime is
   configured and no global file is written. When the selected runtime cannot
   be asked, no global file is written in that sync: it reports a notice
-  naming the runtime and the cause, publishes the rest, and the next sync
-  that publishes writes them.
+  naming the runtime and the cause, publishes the rest, and the next sync of
+  that project writes them, whether or not main has moved.
 - **`agents` names** are validated against the runtimes instrukt deploys to,
   whatever is configured on the computer.
 - **Written whole, every time.** Each destination is written whole by every
@@ -476,10 +476,9 @@ Then every configured agent runtime starts with the changed doctrine
   creates the provider, and the instance reads that file until the next sync
   links it again.
 - After a sync during which the selected runtime could not be asked, the
-  global files stay as they were until the next sync that publishes them: a
-  new revision of main in the project that owns `docs/general/`, or
-  `instrukt sync --force` there, since a sync of an unchanged main publishes
-  nothing (`project/instrukt/spec/feature/publication/project-publication`).
+  global files stay as they were until the next sync of the project that owns
+  `docs/general/`: a hook trigger there, or `instrukt sync` run in it
+  (`project/instrukt/spec/feature/publication/project-publication`).
 - How a runtime combines the rendering with other instruction files in a
   home, and whether it reads it again during a session or when it resumes
   one, is that runtime's.

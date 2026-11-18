@@ -392,9 +392,8 @@ session-fixed timing through A3's bounded batch log.
 ## Failure modes
 
 - **A hook did not fire** (a reset): the next `sync` from any trigger catches
-  up, because it compares main with the published commit; `docs get` warns
-  when publication is behind main, and `instrukt sync --force` republishes on
-  demand.
+  up, because every sync converges on main; `docs get` warns when
+  publication is behind main, and `instrukt sync` republishes on demand.
 - **Committed docs fail validation:** `sync` publishes nothing for that commit;
   the previous publication stays, and `instrukt hooks status` shows the
   refusal.
@@ -402,7 +401,7 @@ session-fixed timing through A3's bounded batch log.
   refused and names the owner; the published tree is unchanged.
 - **The selected runtime cannot be asked:** the `general` owner's `sync`
   writes no global agent file, publishes the rest and names the runtime and
-  the cause; the next sync that publishes writes them.
+  the cause; the next sync of that project writes them.
 - **A hook manager regenerated a hook file** and dropped instrukt's section:
   `instrukt hooks status` reports it and prints the line to add to that tool.
 - **Graph generation fails or is interrupted:** the previous complete graph

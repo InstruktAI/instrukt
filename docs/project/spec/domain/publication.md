@@ -21,8 +21,8 @@ the `pre-commit` hook section and by `instrukt docs render`, never by a sync. Ev
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
 Publication never reads another project's repository, keeps no registry of
-projects, and after configuration migration does nothing when main equals the
-commit it last published. It
+projects, and after configuration migration converges: it writes only what is
+missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
 
@@ -139,7 +139,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 ## Ownership boundary
 
 - **Owns** — reading a project's committed main for publication; the
-  published-commit and checkout-path record and the no-op; the ownership
+  published-commit and checkout-path record and convergence; the ownership
   record and its refusals (a second claimant, a reserved domain name);
   index patching by owner with its duplicate-id refusal; retraction;
   rendering of the committed entrypoints — a project's `AGENTS.md` files and
@@ -331,11 +331,9 @@ This context emits no events.
 
 ## Known caveats
 
-- `instrukt sync --force` republishes even when main is unchanged.
 - The global agent files are rendered only by the `docs/general/` owner's
   sync. A domain another project publishes, or changes, reaches them at that
-  owner's next sync that publishes; `instrukt sync --force` in that project
-  renders them at once.
+  owner's next sync; `instrukt sync` in that project renders them at once.
 - A sync contributes its result, including a refusal, to hook-run outcome
   reporting owned by
   `project/instrukt/spec/feature/repository/hook-sections`; the

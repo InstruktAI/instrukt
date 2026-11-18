@@ -94,6 +94,14 @@ DeepSeek's among them unless the runtime reports it, stays until you delete
 it. The record of written files an earlier release kept under
 `~/.instrukt/state/publication/outputs/` is deleted by the first sync that
 publishes.
+
+Every sync now converges: it writes what is missing or different whether or
+not main has moved, so a file deleted or edited by hand comes back at the next
+sync. `instrukt sync` no longer takes `--force`; remove it from scripts and
+aliases. A symbolic link at one of instrukt's destinations, such as a global
+agent file linked into a dotfiles repository, is replaced by the file and the
+sync names it; the file the link pointed to is left as it was. Keep what that
+file held in documentation.
 `agents` keys in `docs/general/index.yaml` name the runtimes instrukt deploys
 to; `instrukt docs validate` names them when a key is not one. Two keys are
 retired. In a `docs/general/index.yaml` you publish, rename `agents: gemini`
@@ -349,8 +357,8 @@ documentation. A new `actions` declaration is an unknown-key finding.
 Project documentation now lives in `~/.instrukt/docs/project/<slug>/`, copied from
 committed canonical main. Index schema 1 is upcast to schema 2 on read; its former
 checkout paths become store paths. For each previously published project, run
-`instrukt sync --force` once after upgrading to populate its store even when main
-has not changed. A missing store file reports the project and republish command;
+`instrukt sync` once after upgrading to populate its store, whether or not main
+has changed. A missing store file reports the project and republish command;
 retrieval never reads a checkout as a fallback. Source headers retain the real
 checkout address for authoring.
 
