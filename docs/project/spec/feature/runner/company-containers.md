@@ -101,9 +101,8 @@ passed, it reaches every company's container without anyone acting for one
 company, without the image being rebuilt, without a version set by hand, and
 without touching a company's logins, threads or projects. A release that fails
 the check is not taken, and the failure is reported as an anomaly through
-`project/instrukt/spec/feature/runner/anomaly-notification`; the companies keep
-the release they run. A company therefore runs a new release at most a day
-after it appears, and a release instrukt cannot work with stops no company.
+`project/instrukt/spec/feature/runner/anomaly-notification`; every company
+keeps the release it runs meanwhile.
 
 ### Shared defaults
 
