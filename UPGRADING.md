@@ -15,10 +15,11 @@ lets each linked worktree run its own checkout's hook. The Python lint and
 type check are the framework's own hooks for ruff and mypy at pinned commits.
 `make hooks` installs them into `~/.cache/pre-commit`, which needs network
 access. A commit made before that, or after a pinned tool changes, installs
-what it needs itself and takes longer that one time. A clone that enabled the
-hook before this change needs nothing done. A `v*` tag builds and
-publishes release binaries only after the checks `main` requires pass on the
-tagged revision.
+what it needs itself. A newly installed tool's first run is slower too, once
+per installation and not once per checkout, so a commit takes longer that one
+time. A clone that enabled the hook before this change needs nothing done. A
+`v*` tag builds and publishes release binaries only after the checks `main`
+requires pass on the tagged revision.
 
 The hook directory also holds instrukt's own sections
 (`project/instrukt/spec/feature/repository/hook-sections`): in `pre-commit`

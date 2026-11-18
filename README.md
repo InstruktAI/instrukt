@@ -48,8 +48,9 @@ functional suite runs in CI on every pull request. The Python lint and type
 check are the framework's own hooks for ruff and mypy at pinned commits.
 `make hooks` installs them into the framework's cache (`~/.cache/pre-commit`),
 which needs network access. A commit made before that, or after a pinned tool
-changes, installs what it needs itself and takes longer that one time;
-`make commit-checks` and CI do the same.
+changes, installs what it needs itself; `make commit-checks` and CI do the
+same. A newly installed tool's first run is slower too, once per installation
+and not once per checkout, so a commit takes longer that one time.
 
 Command-line tests run the built binary against a temporary `HOME` and
 temporary git repositories (`crates/instrukt-cli/tests/common`); they never
