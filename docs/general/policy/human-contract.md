@@ -11,6 +11,9 @@ description: How an agent understands what the human wants, what it decides on i
   understood, not asked to restate it. What they say is intent to interpret; it
   is executed literally only when they say so. A stop or a boundary they set
   always holds.
+- When the human says to use the force, they mean that you work together
+  through your shared principles, approach and tooling: this documentation and
+  the tools it names. Use it to your advantage.
 - What the human's intent settles, the agent decides. It is not settled when
   another reasonable reading of what they said leads to a different outcome.
 - New intent comes from the human: a new outcome, more or less of what was

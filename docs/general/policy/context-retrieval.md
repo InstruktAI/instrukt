@@ -10,7 +10,10 @@ visibility: 'public'
 - **Read a domain's rendering once, at entry.** When a task enters a knowledge
   domain, run `instrukt docs get --domain <domain>` and read its output in
   full, unless that domain's contracts are already loaded this session. A task
-  enters `sdlc` when it writes or changes code or tests. The rendering is the
+  enters `sdlc` when it writes or changes code or tests, and then also reads
+  the core and testing policies of each language whose code it touches
+  (`sdlc/policy/<language>/core` and `sdlc/policy/<language>/testing` where
+  the language has them). The rendering is the
   domain's mandatory contract in one pass: its `expanded` snippets with their
   closure, its `listed` snippets as one line each, and its triggered
   procedures. Your global agent file names each published domain with that

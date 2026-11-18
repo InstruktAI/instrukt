@@ -63,6 +63,9 @@ All Committizen types are allowed.
 - Commit through `instrukt repo commit`. It stages nothing: stage the change
   with git first, or name its paths with `--only <path>...` to commit just
   those.
+- When the human intends a full commit, first inspect the entire change set,
+  then commit the full working tree as-is, with no selective scoping, under a
+  clear, meaningful, intent-based commit message.
 
 - Review is routed by the committed worktree diff and binds its head before merge. Functional code/tests are committed in that worktree first. The authoring session
   decides for each commit whether independent review is owed, by what a wrong change would
@@ -110,6 +113,9 @@ that invite the author to imitate platform output (`general/principle/priming`).
 
 - Consistent commits enable reliable rollbacks and audits.
 - Commit messages drive automated release notes and changelogs.
+- A full commit the human asks for records the working tree they are looking
+  at; scoping it selectively leaves part of their work uncommitted without
+  their knowing, and an unread change set gets a message that misstates it.
 - Asking before routine commits shifts technical stewardship back to the human
   and leaves completed work unrecorded. The safety boundary is post-commit
   review routing, not a human permission prompt.
