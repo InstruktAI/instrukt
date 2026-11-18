@@ -66,10 +66,15 @@ verified vendor contract is T3's projection writer (see See Also).
 ### Freshness and participation
 
 The existing long-lived `instrukt run` catches up at startup and on native
-notifications of database or WAL changes. Explicit extraction and every history
+notifications of database or WAL changes. While T3's database or its WAL does
+not exist or cannot be watched, the runner tries every two seconds to watch
+it, reading nothing, and catches up once when the watch is established: a
+source that is absent or unwatchable is recovered from, not failed on
+(`sdlc/principle/design-fundamentals`). Explicit extraction and every history
 search also catch up before reading the local index. Each remote participant
-performs its own catch-up before answering. There is no tick-driven extraction,
-periodic polling loop or scheduled reconciliation fallback.
+performs its own catch-up before answering. There is no tick-driven
+extraction, no periodic reading of T3's state and no scheduled reconciliation
+fallback.
 
 Local extraction, import, lookup and search require no Redis. Installation
 counts enabled history independently as demand for cluster Redis for merged
@@ -123,6 +128,14 @@ Then the results merge matches from those stores with their source computer iden
 And no central database is introduced
 ```
 
+### UC-HI4: A developer's history follows a T3 database that appears while the runner is running
+
+```gherkin
+Given a developer runs `instrukt run` on a computer where T3's database does not exist
+When T3 creates its database and the developer completes a conversation there
+Then that conversation is in the developer's instrukt history without a search or a tick
+```
+
 ## Known caveats
 
 - A conversation physically deleted from the runtime before any extraction cannot
@@ -143,9 +156,11 @@ And no central database is introduced
 - The legacy importer supports the source revision owned by its importer and
   refuses other shapes without migrating the source. A completed selected-source
   import requires no continuing TeleClaude mirror or runtime dependency.
-- Native notifications must be available on the source filesystem. Notification
-  failure is explicit; no polling backend or new daemon is introduced. Searches
-  remain an explicit catch-up boundary.
+- Native notifications must be available on the source filesystem. A watch
+  that cannot be established is reported in the runner's log when it starts
+  failing and when it recovers, and the runner keeps trying; no polling
+  backend or new daemon is introduced. Searches remain an explicit catch-up
+  boundary.
 - This contract introduces neither the held central-service design nor Postgres.
 
 ## See Also

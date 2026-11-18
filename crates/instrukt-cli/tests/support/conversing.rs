@@ -106,6 +106,55 @@ pub fn wait(what: &str, condition: impl FnMut() -> bool) {
     common::wait_until(what, Duration::from_secs(20), condition);
 }
 
+/// The paths of the files process `pid` holds open, as the operating system
+/// names them. A listing that cannot be made fails the test; it is never
+/// taken as an empty one.
+#[cfg(target_os = "macos")]
+fn open_paths(pid: u32) -> Vec<std::path::PathBuf> {
+    let output = std::process::Command::new(common::tool_executable("lsof"))
+        .args(["-n", "-P", "-p", &pid.to_string(), "-F", "pn"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "lsof -p {pid} failed with {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listing = String::from_utf8(output.stdout).unwrap();
+    // Each process record opens with its `p` field, and its files follow.
+    let processes = listing
+        .lines()
+        .filter_map(|line| line.strip_prefix('p'))
+        .collect::<Vec<_>>();
+    assert_eq!(processes, [pid.to_string()], "lsof listed other processes");
+    listing
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .map(std::path::PathBuf::from)
+        .collect()
+}
+
+/// The paths of the files process `pid` holds open, as the operating system
+/// names them. A listing that cannot be made fails the test; it is never
+/// taken as an empty one.
+#[cfg(target_os = "linux")]
+fn open_paths(pid: u32) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .unwrap()
+        .filter_map(|entry| {
+            match std::fs::read_link(entry.unwrap().path()) {
+                Ok(target) => Ok(Some(target)),
+                // A descriptor closed between listing and reading is no
+                // longer held.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error),
+            }
+            .unwrap()
+        })
+        .collect()
+}
+
 /// Creates the company home `name` with `settings` applied through the
 /// configuration verbs and its Slack tokens in its own secrets file.
 pub fn company_home(env: &TestEnv, name: &str, app: &str, bot: &str, settings: &str) {
@@ -259,6 +308,18 @@ impl Company {
     pub fn runner_ended(&mut self) {
         let runner = self.runner.as_mut().unwrap();
         wait("the runner's end", || runner.exited().is_some());
+    }
+
+    /// How many descriptors the running runner holds open on the folder
+    /// `dir` itself. A kqueue watch of the folder holds one; reading files
+    /// inside it holds none.
+    pub fn runner_files_on(&self, dir: &std::path::Path) -> usize {
+        let runner = self.runner.as_ref().unwrap();
+        let dir = dir.canonicalize().unwrap();
+        open_paths(runner.child.id())
+            .iter()
+            .filter(|path| **path == dir)
+            .count()
     }
 
     /// The agent sessions started so far.

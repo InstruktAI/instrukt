@@ -49,9 +49,10 @@ impl Worker {
             .name("conversation-relay".into())
             .spawn(move || {
                 let _notice = ExitNotice(supervise);
-                // Links catch up at startup and on native source changes only;
-                // connector arrivals and the retry bound drive conversation
-                // work alone.
+                // Links catch up at startup and on source changes only (native
+                // notifications, and a missing source file that is now
+                // watched); connector arrivals and the retry bound drive
+                // conversation work alone.
                 let mut links_due = true;
                 loop {
                     if links_due {

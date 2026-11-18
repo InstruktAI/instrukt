@@ -120,7 +120,7 @@ pub enum SourceError {
     Shape(&'static str),
 }
 pub trait ConversationNotifications: Send {
-    /// Waits for a native change, or returns false only for the cancellation wait bound.
+    /// Waits for a change, a native notification or a missing source file that is now watched, or returns false only for the cancellation wait bound.
     fn wait(&mut self, timeout: Duration) -> Result<bool, SourceError>;
 }
 pub trait ConversationSource: Send {

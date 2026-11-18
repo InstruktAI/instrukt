@@ -183,6 +183,51 @@ fn runner_database_notifications_keep_history_current_without_a_search_or_tick()
     );
 }
 
+// spec: project/instrukt/spec/feature/runner/history UC-HI4
+#[test]
+fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
+    let env = TestEnv::new();
+    let redis = common::redis::RedisServer::new(&env);
+    fixture::computer(&env, "aaaaaaaaaaaaaaaa");
+    fixture::configure_cluster(&env, &redis.url);
+    // The runner starts on a computer where T3's database does not exist.
+    let _runner = fixture::runner(&env);
+    // The source's identity, read without a search: a search catches up by
+    // itself.
+    let home = instrukt_core::home::Home::at_user_home(env.home().into());
+    let source_env =
+        instrukt_core::config::Env::from_pairs([("HOME", env.home().display().to_string())]);
+    let source_id = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3)
+        .conversation_source(&home, &source_env)
+        .unwrap()
+        .identity()
+        .to_owned();
+    // How many of the conversation's messages history holds; a conversation
+    // it does not hold yet is refused.
+    let messages = || {
+        let out = env.run(env.home(), ["history", "show", &source_id, "child"]);
+        let output = out.get_output();
+        if !output.status.success() {
+            return 0;
+        }
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        document["messages"].as_array().map_or(0, Vec::len)
+    };
+    // T3 creates its database with a conversation, and history holds it.
+    let source = fixture::T3Store::create(&env);
+    crate::common::wait_until(
+        "the seeded conversation to be held",
+        Duration::from_secs(20),
+        || messages() == 1,
+    );
+    // Only then the developer completes the conversation, and history holds
+    // the completion without a search or a tick.
+    source.complete();
+    crate::common::wait_until("the completion to be held", Duration::from_secs(20), || {
+        messages() == 2
+    });
+}
+
 // spec: project/instrukt/spec/feature/runner/history UC-HI3
 #[test]
 fn merged_search_identifies_each_computer_and_reports_an_unreachable_one() {
