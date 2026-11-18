@@ -61,6 +61,20 @@ if args[:3]==['auth','session','issue']:
     (readiness/'clock-source').write_text(os.environ.get('INSTRUKT_NOW',''))
     print(token); sys.exit(0)
 if args[:3]==['auth','session','revoke']:
+    import time
+    # A held revoke waits until the test releases it: every one while
+    # `hold-revoke` is set, the next one once for `hold-next-revoke`. Its pid
+    # tells whether it is still running; it gives up after a minute.
+    hold=(root/'hold-revoke').exists()
+    if (root/'hold-next-revoke').exists():
+        (root/'hold-next-revoke').unlink(missing_ok=True); hold=True
+    if hold:
+        held=root/'held-revokes'; held.mkdir(exist_ok=True)
+        (held/str(len(list(held.iterdir()))+1)).write_text(str(os.getpid()))
+        given_up=time.monotonic()+60
+        while not (root/'release-revoke').exists():
+            if time.monotonic()>given_up: sys.exit(1)
+            time.sleep(0.02)
     if (root/'revoke-failure').exists(): sys.exit(1)
     record=readiness/'tokens'/(args[-1]+'.json')
     if record.exists():
@@ -366,6 +380,33 @@ impl FakeT3 {
     pub fn issued(&self) -> usize {
         std::fs::read_to_string(self.state.join("sessions"))
             .map_or(0, |n| n.trim().parse().unwrap())
+    }
+    /// How many `auth session revoke` launches were held so far.
+    pub fn held_revokes(&self) -> usize {
+        std::fs::read_dir(self.state.join("held-revokes")).map_or(0, Iterator::count)
+    }
+    /// Whether the `n`th held `auth session revoke` launch (from 1) is still
+    /// running.
+    pub fn held_revoke_running(&self, n: usize) -> bool {
+        self.running(&format!("held-revokes/{n}"))
+    }
+    /// How many times `auth session revoke` was launched for `session`.
+    pub fn revoke_attempts(&self, session: &str) -> usize {
+        let call = format!("auth session revoke -- {session}");
+        self.calls().iter().filter(|line| **line == call).count()
+    }
+    /// Whether the process whose pid the state file `record` holds is
+    /// still running.
+    fn running(&self, record: &str) -> bool {
+        let Ok(pid) = std::fs::read_to_string(self.state.join(record)) else {
+            return false;
+        };
+        std::process::Command::new("kill")
+            .args(["-0", pid.trim()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
     }
     /// How many `auth session issue` launches were held so far.
     pub fn held_issues(&self) -> usize {

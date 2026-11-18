@@ -978,3 +978,57 @@ fn a_snapshot_is_observed_when_its_read_returns() {
         "{until:?}"
     );
 }
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
+#[test]
+fn a_stop_during_a_renewal_revokes_the_token_kept_then() {
+    let mut c = Company::new("");
+    let mut clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
+    c.run();
+    let first = "00000000-0000-4000-8000-000000000001";
+    let second = "00000000-0000-4000-8000-000000000002";
+    wait("the first snapshot", || {
+        common::t3_readiness::reads(&c.env)
+            .last()
+            .map(String::as_str)
+            == Some(first)
+    });
+    // The renewal keeps the second token; the first one's revocation is
+    // still running when the runner is stopped.
+    c.runtime.flag("hold-next-revoke", true);
+    clock.advance_seconds(270);
+    wait("the earlier token's revocation", || {
+        c.runtime.held_revoke_running(1)
+    });
+    assert_eq!(c.runtime.issued(), 2);
+    c.stop_runner();
+    // The stop revokes the token kept then, once, and not the earlier one
+    // again.
+    assert!(common::t3_readiness::revoked(&c.env, second));
+    assert_eq!(c.runtime.revoke_attempts(second), 1);
+    assert_eq!(c.runtime.revoke_attempts(first), 1);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
+#[test]
+fn a_slow_stop_revocation_is_bounded_and_leaves_no_child() {
+    let mut c = Company::new("");
+    // The operator's clock stands still: the stop's bound is real time.
+    let _clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
+    c.run();
+    let first = "00000000-0000-4000-8000-000000000001";
+    wait("the first snapshot", || {
+        !common::t3_readiness::reads(&c.env).is_empty()
+    });
+    // T3 does not answer the revocation the stop attempts.
+    c.runtime.flag("hold-revoke", true);
+    c.stop_runner();
+    assert_eq!(c.runtime.held_revokes(), 1);
+    assert!(
+        !c.runtime.held_revoke_running(1),
+        "the stop's revocation ended with the runner"
+    );
+    assert_eq!(c.runtime.revoke_attempts(first), 1);
+    assert!(!c.readiness_failing());
+    c.runtime.flag("release-revoke", true);
+}
