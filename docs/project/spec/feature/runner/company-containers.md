@@ -236,8 +236,8 @@ And no other company on the host changed
   last export brings back what that copy holds and what the repositories
   hold; anything newer, and work in a checkout that was not committed and
   pushed, is lost.
-- A connector open to people outside the company needs an agent with no
-  tools. A company's container does not provide one.
+- A company's container is not confinement enough for an agent that answers
+  people outside the company, and this feature delivers no such agent.
 - A Mac is for testing the container, not for hosting companies.
 - A company whose container is stopped receives no messages; a message
   written meanwhile is received when the container runs again only as far as
