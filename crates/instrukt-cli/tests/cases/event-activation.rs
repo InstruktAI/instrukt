@@ -77,7 +77,7 @@ fn an_upstream_change_starts_then_wakes_the_subscribed_standing_agent() {
 
     // Enabling the watch records where upstream stands; nothing changed yet.
     tick(&env, &cwd);
-    assert!(rt.calls().is_empty(), "{:?}", rt.calls());
+    assert!(rt.thread_calls().is_empty(), "{:?}", rt.calls());
 
     let first = push_upstream_change(&upstream_work, "one.md");
     tick(&env, &cwd);

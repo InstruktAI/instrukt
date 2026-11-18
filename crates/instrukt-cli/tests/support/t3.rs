@@ -28,16 +28,57 @@ args=sys.argv[1:]
 with (root/'calls').open('a') as f: f.write(' '.join(args)+'\n')
 if args==['--version']:
     print((root/'release').read_text() if (root/'release').exists() else 't3 v0.1.7'); sys.exit(0)
+readiness=root.parent/'t3-readiness'
+def clock_now():
+    import datetime
+    value=os.environ.get('INSTRUKT_NOW','')
+    if value.startswith('@'): value=pathlib.Path(value[1:]).read_text().strip()
+    if value: return datetime.datetime.fromisoformat(value.replace('Z','+00:00'))
+    return datetime.datetime.now(datetime.timezone.utc)
 if args[:3]==['auth','session','issue']:
-    import base64
-    claims={'v':1,'kind':'session','sid':'00000000-0000-4000-8000-000000000001','method':'bearer-access-token','scopes':['orchestration:read']}
-    import hashlib
+    import base64, datetime, hashlib, time
+    # A held issue waits until the test releases it; its pid tells whether
+    # the launch is still running or was ended by its caller. A test that
+    # failed before releasing it leaves no launch behind: it gives up after a
+    # minute.
+    if (root/'hold-issue').exists():
+        held=root/'held-issues'; held.mkdir(exist_ok=True)
+        (held/str(len(list(held.iterdir()))+1)).write_text(str(os.getpid()))
+        given_up=time.monotonic()+60
+        while not (root/'release-issue').exists():
+            if time.monotonic()>given_up: sys.exit(1)
+            time.sleep(0.02)
+    if (root/'issue-failure').exists(): print('cannot issue a session',file=sys.stderr); sys.exit(1)
+    counter=root/'sessions'; n=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(n))
+    sid='00000000-0000-4000-8000-%012d'%n
+    ttl=args[args.index('--ttl')+1]
+    seconds=int(ttl[:-1])*{'s':1,'m':60,'h':3600}[ttl[-1]]
+    claims={'v':1,'kind':'session','sid':sid,'method':'bearer-access-token','scopes':['orchestration:read']}
     token=base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')+'.test-signature'
-    (root.parent/'t3-readiness/token-digest').write_text(hashlib.sha256(token.encode()).hexdigest())
+    expires=(clock_now()+datetime.timedelta(seconds=seconds)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    (readiness/'tokens').mkdir(parents=True,exist_ok=True)
+    (readiness/'tokens'/(sid+'.json')).write_text(json.dumps({'digest':hashlib.sha256(token.encode()).hexdigest(),'expires':expires,'revoked':False}))
+    (readiness/'clock-source').write_text(os.environ.get('INSTRUKT_NOW',''))
     print(token); sys.exit(0)
 if args[:3]==['auth','session','revoke']:
+    import time
+    # A held revoke waits until the test releases it: every one while
+    # `hold-revoke` is set, the next one once for `hold-next-revoke`. Its pid
+    # tells whether it is still running; it gives up after a minute.
+    hold=(root/'hold-revoke').exists()
+    if (root/'hold-next-revoke').exists():
+        (root/'hold-next-revoke').unlink(missing_ok=True); hold=True
+    if hold:
+        held=root/'held-revokes'; held.mkdir(exist_ok=True)
+        (held/str(len(list(held.iterdir()))+1)).write_text(str(os.getpid()))
+        given_up=time.monotonic()+60
+        while not (root/'release-revoke').exists():
+            if time.monotonic()>given_up: sys.exit(1)
+            time.sleep(0.02)
     if (root/'revoke-failure').exists(): sys.exit(1)
-    (root.parent/'t3-readiness/token-digest').unlink(missing_ok=True)
+    record=readiness/'tokens'/(args[-1]+'.json')
+    if record.exists():
+        session=json.loads(record.read_text()); session['revoked']=True; record.write_text(json.dumps(session))
     print('Revoked session.'); sys.exit(0)
 if len(args)<2 or args[0]!='thread': sys.exit(2)
 command=args[1]; args=args[2:]
@@ -334,6 +375,55 @@ impl FakeT3 {
     }
     pub fn archive(&self, id: &str) {
         self.change(id, "archived", true.into());
+    }
+    /// The sessions issued so far, in order.
+    pub fn issued(&self) -> usize {
+        std::fs::read_to_string(self.state.join("sessions"))
+            .map_or(0, |n| n.trim().parse().unwrap())
+    }
+    /// How many `auth session revoke` launches were held so far.
+    pub fn held_revokes(&self) -> usize {
+        std::fs::read_dir(self.state.join("held-revokes")).map_or(0, Iterator::count)
+    }
+    /// Whether the `n`th held `auth session revoke` launch (from 1) is still
+    /// running.
+    pub fn held_revoke_running(&self, n: usize) -> bool {
+        self.running(&format!("held-revokes/{n}"))
+    }
+    /// How many times `auth session revoke` was launched for `session`.
+    pub fn revoke_attempts(&self, session: &str) -> usize {
+        let call = format!("auth session revoke -- {session}");
+        self.calls().iter().filter(|line| **line == call).count()
+    }
+    /// Whether the process whose pid the state file `record` holds is
+    /// still running.
+    fn running(&self, record: &str) -> bool {
+        let Ok(pid) = std::fs::read_to_string(self.state.join(record)) else {
+            return false;
+        };
+        std::process::Command::new("kill")
+            .args(["-0", pid.trim()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    }
+    /// How many `auth session issue` launches were held so far.
+    pub fn held_issues(&self) -> usize {
+        std::fs::read_dir(self.state.join("held-issues")).map_or(0, Iterator::count)
+    }
+    /// Whether the `n`th held `auth session issue` launch (from 1) is still
+    /// running: its process alive, neither ended by its caller nor released.
+    pub fn held_issue_running(&self, n: usize) -> bool {
+        let Ok(pid) = std::fs::read_to_string(self.state.join(format!("held-issues/{n}"))) else {
+            return false;
+        };
+        std::process::Command::new("kill")
+            .args(["-0", pid.trim()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
     }
     pub fn server_down(&self) {
         self.flag("down", true);

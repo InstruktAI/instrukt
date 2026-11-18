@@ -176,6 +176,11 @@ pub struct SlackEndpoint {
 }
 
 impl SlackEndpoint {
+    /// The time now on the runner's clock, the one this endpoint is timed by.
+    pub fn now(&self) -> Timestamp {
+        (self.limits.clock)()
+    }
+
     /// Slack's own hosts unless [`API_URL_SETTING`] names a loopback
     /// address; any other value refuses. The endpoint starts knowing no wait
     /// and keeps those Slack names for as long as it lives, timed by `clock`.

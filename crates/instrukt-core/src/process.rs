@@ -204,6 +204,24 @@ impl<'a> Invocation<'a> {
     /// killed (descendants still holding its pipes included) and the
     /// timeout reported.
     pub fn run(&self, timeout: Duration) -> Result<Finished, ProcessError> {
+        let started = Instant::now();
+        let limit = self.limit(timeout, started)?;
+        self.finish(limit, started)
+    }
+
+    /// As [`Invocation::run`], with `timeout` measured in real time even
+    /// when the operator's clock is set: for what must end within a real
+    /// bound, as a process's stop does.
+    pub fn run_in_real_time(&self, timeout: Duration) -> Result<Finished, ProcessError> {
+        let started = Instant::now();
+        let limit = Limit {
+            limit: timeout,
+            start: Start::Real(started + timeout),
+        };
+        self.finish(limit, started)
+    }
+
+    fn finish(&self, limit: Limit, started: Instant) -> Result<Finished, ProcessError> {
         let mut command = Command::new(&self.program);
         command
             .args(&self.args)
@@ -211,7 +229,7 @@ impl<'a> Invocation<'a> {
         if let Some(cwd) = self.cwd {
             command.current_dir(cwd);
         }
-        let output = self.execute(&mut command, Some(timeout))?;
+        let output = self.execute(&mut command, Some(limit), started)?;
         Ok(Finished {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -223,12 +241,9 @@ impl<'a> Invocation<'a> {
     fn execute(
         &self,
         command: &mut Command,
-        timeout: Option<Duration>,
+        limit: Option<Limit>,
+        started: Instant,
     ) -> Result<std::process::Output, ProcessError> {
-        let started = Instant::now();
-        let limit = timeout
-            .map(|timeout| self.limit(timeout, started))
-            .transpose()?;
         command
             .stdin(if self.input.is_some() {
                 Stdio::piped()
@@ -242,12 +257,25 @@ impl<'a> Invocation<'a> {
             program: self.program.clone(),
             source,
         })?;
-        let writer = match (self.input, child.stdin.take()) {
-            (Some(input), Some(stdin)) => Some(feed(stdin, input.to_vec())),
-            _ => None,
+        // A helper thread the system cannot start is a handled failure:
+        // the command's group is stopped and its direct child reaped.
+        let helpers = (|| {
+            let writer = match (self.input, child.stdin.take()) {
+                (Some(input), Some(stdin)) => Some(feed(stdin, input.to_vec())?),
+                _ => None,
+            };
+            let stdout = drain(child.stdout.take())?;
+            let stderr = drain(child.stderr.take())?;
+            Ok((writer, stdout, stderr))
+        })();
+        let (writer, stdout, stderr) = match helpers {
+            Ok(helpers) => helpers,
+            Err(source) => {
+                group.stop().map_err(|source| self.io(source))?;
+                let _ = child.wait();
+                return Err(self.io(source));
+            }
         };
-        let stdout = drain(child.stdout.take());
-        let stderr = drain(child.stderr.take());
         let status = match self.wait(&mut child, limit) {
             Ok(status) => status,
             Err(err) => {
@@ -398,37 +426,43 @@ impl<'a> Invocation<'a> {
 
 /// Writes `input` to the command on a thread of its own; a command that
 /// stops reading (a closed pipe) is not a failure of the write.
-fn feed(mut stdin: ChildStdin, input: Vec<u8>) -> Receiver<std::io::Result<()>> {
+fn feed(mut stdin: ChildStdin, input: Vec<u8>) -> std::io::Result<Receiver<std::io::Result<()>>> {
     let (send, receive) = mpsc::channel();
-    std::thread::spawn(move || {
-        let written = match stdin.write_all(&input) {
-            Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-            other => other,
-        };
-        drop(stdin);
-        if send.send(written).is_err() {
-            tracing::debug!(event = "process_input_unclaimed");
-        }
-    });
-    receive
+    std::thread::Builder::new()
+        .name("instrukt-command-input".into())
+        .spawn(move || {
+            let written = match stdin.write_all(&input) {
+                Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+                other => other,
+            };
+            drop(stdin);
+            if send.send(written).is_err() {
+                tracing::debug!(event = "process_input_unclaimed");
+            }
+        })?;
+    Ok(receive)
 }
 
 /// Reads a pipe to its end on a thread of its own.
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Receiver<std::io::Result<Vec<u8>>> {
+fn drain<R: Read + Send + 'static>(
+    pipe: Option<R>,
+) -> std::io::Result<Receiver<std::io::Result<Vec<u8>>>> {
     let (send, receive) = mpsc::channel();
-    std::thread::spawn(move || {
-        let read = (|| {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                pipe.read_to_end(&mut bytes)?;
+    std::thread::Builder::new()
+        .name("instrukt-command-output".into())
+        .spawn(move || {
+            let read = (|| {
+                let mut bytes = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    pipe.read_to_end(&mut bytes)?;
+                }
+                Ok(bytes)
+            })();
+            if send.send(read).is_err() {
+                tracing::debug!(event = "process_output_unclaimed");
             }
-            Ok(bytes)
-        })();
-        if send.send(read).is_err() {
-            tracing::debug!(event = "process_output_unclaimed");
-        }
-    });
-    receive
+        })?;
+    Ok(receive)
 }
 
 pub fn shell_quote(value: &str) -> String {
@@ -439,6 +473,33 @@ pub fn shell_quote(value: &str) -> String {
 // This registry contains only live owned groups, never domain/configuration state.
 static GROUPS: Mutex<Vec<rustix::process::Pid>> = Mutex::new(Vec::new());
 static SIGNALS: OnceLock<Result<(), String>> = OnceLock::new();
+/// What a catchable stop runs after the owned command groups are stopped and
+/// before the process ends, in the order registered.
+type StopHook = Box<dyn Fn() + Send + Sync>;
+static STOP_HOOKS: Mutex<Vec<StopHook>> = Mutex::new(Vec::new());
+
+/// Runs each stop hook in turn. A hook that panics is logged and the next
+/// one runs: no hook can end the thread that handles the signal, which goes
+/// on to end the process.
+fn run_stop_hooks(hooks: Vec<StopHook>) {
+    for hook in hooks {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook)).is_err() {
+            tracing::error!(event = "stop_hook_panicked");
+        }
+    }
+}
+
+/// Runs `hook` when this process is stopped by SIGINT or SIGTERM: after
+/// its commands' groups are stopped, before it ends. A hook bounds its own
+/// work; the process ends once every hook has returned.
+pub fn on_stop(hook: StopHook) -> std::io::Result<()> {
+    install_signals()?;
+    match STOP_HOOKS.lock() {
+        Ok(mut hooks) => hooks.push(hook),
+        Err(poisoned) => poisoned.into_inner().push(hook),
+    }
+    Ok(())
+}
 
 fn groups() -> std::sync::MutexGuard<'static, Vec<rustix::process::Pid>> {
     match GROUPS.lock() {
@@ -454,6 +515,11 @@ fn install_signals() -> std::io::Result<()> {
                 for pid in groups().iter().copied() {
                     if let Err(error)=kill_group(pid){tracing::error!(event="interrupted_group_cleanup_failed",pid=pid.as_raw_nonzero().get(),error=%error);}
                 }
+                let hooks = match STOP_HOOKS.lock() {
+                    Ok(mut hooks) => std::mem::take(&mut *hooks),
+                    Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+                };
+                run_stop_hooks(hooks);
                 // Preserve the signal's normal exit semantics after cleanup,
                 // including when it arrives between child commands.
                 if let Err(error)=signal_hook::low_level::emulate_default_handler(signal) {
@@ -539,7 +605,9 @@ pub fn output(
     let name = command.get_program().to_string_lossy().into_owned();
     let mut invocation = Invocation::program(&name, &[]);
     invocation.input = input;
-    invocation.execute(command, Some(timeout))
+    let started = Instant::now();
+    let limit = invocation.limit(timeout, started)?;
+    invocation.execute(command, Some(limit), started)
 }
 
 /// Executes a native command as [`output`] does, waiting for it to its end
@@ -553,5 +621,24 @@ pub fn output_to_end(
     let name = command.get_program().to_string_lossy().into_owned();
     let mut invocation = Invocation::program(&name, &[]);
     invocation.input = input;
-    invocation.execute(command, None)
+    invocation.execute(command, None, Instant::now())
+}
+
+#[cfg(test)]
+mod stop_hook_tests {
+    use super::run_stop_hooks;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn a_panicking_stop_hook_leaves_the_rest_of_the_stop_to_run() {
+        let later = Arc::new(AtomicBool::new(false));
+        let ran = Arc::clone(&later);
+        // The signal thread re-raises the signal once this returns.
+        run_stop_hooks(vec![
+            Box::new(|| panic!("a stop hook that fails")),
+            Box::new(move || ran.store(true, Ordering::SeqCst)),
+        ]);
+        assert!(later.load(Ordering::SeqCst));
+    }
 }

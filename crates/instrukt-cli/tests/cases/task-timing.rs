@@ -183,7 +183,11 @@ fn the_installed_wake_up_runs_due_work_under_its_missed_run_policy() {
     // at 09:05 nothing is due; the computer is then off until 11:05, past
     // several occurrences, and one catch-up run is dispatched.
     run_registered(&registered, project.env.home(), "2030-01-06T09:05:00Z");
-    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+    assert!(
+        project.rt.thread_calls().is_empty(),
+        "{:?}",
+        project.rt.calls()
+    );
     run_registered(&registered, project.env.home(), "2030-01-06T11:05:00Z");
     assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!("installed-catch-up", project.rt.opening("s1"));
@@ -201,7 +205,11 @@ fn an_authorized_task_is_dispatched_when_a_wake_up_arrives_at_its_time() {
         String::from_utf8_lossy(&early.get_output().stderr),
         @"instrukt: clock overridden to 2030-01-06T08:59:20Z"
     );
-    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+    assert!(
+        project.rt.thread_calls().is_empty(),
+        "{:?}",
+        project.rt.calls()
+    );
 
     // The wake-up at its time dispatches it into the task runner.
     project.tick_at("2030-01-06T09:00:20Z");
@@ -221,7 +229,11 @@ fn missed_occurrences(policy: &str) -> usize {
         &["--catch-up", policy],
     );
     project.tick_at("2030-01-06T09:05:00Z");
-    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+    assert!(
+        project.rt.thread_calls().is_empty(),
+        "{:?}",
+        project.rt.calls()
+    );
     project.tick_at("2030-01-06T11:05:00Z");
     project.rt.started_count()
 }

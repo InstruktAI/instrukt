@@ -1,6 +1,12 @@
 //! Protocol- and shape-validated translation of T3's internal read-scoped provider snapshot.
 //! Wire source: https://github.com/pingdotgg/t3code/tree/6417151c09/apps/server/src
-use super::{ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
+//!
+//! Readiness is off the start path. A runner keeps one read-scoped token,
+//! issued when it starts and renewed before it expires, and refreshes the
+//! provider snapshot on its own wake ([`Readiness`]). Each snapshot read is
+//! published with the time it was observed; a start reads the last one
+//! published ([`last`]) and never waits on an acquisition in progress.
+use super::{ObservedSnapshot, ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
 use crate::{process::Invocation, sessions::SessionsError};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{
@@ -19,7 +25,13 @@ use std::{
 use tungstenite::{Message, client::IntoClientRequest};
 
 const RPC_REQUEST_ID: &str = "instrukt-readiness";
+/// The limit on one T3 CLI launch and on one snapshot read.
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// The lifetime T3 gives a readiness token (`--ttl`).
+const TOKEN_LIFETIME: &str = "5m";
+const TOKEN_LIFETIME_SECONDS: i64 = 300;
+/// How long before its expiry a token is replaced.
+const RENEW_BEFORE_SECONDS: i64 = 60;
 fn refused(cause: &str) -> SessionsError {
     SessionsError::Refused(format!("T3 readiness: {cause}"))
 }
@@ -170,7 +182,7 @@ impl Token {
                 "--scope",
                 "orchestration:read",
                 "--ttl",
-                "5m",
+                TOKEN_LIFETIME,
                 "--token-only",
                 "--label",
                 "instrukt-readiness",
@@ -225,7 +237,8 @@ impl Drop for Token {
         }
     }
 }
-fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
+/// The local server's WebSocket endpoint, from its runtime descriptor.
+fn endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
     let cli = match command(&["--version"], "cannot inspect CLI release") {
         Ok(release) => Some(release),
         Err(error) => {
@@ -259,6 +272,169 @@ fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
         .map_err(|_| refused("invalid server transport"))?;
     endpoint.set_path("/ws");
     endpoint.set_query(Some("orchestrationProtocol=2"));
+    Ok(endpoint)
+}
+
+/// The snapshot a start reads: the last one any refresh in this process
+/// published, with the time it was observed.
+static LAST: std::sync::RwLock<Option<std::sync::Arc<ObservedSnapshot>>> =
+    std::sync::RwLock::new(None);
+
+/// The last snapshot published in this process, if any.
+pub(super) fn last() -> Option<std::sync::Arc<ObservedSnapshot>> {
+    match LAST.read() {
+        Ok(last) => last.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+fn publish(observed: &std::sync::Arc<ObservedSnapshot>) {
+    let next = Some(std::sync::Arc::clone(observed));
+    match LAST.write() {
+        Ok(mut last) => *last = next,
+        Err(poisoned) => *poisoned.into_inner() = next,
+    }
+}
+
+/// The runner's one readiness token and the refresh of the provider
+/// snapshot it reads. The token is issued on the first refresh and replaced
+/// before it expires: the next is issued, then the earlier one revoked. The
+/// last one is revoked when this is dropped. A revocation that fails is
+/// logged; the token lapses with its lifetime.
+pub(crate) struct Readiness {
+    env: Env,
+    slot: std::sync::Arc<std::sync::Mutex<Slot>>,
+}
+
+/// The one token the runner keeps: the token reads use and the token a stop
+/// revokes are this slot's, replaced in one step.
+#[derive(Default)]
+struct Slot {
+    /// The kept token and when it is renewed.
+    kept: Option<(Token, Timestamp)>,
+    /// A stop has taken the slot: no token is kept in it any more.
+    claimed: bool,
+}
+
+fn lock(slot: &std::sync::Mutex<Slot>) -> std::sync::MutexGuard<'_, Slot> {
+    match slot.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+impl Readiness {
+    pub(super) fn new(env: Env) -> Self {
+        Self {
+            env,
+            slot: std::sync::Arc::default(),
+        }
+    }
+
+    /// The secret of the token to read with at `now`, issuing or renewing
+    /// it as due. A replacement is issued outside the slot and kept in one
+    /// step; the earlier token is revoked after that, outside the slot. Once
+    /// a stop has claimed the slot nothing is kept: a replacement issued
+    /// meanwhile is revoked here.
+    fn token(&mut self, now: Timestamp) -> Result<String, SessionsError> {
+        {
+            let slot = lock(&self.slot);
+            if slot.claimed {
+                return Err(refused("the runner is stopping"));
+            }
+            if let Some((token, renew_at)) = &slot.kept
+                && now < *renew_at
+            {
+                return Ok(token.secret.clone());
+            }
+        }
+        let next = Token::issue()?;
+        let renew_at = now
+            .checked_add(jiff::SignedDuration::from_secs(
+                TOKEN_LIFETIME_SECONDS - RENEW_BEFORE_SECONDS,
+            ))
+            .map_err(|_| refused("cannot compute the token's renewal time"))?;
+        let secret = next.secret.clone();
+        let earlier = {
+            let mut slot = lock(&self.slot);
+            if slot.claimed {
+                drop(slot);
+                // Revoked as it is dropped: the stop took the slot first.
+                drop(next);
+                return Err(refused("the runner is stopping"));
+            }
+            slot.kept.replace((next, renew_at))
+        };
+        // Revoked as it is dropped, the slot already holding the next one.
+        drop(earlier);
+        Ok(secret)
+    }
+}
+
+impl Drop for Readiness {
+    /// A readiness that ends revokes the token it keeps.
+    fn drop(&mut self) {
+        let kept = {
+            let mut slot = lock(&self.slot);
+            slot.claimed = true;
+            slot.kept.take()
+        };
+        drop(kept);
+    }
+}
+
+impl super::Readiness for Readiness {
+    fn refresh(
+        &mut self,
+        home: &Home,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<std::sync::Arc<ObservedSnapshot>, SessionsError> {
+        let endpoint = endpoint(home, &self.env)?;
+        let secret = self.token(clock())?;
+        let source = read_rpc(&endpoint, &secret)?;
+        // Observed when the read returned, however long it took.
+        let observed = std::sync::Arc::new(ObservedSnapshot {
+            snapshot: translate(source),
+            at: clock(),
+        });
+        publish(&observed);
+        Ok(observed)
+    }
+
+    fn stopper(&self) -> Box<dyn Fn() + Send + Sync> {
+        let slot = std::sync::Arc::clone(&self.slot);
+        Box::new(move || {
+            let kept = {
+                let mut slot = lock(&slot);
+                slot.claimed = true;
+                slot.kept.take()
+            };
+            let Some((mut token, _)) = kept else {
+                return;
+            };
+            // One attempt at the kept token, bounded in real time whatever
+            // the operator's clock says: past the bound its command's process
+            // group is ended and reaped before the process ends.
+            token.revoked = true;
+            let attempt =
+                Invocation::program("t3", &["auth", "session", "revoke", "--", &token.session])
+                    .run_in_real_time(TIMEOUT);
+            if let Err(failure) = command_output(attempt) {
+                tracing::error!(
+                    event = "readiness_token_cleanup_failed",
+                    category = failure.as_str(),
+                    message =
+                        "readiness session revocation failed at stop; its five-minute TTL remains"
+                );
+            }
+        })
+    }
+}
+
+/// One snapshot read with a token of its own, revoked after it: for a
+/// command that reads readiness once, never for a start.
+fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
+    let endpoint = endpoint(home, env)?;
     let mut token = Token::issue()?;
     let result = read_rpc(&endpoint, &token.secret);
     let cleanup = token.revoke();
@@ -417,8 +593,11 @@ fn unavailable(provider: &Provider) -> Option<String> {
     None
 }
 pub(super) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, SessionsError> {
-    let source = acquire(home, env)?;
-    Ok(ProviderSnapshot {
+    Ok(translate(acquire(home, env)?))
+}
+
+fn translate(source: Snapshot) -> ProviderSnapshot {
+    ProviderSnapshot {
         native_picks: vec!["auto".into(), "default".into()],
         providers: source
             .providers
@@ -450,7 +629,7 @@ pub(super) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, Sessi
                 }
             })
             .collect(),
-    })
+    }
 }
 
 #[cfg(test)]
