@@ -66,6 +66,12 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   rebuild is limited to the crates the commit touches and the crates that
   depend on them, and a commit that touches nothing a crate is built from or
   tested against builds nothing.
+- No commit installs a check's tool. `make hooks` installs the tools
+  `.pre-commit-config.yaml` pins when it enables the hook, and is run again
+  when a pinned tool changes. A commit whose checks' tools are not installed
+  is refused, naming the step. The every-file run, which CI and
+  `make commit-checks` use and which is not a commit, installs what is
+  missing itself.
 - GitHub CI runs that configuration over every file, and the whole test
   suite, on every pull request, on Linux and macOS, exercising filesystem case
   behavior, hooks and paths. `main` requires these checks, so a functional
@@ -109,6 +115,10 @@ recording it, and one whose record can be neither appended to nor removed. In
 both the write that was attempted did not land. Independently authored use cases supply the expected outcomes;
 pure-logic units and property tests cover the Rust exception without replacing
 feature-level evidence.
+
+Installing a tool is a download whose duration nothing in a commit bounds. In
+the step that enables the hook it happens once, where a developer expects to
+wait, and a commit stays a check of what the commit holds.
 
 ## Scope
 
