@@ -34,6 +34,11 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     elsewhere.stream();
     let gate = c.store.gate();
     c.run();
+    // The relay runs, so its subscription to T3's database exists; watching
+    // it holds no open file on T3's data folder.
+    let t3_folder = c.store.file.parent().unwrap().to_path_buf();
+    assert_eq!(c.conversations().relay_failure, None);
+    assert_eq!(c.runner_files_on(&t3_folder), 0);
     let channel = "C1";
     // No published procedure declares the role conversations start under:
     // the question waits, no session starts, and the cause names the role.

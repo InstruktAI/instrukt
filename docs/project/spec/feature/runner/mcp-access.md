@@ -50,6 +50,11 @@ mcp:
 | `sign_in.accept_return_without_issuer` | With `speaker_login: sign-in`, optional, `true` or `false` (the default): the operator's acceptance of a return that does not name its issuer, for a server whose authorization server does not announce that it names itself on the return (see The return path and the issuer). |
 | `sign_in.identity.url`, `sign_in.identity.email_field` | With `speaker_login: sign-in`, optional, together: a request that answers who signed in, for a server whose authorization server is no OpenID Provider. `url` is an absolute `https` address without credentials or fragment, which the operator trusts to receive this server's tokens; instrukt sends a `GET` to it with the new access token and reads the email address from `email_field`, a dot-separated path into the JSON answer. |
 
+`instrukt config schema --company <name> mcp` shows these fields with their
+contracts for a company home, and `instrukt config schema --global mcp` for
+the computer
+(`project/instrukt/spec/feature/configuration/configuration-editing`).
+
 A declaration that carries none of `credential`, `login` and `speaker_login:
 sign-in` is an open server: its calls carry no login. A company home's
 declaration takes the place of a machine-wide declaration of the same name for
@@ -488,9 +493,11 @@ The caller identity is the runtime's statement of which session a process
 belongs to, and instrukt does not authenticate a caller beyond it. Every
 process of the same operating-system user is trusted: a caller presenting
 another session's identity is served as that session, and that user can read a
-company home's files, its secrets file among them. Closing that takes
-confining the agent, which this contract does not provide
-(`project/instrukt/spec/feature/company/conversations`). The `--company` path
+company home's files, its secrets file among them. A session working for a
+company runs in that company's container, which holds no other company's
+home, logins or sessions
+(`project/instrukt/spec/feature/runner/company-containers`); inside one
+company's container, every process is trusted alike. The `--company` path
 is the local operator's.
 
 ### Commands
@@ -683,7 +690,9 @@ And a call for that person starts a new sign-in
   database until they sign out, the operator removes them, or the
   authorization server refuses a renewal.
 - Logins lie in the state database, where any process of the same
-  operating-system user can read them. With a person's own login the agent
+  operating-system user can read them; a company's container holds no other
+  company's logins
+  (`project/instrukt/spec/feature/runner/company-containers`). With a person's own login the agent
   holds that person's rights at the server, and in a channel text of other
   people accompanies the speaker's message and can steer what happens under
   the speaker's name.

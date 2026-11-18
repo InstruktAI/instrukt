@@ -2,6 +2,35 @@
 
 ## 0.1.0
 
+### This repository's commit check
+
+For developers of instrukt itself. The pre-commit hook runs the checks the
+staged files need, as `.pre-commit-config.yaml` assigns them, through the
+pre-commit framework; the functional suite runs in CI. Install the pinned
+framework once, `uv tool install pre-commit==<version>` with the version in
+`scripts/test-tools.env`, and keep `make hooks` as the way to enable the hook:
+the framework's own `install` refuses while `core.hooksPath` is set. A
+`core.hooksPath` set to the relative `.githooks`, as `make hooks` sets it,
+lets each linked worktree run its own checkout's hook. The Python lint and
+type check are the framework's own hooks for ruff and mypy at pinned commits.
+`make hooks` installs them into `~/.cache/pre-commit`, which needs network
+access. A commit made before that, or after a pinned tool changes, installs
+what it needs itself. A newly installed tool's first run is slower too, once
+per installation and not once per checkout, so a commit takes longer that one
+time. A clone that enabled the hook before this change needs nothing done. A
+`v*` tag builds and publishes release binaries only after the checks `main`
+requires pass on the tagged revision.
+
+The hook directory also holds instrukt's own sections
+(`project/instrukt/spec/feature/repository/hook-sections`): in `pre-commit`
+before the framework call, and as `post-commit`, `post-merge`, `post-rewrite`
+and `post-checkout`, so that documents are published from main without a
+command. They run the installed `instrukt` from the path; without it a commit
+goes through unchanged. An existing checkout has nothing to install for them
+beyond `instrukt` itself. Publication they start needs this computer's global
+agent files to be instrukt's; until then `instrukt hooks status` reports the
+refused sync, and git's result is unchanged.
+
 ### Agent instructions are committed, and reach the runtimes you configured
 
 A repository's `AGENTS.md` files are now committed. instrukt's `pre-commit`
