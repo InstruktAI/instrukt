@@ -4,12 +4,9 @@
 use crate::common;
 use crate::fixtures::documented;
 use std::path::Path;
-use std::time::Duration;
 
 use common::TestEnv;
-use instrukt_core::home::Home;
-use instrukt_core::ids::ProjectSlug;
-use instrukt_core::repository::{self, Hook, SyncOutcome};
+use instrukt_core::repository::{Hook, SyncOutcome};
 
 // spec: project/instrukt/spec/feature/configuration/logging UC-LG1
 #[test]
@@ -40,20 +37,16 @@ fn a_hook_publication_is_retrievable_and_recorded_in_the_sync_log() {
     let commit = repo.commit("docs: publish the rules");
 
     // The detached hook worker records completion after its sync exits.
-    let home = Home::at_user_home(env.home().to_path_buf());
-    let project = ProjectSlug::parse("demo").unwrap();
-    crate::common::wait_until(
-        "hook publication to finish",
-        Duration::from_secs(30),
-        || {
-            if let Some(record) = repository::last_run(&home, &project, Hook::PostCommit).unwrap()
-                && let Some(SyncOutcome::Finished { exit_code, .. }) = record.sync
-            {
-                assert_eq!(exit_code, Some(0));
-                return true;
-            }
-            false
-        },
+    let record = env.finished_hook_run(repo.path(), Hook::PostCommit);
+    assert!(
+        matches!(
+            record.sync,
+            Some(SyncOutcome::Finished {
+                exit_code: Some(0),
+                ..
+            })
+        ),
+        "{record:?}"
     );
 
     // This is the public log location the InstruktAI reader discovers.

@@ -2,12 +2,21 @@
 //! that waits for the sync it started, and the per-hook record of the last
 //! run's outcome that `hooks status` shows.
 //!
-//! Checkout rendering completes before return, and so does pre-commit's
-//! staging of committed forms. Other hook work is detached. For a post-hook it writes the
-//! run's record (sync `running`), starts the detached worker and returns;
-//! the worker starts `instrukt sync`, waits for it within a bound, and
-//! completes the record with sync's exit status — unless a later run of the
-//! same hook has replaced the record meanwhile.
+//! Pre-commit's staging completes before return: the committed forms of the
+//! files being committed, and the repository's `AGENTS.md` files rendered
+//! from the index the commit is made from, staged into it; the post-commit
+//! run keeps the repository's index in step with what was committed. Other
+//! hook work is detached. For a post-hook it writes the run's record (sync
+//! `running`), starts the detached worker and returns; the worker starts
+//! `instrukt sync`, waits for it within a bound, and completes the record
+//! with sync's exit status — unless a later run of the same hook has
+//! replaced the record meanwhile. A checkout starts publication only in the
+//! primary checkout.
+//!
+//! Records belong to the repository, all its worktrees alike: they are kept
+//! under a key of its git common directory, never under anything its
+//! configuration says, so a company home and a root that cannot be read have
+//! one too.
 
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
@@ -16,7 +25,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{self, Env};
+use sha2::{Digest, Sha256};
+
+use crate::config::{self, Env, RootDocument};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::git;
 use crate::home::Home;
@@ -39,13 +50,14 @@ const RECORD_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 /// The longest sync message a record keeps.
 const MESSAGE_LIMIT: usize = 2000;
 
-/// What one hook run did, recorded per hook under
-/// `state/hooks/<project>/<hook>.yaml`.
+/// What one hook run did, recorded per repository and hook under
+/// `state/hook-runs/<repository key>/<hook>.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookRunRecord {
     pub schema_version: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkout: Option<CheckoutOutcome>,
+    /// The repository the run belongs to: its git common directory, shared
+    /// by all its worktrees.
+    pub repository: PathBuf,
     pub hook: Hook,
     /// Identifies the run, so a worker completes only its own run's record.
     pub run: String,
@@ -68,25 +80,41 @@ pub struct HookRunRecord {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum StagingOutcome {
     /// These files, relative to the repository root, were staged in their
-    /// committed form: a current project layer, a corrected modeline.
-    Staged { files: Vec<String> },
-    /// Every file being committed was already in its committed form.
-    Unchanged,
+    /// committed form: a current project layer, a corrected modeline, a
+    /// rendered `AGENTS.md` or its removal. Each finding left a file as it
+    /// was in the commit.
+    Staged {
+        files: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        findings: Vec<String>,
+    },
+    /// Every file being committed was already in its committed form; each
+    /// finding left a file as it was in the commit.
+    Unchanged {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        findings: Vec<String>,
+    },
     /// The run could not stage; the commit went ahead without it.
     Failed { error: String },
 }
 
 /// The current hook-record shape: version 2 adds a pre-commit run's
-/// `staging` outcome. Unversioned and version-1 records convert on read,
-/// keeping the outcomes they hold and inventing none they lack, and the next recorded
-/// run persists this shape; a newer shape needs a newer instrukt.
+/// `staging` outcome; version 3 names the repository, drops the checkout
+/// outcome and carries a staging outcome's findings. Older records convert
+/// on read, keeping the outcomes they hold and inventing none they lack,
+/// and the next recorded run persists this shape; a newer shape needs a
+/// newer instrukt.
 fn hook_record_version() -> u32 {
-    2
+    3
 }
 
-/// The record `text` at `path`, in any shape this instrukt knows, brought
-/// to the current shape.
-fn read_record(path: &Path, text: &str) -> Result<HookRunRecord, RepositoryError> {
+/// The record `text` at `path`, of `repository`, in any shape this instrukt
+/// knows, brought to the current shape.
+fn read_record(
+    path: &Path,
+    text: &str,
+    repository: &Path,
+) -> Result<HookRunRecord, RepositoryError> {
     let malformed = |source| RepositoryError::Record {
         path: path.to_path_buf(),
         source,
@@ -107,22 +135,21 @@ fn read_record(path: &Path, text: &str) -> Result<HookRunRecord, RepositoryError
             && version < u64::from(hook_record_version())
         {
             // Outcomes an earlier record holds are kept as recorded, and
-            // one it lacks stays absent.
+            // one it lacks stays absent; the checkout outcome is gone.
             map.insert(
                 "schema_version".into(),
                 serde_yaml_ng::Value::Number(hook_record_version().into()),
             );
+            map.remove("checkout");
+            if !map.contains_key("repository") {
+                map.insert(
+                    "repository".into(),
+                    serde_yaml_ng::Value::String(repository.display().to_string()),
+                );
+            }
         }
     }
     serde_yaml_ng::from_value(value).map_err(malformed)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum CheckoutOutcome {
-    Rendered,
-    Bootstrapped,
-    Failed { error: String },
 }
 
 /// The outcome of the sync a hook run started.
@@ -171,14 +198,15 @@ pub struct HookInvocation<'a> {
 }
 
 /// Runs one hook point in the repository containing `cwd`: pre-commit
-/// stages the committed form of the files being committed and records what
-/// it did; post-commit first settles the index those forms leave behind;
-/// otherwise hands a push
-/// to main or a pull advancing main to graph generation when it is wired,
-/// and for a post-hook starts the detached worker that runs `instrukt
-/// sync`. Checkout first renders published entrypoints synchronously; other
-/// work returns without waiting. Outside a working tree it
-/// does nothing.
+/// stages the committed forms of the files being committed and the
+/// repository's `AGENTS.md` files rendered from the index the commit is
+/// made from, and records what it did and what the rendering found;
+/// post-commit first settles the index those stagings leave behind; a
+/// checkout in a linked worktree does nothing; otherwise hands a push to
+/// main or a pull advancing main to graph generation when it is wired, and
+/// for a post-hook starts the detached worker that runs `instrukt sync`.
+/// Outside a working tree it does nothing. The first run that finds the
+/// project-keyed records an earlier release kept removes them.
 pub fn run_hook(
     home: &Home,
     cwd: &Path,
@@ -191,6 +219,8 @@ pub fn run_hook(
         tracing::debug!(event = "hook_run_outside_worktree", hook = %hook, cwd = %cwd.display());
         return Ok(());
     };
+    retire_project_records(home)?;
+    let records = Records::of(home, &root)?;
     // Git names the index a commit is made from relative to the hook's
     // working directory.
     let index = invocation
@@ -198,36 +228,29 @@ pub fn run_hook(
         .get("GIT_INDEX_FILE")
         .map(|file| cwd.join(file));
     if hook == Hook::PreCommit {
-        let outcome = stage_committed_forms(&root, index.as_deref());
+        let outcome = pre_commit(&root, index.as_deref());
         let staging = match &outcome {
-            Ok(files) if files.is_empty() => StagingOutcome::Unchanged,
-            Ok(files) => StagingOutcome::Staged {
+            Ok((files, findings)) if files.is_empty() => StagingOutcome::Unchanged {
+                findings: findings.clone(),
+            },
+            Ok((files, findings)) => StagingOutcome::Staged {
                 files: files.clone(),
+                findings: findings.clone(),
             },
             Err(error) => StagingOutcome::Failed {
                 error: error.to_string(),
             },
         };
-        match config::project_slug(&root) {
-            Ok(Some(project)) => save(
-                home,
-                &project,
-                &HookRunRecord {
-                    schema_version: hook_record_version(),
-                    checkout: None,
-                    hook,
-                    run: format!("{}-{}", now_ms(), std::process::id()),
-                    started_at_ms: now_ms(),
-                    sync: None,
-                    graph_generation: None,
-                    staging: Some(staging),
-                },
-            )?,
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(event = "pre_commit_not_recorded", error = %error);
-            }
-        }
+        records.save(&HookRunRecord {
+            schema_version: hook_record_version(),
+            repository: records.repository.clone(),
+            hook,
+            run: format!("{}-{}", now_ms(), std::process::id()),
+            started_at_ms: now_ms(),
+            sync: None,
+            graph_generation: None,
+            staging: Some(staging),
+        })?;
         return outcome.map(drop);
     }
     if hook == Hook::PostCommit
@@ -235,47 +258,36 @@ pub fn run_hook(
     {
         tracing::warn!(event = "committed_index_not_settled", error = %error);
     }
-    if hook == Hook::PostCheckout {
-        let outcome = crate::publication::checkout_entrypoints(&crate::publication::SyncRequest {
-            home,
-            cwd: &root,
-            wiring,
-            now: jiff::Timestamp::now(),
-        });
-        let checkout = match &outcome {
-            Ok(crate::publication::Checkout::Bootstrapped) => CheckoutOutcome::Bootstrapped,
-            Ok(_) => CheckoutOutcome::Rendered,
-            Err(error) => CheckoutOutcome::Failed {
-                error: error.to_string(),
-            },
-        };
-        if let Some(project) = config::project_slug(&root)? {
-            save(
-                home,
-                &project,
-                &HookRunRecord {
-                    schema_version: hook_record_version(),
-                    checkout: Some(checkout),
-                    hook,
-                    run: format!("{}-{}", now_ms(), std::process::id()),
-                    started_at_ms: now_ms(),
-                    sync: None,
-                    graph_generation: None,
-                    staging: None,
-                },
-            )?;
-        }
-        if !matches!(outcome?, crate::publication::Checkout::Primary) {
-            return Ok(());
-        }
+    if hook == Hook::PostCheckout && !is_primary(&root)? {
+        tracing::debug!(event = "hook_checkout_in_linked_worktree", root = %root.display());
+        return Ok(());
     }
     if invocation.hook.starts_sync()
         && git::run(&root, ["branch", "--show-current"])? != crate::github::default_branch(&root)?
     {
         tracing::debug!(event="hook_unintegrated_worktree",root=%root.display());
+        // A checkout away from main, a rebase's detached one included, is
+        // recorded as a run that started nothing.
+        if hook == Hook::PostCheckout {
+            records.save(&HookRunRecord {
+                schema_version: hook_record_version(),
+                repository: records.repository.clone(),
+                hook,
+                run: format!("{}-{}", now_ms(), std::process::id()),
+                started_at_ms: now_ms(),
+                sync: None,
+                graph_generation: None,
+                staging: None,
+            })?;
+        }
         return Ok(());
     }
-    let project = config::project_slug(&root)?;
+    // The project only names a graph to generate: a root that is no project
+    // layer, or cannot be read, generates none and still starts the sync.
+    let project = config::project_slug(&root).unwrap_or_else(|error| {
+        tracing::warn!(event = "hook_project_unknown", hook = %hook, error = %error);
+        None
+    });
     // A handoff that cannot be decided or made is reported and never keeps
     // the sync from starting.
     let graph_generation = match &wiring.graph_generation {
@@ -303,7 +315,7 @@ pub fn run_hook(
     let run = format!("{}-{}", now_ms(), std::process::id());
     let mut record = HookRunRecord {
         schema_version: hook_record_version(),
-        checkout: (hook == Hook::PostCheckout).then_some(CheckoutOutcome::Rendered),
+        repository: records.repository.clone(),
         hook,
         run: run.clone(),
         started_at_ms: now_ms(),
@@ -311,42 +323,57 @@ pub fn run_hook(
         graph_generation,
         staging: None,
     };
-    if let Some(project) = &project {
-        save(home, project, &record)?;
-    }
+    records.save(&record)?;
     if hook.starts_sync()
-        && let Err(err) = start_worker(invocation.exe, &root, hook, &run, project.as_ref())
+        && let Err(err) = start_worker(invocation.exe, &root, hook, &run, &records.key)
     {
         tracing::warn!(event = "hook_worker_not_started", hook = %hook, error = %err);
         record.sync = Some(SyncOutcome::NotStarted {
             error: err.to_string(),
         });
-        if let Some(project) = &project {
-            save(home, project, &record)?;
-        }
+        records.save(&record)?;
     }
     tracing::debug!(
         event = "hook_run_started",
         hook = %hook,
         run = %run,
         repo_root = %root.display(),
-        recorded = project.is_some(),
         duration_ms = started.elapsed().as_millis() as u64,
     );
     Ok(())
 }
 
+/// One pre-commit run: the committed forms of the files being committed,
+/// then the repository's `AGENTS.md` files rendered from the index the
+/// commit is made from, all staged into it, and the handoff the post-commit
+/// run settles. Returns the files staged and the rendering's findings, each
+/// of which left its file as it was in the commit.
+fn pre_commit(
+    root: &Path,
+    index: Option<&Path>,
+) -> Result<(Vec<String>, Vec<String>), RepositoryError> {
+    let mut handoff = String::new();
+    let mut staged = stage_committed_forms(root, index, &mut handoff)?;
+    let (rendered, findings) = stage_entrypoints(root, index, &mut handoff)?;
+    staged.extend(rendered);
+    record_replaced(root, &handoff)?;
+    Ok((staged, findings))
+}
+
 /// Brings each file the commit being made carries into its committed form
 /// and stages that form in the index `index` names: a project layer at an
 /// older schema version is converted, and a file an editor schema describes
-/// gets its modeline at the top. A file the checkout holds with the staged
-/// bytes is rewritten too, so the commit leaves no change behind; an
-/// unstaged edit is left as it is. Returns the files staged, relative to the
-/// repository root (`docs/project/spec/feature/configuration/owned-files.md`,
+/// gets its modeline at the top. A root document that is no project layer —
+/// a company's, or one that cannot be read — is not converted. A file the
+/// checkout holds with the staged bytes is rewritten too, so the commit
+/// leaves no change behind; an unstaged edit is left as it is. Appends a
+/// handoff line per file it staged and returns the files staged, relative
+/// to the repository root (`docs/project/spec/feature/configuration/owned-files.md`,
 /// `docs/project/spec/feature/publication/editor-schemas.md`).
 fn stage_committed_forms(
     root: &Path,
     index: Option<&Path>,
+    handoff: &mut String,
 ) -> Result<Vec<String>, RepositoryError> {
     let started = Instant::now();
     let changed = git::run_on_index(
@@ -368,24 +395,23 @@ fn stage_committed_forms(
         .collect();
     paths.insert(config::CONFIG_FILE_NAME.to_owned());
     let mut staged = Vec::new();
-    let mut replaced = String::new();
     for rel in paths {
         let Some((mode, object)) = index_entry(root, index, &rel)? else {
             continue;
         };
         let bytes = git::run_bytes(root, ["cat-file", "blob", object.as_str()])?;
+        if rel == config::CONFIG_FILE_NAME
+            && !matches!(
+                config::classify_root(Some(&bytes)),
+                RootDocument::ProjectLayer(_)
+            )
+        {
+            continue;
+        }
         let Some(next) = committed_form(root, &rel, &bytes)? else {
             continue;
         };
-        let written = git::run_on_index(root, index, ["hash-object", "-w", "--stdin"], &next)?;
-        let written = String::from_utf8_lossy(&written).trim().to_owned();
-        let cacheinfo = format!("{mode},{written},{rel}");
-        git::run_on_index(
-            root,
-            index,
-            ["update-index", "--cacheinfo", cacheinfo.as_str()],
-            b"",
-        )?;
+        let written = stage_blob(root, index, &mode, &rel, &next)?;
         let path = root.join(&rel);
         match std::fs::symlink_metadata(&path) {
             Ok(meta) if meta.is_file() => {
@@ -401,10 +427,9 @@ fn stage_committed_forms(
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => return Err(RepositoryError::Read { path, source }),
         }
-        replaced.push_str(&format!("{object} {written} {rel}\n"));
+        handoff.push_str(&format!("{object} {written} {rel}\n"));
         staged.push(rel);
     }
-    record_replaced(root, &replaced)?;
     tracing::info!(
         event = "committed_forms_staged",
         repo_root = %root.display(),
@@ -414,8 +439,117 @@ fn stage_committed_forms(
     Ok(staged)
 }
 
+/// Renders the repository's `AGENTS.md` files from the index `index` names
+/// and stages each rendering that differs from its entry, and each removal,
+/// into it (`docs/project/spec/feature/publication/agent-entrypoints.md`,
+/// "When a committed entrypoint is rendered"). The working tree takes each
+/// rendering whatever its file holds, and loses each removed file while it
+/// is a rendering. Appends a handoff line per path staged, `-` for an absent
+/// blob, and returns the paths staged and the rendering's findings.
+fn stage_entrypoints(
+    root: &Path,
+    index: Option<&Path>,
+    handoff: &mut String,
+) -> Result<(Vec<String>, Vec<String>), RepositoryError> {
+    let started = Instant::now();
+    let plan = crate::publication::render_repository(crate::publication::RepositoryView::Index {
+        root,
+        index,
+    })?;
+    let mut staged = Vec::new();
+    for file in &plan.writes {
+        let rel = file.path.to_string_lossy().into_owned();
+        if file.differs() {
+            let before = index_entry(root, index, &rel)?.map(|(_, object)| object);
+            let written = stage_blob(root, index, "100644", &rel, file.text.as_bytes())?;
+            handoff.push_str(&format!(
+                "{} {written} {rel}\n",
+                before.as_deref().unwrap_or(ABSENT)
+            ));
+            staged.push(rel.clone());
+        }
+        let path = root.join(&file.path);
+        if read_regular(&path)?.as_deref() != Some(file.text.as_bytes()) {
+            atomic_write(&path, file.text.as_bytes())?;
+        }
+    }
+    for removed in &plan.removals {
+        let rel = removed.to_string_lossy().into_owned();
+        if let Some((_, before)) = index_entry(root, index, &rel)? {
+            git::run_on_index(
+                root,
+                index,
+                ["update-index", "--force-remove", "--", rel.as_str()],
+                b"",
+            )?;
+            handoff.push_str(&format!("{before} {ABSENT} {rel}\n"));
+            staged.push(rel.clone());
+        }
+        let path = root.join(removed);
+        if read_regular(&path)?.is_some_and(|bytes| crate::publication::is_rendering(&bytes)) {
+            crate::fsx::remove_file(&path)
+                .map_err(|source| RepositoryError::Remove { path, source })?;
+        }
+    }
+    let findings: Vec<String> = plan.findings.iter().map(ToString::to_string).collect();
+    tracing::info!(
+        event = "entrypoints_staged",
+        repo_root = %root.display(),
+        staged = staged.len(),
+        findings = findings.len(),
+        duration_ms = started.elapsed().as_millis() as u64,
+    );
+    Ok((staged, findings))
+}
+
+/// Writes `bytes` as a blob and stages it at `rel` with `mode` in the index
+/// `index` names, as an addition when the index has no entry there yet.
+/// Returns the blob's id.
+fn stage_blob(
+    root: &Path,
+    index: Option<&Path>,
+    mode: &str,
+    rel: &str,
+    bytes: &[u8],
+) -> Result<String, RepositoryError> {
+    let written = git::run_on_index(root, index, ["hash-object", "-w", "--stdin"], bytes)?;
+    let written = String::from_utf8_lossy(&written).trim().to_owned();
+    let cacheinfo = format!("{mode},{written},{rel}");
+    git::run_on_index(
+        root,
+        index,
+        ["update-index", "--add", "--cacheinfo", cacheinfo.as_str()],
+        b"",
+    )?;
+    Ok(written)
+}
+
+/// The bytes of the regular file at `path`; `None` when there is none.
+fn read_regular(path: &Path) -> Result<Option<Vec<u8>>, RepositoryError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => {
+            std::fs::read(path)
+                .map(Some)
+                .map_err(|source| RepositoryError::Read {
+                    path: path.to_path_buf(),
+                    source,
+                })
+        }
+        Ok(_) => Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(RepositoryError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// How the handoff names a blob that is absent: no entry before, or a
+/// removal after.
+const ABSENT: &str = "-";
+
 /// The file, in this worktree's git directory, in which pre-commit names
-/// each blob it replaced: `<replaced> <committed> <path>` per line.
+/// each blob it replaced: `<replaced|-> <committed|-> <path>` per line.
 const REPLACED_FILE: &str = "instrukt-replaced";
 
 fn replaced_path(root: &Path) -> Result<PathBuf, RepositoryError> {
@@ -452,12 +586,15 @@ fn remove_replaced(path: &Path) -> Result<(), RepositoryError> {
     }
 }
 
-/// After a commit, returns each index entry still holding exactly the blob
-/// the pre-commit run replaced to the blob it committed. A partial commit
-/// (`git commit <paths>`) is made from an index of its own, and git installs
-/// the repository's index, prepared before the hook ran, after it; this
-/// keeps that index from staging the reverse of the conversion. An entry
-/// holding any other blob is a staging choice and is left as it is.
+/// After a commit, brings each index entry the pre-commit run staged in step
+/// with what was committed. A partial commit (`git commit <paths>`) is made
+/// from an index of its own, and git installs the repository's index,
+/// prepared before the hook ran, after it; without this, that index stages
+/// the reverse of what the commit carries. Per handoff line `<before>
+/// <after> <path>`: an entry already equal to `HEAD`'s is left; one still
+/// holding `before` (absent included) while `HEAD` holds `after` is set to
+/// `HEAD`'s, an addition or a removal included; any other entry is a staging
+/// choice and is left as it is.
 fn settle_committed_index(root: &Path, index: Option<&Path>) -> Result<(), RepositoryError> {
     let path = replaced_path(root)?;
     let record = match std::fs::read_to_string(&path) {
@@ -467,26 +604,46 @@ fn settle_committed_index(root: &Path, index: Option<&Path>) -> Result<(), Repos
     };
     for line in record.lines() {
         let mut fields = line.splitn(3, ' ');
-        let (Some(replaced), Some(committed), Some(rel)) =
-            (fields.next(), fields.next(), fields.next())
+        let (Some(before), Some(after), Some(rel)) = (fields.next(), fields.next(), fields.next())
         else {
             continue;
         };
-        let Some((mode, object)) = index_entry(root, index, rel)? else {
+        let entry = index_entry(root, index, rel)?;
+        let current = entry.as_ref().map_or(ABSENT, |(_, object)| object.as_str());
+        let head = committed_blob(root, rel)?;
+        let head = head.as_deref().unwrap_or(ABSENT);
+        if current == head || current != before || head != after {
             continue;
-        };
-        let head = git::run(root, ["rev-parse", &format!("HEAD:{rel}")])?;
-        if object == replaced && head == committed {
-            let cacheinfo = format!("{mode},{committed},{rel}");
+        }
+        if head == ABSENT {
             git::run_on_index(
                 root,
                 index,
-                ["update-index", "--cacheinfo", cacheinfo.as_str()],
+                ["update-index", "--force-remove", "--", rel],
+                b"",
+            )?;
+        } else {
+            let mode = entry.as_ref().map_or("100644", |(mode, _)| mode.as_str());
+            let cacheinfo = format!("{mode},{head},{rel}");
+            git::run_on_index(
+                root,
+                index,
+                ["update-index", "--add", "--cacheinfo", cacheinfo.as_str()],
                 b"",
             )?;
         }
     }
     remove_replaced(&path)
+}
+
+/// The blob `HEAD` holds at `rel`; `None` when it holds none.
+fn committed_blob(root: &Path, rel: &str) -> Result<Option<String>, RepositoryError> {
+    let output = git::run_output(
+        root,
+        ["rev-parse", "--verify", "--quiet", &format!("HEAD:{rel}")],
+    )?;
+    let blob = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((output.status.success() && !blob.is_empty()).then_some(blob))
 }
 
 /// Whether a file at `rel` (relative to the repository root) has a committed
@@ -531,8 +688,9 @@ fn index_entry(
 }
 
 /// The detached worker a post-hook run started (`job` is what the run
-/// passed after [`HOOK_WORKER_COMMAND`]): runs `instrukt sync` in `cwd`,
-/// waits for it within its bound and completes the run's record.
+/// passed after [`HOOK_WORKER_COMMAND`]: the hook, the run and the
+/// repository's key): runs `instrukt sync` in `cwd`, waits for it within its
+/// bound and completes the run's record.
 pub fn run_hook_worker(
     home: &Home,
     cwd: &Path,
@@ -540,12 +698,13 @@ pub fn run_hook_worker(
     job: &[String],
 ) -> Result<(), RepositoryError> {
     let malformed = || RepositoryError::WorkerJob { job: job.join(" ") };
-    let (hook, run, project) = match job {
-        [hook, run] => (hook, run, None),
-        [hook, run, project] => (hook, run, Some(ProjectSlug::parse(project)?)),
-        _ => return Err(malformed()),
+    let [hook, run, key] = job else {
+        return Err(malformed());
     };
     let hook = Hook::parse(hook).ok_or_else(malformed)?;
+    if !is_repository_key(key) {
+        return Err(malformed());
+    }
     let outcome = run_sync(exe, cwd);
     let exit_code = match &outcome {
         SyncOutcome::Finished { exit_code, .. } => *exit_code,
@@ -556,27 +715,77 @@ pub fn run_hook_worker(
         hook = %hook,
         run = %run,
         exit_code = ?exit_code,
-        recorded = project.is_some(),
     );
-    if let Some(project) = project {
-        complete(home, &project, hook, run, outcome)?;
-    }
-    Ok(())
+    let records = Records {
+        dir: home.hook_runs_dir(key),
+        key: key.clone(),
+        repository: PathBuf::new(),
+    };
+    records.complete(hook, run, outcome)
 }
 
-/// The last recorded run of `hook` in `project`; `None` before the first.
+/// The last recorded run of `hook` in the repository whose git common
+/// directory is `repository`; `None` before the first.
 pub fn last_run(
     home: &Home,
-    project: &ProjectSlug,
+    repository: &Path,
     hook: Hook,
 ) -> Result<Option<HookRunRecord>, RepositoryError> {
-    let path = record_path(home, project, hook);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(RepositoryError::Read { path, source }),
+    let records = Records {
+        dir: home.hook_runs_dir(&repository_key(repository)),
+        key: repository_key(repository),
+        repository: repository.to_path_buf(),
     };
-    read_record(&path, &text).map(Some)
+    records.last(hook)
+}
+
+/// The repository the worktree rooted at `root` belongs to: its git common
+/// directory, canonical, the same for every worktree of it.
+pub(crate) fn repository_of(root: &Path) -> Result<PathBuf, RepositoryError> {
+    let dir = _git::common_dir(root)?;
+    dir.canonicalize()
+        .map_err(|source| RepositoryError::Read { path: dir, source })
+}
+
+/// The key a repository's hook records are kept under: the first 16 hex
+/// digits of the SHA-256 of its git common directory's path, read with `.`
+/// segments and a trailing `/` dropped.
+pub fn repository_key(common_dir: &Path) -> String {
+    // A path read through its components drops `.` segments and a
+    // trailing `/`.
+    let normal: PathBuf = common_dir.components().collect();
+    let digest = Sha256::digest(normal.to_string_lossy().as_bytes());
+    hex::encode(digest)[..16].to_owned()
+}
+
+fn is_repository_key(key: &str) -> bool {
+    key.len() == 16 && key.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Whether the worktree rooted at `root` is its repository's primary
+/// checkout.
+fn is_primary(root: &Path) -> Result<bool, RepositoryError> {
+    let canonical = |path: &Path| {
+        path.canonicalize().map_err(|source| RepositoryError::Read {
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    Ok(canonical(&_git::primary_worktree(root)?)? == canonical(root)?)
+}
+
+/// Removes the project-keyed hook records an earlier release kept under
+/// `state/hooks/`, all at once; their content is not carried over.
+fn retire_project_records(home: &Home) -> Result<(), RepositoryError> {
+    let dir = home.retired_hook_records_dir();
+    match crate::fsx::remove_dir_all(&dir) {
+        Ok(()) => {
+            tracing::info!(event = "hook_records_retired", dir = %dir.display());
+            Ok(())
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(RepositoryError::Remove { path: dir, source }),
+    }
 }
 
 fn start_worker(
@@ -584,14 +793,14 @@ fn start_worker(
     root: &Path,
     hook: Hook,
     run: &str,
-    project: Option<&ProjectSlug>,
+    key: &str,
 ) -> Result<(), RepositoryError> {
     let mut command = Command::new(exe);
     git::strip_repository_env(&mut command)
         .args(HOOK_WORKER_COMMAND)
         .arg(hook.name())
         .arg(run)
-        .args(project.map(ProjectSlug::as_str))
+        .arg(key)
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -755,52 +964,73 @@ fn hand_to_generation(
     }))
 }
 
-fn record_path(home: &Home, project: &ProjectSlug, hook: Hook) -> PathBuf {
-    home.hooks_state_dir(project)
-        .join(format!("{}.yaml", hook.name()))
+/// The records of one repository's hook runs.
+struct Records {
+    /// `state/hook-runs/<key>/`.
+    dir: PathBuf,
+    key: String,
+    /// Its git common directory; empty for a worker, which only completes a
+    /// record the run wrote.
+    repository: PathBuf,
 }
 
-fn lock_path(home: &Home, project: &ProjectSlug, hook: Hook) -> PathBuf {
-    home.hooks_state_dir(project)
-        .join(format!("{}.lock", hook.name()))
-}
+impl Records {
+    fn of(home: &Home, root: &Path) -> Result<Self, RepositoryError> {
+        let repository = repository_of(root)?;
+        let key = repository_key(&repository);
+        Ok(Self {
+            dir: home.hook_runs_dir(&key),
+            key,
+            repository,
+        })
+    }
 
-/// Writes `record` as the hook's last run.
-fn save(home: &Home, project: &ProjectSlug, record: &HookRunRecord) -> Result<(), RepositoryError> {
-    let _lock = LockGuard::acquire(&lock_path(home, project, record.hook), RECORD_LOCK_TIMEOUT)?;
-    write(home, project, record)
-}
+    fn record_path(&self, hook: Hook) -> PathBuf {
+        self.dir.join(format!("{}.yaml", hook.name()))
+    }
 
-/// Completes run `run`'s record with the sync outcome, unless a later run
-/// replaced it.
-fn complete(
-    home: &Home,
-    project: &ProjectSlug,
-    hook: Hook,
-    run: &str,
-    outcome: SyncOutcome,
-) -> Result<(), RepositoryError> {
-    let _lock = LockGuard::acquire(&lock_path(home, project, hook), RECORD_LOCK_TIMEOUT)?;
-    match last_run(home, project, hook)? {
-        Some(mut record) if record.run == run => {
-            record.sync = Some(outcome);
-            write(home, project, &record)
-        }
-        _ => {
-            tracing::debug!(event = "hook_run_superseded", hook = %hook, run = %run);
-            Ok(())
+    fn lock_path(&self, hook: Hook) -> PathBuf {
+        self.dir.join(format!("{}.lock", hook.name()))
+    }
+
+    /// Writes `record` as the hook's last run.
+    fn save(&self, record: &HookRunRecord) -> Result<(), RepositoryError> {
+        let _lock = LockGuard::acquire(&self.lock_path(record.hook), RECORD_LOCK_TIMEOUT)?;
+        self.write(record)
+    }
+
+    /// The hook's last run; `None` before the first.
+    fn last(&self, hook: Hook) -> Result<Option<HookRunRecord>, RepositoryError> {
+        let path = self.record_path(hook);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(RepositoryError::Read { path, source }),
+        };
+        read_record(&path, &text, &self.repository).map(Some)
+    }
+
+    /// Completes run `run`'s record with the sync outcome, unless a later
+    /// run replaced it.
+    fn complete(&self, hook: Hook, run: &str, outcome: SyncOutcome) -> Result<(), RepositoryError> {
+        let _lock = LockGuard::acquire(&self.lock_path(hook), RECORD_LOCK_TIMEOUT)?;
+        match self.last(hook)? {
+            Some(mut record) if record.run == run => {
+                record.sync = Some(outcome);
+                self.write(&record)
+            }
+            _ => {
+                tracing::debug!(event = "hook_run_superseded", hook = %hook, run = %run);
+                Ok(())
+            }
         }
     }
-}
 
-fn write(
-    home: &Home,
-    project: &ProjectSlug,
-    record: &HookRunRecord,
-) -> Result<(), RepositoryError> {
-    let text = serde_yaml_ng::to_string(record).map_err(RepositoryError::RenderRecord)?;
-    atomic_write(&record_path(home, project, record.hook), text.as_bytes())?;
-    Ok(())
+    fn write(&self, record: &HookRunRecord) -> Result<(), RepositoryError> {
+        let text = serde_yaml_ng::to_string(record).map_err(RepositoryError::RenderRecord)?;
+        atomic_write(&self.record_path(record.hook), text.as_bytes())?;
+        Ok(())
+    }
 }
 
 fn now_ms() -> u64 {
@@ -813,36 +1043,41 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{
         CommitSha, GenerationOutcome, Hook, HookRunRecord, RepositoryError, StagingOutcome,
-        SyncOutcome, hook_record_version, is_pull, pushed_to, read_record,
+        SyncOutcome, hook_record_version, is_pull, pushed_to, read_record, repository_key,
     };
 
     const SHA: &str = "1111111111111111111111111111111111111111";
     const ZERO: &str = "0000000000000000000000000000000000000000";
+    const REPOSITORY: &str = "/work/demo/.git";
+
+    fn read(path: &str, text: &str) -> Result<HookRunRecord, RepositoryError> {
+        read_record(Path::new(path), text, Path::new(REPOSITORY))
+    }
 
     #[test]
-    fn unversioned_hook_records_read_as_current_without_inventing_a_checkout() {
+    fn unversioned_hook_records_read_as_current_without_inventing_a_staging() {
         let legacy = "hook: post-checkout\nrun: old\nstarted_at_ms: 1\nsync: null\n";
-        let record = read_record(Path::new("post-checkout.yaml"), legacy).unwrap();
+        let record = read("post-checkout.yaml", legacy).unwrap();
         assert_eq!(record.schema_version, hook_record_version());
-        assert_eq!(record.checkout, None);
+        assert_eq!(record.repository, PathBuf::from(REPOSITORY));
         assert_eq!(record.staging, None);
     }
 
-    /// A version-1 record as the previous instrukt wrote it.
+    /// A version-1 record as an earlier instrukt wrote it.
     const VERSION_1: &str = "schema_version: 1\nhook: post-commit\nrun: 7-42\nstarted_at_ms: 7\nsync:\n  state: finished\n  finished_at_ms: 9\n  exit_code: 0\ngraph_generation:\n  state: started\n  sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n";
 
     #[test]
     fn a_version_1_record_reads_as_current_keeping_its_outcomes_and_inventing_no_staging() {
-        let record = read_record(Path::new("post-commit.yaml"), VERSION_1).unwrap();
+        let record = read("post-commit.yaml", VERSION_1).unwrap();
         assert_eq!(
             record,
             HookRunRecord {
                 schema_version: hook_record_version(),
-                checkout: None,
+                repository: PathBuf::from(REPOSITORY),
                 hook: Hook::PostCommit,
                 run: "7-42".into(),
                 started_at_ms: 7,
@@ -865,7 +1100,7 @@ mod tests {
 
     #[test]
     fn a_version_1_record_keeps_the_staging_outcome_it_recorded() {
-        let record = read_record(Path::new("pre-commit.yaml"), VERSION_1_STAGED).unwrap();
+        let record = read("pre-commit.yaml", VERSION_1_STAGED).unwrap();
         assert_eq!(record.schema_version, hook_record_version());
         let written: serde_yaml_ng::Value = serde_yaml_ng::from_str(VERSION_1_STAGED).unwrap();
         let written_error = written["staging"]["error"].as_str().unwrap();
@@ -875,6 +1110,70 @@ mod tests {
         }
     }
 
+    /// A version-2 post-checkout record with its checkout outcome, and a
+    /// version-2 pre-commit record with a staging outcome, as the previous
+    /// instrukt wrote them.
+    const VERSION_2_CHECKOUT: &str = "schema_version: 2\ncheckout:\n  state: rendered\nhook: post-checkout\nrun: 9-44\nstarted_at_ms: 9\nsync:\n  state: running\n";
+    const VERSION_2_STAGED: &str = "schema_version: 2\nhook: pre-commit\nrun: 10-45\nstarted_at_ms: 10\nstaging:\n  state: staged\n  files:\n  - instrukt.yaml\n";
+
+    #[test]
+    fn a_version_2_record_drops_its_checkout_and_invents_no_findings() {
+        let checkout = read("post-checkout.yaml", VERSION_2_CHECKOUT).unwrap();
+        assert_eq!(
+            checkout,
+            HookRunRecord {
+                schema_version: hook_record_version(),
+                repository: PathBuf::from(REPOSITORY),
+                hook: Hook::PostCheckout,
+                run: "9-44".into(),
+                started_at_ms: 9,
+                sync: Some(SyncOutcome::Running),
+                graph_generation: None,
+                staging: None,
+            }
+        );
+        let staged = read("pre-commit.yaml", VERSION_2_STAGED).unwrap();
+        assert_eq!(
+            staged.staging,
+            Some(StagingOutcome::Staged {
+                files: vec!["instrukt.yaml".to_owned()],
+                findings: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_version_3_record_with_findings_round_trips() {
+        let record = HookRunRecord {
+            schema_version: hook_record_version(),
+            repository: PathBuf::from(REPOSITORY),
+            hook: Hook::PreCommit,
+            run: "11-46".into(),
+            started_at_ms: 11,
+            sync: None,
+            graph_generation: None,
+            staging: Some(StagingOutcome::Unchanged {
+                findings: vec!["AGENTS.md: a finding".to_owned()],
+            }),
+        };
+        let text = serde_yaml_ng::to_string(&record).unwrap();
+        let elsewhere = read_record(
+            Path::new("pre-commit.yaml"),
+            &text,
+            Path::new("/other/.git"),
+        );
+        assert_eq!(elsewhere.unwrap(), record);
+    }
+
+    #[test]
+    fn one_common_directory_has_one_key_and_two_have_two() {
+        let key = repository_key(Path::new("/work/demo/.git"));
+        assert_eq!(key, repository_key(Path::new("/work/demo/.git/")));
+        assert_eq!(key, repository_key(Path::new("/work/demo/./.git")));
+        assert_ne!(key, repository_key(Path::new("/work/other/.git")));
+        assert_eq!(key.len(), 16);
+    }
+
     #[test]
     fn a_record_of_a_newer_shape_is_refused() {
         let newer = VERSION_1.replace(
@@ -882,7 +1181,7 @@ mod tests {
             &format!("schema_version: {}", hook_record_version() + 1),
         );
         assert!(matches!(
-            read_record(Path::new("post-commit.yaml"), &newer),
+            read("post-commit.yaml", &newer),
             Err(RepositoryError::HookRecordVersion { .. })
         ));
     }

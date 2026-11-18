@@ -1,0 +1,17 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "hooks_status(&env, &repo)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+runs recorded for the repository at [TMP]/demo/.git
+pre-commit: current
+  last run: every file was already in committed form; 1 finding(s) left files as they were
+  finding: AGENTS.md: the rendering keeps `@notes/house.md`, which an agent program would try to load; name the document by its id instead
+post-commit: current
+  last run: sync succeeded
+post-merge: current
+  last run: none
+post-rewrite: current
+  last run: none
+post-checkout: current
+  last run: sync succeeded

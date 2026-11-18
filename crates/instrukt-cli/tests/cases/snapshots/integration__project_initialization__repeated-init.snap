@@ -8,7 +8,7 @@ project index (docs/project/index.yaml): already present
 project schema (docs/project/schema.yaml): not written: sdlc is not published on this computer, so the project follows the root rules only
 master (AGENTS.master.md): already present
 editor schemas (.instrukt/schemas/): already present
-ignores of AGENTS.md and .instrukt/ (.gitignore): already present
+ignores of .instrukt/ (.gitignore): already present
 hook sections: already present
   hooks directory: [TMP]/demo/.git/hooks
   pre-commit: already current

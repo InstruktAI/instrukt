@@ -888,9 +888,18 @@ fn a_domain_read_shows_reference_links_as_ids() {
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR9
 #[test]
 fn rendered_nested_agent_instructions_show_reference_links_as_ids() {
-    let env = TestEnv::new();
+    let mut env = TestEnv::new();
+    // The hook sections call the built `instrukt` by name.
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    let path = format!("{}:{}", bin.display(), env.injected("PATH").unwrap());
+    env.set_env("PATH", &path);
     let demo = published_linked_demo(&env);
-    let agents = std::fs::read_to_string(demo.path().join("tools/AGENTS.md")).unwrap();
+    env.run(demo.path(), ["hooks", "install"]).success();
+    demo.commit("instructions");
+    env.finished_hook_run(demo.path(), instrukt_core::repository::Hook::PostCommit);
+    let agents = demo.git(["show", "HEAD:tools/AGENTS.md"]);
     insta::assert_snapshot!("linked-nested-agents", text(&env, agents.as_bytes()));
 }
 

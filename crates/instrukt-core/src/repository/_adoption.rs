@@ -37,7 +37,7 @@ const SCHEMA_DOMAIN: &str = "sdlc";
 const EMPTY_INDEX: &str = "expanded: []\nlisted: []\n";
 /// The lines adoption keeps in `.gitignore`: the generated `AGENTS.md`
 /// files and instrukt's generated folder.
-const IGNORED: [&str; 2] = [GENERATED_FILE, ".instrukt/"];
+const IGNORED: [&str; 1] = [".instrukt/"];
 
 /// A part of adoption, in the order `init` establishes them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,12 +81,10 @@ pub enum PartOutcome {
     NotWritten(NotWritten),
 }
 
-/// The hand-written root `AGENTS.md` adoption kept aside.
+/// The hand-written root `AGENTS.md` adoption kept aside; the next commit
+/// through the hook writes the rendering over the file itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KeptInstructions {
-    /// Whether git still tracks the root `AGENTS.md`.
-    pub tracked: bool,
-}
+pub struct KeptInstructions;
 
 /// What `init` did, part by part, and the claims the first sync will make.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,7 +155,12 @@ pub fn init(
     parts.push((InitPart::ProjectSchema, project_schema(home, &schema)?));
     let hand_written = !had_master
         && exists(&generated)?
-        && !publication::wrote_project_file(home, &project, Path::new(GENERATED_FILE))?;
+        && !std::fs::read(&generated)
+            .map(|bytes| publication::is_rendering(&bytes))
+            .map_err(|source| RepositoryError::Read {
+                path: generated.clone(),
+                source,
+            })?;
     parts.push((InitPart::Master, master(&project, &master_path)?));
     if hand_written {
         let bytes = std::fs::read(&generated).map_err(|source| RepositoryError::Read {
@@ -169,9 +172,7 @@ pub fn init(
         parts.push((InitPart::KeptInstructions, PartOutcome::AlreadyPresent));
     }
     let kept = if exists(&kept_path)? {
-        Some(KeptInstructions {
-            tracked: tracked(&root, GENERATED_FILE)?,
-        })
+        Some(KeptInstructions)
     } else {
         None
     };
@@ -261,11 +262,6 @@ fn project_schema(home: &Home, path: &Path) -> Result<PartOutcome, RepositoryErr
 /// project's `AGENTS.md` includes comes from `docs/project/index.yaml`.
 fn master(project: &ProjectSlug, path: &Path) -> Result<PartOutcome, RepositoryError> {
     create(path, format!("## Purpose\n\n{project}\n").as_bytes())
-}
-
-/// Whether git tracks `rel` in the working tree at `root`.
-fn tracked(root: &Path, rel: &str) -> Result<bool, RepositoryError> {
-    Ok(!crate::git::run(root, ["ls-files", "--", rel])?.is_empty())
 }
 
 fn editor_outcome(schemas_existed: bool, changes: &[EditorChange]) -> PartOutcome {

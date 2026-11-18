@@ -19,8 +19,8 @@ use common::{Repo, TestEnv};
 use instrukt_core::fsx::LockGuard;
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
-use instrukt_core::publication::PublishedRecord;
-use instrukt_core::repository::{Hook, HookRunRecord, SyncOutcome};
+use instrukt_core::publication::{GENERATED_LINE, PublishedRecord};
+use instrukt_core::repository::Hook;
 
 /// A test machine whose `PATH` holds the built `instrukt`, as an installed
 /// one would: hook sections and the docs filter call it by name.
@@ -62,32 +62,6 @@ fn write_hook(path: &Path, text: &str, mode: u32) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
-}
-
-/// The recorded run of `hook` once its sync has ended: waits for the
-/// detached worker, failing the test after a bound.
-fn finished_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
-    let path = env
-        .instrukt_home()
-        .join("state/hooks")
-        .join(project)
-        .join(format!("{}.yaml", hook.name()));
-    let mut finished = None;
-    crate::common::wait_until(
-        &format!("{hook} sync for {project}"),
-        Duration::from_secs(30),
-        || {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
-                if record.sync != Some(SyncOutcome::Running) {
-                    finished = Some(record);
-                    return true;
-                }
-            }
-            false
-        },
-    );
-    finished.unwrap()
 }
 
 /// The commit publication last recorded for `project`; `None` before the
@@ -180,7 +154,7 @@ fn installing_keeps_the_developers_own_hook_and_a_commit_starts_publication() {
 
     drop(blocked);
     wait_published(&env, "demo", &head);
-    finished_run(&env, "demo", Hook::PostCommit);
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
 }
 
 // spec: project/instrukt/spec/feature/repository/hook-sections UC-HK1
@@ -423,12 +397,12 @@ fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() 
     );
     drop(blocked);
     wait_published(&env, "demo", &merged);
-    finished_run(&env, "demo", Hook::PostMerge);
+    env.finished_hook_run(developer.path(), Hook::PostMerge);
 
     developer.write("local.md", "a local commit\n");
     developer.commit("local work");
     wait_published(&env, "demo", &developer.head());
-    finished_run(&env, "demo", Hook::PostCommit);
+    env.finished_hook_run(developer.path(), Hook::PostCommit);
     upstream.write("b.md", "second upstream change\n");
     upstream.commit("upstream change by rebase");
     upstream.git(["push", "--quiet", "origin", "main"]);
@@ -447,21 +421,11 @@ fn a_pull_by_merge_or_rebase_completes_and_starts_publication_of_the_new_main() 
     );
     drop(blocked);
     wait_published(&env, "demo", &rebased);
-    finished_run(&env, "demo", Hook::PostRewrite);
-    // The rebase's detached checkout renders instructions but never publishes
-    // unintegrated state. Its separately recorded outcome has no sync.
-    let checkout = instrukt_core::repository::last_run(
-        &Home::at_user_home(env.home().to_path_buf()),
-        &ProjectSlug::parse("demo").unwrap(),
-        Hook::PostCheckout,
-    )
-    .unwrap()
-    .unwrap();
+    env.finished_hook_run(developer.path(), Hook::PostRewrite);
+    // The rebase's detached checkout never publishes unintegrated state. Its
+    // separately recorded outcome has no sync.
+    let checkout = env.finished_hook_run(developer.path(), Hook::PostCheckout);
     assert_eq!(checkout.sync, None);
-    assert_eq!(
-        checkout.checkout,
-        Some(instrukt_core::repository::CheckoutOutcome::Rendered)
-    );
 }
 
 // spec: project/instrukt/spec/feature/repository/hook-sections UC-HK3
@@ -481,7 +445,7 @@ fn status_names_the_hook_a_hook_manager_regenerated_and_the_line_to_restore_it()
     );
     repo.write("notes.md", "a change\n");
     repo.commit("a change on main");
-    finished_run(&env, "demo", Hook::PostCommit);
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
 
     write_hook(
         &repo.path().join(".manager-hooks/post-commit"),
@@ -551,4 +515,234 @@ fn removing_leaves_every_byte_of_the_developers_hooks_as_it_was() {
     assert!(created.exists(), "a hook file instrukt created remains");
     let status = env.run(repo.path(), ["hooks", "status"]).success();
     insta::assert_snapshot!("status-after-remove", stdout(&env, &status));
+}
+
+/// `git status --porcelain`'s lines.
+fn porcelain(repo: &Repo) -> Vec<String> {
+    repo.git(["status", "--porcelain"])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `instrukt hooks status`, the test's directory shown as `[TMP]` and the
+/// head commit as `[SHA]`.
+fn hooks_status(env: &TestEnv, repo: &Repo) -> String {
+    stdout(env, &env.run(repo.path(), ["hooks", "status"]).success()).replace(&repo.head(), "[SHA]")
+}
+
+/// Commits only `paths`, whatever else is staged, through the hooks, and
+/// waits for the post-commit run's sync.
+fn commit_paths(env: &TestEnv, repo: &Repo, message: &str, paths: &[&str]) {
+    let mut args = vec!["commit", "--quiet", "-m", message, "--"];
+    args.extend_from_slice(paths);
+    repo.git(args);
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+}
+
+/// A project policy with every required section, whose rule is `rule`.
+fn policy(title: &str, rule: &str) -> String {
+    format!(
+        "---\ndescription: The {title} policy.\n---\n\n# {title} — Policy\n\n## Rules\n\n{rule}\n\n\
+         ## Rationale\n\nBecause.\n\n## Scope\n\nAll work.\n\n## Enforcement\n\nReview.\n\n\
+         ## Exceptions\n\nNone.\n"
+    )
+}
+
+// spec: project/instrukt/spec/feature/repository/hook-sections UC-HK6
+#[test]
+fn a_commit_carries_the_agent_instructions_its_content_yields() {
+    let env = machine();
+    let repo = env.git_repo("demo");
+    // The developer's own pre-commit hook leaves a mark each time it runs.
+    write_hook(
+        &hook_path(&repo, "pre-commit"),
+        "#!/bin/sh\ntouch \"$(git rev-parse --git-dir)/own-pre-commit-ran\"\n",
+        0o755,
+    );
+    let own_mark = repo.path().join(".git/own-pre-commit-ran");
+    repo.write("other.txt", "first\n");
+    repo.commit("the developer's first commit");
+    std::fs::remove_file(&own_mark).unwrap();
+    env.run(repo.path(), ["init"]).success();
+    repo.write("docs/project/policy/house.md", &policy("House", "Be kind."))
+        .write(
+            "docs/project/index.yaml",
+            "expanded:\n  - project/demo/policy/house\n",
+        );
+
+    // 1. The first commit after init carries the rendering, new in the index.
+    repo.commit("adopt instrukt");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    let first = repo.git(["show", "HEAD:AGENTS.md"]);
+    insta::assert_snapshot!("first-committed-rendering", first);
+    assert!(own_mark.exists(), "the developer's own hook ran");
+    assert_eq!(porcelain(&repo), Vec::<String>::new());
+
+    // 2. A partial commit of the master renders what is staged, not the
+    // unstaged edit beside it, and leaves the developer's staging as it was.
+    // The unstaged edit would drop the house policy from the rendering.
+    let edited_index = "expanded: []\n";
+    repo.write("other.txt", "second\n")
+        .write("docs/project/index.yaml", edited_index)
+        .write(
+            "AGENTS.master.md",
+            "## Purpose\n\nThe demo project, renamed.\n",
+        );
+    repo.git(["add", "other.txt"]);
+    commit_paths(&env, &repo, "rename", &["AGENTS.master.md"]);
+    insta::assert_snapshot!(
+        "partial-commit-rendering",
+        repo.git(["show", "HEAD:AGENTS.md"])
+    );
+    assert_eq!(
+        porcelain(&repo),
+        [" M docs/project/index.yaml", "M  other.txt"]
+    );
+    assert_eq!(repo.read("docs/project/index.yaml"), edited_index);
+    assert!(own_mark.exists());
+
+    // 2, variant: a blob the developer staged for AGENTS.md stays staged.
+    repo.write("AGENTS.md", "# My staged notes\n");
+    repo.git(["add", "AGENTS.md"]);
+    let staged_blob = repo.git(["rev-parse", ":AGENTS.md"]);
+    repo.write(
+        "AGENTS.master.md",
+        "## Purpose\n\nThe demo project, again.\n",
+    );
+    commit_paths(&env, &repo, "again", &["AGENTS.master.md"]);
+    assert_eq!(repo.git(["rev-parse", ":AGENTS.md"]), staged_blob);
+    repo.git(["reset", "--quiet", "--", "AGENTS.md"]);
+
+    // 2, variant: a layer deleted in the working tree, unstaged, still
+    // renders the commit as the project it is in the index.
+    std::fs::remove_file(repo.path().join("instrukt.yaml")).unwrap();
+    repo.write(
+        "AGENTS.master.md",
+        "## Purpose\n\nThe demo project, still.\n",
+    );
+    commit_paths(&env, &repo, "still", &["AGENTS.master.md"]);
+    insta::assert_snapshot!(
+        "rendering-from-the-index-layer",
+        repo.git(["show", "HEAD:AGENTS.md"])
+    );
+    repo.git(["checkout", "--quiet", "--", "instrukt.yaml"]);
+    env.finished_hook_run(repo.path(), Hook::PostCheckout);
+
+    // 2b. A nested master committed by path adds its rendering.
+    repo.write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n");
+    repo.git(["add", "tools/AGENTS.master.md"]);
+    commit_paths(&env, &repo, "tools", &["tools/AGENTS.master.md"]);
+    insta::assert_snapshot!(
+        "added-nested-rendering",
+        repo.git(["show", "HEAD:tools/AGENTS.md"])
+    );
+    assert_eq!(
+        porcelain(&repo),
+        [" M docs/project/index.yaml", "M  other.txt"]
+    );
+
+    // 2c. Its removal, committed by path, removes the rendering.
+    repo.git(["rm", "--quiet", "tools/AGENTS.master.md"]);
+    commit_paths(&env, &repo, "no tools", &["tools/AGENTS.master.md"]);
+    assert_eq!(
+        repo.git(["ls-tree", "-r", "--name-only", "HEAD", "--", "tools"]),
+        ""
+    );
+    assert!(!repo.path().join("tools/AGENTS.md").exists());
+    assert_eq!(
+        porcelain(&repo),
+        [" M docs/project/index.yaml", "M  other.txt"]
+    );
+    repo.git(["checkout", "--quiet", "--", "docs/project/index.yaml"]);
+    env.finished_hook_run(repo.path(), Hook::PostCheckout);
+    repo.commit("the developer's second commit");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+
+    // 3. A configured value in the master is a finding: the commit is made
+    // and the rendering stays as it was.
+    let committed = repo.git(["show", "HEAD:AGENTS.md"]);
+    let purpose = repo.read("AGENTS.master.md");
+    repo.write(
+        "AGENTS.master.md",
+        &format!("{purpose}\n<!-- @config: project -->\n"),
+    );
+    let before = repo.head();
+    repo.commit("a configured value");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    assert_ne!(repo.head(), before, "the commit is made");
+    assert_eq!(repo.git(["show", "HEAD:AGENTS.md"]), committed);
+    insta::assert_snapshot!(
+        "status-names-the-configured-value",
+        hooks_status(&env, &repo)
+    );
+    repo.write("AGENTS.master.md", &purpose);
+    repo.commit("no configured value");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+
+    // 4. A reference left for an agent program is a finding: the commit is
+    // made, the rendering stays as it was, and both status and the check
+    // name it.
+    let committed = repo.git(["show", "HEAD:AGENTS.md"]);
+    repo.write("notes/house.md", "The house notes.\n").write(
+        "AGENTS.master.md",
+        &format!("{purpose}\nRead it (@notes/house.md) first.\n"),
+    );
+    repo.commit("a reference");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    assert_eq!(repo.git(["show", "HEAD:AGENTS.md"]), committed);
+    insta::assert_snapshot!("status-names-the-reference", hooks_status(&env, &repo));
+    let check = env
+        .run(repo.path(), ["docs", "render", "--check"])
+        .failure();
+    insta::assert_snapshot!("check-names-the-reference", stdout(&env, &check));
+    repo.write("AGENTS.master.md", &purpose);
+    repo.commit("no reference");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+
+    // 5. An override beside the root master is named, and left as it is.
+    let override_text = format!("{GENERATED_LINE}\n# An old rendering\n");
+    repo.write("AGENTS.override.md", &override_text);
+    repo.git([
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "beside an override",
+    ]);
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    assert_eq!(repo.read("AGENTS.override.md"), override_text);
+    insta::assert_snapshot!("status-names-the-override", hooks_status(&env, &repo));
+    let check = env
+        .run(repo.path(), ["docs", "render", "--check"])
+        .failure();
+    insta::assert_snapshot!("check-names-the-override", stdout(&env, &check));
+    std::fs::remove_file(repo.path().join("AGENTS.override.md")).unwrap();
+
+    // The project-keyed records an earlier release kept are removed by the
+    // next run; status names the repository its runs belong to.
+    let old = env.instrukt_home().join("state/hooks/demo/pre-commit.yaml");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(
+        &old,
+        "schema_version: 2\nhook: pre-commit\nrun: old\nstarted_at_ms: 1\n",
+    )
+    .unwrap();
+    repo.write("other.txt", "third\n");
+    repo.commit("third");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    assert!(!env.instrukt_home().join("state/hooks").exists());
+    insta::assert_snapshot!("status-names-the-repository", hooks_status(&env, &repo));
+
+    // A root document that cannot be read: the commit is made, and status
+    // shows the finding.
+    let before = repo.head();
+    repo.write("instrukt.yaml", "[: no\n");
+    repo.commit("an unreadable root");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    assert_ne!(repo.head(), before, "the commit is made");
+    insta::assert_snapshot!(
+        "status-names-the-unreadable-root",
+        hooks_status(&env, &repo)
+    );
 }

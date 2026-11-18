@@ -17,7 +17,7 @@ editor schemas (.instrukt/schemas/): completed
   instrukt.yaml: modeline inserted
   docs/domain/ops/index.yaml: not written: a symbolic link
   docs/project/index.yaml: modeline inserted
-ignores of AGENTS.md and .instrukt/ (.gitignore): created
+ignores of .instrukt/ (.gitignore): created
 hook sections: created
   hooks directory: [TMP]/demo/.git/hooks
   pre-commit: written

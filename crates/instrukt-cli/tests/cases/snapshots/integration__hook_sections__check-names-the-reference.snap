@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "stdout(&env, &check)"
+---
+AGENTS.md: the rendering keeps `@notes/house.md`, which an agent program would try to load; name the document by its id instead

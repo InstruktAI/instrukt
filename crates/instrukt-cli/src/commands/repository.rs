@@ -65,7 +65,7 @@ fn part_label(part: InitPart) -> String {
         InitPart::Master => format!("master ({MASTER_FILE})"),
         InitPart::KeptInstructions => format!("kept instructions ({KEPT_INSTRUCTIONS})"),
         InitPart::EditorSchemas => format!("editor schemas ({SCHEMAS_DIR}/)"),
-        InitPart::Ignores => format!("ignores of {GENERATED_FILE} and .instrukt/ (.gitignore)"),
+        InitPart::Ignores => "ignores of .instrukt/ (.gitignore)".to_owned(),
         InitPart::HookSections => "hook sections".to_owned(),
     }
 }
@@ -109,16 +109,10 @@ pub(crate) fn editor_lines(changes: &[EditorChange]) -> Vec<String> {
         .collect()
 }
 
-fn kept_lines(kept: KeptInstructions) -> Vec<String> {
-    let mut lines = vec![format!(
-        "{GENERATED_FILE} is generated from now on: the first sync renders it from {MASTER_FILE} and {PROJECT_DOCS}/index.yaml"
-    )];
-    if kept.tracked {
-        lines.push(format!(
-            "stop tracking it in the commit that adds the master: git rm --cached {GENERATED_FILE}"
-        ));
-    }
-    lines
+fn kept_lines(_kept: KeptInstructions) -> Vec<String> {
+    vec![format!(
+        "{GENERATED_FILE} is generated from now on: the next commit through instrukt's hook writes its rendering from {MASTER_FILE} and {PROJECT_DOCS}/index.yaml over it"
+    )]
 }
 
 /// The claims report: what the repository's first sync will claim.
@@ -184,10 +178,12 @@ enum HooksCommand {
     /// outdated or absent (with the line to give a hook manager), and the
     /// last run's outcome.
     Status,
-    /// What a section calls: pre-commit stages a project layer converted to
-    /// the current schema into the commit; checkout waits for entrypoint
-    /// rendering and first publication if needed; other publication triggers
-    /// run detached. Never fails the git operation.
+    /// What a section calls: pre-commit stages the repository's generated
+    /// `AGENTS.md` files and a project layer converted to the current schema
+    /// into the commit; post-commit keeps the index in step with what was
+    /// committed; checkout in the primary checkout starts publication
+    /// detached; other publication triggers run detached. Never fails the git
+    /// operation.
     Run(RunArgs),
     /// The detached process a hook run starts.
     #[command(hide = true)]
@@ -276,11 +272,15 @@ fn start_hook_run(hook: Hook, args: &RunArgs, ctx: &Ctx) -> anyhow::Result<()> {
         exe: &exe,
     };
     // The pre-commit run reads no configuration: module wiring is built for
-    // the post-hooks that use it.
+    // the post-hooks that use it. A configuration it cannot read leaves the
+    // optional modules unwired, and the run is still recorded.
     let wiring = if hook == Hook::PreCommit {
         instrukt_core::interfaces::CoreWiring::default()
     } else {
-        core_wiring(ctx)?
+        core_wiring(ctx).unwrap_or_else(|error| {
+            tracing::warn!(event = "hook_wiring_unavailable", hook = %hook, error = %format!("{error:#}"));
+            instrukt_core::interfaces::CoreWiring::default()
+        })
     };
     repository::run_hook(&ctx.home, &ctx.cwd, &wiring, &invocation)?;
     Ok(())
@@ -289,6 +289,15 @@ fn start_hook_run(hook: Hook, args: &RunArgs, ctx: &Ctx) -> anyhow::Result<()> {
 fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
     let status = repository::hooks_status(&ctx.home, &ctx.cwd)?;
     ctx.out.line(&hooks_dir_line(&status.dir))?;
+    ctx.out.line(&format!(
+        "runs recorded for the repository at {}",
+        status.repository.display()
+    ))?;
+    if let Some(reason) = &status.blueprint_unknown {
+        ctx.out.line(&format!(
+            "pre-push: not shown; whether the blueprint module is on cannot be told: {reason}"
+        ))?;
+    }
     for hook in &status.hooks {
         let section = match &hook.section {
             SectionStatus::Current => "current".to_owned(),
@@ -308,30 +317,29 @@ fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
             ctx.out
                 .line("  the file is not executable, so git does not run it")?;
         }
-        let last_run = match (&status.project, &hook.last_run) {
-            (None, _) => "not recorded: the project layer declares no project slug".to_owned(),
-            (Some(_), None) => "none".to_owned(),
-            (Some(_), Some(record)) => last_run_text(record),
-        };
+        let last_run = hook
+            .last_run
+            .as_ref()
+            .map_or_else(|| "none".to_owned(), last_run_text);
         ctx.out.line(&format!("  last run: {last_run}"))?;
+        if let Some(
+            repository::StagingOutcome::Staged { findings, .. }
+            | repository::StagingOutcome::Unchanged { findings },
+        ) = hook
+            .last_run
+            .as_ref()
+            .and_then(|record| record.staging.as_ref())
+        {
+            for finding in findings {
+                ctx.out.line(&format!("  finding: {finding}"))?;
+            }
+        }
     }
     Ok(())
 }
 
 fn last_run_text(record: &HookRunRecord) -> String {
     let mut parts = Vec::new();
-    match &record.checkout {
-        Some(repository::CheckoutOutcome::Rendered) => {
-            parts.push("checkout entrypoints rendered".to_owned())
-        }
-        Some(repository::CheckoutOutcome::Bootstrapped) => {
-            parts.push("checkout publication bootstrapped".to_owned())
-        }
-        Some(repository::CheckoutOutcome::Failed { error }) => {
-            parts.push(format!("checkout rendering failed: {error}"))
-        }
-        None => {}
-    }
     match &record.sync {
         None => {}
         Some(SyncOutcome::Running) => parts.push("sync running".to_owned()),
@@ -356,11 +364,23 @@ fn last_run_text(record: &HookRunRecord) -> String {
     }
     match &record.staging {
         None => {}
-        Some(repository::StagingOutcome::Staged { files }) => {
+        Some(repository::StagingOutcome::Staged { files, findings }) => {
             parts.push(format!("staged in committed form: {}", files.join(", ")));
+            if !findings.is_empty() {
+                parts.push(format!(
+                    "{} finding(s) left files as they were",
+                    findings.len()
+                ));
+            }
         }
-        Some(repository::StagingOutcome::Unchanged) => {
+        Some(repository::StagingOutcome::Unchanged { findings }) => {
             parts.push("every file was already in committed form".to_owned());
+            if !findings.is_empty() {
+                parts.push(format!(
+                    "{} finding(s) left files as they were",
+                    findings.len()
+                ));
+            }
         }
         Some(repository::StagingOutcome::Failed { error }) => {
             parts.push(format!("staging failed: {error}"));

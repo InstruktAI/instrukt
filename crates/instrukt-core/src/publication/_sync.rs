@@ -10,8 +10,8 @@ use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_render::Renderer;
-use super::_source::{self, Committed, MASTER_FILE_NAME, Project};
-use super::_tree::{self, ClaimRecord, Outputs, ProjectClaimRecord};
+use super::_source::{self, Committed, Project};
+use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
 use super::_tx::{STAGING_PREFIX, Transaction, destination, own_destination, resolved, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
@@ -31,9 +31,6 @@ const DOCS_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The docs lock's file name below the home's lock directory.
 const DOCS_LOCK: &str = "docs.lock";
-
-/// The rendered file beside a master.
-const AGENTS_FILE: &str = "AGENTS.md";
 
 /// What one sync is asked to do.
 #[derive(Clone, Copy)]
@@ -281,8 +278,6 @@ struct Prepared {
     patched: GlobalIndex,
     /// Every claimed position's owner before this sync.
     owners: BTreeMap<DomainName, ProjectSlug>,
-    /// Rendered `AGENTS.md` files, relative to the primary worktree.
-    agents: Vec<(PathBuf, String)>,
     /// Global agent files, relative to the user's home directory, each with
     /// the agent program that reads it.
     global: Vec<(PathBuf, &'static str, String)>,
@@ -374,7 +369,6 @@ fn publish(
     let owned: BTreeSet<DomainName> = held.iter().cloned().collect();
     let values = Values::publish(&config, wiring.caller_identity.as_deref());
     let indexes = position_indexes(home, &committed, &held, &owners, &project.slug)?;
-    let project_index = committed_index(&committed, &Position::Project)?;
     let renderer = Renderer {
         home,
         project: &project.slug,
@@ -384,13 +378,6 @@ fn publish(
         indexes: &indexes,
         values: &values,
     };
-    let agents = project_agents(
-        home,
-        &committed,
-        &renderer,
-        project_index.as_ref(),
-        &mut notices,
-    )?;
     let GlobalPlan {
         global,
         settings,
@@ -415,7 +402,6 @@ fn publish(
         index,
         patched,
         owners,
-        agents,
         global,
         settings,
     };
@@ -485,15 +471,6 @@ fn preflight(
     commit: &CommitSha,
     prepared: &Prepared,
 ) -> Result<(), PublicationError> {
-    let previous = Outputs::load(home, &project.slug)?;
-    for rel in prepared
-        .agents
-        .iter()
-        .map(|(rel, _)| rel)
-        .chain(&previous.agents)
-    {
-        own_destination(&project.primary, rel)?;
-    }
     let user_home = home.user_home();
     for rel in prepared
         .global
@@ -532,59 +509,11 @@ fn preflight(
     targets.push(_tree::project_claim_path(home, &project.slug));
     targets.push(home.index_file());
     targets.extend(_fingerprint::record_paths(home, commit));
-    targets.push(Outputs::record_path(home, &project.slug));
     targets.push(record_path(home, &project.slug));
     for target in targets {
         own_destination(root, &relative_to(root, &target)?)?;
     }
     Ok(())
-}
-
-/// Render every committed project master and the supported project overrides
-/// with one selection pipeline, for publication or checkout-only rendering.
-pub(super) fn project_agents(
-    home: &Home,
-    committed: &Committed,
-    renderer: &Renderer<'_>,
-    project_index: Option<&PositionIndex>,
-    notices: &mut Vec<Notice>,
-) -> Result<Files<String>, PublicationError> {
-    let mut agents = Vec::new();
-    for master in committed
-        .masters()
-        .into_iter()
-        .filter(|_| !home.is_development())
-    {
-        let text = String::from_utf8_lossy(committed.file(master).unwrap_or_default()).into_owned();
-        let dir = Path::new(master).parent().unwrap_or(Path::new(""));
-        let rendered = if master == MASTER_FILE_NAME {
-            if project_index.is_none() {
-                notices.push(super::_render::project_without_index());
-            }
-            let rendered = renderer.root_agents(master, &text, project_index)?;
-            agents.extend(project_overrides(home, &rendered)?);
-            rendered
-        } else {
-            renderer.nested(master, &text)?
-        };
-        agents.push((dir.join(AGENTS_FILE), rendered));
-    }
-    Ok(agents)
-}
-
-/// Project override files of the supported installed CLIs, holding the root
-/// entrypoint's rendered text, relative to the checkout.
-fn project_overrides(home: &Home, root_agents: &str) -> Result<Files<String>, PublicationError> {
-    let mut overrides = Vec::new();
-    for target in TARGETS {
-        let Some(file) = target.project_override else {
-            continue;
-        };
-        if resolved(home.user_home(), Path::new(target.dir))?.is_dir() {
-            overrides.push((PathBuf::from(file), root_agents.to_owned()));
-        }
-    }
-    Ok(overrides)
 }
 
 /// `(path, content)` pairs of files a sync writes, relative to a root.
@@ -804,23 +733,10 @@ fn write(
         serde_yaml_ng::to_string(&prepared.patched).map_err(PublicationError::Render)?;
     tx.write(&in_home(&home.index_file())?, index_text.as_bytes())?;
 
-    // Outside the home: the project's AGENTS.md files and, from the owner
-    // of `docs/general/`, the global agent files with their settings keys.
-    // The global files are written whole and never removed; nothing records
-    // them.
-    let previous = Outputs::load(home, &project.slug)?;
-    let mut outputs = Outputs::default();
-    for (rel, text) in &prepared.agents {
-        tx.write(&own_destination(&project.primary, rel)?, text.as_bytes())?;
-        outputs.agents.push(rel.clone());
-    }
-    for old in previous
-        .agents
-        .iter()
-        .filter(|old| !outputs.agents.contains(old))
-    {
-        tx.remove_file(&own_destination(&project.primary, old)?)?;
-    }
+    // Outside the home, from the owner of `docs/general/`: the global agent
+    // files with their settings keys, written whole and never removed;
+    // nothing records them. A sync writes no file of the repository: its
+    // `AGENTS.md` files change only in a commit.
     let user_home = home.user_home();
     let mut global_files = Vec::new();
     for (rel, runtime, text) in &prepared.global {
@@ -839,8 +755,12 @@ fn write(
     for (path, bytes) in _fingerprint::records(home, &fingerprint, now)? {
         tx.write(&in_home(&path)?, &bytes)?;
     }
-    let (path, bytes) = outputs.rendered(home, &project.slug)?;
-    tx.write(&in_home(&path)?, &bytes)?;
+    // The record of the repository files an earlier release wrote is
+    // deleted unparsed, whatever it holds, and nothing it lists is touched.
+    tx.remove_file(&in_home(&_tree::earlier_outputs_record(
+        home,
+        &project.slug,
+    ))?)?;
     let record = PublishedRecord {
         project: project.slug.clone(),
         commit: commit.clone(),

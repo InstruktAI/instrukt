@@ -222,27 +222,6 @@ fn linked_schemas_are_replaced_and_a_linked_file_is_left_and_named() {
     assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
 }
 
-/// Waits, within a bound, until the detached sync of `project`'s last
-/// post-commit run has ended.
-fn wait_for_post_commit_sync(env: &TestEnv, project: &str) {
-    let record = env
-        .instrukt_home()
-        .join("state/hooks")
-        .join(project)
-        .join("post-commit.yaml");
-    common::wait_until(
-        &format!("the post-commit sync of {project}"),
-        std::time::Duration::from_secs(60),
-        || {
-            std::fs::read_to_string(&record).is_ok_and(|text| {
-                let record: instrukt_core::repository::HookRunRecord =
-                    serde_yaml_ng::from_str(&text).unwrap();
-                record.sync != Some(instrukt_core::repository::SyncOutcome::Running)
-            })
-        },
-    );
-}
-
 // spec: project/instrukt/spec/feature/publication/editor-schemas UC-ES2
 #[test]
 fn publication_brings_older_schemas_and_modelines_to_the_installed_instrukt() {
@@ -260,7 +239,7 @@ fn publication_brings_older_schemas_and_modelines_to_the_installed_instrukt() {
     repo.commit("adopt instrukt");
     // The commit's post-commit section started a detached sync; it ends
     // before anything below changes the schemas.
-    wait_for_post_commit_sync(&env, "demo");
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
     env.run(repo.path(), ["sync"]).success();
 
     // What an older instrukt left: other schema content and a modeline
