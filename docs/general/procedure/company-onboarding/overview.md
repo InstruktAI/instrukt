@@ -88,15 +88,15 @@ the services it touched, then step 10.
    and run it. Tell
    each person to sign in to a service with the account whose email address
    their messaging workspace shows for them.
-7. **Install what the company demands.** Run `instrukt install`, then
-   `instrukt install --check` and `instrukt events status`. Each names what is
-   unmet or not connected; correct what it names and run them again.
-8. **Publish the company's final knowledge.** Make sure this computer
-   publishes the procedure for the role `company-agent`: run `instrukt docs get
+7. **Install what the company demands.** Make sure this computer publishes
+   the procedure for the role `company-agent`: run `instrukt docs get
    general/procedure/company-assistance`. When it is not found, clone the docs
    repository that publishes it, adopt it with `instrukt init` and run
-   `instrukt sync` in it, then run step 7's checks again. In the home, run
-   `instrukt docs render --check`; it names a stale `AGENTS.md` or a reference the rendering
+   `instrukt sync` in it. Then run `instrukt install`, then
+   `instrukt install --check` and `instrukt events status`. Each names what is
+   unmet or not connected; correct what it names and run them again.
+8. **Publish the company's final knowledge.** In the home, run `instrukt docs
+   render --check`; it names a stale `AGENTS.md` or a reference the rendering
    refuses, which you correct and commit before going on. With the working
    tree clean, push the home's main to the company's repository and read that
    the repository's main is the home's head. The proof below runs on that
