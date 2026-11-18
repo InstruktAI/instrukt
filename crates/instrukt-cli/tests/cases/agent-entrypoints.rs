@@ -174,6 +174,129 @@ fn without_a_project_index_the_root_agents_md_holds_the_purpose_and_procedures()
     insta::assert_snapshot!("root_agents_md_without_index", repo.read("AGENTS.md"));
 }
 
+/// Every file below `dir` outside `.git`, with its bytes.
+fn files_below(dir: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_entry(|e| e.file_name() != ".git")
+        .map(Result::unwrap)
+        .filter(|e| e.file_type().is_file())
+        .map(|e| {
+            (
+                e.path().strip_prefix(dir).unwrap().to_path_buf(),
+                std::fs::read(e.path()).unwrap(),
+            )
+        })
+        .collect()
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE9
+#[test]
+fn ci_catches_instructions_a_commit_left_stale() {
+    let env = TestEnv::new();
+    let instrukt_home = env.instrukt_home();
+    assert!(!instrukt_home.exists(), "the home holds no instrukt");
+    let home_at_start = files_below(env.home());
+    let repo = env.git_repo("demo");
+    // Every `docs render` and `docs render --check` leaves the home as the
+    // test found it: no instrukt home, no log, whatever the outcome.
+    let render = |args: &[&str]| -> Assert {
+        let mut all = vec!["docs", "render"];
+        all.extend_from_slice(args);
+        let run = env.run(repo.path(), all);
+        assert_eq!(
+            files_below(env.home()),
+            home_at_start,
+            "`docs render {}` wrote in the home",
+            args.join(" ")
+        );
+        run
+    };
+
+    // An unfinished index that no rendering reads blocks nothing, with no
+    // master and with one.
+    repo.write("instrukt.yaml", &layer("demo"))
+        .write("docs/domain/unselected/index.yaml", "[: no\n");
+    let nothing = render(&[]).success();
+    insta::assert_snapshot!(stdout(&env, &nothing), @"");
+    assert!(!repo.path().join("AGENTS.md").exists());
+    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
+        .write(
+            "docs/project/policy/house.md",
+            &snippet("policy", "House", "", &["sdlc/policy/tests"]),
+        )
+        .write(
+            "docs/project/policy/style.md",
+            &snippet("policy", "Style", "", &[]),
+        )
+        .write(
+            "docs/project/procedure/release.md",
+            &snippet(
+                "procedure",
+                "Release",
+                "activation_trigger: When cutting a release.\n",
+                &[],
+            ),
+        );
+
+    // The developer renders the instruction files and commits them; a
+    // project without an index holds its purpose and procedures.
+    let rendered = render(&[]).success();
+    insta::assert_snapshot!("render_without_project_index", stdout(&env, &rendered));
+    repo.commit("instructions");
+
+    // A commit made without instrukt's hook changes the project's index.
+    repo.write(
+        "docs/project/index.yaml",
+        "expanded:\n  - project/demo/policy/house\nlisted:\n  - project/demo/policy/style\n",
+    );
+    repo.git(["add", "--all"]);
+    repo.git(["commit", "--quiet", "--no-verify", "-m", "index"]);
+    let tree_before = files_below(repo.path());
+
+    // The check fails, names the stale file and writes nothing.
+    let stale = render(&["--check"]).failure();
+    insta::assert_snapshot!("check_names_the_stale_file", stdout(&env, &stale));
+    assert_eq!(files_below(repo.path()), tree_before);
+
+    // The developer renders and commits; the check passes.
+    render(&[]).success();
+    repo.commit("rendered");
+    insta::assert_snapshot!("committed_root_agents_md", repo.read("AGENTS.md"));
+    render(&["--check"]).success();
+
+    // A root master that carries required reads is a finding the check names.
+    let purpose = "## Purpose\n\nThe demo project.\n";
+    repo.write(
+        "AGENTS.master.md",
+        &format!("{purpose}\n## Required reads\n\n- project/demo/policy/style\n"),
+    );
+    let finding = render(&["--check"]).failure();
+    insta::assert_snapshot!(
+        "check_names_the_root_master_finding",
+        stdout(&env, &finding)
+    );
+
+    // A master carrying a directive the format does not support is a
+    // finding: the file keeps what it held, and both commands fail.
+    let committed = repo.read("AGENTS.md");
+    for (name, directive) in [
+        ("exec", "<!-- @exec: echo harmless -->"),
+        ("include", "<!-- @include: notes.md -->"),
+    ] {
+        repo.write("AGENTS.master.md", &format!("{purpose}\n{directive}\n"));
+        let refused = render(&[]).failure();
+        let checked = render(&["--check"]).failure();
+        assert_eq!(stdout(&env, &checked), stdout(&env, &refused));
+        insta::assert_snapshot!(
+            format!("unsupported_directive_{name}"),
+            stdout(&env, &refused)
+        );
+        assert_eq!(repo.read("AGENTS.md"), committed);
+    }
+    assert!(!instrukt_home.exists());
+}
+
 /// A project publishing `sdlc` with a description, a triggered procedure
 /// and a snippet the general owner's index selects.
 fn engineering(env: &TestEnv) -> Repo {

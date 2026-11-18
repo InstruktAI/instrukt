@@ -7,7 +7,10 @@
 //! `docs/general/`, each `docs/domain/<x>/` and `docs/project/`. Each is claimed
 //! in the ownership record in the selected home's publication state.
 //!
-//! One operation, [`sync`]: publish the project the caller stands in from
+//! Two operations. [`render_repository`] renders a repository's committed
+//! entrypoints from one view of it and nothing from the computer, as a
+//! [`RenderPlan`] its caller applies ([`write_rendering`] for the working
+//! tree). [`sync`]: publish the project the caller stands in from
 //! the selected committed source, or do nothing when that commit is already
 //! published. What it reads (the committed tree), how it patches the
 //! index, stages and swaps the published tree, renders agent files and
@@ -27,7 +30,7 @@ mod _sync;
 mod _tree;
 mod _tx;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +45,9 @@ pub use _editor::{
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
+pub use _render::{
+    GENERATED_LINE, PlannedFile, RenderFinding, RenderFindingKind, RenderPlan, is_rendering,
+};
 pub use _sync::{
     GlobalDestination, Refusal, SyncError, SyncFinding, SyncOutcome, SyncReport, SyncRequest, sync,
 };
@@ -53,6 +59,53 @@ use crate::git::GitError;
 use crate::home::Home;
 use crate::ids::{CommitSha, ProjectSlug};
 use crate::index::IndexError;
+
+/// The view of a repository its entrypoints are rendered from.
+#[derive(Debug, Clone, Copy)]
+pub enum RepositoryView<'a> {
+    /// The working tree whose root is this directory, tracked and
+    /// untracked files alike.
+    WorkingTree(&'a Path),
+}
+
+/// Renders every entrypoint of the repository in `view` from that view
+/// alone (`project/instrukt/spec/feature/publication/agent-entrypoints`,
+/// "Committed entrypoints"): what to write, what to remove, what the
+/// rendering found and noticed. Reads nothing from the computer and writes
+/// nothing.
+pub fn render_repository(view: RepositoryView<'_>) -> Result<RenderPlan, PublicationError> {
+    let tree = match view {
+        RepositoryView::WorkingTree(root) => _source::Committed::working_tree(root)?,
+    };
+    _render::render_tree(&tree)
+}
+
+/// Applies `plan` to the working tree whose root is `root`: each rendering
+/// that differs from its file is written, and each removal made, one file
+/// at a time and each atomically. Returns the paths it changed, relative to
+/// `root`.
+pub fn write_rendering(root: &Path, plan: &RenderPlan) -> Result<Vec<PathBuf>, PublicationError> {
+    let mut changed = Vec::new();
+    for file in plan.writes.iter().filter(|file| file.differs()) {
+        let target = _tx::own_destination(root, &file.path)?;
+        crate::fsx::atomic_write(&target, file.text.as_bytes())?;
+        changed.push(file.path.clone());
+    }
+    for path in &plan.removals {
+        let target = _tx::own_destination(root, path)?;
+        match crate::fsx::remove_file(&target) {
+            Ok(()) => changed.push(path.clone()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PublicationError::Io {
+                    path: target,
+                    source,
+                });
+            }
+        }
+    }
+    Ok(changed)
+}
 
 /// A sync could not run to its end. Refusals are not errors (see
 /// [`Refusal`]); these are.
@@ -96,6 +149,17 @@ pub enum PublicationError {
     Settings { path: PathBuf, reason: String },
     #[error("cannot render {file}: {reason}")]
     Rendering { file: String, reason: String },
+    /// A document a committed rendering would hold reads a configured
+    /// value, which differs per computer.
+    #[error("{document} reads a configured value, which a committed rendering cannot hold")]
+    CommittedConfig { document: String },
+    /// A document a committed rendering would hold carries a directive the
+    /// format does not support.
+    #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    CommittedDirectives { findings: Vec<crate::docs::Finding> },
+    /// A company home's rendering, which this build does not carry yet.
+    #[error("company rendering is not available in this build")]
+    CompanyRenderingUnavailable,
     #[error("cannot access {}: {source}", path.display())]
     Io {
         path: PathBuf,

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "stdout(&env, &stale)"
+---
+AGENTS.md: differs from its rendering; `instrukt docs render` writes it

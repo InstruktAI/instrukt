@@ -1,4 +1,4 @@
-//! Docs commands: `instrukt docs validate|schema|fold|index|get`.
+//! Docs commands: `instrukt docs validate|schema|fold|index|get|render`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,6 +9,7 @@ use instrukt_core::docs::{
 };
 use instrukt_core::git;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
+use instrukt_core::publication::{self, RenderPlan, RepositoryView};
 
 use crate::context::Ctx;
 use crate::wiring::core_wiring;
@@ -61,6 +62,27 @@ enum DocsCommand {
     /// triggered procedures. Exits non-zero when an id or domain is unknown
     /// or a configured value cannot be resolved.
     Get(GetArgs),
+    /// Render the repository's `AGENTS.md` files from its working tree.
+    ///
+    /// Each `AGENTS.md` beside an `AGENTS.master.md` is rendered from what
+    /// the working tree holds and nothing else: no home, publication or
+    /// configuration is read, so a fresh clone and the binary are enough.
+    /// Writes each rendering that differs, removes each rendering whose
+    /// master is gone, and prints one line per file changed, then each
+    /// finding and each notice. A finding leaves its file as it is and
+    /// fails the run. Stages nothing.
+    ///
+    /// With `--check`, writes nothing: prints each file that differs from
+    /// its rendering or is missing, each rendering whose master is gone and
+    /// each finding, and exits non-zero when it prints any.
+    Render(RenderArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct RenderArgs {
+    /// Write nothing; report what a render would change and what it finds.
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -139,7 +161,66 @@ pub fn run(args: DocsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         DocsCommand::Fold(args) => fold(args, ctx),
         DocsCommand::Index(args) => index(args, ctx),
         DocsCommand::Get(args) => get(args, ctx),
+        DocsCommand::Render(args) => render(&args, ctx),
     }
+}
+
+/// Renders the repository's committed entrypoints from its working tree,
+/// or with `--check` reports what that would change.
+fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let root = git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
+    let plan = publication::render_repository(RepositoryView::WorkingTree(&root))?;
+    let mut failed = !plan.findings.is_empty();
+    if args.check {
+        for line in check_lines(&plan) {
+            ctx.out.line(&line)?;
+            failed = true;
+        }
+    } else {
+        let removed: Vec<&Path> = plan.removals.iter().map(PathBuf::as_path).collect();
+        for path in publication::write_rendering(&root, &plan)? {
+            let what = if removed.contains(&path.as_path()) {
+                "removed"
+            } else {
+                "written"
+            };
+            ctx.out.line(&format!("{}: {what}", path.display()))?;
+        }
+    }
+    for finding in &plan.findings {
+        ctx.out.line(&finding.to_string())?;
+    }
+    if !args.check {
+        for notice in &plan.notices {
+            ctx.out.line(&format!("notice: {notice}"))?;
+        }
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// One line per entrypoint whose file differs from its rendering or is
+/// missing, and per rendering whose master is gone.
+fn check_lines(plan: &RenderPlan) -> Vec<String> {
+    let mut lines = Vec::new();
+    for file in plan.writes.iter().filter(|file| file.differs()) {
+        let what = if file.current.is_some() {
+            "differs from its rendering; `instrukt docs render` writes it"
+        } else {
+            "missing; `instrukt docs render` writes it"
+        };
+        lines.push(format!("{}: {what}", file.path.display()));
+    }
+    for path in &plan.removals {
+        lines.push(format!(
+            "{}: its master is gone; `instrukt docs render` removes it",
+            path.display()
+        ));
+    }
+    lines
 }
 
 fn index(args: IndexArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {

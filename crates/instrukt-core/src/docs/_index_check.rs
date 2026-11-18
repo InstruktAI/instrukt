@@ -74,7 +74,10 @@ pub(super) fn domain_index_text(
             .join(Position::of_domain(domain).dir())
             .join(INDEX_FILE)
     } else {
-        corpus.home().domain_dir(domain).join(INDEX_FILE)
+        match corpus.home() {
+            Some(home) => home.domain_dir(domain).join(INDEX_FILE),
+            None => return Ok(None),
+        }
     };
     read_optional(&path)
 }

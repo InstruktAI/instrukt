@@ -490,7 +490,14 @@ pub(super) enum Stray {
 #[derive(Debug, Clone)]
 pub struct Corpus {
     project: Option<ProjectSlug>,
-    home: Home,
+    /// The computer whose publication this repository's references reach;
+    /// `None` for a corpus read with nothing from the computer, where
+    /// every published lookup answers "not published".
+    home: Option<Home>,
+    /// The readers' home directory, against which an absolute path
+    /// reference into the published tree is read; empty without a home,
+    /// where only the `~/` form names a published file.
+    user_home: PathBuf,
     snippets: Vec<Snippet>,
     by_id: HashMap<SnippetId, usize>,
     baselines: Vec<BaselineManifest>,
@@ -508,14 +515,16 @@ impl Corpus {
     pub fn load(repo_root: &Path, home: &Home) -> Result<Self, DocsError> {
         let project = crate::config::project_slug(repo_root)?;
         let sources = read_tree(repo_root)?;
-        Ok(Self::from_sources(project, home, sources))
+        Ok(Self::from_sources(project, Some(home), sources))
     }
 
     /// Builds the model from files already read — the working tree, or a
-    /// committed revision.
+    /// committed revision. Without `home`, nothing from the computer is
+    /// read: a reference into a domain this repository does not publish
+    /// does not resolve.
     pub fn from_sources(
         project: Option<ProjectSlug>,
-        home: &Home,
+        home: Option<&Home>,
         sources: impl IntoIterator<Item = SourceFile>,
     ) -> Self {
         let files: BTreeMap<String, String> = sources
@@ -525,7 +534,10 @@ impl Corpus {
             .collect();
         let mut corpus = Self {
             project,
-            home: home.clone(),
+            home: home.cloned(),
+            user_home: home
+                .map(|home| home.user_home().to_path_buf())
+                .unwrap_or_default(),
             snippets: Vec::new(),
             by_id: HashMap::new(),
             baselines: Vec::new(),
@@ -559,7 +571,7 @@ impl Corpus {
     }
 
     fn add(&mut self, path: &str, text: &str) {
-        let user_home = self.home.user_home().to_path_buf();
+        let user_home = self.user_home.clone();
         if let Some(domain) = owned_domain(path) {
             self.owned_domains.insert(domain);
         }
@@ -610,7 +622,7 @@ impl Corpus {
             return;
         };
         let class = self.snippets[parent_index].class.clone();
-        let user_home = self.home.user_home().to_path_buf();
+        let user_home = self.user_home.clone();
         let next = (!text.is_empty()).then(|| {
             Version::parse(
                 path,
@@ -674,8 +686,16 @@ impl Corpus {
         &self.strays
     }
 
-    pub(super) fn home(&self) -> &Home {
-        &self.home
+    /// The computer whose publication this corpus reads; `None` when it
+    /// reads nothing from one.
+    pub(super) fn home(&self) -> Option<&Home> {
+        self.home.as_ref()
+    }
+
+    /// The readers' home directory references are read against; empty
+    /// without a home.
+    pub(super) fn user_home(&self) -> &Path {
+        &self.user_home
     }
 
     /// Whether a reference target names an existing file: a snippet of
@@ -686,14 +706,18 @@ impl Corpus {
             RefTarget::Snippet(id) if target.is_local() => self.snippet(id).is_some(),
             RefTarget::Snippet(id) => match self.owner_of(id) {
                 Some(true) => self.snippet(id).is_some(),
-                _ => self
-                    .home
-                    .docs_dir()
-                    .join(format!("{}.md", id.as_str()))
-                    .is_file(),
+                _ => self.home.as_ref().is_some_and(|home| {
+                    home.docs_dir()
+                        .join(format!("{}.md", id.as_str()))
+                        .is_file()
+                }),
             },
             RefTarget::Domain(domain) | RefTarget::Bundle(domain) => {
-                self.owned_domains.contains(domain) || self.home.domain_dir(domain).is_dir()
+                self.owned_domains.contains(domain)
+                    || self
+                        .home
+                        .as_ref()
+                        .is_some_and(|home| home.domain_dir(domain).is_dir())
             }
             RefTarget::LocalFile(path) => self.paths.contains(path),
         }
@@ -818,7 +842,7 @@ mod tests {
     fn corpus(files: &[(&str, &str)]) -> Corpus {
         Corpus::from_sources(
             ProjectSlug::parse("demo").ok(),
-            &home(),
+            Some(&home()),
             files.iter().map(|(path, text)| SourceFile {
                 path: (*path).to_owned(),
                 text: (*text).to_owned(),

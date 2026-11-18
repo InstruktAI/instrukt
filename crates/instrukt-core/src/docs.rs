@@ -100,6 +100,7 @@ pub use _corpus::{
     BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,
     Version, View,
 };
+pub(crate) use _directives::{carries_required_reads, unsupported_directives};
 pub use _finding::{Finding, FindingCode, Notice, NoticeCode};
 pub use _fold::{FoldOutcome, fold};
 pub use _frontmatter::{Frontmatter, Parameter, ProcedureEntry, Visibility};
@@ -118,7 +119,10 @@ pub use _retrieval::{DomainRequest, GetRequest, IndexRequest, Reading, get, get_
 pub use _schema::{
     EffectiveSchema, FolderSchema, Imposer, REQUIRED_READS, SEE_ALSO, SchemaSection, schema,
 };
-pub use _selection::{InFull, Listing, Selection, closure_command, demote_headings, heading};
+pub use _selection::{
+    Entry, InFull, Listing, Named, Selection, closure_command, demote_headings,
+    domain_reference_line, heading, reference_line,
+};
 pub use _text::Directive;
 pub use _transfer::{TransferOutcome, transfer_pending};
 pub use _validate::{Validation, ValidationRequest, validate};

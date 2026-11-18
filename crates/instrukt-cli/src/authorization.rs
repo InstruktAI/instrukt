@@ -40,7 +40,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["status"] => ConfigRead,
         ["bugs", "suppressions"] => TodoRead,
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
-        ["docs", "fold"] => DocsWrite,
+        ["docs", "fold" | "render"] => DocsWrite,
         ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
         ["todo", "list" | "show" | "refresh"] => TodoRead,
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
@@ -85,6 +85,54 @@ pub fn action(path: &[&str]) -> Option<Action> {
         | ["webhooks", ..] => RunnerExecute,
         _ => return None,
     })
+}
+
+/// The command path `matches` selects, and its leaf's matches.
+fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
+    let mut path = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        path.push(name);
+        leaf = sub;
+    }
+    (path, leaf)
+}
+
+/// The commands that work on the repository the caller stands in and need
+/// nothing else of the computer: `docs render [--check]`, `hooks run` and
+/// `hooks status`. They load no project layer and skip the layer notices;
+/// whether the caller is in its project comes from what the working
+/// tree's root document is.
+pub fn repository_local(matches: &ArgMatches) -> bool {
+    matches!(
+        command_path(matches).0.as_slice(),
+        ["docs", "render"] | ["hooks", "run" | "status"]
+    )
+}
+
+/// The commands that write no log: `docs render [--check]`, so a check
+/// writes nothing anywhere and errors go to stderr alone.
+pub fn untraced(matches: &ArgMatches) -> bool {
+    command_path(matches).0 == ["docs", "render"]
+}
+
+/// Whether the caller's working tree's root document is a project layer,
+/// and which project it declares; an unreadable or absent document, or a
+/// company's, is no project.
+fn root_project(ctx: &Ctx) -> anyhow::Result<Option<instrukt_core::ids::ProjectSlug>> {
+    let root = instrukt_core::git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
+    let path = root.join(instrukt_core::config::CONFIG_FILE_NAME);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(anyhow::Error::new(error).context(path.display().to_string())),
+    };
+    Ok(
+        match instrukt_core::config::classify_root(bytes.as_deref()) {
+            instrukt_core::config::RootDocument::ProjectLayer(project) => project,
+            _ => None,
+        },
+    )
 }
 
 pub fn strict_inspection(matches: &ArgMatches) -> bool {
@@ -144,6 +192,8 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     }
     let action = if path == ["install"] && leaf.get_flag("check") {
         Some(Action::InstallationRead)
+    } else if path == ["docs", "render"] && leaf.get_flag("check") {
+        Some(Action::DocsRead)
     } else {
         action(&path)
     }
@@ -165,8 +215,15 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
-    let project = config.project()?;
+    let config = if repository_local(matches) {
+        None
+    } else {
+        Some(Configuration::load_at(&ctx.home, &ctx.cwd)?)
+    };
+    let project = match &config {
+        Some(config) => config.project()?,
+        None => root_project(ctx)?,
+    };
     let in_project = assignment.project.is_some() && assignment.project == project;
     // Clap's parsed identifiers retain their types; raw values are used only as target addresses.
     let raw = |name: &str| {
@@ -236,10 +293,11 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
                 .procedure
                 .as_ref()
                 .filter(|id| Some(id.as_str()) == raw("procedure"))
+                && let Some(config) = &config
             {
                 match instrukt_runner::standing::binding_home(
                     &ctx.home,
-                    &config,
+                    config,
                     procedure,
                     raw("reservation"),
                     raw("company")

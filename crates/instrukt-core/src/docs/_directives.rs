@@ -101,7 +101,7 @@ pub(super) fn check(
 
 /// Whether a master's body carries a `## Required reads` heading outside
 /// fenced code.
-fn carries_required_reads(body: &str) -> bool {
+pub(crate) fn carries_required_reads(body: &str) -> bool {
     _text::headings(&_text::lines(body))
         .iter()
         .any(|h| h.level == 2 && _text::normalize_title(&h.title) == "required reads")
@@ -129,6 +129,15 @@ fn rendered_in_full(index: &PositionIndex) -> Vec<&crate::ids::SnippetId> {
         ids.extend(general.agents.values().flatten());
     }
     ids
+}
+
+/// A finding for each `@exec` and `@include` directive of the source text
+/// `text` at `path` (its frontmatter, if any, aside): the rule validation
+/// applies, for a rendering that holds the text.
+pub(crate) fn unsupported_directives(path: &Path, text: &str) -> Vec<Finding> {
+    let mut out = Vec::new();
+    unsupported_in(path, _text::split_frontmatter(text).body, &mut out);
+    out
 }
 
 /// A finding for each `@exec` and `@include` directive in `body`, naming
@@ -227,7 +236,7 @@ fn current(body: &str) -> String {
 /// The masters of the repository at `repo_root`,
 /// with their text: tracked and untracked files git does not ignore in a
 /// working tree, every file of a directory that is none.
-fn compiled_sources(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError> {
+pub(super) fn compiled_sources(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError> {
     let listed: Vec<String> = match git::worktree_root(repo_root)? {
         Some(root) if same_dir(&root, repo_root)? => {
             let listing = git::run_bytes(

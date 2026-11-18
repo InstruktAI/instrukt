@@ -220,7 +220,7 @@ pub(super) fn compute(
         };
         sources.push(SourceFile { path: origin, text });
     }
-    let corpus = Corpus::from_sources(None, home, sources.iter().cloned());
+    let corpus = Corpus::from_sources(None, Some(home), sources.iter().cloned());
     let texts: std::collections::BTreeMap<&str, &str> = sources
         .iter()
         .map(|s| (s.path.as_str(), s.text.as_str()))

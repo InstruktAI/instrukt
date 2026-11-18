@@ -64,6 +64,9 @@ enum Moment {
     Read,
     /// At publication: no runtime session; a refusal fails the rendering.
     Publish,
+    /// In a committed rendering: no configured value at all, so the
+    /// rendering is the same on every computer; any directive fails it.
+    Commit,
 }
 
 /// How `@config` directives resolve: in-process through configuration's
@@ -71,7 +74,8 @@ enum Moment {
 /// subprocess, no working directory, nothing cached.
 #[derive(Debug, Clone)]
 pub struct Values<'a> {
-    configuration: &'a Configuration,
+    /// `None` for a committed rendering, which reads no configuration.
+    configuration: Option<&'a Configuration>,
     env: Env,
     moment: Moment,
 }
@@ -83,7 +87,7 @@ impl<'a> Values<'a> {
     /// [`Rendered::config_refusals`].
     pub fn read(configuration: &'a Configuration, env: &Env) -> Self {
         Self {
-            configuration,
+            configuration: Some(configuration),
             env: env.clone(),
             moment: Moment::Read,
         }
@@ -104,9 +108,20 @@ impl<'a> Values<'a> {
         }
         .without_caller();
         Self {
-            configuration,
+            configuration: Some(configuration),
             env,
             moment: Moment::Publish,
+        }
+    }
+
+    /// In a committed rendering: nothing from the computer, so no
+    /// configured value resolves and any `@config` directive fails the
+    /// rendering ([`DocsError::ConfigUnresolved`]).
+    pub fn committed() -> Values<'static> {
+        Values {
+            configuration: None,
+            env: Env::default(),
+            moment: Moment::Commit,
         }
     }
 
@@ -115,9 +130,12 @@ impl<'a> Values<'a> {
         if self.moment == Moment::Publish && is_runtime(path) {
             return Err("publication has no runtime session".to_owned());
         }
+        let Some(configuration) = self.configuration else {
+            return Err("a committed rendering holds no configured value".to_owned());
+        };
         // As `instrukt config get` prints it: a string as is, anything else,
         // structured values included, as YAML.
-        match self.configuration.get(Some(path), &self.env) {
+        match configuration.get(Some(path), &self.env) {
             Ok(serde_yaml_ng::Value::String(text)) => Ok(text),
             Ok(other) => render_yaml(&other).map_err(|err| err.to_string()),
             Err(err) => Err(err.to_string()),
@@ -133,9 +151,11 @@ pub(super) fn is_runtime(path: &str) -> bool {
 /// Everything a rendering resolves outside the text itself.
 #[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
-    /// The home whose user directory a master's `~/` path references are
-    /// read against.
-    pub home: &'a Home,
+    /// The home whose user directory a master's absolute path references
+    /// into the published tree are read against; `None` for a rendering
+    /// that reads nothing from the computer, where only the `~/` form
+    /// names a published file.
+    pub home: Option<&'a Home>,
     /// How `@config` directives resolve.
     pub values: &'a Values<'a>,
     /// The slug the text's repository declares, which a master's
@@ -245,7 +265,7 @@ fn resolve_values(
         };
         match values.resolve(&path) {
             Ok(value) => replacements.push((span, fenced(&value))),
-            Err(reason) if values.moment == Moment::Publish => {
+            Err(reason) if values.moment != Moment::Read => {
                 return Err(DocsError::ConfigUnresolved { path, reason });
             }
             Err(reason) => {
@@ -280,7 +300,8 @@ fn fenced(value: &str) -> String {
 /// The entries of `body`'s `## Required reads` section.
 fn section_reads(body: &str, cx: &RenderContext<'_>) -> Vec<Reference> {
     let lines = _text::lines(body);
-    super::_corpus::section_reads(&lines, cx.project, cx.home.user_home())
+    let user_home = cx.home.map_or(Path::new(""), Home::user_home);
+    super::_corpus::section_reads(&lines, cx.project, user_home)
 }
 
 /// `body` without its `## Required reads` section, heading included.

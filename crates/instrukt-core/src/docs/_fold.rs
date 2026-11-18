@@ -55,7 +55,7 @@ pub fn fold(repo_root: &Path, slug: &TodoSlug) -> Result<FoldOutcome, DocsError>
     let sources = super::_corpus::read_tree(&root)?;
     let corpus = super::_corpus::Corpus::from_sources(
         crate::config::project_slug(&root)?,
-        &crate::home::Home::at_user_home(root.clone()),
+        Some(&crate::home::Home::at_user_home(root.clone())),
         sources.clone(),
     );
     let inventory = crate::specs::Inventory::read(&corpus);

@@ -295,7 +295,7 @@ fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version(
 
 // spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
 #[test]
-fn publishing_a_project_whose_master_needs_an_unpublished_domain_names_it() {
+fn validating_a_project_whose_master_needs_an_unpublished_domain_names_it() {
     let env = machine();
     let app = env.git_repo("app");
     app.write("instrukt.yaml", &layer("app", "")).write(
@@ -304,8 +304,8 @@ fn publishing_a_project_whose_master_needs_an_unpublished_domain_names_it() {
     );
     app.commit("app");
 
-    let refused = env.run(app.path(), ["sync"]).failure();
-    insta::assert_snapshot!(stderr(&env, &refused), @"instrukt: domain `sdlc` is not published on this computer, but tools/AGENTS.master.md needs it; adopt a docs repository that publishes it");
+    let refused = env.run(app.path(), ["docs", "validate"]).failure();
+    insta::assert_snapshot!(stdout(&env, &refused), @"tools/AGENTS.master.md: reference-domain-unpublished: sdlc: domain `sdlc` is not published on this computer; adopt a docs repository that publishes it");
 }
 
 /// A project with `todos` on whose `workflow.domain` names `flows`, which

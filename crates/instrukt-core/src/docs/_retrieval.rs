@@ -204,7 +204,7 @@ fn target_index(
         let (project, root) = (&target.project, &target.root);
         let corpus = Corpus::from_sources(
             Some(project.clone()),
-            home,
+            Some(home),
             target.sources(super::_corpus::read_tree(root)?)?,
         );
         index.snippets.retain(|e| &e.source_project != project);
@@ -733,7 +733,11 @@ pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
     out.push(String::new());
     let section = Selection {
         position: domain.as_str().to_owned(),
-        in_full,
+        in_full: in_full
+            .into_iter()
+            .map(super::_selection::Entry::InFull)
+            .collect(),
+        references: Vec::new(),
         listed,
         triggered,
     }
@@ -943,7 +947,7 @@ impl<'i> Reader<'i> {
             Some(target) => target.sources(sources)?,
             None => sources,
         };
-        let corpus = Corpus::from_sources(project, self.home, sources);
+        let corpus = Corpus::from_sources(project, Some(self.home), sources);
         let snippet =
             corpus
                 .snippet(&entry.id)
@@ -1156,7 +1160,7 @@ impl<'i> Reader<'i> {
 
     fn context<'c>(&'c self, loaded: &'c Loaded<'_>) -> RenderContext<'c> {
         RenderContext {
-            home: self.home,
+            home: Some(self.home),
             values: &self.values,
             project: loaded.project(),
         }
@@ -1243,7 +1247,7 @@ impl<'i> Reader<'i> {
             }
         })?;
         let cx = RenderContext {
-            home: self.home,
+            home: Some(self.home),
             values: &self.values,
             project: None,
         };
