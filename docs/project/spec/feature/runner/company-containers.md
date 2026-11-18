@@ -1,5 +1,5 @@
 ---
-description: Company containers — on a Linux host each company runs in one long-running container of its own, with T3 and the agent tools inside; its agents reach no other company and nothing of the host, its state lives in its folder on the host and survives the container, it is signed in once, its tools take each release that passed instrukt's nightly check automatically and without a new image, shared defaults reach every company, no credential that opens its environment is kept in a log, and every company is backed up each night.
+description: Company containers — on a Linux host each company runs in one long-running container of its own, with T3 and the agent tools inside; its agents reach no other company and nothing of the host, its state lives in its folder on the host and survives the container, it is signed in once, its tools take each release that passed instrukt's nightly check automatically and without a new image, shared defaults reach every company, no credential that opens its environment is kept in a log, and its irreplaceable state can be exported while it runs and imported on a prepared host.
 ---
 
 # Company Containers — Spec
@@ -119,37 +119,22 @@ diagnostic output, whoever can read it; starting or restarting a company's
 container writes none there (`sdlc/policy/security-awareness`: secrets never
 enter logs).
 
-### Backup and restore
+### Export and import
 
-- Every night the platform backs up each company from the host, with the
-  operator's permissions; a company's container takes no part in it. It goes
-  to S3-compatible storage the operator sets through configuration. The
-  newest nights, as many as the backup's settings name, are kept and older
-  ones are removed (`sdlc/policy/state-storage`: state whose loss forces more
-  than cheap local recomputation is persisted and survives restarts).
-- What is backed up is what exists nowhere else: the company's settings and
-  secrets, its conversations, its agent's sessions with their history, and
-  the logins kept for it. What a repository governs, the company's own
-  documents and every checkout under its projects, and what can be installed
-  again, the agent tools, is not backed up.
-- Work in a checkout that is not committed and pushed is in no backup. Each
-  night's run names every such checkout to the operator.
-- A backup holds every company's secrets and logins. It is written only to the
-  storage the operator configures, read only with the operator's credentials
-  for that storage, and never left where a company's container can read it
-  (`sdlc/policy/security-awareness`: scope secret access to the component that
-  needs it).
-- Restoring one company brings back its settings, secrets, conversations,
-  sessions and logins from a chosen night, on a host where the operator's
-  prerequisites for companies are in place, and touches no other company. Its
-  documents and projects come from their repositories and its tools are
-  installed again. A company restored this way starts and works: what is
-  restored for it is consistent as of that night. Nothing here moves a
-  company by itself or keeps a second copy of it running.
-- A night whose backup fails removes nothing already kept and is reported as an
-  anomaly through `project/instrukt/spec/feature/runner/anomaly-notification`,
-  which reaches the operator as far as that contract's notification is
-  configured.
+- instrukt exports a company's irreplaceable state as one consistent copy
+  while the company keeps running: its settings and secrets, its
+  conversations, its agent's sessions with their history and the logins kept
+  for it. A database in it is copied consistently even while it is being
+  written to. What a repository governs, the company's own documents and every
+  checkout under its projects, and what can be installed again, the agent
+  tools, are not in the copy.
+- Work in a checkout that is not committed and pushed is in no copy; the
+  export names every such checkout in its output.
+- instrukt imports such a copy on a host where the operator's prerequisites
+  for companies are in place. The company then starts and works, with its
+  conversations, sessions and logins as they were when the copy was taken, and
+  no other company is touched. Its documents and projects come from their
+  repositories and its tools are installed again.
 
 ## Use cases
 
@@ -214,30 +199,6 @@ Then every company's container runs with the changed default
 And no company had to be changed on its own
 ```
 
-### UC-CC8: Back up every company each night
-
-```gherkin
-Given an operator runs several companies on a host and has configured their backup storage
-When a night passes
-Then each company's settings, secrets, conversations, sessions and logins of that night are in the storage
-And no checkout of a repository and no installed tool is in it
-And the operator is told of every checkout that holds work not committed and pushed
-And only the configured number of newest nights is kept
-And no company's container can read any of it
-But a night whose backup fails removes nothing already kept and is reported as an anomaly where anomaly notification is configured
-```
-
-### UC-CC9: Restore a company whose folder was lost
-
-```gherkin
-Given a company's folder on the host was lost
-When the operator restores that company from a chosen night on a prepared host
-Then its settings, secrets, conversations, sessions and logins are as they were that night
-And its documents and projects come back from their repositories and its tools are installed again
-And its agent answers its members again
-And no other company on the host changed
-```
-
 ### UC-CC11: Start a company's environment without leaving a credential in its log
 
 ```gherkin
@@ -246,13 +207,35 @@ When the company's container starts or restarts
 Then no credential that opens the company's environment is kept in any log or diagnostic output
 ```
 
+### UC-CC12: Export a company while it runs
+
+```gherkin
+Given an operator runs a company whose members are talking to its agent
+When the operator exports that company
+Then the copy holds its settings, secrets, conversations, sessions and logins, consistent as of one moment
+And no checkout of a repository and no installed tool is in it
+And the export names every checkout that holds work not committed and pushed
+And the company's agent kept answering its members throughout
+```
+
+### UC-CC13: Import a company on a prepared host
+
+```gherkin
+Given an operator has an exported copy of a company and a host prepared for companies that runs other companies
+When the operator imports the copy there
+Then the company starts with its settings, secrets, conversations, sessions and logins as they were when the copy was taken
+And its documents and projects come back from their repositories and its tools are installed again
+And its agent answers its members
+And no other company on the host changed
+```
+
 ## Known caveats
 
 - Inside its container a company's team agent is not confined further: it
   can read, change or erase anything of its own company's that the container
-  holds, the company's secrets file and its login included. A restore brings
-  back what the last night's backup holds and what the repositories hold;
-  work since that night, and work in a checkout that was not committed and
+  holds, the company's secrets file and its login included. Importing its
+  last export brings back what that copy holds and what the repositories
+  hold; anything newer, and work in a checkout that was not committed and
   pushed, is lost.
 - A connector open to people outside the company needs an agent with no
   tools. A company's container does not provide one.
