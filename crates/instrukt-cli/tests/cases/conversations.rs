@@ -117,7 +117,7 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let assignment = resolved().unwrap();
     assert_eq!(
         assignment.role.as_str(),
-        instrukt_core::config::CONVERSATION_ROLE
+        instrukt_core::config::COMPANY_AGENT_ROLE
     );
     assert_eq!(assignment.procedure, None);
     assert_eq!(assignment.company, Some(c.company()));

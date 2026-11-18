@@ -83,7 +83,7 @@ impl Profile {
 }
 
 /// The role the runner gives a conversation session.
-pub const CONVERSATION_ROLE: &str = "conversation";
+pub const COMPANY_AGENT_ROLE: &str = "company-agent";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -445,10 +445,10 @@ impl Agents {
         self.roles
             .keys()
             .map(String::as_str)
-            // `conversation` is the runner-supplied role of conversation
-            // sessions, which have no procedure.
+            // `company-agent` is the role the runner gives conversation
+            // sessions, whatever procedure is published for it.
             .filter(|r| {
-                !matches!(*r, "default" | "event-handler" | CONVERSATION_ROLE)
+                !matches!(*r, "default" | "event-handler" | COMPANY_AGENT_ROLE)
                     && !installed.contains(r)
             })
             .collect()

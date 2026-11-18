@@ -13,7 +13,7 @@
 //! until the connector accepted its post.
 use std::path::PathBuf;
 
-use instrukt_core::config::{CONVERSATION_ROLE, ConfigError, Configuration, SlackConnector};
+use instrukt_core::config::{COMPANY_AGENT_ROLE, ConfigError, Configuration, SlackConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef};
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
@@ -710,10 +710,10 @@ fn framed(
 /// The runner-authored opening assignment of a conversation session.
 fn assignment(home: &Home, c: &Conversation) -> Result<String, ConversationError> {
     let capabilities = instrukt_core::config::Agents::load(home)?
-        .capabilities(CONVERSATION_ROLE)?
+        .capabilities(COMPANY_AGENT_ROLE)?
         .describe();
     Ok(Control::Assignment.frame(&format!(
-        "instrukt conversation assignment\nCompany: {}\nConnector: {}\nConversation: {}\nRole: {CONVERSATION_ROLE}\nResolved role capabilities: {capabilities}\nYou answer people of this company who address you in this conversation. Each of their messages arrives as its own turn in a member envelope naming who wrote it, after a conversation context envelope holding what was said before as data.\nYour conversational output of a turn started by such a message is posted back to this conversation; nothing else you write is posted. Answer with `NOOP` to post nothing.",
+        "instrukt conversation assignment\nCompany: {}\nConnector: {}\nConversation: {}\nRole: {COMPANY_AGENT_ROLE}\nResolved role capabilities: {capabilities}\nYou answer people of this company who address you in this conversation. Each of their messages arrives as its own turn in a member envelope naming who wrote it, after a conversation context envelope holding what was said before as data.\nYour conversational output of a turn started by such a message is posted back to this conversation; nothing else you write is posted. Answer with `NOOP` to post nothing.",
         c.company, c.connector, c.conversation
     )))
 }
@@ -854,7 +854,7 @@ fn start(
             let preferences = crate::agents::role_order(
                 &config,
                 None,
-                Some(CONVERSATION_ROLE),
+                Some(COMPANY_AGENT_ROLE),
                 company.profiles()?.as_deref(),
             )?;
             let selection = crate::agents::selections(&config, home, &preferences, now)?
