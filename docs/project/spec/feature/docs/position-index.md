@@ -34,9 +34,10 @@ states what an index may say and what validation reports about it.
   description and the command that reads it.
 - **`description`** — one line saying what the domain is about; the line that
   stands for the domain in every agent's global file.
-- **`agents`** — a map from a supported agent CLI (`claude`, `codex`,
-  `gemini`, `deepseek`) to snippet ids. Those snippets are rendered into that
-  one CLI's global file only, after everything else.
+- **`agents`** — a map from an agent runtime instrukt deploys global files to
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`) to snippet
+  ids. Those snippets are rendered into that one runtime's global file only,
+  after everything else.
 
 `general`'s `expanded` and `listed` may name ids from any domain: always-on
 content from several domains is chosen in this one place. A domain's index and
@@ -59,7 +60,7 @@ names the `index.yaml`, the key and the offending value.
 | a domain's `index.yaml` has no `description` (the line the global agent files show for the domain) |
 | an id names no snippet, or names a pending snippet |
 | a domain's or the project's index names an id of another position |
-| an `agents` key is not a supported agent CLI |
+| an `agents` key names no agent runtime instrukt deploys to; the finding names the ones it does |
 | a `listed` id is already in the closure of `expanded`; the finding names the `expanded` id whose closure carries it |
 | an `index.yaml` sits anywhere but a position's root |
 

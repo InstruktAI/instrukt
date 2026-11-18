@@ -28,7 +28,9 @@ meaning belongs to the context or module that reads it.
 
 **Company home**
 : The folder `~/.instrukt/companies/<name>/` whose settings document and
-secrets file make a company exist on the machine. Its document is read on its
+secrets file make a company exist on the machine. It is the checkout of the
+company's repository, which holds the company's knowledge; its settings
+document, secrets file and local state are kept out of that repository. Its document is read on its
 own and is no layer.
 
 **Member**
@@ -139,6 +141,8 @@ JSON.
   - References in its settings resolve only from its own secrets file.
   - An email address is listed by at most one of its members.
   - It combines with no layer and names no project.
+  - Its settings document, secrets file, `projects/` and local state are
+    ignored by the home's repository; validation reports one that is tracked or not ignored.
 - **Identifier:** the company name, unique among the machine's company homes.
 - **Lifecycle:** created by `instrukt config init --company <name>`; changed by
   `patch` and the secrets commands; migrated like a layer document; never

@@ -203,7 +203,6 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
 
 const HAND_WRITTEN: &str = "# Instructions\n\nWritten by hand.\n";
 
-// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN5
 #[test]
 fn a_hand_written_agents_file_is_kept_aside_and_left_until_the_first_publication_renders_it() {
     let env = machine();
@@ -325,7 +324,6 @@ fn files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
         .collect()
 }
 
-// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN3
 #[test]
 fn adopting_a_docs_repository_reports_its_claims_before_anything_is_published() {
     let env = machine();

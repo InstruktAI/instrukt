@@ -77,9 +77,11 @@ path is the same for every connector, whichever channel it speaks to
   `instrukt docs get <procedure-id> --closure` before the message is handled.
   The procedure is read from current publication when the session starts; a
   woken session keeps the assignment it started with.
-- The conversation's agent works only through the company's declared MCP
-  servers (`project/instrukt/spec/feature/runner/mcp-access`) and declines
-  anything else. Its procedure instructs it so.
+- The conversation's agent works through the company's declared MCP servers
+  (`project/instrukt/spec/feature/runner/mcp-access`) and on the company's
+  own documents in its home, which it may change and commit
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`), and
+  declines anything else. Its procedure instructs it so.
 - While no published procedure declares the role `company-agent`, a
   conversation's first message waits: no session is started, nothing is
   delivered or replied, and the cause shows in `instrukt events status`.
@@ -202,8 +204,9 @@ And no subscribed procedure is activated by that message
   answer to an addressed message. The direct messages instrukt sends about a
   person's sign-ins are instrukt's own, not the agent's.
 - A post whose acceptance was lost can be sent twice.
-- A conversation session loads its procedure, and instrukt renders the
-  company's knowledge, when the session starts. A later change to either
+- A conversation session loads its procedure, and its agent program reads
+  the company's knowledge from the home's committed `AGENTS.md`, when the
+  session starts. A later change to either
   reaches a session already running only as far as its agent program reads
   its instructions again.
 - That the agent acts on the addressed message for its writer, reads the

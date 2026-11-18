@@ -1,5 +1,5 @@
 ---
-description: instrukt's git hook sections — one marked section per hook file beside whatever else is there, never `exec`ing a command; checkout renders before return and other post-hooks start publication detached, pushes and pulls advancing main are handed to blueprint, `core.hooksPath` is honoured, and status reports a section a hook manager dropped.
+description: instrukt's git hook sections — one marked section per hook file beside whatever else is there, never `exec`ing a command; pre-commit stages the repository's generated content into the commit, post-hooks start publication detached, pushes and pulls advancing main are handed to blueprint, `core.hooksPath` is honoured, and status reports a section a hook manager dropped.
 ---
 # Hook Sections — Spec
 
@@ -7,8 +7,10 @@ description: instrukt's git hook sections — one marked section per hook file b
 
 Git hooks are shared: a project, its hook manager and other tools all put
 behaviour there. instrukt owns one marked section per hook file it uses and
-touches nothing else. Its post-hook sections keep publication current after
-every change to main — commit, merge or rebase — by starting a sync
+touches nothing else. Its `pre-commit` section puts what instrukt generates
+from a repository's content into the commit being made, so committed files
+change only in a commit. Its post-hook sections keep publication current
+after every change to main — commit, merge or rebase — by starting a sync
 and returning at once. When blueprint is enabled, its hook sections hand
 pushes to main and pulls advancing main to blueprint
 (`project/instrukt/spec/feature/blueprint/graph-generation`). instrukt adds no lint or test hooks;
@@ -20,29 +22,31 @@ projects keep their own tooling.
 
 | Hook | When instrukt installs it | What the hook run does |
 | --- | --- | --- |
-| `pre-commit` | always | converts an older project layer to the current schema and inserts or corrects the editor modelines of the files being committed, staging both into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/publication/editor-schemas`) |
+| `pre-commit` | always | converts an older project layer to the current schema, inserts or corrects the editor modelines of the files being committed, and renders the repository's `AGENTS.md` files from the content being committed, staging all of them into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/publication/editor-schemas`, `project/instrukt/spec/feature/publication/agent-entrypoints`) |
 | `post-commit` | always | starts `instrukt sync` detached; after a partial commit, returns an index entry the pre-commit conversion left in its unconverted form to the committed version, leaving every other staging choice as it is |
 | `post-merge` | always | starts `instrukt sync` detached; when a pull or runner fast-forward advances main to its fetched upstream head and blueprint is enabled, hands the revision to blueprint |
 | `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
-| `post-checkout` | always | renders project entrypoints in this checkout from published state; an unpublished primary checkout bootstraps full publication from main once; a previously published primary checkout on main also retains its detached sync trigger |
+| `post-checkout` | always | in the primary checkout, starts `instrukt sync` detached; in a linked worktree, does nothing |
 | `pre-push` | the blueprint module is on | hands a push to main to the blueprint, which starts generation detached (`project/instrukt/spec/domain/blueprint`) |
 
 - Graph-generation policy belongs to
   `project/instrukt/spec/feature/blueprint/graph-generation`; each
   handoff starts generation detached. Local commits and unrelated merges
   are not graph-generation triggers.
-- Checkout rendering is the synchronous entrypoint-only operation in
-  `project/instrukt/spec/feature/publication/agent-entrypoints`, including its
-  primary-checkout bootstrap and missing-publication behavior. It runs on every
-  branch and in linked worktrees; other post-hooks retain their main guard.
+- The `pre-commit` section never refuses a commit. A rendering with a
+  finding leaves that file as it is in the commit, and the finding is the
+  section's run outcome, which `instrukt hooks status` reports; the
+  repository's CI check reports it too
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+- A checkout receives its `AGENTS.md` files from git, committed at its
+  revision; no section renders them after a checkout.
 - A started sync runs under the publication lock and does nothing when main
   equals the published commit
   (`project/instrukt/spec/feature/publication/project-publication`), so
-  repeated publication triggers do not republish an unchanged revision.
-  Checkout rendering follows its separate synchronous contract above.
-- Publication and graph generation started by other hooks stay detached.
-  Checkout rendering completes before return; no hook ever fails the
-  git operation: a missing `instrukt` binary, a refused sync or a failed start
+  repeated publication triggers do not republish an unchanged revision, and
+  a primary checkout whose project was never published publishes it once.
+- Publication and graph generation stay detached. No hook ever fails the git
+  operation: a missing `instrukt` binary, a refused sync or a failed start
   leaves git's result unchanged.
 
 ### The section
@@ -131,14 +135,17 @@ Then instrukt's sections are absent
 And the developer's own hook content and hook files remain unchanged
 ```
 
-### UC-HK5: A developer keeps their checkout hooks working through the rendering handoff
+### UC-HK5: A developer keeps their checkout hooks working through the rendering handoff (retired)
+
+### UC-HK6: A developer's commit carries the agent instructions its content yields
 
 ```gherkin
-Given a developer has installed instrukt post-checkout beside their own hook content
-When the developer checks out a branch or adds a linked worktree
-Then the hook waits for the rendering handoff to finish before returning to git
-And the developer's own hook still runs
-And a rendering failure leaves git's result unchanged and is reported
+Given a developer's repository with instrukt's hooks installed beside their own pre-commit hook
+When the developer commits a change to the project's documentation selection
+Then the commit carries the re-rendered agent instruction file
+And the developer's own pre-commit hook still runs
+But when the rendering reports a finding
+Then the commit is made without the changed instruction file and the finding is reported
 ```
 
 ## Known caveats

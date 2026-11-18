@@ -50,7 +50,9 @@ the machine, the global layer and company home documents among them, writing com
 installation convergence and ticks persist the conversion before proceeding; a skip
 due to unchanged publication is considered only after migration.
 
-A project layer is committed to its repository, so it changes only in a commit.
+A project layer is committed to its repository, so it changes only in a commit,
+as do the editor modelines and the repository's generated `AGENTS.md` files
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
 instrukt's pre-commit hook section converts an older project layer and stages it
 into the commit being made, and the `instrukt config` writing verbs a developer
 runs convert it in their checkout. Every other path, checkout rendering, the hooks

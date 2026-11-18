@@ -1,5 +1,5 @@
 ---
-description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner, patches the global index by owner, renders its `AGENTS.md` files, and, as owner of `docs/general/`, renders the global agent files and their settings keys from what is published on the computer.
+description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner and patches the global index by owner; a repository's `AGENTS.md` files are rendered from its committed content at each commit; and the owner of `docs/general/` renders a global agent file, with its settings key, for each agent runtime the selected runtime reports as configured.
 ---
 # Publication — Spec
 
@@ -10,12 +10,14 @@ agents on this computer read. `instrukt sync` publishes the project the caller
 stands in, and only that project: from the committed state of its canonical
 main it publishes the project's general, domain and project positions
 into the home, claims each of them for the project, patches the
-global index so that exactly the project's own entries change, renders the
-project's `AGENTS.md` files, and records the commit it published beside the
-project's checkout path. The project that owns `docs/general/` also renders
-the global agent files of the supported agent CLIs from what is published on
-the computer, and sets the one settings key each needs to load project
-instruction files. Every sync that publishes recomputes the eval fingerprint
+global index so that exactly the project's own entries change, and records
+the commit it published beside the project's checkout path. The project that
+owns `docs/general/` also renders a global agent file for each agent runtime
+the selected runtime reports as configured, from what is published on the
+computer, and sets the one settings key each needs to load project
+instruction files. A repository's `AGENTS.md` files are committed: they are
+rendered from the repository's committed content alone at each commit, by
+the `pre-commit` hook section and by `instrukt docs render`, never by a sync. Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
 Publication never reads another project's repository, keeps no registry of
@@ -96,25 +98,39 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 **Rendering**
-:  Producing one self-contained instruction file from published or project
-   documentation: selected snippets in full with their closure, listing
-   lines, triggered-procedure lines, `@config` directives resolved, planned
-   material dropped, no reference left for an agent CLI to resolve.
+:  Producing one instruction file from documentation: selected snippets in
+   full with their closure, listing lines, triggered-procedure lines, planned
+   material dropped, no import left for an agent program to resolve. A
+   global agent file inlines what is published on the computer and resolves
+   `@config`; a committed entrypoint inlines only what its repository holds,
+   names other repositories' doctrine by the command that reads it, and
+   admits no configured value.
+
+**Committed entrypoint**
+:  An `AGENTS.md` beside an `AGENTS.master.md` in a repository or a company
+   home: committed with the repository, opening with the generated line that
+   marks it as a rendering, and a function of the repository's committed
+   content and the rendering instrukt release only.
+
+**Configured agent runtime**
+:  An agent runtime the runtime `runner.runtime` selects reports as configured
+   and enabled — for T3, an enabled provider instance — with the home that
+   instance runs with.
 
 **Global agent file**
-:  The user-scope instruction file of a supported agent CLI, rendered from
-   what is published on the computer: `general`'s section, one group per
-   other domain, then that CLI's `agents` snippets.
+:  The user-scope instruction file of a configured agent runtime, in the home
+   it runs with, rendered from what is published on the computer: `general`'s
+   section, one group per other domain, then that runtime's `agents`
+   snippets.
 
 **Entrypoint-loading key**
-:  The one key in an agent CLI's user settings that makes it load `AGENTS.md`
-   files.
+:  The one key in an agent runtime's user settings that makes it load
+   `AGENTS.md` files.
 
 **Written record**
 :  What publication state records about each user-scope instruction file it
-   wrote, and about each company home's rendered `AGENTS.md`: its path and
-   the content it left there. A file is one instrukt wrote only while its
-   content is the content recorded.
+   wrote: its path and the content it left there. A file is one instrukt
+   wrote only while its content is the content recorded.
 
 **Eval fingerprint**
 :  The digest of every published snippet that declares `eval: true`, recorded
@@ -131,10 +147,12 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   published-commit and checkout-path record and the no-op; the ownership
   record and its refusals (a second claimant, a reserved domain name);
   index patching by owner with its duplicate-id refusal; retraction;
-  rendering of the project's `AGENTS.md` files, of the global agent files
-  and of each company home's `AGENTS.md`;
+  rendering of the committed entrypoints — a project's `AGENTS.md` files and
+  each company home's — and of the global agent files; the choice of global
+  file targets from the configured agent runtimes;
   the written record and the refusal to overwrite or remove a user-scope
-  instruction file or a company home's `AGENTS.md` instrukt did not write; merging the entrypoint-loading keys; the editor
+  instruction file, or a committed entrypoint, instrukt did not write;
+  merging the entrypoint-loading keys; the editor
   schemas in a repository's `.instrukt/schemas/` and their modelines, which
   sync and `instrukt init` write; the eval
   fingerprint; owner-scoped publication and retraction of domain workflow
@@ -160,8 +178,9 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   index `~/.instrukt/state/index.yaml`; the ownership record, published
   commits, checkout paths and written records under
   `~/.instrukt/state/publication/`; the eval fingerprint per published commit
-  under `~/.instrukt/state/eval-fingerprint/`; the rendered `AGENTS.md` files
-  in a project; the global agent files; `.instrukt/schemas/` and the modeline
+  under `~/.instrukt/state/eval-fingerprint/`; the committed `AGENTS.md`
+  files of a repository and `instrukt docs render [--check]`; the global
+  agent files; `.instrukt/schemas/` and the modeline
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
   (`project/instrukt/spec/feature/publication/instrukt-status`).
@@ -169,7 +188,10 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime choice, its migration operation, and the configuration schema type
   the editor schema of `instrukt.yaml` is generated from, as customer);
-  for `instrukt status` only, repository (hook-section state, as customer).
+  for `instrukt status` only, repository (hook-section state, as customer);
+  runner (the configured agent runtimes and their homes, read through the
+  selected runtime's adapter behind an interface core declares and the CLI
+  wires, as customer).
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
 
@@ -195,8 +217,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 - **Root:** the published part of one project, identified by its slug.
 - **Contains:** its published positions with their claims; the project's
-  entries in the global index; the rendered `AGENTS.md` files in its primary
-  worktree; its published commit and checkout path.
+  entries in the global index; its published commit and checkout path.
 - **Invariants:**
   - Its publication outputs were produced from one commit: the published
     commit.
@@ -211,36 +232,44 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 #### Global agent files (aggregate)
 
-- **Root:** the set of user-scope instruction files of the supported agent
-  CLIs.
-- **Contains:** one rendered file per agent CLI present on the computer; one
-  entrypoint-loading key per agent that needs one; the written record of each
-  file.
+- **Root:** the set of user-scope instruction files of the configured agent
+  runtimes.
+- **Contains:** one rendered file per configured agent runtime that has a
+  user-scope file, per home its instances run with; one entrypoint-loading key
+  per agent runtime that needs one; the written record of each file.
 - **Invariants:**
   - Written only by the sync of the project that owns `docs/general/`.
   - Never written over a file instrukt did not write.
   - A settings merge changes the entrypoint-loading key and no other key.
+  - Targets only the agent runtimes the selected runtime reports as
+    configured; when it cannot be asked, nothing in the set changes.
 - **Identifier:** one per computer.
 - **Lifecycle:** written by the `docs/general/` owner's sync; replaced on its
-  next sync that publishes; retracted when that project stops publishing
-  `docs/general/`.
+  next sync that publishes; a file is retracted when its runtime is no longer
+  configured, and all are when that project stops publishing `docs/general/`.
 
-#### Company home rendering (aggregate)
+#### Committed entrypoint (aggregate)
 
-- **Root:** the rendered `AGENTS.md` of one company home.
-- **Contains:** the rendered file and its written record.
+- **Root:** one `AGENTS.md` beside a master, in a project's repository or a
+  company home.
+- **Contains:** the rendered file, its generated line and the master it is
+  rendered from.
 - **Invariants:**
-  - Rendered from the home's master as it stands when a start renders it,
-    never from a project's committed main; it has no published commit, no
-    claim and no index entry, and belongs to no project's published part.
-  - Written, replaced or removed only while the file is absent or its
-    content is the content its written record holds.
-  - Written under the docs lock and replaced whole; a rendering that fails
-    leaves the previous file and its record as they were.
-- **Identifier:** the company's name.
-- **Lifecycle:** rendered before each session the runner starts in the home
-  and before a manual reservation for it; removed by the next such start
-  once the master is gone
+  - A function of the repository's committed content and the rendering
+    instrukt release: nothing published on the computer, no configuration
+    layer and no environment enters it.
+  - Changes only in a commit, or in the working tree through
+    `instrukt docs render`; no sync, checkout, start or tick writes it.
+  - Written, replaced or removed only while the file is absent or opens with
+    the generated line.
+  - A company home's rendering is its master's own content and references
+    nothing outside the company's own documents.
+  - It has no published commit, no claim and no index entry, and belongs to
+    no project's published part.
+- **Identifier:** the file's path in its repository or home.
+- **Lifecycle:** rendered and staged by the `pre-commit` section at each
+  commit, or written by `instrukt docs render`, including a repository's CI
+  workflow; removed with its master
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 ### Domain events emitted
@@ -260,7 +289,7 @@ This context emits no events.
 ## Use cases
 
 - **project-publication** — `project/instrukt/spec/feature/publication/project-publication` — a project's committed positions reach the agents on this computer, side by side with other projects' docs, without either taking the other's.
-- **agent-entrypoints** — `project/instrukt/spec/feature/publication/agent-entrypoints` — the project's `AGENTS.md` is its purpose and the rendering of `docs/project/index.yaml`, and the `docs/general/` owner gives every supported agent CLI a rendered global file without overwriting one it did not write.
+- **agent-entrypoints** — `project/instrukt/spec/feature/publication/agent-entrypoints` — a repository's committed `AGENTS.md` gives any agent that checks it out what the project selected, a company home's gives the company's own knowledge, and the `docs/general/` owner gives every configured agent runtime a rendered global file without overwriting one it did not write.
 - **eval-fingerprint** — `project/instrukt/spec/feature/publication/eval-fingerprint` — every publishing sync leaves a digest of the evaluated doctrine for stamps to carry.
 - **editor-schemas** — `project/instrukt/spec/feature/publication/editor-schemas` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
 - **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
@@ -289,9 +318,12 @@ This context emits no events.
 - **work** — Customer / Supplier. Publication supplies the current fingerprint
   and its per-published-commit association; stamp behavior belongs to
   `project/instrukt/spec/domain/work`.
-- **runner** — Customer / Supplier. Publication supplies project checkout paths
-  beside published commits in its existing state
-  (`project/instrukt/spec/domain/runner`).
+- **runner** — Customer / Supplier, both ways. Publication supplies project
+  checkout paths beside published commits in its existing state
+  (`project/instrukt/spec/domain/runner`); the selected runtime's adapter
+  supplies the configured agent runtimes and their homes the global agent
+  files are written for, through an interface core declares and the CLI
+  wires.
 - **Workflow** — Customer / Supplier. Publication supplies definitions, roles,
   actions and templates from `docs/domain/<x>/workflow/` to
   `~/.instrukt/docs/<x>/workflow/`. The engine selects the domain with
