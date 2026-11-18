@@ -1,24 +1,23 @@
-//! Connectors hosted by `instrukt run` (`slack-connector` spec): one Socket
-//! Mode connection per declared Slack connector, opened outward with the
-//! app token. Each envelope is acknowledged as soon as what it carries is
-//! retained; deciding who is answered from Slack's record of the sender,
-//! reading the accompanying messages, posting refusals and keeping Slack's
-//! status line follow from the retained record, retried until done. Only
-//! mentions and direct messages reach the agent.
+//! The Slack connector (`slack-connector` spec): one Socket Mode connection
+//! per company, opened outward with the app token; Slack's record of a
+//! sender decides who is answered; the accompanying messages are read from
+//! the conversation; answers are posted as the Markdown the agent wrote; and
+//! Slack's status line shows the agent working. Everything around these
+//! operations is the connector host's (`connector_host`).
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::SyncSender;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use instrukt_connector::{Accompanying, Earlier, Incoming, Sender};
-use instrukt_core::config::{Admitted, Current, Env, SlackConnector};
-use instrukt_core::home::Home;
-use instrukt_core::ids::ProjectSlug;
+use instrukt_connector::{
+    Accompanying, Admission, Captured, Clock, Connector, ConnectorError, Declaration, Declared,
+    Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender,
+};
 use jiff::Timestamp;
 use serde_json::Value;
 
-use crate::conversations::{self, ConnectionState, Intake};
+/// The target every log statement of the connector carries: the module the
+/// host and Slack shared before the cut, so the same settings select it.
+const LOG_TARGET: &str = "instrukt_runner::connectors";
 
 /// The connector's key under `connectors`.
 pub const SLACK: &str = "slack";
@@ -60,18 +59,45 @@ const NOTICES: [&str; 20] = [
     "reminder_add",
 ];
 
+/// The most characters Slack takes in one posted message: a longer answer is
+/// posted in parts, in order.
+pub const SLACK_MESSAGE_LIMIT: usize = 12_000;
+
+/// How many earlier messages accompany an addressed message when the
+/// declaration names none.
+const DEFAULT_CONTEXT_MESSAGES: u64 = 30;
+
+/// What `context_messages` is, as its finding and editor schema say it.
+const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted";
+
+/// The fields a `connectors.slack` entry takes.
+pub static SLACK_DECLARATION: Declaration = Declaration {
+    key: SLACK,
+    fields: &[
+        Field {
+            name: "app_token",
+            rule: Rule::SecretReference { required: true },
+        },
+        Field {
+            name: "bot_token",
+            rule: Rule::SecretReference { required: true },
+        },
+        Field {
+            name: "context_messages",
+            rule: Rule::PositiveCount {
+                default: DEFAULT_CONTEXT_MESSAGES,
+                meaning: CONTEXT_MESSAGES,
+            },
+        },
+    ],
+};
+
 /// About how often a status that stays is set again: Slack drops it after
 /// two minutes. The status is a courtesy; nothing promises this timing.
-const STATUS_INTERVAL: Duration = Duration::from_secs(30);
-
-/// How often the status pass looks at what is unfinished.
-const STATUS_TICK: Duration = Duration::from_secs(1);
+pub(crate) const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 
 /// How long one status call may take.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The longest wait before retrying intake work that failed.
-const MOST_BACKOFF: Duration = Duration::from_secs(60);
 
 /// The setting that points the connector at a local stand-in for Slack.
 /// Only a loopback address is accepted.
@@ -79,14 +105,6 @@ pub const API_URL_SETTING: &str = "INSTRUKT_SLACK_API_URL";
 
 /// Slack's Web API.
 const SLACK_API: &str = "https://slack.com/api";
-
-/// How long retained intake work waits between passes, and how long it first
-/// waits after a pass that failed; each further failure in a row doubles
-/// that wait, up to [`MOST_BACKOFF`].
-const RETRY: Duration = Duration::from_secs(2);
-
-/// The time the limits read: the runner's clock.
-pub type Clock = Arc<dyn Fn() -> Timestamp + Send + Sync>;
 
 /// Until when Slack limited each method for each company's workspace, as
 /// its `Retry-After` said, on the runner's clock. The runner owns one and
@@ -141,8 +159,6 @@ pub enum SlackError {
     /// token.
     #[error("Slack {method}: {cause}")]
     Api { method: String, cause: String },
-    #[error(transparent)]
-    Config(#[from] instrukt_core::config::ConfigError),
     #[error(
         "`{API_URL_SETTING}` may only name a loopback address (http://127.0.0.1, http://localhost or http://[::1]); unset it to reach Slack"
     )]
@@ -176,17 +192,16 @@ pub struct SlackEndpoint {
 }
 
 impl SlackEndpoint {
-    /// The time now on the runner's clock, the one this endpoint is timed by.
-    pub fn now(&self) -> Timestamp {
-        (self.limits.clock)()
-    }
-
-    /// Slack's own hosts unless [`API_URL_SETTING`] names a loopback
-    /// address; any other value refuses. The endpoint starts knowing no wait
-    /// and keeps those Slack names for as long as it lives, timed by `clock`.
-    pub fn from_env(env: &Env, clock: Clock) -> Result<Self, SlackError> {
-        match env
-            .get(API_URL_SETTING)
+    /// Slack's own hosts unless [`API_URL_SETTING`], as `lookup` reads the
+    /// environment, names a loopback address; any other value refuses. The
+    /// endpoint starts knowing no wait and keeps those Slack names for as
+    /// long as it lives, timed by `clock`.
+    pub fn from_lookup(
+        lookup: &dyn Fn(&str) -> Option<String>,
+        clock: Clock,
+    ) -> Result<Self, SlackError> {
+        match lookup(API_URL_SETTING)
+            .as_deref()
             .filter(|url| !url.trim().is_empty())
         {
             None => Ok(Self {
@@ -224,10 +239,10 @@ impl SlackEndpoint {
     }
 }
 
-/// One company's Slack Web API, with its tokens resolved from the company
-/// home's own secrets file.
+/// One company's Slack Web API, with the tokens its admitted generation
+/// resolved, as its connector's opening drew them through the resolver.
 pub struct SlackApi {
-    company: ProjectSlug,
+    company: String,
     endpoint: SlackEndpoint,
     app_token: String,
     bot_token: String,
@@ -251,31 +266,19 @@ fn message_ts(m: &Value) -> Option<i64> {
 }
 
 impl SlackApi {
-    /// The Web API of `company`'s Slack connector, with the tokens its
-    /// admitted generation resolved; none when the connector is not admitted.
-    pub fn admitted(
-        admitted: &Admitted,
-        company: &ProjectSlug,
-        endpoint: &SlackEndpoint,
-    ) -> Result<Self, SlackError> {
-        let slack = admitted
-            .company(company)
-            .and_then(|company| company.slack.as_ref())
-            .ok_or_else(|| SlackError::Api {
-                method: "connector".into(),
-                cause: format!("the slack connector of company `{company}` is not admitted"),
-            })?;
-        Ok(Self {
-            company: company.clone(),
+    /// The Web API of `company`'s Slack connector, with its two tokens.
+    fn new(company: &str, endpoint: &SlackEndpoint, app_token: String, bot_token: String) -> Self {
+        Self {
+            company: company.to_owned(),
             endpoint: endpoint.clone(),
-            app_token: slack.app_token.clone(),
-            bot_token: slack.bot_token.clone(),
+            app_token,
+            bot_token,
             agent: ureq::Agent::config_builder()
                 .timeout_global(Some(Duration::from_secs(30)))
                 .http_status_as_error(false)
                 .build()
                 .into(),
-        })
+        }
     }
 
     fn call(&self, method: &str, app: bool, form: &[(&str, &str)]) -> Result<Value, SlackError> {
@@ -292,7 +295,7 @@ impl SlackApi {
         form: &[(&str, &str)],
         timeout: Option<Duration>,
     ) -> Result<Value, SlackError> {
-        let company = self.company.to_string();
+        let company = self.company.clone();
         if let Some(seconds) = self.endpoint.limits.remaining(&company, method) {
             return Err(SlackError::Limited {
                 method: method.into(),
@@ -327,7 +330,7 @@ impl SlackApi {
                 .and_then(|value| value.trim().parse::<u64>().ok())
                 .unwrap_or(1);
             self.endpoint.limits.limit(&company, method, seconds);
-            tracing::warn!(event = "connector_rate_limited", company = %self.company, method, seconds);
+            tracing::warn!(target: LOG_TARGET, event = "connector_rate_limited", company = %self.company, method, seconds);
             return Err(SlackError::Limited {
                 method: method.into(),
                 seconds,
@@ -631,7 +634,7 @@ fn name(record: &Value) -> Option<String> {
 /// name Slack cannot give is the Slack id.
 struct Names<'a> {
     api: &'a SlackApi,
-    known: HashMap<String, String>,
+    known: std::sync::MutexGuard<'a, HashMap<String, String>>,
 }
 impl Names<'_> {
     fn of(&mut self, user: &str) -> String {
@@ -684,407 +687,189 @@ fn split_conversation(conversation: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Wakes the runner's supervision when a connection thread ends, whether it
-/// returned or unwound.
-struct ExitNotice(SyncSender<()>);
-impl Drop for ExitNotice {
-    fn drop(&mut self) {
-        let _ = self.0.try_send(());
-    }
-}
-
-struct Hosted {
-    company: ProjectSlug,
-    declared: SlackConnector,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-/// Where a connection reaches its company: the admitted generation that
-/// holds its tokens, and Slack's endpoint.
-#[derive(Clone, Copy)]
-struct Reach<'a> {
-    current: &'a Current,
-    endpoint: &'a SlackEndpoint,
-}
-
-/// The connections `instrukt run` holds open, supervised by the run loop.
-pub struct Connections {
-    home: Home,
-    current: Current,
+/// The Slack kind of this process: its endpoint, built once when the runner
+/// starts, and the bot identity each company's tokens answered with, asked
+/// of Slack once while those tokens stay.
+pub struct SlackKind {
     endpoint: SlackEndpoint,
-    stop: Arc<AtomicBool>,
-    wake: SyncSender<()>,
-    supervise: SyncSender<()>,
-    hosted: Vec<Hosted>,
+    identities: Arc<Mutex<HashMap<String, (String, Me)>>>,
 }
 
-impl Connections {
-    /// Open one connection per declared Slack connector. `wake` tells the
-    /// relay that retained work arrived; `supervise` tells the run loop that
-    /// a connection thread ended.
-    pub fn start(
-        home: &Home,
-        current: &Current,
-        endpoint: &SlackEndpoint,
-        wake: SyncSender<()>,
-        supervise: SyncSender<()>,
-    ) -> Result<Self, conversations::ConversationError> {
-        let mut connections = Self {
-            home: home.clone(),
-            current: current.clone(),
-            endpoint: endpoint.clone(),
-            stop: Arc::new(AtomicBool::new(false)),
-            wake,
-            supervise,
-            hosted: Vec::new(),
-        };
-        let demand = conversations::admitted_demand(&current.get());
-        let hosted: Vec<(String, String)> = demand
-            .iter()
-            .map(|(company, _)| (company.to_string(), SLACK.to_owned()))
-            .collect();
-        if let Err(error) = crate::runner::publish_hosted(home, &hosted) {
-            tracing::warn!(event = "connector_hosting_unpublished", error = %error);
+impl SlackKind {
+    pub fn new(endpoint: SlackEndpoint) -> Self {
+        Self {
+            endpoint,
+            identities: Arc::default(),
         }
-        for (company, declared) in demand {
-            let thread = connections.spawn(&company, &declared);
-            connections.hosted.push(Hosted {
-                company,
-                declared,
-                thread,
-            });
-        }
-        Ok(connections)
+    }
+}
+
+impl Kind for SlackKind {
+    fn declaration(&self) -> &'static Declaration {
+        &SLACK_DECLARATION
     }
 
-    fn spawn(
+    fn open(
         &self,
-        company: &ProjectSlug,
-        declared: &SlackConnector,
-    ) -> Option<std::thread::JoinHandle<()>> {
-        let home = self.home.clone();
-        let current = self.current.clone();
-        let endpoint = self.endpoint.clone();
-        let stop = Arc::clone(&self.stop);
-        let wake = self.wake.clone();
-        let notice = ExitNotice(self.supervise.clone());
-        let company = company.clone();
-        let declared = declared.clone();
-        let spawned = std::thread::Builder::new()
-            .name(format!("slack-{company}"))
-            .spawn(move || {
-                let _notice = notice;
-                let reach = Reach {
-                    current: &current,
-                    endpoint: &endpoint,
-                };
-                connection(&home, reach, &company, &declared, &stop, &wake);
-            });
-        match spawned {
-            Ok(thread) => Some(thread),
+        company: &str,
+        declared: &Declared,
+        secrets: &dyn SecretResolver,
+    ) -> Result<Box<dyn Connector>, ConnectorError> {
+        let token = |field: &str| -> Result<String, ConnectorError> {
+            let reference = declared.text(field).ok_or_else(|| ConnectorError {
+                cause: format!("the slack connector declares no {field}"),
+            })?;
+            secrets.resolve(reference)
+        };
+        let api = SlackApi::new(
+            company,
+            &self.endpoint,
+            token("app_token")?,
+            token("bot_token")?,
+        );
+        Ok(Box::new(Slack {
+            api,
+            context_messages: declared
+                .count("context_messages")
+                .unwrap_or(DEFAULT_CONTEXT_MESSAGES),
+            identities: Arc::clone(&self.identities),
+            names: Mutex::default(),
+        }))
+    }
+}
+
+/// One company's Slack connector.
+struct Slack {
+    api: SlackApi,
+    context_messages: u64,
+    identities: Arc<Mutex<HashMap<String, (String, Me)>>>,
+    /// The people's names asked of Slack while this connector is open.
+    names: Mutex<HashMap<String, String>>,
+}
+
+impl Slack {
+    /// The bot's identity in its workspace, asked of Slack once for these
+    /// tokens.
+    fn me(&self) -> Result<Me, SlackError> {
+        let company = self.api.company.clone();
+        if let Ok(identities) = self.identities.lock()
+            && let Some((token, me)) = identities.get(&company)
+            && *token == self.api.bot_token
+        {
+            return Ok(me.clone());
+        }
+        let me = self.api.identity()?;
+        if let Ok(mut identities) = self.identities.lock() {
+            identities.insert(company, (self.api.bot_token.clone(), me.clone()));
+        }
+        Ok(me)
+    }
+
+    fn names(&self) -> Names<'_> {
+        Names {
+            api: &self.api,
+            known: match self.names.lock() {
+                Ok(known) => known,
+                Err(poisoned) => poisoned.into_inner(),
+            },
+        }
+    }
+}
+
+fn failed(error: impl std::fmt::Display) -> ConnectorError {
+    ConnectorError {
+        cause: error.to_string(),
+    }
+}
+
+impl Connector for Slack {
+    fn limits(&self) -> instrukt_connector::Limits {
+        instrukt_connector::Limits {
+            message_chars: SLACK_MESSAGE_LIMIT,
+            working_refresh: Some(STATUS_INTERVAL),
+        }
+    }
+
+    fn listen(&self, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), ConnectorError> {
+        session(&self.api, inbox, quit).map_err(|cause| ConnectorError { cause })
+    }
+
+    /// Slack's record of the sender read now decides: one of the company's
+    /// own, or not. Slack answering that it shows the app no such user is
+    /// not one of the company's own; every other failure decides nothing.
+    fn admit(&self, sender: &str) -> Admission {
+        let me = match self.me() {
+            Ok(me) => me,
+            Err(error) => return Admission::Undecided(error.to_string()),
+        };
+        match self.api.user(sender) {
+            Ok(record) => match admission(&record, &me) {
+                Some(admitted) => {
+                    self.names()
+                        .known
+                        .insert(sender.to_owned(), admitted.name.clone());
+                    Admission::Admitted(admitted)
+                }
+                None => Admission::NotOwn,
+            },
+            Err(SlackError::Api { cause, .. })
+                if cause == "user_not_found" || cause == "user_not_visible" =>
+            {
+                Admission::NotOwn
+            }
             Err(error) => {
-                tracing::error!(event = "connector_start_failed", error = %error);
-                None
+                Admission::Undecided(format!("who sent it cannot be looked up yet: {error}"))
             }
         }
     }
 
-    /// Restart every connection whose thread ended unexpectedly, retaining
-    /// the cause as that connector's failure.
-    pub fn check(&mut self) {
-        for index in 0..self.hosted.len() {
-            let ended = self.hosted[index]
-                .thread
-                .as_ref()
-                .is_none_or(std::thread::JoinHandle::is_finished);
-            if !ended || self.stop.load(Ordering::Acquire) {
-                continue;
-            }
-            let cause = match self.hosted[index]
-                .thread
-                .take()
-                .map(std::thread::JoinHandle::join)
-            {
-                Some(Err(_)) => "the connection's intake panicked; restarted",
-                _ => "the connection's intake stopped unexpectedly; restarted",
-            };
-            let hosted = &self.hosted[index];
-            tracing::error!(event = "connector_intake_stopped", company = %hosted.company, connector = SLACK, cause);
-            state(
-                &self.home,
-                &hosted.company,
-                ConnectionState::Failed,
-                Some(cause),
-            );
-            let thread = self.spawn(&hosted.company, &hosted.declared);
-            self.hosted[index].thread = thread;
-        }
+    fn capture(
+        &self,
+        conversation: &str,
+        message: &str,
+        previous: Option<&str>,
+        text: &str,
+    ) -> Result<Captured, ConnectorError> {
+        let me = self.me().map_err(failed)?;
+        let mut names = self.names();
+        let text = names.written(text);
+        let accompanying = accompanying(
+            &self.api,
+            self.context_messages,
+            &me,
+            &mut names,
+            conversation,
+            message,
+            previous,
+        )
+        .map_err(failed)?;
+        Ok(Captured { text, accompanying })
     }
-}
 
-impl Drop for Connections {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        for hosted in &mut self.hosted {
-            if let Some(thread) = hosted.thread.take()
-                && thread.join().is_err()
-            {
-                tracing::error!(event = "connector_thread_panicked");
-            }
-        }
+    fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError> {
+        self.api.answer(conversation, part).map_err(failed)
     }
-}
 
-fn state(home: &Home, company: &ProjectSlug, status: ConnectionState, failure: Option<&str>) {
-    if let Err(error) = conversations::connector_state(home, company, SLACK, status, failure) {
-        tracing::warn!(event = "connector_state_unrecorded", company = %company, error = %error);
+    fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError> {
+        self.api.post(conversation, TURN_AWAY).map_err(failed)
     }
-}
 
-/// Keep one company's connection open until `stop`: a refused or dropped
-/// connection is recorded and retried, and retained intake work continues
-/// while it is down.
-fn connection(
-    home: &Home,
-    reach: Reach<'_>,
-    company: &ProjectSlug,
-    declared: &SlackConnector,
-    stop: &AtomicBool,
-    wake: &SyncSender<()>,
-) {
-    // Intake runs beside the socket, so reading what accompanies a message
-    // or posting a refusal never holds back the next acknowledgement. Its
-    // end ends this connection, which the run loop then restarts. Slack's
-    // status line has a worker of its own beside both.
-    let ended = AtomicBool::new(false);
-    let (nudge, nudges) = std::sync::mpsc::sync_channel::<()>(1);
-    let (admitted, admissions) = std::sync::mpsc::sync_channel::<()>(1);
-    let ended = &ended;
-    std::thread::scope(|scope| {
-        scope.spawn(move || {
-            struct Ended<'a>(&'a AtomicBool);
-            impl Drop for Ended<'_> {
-                fn drop(&mut self) {
-                    self.0.store(true, Ordering::Release);
-                }
-            }
-            let _ended = Ended(ended);
-            intake_worker(
-                home,
-                reach,
-                company,
-                declared,
-                stop,
-                Wakes {
-                    relay: wake,
-                    status: &admitted,
-                },
-                &nudges,
-            );
-        });
-        scope.spawn(move || {
-            let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
-            status_worker(home, reach, company, &quit, &admissions);
-        });
-        let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
-        let mut backoff = Duration::from_secs(1);
-        while !quit() {
-            state(home, company, ConnectionState::Connecting, None);
-            let failure = session(home, reach, company, &quit, &nudge).err();
-            if quit() {
-                break;
-            }
-            if let Some(error) = &failure {
-                tracing::warn!(event = "connector_failed", company = %company, connector = SLACK, error = %error);
-                state(home, company, ConnectionState::Failed, Some(error));
-            }
-            let until = Instant::now() + backoff;
-            while Instant::now() < until && !quit() {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            backoff = if failure.is_some() {
-                (backoff * 2).min(Duration::from_secs(60))
-            } else {
-                Duration::from_secs(1)
-            };
-        }
-    });
-    if stop.load(Ordering::Acquire) {
-        state(home, company, ConnectionState::Stopped, None);
+    /// A channel conversation's thread; a direct message's addressed message.
+    fn place(&self, conversation: &str, message: &str) -> Place {
+        let (channel, thread) = split_conversation(conversation);
+        Place(channel.to_owned(), thread.unwrap_or(message).to_owned())
     }
-}
 
-/// Whom intake wakes: the relay, for what became deliverable, and the
-/// status worker, for a message just admitted.
-#[derive(Clone, Copy)]
-struct Wakes<'a> {
-    relay: &'a SyncSender<()>,
-    status: &'a SyncSender<()>,
-}
-
-/// The company's retained intake work, until `stop`: run when a retained
-/// envelope nudges it, every [`RETRY`] while it runs clean, and after a
-/// failure once its wait has passed: [`RETRY`] after the first failure in a
-/// row, doubling up to [`MOST_BACKOFF`]. A method Slack limited is not
-/// called before its wait is over, also on a nudge.
-fn intake_worker(
-    home: &Home,
-    reach: Reach<'_>,
-    company: &ProjectSlug,
-    declared: &SlackConnector,
-    stop: &AtomicBool,
-    wakes: Wakes<'_>,
-    nudges: &std::sync::mpsc::Receiver<()>,
-) {
-    let Reach { current, endpoint } = reach;
-    let mut me = None;
-    let mut failures: u32 = 0;
-    let mut retry_at = Instant::now();
-    let mut nudged = true;
-    while !stop.load(Ordering::Acquire) {
-        if nudged || Instant::now() >= retry_at {
-            let clean = match SlackApi::admitted(&current.get(), company, endpoint) {
-                Ok(api) => {
-                    if me.is_none() {
-                        me = api.identity().ok();
-                    }
-                    intake(home, company, declared, &api, me.as_ref(), wakes)
-                }
-                // A failure before any request stays with the outstanding work.
-                Err(error) => {
-                    if let Err(record) =
-                        conversations::intake_failed(home, company, SLACK, &error.to_string())
-                    {
-                        tracing::warn!(event = "connector_intake_failed", company = %company, connector = SLACK, error = %record);
-                    }
-                    false
-                }
-            };
-            failures = if clean { 0 } else { failures.saturating_add(1) };
-            let wait = if failures == 0 {
-                RETRY
-            } else {
-                RETRY
-                    .saturating_mul(1 << (failures - 1).min(5))
-                    .min(MOST_BACKOFF)
-            };
-            retry_at = Instant::now() + wait;
-        }
-        nudged = false;
-        while Instant::now() < retry_at && !stop.load(Ordering::Acquire) {
-            if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
-                nudged = true;
-                break;
-            }
-        }
-    }
-}
-
-/// One status place: a channel conversation's thread, or a direct message's
-/// addressed message.
-type Place = (String, String);
-
-/// Slack's status line for one company, a courtesy kept on a best-effort
-/// basis apart from intake and the relay, so no status call holds a
-/// message. A plain periodic pass reads the places with unfinished admitted
-/// messages, sets each whose last attempt is [`STATUS_INTERVAL`] old or
-/// more, and clears once each place this process set that has no unfinished
-/// work left. A message's admission wakes the pass, so its first status
-/// comes promptly. A call that fails or is skipped is left to the next
-/// regular setting, and a clear that does not happen to Slack's own two
-/// minutes; nothing is made up for and nothing set by an earlier run is
-/// cleared.
-fn status_worker(
-    home: &Home,
-    reach: Reach<'_>,
-    company: &ProjectSlug,
-    stop: &dyn Fn() -> bool,
-    admitted: &std::sync::mpsc::Receiver<()>,
-) {
-    let Reach { current, endpoint } = reach;
-    let mut attempted: HashMap<Place, Instant> = HashMap::new();
-    let mut failing: Option<String> = None;
-    while !stop() {
-        let pass = SlackApi::admitted(&current.get(), company, endpoint)
-            .map_err(|error| error.to_string())
-            .and_then(|api| {
-                let working =
-                    conversations::working(home, company, SLACK).map_err(|e| e.to_string())?;
-                Ok((api, working))
-            });
-        match pass {
-            Ok((api, working)) => {
-                if let Some(cause) = failing.take() {
-                    tracing::info!(event = "connector_status_recovered", company = %company, cause = %cause);
-                }
-                keep(&api, &working, &mut attempted);
-            }
-            // A continuing cause is logged once, when it starts or changes.
-            Err(cause) => {
-                if failing.as_deref() != Some(cause.as_str()) {
-                    tracing::warn!(event = "connector_status_unprepared", company = %company, error = %cause);
-                    failing = Some(cause);
-                }
-            }
-        }
-        let until = Instant::now() + STATUS_TICK;
-        while Instant::now() < until && !stop() {
-            if admitted.recv_timeout(Duration::from_millis(100)).is_ok() {
-                break;
-            }
-        }
-    }
-}
-
-/// The status place of a conversation's message.
-fn place(conversation: &str, message: &str) -> Place {
-    let (channel, thread) = split_conversation(conversation);
-    (channel.to_owned(), thread.unwrap_or(message).to_owned())
-}
-
-/// One status pass: set what stays and is due, clear once what no longer
-/// stays. Each call's outcome is only logged.
-fn keep(api: &SlackApi, working: &[(String, String)], attempted: &mut HashMap<Place, Instant>) {
-    let wanted: std::collections::HashSet<Place> = working
-        .iter()
-        .map(|(conversation, message)| place(conversation, message))
-        .collect();
-    for target in &wanted {
-        let due = attempted
-            .get(target)
-            .is_none_or(|at| at.elapsed() >= STATUS_INTERVAL);
-        if due {
-            attempted.insert(target.clone(), Instant::now());
-            call(api, target, WORKING);
-        }
-    }
-    let ended: Vec<Place> = attempted
-        .keys()
-        .filter(|target| !wanted.contains(*target))
-        .cloned()
-        .collect();
-    for target in ended {
-        attempted.remove(&target);
-        call(api, &target, "");
-    }
-}
-
-fn call(api: &SlackApi, target: &Place, status: &str) {
-    if let Err(error) = api.status(&target.0, &target.1, status) {
-        tracing::debug!(event = "connector_status_skipped", company = %api.company, connector = SLACK, error = %error);
+    fn working(&self, place: &Place, on: bool) -> Result<(), ConnectorError> {
+        self.api
+            .status(&place.0, &place.1, if on { WORKING } else { "" })
+            .map_err(failed)
     }
 }
 
 /// One Socket Mode connection, from opening to its drop or a disconnect.
-fn session(
-    home: &Home,
-    reach: Reach<'_>,
-    company: &ProjectSlug,
-    quit: &dyn Fn() -> bool,
-    nudge: &SyncSender<()>,
-) -> Result<(), String> {
-    let Reach { current, endpoint } = reach;
-    let api = SlackApi::admitted(&current.get(), company, endpoint).map_err(|e| e.to_string())?;
+fn session(api: &SlackApi, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), String> {
+    let company = &api.company;
     let url = api.connection_url().map_err(|e| e.to_string())?;
     let me = api.identity().map_err(|e| e.to_string())?;
     let (mut socket, _) =
@@ -1099,8 +884,8 @@ fn session(
         _ => Ok(()),
     }
     .map_err(|e| format!("Socket Mode connection: {e}"))?;
-    state(home, company, ConnectionState::Connected, None);
-    tracing::info!(event = "connector_connected", company = %company, connector = SLACK);
+    inbox.connected();
+    tracing::info!(target: LOG_TARGET, event = "connector_connected", company = %company, connector = SLACK);
     let mut unretained = false;
     while !quit() {
         let message = match socket.read() {
@@ -1137,7 +922,11 @@ fn session(
         // Acknowledge only once what the envelope carries is retained, so
         // Slack retries what instrukt could not keep; reading the
         // accompanying messages and posting refusals come after.
-        match receive(home, company, &me, &envelope) {
+        let retained = receive(&me, &envelope).and_then(|incoming| match incoming {
+            Some(incoming) => inbox.retain(incoming).map_err(|error| error.cause),
+            None => Ok(()),
+        });
+        match retained {
             Ok(()) => {
                 socket
                     .send(tungstenite::Message::text(
@@ -1145,21 +934,15 @@ fn session(
                     ))
                     .map_err(|e| format!("Socket Mode acknowledgement: {e}"))?;
                 if unretained {
-                    state(home, company, ConnectionState::Connected, None);
+                    inbox.connected();
                     unretained = false;
                 }
-                let _ = nudge.try_send(());
             }
             Err(error) => {
-                tracing::warn!(event = "connector_message_unretained", company = %company, connector = SLACK, error = %error);
-                state(
-                    home,
-                    company,
-                    ConnectionState::Connected,
-                    Some(&format!(
-                        "a message could not be retained and awaits Slack's retry: {error}"
-                    )),
-                );
+                tracing::warn!(target: LOG_TARGET, event = "connector_message_unretained", company = %company, connector = SLACK, error = %error);
+                inbox.unretained(&format!(
+                    "a message could not be retained and awaits Slack's retry: {error}"
+                ));
                 unretained = true;
             }
         }
@@ -1168,22 +951,23 @@ fn session(
     Ok(())
 }
 
-/// Retain one Events API envelope if it is a mention in a channel or a
-/// direct message. Nothing here waits on the network.
-fn receive(home: &Home, company: &ProjectSlug, me: &Me, envelope: &Value) -> Result<(), String> {
+/// The addressed message one Events API envelope carries: a mention in a
+/// channel or a direct message; none for anything else. Nothing here waits
+/// on the network.
+fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
     if envelope.get("type").and_then(Value::as_str) != Some("events_api") {
-        return Ok(());
+        return Ok(None);
     }
     let Some(event) = envelope.get("payload").and_then(|p| p.get("event")) else {
-        return Ok(());
+        return Ok(None);
     };
     let text = |field: &str| event.get(field).and_then(Value::as_str);
     let (Some(channel), Some(ts), Some(sender)) = (text("channel"), text("ts"), text("user"))
     else {
-        return Ok(());
+        return Ok(None);
     };
     if !newly_written(event) {
-        return Ok(());
+        return Ok(None);
     }
     let thread = match text("type") {
         Some("app_mention") => Some(text("thread_ts").unwrap_or(ts)),
@@ -1194,7 +978,7 @@ fn receive(home: &Home, company: &ProjectSlug, me: &Me, envelope: &Value) -> Res
         {
             None
         }
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
     let incoming = Incoming {
         connector: SLACK.into(),
@@ -1207,146 +991,7 @@ fn receive(home: &Home, company: &ProjectSlug, me: &Me, envelope: &Value) -> Res
         written_at: ts_time(ts).ok_or("message without a valid time")?,
         text: text("text").unwrap_or_default().to_owned(),
     };
-    match conversations::retain(home, company, &incoming, Timestamp::now())
-        .map_err(|e| e.to_string())?
-    {
-        Intake::Retained | Intake::Repeated => Ok(()),
-    }
-}
-
-/// Retained intake work of one company: post owed refusals, decide for each
-/// received message from Slack's record of its sender read now whether it is
-/// answered, and read what accompanies each admitted one. A failure stays
-/// with its record and is retried; while Slack cannot be asked, a message
-/// waits and nothing is delivered or replied. The relay is woken for what
-/// became deliverable. Returns whether the pass ended without a failure.
-fn intake(
-    home: &Home,
-    company: &ProjectSlug,
-    declared: &SlackConnector,
-    api: &SlackApi,
-    me: Option<&Me>,
-    wakes: Wakes<'_>,
-) -> bool {
-    let mut clean = true;
-    let result = (|| -> Result<(), conversations::ConversationError> {
-        let owned;
-        let me = match me {
-            Some(me) => me,
-            None => match api.identity() {
-                Ok(identity) => {
-                    owned = identity;
-                    &owned
-                }
-                Err(error) => {
-                    clean = false;
-                    for unread in conversations::unread(home, company, SLACK)? {
-                        conversations::waiting(home, company, SLACK, &unread, &error.to_string())?;
-                    }
-                    return Ok(());
-                }
-            },
-        };
-        let mut names = Names {
-            api,
-            known: HashMap::new(),
-        };
-        let mut readable = false;
-        for unread in conversations::unread(home, company, SLACK)? {
-            if !unread.admitted {
-                let Some(sender) = unread.sender.as_deref() else {
-                    clean = false;
-                    conversations::waiting(
-                        home,
-                        company,
-                        SLACK,
-                        &unread,
-                        "the message has no sender",
-                    )?;
-                    continue;
-                };
-                match api.user(sender) {
-                    Ok(record) => match admission(&record, me) {
-                        Some(admitted) => {
-                            names.known.insert(sender.to_owned(), admitted.name.clone());
-                            conversations::admitted(home, company, SLACK, &unread, &admitted)?;
-                            // Its status is arranged now, not after the batch.
-                            let _ = wakes.status.try_send(());
-                        }
-                        None => {
-                            conversations::refused(
-                                home,
-                                company,
-                                SLACK,
-                                &unread,
-                                sender,
-                                Timestamp::now(),
-                            )?;
-                            continue;
-                        }
-                    },
-                    // Slack answered that it shows the app no such user: the
-                    // sender is not one of the company's own. Every other
-                    // failure is no answer about the sender, and the message
-                    // waits.
-                    Err(SlackError::Api { cause, .. })
-                        if cause == "user_not_found" || cause == "user_not_visible" =>
-                    {
-                        conversations::refused(
-                            home,
-                            company,
-                            SLACK,
-                            &unread,
-                            sender,
-                            Timestamp::now(),
-                        )?;
-                        continue;
-                    }
-                    Err(error) => {
-                        clean = false;
-                        conversations::waiting(
-                            home,
-                            company,
-                            SLACK,
-                            &unread,
-                            &format!("who sent it cannot be looked up yet: {error}"),
-                        )?;
-                        continue;
-                    }
-                }
-            }
-            let text = names.written(&unread.text);
-            let context =
-                accompanying(api, declared, me, &mut names, &unread).map_err(|e| e.to_string());
-            readable |= context.is_ok();
-            clean &= context.is_ok();
-            conversations::captured(home, company, SLACK, &unread, &text, context)?;
-        }
-        if readable {
-            let _ = wakes.relay.try_send(());
-        }
-        // Replies owed, those decided now among them.
-        for refusal in conversations::unsent_refusals(home, company, SLACK)? {
-            let outcome = api
-                .post(&refusal.conversation, TURN_AWAY)
-                .map_err(|e| e.to_string());
-            clean &= outcome.is_ok();
-            conversations::refusal_posted(
-                home,
-                company,
-                SLACK,
-                &refusal,
-                outcome,
-                Timestamp::now(),
-            )?;
-        }
-        Ok(())
-    })();
-    if let Err(error) = result {
-        clean = false;
-        tracing::warn!(event = "connector_intake_failed", company = %company, connector = SLACK, error = %error);
-    }
-    clean
+    Ok(Some(incoming))
 }
 
 /// What accompanies a received message: of the messages before the first
@@ -1356,15 +1001,17 @@ fn intake(
 /// named and mentions written as names, as for the addressed message.
 fn accompanying(
     api: &SlackApi,
-    declared: &SlackConnector,
+    context_messages: u64,
     me: &Me,
     names: &mut Names<'_>,
-    unread: &conversations::Unread,
+    conversation: &str,
+    message: &str,
+    previous: Option<&str>,
 ) -> Result<Accompanying, SlackError> {
-    let (channel, thread) = split_conversation(&unread.conversation);
-    let ts = unread.message.as_str();
-    let cap = usize::try_from(declared.context_messages).unwrap_or(usize::MAX);
-    let (earlier, left_out) = match &unread.previous {
+    let (channel, thread) = split_conversation(conversation);
+    let ts = message;
+    let cap = usize::try_from(context_messages).unwrap_or(usize::MAX);
+    let (earlier, left_out) = match previous {
         Some(previous) => api.read(channel, thread, Some(previous), ts, cap)?,
         None => {
             let within = thread.filter(|thread| *thread != ts);
@@ -1403,8 +1050,8 @@ fn accompanying(
 #[cfg(test)]
 mod tests {
     use super::{Me, SlackEndpoint, admission, notice, split_conversation, ts_micros};
-    use instrukt_core::config::Env;
     use serde_json::{Value, json};
+    use std::collections::HashMap;
 
     fn system() -> super::Clock {
         std::sync::Arc::new(jiff::Timestamp::now)
@@ -1474,10 +1121,17 @@ mod tests {
 
     #[test]
     fn only_slack_or_a_loopback_stand_in_receives_tokens() {
+        let lookup =
+            |settings: HashMap<String, String>| move |name: &str| settings.get(name).cloned();
         let at = |url: &str| {
-            SlackEndpoint::from_env(&Env::from_pairs([(super::API_URL_SETTING, url)]), system())
+            let set = lookup(HashMap::from([(
+                super::API_URL_SETTING.to_owned(),
+                url.to_owned(),
+            )]));
+            SlackEndpoint::from_lookup(&set, system())
         };
-        assert!(SlackEndpoint::from_env(&Env::default(), system()).is_ok_and(|e| !e.local));
+        let unset = lookup(HashMap::new());
+        assert!(SlackEndpoint::from_lookup(&unset, system()).is_ok_and(|e| !e.local));
         assert!(at("http://127.0.0.1:9/api").is_ok_and(|e| e.local));
         for refused in [
             "http://example.com/api",
@@ -1487,7 +1141,7 @@ mod tests {
         ] {
             assert!(at(refused).is_err(), "{refused}");
         }
-        let slack = SlackEndpoint::from_env(&Env::default(), system()).unwrap();
+        let slack = SlackEndpoint::from_lookup(&unset, system()).unwrap();
         assert!(slack.admits_socket("wss://wss-primary.slack.com/link/?ticket=1"));
         assert!(!slack.admits_socket("ws://wss-primary.slack.com/link"));
         assert!(!slack.admits_socket("wss://evil.example/link"));

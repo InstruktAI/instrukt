@@ -6,8 +6,8 @@
 use crate::fixtures::conversing::{Company, company_home, slack_settings, wait};
 use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN, Post};
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::connectors::{API_URL_SETTING, WORKING};
 use instrukt_runner::conversations::{ConnectionState, Status};
+use instrukt_runner::slack::{API_URL_SETTING, WORKING};
 
 // spec: project/instrukt/spec/feature/company/slack-connector UC-SL1
 #[test]
