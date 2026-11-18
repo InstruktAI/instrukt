@@ -669,7 +669,11 @@ impl OperatorClock {
     }
 
     fn advance(&mut self, minutes: i64) {
-        self.now += jiff::SignedDuration::from_mins(minutes);
+        self.advance_seconds(minutes * 60);
+    }
+
+    fn advance_seconds(&mut self, seconds: i64) {
+        self.now += jiff::SignedDuration::from_secs(seconds);
         self.write();
     }
 
@@ -793,9 +797,9 @@ fn a_renewed_token_keeps_the_snapshot_fresh() {
     wait("the first snapshot", || {
         common::t3_readiness::reads(&c.env).last() == Some(&session(1))
     });
-    // Past the renewal point the next refresh reads with a new token, and
-    // the earlier one is revoked.
-    clock.advance(5);
+    // Past the renewal point, a minute before the token's five expire, the
+    // next refresh reads with a new token, and the earlier one is revoked.
+    clock.advance_seconds(270);
     wait("a read with the renewed token", || {
         common::t3_readiness::reads(&c.env).last() == Some(&session(2))
     });
@@ -803,11 +807,11 @@ fn a_renewed_token_keeps_the_snapshot_fresh() {
     assert!(!common::t3_readiness::revoked(&c.env, &session(2)));
     // A revocation that fails is logged; the refresh still succeeds.
     c.runtime.flag("revoke-failure", true);
-    clock.advance(5);
+    clock.advance_seconds(270);
     wait("a read with the next token", || {
         common::t3_readiness::reads(&c.env).last() == Some(&session(3))
     });
-    assert!(!c.readiness_failing());
+    wait("the refresh to succeed", || !c.readiness_failing());
     // What T3 reports after the renewal is what the next start sees.
     common::t3_readiness::update(&c.env, |snapshot| {
         for provider in snapshot["providers"].as_array_mut().unwrap() {
