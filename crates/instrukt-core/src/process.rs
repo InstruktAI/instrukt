@@ -439,6 +439,22 @@ pub fn shell_quote(value: &str) -> String {
 // This registry contains only live owned groups, never domain/configuration state.
 static GROUPS: Mutex<Vec<rustix::process::Pid>> = Mutex::new(Vec::new());
 static SIGNALS: OnceLock<Result<(), String>> = OnceLock::new();
+/// What a catchable stop runs after the owned command groups are stopped and
+/// before the process ends, in the order registered.
+type StopHook = Box<dyn Fn() + Send + Sync>;
+static STOP_HOOKS: Mutex<Vec<StopHook>> = Mutex::new(Vec::new());
+
+/// Runs `hook` when this process is stopped by SIGINT or SIGTERM: after
+/// its commands' groups are stopped, before it ends. A hook bounds its own
+/// work; the process ends once every hook has returned.
+pub fn on_stop(hook: StopHook) -> std::io::Result<()> {
+    install_signals()?;
+    match STOP_HOOKS.lock() {
+        Ok(mut hooks) => hooks.push(hook),
+        Err(poisoned) => poisoned.into_inner().push(hook),
+    }
+    Ok(())
+}
 
 fn groups() -> std::sync::MutexGuard<'static, Vec<rustix::process::Pid>> {
     match GROUPS.lock() {
@@ -453,6 +469,13 @@ fn install_signals() -> std::io::Result<()> {
             for signal in signals.forever() {
                 for pid in groups().iter().copied() {
                     if let Err(error)=kill_group(pid){tracing::error!(event="interrupted_group_cleanup_failed",pid=pid.as_raw_nonzero().get(),error=%error);}
+                }
+                let hooks = match STOP_HOOKS.lock() {
+                    Ok(mut hooks) => std::mem::take(&mut *hooks),
+                    Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+                };
+                for hook in hooks {
+                    hook();
                 }
                 // Preserve the signal's normal exit semantics after cleanup,
                 // including when it arrives between child commands.

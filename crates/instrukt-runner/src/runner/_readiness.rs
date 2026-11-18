@@ -1,7 +1,10 @@
 //! The runtime's readiness, kept by the runner off every start path: one
 //! refresh when the runner starts and one on each of its wakes, on a thread
 //! of its own. A start reads the last snapshot a refresh published and never
-//! waits on one in progress.
+//! waits on one in progress. The `readiness` row in `runner_workers` lives
+//! as long as the worker: written by a failed refresh, removed by the next
+//! success and when the worker ends, a stop by SIGINT or SIGTERM included,
+//! which also revokes the kept token.
 
 use std::sync::Arc;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
@@ -23,10 +26,10 @@ const READINESS: &str = "readiness";
 pub(crate) fn refresh(
     home: &Home,
     readiness: &mut dyn Readiness,
-    now: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
     recorded: &mut bool,
 ) {
-    match readiness.refresh(home, now) {
+    match readiness.refresh(home, clock) {
         Ok(observed) => {
             if let Err(error) = crate::agents::apply_usage(home, &observed) {
                 tracing::warn!(event = "readiness_usage_unapplied", %error);
@@ -41,6 +44,11 @@ pub(crate) fn refresh(
             *recorded = true;
         }
     }
+}
+
+/// Ends the `readiness` worker's row: its worker is gone.
+pub(crate) fn ended(home: &Home) {
+    crate::state::worker_state(home, READINESS, None);
 }
 
 /// The runner's readiness thread.
@@ -58,6 +66,14 @@ impl Worker {
         clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
     ) -> std::io::Result<Self> {
         let home = home.clone();
+        // A stop by SIGINT or SIGTERM revokes the kept token and ends the
+        // worker's row before the process ends.
+        let stopper = readiness.stopper();
+        let stopping_home = home.clone();
+        instrukt_core::process::on_stop(Box::new(move || {
+            stopper();
+            ended(&stopping_home);
+        }))?;
         let (wake, wakes) = mpsc::sync_channel::<()>(1);
         let handle = std::thread::Builder::new()
             .name("readiness".into())
@@ -65,10 +81,12 @@ impl Worker {
                 // An earlier process's failure row is cleared by the first
                 // refresh that succeeds.
                 let mut recorded = true;
-                refresh(&home, readiness.as_mut(), clock(), &mut recorded);
+                refresh(&home, readiness.as_mut(), &*clock, &mut recorded);
                 while wakes.recv().is_ok() {
-                    refresh(&home, readiness.as_mut(), clock(), &mut recorded);
+                    refresh(&home, readiness.as_mut(), &*clock, &mut recorded);
                 }
+                drop(readiness);
+                ended(&home);
             })?;
         Ok(Self {
             wake: Some(wake),

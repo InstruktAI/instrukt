@@ -191,7 +191,11 @@ pub enum TickOutcome {
 /// One wake-up at `now`; exits at once when the runner lock is held. Its
 /// configuration is admitted at its start: an invalid machine layer or
 /// `agents.yaml` refuses it, and what was not admitted is left out.
-pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, RunnerError> {
+pub fn tick(
+    cx: &RunnerContext<'_>,
+    clock: &dyn Fn() -> Timestamp,
+) -> Result<TickOutcome, RunnerError> {
+    let now = clock();
     let state = RunnerState::new(cx.home);
     let Some(_runner) = _holder::tick(cx.home)? else {
         return Ok(TickOutcome::Busy);
@@ -216,19 +220,26 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
         .ok()
         .and_then(|runtime| crate::runtime::adapter(runtime).readiness());
     if let Some(readiness) = readiness.as_mut() {
-        _readiness::refresh(cx.home, readiness.as_mut(), now, &mut true);
+        _readiness::refresh(cx.home, readiness.as_mut(), clock, &mut true);
     }
     let considered = considered(&admitted);
-    let platform = event_platform(cx, &state, &admitted)?;
-    wake(
-        cx,
-        &state,
-        now,
-        &considered,
-        platform.as_ref(),
-        true,
-        &invocation,
-    )?;
+    let woke = event_platform(cx, &state, &admitted).and_then(|platform| {
+        wake(
+            cx,
+            &state,
+            now,
+            &considered,
+            platform.as_ref(),
+            true,
+            &invocation,
+        )
+    });
+    // The tick's readiness ends with it: its token is revoked and its row,
+    // if a failed refresh left one, removed.
+    if readiness.take().is_some() {
+        _readiness::ended(cx.home);
+    }
+    woke?;
     Ok(TickOutcome::Done)
 }
 

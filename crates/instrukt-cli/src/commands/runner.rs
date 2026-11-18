@@ -68,7 +68,8 @@ pub fn run_tick(_args: TickArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         tz: &tz,
         wiring: &wiring,
     };
-    match runner::tick(&cx, ctx.clock.now())? {
+    let clock = ctx.clock.clone();
+    match runner::tick(&cx, &move || clock.now())? {
         TickOutcome::Done => {}
         TickOutcome::Busy => ctx
             .out

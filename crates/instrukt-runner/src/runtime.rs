@@ -206,12 +206,16 @@ pub struct ObservedSnapshot {
 /// A runtime's readiness kept by the runner: refreshed on the runner's own
 /// wake, never on a start.
 pub trait Readiness: Send {
-    /// Reads the provider snapshot now and publishes it for starts to read.
+    /// Reads the provider snapshot and publishes it for starts to read,
+    /// observed at the time on `clock` when the read returned.
     fn refresh(
         &mut self,
         home: &instrukt_core::home::Home,
-        now: jiff::Timestamp,
+        clock: &dyn Fn() -> jiff::Timestamp,
     ) -> Result<std::sync::Arc<ObservedSnapshot>, SessionsError>;
+    /// What revokes the token this readiness keeps when the process stops:
+    /// one attempt, bounded, its failure logged.
+    fn stopper(&self) -> Box<dyn Fn() + Send + Sync>;
 }
 
 /// Adapter-translated provider facts; expiry and selection belong to runner policy.

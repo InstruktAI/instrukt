@@ -304,11 +304,17 @@ fn publish(observed: &std::sync::Arc<ObservedSnapshot>) {
 pub(crate) struct Readiness {
     env: Env,
     kept: Option<(Token, Timestamp)>,
+    /// The session of the token kept now, for the stop to revoke.
+    session: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Readiness {
     pub(super) fn new(env: Env) -> Self {
-        Self { env, kept: None }
+        Self {
+            env,
+            kept: None,
+            session: std::sync::Arc::default(),
+        }
     }
 
     /// The token to read with at `now`, issuing or renewing it as due.
@@ -324,8 +330,13 @@ impl Readiness {
                     TOKEN_LIFETIME_SECONDS - RENEW_BEFORE_SECONDS,
                 ))
                 .map_err(|_| refused("cannot compute the token's renewal time"))?;
+            let session = next.session.clone();
             // The earlier token is revoked once the next one is in hand.
             drop(self.kept.replace((next, renew_at)));
+            match self.session.lock() {
+                Ok(mut kept) => *kept = Some(session),
+                Err(poisoned) => *poisoned.into_inner() = Some(session),
+            }
         }
         match &self.kept {
             Some((token, _)) => Ok(token),
@@ -338,17 +349,50 @@ impl super::Readiness for Readiness {
     fn refresh(
         &mut self,
         home: &Home,
-        now: Timestamp,
+        clock: &dyn Fn() -> Timestamp,
     ) -> Result<std::sync::Arc<ObservedSnapshot>, SessionsError> {
         let endpoint = endpoint(home, &self.env)?;
-        let token = self.token(now)?;
+        let token = self.token(clock())?;
         let source = read_rpc(&endpoint, &token.secret)?;
+        // Observed when the read returned, however long it took.
         let observed = std::sync::Arc::new(ObservedSnapshot {
             snapshot: translate(source),
-            at: now,
+            at: clock(),
         });
         publish(&observed);
         Ok(observed)
+    }
+
+    fn stopper(&self) -> Box<dyn Fn() + Send + Sync> {
+        let session = std::sync::Arc::clone(&self.session);
+        Box::new(move || {
+            let kept = match session.lock() {
+                Ok(mut kept) => kept.take(),
+                Err(poisoned) => poisoned.into_inner().take(),
+            };
+            let Some(session) = kept else {
+                return;
+            };
+            // One attempt, bounded in real time: the process ends after it
+            // whatever the operator's clock says.
+            let (done, finished) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = done.send(command(
+                    &["auth", "session", "revoke", "--", &session],
+                    "cannot revoke readiness session",
+                ));
+            });
+            match finished.recv_timeout(TIMEOUT) {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::error!(event = "readiness_token_cleanup_failed", %error, message = "readiness session revocation failed at stop; its five-minute TTL remains")
+                }
+                Err(_) => tracing::error!(
+                    event = "readiness_token_cleanup_failed",
+                    message = "readiness session revocation did not finish at stop; its five-minute TTL remains"
+                ),
+            }
+        })
     }
 }
 

@@ -1240,7 +1240,7 @@ pub fn relay(
                 .filter(|m| m.stage == Stage::Pending && m.attempted)
             {
                 if let Err(error) =
-                    reconcile(adapter, &state, &c, session, &message, Timestamp::now())
+                    reconcile(adapter, &state, &c, session, &message, endpoint.now())
                 {
                     let cause = match &error {
                         ConversationError::Sessions(native) => adapter
@@ -1273,7 +1273,9 @@ pub fn relay(
                 source,
                 &state,
                 &c,
-                Timestamp::now(),
+                // Restrictions are judged on the runner's clock, as dispatch
+                // and `agents availability` judge them.
+                endpoint.now(),
             );
         }
         // A session bound just now may be one a recovery found with its
