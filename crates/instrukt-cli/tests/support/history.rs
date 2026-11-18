@@ -10,6 +10,8 @@ pub struct T3Store {
     db: Connection,
 }
 impl T3Store {
+    /// A computer whose T3 holds the seeded conversations: its machine id and
+    /// global configuration, then T3's database.
     pub fn new(env: &TestEnv) -> Self {
         computer(env, "aaaaaaaaaaaaaaaa");
         std::fs::write(
@@ -17,6 +19,11 @@ impl T3Store {
             "schema_version: 1\nrunner: {runtime: t3}\n",
         )
         .unwrap();
+        Self::create(env)
+    }
+    /// T3 creates its database with the seeded conversations; nothing of
+    /// instrukt's configuration changes.
+    pub fn create(env: &TestEnv) -> Self {
         let file = env.home().join(".t3/userdata/statev2.sqlite");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         let db = Connection::open(&file).unwrap();
