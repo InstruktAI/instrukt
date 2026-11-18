@@ -501,6 +501,82 @@ position that read them and the message's `answered` state, and `posted_at`
 is set only when the connector accepted that piece. These tables hold no
 credential.
 
+**`connector_private_messages`** — the messages a connector posted for one
+person alone, such as a sign-in link
+(`project/instrukt/spec/feature/runner/slack-connector`). Key: `(company,
+connector, channel, message)`, the provider's identity of the posted message.
+Column: `posted_at`. These messages, and every message that carries the
+connector's private-message marker whether or not its identity was recorded,
+are left out of every range of accompanying messages.
+
+**MCP sign-in tables** — what signing in to a company's MCP servers keeps,
+under `project/instrukt/spec/feature/runner/mcp-access`. A person is their
+email address in lower case. These tables hold credentials; they are written
+to no file other than this database, and their values appear in no log,
+status or recorded cause.
+
+**`mcp_registrations`** — one registration of a client. Key: `return_id`.
+
+| Column | Meaning |
+| --- | --- |
+| `company`, `server`, `issuer` | The company home, the server and the authorization server it was made for. |
+| `declared` | `1` for a client declared under `sign_in.client`, whose secret is read from the home's secrets file; `0` for a client instrukt registered. |
+| `client_id` | The client's identifier, for a declared client as it was declared when the registration was made. |
+| `client_secret`, `secret_digest` | A registered client's secret, `NULL` for a public client and for a declared one; for a declared client the SHA-256 digest of its secret, `NULL` when it has none. |
+| `return_address` | The return address the client was registered with. |
+| `registered_at`, `retired_at` | When it was made, and when a newer registration replaced it; `NULL` while current. |
+
+**`mcp_generations`** — Key: `(company, person, server)`. Column:
+`generation`, raised by every removal of that person's login or open sign-ins
+for that server.
+
+**`mcp_logins`** — one signed-in login. Key: `(company, person, server)`.
+
+| Column | Meaning |
+| --- | --- |
+| `resource` | The server's `url` the login was issued for. |
+| `subject` | The OpenID Connect `sub` recorded at sign-in; `NULL` with a declared identity request. |
+| `return_id` | The registration it was issued to, which names its authorization server and client. |
+| `access_token`, `expires_at` | The access token and when it runs out; `expires_at` is `NULL` when the server gave no lifetime, which means unknown. |
+| `checked` | `1` once who the access token identifies as has been confirmed; `0` while a renewed access token waits for that check, during which it is not used. |
+| `refresh_token` | The refresh token; `NULL` when the server issued none. |
+| `scopes` | The scopes granted, as the server gave them. |
+| `signed_in_at`, `renewed_at` | When the person signed in, and when instrukt last renewed it. |
+| `renewing_until` | While a renewal runs, when its claim lapses; `NULL` otherwise. |
+
+**`mcp_sign_ins`** — one sign-in. Key: `state_digest`, the SHA-256 digest of
+the state. At most one row per company, person and server is `open` or
+`exchanging`.
+
+| Column | Meaning |
+| --- | --- |
+| `company`, `person`, `server` | Whose sign-in it is, and to which server. |
+| `return_id`, `resource`, `scopes` | The registration it uses, and what the link asked for. |
+| `generation` | The generation of that company, person and server when it was made. |
+| `connector`, `conversation`, `message`, `recipient` | The addressed message whose call started it, and the person's identity on that connector, to whom its direct messages go. |
+| `code_verifier`, `nonce` | The PKCE verifier and, for an OpenID Connect sign-in, the nonce; `NULL` once it is closed. |
+| `link` | The link while the connector has not accepted it; `NULL` afterwards. |
+| `created_at`, `expires_at` | When it was made, and ten minutes after. |
+| `state` | `open`; `exchanging`, its return claimed; or closed: `completed`, `declined`, `refused`, `failed`, `undelivered`, `expired` or `cancelled`. |
+| `link_sent_at`, `told_at` | When the connector accepted the link, and the closing direct message; `NULL` while outstanding. |
+| `closed_at` | When it closed; `NULL` while `open` or `exchanging`. |
+| `failure` | The cause of its last failed step, without any value of the sign-in; `NULL` once that step succeeds. |
+
+**`mcp_sign_in_waiters`** — the calls waiting on a sign-in. Key:
+`(state_digest, waiter)`. Column: `waiting_until`, the end of that call's own
+wait. A call removes only its own row when it stops waiting.
+
+A sign-in and the call that starts it, with its waiter row, are written in one
+transaction, only when the generation the start captured is still current. Claiming a return moves the sign-in from `open` to `exchanging`
+in one transaction before anything is sent to the authorization server. A
+sign-in's `completed` state and its login are written in one transaction,
+only when its generation is still current; it reads the waiter rows to decide
+whether waiting calls take the login or the person is told to ask again. A
+renewal writes its new access token, lifetime and refresh token in one
+transaction, only when the generation is unchanged. A removal raises the
+generation, deletes the login and cancels the sign-ins that are open or being
+exchanged in one transaction.
+
 **`request_validators`** — conditional-request validators. Key:
 `(project, request)`, `etag`, `body` (the cached answer an
 unchanged `304` reuses).
@@ -613,7 +689,11 @@ after seven days. Local history does not backfill a newly created Redis group.
 Conversation bindings, addressed messages, answer pieces and refusal receipts
 are kept with their text, captured context and framed input after delivery and
 posting; a `failure` cause is the only value cleared, when its operation
-recovers.
+recovers. A signed-in login is kept until it is signed out, removed by the
+operator, refused at renewal or unusable. A closed sign-in loses its code
+verifier, nonce and link at once and its row a day after `closed_at`. A
+retired registration is kept while a login or a sign-in uses it. A
+connector's private message is kept as long as its conversation.
 
 ### Agent capacity
 
@@ -641,6 +721,9 @@ agents use `instrukt agents availability|status`, never direct database queries.
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
+- A signed-in login and its refresh token lie in this database for as long
+  as the login is kept; any process of the same operating-system user can
+  read them.
 - Conversation text is kept without a limit: addressed messages, what
   accompanied them, their framed input and the answers stay in the database,
   with the names and email addresses of the people who addressed an agent.

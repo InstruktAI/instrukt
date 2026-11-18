@@ -56,8 +56,8 @@ enable events. Installation and withdrawal are owned by
 | `members.<member>` (`name`, `email`, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves a speaker's tool logins |
 | `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
 | `connectors.slack` (`app_token` and `bot_token` references, optional `context_messages`) | company home only | runner conversations |
-| `mcp.<name>` (`url`, `description`; in a company home `credential` and, with it, a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
-| `ingress.computer`, `ingress.port`, `ingress.reactions` | global only; stable existing machine ID of the ingress, loopback port, and stable existing machine ID of the computer that reacts to external facts (default: the ingress) | runner intake |
+| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` scopes, client references and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
@@ -94,7 +94,12 @@ external facts; left out, the ingress reacts (`project/instrukt/spec/feature/run
 machine global layers agree on both IDs and the logical cluster Redis/namespace;
 URL spellings and ACL credentials may differ when they reach the same logical
 store with required permissions. `ingress.port` is a valid TCP port shared only
-by the ingress receiver and local edge. The bind host is fixed loopback. Local
+by the ingress receiver and local edge. The bind host is fixed loopback.
+`ingress.url` is an `https` address with a host, an optional port and no
+credentials, path, query or fragment; the edge forwards `/hooks/inbound` below it to the
+receiver, and a sign-in's return address is built from it
+(`project/instrukt/spec/feature/runner/mcp-access`). All participating
+computers agree on it as on `ingress.computer`. Local
 Redis socket paths, local credentials, runtime and ticks settings stay local.
 `instrukt events status` shows each computer's own machine ID and both IDs as
 that computer reads them (`project/instrukt/spec/feature/runner/module-installation`);

@@ -167,6 +167,26 @@ issues a new one.
 Name the company's Slack app and its bot `agent`; the status line Slack shows
 while the agent works starts with that name.
 
+### Signing in to a company's MCP servers
+
+A company home's MCP server can be declared with `speaker_login: sign-in`
+(`docs/project/spec/feature/runner/mcp-access.md`). A declaration that names
+`credential` keeps its stored logins and needs nothing.
+
+Before declaring a server with sign-in:
+
+- Set `ingress.url` in the global layer of every participating computer to
+  the public `https` address at which the operator's edge forwards
+  `/hooks/inbound` to the receiver, keep events enabled on the ingress
+  computer, and keep cluster Redis reachable from the ingress computer and
+  the company's computer. Then run `instrukt install` on both.
+- For a server registered with a client beforehand (`sign_in.client`),
+  register the return address `instrukt mcp list --company <company>` shows
+  with the server's authorization server.
+
+The Slack app needs no new permission: the sign-in link is posted to the
+person's direct messages with the bot's existing `chat:write`.
+
 ### Protected secrets and owned files
 
 Existing development installations need machine-local secret setup before using

@@ -24,7 +24,10 @@ default without an adopted enabled project creates no infrastructure demand,
 except through a company home, which follows the machine's global switches
 (`project/instrukt/spec/feature/configuration/company-homes`): a nonempty valid
 source map there demands events infrastructure and the receiver while events is
-on, and a declared connector demands the runner service.
+on, a declared connector demands the runner service, and an MCP server declared
+with sign-in demands cluster Redis and a set `ingress.url` on the computer that
+holds that home. The ingress computer serves the sign-in return whenever events
+is on there and `ingress.url` is set, whichever homes it holds.
 Writing installation reads the registered checkouts and retains their validated
 project settings and resolved repository identities in this computer's own
 installation state. Inspection reads the current repository and those retained
@@ -42,6 +45,8 @@ unused; withdrawal waits for a complete demand read.
 | Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
 | Events enabled, no sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
 | Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers, the reacting computer included, retain consumers without listeners. |
+| A company home's MCP server declared with sign-in (`project/instrukt/spec/feature/runner/mcp-access`) | On the computer that holds the home: cluster Redis reachable and `ingress.url` set. Without them it is an unmet finding naming the company and the server, with its door: set the missing settings, then `instrukt install`. No receiver on that computer solely for sign-in. |
+| The ingress computer with events enabled and `ingress.url` set | The events dependencies and the receiver/socket service, which serves the sign-in return whether or not a source is declared. |
 
 The local database is created/migrated on commands that need it under its own
 contract. Todos may record finalize-ready events locally while events are off;
@@ -66,7 +71,7 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
 | `instrukt events status` | Show this computer's machine ID and its `ingress.computer` and `ingress.reactions` as it reads them, enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, receiver placement/health, the runner service's state and each connector's connection; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
-| `instrukt webhooks serve` | Internal receiver entry point for owned service definitions; refuse before binding on non-ingress or with no enabled valid source. |
+| `instrukt webhooks serve` | Internal receiver entry point for owned service definitions; refuse before binding on non-ingress, or with neither an enabled valid source nor `ingress.url` set with events enabled. |
 
 The optional module filter limits which dependency set is converged or checked;
 it never overrides disabled configuration, ingress placement or other projects'
@@ -221,7 +226,11 @@ discards a group to make a check pass. Scope handover follows event-transport.
 
 Receiver demand exists only on the configured `ingress.computer`, identified
 by instrukt's stable machine ID, and only while an adopted enabled project's
-or an enabled company home's nonempty valid source map exists there. Missing
+or an enabled company home's nonempty valid source map exists there, or events
+is enabled there and `ingress.url` is set. The sign-in return needs no company
+home on the ingress computer: the receiver knows no company, checks only the
+return's form and path, and writes its short-lived entry
+(`project/instrukt/spec/feature/runner/mcp-access`). Missing
 declaring homes or signing values fail with the home/reference named. Signing
 material resolves only on the ingress computer, from its owner-only
 `~/.instrukt/secrets.env` for a project source and from the company home's own
@@ -437,6 +446,17 @@ When Graphify needs installation and uv is absent or fails
 Then installation reports the unmet prerequisite and its repair door
 But with blueprint disabled
 Then Graphify is neither installed nor required and an existing tool is retained
+```
+
+### UC-MI14: Serve sign-in returns without a webhook source
+
+```gherkin
+Given a developer declares a company's MCP server with sign-in and no webhook source anywhere
+And the ingress computer has events enabled and the ingress address set, and holds no company home
+When the configuration agent installs the demanded infrastructure on the ingress computer and the company's computer
+Then the ingress computer runs the receiver that takes sign-in returns
+But when the company's computer has no ingress address or cannot reach cluster Redis
+Then installation reports the company and the server with the setting to supply, and claims no success
 ```
 
 ### UC-MI13: Keep the runner running for a company's conversations

@@ -222,6 +222,28 @@ splitting ends, so an answer that is an exact multiple of the limit is
 followed by no empty part. Nothing is inserted, so no part is longer than
 12,000 characters.
 
+### Direct messages from instrukt
+
+When instrukt has something for one person alone, such as a sign-in link
+(`project/instrukt/spec/feature/runner/mcp-access`), the connector posts it
+with `chat.postMessage` and the bot token to that person's Slack id, which
+Slack delivers in the person's direct messages with the agent. It is never
+posted in a channel or a thread, whichever conversation the person was in.
+Slack's `ratelimited`, a server error and a failed connection are retried;
+every other error Slack answers for that call fails the delivery, and the
+connector never posts the message anywhere else. Such a message is no answer:
+it starts no turn and is not delivered to the agent.
+
+Each such message is posted with Slack message metadata whose `event_type` is
+`instrukt_private`, and the connector reads conversation history with that
+metadata (`include_all_metadata`). A message the app posted that carries it
+accompanies no addressed message, also when its post was accepted but the
+answer never reached the connector or a retry posted it twice: it is left out
+of every range the connector reads, the first of a conversation, a later one
+and one read again after a restart, before what accompanies a message is
+captured and framed. The connector also keeps the channel and the time Slack
+gives each such message it posted.
+
 ## Use cases
 
 ### UC-SL1: Connect a company's Slack without exposing the computer
@@ -311,4 +333,6 @@ And an answer longer than Slack takes in one message arrives in parts, in order,
 - https://docs.slack.dev/reference/methods/chat.postMessage/ — `markdown_text`: Markdown Slack renders, at most 12,000 characters, never together with `text` or `blocks`; `thread_ts` for a reply in a thread.
 - https://docs.slack.dev/reference/block-kit/blocks/markdown-block/ — the Markdown Slack renders, and that an image shows as link text.
 - https://docs.slack.dev/reference/objects/user-object/ — the fields that tell a full member from a bot, a guest and a member of another workspace.
+- https://docs.slack.dev/messaging/message-metadata/ — message metadata: an `event_type` of letters, digits, underscores and hyphens, attached with the `metadata` argument, needing no registration; `conversations.history` returns it with `include_all_metadata`.
+- https://docs.slack.dev/reference/methods/chat.postMessage/#post-to-a-direct-message-channel — a bot posts in its direct messages with a person by passing the person's user id as the channel, with `chat:write`.
 - https://docs.slack.dev/reference/methods/assistant.threads.setStatus/ — the status line: its text, its two-minute limit and its removal when the app replies.
