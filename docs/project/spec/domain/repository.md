@@ -130,11 +130,11 @@ commands.
     complete section is instrukt's and all of them become one fresh section at the
     first one's place (none, for removal). An unterminated or stray marker line is
     kept as the comment `# instrukt: damaged marker kept (was: <marker>)`; the lines
-    after it are not touched, including lines identical to instrukt's own. The
-    repair is reported per file with the lines it changed and kept, and one damaged
-    file never stops another (`project/instrukt/policy/checks-and-guards`: nothing a
-    person wrote is removed because it looks generated; a damaged file does not
-    block).
+    after it are not touched, including lines identical to instrukt's own, and a
+    run line of instrukt's among them is named as a duplicate. The repair is
+    reported per file with the lines it changed and kept, `hooks status` names a
+    kept damaged marker for as long as it is there, and one damaged file never
+    stops another.
   - A section never `exec`s a command (never replaces the shell) and never
     ends the hook early, so every section after it runs; a redirection-only
     `exec` is allowed, and the pre-push section uses one to give the sections

@@ -70,8 +70,7 @@ the derived `runtime.session_id` and selected `runtime.<operation>`.
 **Selected runtime**
 : The compiled adapter chosen by global `runner.runtime`, initially `t3`.
 Absent, it is the one runtime compiled into this instrukt; an unknown name is a
-finding (`project/instrukt/policy/checks-and-guards`: a prerequisite that has one
-possible value is not asked for).
+finding. No runtime is detected from installed tools or the caller's environment.
 
 **Caller identity**
 : The selected adapter's recognition of the current native session. It may

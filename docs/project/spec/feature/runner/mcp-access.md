@@ -518,9 +518,7 @@ is the local operator's.
   versions its client lists (`crates/instrukt-runner/src/mcp/_client.rs`): it
   offers the newest, continues with any listed version the server answers and
   sends that version on every later request of the connection; a version it does
-  not speak ends the call naming both
-  (`project/instrukt/policy/checks-and-guards`: a service is not unreachable
-  because it answers another published version). A reply that is not a well-formed answer to the request it was
+  not speak ends the call naming both. A reply that is not a well-formed answer to the request it was
   sent, or that lacks what the method requires, is a failure, never an empty
   result. An answer that arrives as an event completes the request without
   waiting for the stream to end.
@@ -647,14 +645,16 @@ And a sign-in that person had started keeps nothing when they complete it
 And a call for that person starts a new sign-in
 ```
 
-### UC-MA11: Reach a server that answers an earlier protocol version
+### UC-MA11: A member's request is served by a server that answers an earlier protocol version
 
 ```gherkin
-Given a company declares a server that answers an earlier protocol version instrukt also speaks
-When an agent lists its tools and calls one
-Then both succeed and every request after the first names the version the server answered
+Given a company member asks the company's agent for something a tool of the company's declared server provides
+And that server answers an earlier protocol version instrukt also speaks
+When the agent uses the tool for them
+Then the member gets the tool's result in the agent's answer
+And every request to the server after the first names the version the server answered
 But when the server answers a version instrukt does not speak
-Then the call fails naming both versions
+Then the agent's call fails naming both versions
 ```
 
 ## Known caveats

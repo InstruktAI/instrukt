@@ -104,8 +104,7 @@ adapter; an actor as JSON text, one of
   refused for writing; the refusal names both versions and prints the command
   that installs the current instrukt. A status command reads an older database
   through a migrated in-memory image and changes nothing on disk, and reports a
-  newer one as a finding while still reporting everything else
-  (`project/instrukt/policy/checks-and-guards`: a status command never refuses because of old state).
+  newer one as a finding while still reporting everything else.
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
@@ -422,8 +421,7 @@ capability, native reference, source and observation time; unknown/unsupported
 evidence leaves the slot occupied, rather than fabricating a transcript or run id,
 until the input bound (`runner/inputs.rs`): then the input is `unconfirmed` (outcome
 unknown, never sent again) and the slot is released. An item larger than the
-delivery limit on its own is `set_aside`, with its failure, and later items proceed
-(`project/instrukt/policy/checks-and-guards`: an uncertain effect stays recorded; one entry affects only itself). Wake requests coalesce per target.
+delivery limit on its own is `set_aside`, with its failure, and later items proceed. Wake requests coalesce per target.
 Only-at-entry selection rechecks idleness before handover. Runtime calls run
 outside transactions; the fixed target and selected input commit before send.
 A lost acknowledgement can repeat input and remains distinguishable from
@@ -689,12 +687,12 @@ conversation core. Key: `(company, connector)`. Columns: `retained_until`, where
 last completed read-back started less a margin, `NULL` until one completes, written
 only by a completed read-back in the transaction of its last retention and never
 from a connection state or a retained message's time; `first_seen`, when the runner
-first saw the connector declared; `missed`, the addressed messages older than a
-day that a read-back found and did not admit (conversation, message, time, link),
-kept 30 days and one per message. The row lives as long as the declaration. On
+first saw the connector declared; `missed`, the addressed messages older than the
+answering bound that a read-back found and did not admit (conversation, message,
+time, link), kept for the reporting period and one per message; both are declared
+with the conversation core (`project/instrukt/spec/feature/company/conversations`). The row lives as long as the declaration. On
 migration an existing connector's `first_seen` is its company's earliest retained
-message, or the migration time (`project/instrukt/policy/checks-and-guards`: what read-back must still read is
-never inferred from a timestamp).
+message, or the migration time.
 
 **`runner_workers`** — one row per history worker (extraction, query responder):
 `failure` and `since`, its current outside failure, written by that worker on a

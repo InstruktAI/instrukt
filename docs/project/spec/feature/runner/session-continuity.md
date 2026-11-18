@@ -6,8 +6,8 @@ visibility: public
 
 ## What it is
 
-The runner defines a Rust runtime-adapter trait and ships T3 first, explicitly
-selected with global `runner.runtime`. It acts where instrukt has no agent:
+The runner defines a Rust runtime-adapter trait and ships T3 first, selected
+with global `runner.runtime` or, unset, as the one compiled adapter. It acts where instrukt has no agent:
 todo orchestrator pickup, event-driven standing agents, recurring tasks,
 keyed singleton discovery, event/approval delivery and conversation-link relay. Its implementation is code.
 
@@ -157,7 +157,8 @@ to its own dispatch path, never an instruction for an agent to execute.
 
 ### Runtime choice and feature availability
 
-`runner.runtime` is global-only and names a compiled adapter. It has no default.
+`runner.runtime` is global-only and names a compiled adapter. Unset, it is the
+one adapter compiled into this instrukt.
 `t3` is the first shipped implementation. No code chooses a runtime from
 installed tools or session environment variables. Unknown adapter names are
 validation findings. Runtime instruction entries are configuration prose, not
@@ -168,26 +169,26 @@ adapter verb templates.
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
-| History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unset or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
+| History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
-enabled for a declaring home and no runtime chosen: the project's effective
+enabled for a declaring home whether or not its runtime is installed there: the project's effective
 switch for a project source, the machine's global switch for a company source.
 Its receiver installs and serves as on any ingress. The standing-agent row
 applies where activation happens: on the reacting computer, and for the events
 a computer emits itself; a procedure activation the ingress accepts for an event
-of its own fails visibly at its execution boundary while no runtime is chosen.
+of its own fails visibly at its execution boundary while that runtime is not installed there.
 Every other feature in the table keeps its requirement.
 
-Enabling a module without a selected runtime, or with its native/adapter path
+Enabling a module while `runner.runtime` names no compiled adapter, or with its native/adapter path
 lacking a required capability, is refused without changing configuration, with
 the ingress exception above. The refusal and
-`config validate` name the runtime and missing capability, or state that no
-runtime is chosen. A temporarily unreachable runtime is an execution failure,
+`config validate` name the runtime and missing capability, or the unknown
+runtime name. A temporarily unreachable runtime is an execution failure,
 never a reason to select another adapter or create a replacement session.
 Enablement reads the selected workflow's typed `requires` declaration under
 `project/instrukt/spec/feature/workflow/workflow-definition`; it does not infer
@@ -410,8 +411,7 @@ release strings are diagnostics, not exact-release gates. Unknown descriptor
 version or protocol/shape and failed acquisition refuse startup with the operation and
 a safe failure category, without raw outputs or credentials. A token that cannot be
 revoked is logged and the readiness read is used: the token is read-scoped and lapses
-after its five-minute TTL (`general/principle/trust-and-guardrails`: cleanup of a
-bounded credential is no gate on the work).
+at the end of the TTL it was issued with.
 A hard process stop before revocation leaves the session bounded by its short TTL.
 
 The same read answers publication's question which agent runtimes are
@@ -541,8 +541,8 @@ execution, after a terminal run without either, or a gone session,
 the runner attempts one recovery send to that same id; continued absence raises an anomaly. Observation failure retries
 observation instead. Such an execution is listed in `instrukt events status` until its workflow
 state advances, whether or not a notification command is configured; recovered means
-that its state advanced (`project/instrukt/policy/checks-and-guards`: what automation
-cannot resolve reaches the operator). Release claims through work's command contract; ending
+that its state advanced (`project/instrukt/policy/checks-and-guards`: what instrukt
+cannot resolve goes to the operator). Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
 
 ### Fresh canonical base
@@ -598,13 +598,15 @@ But a custom workflow requiring existing-worktree attachment is refused with the
 And a feature missing another required capability is refused without changing configuration
 ```
 
-### UC-SS6: A developer who has chosen no runtime is never given one
+### UC-SS6: A developer who has chosen no runtime works with the compiled one, never a detected one
 
 ```gherkin
-Given T3 Code is installed but the developer has chosen no runtime
+Given the developer has not set `runner.runtime`
 When the developer enables work dispatch or standing agents
-Then instrukt refuses saying that no runtime is chosen
-And no runtime is picked for them
+Then the one runtime compiled into instrukt is selected and named
+And nothing about installed tools or the caller's session changes that choice
+But when `runner.runtime` names no compiled adapter
+Then instrukt refuses naming the unknown runtime
 ```
 
 ### UC-SS8: Events keep one standing agent through a runtime outage
@@ -741,14 +743,14 @@ And the existing conversation wakes without a new thread
 And the listing window has no part in that decision
 ```
 
-### UC-SS22: A standing agent whose thread was deleted continues in a new one
+### UC-SS22: A developer who deleted a standing agent's thread has the subject's events handled in a new one
 
 ```gherkin
-Given a standing agent bound to a subject
-When its thread is deleted in the runtime and a later event for that subject arrives
-Then a successor conversation receives the event
-But when its thread was archived instead
-Then no successor starts, the event stays pending and the operator is shown the archived thread
+Given a developer's procedure keeps a standing agent for a subject
+When the developer deletes its thread in the runtime and a later event for that subject arrives
+Then a successor conversation for that subject handles the event
+But when the developer archived the thread instead
+Then no successor starts, the event stays pending and status shows the developer the archived thread
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

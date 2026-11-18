@@ -49,9 +49,7 @@ diagnostics would otherwise be gone with them.
   `sdlc/policy/security-awareness`).
 - The logging crate owns open and write failures. instrukt initialises it
   before any other work. When initialisation fails, records go to standard
-  error and the command continues; the failure is the first record
-  (`project/instrukt/policy/checks-and-guards`: diagnostics are not a
-  prerequisite of the work).
+  error and the command continues; the failure is the first record.
 
 ## Use cases
 

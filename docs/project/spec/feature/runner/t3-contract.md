@@ -113,8 +113,7 @@ the newest version-ordered `v*-nightly.*` tag and its commit using
 that version with the pin recorded on the workflow-owned `upstream/t3-nightly`
 branch. An unchanged nightly skips the update; the check is dispatched again when
 no contract run exists for the recorded head, so a dispatch that failed or was
-interrupted is repaired at the next run (`project/instrukt/policy/checks-and-guards`:
-the state is checked, not a record of having started it). A missing branch or
+interrupted is repaired at the next run. A missing branch or
 changed nightly produces a pin-bump commit on that branch, using the current
 default-branch source with `crates/instrukt-runner/t3.version` set to the nightly
 version. The default branch's stable pin and the person's installation stay

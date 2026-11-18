@@ -72,8 +72,7 @@ unfinished parking before later entries; already completed stages remain
 recognizable after interruption. A failed announcement — local transport not
 prepared, the envelope not encodable, local Redis unreachable — is counted in
 `instrukt events status` and parking completes without it, so it never holds later
-entries (`project/instrukt/policy/checks-and-guards`: the dead-letter record is the
-event's only copy; the announcement is not). Other groups keep their own progress.
+entries. Other groups keep their own progress.
 
 A reaction that panics is caught where it is called: the entry counts a failed
 attempt, as any failure does, and the reader goes on.
@@ -82,8 +81,7 @@ The activation matcher reads the published subscriptions entry by entry: an entr
 that cannot be decoded, or that is invalid, is dropped and named in
 `instrukt events status`, and every other subscription stays active. An index that
 cannot be read as a whole fails the event's handling, which is retried and then
-parked; it is never taken as empty
-(`project/instrukt/policy/checks-and-guards`: one wrong entry affects only itself).
+parked; it is never taken as empty.
 `instrukt events status` counts events settled with no activation.
 
 ### Lifetime distinction
@@ -160,10 +158,10 @@ Then selection is identical and only the selected reaction interprets data
 ```gherkin
 Given a developer has an event that fails through the attempt ceiling, including a malformed entry
 When parking succeeds
-Then its original evidence and failure facts are inspectable as that consumer's dead letter and it is announced before ACK
-And later entries proceed
+Then its original evidence and failure facts are inspectable as that consumer's dead letter
+And later entries proceed, whether or not its announcement could be made
+And a dead letter that could not be announced is counted in status
 But a failed persist or ACK leaves it unsettled and resumes the unfinished stages after interruption
-And a dead letter whose announcement cannot be made still lets later entries proceed, and status counts it
 ```
 
 ### UC-EC9: Catch up an existing responsibility after downtime
@@ -183,13 +181,13 @@ When its group is prepared and new producers are admitted
 Then it receives subsequent occurrences without replaying stream or local-log history
 ```
 
-### UC-EC13: One broken subscription does not silence the others
+### UC-EC13: A developer's procedure keeps responding while another's subscription is broken
 
 ```gherkin
-Given a computer has published two procedures that subscribe to events, and one of their index entries is broken
-When an event matching the other procedure arrives
-Then that procedure is activated
-And status names the broken entry
+Given a developer has published two procedures that subscribe to events, and the subscription entry of one of them is broken
+When an event the other procedure subscribes to arrives
+Then that procedure's agent takes the event up
+And the developer sees the broken entry named in status
 ```
 
 ## Known caveats

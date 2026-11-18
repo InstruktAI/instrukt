@@ -40,7 +40,7 @@ reported in `instrukt events status`. A project layer with a finding against a
 module is not admitted for that module; its other modules are unaffected. No part
 of the runner reads those files on its own
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters, and a running process uses only what it admitted).
+enters; nothing running handles a missing one).
 
 **Parts that depend on a service outside instrukt.** The conversation relay (on
 T3's conversation source), the connectors (on the provider), the event readers (on
@@ -240,13 +240,13 @@ But when a company declares a connector
 Then the runner runs with work tracking and event responses off
 ```
 
-### UC-RD3: Todos are picked up when a project's event responses are not admitted
+### UC-RD3: A developer's todos are picked up while their project's event responses are not admitted
 
 ```gherkin
-Given a project switches on automatic pickup and event responses on a computer without event transport
-When the scheduled wake-up runs
-Then the project's eligible todo is dispatched
-And the computer's status names the project's event responses as not admitted, with the setting they need
+Given a developer has switched on automatic pickup and event responses for their project on a computer without the event transport
+When their project has a todo ready for pickup
+Then the todo is picked up
+And the developer sees in status that the project's event responses are not admitted, with the setting they need
 ```
 
 ## Known caveats

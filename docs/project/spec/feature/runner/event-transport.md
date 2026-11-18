@@ -63,8 +63,7 @@ A former source no longer in the configuration cannot be drained: it is marked
 abandoned when the change is admitted, the new source runs at once, and
 `instrukt events status` names the abandoned source and that its pending events
 stay unread in that Redis. Configured again, it is drained like any retiring
-source from its own group (`project/instrukt/policy/checks-and-guards`: a change
-never leaves a consumer waiting on what the configuration no longer names).
+source from its own group.
 
 ### Local committed facts and publication recovery
 

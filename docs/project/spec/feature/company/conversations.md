@@ -90,7 +90,11 @@ path is the same for every connector, whichever channel it speaks to
 - Its role is `company-agent`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
-- Resolution is serialized per conversation. The company context keeps the
+- Resolution is serialized per conversation. A delivery pass that cannot take
+  one conversation's lock within its wait skips that conversation, whose messages
+  stay pending for the next pass, and goes on with the others; this is apart from
+  the runtime-dispatch lock, whose timeout skips a whole wake
+  (`project/instrukt/spec/feature/runner/work-dispatch`). The company context keeps the
   binding, each accepted message and each answer, so a message is not lost
   before it is delivered and an answer is not lost before it is posted. What is stored and
   kept is `project/instrukt/spec/feature/work/state-database`.
@@ -154,9 +158,7 @@ connector gives.
   source's identity changes, the conversation's thread is read whole from the new
   source and matched by each message's boundary; turns already posted are
   recognised by their turn identity and not posted again; a message whose turn
-  cannot be found stays sent and goes to the operator, never delivered again
-  (`project/instrukt/policy/checks-and-guards`: an uncertain effect stays
-  recorded and recoverable).
+  cannot be found stays sent and goes to the operator, never delivered again.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until its turn ends, the
@@ -214,8 +216,8 @@ person's interval is the earliest among their unanswered messages. While the rel
 cannot acquire the conversation source, every unanswered message counts from the
 later of its admission and the start of that failure, unless its own interval
 started earlier. The interval is evaluated by each connector's intake pass, at
-least every five seconds while an admitted message of its company has no posted
-answer, from the state database and the clock alone, so a held lock or an absent
+least once per intake interval while an admitted message of its company has no
+posted answer, from the state database and the clock alone, so a held lock or an absent
 source never delays it.
 
 **The one notice** is once per person per epoch: from the posting of the last
@@ -231,26 +233,29 @@ the next answer to them is posted.
   per-conversation post lock, held for the decision and one post, never for a
   read at the provider or a runtime call. An answer post cancels the person's
   notice in the same critical section once the provider accepted it.
-- A notice whose post timed out or lost its response is not posted again before a
-  settle bound of two minutes after the attempt. After it, the connector reads the
+- A notice whose post timed out or lost its response is not posted again before
+  the settle bound after the attempt has passed. After it, the connector reads the
   conversation from the epoch's start for a post of its own that begins with that
   person's mention and the sentence; finding one records it posted, finding none
   posts again.
 
-If a post is committed by the provider more than two minutes after it was sent,
+If a post is committed by the provider later than the settle bound after it was sent,
 the person can see the sentence twice, or once after their answer: the provider's
 methods promise neither a write deadline nor idempotent posts.
+
+The intake interval, the settle bound, and read-back's answering bound and
+reporting period below are declared with the conversation core in
+`crates/instrukt-runner/src/conversations.rs`.
 
 ### After the agent was offline
 
 A connector reads back what was written while it was not connected
 (`project/instrukt/spec/feature/company/slack-connector`). A message written
-within the last 24 hours that is addressed and not yet retained is admitted and
-answered like a live one. An older one is not answered — an answer to an old
-question arriving out of nowhere confuses more than it helps — and is named to the
-operator in `instrukt events status` for 30 days, once per message
-(`project/instrukt/policy/checks-and-guards`: what automation cannot resolve
-reaches the operator).
+within the answering bound that is addressed and not yet retained is admitted and
+answered like a live one. An older one is not answered and is named to the
+operator in `instrukt events status` for the reporting period, once per message
+(`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
+the operator).
 
 ## Use cases
 
@@ -314,7 +319,7 @@ Scenario Outline: Recover the answer
   Given a member's message reached the agent
   When <failure>
   Then the member gets the answer to that message
-  And nothing else is posted in the conversation
+  And nothing else is posted in the conversation, except the one notice that the assistant is temporarily unavailable when the recovery leaves the message without work for a minute
 
   Examples:
     | failure |
@@ -340,8 +345,10 @@ And a question written before the company was admitted is answered too
 Given a computer serves a company and a project that switches on event responses without the event transport they need
 When a member addresses the company's agent
 Then the agent's answer appears in that conversation
-And the computer's status names the project's event responses as not admitted
 ```
+
+Which project layers are admitted for events, and how status names one that is
+not, is `project/instrukt/spec/feature/runner/work-dispatch`.
 
 ### UC-CV13: Be answered for a message written while the assistant was offline
 
@@ -350,7 +357,7 @@ Given the assistant was offline
 When a member addressed it during that time, in a direct message or in a reply to an existing thread
 Then each addressed message is answered once when the assistant is back
 And a message that did not address it gets nothing
-But a message older than a day is not answered and is named to the operator
+But a message older than the answering bound is not answered and is named to the operator
 ```
 
 ## Known caveats

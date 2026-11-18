@@ -159,8 +159,8 @@ neither turns, link membership nor relay decisions. There is no separate relay
 process, agent relay tool, scheduled tick relay or periodic fallback. A relay pass
 that failed is tried again after a growing delay, whether or not the source changes
 meanwhile; a pass that cannot acquire the source retries the acquisition inside the
-relay (`project/instrukt/policy/checks-and-guards`: an outside failure is retried
-where it is used).
+relay (`project/instrukt/policy/checks-and-guards`: a part that depends on an outside
+service retries until it returns).
 
 Runner-owned link and direction positions live in the existing state database
 under `project/instrukt/spec/feature/work/state-database`. Each direction

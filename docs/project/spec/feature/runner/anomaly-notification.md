@@ -51,8 +51,8 @@ failing (`project/instrukt/spec/feature/runner/session-continuity`,
 `project/instrukt/spec/feature/company/conversations`). Each is also listed in
 `instrukt events status` with its door, whether or not a notification command is
 configured, so the operator sees it when the runtime offers no notification
-(`project/instrukt/policy/checks-and-guards`: what automation cannot resolve
-reaches the operator, never the person).
+(`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
+the operator).
 
 ## Use cases
 

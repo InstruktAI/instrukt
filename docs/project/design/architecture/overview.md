@@ -72,7 +72,7 @@ into it when enabled. Core declares the todo-existence and flavor-role lookup
 interfaces, wired by the CLI to todos only when enabled.
 
 Core declares a caller-identity lookup interface for configuration interpolation
-and commit composition. The CLI wires the explicitly selected runtime adapter
+and commit composition. The CLI wires the selected runtime adapter
 into it; the lookup reads caller context without runtime I/O. Core never imports
 runner. The CLI also wires owner-supplied work/standing assignment lookup into
 command admission. The native caller identifies the recorded assignment whose
@@ -172,7 +172,7 @@ commands. Docs name `-h`.
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
 | Configured agent runtimes | publication | rendered global files in each configured runtime's home, written whole on every sync and never removed, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter |
-| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
+| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; `runner.runtime`, unset meaning the compiled adapter, never detected; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
@@ -418,8 +418,9 @@ session-fixed timing through A3's bounded batch log.
   resumes when GitHub is reachable.
 - **Main turns red anyway:** the integrator reverts the culprit first and
   repairs it in its own todo.
-- **No runtime is chosen:** runtime-dependent module enablement refuses and
-  names `runner.runtime`; code selects none. A missing caller context makes
+- **`runner.runtime` names no compiled adapter:** runtime-dependent module
+  enablement refuses and names it. Unset, it is the compiled adapter; code never
+  detects one. A missing caller context makes
   `runtime.session_id` fail and omits a commit's `Session:` trailer.
 - **Runtime identity or delivery is uncertain:** preserve the event, key and
   any start marker; recover through listing or explicit resolution. A failed

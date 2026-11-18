@@ -221,10 +221,9 @@ answer. Messages the agent was sent before stay in its session and are not
 sent again.
 
 When the accompanying messages cannot be read within the context bound the
-conversation core declares (two minutes from the message's arrival), the message
+conversation core declares, counted from the message's arrival, the message
 is delivered without them and the conversation context says they could not be
-read (`project/instrukt/policy/checks-and-guards`: missing context is the agent's
-to handle, not a reason to hold the message).
+read.
 
 ### Posting
 
@@ -256,8 +255,7 @@ for a post of its own beginning with that mention and sentence.
 ### Reading back after a connection
 
 After every connection is established, the connector reads back what was written
-while it was not connected (`project/instrukt/policy/checks-and-guards`: an
-outside failure is recovered transparently):
+while it was not connected:
 
 - For each conversation the app is in (`users.conversations`, types
   `public_channel`, `private_channel` and `im`), it reads every parent message
@@ -266,11 +264,12 @@ outside failure is recovered transparently):
   (`conversations.replies`), and the top-level and direct messages after it.
 - The window starts where the last completed read-back started, less a margin;
   with none completed, at the earlier of the time the runner first saw the
-  connector declared and 24 hours back. Only a read-back that completes moves it;
+  connector declared and the answering bound back
+  (`project/instrukt/spec/feature/company/conversations`). Only a read-back that completes moves it;
   a failed, partial or interrupted one reads the same window again.
 - Every message read goes through the rules of "What reaches the agent" and "Who
   is answered". One already retained is skipped by its identity; an addressed one
-  written within the last 24 hours is admitted like a live one; an older one is
+  written within the answering bound is admitted like a live one; an older one is
   not admitted and is named to the operator
   (`project/instrukt/spec/feature/company/conversations`).
 - Slack's retention, the app's access and Slack's rate limits are its only
@@ -360,7 +359,7 @@ And the member is answered
 ## Known caveats
 
 - A message written while the connection is down is read back after it returns,
-  as far as Slack still serves it; one older than a day is named to the operator,
+  as far as Slack still serves it; one older than the answering bound is named to the operator,
   not answered.
 - The agent reads no more of a conversation than what accompanies an addressed
   message.

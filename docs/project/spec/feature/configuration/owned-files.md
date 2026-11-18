@@ -37,8 +37,7 @@ operation with the reference and cause, never its value. An operation needing
 no secret does not require unrelated values to be present. Only
 `instrukt secrets set` and `instrukt secrets generate` write the file. At a
 terminal, `secrets set` asks for the value with echo off; from redirected input
-or `--from-file` it reads that (`project/instrukt/policy/checks-and-guards`: an
-operator must be able to type a secret). Writes
+or `--from-file` it reads that. Writes
 are atomic, and values are never echoed or included in diagnostics. Reading,
 validation and masked configuration output never disclose them. Ingress still
 resolves current and previous signing references at each request for rotation.
@@ -90,9 +89,9 @@ Hook-run records carry a shape version and an optional checkout or staging
 outcome. Older records convert in memory with no invented checkout or staging
 result; a record in a shape this binary does not know, a newer one included,
 reads as no record and is never refused, and the
-next recorded hook run persists the versioned shape (`sdlc/policy/state-storage`:
-an observation the next run rebuilds is not version-gated). Inspection never rewrites
-these records and a newer shape requires a newer binary. A record belongs to
+next recorded hook run persists the versioned shape
+(`project/instrukt/policy/checks-and-guards`: a version gate on rebuildable state
+is no gate). Inspection never rewrites these records. A record belongs to
 the repository, keyed by a digest of its git common directory and naming the
 repository's path, so it is found without reading the repository's
 configuration (`sdlc/principle/design-fundamentals`: an outcome is never lost
@@ -125,8 +124,7 @@ and runs its private copy with `INSTRUKT_HOME=<worktree>/.instrukt-home`. The ho
 is gitignored. Each use repairs what the development home lacks — its global
 layer and its published index — seeded from that worktree's committed HEAD,
 keeping development state and user-scope outputs out of the normal machine home;
-no marker stands in for the state itself (`project/instrukt/policy/checks-and-guards`:
-the state is checked, not a record of having made it). Later development syncs use that same worktree
+no marker stands in for the state itself. Later development syncs use that same worktree
 source, and first-use initialization does not overwrite later configuration edits.
 Secrets continue resolving from the one normal machine protected file.
 

@@ -65,16 +65,16 @@ field the file sets replaces the shipped one and a field it leaves out is
 inherited; lists (an order, a tier chain, `can`) are replaced whole. The merged
 value is validated as one document. A newer instrukt's defaults therefore reach
 every key the file does not name. instrukt never writes the file
-(`project/instrukt/policy/checks-and-guards`: what a person wrote is theirs;
-defaults live in the program, so no copy of them needs replacing). Owned-shape
+(`project/instrukt/policy/checks-and-guards`: a person's stated choices are
+migrated, never discarded). Owned-shape
 migrations follow `project/instrukt/spec/feature/configuration/owned-files`.
 
-An earlier instrukt wrote a full copy of its defaults into the file. The first
-writing command of this release removes that copy when the record the earlier
-release kept recognises it as unedited; an edited, unrecognised or unreadable
-case keeps the file, which then overrides everything it names. The record is
-deleted afterwards (`sdlc/policy/state-storage`: a record is discarded once its
-one use is done).
+A file that is a full copy of shipped defaults, recognised as unedited by the
+deployment record kept beside it, is removed by the first writing command, which
+then deletes the record. A file the record does not recognise as unedited —
+edited, unrecognised, or with the record unreadable — is kept and overrides
+everything it names. Reading commands change neither, and with the record gone
+nothing is converted again.
 
 Capability-field resolution preserves customized agents files at read time;
 its contract is `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
