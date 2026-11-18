@@ -447,6 +447,8 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 
 ### UC-AE13: An agent runtime the developer stops using no longer receives instructions (retired)
 
+### UC-AE14: A developer whose agent runtimes could not be asked is told, and the next publication catches up (retired)
+
 ## Known caveats
 
 - Global files are never removed. The file of a runtime that is no longer
