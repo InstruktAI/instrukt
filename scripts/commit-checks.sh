@@ -17,13 +17,11 @@ scripts/check-test-tool.sh pre-commit
 if [ "${1:-}" != "--all-files" ]; then
     exec pre-commit run --hook-stage pre-commit "$@"
 fi
-# Every file is validated with an instrukt built from this revision. It is
-# built under the build lock, as the Rust check is, so that a clean of the
-# workspace packages on a change of checkout happens before this build, and
-# the checks run a copy outside the target directory, which no cargo command
-# removes.
-scripts/with-build-lock.sh cargo build --locked --bin instrukt
+# Every file is validated with an instrukt built from this revision: built and
+# copied out of the target directory within one hold of the build lock, so
+# another checkout sharing the target can neither remove nor replace it before
+# the copy, and no cargo command removes the copy.
 checks=$(mktemp -d)
 trap 'rm -rf "$checks"' EXIT
-cp "$CARGO_TARGET_DIR/debug/instrukt" "$checks/instrukt"
+scripts/with-build-lock.sh scripts/build-check-instrukt.sh "$checks/instrukt"
 INSTRUKT_CHECK_BIN="$checks/instrukt" pre-commit run --all-files --show-diff-on-failure
