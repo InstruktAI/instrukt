@@ -33,10 +33,12 @@ into the master's `## Purpose`, each instruction into a project snippet of its
 type under `docs/project/` with its entry in the index, and the kept copy
 removed once nothing in it is left unplaced.
 
-From the first sync the root
-`AGENTS.md` is rendered by instrukt. Init reports the kept copy, that the file
-is now generated, and that its tracked copy is to be removed from version
-control in the same commit as the master (`git rm --cached AGENTS.md`); it
+The root `AGENTS.md` is generated from then on, and it stays committed: the
+commit that adopts the project carries its rendering
+(`project/instrukt/spec/feature/publication/agent-entrypoints`). A rendering
+never replaces a file instrukt did not write, so init reports the kept copy,
+that the file is now generated, and that the hand-written file is to be
+deleted; the next commit through the hook renders it in its place. Init
 never deletes or edits the file itself. User-scope agent files are the adopter's decision:
 sync refuses one instrukt did not write and names it
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
@@ -52,7 +54,7 @@ sync refuses one instrukt did not write and names it
 | Master | `AGENTS.master.md` at the repository root, holding only `## Purpose` with the project name | absent |
 | Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists, instrukt did not write it, and there is no master |
 | Editor schemas and modelines | `.instrukt/schemas/` and the first line of each file they describe | as `project/instrukt/spec/feature/publication/editor-schemas` |
-| Ignores | `.gitignore`: the generated `AGENTS.md` files and `.instrukt/` | a line is missing; it is appended, every other line kept |
+| Ignores | `.gitignore`: `.instrukt/` | the line is missing; it is appended, every other line kept |
 | Hook sections | the hooks directory | as `instrukt hooks install` (`project/instrukt/spec/feature/repository/hook-sections`) |
 
 - Refused outside a git repository's working tree.
@@ -82,9 +84,9 @@ In a repository whose working tree holds `docs/general/` or any
   owner, since the sync would be refused);
 - each `docs/domain/general/` or `docs/domain/project/`, as refused because
   the names are reserved;
-- whether the sync will render the global agent files of the agent CLIs
-  installed on the computer, and each existing global file instrukt did not
-  write, which would stop that sync
+- whether the sync will render the global agent files, for which agent
+  runtimes the selected runtime reports as configured, and each existing
+  global file instrukt did not write, which would stop that sync
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 The report claims nothing and writes nothing; ownership is taken by the sync
@@ -109,8 +111,10 @@ And nothing has been committed
 Given a developer's repository has a hand-written root agent instruction file and no instrukt configuration
 When the developer initializes instrukt in it
 Then everything the file said is kept aside for them, and the project's master holds only the purpose
-And the developer is told that the instruction file is generated from now on and how to stop tracking it
-And the file itself is left as it was until the first publication renders it
+And the developer is told that the instruction file is generated from now on and to delete the hand-written one
+And the file itself is left as it was
+When the developer deletes it and commits
+Then the commit carries the rendered instruction file in its place
 When their agent goes through the kept instructions with them
 Then each lands in the project's documentation and index, and the published instruction file carries them
 ```
@@ -135,7 +139,7 @@ And a repository holding always-on doctrine, a free domain and that owned domain
 When the developer initializes instrukt in the repository
 Then they are told it will claim the always-on doctrine and the free domain
 And that the owned domain belongs to the other project and its publication would be refused
-And whether publication will write the global agent instructions of the agent CLIs on the computer
+And whether publication will write global agent instructions, for which configured agent runtimes
 And nothing has been published
 ```
 

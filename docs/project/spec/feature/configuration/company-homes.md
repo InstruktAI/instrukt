@@ -1,12 +1,15 @@
 ---
-description: Company homes — a company exists on a computer as the folder `~/.instrukt/companies/<name>/` with its own settings document, its members and its own protected secrets, addressed with `--company <name>`; no registry, no project ownership and no roles.
+description: Company homes — a company exists on a computer as the folder `~/.instrukt/companies/<name>/`, the checkout of the company's repository, with its own settings document, its members, its knowledge and its own protected secrets kept out of the repository, addressed with `--company <name>`; no registry, no project ownership and no roles.
 ---
 # Company Homes — Spec
 
 ## What it is
 
 A company is a home on a computer: the place where work for that company runs
-and where the company's own settings and secrets live. One computer holds any
+and where the company's own settings, knowledge and secrets live. The home is
+the checkout of the company's repository, at the same location on a computer
+and in a container, so the company's documents are in the folder its agents
+work in. One computer holds any
 number of companies. The folder is the registration: a company exists where
 its home folder holds a valid settings document, and it is listed nowhere
 else. A project belongs to no company, and a company home carries no roles and
@@ -21,7 +24,8 @@ no authorization.
 | Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
 | Settings document | `instrukt.yaml` in the home folder | Carries `schema_version`, `company: <name>` equal to the folder name, and the company-home keys of `project/instrukt/spec/feature/configuration/layered-configuration`. |
 | Secrets file | `secrets.env` in the home folder | The company's own protected secrets, under the protection, write and disclosure rules of `project/instrukt/spec/feature/configuration/owned-files`. |
-| Company knowledge | `AGENTS.master.md` in the home folder | Optional. What every agent working for the company starts with, rendered into the home's `AGENTS.md` (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
+| Company knowledge | `AGENTS.master.md` in the home folder, and the company's documents in its `docs/` folder | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md`. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
+| Ignore file | `.gitignore` in the home folder | Keeps the settings document, the secrets file, `projects/` and the local state instrukt keeps in the home out of the repository. |
 
 - A folder under `companies/` without a valid settings document is not a
   company: nothing is served or run for it, and validation names the folder
@@ -32,6 +36,21 @@ no authorization.
 - Module enablement for a company home follows the machine's global layer; a
   company home carries no module switches.
 - instrukt never deletes a company home.
+
+### What stays out of the repository
+
+The home also holds what belongs to one computer and is never committed: the
+secrets file, the `projects/` folder with the checkouts of other
+repositories, and the local state instrukt keeps in the home. The settings
+document stays out of the repository too: it holds the members' addresses
+and the company's live settings, and it is kept on the computer.
+
+- `instrukt config init --company <name>` writes the home's ignore lines for
+  them, appending each missing line and keeping every other line, also in a
+  home that already exists.
+- `instrukt config validate --company <name>` reports as a finding, naming
+  the path, a settings document, a secrets file, a `projects/` folder or
+  local state that the home's repository tracks or does not ignore.
 
 ### Addressing
 
@@ -131,14 +150,25 @@ And each member's logins appear as references, never as values
 But an address listed by two members is refused naming both
 ```
 
+### UC-CH4: Keep a company's secrets out of its repository
+
+```gherkin
+Given an operator's company home is the checkout of the company's repository
+When the operator sets the home up
+Then the home's settings, its secrets, its other checkouts and instrukt's local state are ignored by the repository
+When a commit tracks the secrets file anyway
+Then validating the company reports the file
+```
+
 ## Known caveats
 
 - A company home publishes no documentation of its own. An agent working
   there starts with the global agent files, the home's rendered `AGENTS.md`
   and the assignment it is given.
-- instrukt reads a company home as it stands. Obtaining the home, keeping it
-  current, and keeping its `secrets.env` and rendered `AGENTS.md` out of its
-  repository are the operator's, outside this contract.
+- instrukt reads a company home as it stands. Obtaining the home — the first
+  checkout, made by an agent at the request of someone with access to the
+  company's repository — and keeping it current are the operator's, outside
+  this contract.
 - Company homes on one computer are separate folders of one operating-system
   user. A session working in one home is not prevented from reading another.
 - There are no person homes.

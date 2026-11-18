@@ -64,15 +64,14 @@ refuse publication and preserve the previous publication.
 | Claims | the ownership record under `~/.instrukt/state/publication/` | the project as owner of each position it publishes |
 | Published entries | the global index `~/.instrukt/state/index.yaml` | one entry per published snippet, owned by the project |
 | Project position and entries | `~/.instrukt/docs/project/<slug>/…` and the global index | committed `docs/project/` content, including pending companions and its position files; entries owned by that project, ids `project/<slug>/…`, resolving to published files with source checkout provenance |
-| `AGENTS.md` files | the project's primary worktree | `project/instrukt/spec/feature/publication/agent-entrypoints` |
-| Global agent files | the agent CLIs' user directories | only from the owner of `docs/general/` (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
+| Global agent files | the homes of the configured agent runtimes | only from the owner of `docs/general/` (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
 | Editor schemas and modelines | the project's primary worktree | `project/instrukt/spec/feature/publication/editor-schemas` |
 | Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path, and the written record of every user-scope instruction file it wrote |
 | Eval fingerprint | `~/.instrukt/state/eval-fingerprint/` | digest associated with the published commit; `project/instrukt/spec/feature/publication/eval-fingerprint` |
 
 - Snippets are published raw: their `@config` directives resolve when they are
-  read (`project/instrukt/spec/domain/docs`). Rendered outputs —
-  `AGENTS.md` files and global agent files — resolve `@config` at
+  read (`project/instrukt/spec/domain/docs`). The global agent files
+  resolve `@config` at
   publication, in-process against the publishing project's effective
   configuration with no runtime session, so no rendered output captures a
   session. A `runtime.*` path in a rendered output is a validation finding,
@@ -146,9 +145,9 @@ sync retracts it. No name is reserved beyond `general` and `project`, besides
 Everything the project published before and its committed main no longer
 yields is removed by the same sync: a position it stopped publishing (its
 directory under `~/.instrukt/docs/`, its claim, its entries), snippets deleted
-or moved within a published position, its index entries without a source, an
-`AGENTS.md` whose master no longer exists, and, when it stops publishing
-`docs/general/`, the global agent files it wrote. Retraction touches nothing
+or moved within a published position, its index entries without a source,
+the global agent file of an agent runtime no longer configured, and, when it
+stops publishing `docs/general/`, every global agent file it wrote. Retraction touches nothing
 another project owns.
 
 ### Failure

@@ -140,8 +140,10 @@ publish it; one project owns each on a computer, and `general`, `project` and
 `third-party` (whose published tree is unchanged) are never a domain's name. Each position may carry an `index.yaml` selecting
 what is rendered and a `schema.yaml` adding sections
 (`project/instrukt/spec/domain/docs`). The project also carries its
-root `AGENTS.master.md` (its purpose only), any nested masters, the generated
-and git-ignored `.instrukt/schemas/` its YAML files' modelines name, and
+root `AGENTS.master.md` (its purpose only), any nested masters, the committed
+`AGENTS.md` beside each master, rendered at each commit from the repository's
+own content, the generated and git-ignored `.instrukt/schemas/` its YAML
+files' modelines name, and
 instrukt's marked sections in its git hooks. No generated index lives in a
 repository, and no git filter rewrites its files: references are snippet ids
 the CLI resolves when read.
@@ -159,7 +161,7 @@ commands. Docs name `-h`.
 | --- | --- | --- |
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
 | GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
-| Supported agent CLIs | publication | rendered global files, never over one instrukt did not write, and the entrypoint-loading settings each requires |
+| Configured agent runtimes | publication | rendered global files in each configured runtime's home, never over one instrukt did not write, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter |
 | Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; explicit `runner.runtime`; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
@@ -229,19 +231,16 @@ configuration layers, never into the skill
 flowchart LR
   A[commit / merge / rebase on main] --> B[hook section]
   B --> C[instrukt sync, detached, under lock]
-  K[checkout in any worktree] --> N{unpublished primary?}
-  N -- yes --> O[synchronous first publication from main]
-  N -- no --> L[synchronous published-entrypoint rendering]
-  L --> Q{primary on main?}
+  R[commit] --> S[pre-commit section: render AGENTS.md from the commit's content, stage]
+  K[checkout] --> Q{primary checkout?}
   Q -- yes --> C
   Q -- no --> P[return to git]
-  O --> P
   C --> M[configuration migration before refusal or skip]
   M --> D{main == published commit?}
   D -- yes --> E[done]
   D -- no --> F[claim and write general, domain and project positions]
   F --> G[patch global index by owner]
-  G --> H[render AGENTS.md; global agent files if owner of general]
+  G --> H[global agent files for configured runtimes if owner of general]
   H --> J[refresh editor schemas and modelines]
   J --> I[record published commit]
 ```

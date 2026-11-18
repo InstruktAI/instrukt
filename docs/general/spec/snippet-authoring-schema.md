@@ -79,9 +79,9 @@ the position's rendering carries; depth below that comes from required reads.
   command that gets it.
 - `description` — the domain's one line in every global agent file, which
   names `instrukt docs get --domain <x>`.
-- `agents` — a map from a supported agent CLI name to snippet ids. Those
-  snippets are ordinary `policy` snippets, appended to that one CLI's global
-  file only.
+- `agents` — a map from the name of an agent runtime instrukt deploys to, to
+  snippet ids. Those snippets are ordinary `policy` snippets, appended to that
+  one runtime's global file only.
 - `general`'s `expanded` and `listed` may name ids from any domain, which is
   how always-on content from several domains is chosen in one place. A
   domain's index and the project's index name only snippets of their own
@@ -90,7 +90,7 @@ the position's rendering carries; depth below that comes from required reads.
 `instrukt docs validate`, and the sync that publishes the position, report as
 findings a key the position does not allow (`agents` outside
 `docs/general/index.yaml` among them), an id that names no delivered snippet,
-an `agents` key that is not a supported agent CLI, a `listed` id already in the
+an `agents` key that names no agent runtime instrukt deploys to, a `listed` id already in the
 closure of `expanded`, and an `index.yaml` anywhere but a position's root; sync
 refuses on them. A domain without `index.yaml` is a notice: it is
 absent from the global file and found only through `instrukt docs index`.
@@ -218,7 +218,7 @@ this spec does not restate them. Across every type:
 - `## Sources` — third-party docs may include web links or a documentation index service's snippet IDs when authoritative references are available.
 - `## See Also` — optional soft references by id, using the same link form for
   same-repository snippets, never rendered into a closure. A code reference stays a repository-relative path.
-- `<!-- @config: <path> -->` — replaced by the configured value at `<path>` when the snippet is read, resolved in-process through configuration. In compiled outputs — the global agent files and a project's `AGENTS.md` — it is resolved at publication against the publishing project's effective configuration, where a `runtime.*` path is a finding. The format has no directive that runs a command or includes another file: `@exec` and `@include` are validation findings, never run or expanded. Text several snippets need is a snippet of its own, named as a required read.
+- `<!-- @config: <path> -->` — replaced by the configured value at `<path>` when the snippet is read, resolved in-process through configuration. In the global agent files it is resolved at publication against the publishing project's effective configuration, where a `runtime.*` path is a finding. A committed `AGENTS.md` admits none: a `@config` in a master, or in a snippet such a file renders in full, is a finding, and the snippet is listed instead. The format has no directive that runs a command or includes another file: `@exec` and `@include` are validation findings, never run or expanded. Text several snippets need is a snippet of its own, named as a required read.
 
 A procedure's optional `Discipline` section is required once an agent command
 explicitly delegates to that procedure's discipline. The section is the procedure's
@@ -294,8 +294,9 @@ do not accumulate by default.
 - Domain names: any name except `general` and `project`, which are reserved,
   and `third-party`, which keeps its existing special case; a domain claiming
   one is refused, naming the rule.
-- `agents` keys in `docs/general/index.yaml`: the supported agent CLIs —
-  `claude`, `codex`, `gemini`, `deepseek`.
+- `agents` keys in `docs/general/index.yaml`: the agent runtimes instrukt
+  deploys global files to; `instrukt docs validate` names them when a key is
+  not one of them.
 - `visibility`: public, internal. Default: `internal`.
 
 ## Known caveats

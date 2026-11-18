@@ -2,6 +2,93 @@
 
 ## 0.1.0
 
+### Agent instructions are committed, and reach the runtimes you configured
+
+A repository's `AGENTS.md` files are now committed. instrukt's `pre-commit`
+section renders them from what the commit holds and stages them into it; a
+sync no longer writes them and a checkout no longer renders them. Each
+rendering opens with a line naming it as generated, and a file beside a
+master without that line is never overwritten. A committed rendering holds
+only the repository's own content: a required read of doctrine another
+repository publishes becomes a line naming `instrukt docs get <id>
+--closure`, and a `@config` directive in a master or in a document a
+rendering holds in full is a finding. In each adopted repository, in this
+order:
+
+1. Run `instrukt hooks install` (or add the line `instrukt hooks status`
+   prints to the hook manager), so the `pre-commit` section renders.
+2. Prepare every source before anything is deleted: for the root master and
+   every nested master, remove each `@config`, `@exec` and `@include` from the
+   master and from every document its rendering holds in full — the root
+   `AGENTS.md`'s `expanded` snippets and their closure, and each nested
+   master's required reads and their closure. Move such a snippet from
+   `expanded` to `listed`, or drop the directive. Run
+   `instrukt docs render --check` until it reports no finding; it reports the
+   existing files as differing, which step 4 resolves.
+3. Remove the `AGENTS.md` lines `instrukt init` wrote to `.gitignore`.
+4. Delete the untracked `AGENTS.md` beside each master; earlier renderings
+   carry no generated line and are not replaced. Commit through the hook: the
+   commit carries the new renderings.
+5. Add `instrukt docs render --check` to the repository's CI, so a commit made
+   without the hook (a web editor, a cloud agent) fails naming the stale file;
+   repair with `instrukt docs render` and a commit. Pin the instrukt release
+   CI installs to the one the hooks run.
+
+A company home is now the checkout of the company's repository, and its
+`AGENTS.md` is committed there; the runner no longer renders it before a
+start. A repository renders as a company home when its root `instrukt.yaml`
+declares `company`, or when its root holds `AGENTS.master.md` and no
+`instrukt.yaml` at all, as a clone of the company's repository does; a root
+project layer always renders as a project. For an existing company home that
+is a plain folder, in this order:
+
+1. In the home, run `instrukt config init --company <name>`: it writes the
+   home's ignore lines for the settings document, the secrets file,
+   `projects/` and local state. Leave all of them where they are.
+2. Put the company's knowledge in place in the home: the master at its root
+   and the company's documents in its `docs/` folder. The master and the
+   documents reference only the company's own documents, by relative path:
+   remove every required read or reference to `general`, a domain or other
+   doctrine, and every `@config`, `@exec` and `@include`. Run
+   `instrukt config validate --company <name>` until it reports no finding.
+3. Delete an `AGENTS.md` the runner rendered in the home before this release,
+   or one another tool rendered: it carries no instrukt generated line and is
+   not replaced.
+4. Make the home folder, in place, the working tree of the company's
+   repository, so that its main is checked out there. The local-only material
+   stays in the folder, untracked and ignored; nothing of it is moved or
+   committed. Where the repository already holds knowledge, the home's
+   documents and the repository's are reconciled into one master and one
+   `docs/`.
+5. Confirm that the repository tracks none of the local-only material:
+   `instrukt config validate --company <name>` reports none of it, and the
+   repository's status lists none of it.
+6. Run `instrukt docs render` in the home and commit the master, the
+   documents, the ignore file and the rendered `AGENTS.md` together; deliver
+   that commit to the repository's main.
+7. Have the company repository's workflow run `instrukt docs render` on main
+   and commit when the rendering changed.
+
+The operator ends with: the home at its usual location, the checkout of the
+company's repository on main, holding the master, the documents, the ignore
+file and the rendered `AGENTS.md`; the settings document, the secrets file,
+`projects/` and local state in the same folder and out of git. The company's
+agent may then change the company's documents in its home and commit them.
+
+The global agent files go to the agent runtimes the selected runtime reports
+as configured, in each one's own home, instead of to every agent program
+whose user directory exists. With `runner.runtime: t3` these are T3's enabled
+provider instances; T3 must be running when the `docs/general/` owner syncs,
+or the files stay as they were. The next such sync writes new files for the
+newly supported runtimes and removes the file of a runtime that no enabled
+instance uses any more, DeepSeek's among them unless the runtime reports it;
+while an enabled instance of a runtime reports no home, that runtime's
+earlier files are kept and `instrukt status` shows them as kept. An
+existing file in a new destination that instrukt did not write stops that
+sync: move its content into documentation or the file out of the way.
+`agents` keys in `docs/general/index.yaml` name the runtimes instrukt deploys
+to; `instrukt docs validate` names them when a key is not one.
+
 ### One computer reacts to external facts; watched refs are repository refs
 
 `runner.upstream_changed` and `runner.main_failing` now name their ref with a
@@ -105,11 +192,11 @@ inside the selected instrukt home. A host `graphify` on PATH no longer supplies
 the shipped adapter; existing configured `blueprint.engine` commands retain
 their command behavior.
 
-Run `instrukt hooks install` in each adopted repository to retain its
-post-checkout section. Existing published projects render their baseline into
-new linked worktrees. For a previously created worktree without an entrypoint,
-run `instrukt hooks run post-checkout` there. An unpublished linked worktree
-requires one `instrukt sync` from its primary checkout first.
+Run `instrukt hooks install` in each adopted repository so its sections are
+current. A checkout renders no agent instructions: every checkout, linked
+worktrees included, holds the `AGENTS.md` files committed at its revision
+(see “Agent instructions are committed, and reach the runtimes you
+configured” above).
 
 ### GitHub App identities
 
