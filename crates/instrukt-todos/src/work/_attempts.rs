@@ -196,10 +196,7 @@ fn native_selection(
         .map_err(|e| WorkError::refused(e.to_string()))?
         .into_iter()
         .next();
-    let runtime = s
-        .config
-        .runner_runtime()?
-        .ok_or_else(|| WorkError::refused("choose runner.runtime for native assignment"))?;
+    let runtime = s.config.runner_runtime()?;
     Ok(selection
         .map(|selection| instrukt_runner::runtime::adapter(runtime).native_selection(&selection)))
 }
@@ -297,10 +294,7 @@ impl Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
         orchestrator(&s, index)?;
-        let runtime = s
-            .config
-            .runner_runtime()?
-            .ok_or_else(|| WorkError::refused("no runtime selected"))?;
+        let runtime = s.config.runner_runtime()?;
         let record = &s.items[index].record;
         if let Some(active) = record.bindings.iter().find(|b| {
             matches!(
@@ -479,10 +473,7 @@ impl Work {
                 "native child identity must differ from its coordinating parent",
             ));
         }
-        let runtime = s
-            .config
-            .runner_runtime()?
-            .ok_or_else(|| WorkError::refused("no runtime selected"))?;
+        let runtime = s.config.runner_runtime()?;
         if session.runtime.as_str() != runtime.name() {
             return Err(WorkError::refused(
                 "child identity belongs to another runtime",
@@ -1026,7 +1017,7 @@ impl Work {
                         session: caller.clone(),
                         worktree: path.clone(),
                         attempt: Attempt {
-                            runtime,
+                            runtime: Some(runtime),
                             native_placement: evidence.cloned(),
                             assignment: AssignmentKind::Driver,
                             lane: Some(lane),

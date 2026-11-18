@@ -34,13 +34,12 @@ pub fn caller_lookup(
 ) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::CallerIdentityLookup>>> {
     let config = instrukt_core::config::Configuration::load_global(&ctx.home)?;
     match config.runner_runtime() {
-        Ok(Some(runtime)) => {
+        Ok(runtime) => {
             let adapter: Arc<dyn instrukt_runner::runtime::RuntimeAdapter> =
                 Arc::from(instrukt_runner::runtime::adapter(runtime));
             let caller: Arc<dyn instrukt_core::interfaces::CallerIdentityLookup> = adapter;
             Ok(Some(caller))
         }
-        Ok(None) => Ok(None),
         Err(error) => {
             tracing::debug!(event="caller_lookup_unavailable",error=%error);
             Ok(None)

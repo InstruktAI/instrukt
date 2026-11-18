@@ -278,7 +278,7 @@ fn deliver_group(
     if !config.module_enabled(instrukt_core::config::Module::Events)? {
         return Ok(());
     }
-    let selected_runtime = config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
+    let selected_runtime = config.runner_runtime()?;
     let manual=state.read(|conn,path|conn.query_row("SELECT token FROM manual_standing_reservations WHERE responsibility=?1 AND session IS NULL",[responsibility],|r|r.get::<_,String>(0)).optional().map_err(state::sql(path)))?.flatten();
     if manual.is_some() {
         return Err(SessionsError::Unresolved {
@@ -342,6 +342,7 @@ fn deliver_group(
                 key: responsibility.into(),
                 brief: original,
                 worktree: None,
+                profiles: crate::runtime::Profiles::default(),
             };
             keyed::recover_binding(
                 adapter.as_ref(),
@@ -526,6 +527,7 @@ fn deliver_group(
             key: responsibility.into(),
             brief: content,
             worktree: None,
+            profiles: crate::runtime::Profiles::default(),
         };
         state.write::<_,StateError>(|tx|{tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,subject,generation,semantic_key,checkout,declaration,request) VALUES (?1,?2,?3,?4,1,?1,?5,?6,?7)",params![responsibility,first.procedure,first.home,subject,root.to_string_lossy(),serde_json::to_string(&fixed).map_err(|e|state::invalid(&state::db_path(tx),e))?,serde_json::to_string(&request).map_err(|e|state::invalid(&state::db_path(tx),e))?]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
         state.write::<_,StateError>(|tx|{for p in &selected{tx.execute("UPDATE standing_deliveries SET state='selected',input_id=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,format!("assignment:{}",request.key)]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
@@ -731,7 +733,7 @@ pub fn reserve_manual(
         args,
         brief,
     } = *request;
-    let runtime = config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
+    let runtime = config.runner_runtime()?;
     let caller = config.caller(env)?.ok_or(SessionsError::NoActiveRuntime)?;
     if entry.subscriptions.is_empty()
         || entry.subscription_identity == SubscriptionIdentity::Subject
@@ -833,7 +835,7 @@ pub fn bind_manual(
         reason,
         now,
     } = *request;
-    let runtime = config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
+    let runtime = config.runner_runtime()?;
     let caller = config.caller(env)?.ok_or(SessionsError::NoActiveRuntime)?;
     let state = RunnerState::new(invocation.home());
     state.write::<_,StateError>(|tx|{
@@ -844,7 +846,8 @@ pub fn bind_manual(
         if owner!=caller.to_string() || fixed.id.as_str()!=procedure { return Err(state::invalid(&db,"reservation belongs to another caller or procedure")); }
         if let Some(e)=evidence {
             if e.session.runtime.as_str()!=runtime.name() || e.title!=request.title || e.assignment!=request.brief || bound.as_deref().is_some_and(|s|s!=e.session.to_string()) { return Err(state::invalid(&db,"native identity or initialized assignment differs from reserved facts")); }
-            let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some(crate::runtime::adapter(runtime).selection_realization(crate::runtime::SelectionOperation::NativeDelegation)),checkout:request.checkout.clone(),title:request.title.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None};
+            let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some(crate::runtime::adapter(runtime).selection_realization(crate::runtime::SelectionOperation::NativeDelegation)),checkout:request.checkout.clone(),title:request.title.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None,
+            profiles: crate::runtime::Profiles::default()};
             tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,1,?1,?4,?5,?6,?7) ON CONFLICT(responsibility) DO NOTHING",params![responsibility,procedure,home,request.checkout.to_string_lossy(),declaration,serde_json::to_string(&native).map_err(|e|state::invalid(&db,e))?,e.session.to_string()]).map_err(state::sql(&db))?;
             tx.execute("UPDATE manual_standing_reservations SET session=?2 WHERE token=?1",params![token,e.session.to_string()]).map_err(state::sql(&db))?;
             inputs::retain(tx,&e.session,&Entry{id:&format!("assignment:{}",request.key),kind:InputKind::Recovery,assignment:None,source_at:None,arrived_at:now,intent:Intent::Asap,content:&request.brief})?;
@@ -890,7 +893,7 @@ fn prepare_successor(
     let selection = crate::agents::selections(&config, state.home(), &order, cx.now)?
         .into_iter()
         .next();
-    let runtime = config.runner_runtime()?.ok_or(SessionsError::NoRuntime)?;
+    let runtime = config.runner_runtime()?;
     let realization = crate::runtime::adapter(runtime)
         .selection_realization(crate::runtime::SelectionOperation::ThreadStart);
     state.write::<_,SessionsError>(|tx|{
@@ -908,7 +911,7 @@ fn prepare_successor(
         let entries=pending.iter().map(log_entry).collect::<Result<Vec<_>,_>>()?;
         let (count,content)=inputs::compose(cx.now,&prefix,&entries)?;
         let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);pending.truncate(count);
-        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None};
+        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,profiles:crate::runtime::Profiles::default()};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
         tx.execute("UPDATE procedure_responsibilities SET generation=?2,semantic_key=?3,session=NULL,request=?4,declaration=?5,terminal=NULL,seen_position=?6 WHERE responsibility=?1",params![cx.responsibility,next,next_key,encoded,declaration,newest]).map_err(state::sql(&path))?;

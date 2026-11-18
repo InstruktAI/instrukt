@@ -438,17 +438,14 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     );
     env.run(env.home(), ["install"]).success();
     env.run(env.home(), ["install", "--check"]).success();
-    // Where this computer reacts itself, its events still need a runtime.
+    // Where this computer reacts itself, its events run on the compiled
+    // runtime, which an unset `runner.runtime` is.
     std::fs::write(
         &global,
         reacting.replace(", reactions: '1111111111111111'", ""),
     )
     .unwrap();
-    let check = env
-        .run(env.home(), ["install", "--check", "--json"])
-        .failure();
-    let report: serde_json::Value = serde_json::from_slice(&check.get_output().stdout).unwrap();
-    insta::assert_json_snapshot!("reacting-ingress-needs-runtime", report["findings"]);
+    env.run(env.home(), ["install", "--check"]).success();
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI8

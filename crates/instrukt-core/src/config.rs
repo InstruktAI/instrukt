@@ -8,6 +8,7 @@
 //! [`Layer`]: [`init`], [`migrate`], [`patch`] against a [`revision`], and
 //! [`validate`].
 
+mod _admitted;
 mod _agents;
 mod _agents_migrate;
 mod _company;
@@ -36,6 +37,10 @@ pub use _agents::{
     SHIPPED_AGENTS,
 };
 
+pub use _admitted::{
+    AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSlack, Candidate, Current,
+    Offer,
+};
 pub use _company::{CONNECTORS, DEFAULT_CONTEXT_MESSAGES, Member, Members, SlackConnector};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};

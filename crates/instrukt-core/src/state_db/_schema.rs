@@ -29,7 +29,19 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V16),
     Sql(V17),
     Step(v18),
+    Sql(V19),
 ];
+
+/// Version 19: the current state of the runner's two history workers,
+/// extraction and the query responder. One row per worker, written by that
+/// worker when its state changes; a worker without a failure has no row.
+const V19: &str = r#"
+CREATE TABLE IF NOT EXISTS runner_workers (
+    worker  TEXT PRIMARY KEY,
+    failure TEXT NOT NULL,
+    since   TEXT NOT NULL
+);
+"#;
 
 /// Version 18: each addressed message carries its sender's connector
 /// identity, name and email address, and a message can be refused. A message

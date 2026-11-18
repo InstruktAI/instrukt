@@ -1,7 +1,7 @@
 //! Native database notifications drive the runner's independent relay reader.
 use super::{LinkError, failure, relay, status};
 use instrukt_core::{
-    config::{Configuration, Env},
+    config::{Current, Env},
     home::Home,
 };
 use std::{sync::mpsc, thread::JoinHandle, time::Duration};
@@ -28,78 +28,56 @@ impl Drop for ExitNotice {
         }
     }
 }
+/// The longest wait before T3's conversation source is acquired again.
+const MOST_RETRY: Duration = Duration::from_secs(60);
+
 impl Worker {
     /// The relay serving links and, when given, the connector destination.
+    /// It acquires T3's conversation source inside its own thread, and when
+    /// that source cannot be acquired or stops notifying it waits a growing
+    /// delay and acquires it again; it does not end for it.
     pub(crate) fn start(
         home: &Home,
         env: &Env,
+        current: Current,
         destinations: Option<Destinations>,
         supervise: Option<mpsc::SyncSender<()>>,
     ) -> Result<Self, LinkError> {
-        let runtime = Configuration::load_global(home)?
-            .runner_runtime()?
-            .ok_or(crate::sessions::SessionsError::NoRuntime)?;
-        let adapter = crate::runtime::adapter(runtime);
-        let source = adapter.conversation_source(home, env)?;
-        let mut notifications = source.subscribe()?;
         let owner_home = home.clone();
         let home = home.clone();
+        let env = env.clone();
         let (stop, stopping) = mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
             .name("conversation-relay".into())
             .spawn(move || {
                 let _notice = ExitNotice(supervise);
-                // Links catch up at startup and on source changes only (native
-                // notifications, and a missing source file that is now
-                // watched); connector arrivals and the retry bound drive
-                // conversation work alone.
-                let mut links_due = true;
+                let mut failing: Option<String> = None;
+                let mut delay = Duration::from_secs(1);
                 loop {
-                    if links_due {
-                        if let Err(error) = relay(&home, source.as_ref(), adapter.as_ref()) {
-                            record(&home, &error);
+                    let error = match serve(
+                        &home,
+                        &env,
+                        &current,
+                        destinations.as_ref(),
+                        &stopping,
+                        &mut failing,
+                        &mut delay,
+                    ) {
+                        Ok(()) => return Ok(()),
+                        Err(error) => error,
+                    };
+                    let cause = error.to_string();
+                    if failing.as_deref() != Some(cause.as_str()) {
+                        record(&home, &error);
+                        if destinations.is_some() {
+                            crate::conversations::relay_state(&home, Some(&cause));
                         }
-                        links_due = false;
+                        failing = Some(cause);
                     }
-                    if let Some(destinations) = &destinations
-                        && let Err(error) = crate::conversations::relay(
-                            &home,
-                            source.as_ref(),
-                            adapter.as_ref(),
-                            &destinations.slack,
-                        )
-                    {
-                        tracing::warn!(event = "conversation_relay_failed", error = %error);
+                    if stopping.recv_timeout(delay).is_ok() {
+                        return Ok(());
                     }
-                    // Retained connector work that is not yet done is retried
-                    // within a bound; otherwise only a native change or new
-                    // intake wakes the relay.
-                    let retry = destinations.is_some()
-                        && crate::conversations::outstanding(&home).unwrap_or(true);
-                    let until = std::time::Instant::now() + Duration::from_secs(2);
-                    loop {
-                        if stopping.try_recv().is_ok() {
-                            return Ok(());
-                        }
-                        if destinations.as_ref().is_some_and(|d| {
-                            d.arrivals
-                                .lock()
-                                .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
-                        }) || (retry && std::time::Instant::now() >= until)
-                        {
-                            break;
-                        }
-                        match notifications.wait(Duration::from_millis(100)) {
-                            Ok(true) => {
-                                links_due = true;
-                                break;
-                            }
-                            Ok(false) => {}
-                            Err(error) => {
-                                return Err(LinkError::Source(error));
-                            }
-                        }
-                    }
+                    delay = (delay * 2).min(MOST_RETRY);
                 }
             })
             .map_err(|e| LinkError::Refused(format!("relay worker could not start: {e}")))?;
@@ -118,11 +96,84 @@ impl Worker {
                 Ok(Ok(())) => None,
                 Ok(Err(error)) => Some(LinkError::Stopped(Box::new(error))),
                 Err(_) => Some(LinkError::Refused(
-                    "native conversation notification reader stopped; restart instrukt run".into(),
+                    "the conversation relay ended unexpectedly; it is started again".into(),
                 )),
             };
         }
         observe_stopped(&mut self.failure)
+    }
+}
+
+/// Acquires T3's conversation source and serves links and the connector
+/// destination from it until the worker stops (`Ok`) or the source fails.
+/// A successful acquisition starts the next retry delay from its shortest.
+fn serve(
+    home: &Home,
+    env: &Env,
+    current: &Current,
+    destinations: Option<&Destinations>,
+    stopping: &mpsc::Receiver<()>,
+    failing: &mut Option<String>,
+    delay: &mut Duration,
+) -> Result<(), LinkError> {
+    let adapter = crate::runtime::adapter(current.get().global().runner_runtime()?);
+    let source = adapter.conversation_source(home, env)?;
+    let mut notifications = source.subscribe()?;
+    *delay = Duration::from_secs(1);
+    if let Some(cause) = failing.take() {
+        tracing::info!(event = "conversation_relay_recovered", cause = %cause);
+        if destinations.is_some() {
+            crate::conversations::relay_state(home, None);
+        }
+    }
+    // Links catch up at startup and on source changes only (native
+    // notifications, and a missing source file that is now watched);
+    // connector arrivals and the retry bound drive conversation work alone.
+    let mut links_due = true;
+    loop {
+        if links_due {
+            if let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
+                record(home, &error);
+            }
+            links_due = false;
+        }
+        if let Some(destinations) = destinations
+            && let Err(error) = crate::conversations::relay(
+                home,
+                &current.get(),
+                source.as_ref(),
+                adapter.as_ref(),
+                &destinations.slack,
+            )
+        {
+            tracing::warn!(event = "conversation_relay_failed", error = %error);
+        }
+        // Retained connector work that is not yet done is retried within a
+        // bound; otherwise only a native change or new intake wakes the relay.
+        let retry =
+            destinations.is_some() && crate::conversations::outstanding(home).unwrap_or(true);
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if stopping.try_recv().is_ok() {
+                return Ok(());
+            }
+            if destinations.is_some_and(|d| {
+                d.arrivals
+                    .lock()
+                    .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
+            }) || (retry && std::time::Instant::now() >= until)
+            {
+                break;
+            }
+            match notifications.wait(Duration::from_millis(100)) {
+                Ok(true) => {
+                    links_due = true;
+                    break;
+                }
+                Ok(false) => {}
+                Err(error) => return Err(LinkError::Source(error)),
+            }
+        }
     }
 }
 fn observe_stopped(failure: &mut Option<LinkError>) -> Result<(), LinkError> {

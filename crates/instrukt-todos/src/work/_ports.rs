@@ -395,7 +395,8 @@ impl SessionBindings for Work {
                 })
                 .cloned()
         {
-            if retained.attempt.runtime != s.config.runner_runtime().map_err(WorkError::from)? {
+            if retained.attempt.runtime != Some(s.config.runner_runtime().map_err(WorkError::from)?)
+            {
                 return Err(WorkError::refused("retained phase belongs to another runtime").into());
             }
             if retained.attempt.released_at.is_some() {
@@ -491,11 +492,7 @@ impl SessionBindings for Work {
                     from,
                 }))
             })()?;
-        let selected_runtime = s
-            .config
-            .runner_runtime()
-            .map_err(WorkError::from)?
-            .ok_or_else(|| WorkError::refused("no runtime selected"))?;
+        let selected_runtime = s.config.runner_runtime().map_err(WorkError::from)?;
         if record.bindings.iter().any(|b| {
             b.role == *role
                 && b.attempt.released_at.is_none()

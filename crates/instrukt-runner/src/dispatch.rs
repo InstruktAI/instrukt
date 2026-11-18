@@ -341,7 +341,7 @@ fn dispatch_one(
             return None;
         }
         Err(err) => {
-            if crate::keyed::report_start_finding(cx.state, Some(runtime), &err) {
+            if crate::keyed::report_start_finding(cx.state, runtime, &err) {
                 tracing::warn!(event="dispatch_pending",project=%project.slug,todo=%todo,error=%err);
             }
             return Some(Dispatched::StartUncertain { todo: todo.clone() });

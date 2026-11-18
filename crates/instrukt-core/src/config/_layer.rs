@@ -377,13 +377,24 @@ pub fn patch(
     let mut next = before.clone();
     merge_patch(&mut next, patch);
     let mut findings = findings_for(&home.for_inspection(), layer, &path, &next)?;
-    // Todos already on stay a validation finding; only a write that
-    // switches them on is refused for it.
+    // Todos or event responses already on stay a validation finding; only a
+    // write that switches them on is refused for it.
     if layer.kind() == LayerKind::Project {
         let global = read_usable(home, &Layer::Global)?;
         if todos_on(&before, global.as_ref())? {
             findings.retain(|f| f.kind != FindingKind::TodosNeedGitHub);
         }
+        if super::_validate::events_on(&super::_effective::effective_value(
+            global.as_ref(),
+            Some(&before),
+        )?) {
+            findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+        }
+    }
+    if layer.kind() == LayerKind::Global
+        && super::_validate::events_on(&super::_effective::effective_value(Some(&before), None)?)
+    {
+        findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
     }
     if !findings.is_empty() {
         return Err(ConfigError::Invalid(Findings(findings)));

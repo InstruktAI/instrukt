@@ -409,27 +409,33 @@ impl SharedLockGuard {
     }
 }
 
-/// Retries `attempt` with backoff until it yields a guard or `timeout`
-/// has passed.
+/// Retries `attempt` with backoff until it yields a guard or `timeout` has
+/// passed. The wait is measured on the same clock as process limits: real
+/// time, or the operator's clock when one is set.
 fn wait_for<G>(
     path: &Path,
     timeout: Duration,
     attempt: impl Fn() -> Result<Option<G>, FsError>,
 ) -> Result<G, FsError> {
     let started = Instant::now();
+    let clock_error = |cause: String| FsError::Lock {
+        path: path.to_path_buf(),
+        source: io::Error::other(cause),
+    };
+    let limit = crate::process::Limit::start(timeout).map_err(clock_error)?;
     let mut pause = Duration::from_millis(5);
     loop {
-        if let Some(guard) = attempt()? {
-            return Ok(guard);
+        match limit.judge(attempt()?).map_err(clock_error)? {
+            crate::process::Look::Ended(guard) => return Ok(guard),
+            crate::process::Look::Passed => {
+                return Err(FsError::LockTimeout {
+                    path: path.to_path_buf(),
+                    waited: started.elapsed(),
+                });
+            }
+            crate::process::Look::Running => {}
         }
-        let waited = started.elapsed();
-        if waited >= timeout {
-            return Err(FsError::LockTimeout {
-                path: path.to_path_buf(),
-                waited,
-            });
-        }
-        std::thread::sleep(pause.min(timeout - waited));
+        std::thread::sleep(pause);
         pause = (pause * 2).min(Duration::from_millis(200));
     }
 }

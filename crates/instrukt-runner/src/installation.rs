@@ -672,6 +672,25 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     let computer = instrukt_core::machine::existing_machine_id(request.home)
         .map_err(|e| inspection_error("machine ID", e))?
         .map(|id| id.as_str().to_owned());
+    // What the runner's next wake admits: the findings of what it leaves out,
+    // or why no generation can be admitted at all.
+    let admission = match instrukt_core::config::Admitted::load(request.home) {
+        Ok(candidate) => serde_json::json!({
+            "error": null,
+            "findings": candidate.findings.iter().map(|finding| serde_json::json!({
+                "document": finding.document,
+                "key": finding.key,
+                "message": finding.message,
+            })).collect::<Vec<_>>(),
+        }),
+        Err(error) => serde_json::json!({"error": error.to_string(), "findings": []}),
+    };
+    // The history workers' current failures, while they last.
+    let workers = state.read(|conn, path| {
+        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
+        let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
+    })?.unwrap_or_default();
     let global = Configuration::load_global(request.home)?.get(None, request.env)?;
     let setting = |key: &str| {
         global
@@ -681,7 +700,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             .map(str::to_owned)
     };
     Ok(
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?,"runner_service":runner_service}),
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?,"runner_service":runner_service}),
     )
 }
 

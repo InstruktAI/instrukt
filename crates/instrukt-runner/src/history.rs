@@ -5,7 +5,10 @@ mod _projection;
 mod _store;
 mod _watch;
 
-use instrukt_core::{config::Env, home::Home};
+use instrukt_core::{
+    config::{Current, Env},
+    home::Home,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -267,28 +270,16 @@ pub(super) fn source(
     home: &Home,
     env: &Env,
 ) -> Result<Box<dyn crate::runtime::conversations::ConversationSource>, HistoryError> {
-    let runtime = instrukt_core::config::Configuration::load_global(home)?
-        .runner_runtime()?
-        .ok_or(crate::sessions::SessionsError::NoActiveRuntime)?;
+    let runtime = instrukt_core::config::Configuration::load_global(home)?.runner_runtime()?;
     Ok(crate::runtime::adapter(runtime).conversation_source(home, env)?)
 }
 
-/// Machine reader demand includes each adopted project's effective override.
+/// Whether history extraction is on: the machine's switch while no project
+/// is published here, otherwise any admitted project's.
 pub fn enabled(home: &Home) -> Result<bool, HistoryError> {
-    let global = instrukt_core::config::Configuration::load_global(home)?;
-    let records = instrukt_core::publication::PublishedRecord::load_all(home)
+    let candidate = instrukt_core::config::Admitted::load(home)
         .map_err(|error| HistoryError::Source(error.to_string()))?;
-    if records.is_empty() {
-        return Ok(global.module_enabled(instrukt_core::config::Module::History)?);
-    }
-    for record in records {
-        if instrukt_core::config::Configuration::load(home, Some(&record.checkout))?
-            .module_enabled(instrukt_core::config::Module::History)?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    Ok(candidate.generation.history_enabled()?)
 }
 
 /// Owns independent source and query readers for the long-lived runner.
@@ -298,35 +289,64 @@ pub(crate) struct Readers {
     search: Option<SearchWorker>,
 }
 impl Readers {
-    pub(crate) fn refresh(&mut self, home: &Home, env: &Env) -> Result<(), HistoryError> {
-        if !enabled(home)? {
-            self.search = None;
-            self.extraction = None;
-            return Ok(());
+    /// Starts what the current generation switches on and stops what it
+    /// switches off. A worker whose thread ended is started again; each
+    /// worker retries what it depends on inside its own thread.
+    pub(crate) fn refresh(&mut self, home: &Home, env: &Env, current: &Current) {
+        let admitted = current.get();
+        match admitted.history_enabled() {
+            Ok(true) => {}
+            Ok(false) => {
+                self.search = None;
+                self.extraction = None;
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(event = "history_enablement_unreadable", %error);
+                return;
+            }
         }
-        let config = instrukt_core::config::Configuration::load_global(home)?;
-        if self.extraction.is_none()
-            && let Some(runtime) = config.runner_runtime()?
-            && crate::runtime::adapter(runtime)
+        if self.extraction.as_ref().is_some_and(_watch::Worker::ended) {
+            tracing::warn!(
+                event = "history_worker_restarted",
+                worker = "history-extraction"
+            );
+            self.extraction = None;
+        }
+        if self.search.as_ref().is_some_and(SearchWorker::ended) {
+            tracing::warn!(
+                event = "history_worker_restarted",
+                worker = "history-search"
+            );
+            self.search = None;
+        }
+        let supported = admitted.global().runner_runtime().is_ok_and(|runtime| {
+            crate::runtime::adapter(runtime)
                 .supports(crate::runtime::Capability::ConversationSource)
-        {
-            self.extraction = Some(_watch::Worker::start(home, env)?);
+        });
+        if self.extraction.is_none() && supported {
+            match _watch::Worker::start(home, env, current.clone()) {
+                Ok(worker) => self.extraction = Some(worker),
+                Err(error) => {
+                    tracing::error!(event = "history_worker_unstarted", worker = "history-extraction", %error)
+                }
+            }
         }
         if self.search.is_none() {
             match crate::transport::ScopedTransport::cluster_only(
-                &config,
+                admitted.global(),
                 &crate::state::RunnerState::new(home),
             ) {
-                Ok(transport) => self.search = Some(SearchWorker::start(home, env, &transport)?),
+                Ok(transport) => {
+                    match SearchWorker::start(home, env, current.clone(), &transport) {
+                        Ok(worker) => self.search = Some(worker),
+                        Err(error) => {
+                            tracing::error!(event = "history_worker_unstarted", worker = "history-search", %error)
+                        }
+                    }
+                }
                 Err(error) => tracing::warn!(event="history_merged_search_unavailable", %error),
             }
         }
-        if let Some(extraction) = &self.extraction {
-            extraction.check()?;
-        }
-        if let Some(search) = &self.search {
-            search.check()?;
-        }
-        Ok(())
     }
 }

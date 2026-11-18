@@ -40,7 +40,22 @@ pub struct RuntimeStart {
     pub title: String,
     pub brief: String,
     pub worktree: Option<WorktreeRequest>,
+    /// The agent profiles of the admitted generation the start was prepared
+    /// in; a request without them reads `agents.yaml` when it is started.
+    #[serde(skip)]
+    pub profiles: Profiles,
 }
+
+/// The agent profiles a start carries in memory. They are never stored, so
+/// they take no part in comparing two requests.
+#[derive(Debug, Clone, Default)]
+pub struct Profiles(pub Option<std::sync::Arc<instrukt_core::config::Agents>>);
+impl PartialEq for Profiles {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+impl Eq for Profiles {}
 
 /// Keep labels opaque and place semantic identity last for narrow sidebars.
 pub fn thread_title(label: &str, key: &str) -> String {

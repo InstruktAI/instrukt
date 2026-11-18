@@ -8,7 +8,7 @@ use serde_yaml_ng::Value;
 
 use super::_effective::effective_value;
 use super::_error::{ConfigError, Finding, FindingKind};
-use super::_features::{Feature, Unavailable, availability};
+use super::_features::{Feature, availability};
 use super::_interpolate::{Interpolator, Mode, join, key_text};
 use super::_layer::{Layer, read_usable};
 use super::_module::Module;
@@ -47,6 +47,7 @@ fn findings_in_scope(
             let declared = super::Agents::load(&home.for_inspection());
             super::_company::check_profiles(name, profiles, &declared, &mut found);
         }
+        found.extend(connector_secrets(home, name, value));
         let effective = effective_value(global.as_ref(), None)?;
         found.extend(ingress_signing(
             home,
@@ -184,6 +185,40 @@ fn ingress_signing(
         }
     }
     found
+}
+
+/// The secrets a company's declared Slack connector references are present
+/// and nonblank in the company's own secrets file: a finding at each that is
+/// not, naming the door.
+fn connector_secrets(
+    home: &Home,
+    name: &crate::ids::ProjectSlug,
+    value: &Value,
+) -> Vec<KeyFinding> {
+    let Some(slack) = value
+        .get("connectors")
+        .and_then(|c| c.get(super::CONNECTORS[0]))
+    else {
+        return Vec::new();
+    };
+    let source = super::SecretSource::Company(name.clone());
+    ["app_token", "bot_token"]
+        .into_iter()
+        .filter_map(|field| {
+            let reference = slack.get(field).and_then(Value::as_str)?;
+            super::resolve_secret_from(home, &source, reference)
+                .err()
+                .map(|error| {
+                    KeyFinding::new(
+                        &join("connectors", &join(super::CONNECTORS[0], field)),
+                        FindingKind::Missing,
+                        format!(
+                            "{error}; set it with `instrukt secrets set <NAME> --company {name}`"
+                        ),
+                    )
+                })
+        })
+        .collect()
 }
 
 /// A company home's document names the company its folder is named for.
@@ -358,9 +393,13 @@ pub(crate) fn judge(
         }
     };
     match kind {
-        LayerKind::Project => required_modules(value, &effective, &mut found),
+        LayerKind::Project => {
+            required_modules(value, &effective, &mut found);
+            event_transport(&effective, &mut found);
+        }
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);
+            event_transport(&effective, &mut found);
         }
         LayerKind::Company => {}
     }
@@ -399,21 +438,22 @@ fn connector_capabilities(effective: &Value, out: &mut Vec<KeyFinding>) {
         .get("runner")
         .and_then(|r| r.get("runtime"))
         .and_then(Value::as_str);
-    let chosen = name.and_then(Runtime::named);
-    if name.is_some() && chosen.is_none() {
-        return;
-    }
+    // An unset runtime is the compiled one; one naming no entry is its own
+    // finding and is not judged again here.
+    let chosen = match name {
+        Some(name) => match Runtime::named(name) {
+            Some(runtime) => runtime,
+            None => return,
+        },
+        None => Runtime::COMPILED,
+    };
     let features = &[Feature::Conversations];
     let Some(unavailable) = availability(chosen, features) else {
         return;
     };
-    let kind = match unavailable {
-        Unavailable::NoRuntime => FindingKind::NoRuntimeChosen,
-        Unavailable::MissingCapabilities { .. } => FindingKind::RuntimeCapabilityMissing,
-    };
     out.push(KeyFinding::new(
         "connectors",
-        kind,
+        FindingKind::RuntimeCapabilityMissing,
         unavailable.describe(features),
     ));
 }
@@ -433,10 +473,15 @@ fn feature_capabilities(
         .get("runner")
         .and_then(|r| r.get("runtime"))
         .and_then(Value::as_str);
-    let chosen = name.and_then(Runtime::named);
-    if name.is_some() && chosen.is_none() {
-        return;
-    }
+    // An unset runtime is the compiled one; one naming no entry is its own
+    // finding and is not judged again here.
+    let chosen = match name {
+        Some(name) => match Runtime::named(name) {
+            Some(runtime) => runtime,
+            None => return,
+        },
+        None => Runtime::COMPILED,
+    };
     for module in ["events", "todos"] {
         let on = value
             .get("modules")
@@ -455,13 +500,9 @@ fn feature_capabilities(
         let Some(unavailable) = availability(chosen, features) else {
             continue;
         };
-        let kind = match unavailable {
-            Unavailable::NoRuntime => FindingKind::NoRuntimeChosen,
-            Unavailable::MissingCapabilities { .. } => FindingKind::RuntimeCapabilityMissing,
-        };
         out.push(KeyFinding::new(
             &join("modules", module),
-            kind,
+            FindingKind::RuntimeCapabilityMissing,
             unavailable.describe(features),
         ));
     }
@@ -506,6 +547,33 @@ fn required_modules(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>)
                 format!("requires module `{}`, which is switched off", module.key()),
             ));
         }
+    }
+}
+
+/// Whether event responses are on in `effective`.
+pub(crate) fn events_on(effective: &Value) -> bool {
+    effective
+        .get("modules")
+        .and_then(|m| m.get(Module::Events.key()))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Event responses need the event transport they are carried on: a finding
+/// at `modules.events` while it is on and `redis.cluster.url` is not set.
+fn event_transport(effective: &Value, out: &mut Vec<KeyFinding>) {
+    let url = effective
+        .get("redis")
+        .and_then(|r| r.get("cluster"))
+        .and_then(|c| c.get("url"))
+        .and_then(Value::as_str)
+        .filter(|url| !url.trim().is_empty());
+    if events_on(effective) && url.is_none() {
+        out.push(KeyFinding::new(
+            "modules.events",
+            FindingKind::EventsNeedTransport,
+            "event responses need the event transport, and `redis.cluster.url` is not set; set it in the global layer first (`instrukt config patch --global`)",
+        ));
     }
 }
 
@@ -664,7 +732,9 @@ mod tests {
     }
     #[test]
     fn t3_supports_todos_and_queued_event_delivery() {
-        let doc = current_document("runner: {runtime: t3}\nmodules: {todos: true, events: true}");
+        let doc = current_document(
+            "runner: {runtime: t3}\nmodules: {todos: true, events: true}\nredis: {cluster: {url: 'redis://127.0.0.1:6379'}}",
+        );
         let found = judge(&doc, LayerKind::Global, None, None);
         assert!(found.is_empty());
     }
@@ -679,10 +749,8 @@ mod tests {
                 .map(|f| (f.key.clone(), f.kind))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            found(&current_document("ticks: 'on'")),
-            [("connectors".to_owned(), FindingKind::NoRuntimeChosen)]
-        );
+        // An unset runtime is the compiled one, which carries conversations.
+        assert!(found(&current_document("ticks: 'on'")).is_empty());
         assert!(found(&current_document("runner: {runtime: t3}")).is_empty());
     }
     #[test]
