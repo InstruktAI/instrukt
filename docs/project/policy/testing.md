@@ -51,15 +51,18 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   changes, renames or deletes a file its pattern matches: the document
   validation for documents, shellcheck for shell scripts and hook files, the
   configuration validation for `instrukt.yaml`, and fmt, clippy and the
-  colocated unit tests for everything a crate is built from: its sources and
-  manifests, the files compiled into the program, and the snapshots its unit
-  tests read. No commit runs the functional tests. These are project tooling,
-  not quality hooks installed by instrukt in adopting repositories.
+  colocated unit tests for everything a crate is built from and everything
+  its unit tests read: its sources and manifests, the files compiled into the
+  program, the unit tests' snapshots, and the workflow flavor under
+  `docs/domain/sdlc/workflow/` that the `instrukt-todos` unit tests run
+  against. No commit runs the functional tests. These are project tooling, not
+  quality hooks installed by instrukt in adopting repositories.
 - A commit's checks take under ten seconds once what the commit changed is
   built. The budget counts running the validators, the linter and the unit
   tests; it does not count the compiler rebuilding changed crates. That
   rebuild is limited to the crates the commit touches and the crates that
-  depend on them, and a commit that touches no crate builds nothing.
+  depend on them, and a commit that touches nothing a crate is built from or
+  tested against builds nothing.
 - GitHub CI runs that configuration over every file, and the whole test
   suite, on every pull request, on Linux and macOS, exercising filesystem case
   behavior, hooks and paths. `main` requires these checks, so a functional
