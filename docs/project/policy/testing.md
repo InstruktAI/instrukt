@@ -66,12 +66,11 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   rebuild is limited to the crates the commit touches and the crates that
   depend on them, and a commit that touches nothing a crate is built from or
   tested against builds nothing.
-- No commit installs a check's tool. `make hooks` installs the tools
-  `.pre-commit-config.yaml` pins when it enables the hook, and is run again
-  when a pinned tool changes. A commit whose checks' tools are not installed
-  is refused, naming the step. The every-file run, which CI and
-  `make commit-checks` use and which is not a commit, installs what is
-  missing itself.
+- A check's tool that is not installed yet is installed when it is first
+  needed: by `make hooks`, which installs the tools `.pre-commit-config.yaml`
+  pins when it enables the hook, or by the first commit or every-file run
+  that needs it. That installation is not counted in the ten seconds. No
+  commit is refused because a tool is missing.
 - GitHub CI runs that configuration over every file, and the whole test
   suite, on every pull request, on Linux and macOS, exercising filesystem case
   behavior, hooks and paths. `main` requires these checks, so a functional
@@ -116,9 +115,9 @@ both the write that was attempted did not land. Independently authored use cases
 pure-logic units and property tests cover the Rust exception without replacing
 feature-level evidence.
 
-Installing a tool is a download whose duration nothing in a commit bounds. In
-the step that enables the hook it happens once, where a developer expects to
-wait, and a commit stays a check of what the commit holds.
+A missing tool is installed, not asked for: installing it is idempotent, and
+a refusal would only make a developer run the command the check could have
+run itself.
 
 ## Scope
 
