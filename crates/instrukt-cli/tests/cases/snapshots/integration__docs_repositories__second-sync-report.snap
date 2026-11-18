@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/docs-repositories.rs
+expression: "stdout(&env, &again).replace(&head, \"[SHA]\")"
+---
+published doctrine at [SHA], nothing to change
+[TMP]/home/.claude/CLAUDE.md (claude): current
+[TMP]/home/.codex/AGENTS.md (codex): current
+[TMP]/home/.gemini/antigravity-cli/AGENTS.md (gemini): current
+[TMP]/home/.claude/settings.json: left untouched: it is not a JSON object
+[TMP]/home/.gemini/antigravity-cli/settings.json: left untouched: it is a symbolic link, and nothing is written through a link

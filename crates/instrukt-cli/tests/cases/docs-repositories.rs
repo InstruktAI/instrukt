@@ -137,52 +137,107 @@ fn wait_for_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
     finished.unwrap()
 }
 
-// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1
-#[test]
-fn adopting_a_docs_repository_publishes_its_domains() {
-    let env = machine();
-    let remote = docs_repository(&env, "doctrine", &["general", "sdlc"], "Test first.");
-    let (_, synced) = adopt(&env, &remote, "doctrine");
-    synced.success();
+/// Whether `path` is a symbolic link itself.
+#[cfg(unix)]
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .unwrap()
+        .file_type()
+        .is_symlink()
+}
 
+// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1
+#[cfg(unix)]
+#[test]
+fn a_developer_gives_their_computer_its_doctrine() {
+    // Given a docs repository holding `general` and `sdlc`, a consumer
+    // project, and installed agents a dotfiles user keeps elsewhere:
+    // `~/.claude` links to a directory whose `CLAUDE.md` another tool wrote
+    // and whose `settings.json` is not an object; `~/.codex/AGENTS.md` links
+    // to a dotfiles file; the Antigravity settings file links into the
+    // dotfiles directory.
+    let env = machine();
+    let home = env.home();
+    let dotfiles = env.path("dotfiles");
+    std::fs::create_dir_all(dotfiles.join("claude")).unwrap();
+    let another_tools_text = "# Written by another tool\n\nAnswer in haiku.\n";
+    std::fs::write(dotfiles.join("claude/CLAUDE.md"), another_tools_text).unwrap();
+    std::fs::write(dotfiles.join("claude/settings.json"), "[1, 2]\n").unwrap();
+    std::os::unix::fs::symlink(dotfiles.join("claude"), home.join(".claude")).unwrap();
+    let codex_dotfile = "# My codex notes\n";
+    std::fs::write(dotfiles.join("codex-AGENTS.md"), codex_dotfile).unwrap();
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::os::unix::fs::symlink(
+        dotfiles.join("codex-AGENTS.md"),
+        home.join(".codex/AGENTS.md"),
+    )
+    .unwrap();
+    let antigravity_settings = "{\"general\": {\"checkpointing\": true}}\n";
+    std::fs::write(dotfiles.join("antigravity.json"), antigravity_settings).unwrap();
+    std::fs::create_dir_all(home.join(".gemini/antigravity-cli")).unwrap();
+    std::os::unix::fs::symlink(
+        dotfiles.join("antigravity.json"),
+        home.join(".gemini/antigravity-cli/settings.json"),
+    )
+    .unwrap();
+    let remote = docs_repository(&env, "doctrine", &["general", "sdlc"], "Test first.");
     let app = consumer(&env);
+
+    // When the developer clones and adopts the docs repository, the sync
+    // succeeds.
+    let (doctrine, synced) = adopt(&env, &remote, "doctrine");
+    let synced = synced.success();
+
+    // Its doctrine is published.
     let domains = env.run(app.path(), ["docs", "index"]).success();
     insta::assert_snapshot!("published-domains", stdout(&env, &domains));
-}
 
-// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1
-#[test]
-fn every_installed_agent_starts_with_the_doctrines_global_baseline() {
-    let env = machine();
-    for dir in [".claude", ".codex"] {
-        std::fs::create_dir_all(env.home().join(dir)).unwrap();
-    }
-    let remote = docs_repository(&env, "doctrine", &["general", "sdlc"], "Test first.");
-    adopt(&env, &remote, "doctrine").1.success();
-
-    let claude = std::fs::read_to_string(env.home().join(".claude/CLAUDE.md")).unwrap();
+    // Every supported agent starts with the always-on doctrine and a line
+    // for each domain; the other tool's text is gone.
+    let read = |path: &Path| std::fs::read_to_string(path).unwrap();
+    let claude = read(&home.join(".claude/CLAUDE.md"));
     insta::assert_snapshot!("global-baseline", claude);
-    let codex = std::fs::read_to_string(env.home().join(".codex/AGENTS.md")).unwrap();
-    assert_eq!(
-        codex, claude,
-        "without agents snippets every agent reads the same file"
+    assert!(
+        is_link(&home.join(".claude")),
+        "a directory publication does not own is used as it resolves"
     );
-}
+    assert!(!is_link(&home.join(".codex/AGENTS.md")));
+    assert_eq!(read(&home.join(".codex/AGENTS.md")), claude);
+    assert_eq!(read(&dotfiles.join("codex-AGENTS.md")), codex_dotfile);
+    assert_eq!(
+        read(&home.join(".gemini/antigravity-cli/AGENTS.md")),
+        claude
+    );
 
-// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR1
-#[test]
-fn another_project_reads_the_adopted_doctrine() {
-    let env = machine();
-    let remote = docs_repository(&env, "doctrine", &["general", "sdlc"], "Test first.");
-    adopt(&env, &remote, "doctrine").1.success();
-    let app = consumer(&env);
+    // Settings: nothing is written to either, nor through the link.
+    assert_eq!(read(&dotfiles.join("claude/settings.json")), "[1, 2]\n");
+    assert!(is_link(&home.join(".gemini/antigravity-cli/settings.json")));
+    assert_eq!(
+        read(&dotfiles.join("antigravity.json")),
+        antigravity_settings
+    );
 
-    env.run(app.path(), ["sync"]).success();
-    insta::assert_snapshot!("consumer-instructions", app.read("AGENTS.md"));
-    let read = env
+    // The report names each destination written with its program, the
+    // replaced link and each settings file left with its reason; a second
+    // sync of the unchanged main names every destination as current.
+    let head = doctrine.head();
+    insta::assert_snapshot!(
+        "first-sync-report",
+        stdout(&env, &synced).replace(&head, "[SHA]")
+    );
+    let again = env.run(doctrine.path(), ["sync"]).success();
+    insta::assert_snapshot!(
+        "second-sync-report",
+        stdout(&env, &again).replace(&head, "[SHA]")
+    );
+
+    // Agents in another project read that doctrine.
+    let got = env
         .run(app.path(), ["docs", "get", "sdlc/policy/rules"])
         .success();
-    insta::assert_snapshot!("consumer-reads-doctrine", stdout(&env, &read));
+    insta::assert_snapshot!("consumer-reads-doctrine", stdout(&env, &got));
+    env.run(app.path(), ["sync"]).success();
+    insta::assert_snapshot!("consumer-instructions", app.read("AGENTS.md"));
 }
 
 // spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR2

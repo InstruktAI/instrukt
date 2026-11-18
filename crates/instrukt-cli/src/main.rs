@@ -322,7 +322,6 @@ fn seed_development(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let report = publication::sync(&publication::SyncRequest {
         home: &ctx.home,
         cwd: &ctx.cwd,
-        force: false,
         wiring: &instrukt_core::interfaces::CoreWiring::default(),
         now: ctx.clock.now(),
     })?;

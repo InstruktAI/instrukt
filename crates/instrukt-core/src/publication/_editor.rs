@@ -13,14 +13,13 @@
 
 use std::path::{Path, PathBuf};
 
-use super::_tx::confined;
+use super::_tx::{Transaction, confined, own_destination};
 use super::PublicationError;
 use crate::config::{self, CONFIG_FILE_NAME};
 use crate::docs::{
     DomainIndex, GeneralIndex, INDEX_FILE, Position, PositionSchema, ProjectIndex, SCHEMA_FILE,
     is_reserved_domain_folder,
 };
-use crate::fsx::atomic_write;
 use crate::ids::DomainName;
 use crate::modeline::{leading, with_modeline};
 
@@ -96,36 +95,58 @@ pub enum EditorChangeKind {
     ModelineInserted,
     /// A modeline naming another path was replaced.
     ModelineReplaced,
-    /// Not written: the path is, or lies behind, a symbolic link.
+    /// Not written: a file that would take a modeline is, or lies behind,
+    /// a symbolic link. It is the developer's, left as it is.
     Linked,
-}
-
-/// What to do about a path the refresh would write through a symbolic
-/// link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnLink {
-    /// Leave it unwritten and report it (`init`).
-    Report,
-    /// Fail the operation (`sync`).
-    Refuse,
+    /// A symbolic link stood where a schema, or the schemas' directory,
+    /// belongs; it was removed and the schema written in its place, the
+    /// file it pointed to left as it is.
+    LinkReplaced,
 }
 
 /// Writes every editor schema below `root`'s `.instrukt/schemas/` and
-/// brings the modeline of every file they describe that exists to the top.
-/// A file already holding the generated content or its modeline is left
-/// untouched. Any other failure to write fails the refresh, naming the
-/// file.
+/// brings the modeline of every file they describe that exists to the top,
+/// as one transaction whose replaced directories wait below `home_root`: a
+/// refresh that fails puts back every schema, modeline and link it
+/// changed. A file already holding the generated content or its modeline
+/// is left untouched; a file that would take a modeline and is, or lies
+/// behind, a symbolic link is left and named. Any other failure to write
+/// fails the refresh, naming the file.
 pub fn refresh_editor_schemas(
+    home_root: &Path,
     root: &Path,
-    on_link: OnLink,
 ) -> Result<Vec<EditorChange>, PublicationError> {
-    let mut changes = write_editor_schemas(root, on_link)?;
+    let mut tx = Transaction::begin(home_root)?;
+    match refresh(root, &mut tx) {
+        Ok(changes) => {
+            if let Some(left) = tx.commit() {
+                tracing::warn!(event = "editor_trash_left", path = %left.display());
+            }
+            Ok(changes)
+        }
+        Err(error) => {
+            tx.rollback();
+            Err(error)
+        }
+    }
+}
+
+fn refresh(root: &Path, tx: &mut Transaction) -> Result<Vec<EditorChange>, PublicationError> {
+    let mut changes = write_editor_schemas(root, tx)?;
     for (rel, schema) in described(root)? {
         if !exists(&root.join(&rel))? {
             continue;
         }
-        let Some(path) = writable(root, &rel, on_link, &mut changes)? else {
-            continue;
+        let path = match confined(root, &rel) {
+            Ok(path) => path,
+            Err(PublicationError::Unconfined { .. }) => {
+                changes.push(EditorChange {
+                    path: rel,
+                    kind: EditorChangeKind::Linked,
+                });
+                continue;
+            }
+            Err(error) => return Err(error),
         };
         let Some(bytes) = read(&path)? else {
             continue;
@@ -138,29 +159,43 @@ pub fn refresh_editor_schemas(
         } else {
             EditorChangeKind::ModelineInserted
         };
-        atomic_write(&path, &next)?;
+        tx.write(&path, &next)?;
         changes.push(EditorChange { path: rel, kind });
     }
     Ok(changes)
 }
 
 /// Writes every editor schema below `root`'s git-ignored
-/// `.instrukt/schemas/`, leaving every committed file as it is. A schema
-/// already holding the generated content is left untouched; any other
-/// failure to write fails the refresh, naming the file.
-pub fn write_editor_schemas(
+/// `.instrukt/schemas/` through `tx`, leaving every committed file as it
+/// is. A schema already holding the generated content is left untouched. A
+/// symbolic link standing at the schemas' directory or at a schema is
+/// replaced by the directory or the schema, the file it pointed to left as
+/// it is; `tx`'s rollback makes the link again. A link on the way to the
+/// directory refuses before anything changes; any other failure to write
+/// fails the refresh, naming the file.
+pub(super) fn write_editor_schemas(
     root: &Path,
-    on_link: OnLink,
+    tx: &mut Transaction,
 ) -> Result<Vec<EditorChange>, PublicationError> {
     let mut changes = Vec::new();
+    let dir = own_destination(root, Path::new(SCHEMAS_DIR))?;
+    let replaced = |rel: &Path, changes: &mut Vec<EditorChange>| {
+        changes.push(EditorChange {
+            path: rel.to_path_buf(),
+            kind: EditorChangeKind::LinkReplaced,
+        });
+    };
+    if std::fs::symlink_metadata(&dir).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        replaced(Path::new(SCHEMAS_DIR), &mut changes);
+    }
+    tx.ensure_dir(&dir)?;
     for schema in EditorSchema::ALL {
         let rel = Path::new(SCHEMAS_DIR).join(schema.file_name());
-        let Some(path) = writable(root, &rel, on_link, &mut changes)? else {
-            continue;
-        };
-        let bytes = schema.bytes();
-        if read(&path)?.as_deref() != Some(bytes.as_slice()) {
-            atomic_write(&path, &bytes)?;
+        let path = dir.join(schema.file_name());
+        if tx.unlink(&path)? {
+            replaced(&rel, &mut changes);
+        }
+        if tx.write(&path, &schema.bytes())? {
             changes.push(EditorChange {
                 path: rel,
                 kind: EditorChangeKind::SchemaWritten,
@@ -211,27 +246,6 @@ fn described_by(rel: &Path) -> Option<EditorSchema> {
         Some(EditorSchema::Snippets)
     } else {
         None
-    }
-}
-
-/// `root/rel` resolved for writing; `None`, with the path reported, when
-/// it is or lies behind a symbolic link and `on_link` says to report it.
-fn writable(
-    root: &Path,
-    rel: &Path,
-    on_link: OnLink,
-    changes: &mut Vec<EditorChange>,
-) -> Result<Option<PathBuf>, PublicationError> {
-    match confined(root, rel) {
-        Ok(path) => Ok(Some(path)),
-        Err(PublicationError::Unconfined { .. }) if on_link == OnLink::Report => {
-            changes.push(EditorChange {
-                path: rel.to_path_buf(),
-                kind: EditorChangeKind::Linked,
-            });
-            Ok(None)
-        }
-        Err(error) => Err(error),
     }
 }
 

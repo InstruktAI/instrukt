@@ -1,5 +1,11 @@
 ---
 source: crates/instrukt-cli/tests/cases/editor-schemas.rs
-expression: "stderr(&env, &refused)"
+expression: "stdout(&env, &synced).replace(&sha, \"[SHA]\")"
 ---
-instrukt: [TMP]/demo/.instrukt/schemas is a symbolic link or lies behind one; publication writes only inside its root
+published demo at [SHA]
+.instrukt/schemas: a symbolic link, replaced; what it pointed to is left as it is
+.instrukt/schemas/general-index.schema.json: schema written
+.instrukt/schemas/domain-index.schema.json: schema written
+.instrukt/schemas/project-index.schema.json: schema written
+.instrukt/schemas/snippet-schema.schema.json: schema written
+.instrukt/schemas/instrukt.schema.json: schema written

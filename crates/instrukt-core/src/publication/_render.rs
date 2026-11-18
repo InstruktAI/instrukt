@@ -69,7 +69,10 @@ impl Renderer<'_> {
     /// The global agent file of `cli`: `general`'s section, one group per
     /// other published domain with an `index.yaml`, by name, then the
     /// CLI's `agents` snippets in full with their closure.
-    pub(super) fn global_file(&self, cli: AgentCli) -> Result<String, PublicationError> {
+    /// The global file of `cli`, with the references it keeps for an agent
+    /// program to resolve: a global file is written as rendered and each
+    /// such reference is a finding of the sync, never a refusal.
+    pub(super) fn global_file(&self, cli: AgentCli) -> Result<GlobalFile, PublicationError> {
         let file = "docs/general/index.yaml";
         let general =
             DomainName::parse(docs::GENERAL).map_err(|e| render_error(file, &e.to_string()))?;
@@ -149,8 +152,8 @@ impl Renderer<'_> {
             }
         }
         let text = finish(&blocks.join("\n"));
-        self_contained(file, &text)?;
-        Ok(text)
+        let references = kept_references(&text);
+        Ok(GlobalFile { text, references })
     }
 
     /// The root `AGENTS.md`: the master's text, then the rendering of
@@ -486,13 +489,31 @@ fn finish(text: &str) -> String {
     }
 }
 
+/// A rendered global agent file and the references it keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct GlobalFile {
+    pub text: String,
+    /// Each reference the docs model sees in `text`, as `@<target>`: an
+    /// agent program would try to load it.
+    pub references: Vec<String>,
+}
+
+/// The references the docs model sees in a rendered `text`, as
+/// `@<target>`; a reference inside code is none.
+fn kept_references(text: &str) -> Vec<String> {
+    docs::visible_references(text)
+        .into_iter()
+        .map(|reference| format!("@{reference}"))
+        .collect()
+}
+
 /// Refuses a rendered text that still carries a reference the docs model
 /// sees: an agent CLI would try to load it.
 fn self_contained(file: &str, text: &str) -> Result<(), PublicationError> {
-    match docs::visible_references(text).into_iter().next() {
+    match kept_references(text).into_iter().next() {
         Some(reference) => Err(render_error(
             file,
-            &format!("the rendered text still references `@{reference}`"),
+            &format!("the rendered text still references `{reference}`"),
         )),
         None => Ok(()),
     }
@@ -501,6 +522,18 @@ fn self_contained(file: &str, text: &str) -> Result<(), PublicationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_visible_reference_is_kept_and_one_in_code_is_none() {
+        assert_eq!(
+            kept_references("Read it (@notes/house.md) first.\n"),
+            ["@notes/house.md"]
+        );
+        assert_eq!(
+            kept_references("```\nRead it (@notes/house.md) first.\n```\n"),
+            Vec::<String>::new()
+        );
+    }
 
     #[test]
     fn finishing_drops_lock_sentinels_and_collapses_blank_runs() {
