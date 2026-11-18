@@ -781,6 +781,18 @@ mod tests {
     }
 
     #[test]
+    fn the_conversation_role_is_never_reported_undeclared_while_an_ordinary_role_is() {
+        let agents = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let installed: Vec<&str> = agents
+            .roles
+            .keys()
+            .map(String::as_str)
+            .filter(|role| *role != "builder" && *role != super::COMPANY_AGENT_ROLE)
+            .collect();
+        assert_eq!(agents.undeclared_roles(&installed), vec!["builder"]);
+    }
+
+    #[test]
     fn handler_defaults_and_unknown_roles_preserve_their_recorded_name() {
         let agents = Agents::parse(SHIPPED_AGENTS).unwrap();
         let handler = agents.capabilities("event-handler").unwrap();

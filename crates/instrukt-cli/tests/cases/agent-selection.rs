@@ -136,15 +136,6 @@ fn open_models_accept_native_options_but_reject_malformed_shapes() {
     assert!(Agents::parse(&CONFIG.replace("kind: codex", "kind: unknown")).is_err());
     let agents = Agents::parse(CONFIG).unwrap();
     assert_eq!(agents.undeclared_roles(&[]), vec!["builder"]);
-    // The role the runner gives conversation sessions is reserved: it is not
-    // reported without an installed procedure declaring it, while an
-    // ordinary configured role still is.
-    let with_conversations = Agents::parse(&CONFIG.replace(
-        "roles:\n",
-        "roles:\n  company-agent: {class: standing, can: [read]}\n",
-    ))
-    .unwrap();
-    assert_eq!(with_conversations.undeclared_roles(&[]), vec!["builder"]);
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS4
@@ -195,17 +186,16 @@ fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
         recorded,
         serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(SHIPPED_AGENTS.as_bytes()))})
     );
-    // Edited, the older file keeps its settings through the conversion.
+    // Edited, the older file keeps its settings through the conversion: the
+    // edited profile as the agents configuration shows it afterwards.
     let edited_older = older.replace("gpt-6.1-sol", "edited-strong-model");
     std::fs::write(&file, &edited_older).unwrap();
     std::fs::write(&record, older_record.to_string()).unwrap();
     env.run(env.home(), ["config", "init", "--global"])
         .success();
-    let kept = Agents::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
-    assert_eq!(
-        kept.select(Some("prd-reviewer"), None, None, None).unwrap()[0].model,
-        "edited-strong-model"
-    );
+    let shown = env.run(env.home(), ["config", "show", "agents"]).success();
+    let shown: serde_json::Value = serde_json::from_slice(&shown.get_output().stdout).unwrap();
+    insta::assert_json_snapshot!("edited-older-defaults-kept", shown["profiles"]["codex"]);
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3

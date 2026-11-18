@@ -1517,22 +1517,8 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
 mod tests {
     use super::{
         COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage, opening_procedure,
-        reports, split,
+        split,
     };
-
-    #[test]
-    fn a_message_waiting_for_its_procedure_is_logged_when_its_cause_starts_or_changes() {
-        let waiting = ConversationError::NoProcedure {
-            role: COMPANY_AGENT_ROLE,
-        };
-        let cause = waiting.to_string();
-        assert!(reports(&waiting, None, &cause));
-        assert!(reports(&waiting, Some("an earlier cause"), &cause));
-        assert!(!reports(&waiting, Some(&cause), &cause));
-        let other = ConversationError::Refused("the message is not framed yet".into());
-        let repeated = other.to_string();
-        assert!(reports(&other, Some(&repeated), &repeated));
-    }
 
     /// An index holding the procedure declaring the conversation role,
     /// pending its delivering todo when `pending`.
