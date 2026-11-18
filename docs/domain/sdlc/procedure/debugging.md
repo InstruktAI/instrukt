@@ -7,6 +7,10 @@ visibility: 'public'
 
 # Debugging — Procedure
 
+## Required reads
+
+- [general/concept/failure-modes](../../../general/concept/failure-modes.md)
+
 ## Goal
 
 Find root cause before proposing or implementing fixes. Prevent guess-driven changes that hide symptoms and create regressions.

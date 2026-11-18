@@ -28,6 +28,7 @@ listed:
   - general/policy/grounding
   - general/policy/orchestrator-jurisdiction
   - general/policy/shared-machine-resources
+  - general/policy/agent-artifact-governance
   - general/principle/expansion
   - general/principle/parallel-work
   - general/principle/verification-independence

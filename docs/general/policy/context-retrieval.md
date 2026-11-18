@@ -7,10 +7,19 @@ visibility: 'public'
 
 ## Rules
 
+- **Read your role's commands before work.** Before doing anything, run
+  `instrukt --help` and read the commands your role has. An action that help
+  does not offer you goes back to the dispatcher in your output, which can
+  change the assignment.
 - **Read a domain's rendering once, at entry.** When a task enters a knowledge
   domain, run `instrukt docs get --domain <domain>` and read its output in
   full, unless that domain's contracts are already loaded this session. A task
-  enters `sdlc` when it writes or changes code or tests. The rendering is the
+  enters `sdlc` when it writes or changes code or tests, and then also reads
+  the core and testing policies of each language whose code it touches
+  (`sdlc/policy/<language>/core` and `sdlc/policy/<language>/testing` where
+  the language has them). A task that makes an architectural or structural
+  decision also reads `sdlc/principle/design-fundamentals` with
+  `instrukt docs get <id>` before deciding. The rendering is the
   domain's mandatory contract in one pass: its `expanded` snippets with their
   closure, its `listed` snippets as one line each, and its triggered
   procedures. Your global agent file names each published domain with that
@@ -34,6 +43,9 @@ visibility: 'public'
   before web search or Context7; those are fallbacks for coverage gaps.
 
 ## Rationale
+
+Reading the help first means work is not planned around a command the role
+cannot run.
 
 Immediate context prevents drift from established policy, architecture, and
 procedure. The rendering, not the files behind it, is what an agent reads: it
