@@ -168,7 +168,7 @@ message's state (`project/instrukt/spec/feature/company/conversations`):
 
 | The message's state | Text |
 | --- | --- |
-| its no-work interval is open | `is temporarily unavailable — your message is saved` |
+| its no-work interval is open, the relay-wide failure included (the interval the notice reads) | `is temporarily unavailable — your message is saved` |
 | otherwise, from its admission | `is working on your request` |
 
 Slack puts the app's name in front of it. Each status pass sets the text that

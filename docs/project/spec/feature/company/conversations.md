@@ -167,7 +167,9 @@ connector gives.
   has a way to: that the assistant is working on the request from its
   admission, and that the assistant is temporarily unavailable and the message
   is saved while its no-work interval is open, which happens only once a failure
-  shows the agent cannot work on it ("The minute", below). A slow but healthy
+  shows the agent cannot work on it ("The minute", below). The indication and
+  the notice read the same interval, the relay-wide failure included, so the
+  indication never says working while the notice's minute runs. A slow but healthy
   start shows the working text. Both are fixed texts the connector words; nothing in them is
   generated. The indication belongs to the turn, whether the turn posts an
   answer, posts nothing or fails; it is a courtesy, and each connector states

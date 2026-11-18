@@ -450,8 +450,11 @@ Reported model slugs and aliases are acquisition facts; T3's native `auto` and
 Runner policy applies those facts in configured order. Automatic starts skip
 unavailable and degraded marks until expiry at the command clock; available
 clears the addressed restriction. A usage window at 100% restricts that profile's
-configured models until its reset. Missing resets use one hour from the command
-clock and record that default. Overlapping exhausted windows use the latest
+configured models until its reset. Missing resets use one hour from the time the
+snapshot was observed and record that default. A snapshot's windows are applied
+once, when the snapshot is read; a start applies the restrictions in force and
+never applies the windows of a snapshot it reuses again, so a reused snapshot
+never renews a lapsed restriction. Overlapping exhausted windows use the latest
 active reset; a reset already past has lapsed. Observed quota marks and manual
 restrictions remain independent. Availability and skip diagnostics retain cause
 and expiry. Launch-error text supplies no quota evidence or no-start proof.
