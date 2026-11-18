@@ -2789,10 +2789,19 @@ fn field_database_id(id: &str) -> u64 {
     id.rsplit('_').next().unwrap().parse().unwrap()
 }
 
+/// The time GitHub judges tokens by: the system clock, the time instrukt
+/// was given, or the time in the clock file it was given (`@<path>`), read
+/// at each request as instrukt reads it.
 fn auth_time(file: &std::path::Path) -> jiff::Timestamp {
     let value = std::fs::read_to_string(file).unwrap();
     if value == "system" {
         jiff::Timestamp::now()
+    } else if let Some(clock) = value.strip_prefix('@') {
+        std::fs::read_to_string(clock)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
     } else {
         value.parse().unwrap()
     }

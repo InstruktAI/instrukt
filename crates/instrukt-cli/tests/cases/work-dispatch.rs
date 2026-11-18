@@ -92,7 +92,11 @@ fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() 
 
     project.github.stop();
     project.tick();
-    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+    assert!(
+        project.rt.thread_calls().is_empty(),
+        "{:?}",
+        project.rt.calls()
+    );
 
     project.github.resume();
     project.tick();
@@ -120,7 +124,11 @@ fn work_claimed_while_github_was_unreachable_is_dispatched_after_another_command
     // The runner claims the work but cannot reflect the claim: no session.
     project.github.stop();
     project.tick();
-    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+    assert!(
+        project.rt.thread_calls().is_empty(),
+        "{:?}",
+        project.rt.calls()
+    );
 
     // A developer's command reflects the pending claim before the next tick.
     project.github.resume();
@@ -152,7 +160,11 @@ fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
 
     project.tick();
 
-    assert!(project.rt.calls().is_empty(), "{:?}", project.rt.calls());
+    assert!(
+        project.rt.thread_calls().is_empty(),
+        "{:?}",
+        project.rt.calls()
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD2
@@ -636,14 +648,29 @@ fn quota_without_a_reset_records_one_hour_and_preserves_a_manual_restriction() {
     insta::assert_json_snapshot!("quota-default-and-manual", marks);
 }
 
+/// Whether `instrukt events status` shows the readiness refresh failing.
+fn readiness_failing(p: &Tracked) -> bool {
+    let out = p
+        .env
+        .run(p.env.home(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    status["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["worker"] == "readiness")
+}
+
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn malformed_readiness_is_refused_and_its_token_is_revoked() {
+fn malformed_readiness_is_a_failed_refresh_the_start_proceeds_and_its_token_is_revoked() {
     let p = Tracked::new(true);
     std::fs::write(p.env.path("t3-readiness/malformed"), "").unwrap();
     create_change(&p);
     p.tick();
-    assert_eq!(p.rt.started_count(), 0);
+    assert_eq!(p.rt.started_count(), 1);
+    assert!(readiness_failing(&p));
     assert!(
         p.rt.calls()
             .iter()
@@ -653,12 +680,13 @@ fn malformed_readiness_is_refused_and_its_token_is_revoked() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn failed_readiness_token_revocation_refuses_thread_creation() {
+fn a_failed_readiness_token_revocation_is_logged_and_the_start_proceeds() {
     let p = Tracked::new(true);
     runtime::FakeT3::create(&p.env).flag("revoke-failure", true);
     create_change(&p);
     p.tick();
-    assert_eq!(p.rt.started_count(), 0);
+    assert_eq!(p.rt.started_count(), 1);
+    assert!(!readiness_failing(&p));
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
@@ -715,7 +743,7 @@ fn compatible_readiness_releases_do_not_block_start() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn an_unknown_readiness_descriptor_version_refuses_start_without_creating_a_thread() {
+fn an_unknown_readiness_descriptor_version_is_a_failed_refresh_and_the_start_proceeds() {
     let p = Tracked::new(true);
     let file = common::t3_readiness::state_file(&p.env);
     let mut state: serde_json::Value =
@@ -724,11 +752,110 @@ fn an_unknown_readiness_descriptor_version_refuses_start_without_creating_a_thre
     std::fs::write(file, state.to_string()).unwrap();
     create_change(&p);
     p.tick();
-    assert_eq!(p.rt.started_count(), 0);
-    assert!(
-        !p.rt
-            .calls()
-            .iter()
-            .any(|line| line.starts_with("thread start "))
+    assert_eq!(p.rt.started_count(), 1);
+    assert!(readiness_failing(&p));
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
+fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
+    let mut p = Tracked::new(true);
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
+    // The operator's clock, replaced whole at each move.
+    let clock = p.env.path("clock");
+    let mut now: jiff::Timestamp = "2030-01-01T00:00:00Z".parse().unwrap();
+    let set_clock = |at: jiff::Timestamp| {
+        let next = clock.with_extension("next");
+        std::fs::write(&next, at.to_string()).unwrap();
+        std::fs::rename(&next, &clock).unwrap();
+    };
+    set_clock(now);
+    p.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    let agents =
+        instrukt_core::config::Agents::parse(instrukt_core::config::SHIPPED_AGENTS).unwrap();
+    let profile =
+        |name: &str| &agents.profiles[&instrukt_core::ids::ProfileName::parse(name).unwrap()];
+    // A manual restriction on a model of another profile stays as set.
+    let manual = profile("antigravity").strong[0]["model"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "antigravity",
+                "unavailable",
+                "--model",
+                &manual,
+                "--until",
+                "2099-01-01T00:00:00Z",
+                "--reason",
+                "operator restriction",
+            ],
+        )
+        .success();
+    // At t=0 the snapshot reports the first profile's window full, with no
+    // reset given.
+    let claude = profile("claude").instance.clone();
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == claude.as_str() {
+                provider["usageLimits"] = serde_json::json!({"checkedAt":"2030-01-01T00:00:00Z","windows":[{"id":"session","kind":"session","label":"Session","usedPercent":100}]});
+            }
+        }
+    });
+    let fake = runtime::FakeT3::create(&p.env);
+    let _runner = crate::fixtures::conversing::Running::spawn(
+        p.env
+            .instrukt_process(p.env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
     );
+    crate::common::wait_until(
+        "the first snapshot",
+        std::time::Duration::from_secs(20),
+        || !common::t3_readiness::reads(&p.env).is_empty(),
+    );
+    // Every later refresh fails: the token cannot be renewed.
+    fake.flag("issue-failure", true);
+    // At t=30 min the first profile is still restricted: the second starts.
+    create_change(&p);
+    now += jiff::SignedDuration::from_mins(30);
+    set_clock(now);
+    crate::common::wait_until(
+        "the start at t=30",
+        std::time::Duration::from_secs(20),
+        || p.rt.started_count() == 1,
+    );
+    assert_eq!(fake.provider("s1"), profile("codex").instance);
+    // The start reused the snapshot of t=0: the restriction still expires
+    // at t=60 min, and the manual one is as set.
+    let marks = p
+        .env
+        .run(p.repo.path(), ["agents", "availability"])
+        .success();
+    let marks: serde_json::Value = serde_json::from_slice(&marks.get_output().stdout).unwrap();
+    insta::assert_json_snapshot!("reused-snapshot-quota-marks", marks);
+    // At t=61 min its restriction has lapsed: the first profile starts.
+    p.todo([
+        "create",
+        "sort-docs",
+        "Sort the documentation index.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    now += jiff::SignedDuration::from_mins(31);
+    set_clock(now);
+    crate::common::wait_until(
+        "the start at t=61",
+        std::time::Duration::from_secs(20),
+        || p.rt.started_count() == 2,
+    );
+    assert_eq!(fake.provider("s2"), claude);
 }

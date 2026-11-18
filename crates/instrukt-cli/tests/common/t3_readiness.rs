@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     net::{TcpListener, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -69,63 +69,9 @@ impl Server {
                 let Ok(stream) = stream else {
                     break;
                 };
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-                stream
-                    .set_write_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-                let header_dir = dir.clone();
-                let accepted = tungstenite::accept_hdr(
-                    stream,
-                    move |request: &tungstenite::handshake::server::Request,
-                          response: tungstenite::handshake::server::Response| {
-                        let auth = request
-                            .headers()
-                            .get("authorization")
-                            .and_then(|v| v.to_str().ok())
-                            .and_then(|v| v.strip_prefix("Bearer "))
-                            .is_some_and(|token| {
-                                std::fs::read_to_string(header_dir.join("token-digest")).is_ok_and(
-                                    |expected| {
-                                        hex::encode(Sha256::digest(token.as_bytes())) == expected
-                                    },
-                                )
-                            });
-                        if !auth {
-                            return Err(tungstenite::http::Response::builder()
-                                .status(401)
-                                .body(Some("unauthorized".into()))
-                                .unwrap());
-                        }
-                        std::fs::write(
-                            header_dir.join("authenticated"),
-                            if auth { "yes" } else { "no" },
-                        )
-                        .unwrap();
-                        std::fs::write(header_dir.join("path"), request.uri().to_string()).unwrap();
-                        Ok(response)
-                    },
-                );
-                let Ok(mut socket) = accepted else {
-                    continue;
-                };
-                let Ok(message) = socket.read() else {
-                    continue;
-                };
-                let request: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
-                std::fs::write(dir.join("request.json"), request.to_string()).unwrap();
-                let value: Value = serde_json::from_str(
-                    &std::fs::read_to_string(dir.join("snapshot.json")).unwrap(),
-                )
-                .unwrap();
-                let response = if dir.join("malformed").exists() {
-                    json!({"unknown":true})
-                } else {
-                    json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":value}})
-                };
-                let _ = socket.send(tungstenite::Message::Text(response.to_string().into()));
-                let _ = socket.close(None);
+                // Each connection on its own, so a held read holds no other.
+                let dir = dir.clone();
+                std::thread::spawn(move || serve(&dir, stream));
             }
         });
         Self {
@@ -135,6 +81,148 @@ impl Server {
         }
     }
 }
+/// The time T3 judges a token's expiry by: the operator's clock the runner
+/// issued it under, when it had one.
+fn now(dir: &Path) -> jiff::Timestamp {
+    let source = std::fs::read_to_string(dir.join("clock-source")).unwrap_or_default();
+    let text = match source.strip_prefix('@') {
+        Some(file) => std::fs::read_to_string(file).unwrap_or_default(),
+        None => source,
+    };
+    text.trim()
+        .parse()
+        .unwrap_or_else(|_| jiff::Timestamp::now())
+}
+
+/// The session whose live token `token` is: issued, not revoked, not past
+/// its expiry.
+fn session(dir: &Path, token: &str) -> Option<String> {
+    let digest = hex::encode(Sha256::digest(token.as_bytes()));
+    let now = now(dir);
+    std::fs::read_dir(dir.join("tokens"))
+        .ok()?
+        .find_map(|entry| {
+            let path = entry.ok()?.path();
+            let record: Value = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+            let expires: jiff::Timestamp = record["expires"].as_str()?.parse().ok()?;
+            (record["digest"] == digest.as_str() && record["revoked"] == false && expires > now)
+                .then(|| path.file_stem().unwrap().to_string_lossy().into_owned())
+        })
+}
+
+fn record(dir: &Path, file: &str, line: &str) {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(file))
+        .unwrap();
+    writeln!(file, "{line}").unwrap();
+}
+
+#[allow(
+    clippy::result_large_err,
+    reason = "tungstenite fixes the handshake callback error to an HTTP response"
+)]
+fn serve(dir: &Path, stream: TcpStream) {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let header_dir = dir.to_path_buf();
+    let accepted = tungstenite::accept_hdr(
+        stream,
+        move |request: &tungstenite::handshake::server::Request,
+              response: tungstenite::handshake::server::Response| {
+            let used = request
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .and_then(|token| session(&header_dir, token));
+            // Which session each read used, or that it was refused.
+            record(&header_dir, "reads", used.as_deref().unwrap_or("refused"));
+            if used.is_none() {
+                return Err(tungstenite::http::Response::builder()
+                    .status(401)
+                    .body(Some("unauthorized".into()))
+                    .unwrap());
+            }
+            std::fs::write(header_dir.join("authenticated"), "yes").unwrap();
+            std::fs::write(header_dir.join("path"), request.uri().to_string()).unwrap();
+            Ok(response)
+        },
+    );
+    let Ok(mut socket) = accepted else {
+        return;
+    };
+    let Ok(message) = socket.read() else {
+        return;
+    };
+    let request: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    std::fs::write(dir.join("request.json"), request.to_string()).unwrap();
+    // A held read stays open until the test releases it, unless its client
+    // gives up first: it is recorded when it arrived, and whether the client
+    // ended it.
+    if dir.join("hold-read").exists() {
+        std::fs::write(dir.join("held-read"), "arrived").unwrap();
+        socket
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        while !dir.join("release-read").exists() {
+            match socket.read() {
+                Err(tungstenite::Error::Io(error))
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                _ => {
+                    std::fs::write(dir.join("held-read"), "closed").unwrap();
+                    return;
+                }
+            }
+        }
+        std::fs::write(dir.join("held-read"), "released").unwrap();
+    }
+    let value: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("snapshot.json")).unwrap()).unwrap();
+    let response = if dir.join("malformed").exists() {
+        json!({"unknown":true})
+    } else {
+        json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":value}})
+    };
+    let _ = socket.send(tungstenite::Message::Text(response.to_string().into()));
+    let _ = socket.close(None);
+}
+
+/// Whether the held read has arrived and is still open: neither ended by
+/// its client nor released.
+pub fn held_read_open(env: &TestEnv) -> bool {
+    std::fs::read_to_string(env.path("t3-readiness/held-read"))
+        .is_ok_and(|state| state == "arrived")
+}
+
+/// The session each snapshot read used, in order; `refused` for a read
+/// whose token was not live.
+pub fn reads(env: &TestEnv) -> Vec<String> {
+    std::fs::read_to_string(env.path("t3-readiness/reads"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether the session `sid` was revoked.
+pub fn revoked(env: &TestEnv, sid: &str) -> bool {
+    std::fs::read(env.path(&format!("t3-readiness/tokens/{sid}.json")))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_some_and(|record| record["revoked"] == true)
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);

@@ -60,6 +60,14 @@ impl FakeRuntime {
     pub fn calls(&self) -> Vec<String> {
         self.fake.calls()
     }
+    /// The thread operations among the calls: what was started, sent or
+    /// read; readiness reads its provider snapshot on every wake.
+    pub fn thread_calls(&self) -> Vec<String> {
+        self.calls()
+            .into_iter()
+            .filter(|call| call.starts_with("thread "))
+            .collect()
+    }
     pub fn opening(&self, id: &str) -> String {
         self.fake.message(id, 0)
     }

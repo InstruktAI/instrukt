@@ -648,3 +648,177 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     c.finish_turn(&third, 0, "Friday the 20th.");
     wait("the third answer", || c.slack.posts().len() == 4);
 }
+
+/// The operator's clock of a test (`INSTRUKT_NOW=@<file>`), which the
+/// runner reads at any moment: each new time replaces the file whole.
+struct OperatorClock {
+    file: std::path::PathBuf,
+    now: jiff::Timestamp,
+}
+
+impl OperatorClock {
+    fn on(c: &mut Company, at: &str) -> Self {
+        let clock = Self {
+            file: c.env.path("clock"),
+            now: at.parse().unwrap(),
+        };
+        clock.write();
+        c.env
+            .set_env("INSTRUKT_NOW", &format!("@{}", clock.file.display()));
+        clock
+    }
+
+    fn advance(&mut self, minutes: i64) {
+        self.now += jiff::SignedDuration::from_mins(minutes);
+        self.write();
+    }
+
+    fn write(&self) {
+        let next = self.file.with_extension("next");
+        std::fs::write(&next, self.now.to_string()).unwrap();
+        std::fs::rename(&next, &self.file).unwrap();
+    }
+}
+
+/// The provider instance a shipped profile starts on.
+fn instance(profile: &str) -> instrukt_core::ids::ProviderInstanceId {
+    let agents =
+        instrukt_core::config::Agents::parse(instrukt_core::config::SHIPPED_AGENTS).unwrap();
+    agents.profiles[&instrukt_core::ids::ProfileName::parse(profile).unwrap()]
+        .instance
+        .clone()
+}
+
+/// Waits until the runner has read the provider snapshot again: one read
+/// more than `before`.
+fn read_again(c: &Company, before: usize) {
+    wait("the next readiness read", || {
+        common::t3_readiness::reads(&c.env).len() > before
+    });
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
+#[test]
+fn a_slow_or_failing_t3_cli_does_not_refuse_a_start() {
+    let mut c = Company::new("");
+    let mut clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
+    // No snapshot is known yet: T3's CLI blocks issuing the runner's token
+    // until its launch limit has passed on the clock.
+    c.runtime.flag("hold-issue", true);
+    c.run();
+    wait("the held token issue", || c.runtime.held_issue_running());
+    clock.advance(1);
+    wait("the failed refresh in status", || c.readiness_failing());
+    c.asked_and_answered("When do we ship?", "On Friday.");
+    // Still none known: the CLI now exits non-zero.
+    c.runtime.flag("hold-issue", false);
+    c.runtime.flag("issue-failure", true);
+    let launches = c.issue_launches();
+    clock.advance(2);
+    wait("the next token issue", || c.issue_launches() > launches);
+    assert!(c.readiness_failing());
+    c.asked_and_answered("Who reviews it?", "Ada does.");
+    // A good snapshot is read once the CLI answers again.
+    c.runtime.flag("issue-failure", false);
+    clock.advance(2);
+    wait("a refresh that succeeds", || !c.readiness_failing());
+    // With that snapshot known, the renewal of the token blocks past its
+    // limit, and then fails.
+    std::fs::remove_file(c.runtime.state_dir().join("held-issue")).unwrap();
+    c.runtime.flag("hold-issue", true);
+    clock.advance(5);
+    wait("the held renewal", || c.runtime.held_issue_running());
+    clock.advance(1);
+    wait("the failed refresh in status", || c.readiness_failing());
+    c.asked_and_answered("And the release notes?", "They are ready.");
+    c.runtime.flag("hold-issue", false);
+    c.runtime.flag("issue-failure", true);
+    let launches = c.issue_launches();
+    clock.advance(5);
+    wait("the next token issue", || c.issue_launches() > launches);
+    assert!(c.readiness_failing());
+    c.asked_and_answered("And the date?", "The 20th.");
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
+#[test]
+fn a_start_does_not_wait_on_an_outstanding_readiness_acquisition() {
+    let mut c = Company::new("");
+    // The clock only brings the runner's wakes about: no held acquisition
+    // is judged on it, and the fake says itself whether each is still open.
+    let mut clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
+    // No snapshot yet: the first acquisition, the token's issue at the
+    // runner's start, is held.
+    c.runtime.flag("hold-issue", true);
+    c.run();
+    wait("the held token issue", || c.runtime.held_issue_running());
+    c.asked_and_answered("When do we ship?", "On Friday.");
+    assert!(c.runtime.held_issue_running(), "the issue is still open");
+    c.runtime.flag("release-issue", true);
+    wait("the first snapshot", || {
+        !common::t3_readiness::reads(&c.env).is_empty()
+    });
+    // A snapshot is retained: a later refresh's read is held.
+    std::fs::write(c.env.path("t3-readiness/hold-read"), "").unwrap();
+    clock.advance(2);
+    wait("the held snapshot read", || {
+        common::t3_readiness::held_read_open(&c.env)
+    });
+    c.asked_and_answered("Who reviews it?", "Ada does.");
+    assert!(
+        common::t3_readiness::held_read_open(&c.env),
+        "the read is still open"
+    );
+    std::fs::write(c.env.path("t3-readiness/release-read"), "").unwrap();
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
+#[test]
+fn starts_issue_no_token() {
+    let mut c = Company::new("");
+    c.run();
+    c.asked_and_answered("When do we ship?", "On Friday.");
+    c.asked_and_answered("Who reviews it?", "Ada does.");
+    assert_eq!(c.runtime.issued(), 1);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
+#[test]
+fn a_renewed_token_keeps_the_snapshot_fresh() {
+    let mut c = Company::new("");
+    patch_company(&c.env, COMPANY, "profiles: [claude, codex]");
+    let mut clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
+    c.run();
+    let session = |n: u32| format!("00000000-0000-4000-8000-{n:012}");
+    wait("the first snapshot", || {
+        common::t3_readiness::reads(&c.env).last() == Some(&session(1))
+    });
+    // Past the renewal point the next refresh reads with a new token, and
+    // the earlier one is revoked.
+    clock.advance(5);
+    wait("a read with the renewed token", || {
+        common::t3_readiness::reads(&c.env).last() == Some(&session(2))
+    });
+    assert!(common::t3_readiness::revoked(&c.env, &session(1)));
+    assert!(!common::t3_readiness::revoked(&c.env, &session(2)));
+    // A revocation that fails is logged; the refresh still succeeds.
+    c.runtime.flag("revoke-failure", true);
+    clock.advance(5);
+    wait("a read with the next token", || {
+        common::t3_readiness::reads(&c.env).last() == Some(&session(3))
+    });
+    assert!(!c.readiness_failing());
+    // What T3 reports after the renewal is what the next start sees.
+    common::t3_readiness::update(&c.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == instance("claude").as_str() {
+                provider["installed"] = false.into();
+            }
+        }
+    });
+    let reads = common::t3_readiness::reads(&c.env).len();
+    clock.advance(1);
+    read_again(&c, reads);
+    let started = c.asked_and_answered("When do we ship?", "On Friday.");
+    assert_eq!(c.runtime.provider(&started), instance("codex"));
+}

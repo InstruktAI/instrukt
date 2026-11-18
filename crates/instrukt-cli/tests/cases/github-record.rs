@@ -531,7 +531,7 @@ fn a_todo_whose_claim_moves_here_starts_from_what_github_holds_now() {
     });
     project.tick();
     assert!(
-        project.rt.calls().is_empty(),
+        project.rt.thread_calls().is_empty(),
         "work held elsewhere is not dispatched here"
     );
     project.github.clear_requests();

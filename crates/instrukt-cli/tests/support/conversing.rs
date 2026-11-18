@@ -334,6 +334,44 @@ impl Company {
         self.runtime.threads()
     }
 
+    /// A member asks in a conversation of their own: the agent's session for
+    /// it starts and its answer is posted. The session's id.
+    pub fn asked_and_answered(&mut self, question: &str, answer: &str) -> String {
+        let before = self.sessions();
+        let posts = self.slack.posts().len();
+        self.slack
+            .mention("C1", "USTEVEN", &format!("<@UAGENT> {question}"), None);
+        wait("the question's session", || {
+            self.sessions().len() == before.len() + 1
+        });
+        let session = self
+            .sessions()
+            .into_iter()
+            .find(|session| !before.contains(session))
+            .unwrap();
+        self.finish_turn(&session, 0, answer);
+        wait("the answer", || self.slack.posts().len() == posts + 1);
+        session
+    }
+
+    /// Whether `instrukt events status` names a failing readiness refresh.
+    pub fn readiness_failing(&self) -> bool {
+        self.status()["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["worker"] == "readiness")
+    }
+
+    /// How many times `t3 auth session issue` was launched.
+    pub fn issue_launches(&self) -> usize {
+        self.runtime
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("auth session issue "))
+            .count()
+    }
+
     /// The one session, once a message started it.
     pub fn session(&self) -> String {
         wait("the conversation's session", || {
