@@ -1,6 +1,5 @@
 ---
-description: Connect the services a company works with for its agent — record them in the company's documents, establish from each service's own documentation whether and how its MCP server is reached, declare each one in the company's home so that its people sign in themselves, prove what can be proven as the company, and report what could not be connected and why.
-activation_trigger: Use when the services a company works with are to be connected for its agent — while onboarding a company, when it starts working with another service, or when a connected service no longer answers as the company.
+description: Connect the services a company works with for its agent — record them in the company's documents, establish from each service's own documentation whether and how its MCP server is reached, declare each one in the company's home with a person's own sign-in wherever the service offers it, prove what can be proven as the company, and report what could not be connected and why.
 visibility: public
 ---
 
@@ -11,136 +10,123 @@ visibility: public
 After this procedure the company's agent reaches each service the company
 works with that offers a remote MCP server, and the company's own documents say
 which services its work runs on. You are the operator's agent setting the
-company up; the company's agent uses what you declare.
+company up; the company's agent uses what you declare. You declare a service
+and prove the declaration; where the service lets a person sign in
+themselves, you collect no login of theirs.
 
-You declare a service and prove the declaration. You do not collect a
-person's login: where a service lets a person sign in themselves, instrukt
-asks that person the first time a call of theirs needs it, and keeps and
-renews the login.
-
-Two kinds of material come out of it, and they stay apart. Which services the
-company works with, and what for, is company knowledge: it goes into the
-company's documents in its home, where its agent reads it. A server's address,
-how a login is obtained and any login value are this computer's
-configuration: they go into the home's settings document and secrets file,
-which stay on the computer and out of the company's repository.
+Which services the company works with, and what for, is company knowledge and
+goes into the company's documents in its home. A server's address, how a login
+is obtained and any login value are this computer's configuration and go into
+the home's settings document and secrets file, never into the company's
+repository.
 
 ## Preconditions
 
-- The company's home exists on this computer and `instrukt config validate
-  --company <name>` reports no findings.
-- You work on that computer, outside any session of the company: the
-  `--company` path of `instrukt config`, `instrukt secrets` and `instrukt mcp`
-  is the local operator's (`instrukt mcp -h`).
-- Someone who knows which services the company's work runs on answers you,
-  or the company's documents already say it.
+- The company's home exists on this computer.
+- The operator is at hand to run, at their own terminal, the commands this
+  procedure gives them, and to give you their output back.
+- Someone who knows which services the company's work runs on answers you, or
+  the company's documents already say it.
 
 ## Steps
 
 1. **Take the company's services.** Ask which services the company's work runs
-   on and what each is used for, or read it from the company's documents. A
-   service is what the company's people use by name; one service may be used
-   for several things.
+   on and what each is used for, or read it from the company's documents.
 2. **Record them as company knowledge.** Write the services and what each is
-   used for into the company's documents in its home — the master or a
-   document it references — and commit the change in the home. Write no
-   address, login or connection state there: the company's agent works from
-   these documents and from what `instrukt mcp list` shows it
-   (`general/procedure/company-assistance`).
+   used for into the company's documents in its home and commit the change
+   there. Write no address, login or connection state into them: the
+   company's agent works from these documents and from what `instrukt mcp
+   list` shows it (`general/procedure/company-assistance`).
 3. **Establish each service's server from its own documentation.** For each
-   service, read the service's own current documentation and establish:
-   whether it offers a remote MCP server and its address; whether a person
-   signs in to it in their browser, and if so whether a client must be
-   registered with it beforehand and whether its sign-in names the person's
-   email address; whether, without sign-in, a person can create a login value
-   to hand over; and whether the company can hold a login of its own for work
-   no person asks for. A directory, a third party's listing or your
+   service, read the service's own current documentation of its MCP server and
+   its authorization: whether it offers a remote server and its address;
+   whether a person signs in to it themselves, and what that sign-in requires
+   of a client; whether, without such a sign-in, a person can create a login
+   value to hand over; and whether the company can hold a login of its own for
+   work no person asks for. A directory, a third party's listing or your
    recollection is a lead to that documentation, never a substitute for it
    (`general/principle/grounding`, solution truth is grounded in current
-   vendor documentation). A service that offers no server, or one that runs
-   only as a local program, is not connectable; note why and go on.
-4. **Declare the server for the company.** Read the settings with
-   `instrukt config get --company <name> --revision`, then apply one patch with
-   `instrukt config patch --company <name> --revision <rev>` that adds
-   `mcp.<server>` with its `url` and a one-line `description` saying what the
-   company uses the service for, and then by how a person's login is
-   obtained:
-   - **The person signs in.** Declare `speaker_login: sign-in`. Add
-     `sign_in.client` when the service requires a client registered
-     beforehand, and `sign_in.identity` when its sign-in does not name the
-     person's email address and it documents a request that does. Add
-     `sign_in.accept_return_without_issuer` only when a call or `instrukt
-     config validate --company <name>` names it as missing and the operator,
-     told that it lets a
-     compromised authorization server capture a sign-in, accepts it
-     (`general/policy/leadership`, exposure of what the human owns needs their
-     authorization).
-   - **The service offers no sign-in, only a value a person creates.**
-     Declare `credential: <name>`, and add the reference
-     `members.<member>.credentials.<name>` to the member entry of each person
-     who uses the service, under the email address their messaging provider
-     holds for them.
-   - **No login at all.** `url` and `description` alone.
-
-   Where the company holds a login of its own for work no person asks for,
-   add `login` as a `${NAME}` reference, beside sign-in or a stored
-   credential. The patch validates the whole document and names any field it
-   refuses.
-5. **Store the values the declaration references.** Each `${NAME}` the
-   declaration and the member entries reference — the company's own login, a
-   registered client, a person's created value — reaches the home's secrets
-   file only through `instrukt secrets set --company <name> <NAME>`, run by
-   the operator, with the value from your runtime's secret prompt by
-   `--from-file` or typed into standard input in the operator's terminal. A
-   person's created value comes to the operator from that person outside the
-   conversation. Never ask for a value in the conversation, write it into a
-   document or a command line, or print it (`sdlc/policy/security-awareness`,
-   secrets never enter version control, logs or responses). A reference whose
-   value is not there yet stays; note whose value is missing. For a
-   registered client, give the operator the return address `instrukt mcp list
-   --company <name>` shows, to register with the service.
-6. **Validate the home.** Run `instrukt config validate --company <name>`. It
-   also reports a settings document or secrets file the company's repository
-   tracks.
-7. **Prove what can be proven as the company.** Run `instrukt mcp list
-   --company <name>`, then `instrukt mcp list-tools <server> --company <name>`
-   for each server declared open or with the company's own login. A returned
-   catalog proves the address and that login. A server whose calls carry only
-   a person's login is proven by a person's first call, in the conversation
-   where they address the company's agent; until then it is declared and
-   unproven. Report a declaration as connected only on a returned catalog
+   vendor documentation). A service with no remote server is not connectable;
+   note why and go on.
+4. **Read what a server declaration takes.** Run `instrukt config schema
+   --company <name> mcp`, and `instrukt config schema --company <name>
+   members` when a person's stored login will be needed. They show each field
+   with its contract; derive the declaration from them.
+5. **Read the current settings.** Run `instrukt config get --company <name>
+   mcp` and `instrukt config get --company <name> members` for what is
+   declared now, and `instrukt config get --company <name> --revision` for
+   the revision they belong to.
+6. **Declare the server.** Choose how a person's login is obtained, in this
+   order: the person's own sign-in wherever the service offers it; a value the
+   person creates, only for a service without such a sign-in; no person's
+   login for a server that needs none. Add the company's own login wherever
+   the service gives the company one. Fill the fields the schema of step 4
+   gives for that choice, from the service's documentation. Where the server
+   is already declared under another choice, the patch also removes the keys
+   the new choice does not take, with a null. Apply it with `instrukt config
+   patch --company <name> --revision <rev>`. A sign-in that the operator must
+   accept an exposure for, as its contract shows, is declared only once the
+   operator, told what the exposure is, accepts it
+   (`general/policy/leadership`, exposure of what the human owns needs their
+   authorization).
+7. **Store the values the declaration references.** A value — the company's
+   own login, a registered client's secret, a person's created value — reaches
+   the home's secrets file only through `instrukt secrets set --company <name>
+   <NAME>`, from a file with `--from-file` or from redirected standard input:
+   your runtime's secret prompt writes the value to a file you pass, or the
+   operator runs the command with a file of their own. A person's created
+   value comes to the operator from that person outside the conversation.
+   Never ask for a value in the conversation, write it into a document or a
+   command line, or print it (`sdlc/policy/security-awareness`, secrets never
+   enter version control, logs or responses). A reference whose value is not
+   there yet stays; note whose value is missing.
+8. **Validate the home.** Run `instrukt config validate --company <name>`.
+9. **Prove what can be proven as the company.** Give the operator, to run at
+   their own terminal outside any session, `instrukt mcp list --company
+   <name>` and then `instrukt mcp list-tools <server> --company <name>` for
+   each server you declared, and read back what they return; neither output
+   carries a secret. `mcp list` also shows the return address to register with
+   a service whose client is registered beforehand: give it to the operator
+   for that service. A returned catalog proves the address and the login a
+   call with no person carries. A server whose calls carry only a person's
+   login is proven by that person's first request to the company's agent.
+   Call a declaration connected only on a returned catalog
    (`general/policy/grounding`, confirmation is reserved for inspected
    claims).
-8. **Report to the operator.** Give each service with its outcome: connected,
-   with the server's name and the number of tools listed; declared and
-   awaiting a person's first call, with how that person's login is obtained;
-   or not connectable, with why — no remote server, a server that runs only
-   as a local program, or no way for a person or the company to log in. Name
-   each value still missing and whose it is.
+10. **Report.** Give each service with its outcome: connected, with the
+    server's name and the number of tools listed; declared and awaiting a
+    person's first request, with how that person's login is obtained;
+    declared and unproven, with the failure as given; or not connectable,
+    with why. Name each value still missing and whose it is.
 
 ## Outputs
 
-- The company's documents in its home, committed, naming the services the
+- The company's documents in its home, with a commit naming the services the
   company works with and what for.
 - A declaration in the home's settings document for each connectable service,
   and the values it references in the home's secrets file.
-- The report of step 8.
+- The report of step 10.
 
 ## Recovery
 
 - **The patch is refused for its revision.** Another writer changed the
-  settings: read them again and make the patch against the new revision.
-- **`--company` is refused.** You are inside a company's session; run the
-  command as the operator outside any session.
+  settings: run step 5 again and make the patch from what it returns.
 - **`list-tools` cannot reach the server.** Hold the address against the
   service's documentation again and correct the declaration; a server still
   unreachable is reported unproven with the failure as given.
-- **A call is refused naming a missing value or client.** The refusal names
-  the reference or what the service requires; have the operator store it
-  (step 5), or correct the declaration from the service's documentation, and
-  list again.
-- **The service refuses a login.** The value is wrong, expired or lacks
-  rights at the service; the operator stores a new one (step 5). What the
-  login may do is the service's to grant.
-- **A service no longer answers as the company.** Run steps 3 to 7 for that
+- **A call is refused naming a missing value, client or acceptance.** Store
+  the value (step 7), correct the declaration from the schema and the
+  service's documentation (steps 4 to 6), or put the acceptance to the
+  operator (step 6), and have the operator list again.
+- **The service refuses a stored login.** The value is wrong, expired or
+  lacks rights at the service; its holder gives the operator a new one
+  (step 7).
+- **The service refuses a person's signed-in login.** Report the service's
+  reason as given. A signed-in login is not a value you store: the person
+  ends theirs with a sign-out in their conversation with the company's agent,
+  or the operator ends it at their own terminal with `instrukt mcp sign-out
+  --company <name> --email <address> <server>` (`instrukt mcp sign-out -h`),
+  and the person's next request signs them in again. What a login may do is
+  the service's to grant.
+- **A service no longer answers as the company.** Run steps 3 to 9 for that
   service: its documentation may name a new address or way to log in.
