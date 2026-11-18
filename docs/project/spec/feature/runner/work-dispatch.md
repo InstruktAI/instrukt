@@ -178,7 +178,7 @@ A command of a switched-off module refuses and names the door: `todo` names
 when both `modules.todos` and `modules.events` are off, and then name both;
 with either on, they serve that module's work. Conversation demand, a
 company home's declared connector
-(`project/instrukt/spec/feature/runner/conversations`), admits `sessions` as
+(`project/instrukt/spec/feature/company/conversations`), admits `sessions` as
 well, to list the sessions conversations start and resolve their starts, and
 its refusal then names that declaration too; it does not admit `tick`. `run`
 serves those two modules, history and conversations: it refuses only when

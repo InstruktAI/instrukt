@@ -32,14 +32,22 @@ home, and the flows.
 | `todos` | work, workflow; the runner dispatching todos | on/off; `runner.autostart` | GitHub, a runtime adapter |
 | `history` | runner history extraction, retained search and merged queries | on by default | runtime conversation source for extraction; cluster Redis for merged search only, independently of events |
 | `events` | runner sources, scoped transport, independent consumers and procedure activation | on/off | scoped Redis; selected runtime adapter for agent reactions; opt-in ingress for declared webhooks |
-| `conversations` | runner connectors, conversation sessions and the answer back | a company home's declared connector | selected runtime adapter; the long-lived runner, kept running by an owned service |
+| `conversations` | company: connectors, conversation sessions and the answer back | a company home's declared connector | selected runtime adapter; the long-lived runner, kept running by an owned service |
 
 One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 `instrukt-core`, `instrukt-blueprint`, `instrukt-runner` (the runner context,
-shared by `todos`, `events`, `history` and `conversations`), `instrukt-todos`. Dependencies point one way:
+shared by `todos`, `events` and `history`), `instrukt-todos`,
+`instrukt-company` (the company context's conversation core and connector
+host), `instrukt-connector` (the connector interface and each kind's
+declaration data) and one crate per connector, `instrukt-connector-slack`
+first. Dependencies point one way:
 `instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
-`instrukt-core` and `instrukt-blueprint`; `instrukt-blueprint` → `instrukt-core`; `instrukt-core` →
-nothing of instrukt. Where core needs an answer only an optional module has
+`instrukt-core` and `instrukt-blueprint`; `instrukt-company` →
+`instrukt-runner`, `instrukt-core` and `instrukt-connector`; a connector crate →
+`instrukt-connector` only; `instrukt-blueprint` → `instrukt-core`;
+`instrukt-core` → `instrukt-connector`, for the declarations configuration
+validates against; `instrukt-connector` → nothing of instrukt. Only
+`instrukt-cli` depends on `instrukt-company` or a connector crate. Where core needs an answer only an optional module has
 (whether a todo slug named by a pending doc exists), core declares the
 interface and the CLI wires the module's implementation in only when that
 module is on. Eval is not a module: stamps always carry model, version and eval
@@ -54,6 +62,9 @@ retained records, and reading and writing per-role session bindings. It also
 declares an interface for reading workflow state. The todos crate implements
 these contracts; the CLI wires them into the runner. Todo dispatch is realized
 in the runner against those interfaces, preserving todos → runner → core.
+The runner likewise declares conversation hosting in `instrukt run` and the
+conversation assignment lookup; `instrukt-company` implements them and the CLI
+wires them, preserving company → runner → core.
 Blueprint supplies its release-owned tool lifecycle to runner's module
 installation; runner consumes that API rather than defining tool policy.
 Core likewise declares the hook-generation interface; the CLI wires blueprint
@@ -154,7 +165,7 @@ commands. Docs name `-h`.
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
-| Slack | runner | a Socket Mode connection `instrukt run` opens outward per company home that declares the connector; its history and posting calls with the bot token (`project/instrukt/spec/feature/runner/slack-connector`) |
+| Slack | company, through its Slack connector | a Socket Mode connection opened outward per company home that declares the connector, hosted in `instrukt run` by the runner; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 

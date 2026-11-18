@@ -158,7 +158,7 @@ only named a Slack identity. An entry without an address is a validation
 finding and its company is not served until the address is added.
 
 An existing Slack app needs the permissions of the connector's manifest
-(`docs/project/spec/feature/runner/slack-connector.md`), reading users and
+(`docs/project/spec/feature/company/slack-connector.md`), reading users and
 their email addresses among them. Add the missing ones in the app's settings
 and install the app to the workspace again, before upgrading; Slack grants new
 permissions only on a new installation. Store the bot token again when Slack
