@@ -165,7 +165,7 @@ below) loads it from the home it starts in, so a session of such a runtime in
 the home starts with it: conversation sessions and event-started work alike,
 and an agent that checks the company's repository out elsewhere. The
 company-assistance procedure reaches the agent through its role
-(`project/instrukt/spec/feature/runner/conversations`); it is instrukt's
+(`project/instrukt/spec/feature/company/conversations`); it is instrukt's
 doctrine, not company knowledge. instrukt writes no other instruction file in
 the home and leaves any other there as it is.
 
