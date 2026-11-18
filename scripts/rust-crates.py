@@ -2,8 +2,10 @@
 """Prints the cargo package arguments of the Rust check for the given paths.
 
 Each path selects the workspace crate whose directory holds it, whether the
-path still exists or the commit removed it; a path outside every crate, such
-as the workspace manifest, the lock file or the toolchain and clippy
+path still exists or the commit removed it. A path under a directory outside
+the crates that a crate's unit tests read selects that crate: the sdlc
+workflow flavor selects instrukt-todos. Any other path outside every crate,
+such as the workspace manifest, the lock file or the toolchain and clippy
 configuration, selects every crate. Every crate that depends on a selected
 crate is selected too. Three lines are printed, each of `-p <crate>`
 arguments: every selected crate, those with a library target, those with a
@@ -40,6 +42,13 @@ class Metadata(TypedDict):
     packages: list[Package]
 
 
+# Directories outside the crates that a crate's unit tests read, with that crate.
+TESTED_AGAINST: dict[PurePath, str] = {
+    # crates/instrukt-todos/src/workflow/_testing.rs: the real flavor's authoring source.
+    PurePath("docs/domain/sdlc/workflow"): "instrukt-todos",
+}
+
+
 @dataclass(frozen=True)
 class Crate:
     name: str
@@ -71,7 +80,15 @@ def workspace_crates() -> list[Crate]:
 
 
 def owner(path: PurePath, crates: list[Crate]) -> Crate | None:
-    return next((crate for crate in crates if crate.directory.parts and path.is_relative_to(crate.directory)), None)
+    reader = next((name for directory, name in TESTED_AGAINST.items() if path.is_relative_to(directory)), None)
+    return next(
+        (
+            crate
+            for crate in crates
+            if crate.name == reader or (crate.directory.parts and path.is_relative_to(crate.directory))
+        ),
+        None,
+    )
 
 
 def selected(paths: list[PurePath], crates: list[Crate]) -> set[str]:

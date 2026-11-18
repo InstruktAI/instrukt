@@ -9,7 +9,8 @@
 # the pipeline. Document and configuration checks build nothing: they run an
 # instrukt that is already there (scripts/instrukt-for-checks). The Rust check
 # takes the shared target directory's lock (scripts/with-build-lock.sh) and
-# builds only the crates the commit touches and those that depend on them.
+# builds only the crates the commit touches or whose unit tests read what it
+# touches, and those that depend on them.
 default_install_hook_types: [pre-commit]
 repos:
   - repo: local
@@ -40,13 +41,15 @@ repos:
         language: system
         always_run: true
         require_serial: true
-      # Everything a crate is built from: every file of a crate, the files
-      # compiled into the program and the snapshots its unit tests read among
-      # them, and the workspace's manifest, lock file and toolchain and clippy
+      # Everything a crate is built from and everything its unit tests read:
+      # every file of a crate, the files compiled into the program and the
+      # snapshots its unit tests read among them; the workflow flavor the
+      # instrukt-todos unit tests run against, which is a document too; and
+      # the workspace's manifest, lock file and toolchain and clippy
       # configuration.
       - id: cargo-fmt
         name: cargo fmt
-        files: &rust ^(crates/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|clippy\.toml$)
+        files: &rust ^(crates/|docs/domain/sdlc/workflow/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|clippy\.toml$)
         entry: scripts/commit-check.py
         args: [--pattern, *rust, --run, cargo fmt --all -- --check, --]
         language: system
