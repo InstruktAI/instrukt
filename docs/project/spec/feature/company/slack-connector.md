@@ -38,6 +38,10 @@ naming the company and the field.
 
 ### The Slack app
 
+`instrukt config schema --company <name> connectors.slack` shows this
+declaration and the setup below, the manifest in full
+(`project/instrukt/spec/feature/configuration/configuration-editing`).
+
 Each company's workspace has its own Slack app, created from this manifest and
 installed to the workspace. Its name is `agent`: Slack shows that name as the
 sender of every answer and in front of the status line.

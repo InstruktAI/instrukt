@@ -13,6 +13,7 @@
 //! until the connector accepted its post.
 use std::path::PathBuf;
 
+use instrukt_connector::{Accompanying, Incoming, Sender};
 use instrukt_core::config::{COMPANY_AGENT_ROLE, ConfigError, Configuration, SlackConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
@@ -126,40 +127,6 @@ pub enum ConversationError {
     Refused(String),
 }
 
-/// One earlier message of a conversation, kept with the addressed message
-/// it accompanies until that message is delivered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Earlier {
-    pub speaker: String,
-    pub own: bool,
-    pub at: Option<Timestamp>,
-    pub text: String,
-}
-
-/// What accompanies one addressed message: at most `context_messages` of
-/// the most recent earlier messages, and whether earlier ones were left out.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Accompanying {
-    pub messages: Vec<Earlier>,
-    pub left_out: bool,
-}
-
-/// What a connector supplies for one message addressed to the agent, as it
-/// arrives.
-#[derive(Debug, Clone)]
-pub struct Incoming {
-    pub company: ProjectSlug,
-    pub connector: String,
-    pub conversation: String,
-    /// The connector's identity of the message, unique in its conversation.
-    pub message: String,
-    /// The sender's identity on the connector. It decides nothing:
-    /// admission reads the provider's record for it.
-    pub sender: String,
-    pub written_at: Timestamp,
-    pub text: String,
-}
-
 /// What became of an incoming addressed message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Intake {
@@ -167,14 +134,6 @@ pub enum Intake {
     Retained,
     /// Already retained.
     Repeated,
-}
-
-/// The sender of an admitted message, as the provider gave them when it was
-/// admitted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sender {
-    pub name: String,
-    pub email: Option<String>,
 }
 
 /// The semantic start key of a conversation's session.
@@ -195,27 +154,28 @@ fn micros(at: Timestamp) -> i64 {
 /// network and nothing here decides who is answered.
 pub fn retain(
     home: &Home,
+    company: &ProjectSlug,
     incoming: &Incoming,
     now: Timestamp,
 ) -> Result<Intake, ConversationError> {
     let state = RunnerState::new(home);
-    let company = incoming.company.as_str();
-    let semantic = key(
-        &incoming.company,
-        &incoming.connector,
-        &incoming.conversation,
-    );
+    let semantic = key(company, &incoming.connector, &incoming.conversation);
     let inserted = state.write::<_, StateError>(|tx| {
         let path = state::db_path(tx);
         tx.execute(
             "INSERT INTO connected_conversations(company,connector,conversation,semantic_key) VALUES (?1,?2,?3,?4) ON CONFLICT DO NOTHING",
-            params![company, incoming.connector, incoming.conversation, semantic],
+            params![
+                company.as_str(),
+                incoming.connector,
+                incoming.conversation,
+                semantic
+            ],
         )
         .map_err(state::sql(&path))?;
         tx.execute(
             "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
             params![
-                company,
+                company.as_str(),
                 incoming.connector,
                 incoming.conversation,
                 incoming.message,
@@ -232,7 +192,7 @@ pub fn retain(
     if inserted == 0 {
         return Ok(Intake::Repeated);
     }
-    tracing::info!(event = "conversation_message_accepted", company = %incoming.company, connector = %incoming.connector, conversation = %incoming.conversation);
+    tracing::info!(event = "conversation_message_accepted", company = %company, connector = %incoming.connector, conversation = %incoming.conversation);
     Ok(Intake::Retained)
 }
 

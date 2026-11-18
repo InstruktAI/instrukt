@@ -46,6 +46,11 @@ names a home path.
 - `.instrukt/` is ignored through the line `instrukt init` adds to
   `.gitignore` (`project/instrukt/spec/feature/repository/project-initialization`).
 
+`instrukt config schema --json` prints the configuration schema of the
+addressed document, a company home's document included, which has no editor
+schema file of its own
+(`project/instrukt/spec/feature/configuration/configuration-editing`).
+
 The separate machine-local `agents.yaml` has a hand-maintained schema in
 instrukt's repository, with open model names and known-name editor suggestions
 under `project/instrukt/spec/feature/configuration/agent-selection`. It is not

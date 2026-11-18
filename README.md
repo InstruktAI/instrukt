@@ -32,8 +32,8 @@ out, this repository is that docs repository: its `docs/general/` and
 ## Development
 
 One Cargo workspace, one binary `instrukt` (`crates/instrukt-cli`), with
-`instrukt-core`, `instrukt-blueprint`, `instrukt-runner` and `instrukt-todos`
-beside it.
+`instrukt-core`, `instrukt-blueprint`, `instrukt-runner`, `instrukt-todos` and
+`instrukt-connector` beside it.
 
 ```sh
 make hooks          # once per clone: pre-commit runs the checks the staged files need
