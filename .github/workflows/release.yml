@@ -15,8 +15,13 @@ jobs:
       - name: verify release versions
         run: scripts/check-release-version.sh "$GITHUB_REF_NAME"
 
+  # The checks main requires, on the tagged revision: a release is built only
+  # from a revision that passed them, wherever the tag was pushed.
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   build:
-    needs: validate
+    needs: [validate, checks]
     name: build ${{ matrix.target }}
     strategy:
       fail-fast: false

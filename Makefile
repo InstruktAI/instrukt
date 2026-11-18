@@ -1,14 +1,19 @@
-.PHONY: hooks format lint test audit coverage check dev
+.PHONY: hooks commit-checks format lint test audit coverage check dev
 
-# Point git at the repository's checked-in hooks (pre-commit: fmt, clippy, test).
+# Point git at the repository's checked-in hooks. pre-commit runs the checks the
+# staged files need (.pre-commit-config.yaml); the functional suite runs in CI.
 hooks:
-	git config core.hooksPath .githooks
+	scripts/enable-hooks.sh
+
+# Every commit check over every file, as CI runs it.
+commit-checks:
+	scripts/commit-checks.sh --all-files
 
 format:
 	cargo fmt --all
 
 lint:
-	shellcheck -x scripts/*.sh scripts/dev-instrukt .githooks/pre-commit
+	shellcheck -x scripts/*.sh scripts/dev-instrukt scripts/instrukt-for-checks .githooks/*
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 

@@ -45,13 +45,38 @@ default test commands run without a T3 release or provider.
 Each feature use case is realized by exactly one named test checking its
 complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 
-- This repository's pre-commit checks run fmt, clippy and test, in seconds
-  without services. These are project tooling, not quality hooks installed by
-  instrukt in adopting repositories.
-- GitHub CI runs fmt, clippy and test on Linux and macOS, exercising filesystem
-  case behavior, hooks and paths.
+- This repository's pre-commit check runs what the content of the commit
+  needs, without services. `.pre-commit-config.yaml` assigns each check the
+  pattern of the files it applies to, and a check runs when the commit adds,
+  changes, renames or deletes a file its pattern matches: the document
+  validation for documents, shellcheck for shell scripts and hook files, the
+  lint and the type check for Python scripts, the configuration validation
+  for `instrukt.yaml`, and fmt, clippy and the colocated unit tests for
+  everything a crate is built from and everything its unit tests read: its
+  sources and manifests, the files compiled into the program, the unit tests'
+  snapshots, and the two inputs that live outside the crates' folders: the
+  shared test support under `tests/support/`, which is compiled into unit
+  tests, and the workflow flavor under `docs/domain/sdlc/workflow/`, which the
+  `instrukt-todos` unit tests run against. No commit runs the functional
+  tests. These are project tooling, not quality hooks installed by instrukt in
+  adopting repositories.
+- A commit's checks take under ten seconds once what the commit changed is
+  built. The budget counts running the validators, the linter and the unit
+  tests; it does not count the compiler rebuilding changed crates. That
+  rebuild is limited to the crates the commit touches and the crates that
+  depend on them, and a commit that touches nothing a crate is built from or
+  tested against builds nothing.
+- A check's tool that is not installed yet is installed when it is first
+  needed: by `make hooks`, which installs the tools `.pre-commit-config.yaml`
+  pins when it enables the hook, or by the first commit or every-file run
+  that needs it. That installation and the tool's first run after it are not
+  counted in the ten seconds. No commit is refused because a tool is missing.
+- GitHub CI runs that configuration over every file, and the whole test
+  suite, on every pull request, on Linux and macOS, exercising filesystem case
+  behavior, hooks and paths. `main` requires these checks, so a functional
+  test that fails stops a pull request, not a commit.
 - A version tag produces release binaries for macOS arm64 and Linux
-  x86_64/arm64.
+  x86_64/arm64, and only from a revision that passed those checks.
 - Parity against the corpus instrukt was extracted from is a one-off
   acceptance run, not a CI dependency.
 - Code is synchronous by default; a crate that needs concurrent network I/O
@@ -89,6 +114,10 @@ recording it, and one whose record can be neither appended to nor removed. In
 both the write that was attempted did not land. Independently authored use cases supply the expected outcomes;
 pure-logic units and property tests cover the Rust exception without replacing
 feature-level evidence.
+
+A missing tool is installed, not asked for: installing it is idempotent, and
+a refusal would only make a developer run the command the check could have
+run itself.
 
 ## Scope
 
