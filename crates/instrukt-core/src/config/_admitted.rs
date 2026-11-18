@@ -55,6 +55,12 @@ pub struct Admitted {
 pub struct AdmittedCompany {
     pub name: ProjectSlug,
     pub config: Configuration,
+    /// The configuration of a caller in the company's home directory: the
+    /// machine layer with the company's document as that directory's layer,
+    /// as admitted.
+    pub home_config: Configuration,
+    /// The company's home directory.
+    pub dir: PathBuf,
     /// Its declared Slack connector with the secrets it references resolved.
     pub slack: Option<AdmittedSlack>,
 }
@@ -232,18 +238,30 @@ impl Admitted {
         self.global_layer.as_ref()
     }
 
-    /// The admitted configuration for a caller in the repository at
-    /// `repo_root`: the machine layer for `None`, a published project's for
-    /// its checkout, none for any other repository.
+    /// The admitted configuration for a caller in the directory `repo_root`:
+    /// the machine layer for `None`, a published project's for its checkout,
+    /// an admitted company's for its home directory, none for any other.
     pub(super) fn layer(&self, repo_root: Option<&std::path::Path>) -> Option<&Configuration> {
-        match repo_root {
-            None => Some(&self.global),
-            Some(root) => self
-                .projects
-                .iter()
-                .find(|project| project.checkout == root)
-                .map(|project| &project.config),
-        }
+        let Some(root) = repo_root else {
+            return Some(&self.global);
+        };
+        let same = |covered: &std::path::Path| {
+            covered == root
+                || matches!(
+                    (covered.canonicalize(), root.canonicalize()),
+                    (Ok(a), Ok(b)) if a == b
+                )
+        };
+        self.projects
+            .iter()
+            .find(|project| same(&project.checkout))
+            .map(|project| &project.config)
+            .or_else(|| {
+                self.companies
+                    .iter()
+                    .find(|company| same(&company.dir))
+                    .map(|company| &company.home_config)
+            })
     }
 
     /// The machine layer.
@@ -333,6 +351,14 @@ fn admit_company(
     let config = Configuration::company_from_value(home, name, &value)
         .map_err(|error| vec![unreadable(document.clone(), &error)])?
         .pinned(agents);
+    let dir = home.company_dir(name);
+    let home_config = Configuration::from_layers(
+        home,
+        given.global.flatten().cloned(),
+        Some((dir.clone(), value.clone())),
+    )
+    .map_err(|error| vec![unreadable(document.clone(), &error)])?
+    .pinned(agents);
     let slack = match config.slack_connector() {
         Ok(Some(connector)) => {
             match (
@@ -355,6 +381,8 @@ fn admit_company(
     Ok(Some(AdmittedCompany {
         name: name.clone(),
         config,
+        home_config,
+        dir,
         slack,
     }))
 }
@@ -643,5 +671,94 @@ mod tests {
         assert!(with_switch(false).history_enabled().unwrap());
         // A published project left out of the generation enables nothing.
         assert!(!with_switch(true).history_enabled().unwrap());
+    }
+
+    /// A directory of its own for one test, emptied.
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("instrukt-admitted-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_machine_layer_admitted_is_the_one_validated_though_its_file_changes_meanwhile() {
+        use std::io::Write as _;
+        let dir = scratch("read-once");
+        let home = Home::at_user_home(dir.clone()).for_inspection();
+        let machine = home.global_config();
+        std::fs::create_dir_all(machine.parent().unwrap()).unwrap();
+        let schema = super::super::CURRENT_SCHEMA_VERSION;
+        std::fs::write(
+            &machine,
+            format!("schema_version: {schema}\nrunner: {{runtime: t3}}\n"),
+        )
+        .unwrap();
+        // agents.yaml is a FIFO: admission, having read the machine layer,
+        // waits on it until the writer below has replaced the machine layer
+        // with an invalid one.
+        let agents = home.agents_file();
+        let made = std::process::Command::new("mkfifo")
+            .arg(&agents)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let writer = {
+            let (machine, agents) = (machine.clone(), agents.clone());
+            std::thread::spawn(move || {
+                let mut fifo = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&agents)
+                    .unwrap();
+                let next = machine.with_extension("next");
+                std::fs::write(
+                    &next,
+                    format!("schema_version: {schema}\nrunner: {{runtime: unknown-runtime}}\n"),
+                )
+                .unwrap();
+                std::fs::rename(&next, &machine).unwrap();
+                fifo.write_all(super::super::SHIPPED_AGENTS.as_bytes())
+                    .unwrap();
+            })
+        };
+        let candidate = Admitted::load(&home).unwrap();
+        writer.join().unwrap();
+        assert!(candidate.complete);
+        assert!(candidate.findings.is_empty());
+        assert_eq!(
+            candidate.generation.global().runner_runtime().unwrap(),
+            super::super::Runtime::COMPILED
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_company_home_directory_is_served_its_admitted_configuration() {
+        let dir = scratch("company-home");
+        let home = Home::at_user_home(dir.clone());
+        let company = ProjectSlug::parse("acme").unwrap();
+        let company_dir = home.company_dir(&company);
+        std::fs::create_dir_all(&company_dir).unwrap();
+        let document = company_dir.join(super::super::CONFIG_FILE_NAME);
+        std::fs::write(
+            &document,
+            format!(
+                "schema_version: {}\ncompany: acme\nprofiles: [antigravity]\n",
+                super::super::CURRENT_SCHEMA_VERSION
+            ),
+        )
+        .unwrap();
+        let candidate = Admitted::load(&home).unwrap();
+        assert!(candidate.complete);
+        let current = Current::new(candidate.generation);
+        serve(&home, &current);
+        // The company's document becomes unparseable after admission: a
+        // caller in its home directory, as a start prepared there without
+        // profiles, is answered from the admitted generation.
+        std::fs::write(&document, "schema_version: [\n").unwrap();
+        let served = Configuration::load(&home, Some(&company_dir));
+        assert!(served.is_ok_and(|config| config.agents().is_ok()));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
