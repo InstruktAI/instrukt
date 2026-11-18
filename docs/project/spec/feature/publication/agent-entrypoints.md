@@ -184,9 +184,11 @@ the home and leaves any other there as it is.
   writes the two together, and the layer is committed with the project. A
   company's home and a clone of its repository therefore render the same
   bytes. A root `instrukt.yaml` that cannot be read is a finding naming it,
-  handled as every finding is. A company's settings document tracked by
-  mistake changes no rendering; `instrukt config validate --company <name>`
-  reports it.
+  handled as every finding is: the mode is never guessed from a file that
+  cannot be read (`sdlc/principle/design-fundamentals`). A company's settings
+  document tracked by mistake changes no rendering; configuration validation
+  reports the tracked file
+  (`project/instrukt/spec/feature/configuration/company-homes`).
 - **The company passage.** Between the generated line and the master's
   content, every company rendering carries one fixed passage: an agent
   working in this home may change the company's documents here and commit
