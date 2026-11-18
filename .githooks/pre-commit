@@ -14,5 +14,11 @@ if [ -z "${CARGO_TARGET_DIR:-}" ]; then
     CARGO_TARGET_DIR="$(dirname "$common")/target"
     export CARGO_TARGET_DIR
 fi
+# instrukt's own section (docs/project/spec/feature/repository/hook-sections.md),
+# with the installed instrukt as in any adopting repository; it never changes
+# the commit's result.
+# >>> instrukt >>>
+instrukt hooks run pre-commit "$@" || true
+# <<< instrukt <<<
 scripts/check-test-tool.sh pre-commit
 exec pre-commit run --hook-stage pre-commit

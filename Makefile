@@ -15,7 +15,7 @@ format:
 	cargo fmt --all
 
 lint:
-	shellcheck -x scripts/*.sh scripts/dev-instrukt .githooks/pre-commit
+	shellcheck -x scripts/*.sh scripts/dev-instrukt scripts/instrukt-for-checks .githooks/*
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 

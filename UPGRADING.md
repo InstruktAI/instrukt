@@ -13,6 +13,16 @@ the framework's own `install` refuses while `core.hooksPath` is set. A
 `core.hooksPath` set to the relative `.githooks`, as `make hooks` sets it,
 lets each linked worktree run its own checkout's hook.
 
+The hook directory also holds instrukt's own sections
+(`docs/project/spec/feature/repository/hook-sections.md`): in `pre-commit`
+before the framework call, and as `post-commit`, `post-merge`, `post-rewrite`
+and `post-checkout`, so that documents are published from main without a
+command. They run the installed `instrukt` from the path; without it a commit
+goes through unchanged. An existing checkout has nothing to install for them
+beyond `instrukt` itself. Publication they start needs this computer's global
+agent files to be instrukt's; until then `instrukt hooks status` reports the
+refused sync, and git's result is unchanged.
+
 ### Agent instructions are committed, and reach the runtimes you configured
 
 A repository's `AGENTS.md` files are now committed. instrukt's `pre-commit`

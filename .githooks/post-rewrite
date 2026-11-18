@@ -1,0 +1,7 @@
+#!/bin/sh
+# instrukt's own section (docs/project/spec/feature/repository/hook-sections.md),
+# with the installed instrukt as in any adopting repository; it never changes
+# git's result.
+# >>> instrukt >>>
+instrukt hooks run post-rewrite "$@" || true
+# <<< instrukt <<<

@@ -1,15 +1,18 @@
 # The checks a commit's content needs (docs/project/policy/testing.md). Each
 # check runs only when the commit changes a file its `files` pattern matches;
 # the pipeline runs every check over every file. No check here runs the
-# functional tests: they run in the pipeline. Cargo checks take the shared
-# target directory's lock (scripts/with-build-lock.sh).
+# functional tests: they run in the pipeline. Document and configuration
+# checks build nothing: they run an instrukt that is already there
+# (scripts/instrukt-for-checks). Cargo checks take the shared target
+# directory's lock (scripts/with-build-lock.sh) and build only what the
+# staged files reach.
 default_install_hook_types: [pre-commit]
 repos:
   - repo: local
     hooks:
       - id: docs-validate
         name: document validation
-        entry: scripts/dev-instrukt docs validate
+        entry: scripts/instrukt-for-checks docs validate
         language: system
         files: ^docs/
         pass_filenames: false
@@ -17,30 +20,24 @@ repos:
         name: shellcheck
         entry: shellcheck -x
         language: system
-        files: ^(scripts/[^/]+\.sh|scripts/dev-instrukt|\.githooks/[^/]+)$
+        files: ^(scripts/[^/]+\.sh|scripts/dev-instrukt|scripts/instrukt-for-checks|\.githooks/[^/]+)$
       - id: cargo-fmt
         name: cargo fmt
         entry: scripts/with-build-lock.sh cargo fmt --all -- --check
         language: system
         files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml|^clippy\.toml)$
         pass_filenames: false
-      - id: cargo-clippy
-        name: cargo clippy
-        entry: scripts/with-build-lock.sh cargo clippy --workspace --all-targets --locked -- -D warnings
+      - id: cargo-clippy-and-unit-tests
+        name: cargo clippy and colocated unit tests of the crates reached
+        entry: scripts/with-build-lock.sh scripts/check-rust.sh
         language: system
         files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml|^clippy\.toml)$
-        pass_filenames: false
-      - id: unit-tests
-        name: colocated unit tests
-        entry: scripts/with-build-lock.sh cargo test --workspace --locked --lib --bins
-        language: system
-        files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml)$
-        pass_filenames: false
+        require_serial: true
       # The committed layer alone, under a throwaway machine layer: what this
       # computer's own configuration says does not decide a commit.
       - id: config-validate
         name: configuration validation
-        entry: scripts/with-build-lock.sh scripts/check-committed-config.sh
+        entry: scripts/instrukt-for-checks --script scripts/check-committed-config.sh
         language: system
         files: ^instrukt\.yaml$
         pass_filenames: false

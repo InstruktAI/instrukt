@@ -6,13 +6,18 @@
 # (docs/project/spec/feature/configuration/owned-files.md). The throwaway
 # machine layer selects the runtime the project's modules need.
 set -eu
-cargo build --locked --quiet --bin instrukt
-target="${CARGO_TARGET_DIR:-target}"
-case "$target" in
-/*) ;;
-*) target="$(pwd)/$target" ;;
-esac
-instrukt="$target/debug/instrukt"
+# INSTRUKT_CHECK_BIN names an instrukt already built (the commit check passes
+# one through scripts/instrukt-for-checks); without it this builds its own.
+instrukt="${INSTRUKT_CHECK_BIN:-}"
+if [ -z "$instrukt" ]; then
+    cargo build --locked --quiet --bin instrukt
+    target="${CARGO_TARGET_DIR:-target}"
+    case "$target" in
+    /*) ;;
+    *) target="$(pwd)/$target" ;;
+    esac
+    instrukt="$target/debug/instrukt"
+fi
 home="$(mktemp -d)"
 trap 'rm -rf "$home"' EXIT
 unset XDG_STATE_HOME INSTRUKT_HOME
