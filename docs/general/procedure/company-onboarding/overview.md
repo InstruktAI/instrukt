@@ -78,8 +78,9 @@ the services it touched, then step 10.
    messaging yet: report that as unfinished and continue with the services.
 6. **Connect the services.** For each service from the intake that needs
    setting up for the company first, run that service's own procedure. Then
-   load `general/procedure/company-service-connection` with `instrukt docs get
-   general/procedure/company-service-connection --closure` and run it. Tell
+   load `general/procedure/company-onboarding/service-connection` with
+   `instrukt docs get general/procedure/company-onboarding/service-connection`
+   and run it. Tell
    each person to sign in to a service with the account whose email address
    their messaging workspace shows for them.
 7. **Install what the company demands.** Run `instrukt install`, then
@@ -103,14 +104,19 @@ the services it touched, then step 10.
      after the agent's answer says the sign-in is pending, ask again, and are
      answered;
    - for each service declared with a stored login, a request under that
-     person's login is answered.
+     person's login is answered;
+   - whatever the person is told stays in their world and their words: a
+     service of theirs that cannot be reached or refuses them, or a sign-in
+     they have to complete. Nothing of instrukt's own reaches them — no
+     command, setting, reference or diagnostic.
 
    Any other outcome is corrected and that part of the proof repeated before
    the company's people start (`general/policy/grounding`, confirmation is
    reserved for inspected claims).
 10. **Report to the operator.** Give the home and its repository with the
     revision pushed, the connector and its state, each service's outcome from
-    `general/procedure/company-service-connection`, each outcome of step 9,
+    `general/procedure/company-onboarding/service-connection`, each outcome
+    of step 9,
     and every step still open with what it waits on.
 
 ## Outputs
@@ -127,10 +133,18 @@ the services it touched, then step 10.
 
 - **A person's message is not answered.** `instrukt events status` names the
   cause; correct what it names and have the person address the agent again.
-- **A person is turned away.** The messaging provider does not count them as
-  one of the company's own; that is the company's to change in its workspace.
-- **A sign-in fails.** The agent's answer gives the failure as the call named
-  it; act on what it names. A sign-in not kept for the person is repeated
-  with the account whose address their messaging workspace shows.
+- **A person is turned away.** Hold the connector against its kind's setup
+  in `instrukt config schema --company <name> connectors.<kind>` and correct
+  what differs; when it matches, report the person to the operator.
+- **A request to a service fails for the person.** The person hears only
+  that their service could not be reached or refused them, or that a sign-in
+  waits for them. The cause is the operator's: have the operator run
+  `instrukt events status` and `instrukt mcp list-tools <server> --company
+  <name>` at their own terminal, act on what those name with the recovery of
+  `general/procedure/company-onboarding/service-connection`, and report what
+  neither names as open. A sign-in not kept for the person is repeated with
+  the account whose address their messaging workspace shows.
+- **Instrukt's own diagnostic reached the person.** That part of the proof
+  fails; report it to the operator with the words the person was given.
 - **The rendering check fails.** It names the file and the reference; correct
   it, commit, and run step 8 again.
