@@ -36,9 +36,11 @@ repos:
         language: system
         files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml)$
         pass_filenames: false
+      # The committed layer alone, under a throwaway machine layer: what this
+      # computer's own configuration says does not decide a commit.
       - id: config-validate
         name: configuration validation
-        entry: scripts/dev-instrukt config validate
+        entry: scripts/with-build-lock.sh scripts/check-committed-config.sh
         language: system
         files: ^instrukt\.yaml$
         pass_filenames: false
