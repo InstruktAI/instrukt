@@ -50,15 +50,16 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   pattern of the files it applies to, and a check runs when the commit adds,
   changes, renames or deletes a file its pattern matches: the document
   validation for documents, shellcheck for shell scripts and hook files, the
-  configuration validation for `instrukt.yaml`, and fmt, clippy and the
-  colocated unit tests for everything a crate is built from and everything
-  its unit tests read: its sources and manifests, the files compiled into the
-  program, the unit tests' snapshots, and the two inputs that live outside the
-  crates' folders: the shared test support under `tests/support/`, which is
-  compiled into unit tests, and the workflow flavor under
-  `docs/domain/sdlc/workflow/`, which the `instrukt-todos` unit tests run
-  against. No commit runs the functional tests. These are project tooling, not
-  quality hooks installed by instrukt in adopting repositories.
+  lint and the type check for Python scripts, the configuration validation
+  for `instrukt.yaml`, and fmt, clippy and the colocated unit tests for
+  everything a crate is built from and everything its unit tests read: its
+  sources and manifests, the files compiled into the program, the unit tests'
+  snapshots, and the two inputs that live outside the crates' folders: the
+  shared test support under `tests/support/`, which is compiled into unit
+  tests, and the workflow flavor under `docs/domain/sdlc/workflow/`, which the
+  `instrukt-todos` unit tests run against. No commit runs the functional
+  tests. These are project tooling, not quality hooks installed by instrukt in
+  adopting repositories.
 - A commit's checks take under ten seconds once what the commit changed is
   built. The budget counts running the validators, the linter and the unit
   tests; it does not count the compiler rebuilding changed crates. That
