@@ -393,7 +393,15 @@ each enabled provider instance in the response's server settings, its driver,
 for an ACP-registry instance the registry agent it names, and the home it
 reports: the home its settings name, otherwise the runtime's home variable in
 its instance environment. An instance naming neither reports no home; a home
-T3 takes from its own process environment is not in the response. A server that cannot be reached or
+T3 takes from its own process environment is not in the response. A Codex
+instance on an overlay home (`shadowHomePath`) reports its shared home as the
+home and the overlay as a folder in which a link to the published file must
+exist: at the pinned release Codex runs from the overlay, and T3 links into
+it only the shared entries present when it creates the provider, makes those
+links itself and refuses to create the provider over a file that is not a
+link (`apps/server/src/provider/Drivers/CodexHomeLayout.ts` at the pinned
+release). The adapter reads an instance's home as the pinned release does
+(`project/instrukt/spec/feature/runner/t3-contract`). A server that cannot be reached or
 read answers nothing, and publication leaves the global agent files as they
 are.
 

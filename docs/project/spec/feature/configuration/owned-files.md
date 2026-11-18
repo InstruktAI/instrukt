@@ -47,8 +47,8 @@ migration runs before refusal or skip on every path. Read-only inspection comman
 convert older configuration in memory, leave files and locks untouched, and report
 that the file migrates on the next writing command. For the files instrukt owns on
 the machine, the global layer and company home documents among them, writing commands, publication,
-installation convergence and ticks persist the conversion before proceeding; a skip
-due to unchanged publication is considered only after migration.
+installation convergence and ticks persist the conversion before proceeding; a sync
+compares its outputs only after migration, whether or not main has moved.
 
 A project layer is committed to its repository, so it changes only in a commit,
 as do the editor modelines and the repository's generated `AGENTS.md` files
@@ -87,7 +87,22 @@ Hook-run records carry a shape version and an optional checkout or staging
 outcome. Older records convert in memory with no invented checkout or staging
 result, a record newer than the binary is refused, and the
 next recorded hook run persists the versioned shape. Inspection never rewrites
-these records and a newer shape requires a newer binary.
+these records and a newer shape requires a newer binary. A record belongs to
+the repository, keyed by a digest of its git common directory and naming the
+repository's path, so it is found without reading the repository's
+configuration (`sdlc/principle/design-fundamentals`: an outcome is never lost
+to a file that cannot be read). Records kept under the project-keyed folder
+`state/hooks/` are not converted: the first hook run that finds that folder
+removes it, and the next run of each hook writes its outcome under the
+repository's key (`sdlc/policy/state-storage`: an entry retires with its
+scope).
+
+Publication keeps no record of the files a sync wrote outside the home. The
+record an earlier release kept under `state/publication/outputs/` is not
+read: the first sync that publishes deletes it, whatever its shape, and
+touches none of the files it lists
+(`general/principle/trust-and-guardrails`: a record kept to authorize a later
+overwrite or removal is a guard on what every sync rebuilds).
 
 ### Blueprint tool ownership
 
@@ -127,13 +142,13 @@ And no output discloses its value
 But an unreadable or insufficiently protected required file refuses the dependent operation
 ```
 
-### UC-OF2: Migrate before an unchanged-publication skip
+### UC-OF2: Migrate before publication, even when main has not moved
 
 ```gherkin
 Given the machine and project configurations use an older owned schema
 And canonical main equals the last published commit
 When sync runs after an instrukt upgrade
-Then configuration migrates before the unchanged-publication decision
+Then configuration migrates before anything is published
 And the machine configuration is written at the current schema while the project configuration stays as committed
 And ordinary reads inspect the converted configuration without writing it and report the pending migration
 And ticks persist the machine migration before schema-based refusal or skip
