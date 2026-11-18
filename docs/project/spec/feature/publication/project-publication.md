@@ -242,10 +242,6 @@ When its rendered agent instructions ask for a configured value that cannot be r
 And publication runs for the project
 Then publication fails and names the file and the value
 And the previously published documentation is unchanged
-When its documentation passes validation but a rendered instruction file would keep an unresolved reference
-And publication runs for the project
-Then publication fails and names the file and the reference
-And the previously published documentation is unchanged
 ```
 
 ### UC-PUB7: A committed link cannot make publication write outside the project

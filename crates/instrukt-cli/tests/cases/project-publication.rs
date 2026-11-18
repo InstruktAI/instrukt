@@ -456,7 +456,6 @@ fn without_tmp(env: &TestEnv, bytes: &[u8], shas: &[&str]) -> String {
     text(bytes, shas).replace(base.trim_end_matches('/'), "[TMP]")
 }
 
-// spec: project/instrukt/spec/feature/publication/project-publication UC-PUB6
 #[test]
 fn an_instruction_file_left_with_a_reference_fails_the_sync() {
     let env = TestEnv::new();

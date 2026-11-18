@@ -98,8 +98,10 @@ same content with the same instrukt release write the same bytes.
 - **No configured value.** A `@config` directive in a master, or in a
   document a committed rendering holds in full, is a finding naming the
   document; the door is to list that snippet instead, so it is read on demand
-  where `instrukt docs get` resolves the value. `@exec` and `@include` are
-  findings as everywhere.
+  where `instrukt docs get` resolves the value. `@exec`, `@include` and a
+  reference left for an agent program to resolve are findings as everywhere
+  (`general/policy/agent-artifact-governance`: no generated entrypoint leaves
+  an import).
 - **Never over a file instrukt did not write.** A rendering is written where
   `AGENTS.md` is absent or is a rendering. A file without the generated line
   is left as it is and named, with the door: move its content into the master
@@ -240,7 +242,12 @@ publishes. They are the computer's own, never committed anywhere.
 - **Rendering.** Required reads resolve from the documentation published on
   the computer and are inlined; nothing is left for an agent program to
   resolve. `@config` directives resolve against the publishing project's
-  effective configuration.
+  effective configuration. A global file that would keep a reference left for
+  an agent program to resolve is refused, naming the file and the reference:
+  `general`'s `expanded` can bring in a snippet another project published,
+  which this sync does not validate again
+  (`general/policy/agent-artifact-governance`: no generated entrypoint leaves
+  an import).
 - **A domain without `index.yaml`** is absent from every global file; the
   sync reports a notice naming it, and it is found through
   `instrukt docs index --domain <x>`.
