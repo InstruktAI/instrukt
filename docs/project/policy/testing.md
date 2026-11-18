@@ -53,8 +53,10 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   configuration validation for `instrukt.yaml`, and fmt, clippy and the
   colocated unit tests for everything a crate is built from and everything
   its unit tests read: its sources and manifests, the files compiled into the
-  program, the unit tests' snapshots, and the workflow flavor under
-  `docs/domain/sdlc/workflow/` that the `instrukt-todos` unit tests run
+  program, the unit tests' snapshots, and the two inputs that live outside the
+  crates' folders: the shared test support under `tests/support/`, which is
+  compiled into unit tests, and the workflow flavor under
+  `docs/domain/sdlc/workflow/`, which the `instrukt-todos` unit tests run
   against. No commit runs the functional tests. These are project tooling, not
   quality hooks installed by instrukt in adopting repositories.
 - A commit's checks take under ten seconds once what the commit changed is
