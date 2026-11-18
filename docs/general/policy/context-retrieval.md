@@ -8,11 +8,9 @@ visibility: 'public'
 ## Rules
 
 - **Read your role's commands before work.** Before doing anything, run
-  `instrukt --help` and read the commands your role has. Under an assigned
-  role the help shows that role's surface and names its role, class, scope and
-  usual capabilities. A focused role's help shows only the commands and forms
-  its assignment permits; an action outside them goes back to the dispatcher in
-  your output, which can change the assignment.
+  `instrukt --help` and read the commands your role has. An action that help
+  does not offer you goes back to the dispatcher in your output, which can
+  change the assignment.
 - **Read a domain's rendering once, at entry.** When a task enters a knowledge
   domain, run `instrukt docs get --domain <domain>` and read its output in
   full, unless that domain's contracts are already loaded this session. A task
@@ -46,9 +44,8 @@ visibility: 'public'
 
 ## Rationale
 
-The help an agent reads is shaped by the same mapping that admits its
-commands, so reading it first shows what the role can do before work is
-planned around a command it cannot run.
+Reading the help first means work is not planned around a command the role
+cannot run.
 
 Immediate context prevents drift from established policy, architecture, and
 procedure. The rendering, not the files behind it, is what an agent reads: it
