@@ -44,7 +44,10 @@ make check          # lint, the whole test suite, coverage and the audit by hand
 The commit check uses the pre-commit framework at the version pinned in
 `scripts/test-tools.env` (`uv tool install pre-commit==<version>`).
 `.pre-commit-config.yaml` assigns each check the files it applies to; the
-functional suite runs in CI on every pull request.
+functional suite runs in CI on every pull request. The Python lint and type
+check are the framework's own hooks for ruff and mypy at pinned commits: the
+first commit check fetches them into the framework's cache
+(`~/.cache/pre-commit`), which needs network access once.
 
 Command-line tests run the built binary against a temporary `HOME` and
 temporary git repositories (`crates/instrukt-cli/tests/common`); they never

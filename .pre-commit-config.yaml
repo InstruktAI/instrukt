@@ -7,10 +7,13 @@
 # matching file was added, changed, renamed or deleted. The pipeline runs every
 # check over every file. No check here runs the functional tests: they run in
 # the pipeline. Document and configuration checks build nothing: they run an
-# instrukt that is already there (scripts/instrukt-for-checks). The Rust check
-# takes the shared target directory's lock (scripts/with-build-lock.sh) and
-# builds only the crates the commit touches or whose unit tests read what it
-# touches, and those that depend on them.
+# instrukt that is already there (scripts/instrukt-for-checks). Python scripts
+# are linted and type-checked by the framework's own hooks for ruff and mypy,
+# at the commits their tags name; the framework installs them in its cache on
+# first use. A commit that only removes a Python script leaves them nothing to
+# read. The Rust check takes the shared target directory's lock
+# (scripts/with-build-lock.sh) and builds only the crates the commit touches or
+# whose unit tests read what it touches, and those that depend on them.
 default_install_hook_types: [pre-commit]
 repos:
   - repo: local
@@ -63,3 +66,16 @@ repos:
         language: system
         always_run: true
         require_serial: true
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 2700fd5671c633760d912769c041bfcde2b9a01b  # frozen: v0.15.22
+    hooks:
+      - id: ruff-check
+        name: Python lint (ruff)
+        files: &python ^scripts/[^/]+\.py$
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: a66e98df7b4aeeb3724184b332785976d062b92e  # frozen: v1.19.1
+    hooks:
+      - id: mypy
+        name: Python type check (mypy, strict)
+        files: *python
+        args: [--strict, --scripts-are-modules]
