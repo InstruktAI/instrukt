@@ -5,6 +5,10 @@ visibility: public
 
 # Company Service Connection — Procedure
 
+## Required reads
+
+- [general/procedure/company-onboarding/overview](overview.md)
+
 ## Goal
 
 After this procedure the company's agent reaches each service the company
