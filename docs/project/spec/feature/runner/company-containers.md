@@ -1,5 +1,5 @@
 ---
-description: Company containers — on a Linux host each company runs in one long-running container of its own, with T3 and the agent tools inside; its agents reach no other company and nothing of the host, its state lives in its folder on the host and survives the container, it is signed in once, its tools take each release that passed instrukt's nightly check automatically and without a new image, shared defaults reach every company, its owner opens its environment without the operator's credentials and admits their own people, who may steer agents inside it, and every company is backed up each night.
+description: Company containers — on a Linux host each company runs in one long-running container of its own, with T3 and the agent tools inside; its agents reach no other company and nothing of the host, its state lives in its folder on the host and survives the container, it is signed in once, its tools take each release that passed instrukt's nightly check automatically and without a new image, shared defaults reach every company, no credential that opens its environment is kept in a log, and every company is backed up each night.
 ---
 
 # Company Containers — Spec
@@ -21,10 +21,8 @@ A **company's folder** is the one folder on the host, under the operator's
 (`project/instrukt/spec/feature/configuration/company-homes`) is part of it;
 how the rest is laid out beside the home is the architecture's.
 
-Four kinds of people are involved. The company's **members** talk to its
-agent. The company's **owner** opens the company's own environment and admits
-their own people to it. The **operator** runs the host and sets companies up
-on it. **Another company** on the same host is kept apart from this one.
+Three kinds of people are involved. The company's **members** talk to its
+agent. The **operator** runs the host and sets companies up on it. **Another company** on the same host is kept apart from this one.
 
 ## Canonical fields
 
@@ -73,7 +71,7 @@ recomputation is persisted and survives restarts).
 | The company's home: settings, secrets, documents | Yes |
 | The company's projects | Yes |
 | The installed tools: T3 and the agent programs, each at the version it was updated to | Yes |
-| T3's data: projects, threads, sessions of people with access, its own server keys | Yes |
+| T3's data: projects, threads, its own server keys | Yes |
 | The agent program's login, its settings and its transcripts | Yes |
 | Caches the tools rebuild | Not required |
 
@@ -114,50 +112,12 @@ example that no conversation is compacted automatically after it has been
 idle. It applies to every company's container, and a change to it reaches
 every company from that one source.
 
-### Limits a company cannot change
-
-What bounds what a company's agent may do, and what its container reaches, is
-set by the operator and cannot be changed from inside the container, by anyone
-working there or by an agent (`sdlc/policy/security-awareness`: scope
-credentials, permissions and network access so a compromise in one component
-cannot cascade).
-
-### The owner's access
-
-- The operator gives a company's owner access to that company's environment:
-  the T3 of the company's container. The owner opens it on their own device,
-  with a login of their own; the operator's credentials are never handed over
-  (`sdlc/policy/security-awareness`: no shared root credentials).
-- The environment is the company's, and who enters it is the owner's
-  decision: the owner may give their own people access to it. What the owner
-  gives reaches that one company's environment only.
-- The owner, and whoever the owner admits, may start and steer agents in the
-  environment. Those agents work inside the company's container, within the
-  limits a company cannot change, and reach nothing beyond it.
-- The owner and everyone they admit reach that one company's environment and
-  nothing beyond the company's container (`sdlc/policy/security-awareness`:
-  isolate components so a compromise in one cannot reach others).
-- The operator can see who has access to a company's environment and can
-  revoke any of it at any time, the owner's included. A revoked access is
-  turned away on its next request, also in a session already open
-  (`sdlc/policy/security-awareness`: session invalidation is immediate and
-  server-side).
-
 ### Credentials that open an environment
 
 No credential that opens a company's environment is kept in any log or
 diagnostic output, whoever can read it; starting or restarting a company's
 container writes none there (`sdlc/policy/security-awareness`: secrets never
-enter logs). Handing a newly issued credential once to the person who asked
-for it is a handoff, not a log: it reaches only that person and is not kept.
-
-### The operator's access
-
-The operator reaches each company's environment from the host to set it up,
-sign it in, update it and look into it when needed, with access of the
-operator's own. The operator does not need any company's account to do so
-(`sdlc/policy/security-awareness`: separate credentials per service and
-environment).
+enter logs).
 
 ### Backup and restore
 
@@ -249,18 +209,6 @@ Then every company's container runs with the changed default
 And no company had to be changed on its own
 ```
 
-### UC-CC7: Run one's own company's environment without the operator's credentials
-
-```gherkin
-Given an operator has given a company's owner access to their company's environment
-When the owner opens it on their own device, admits one of their people and starts an agent there
-Then the owner and the person they admitted reach that company's environment and nothing of another company
-And the owner never received the operator's credentials
-And the agent works inside the company's container and reaches nothing beyond it
-And the operator sees both among those with access to the company's environment
-But once the operator revokes the admitted person's access, that person's next request is refused
-```
-
 ### UC-CC8: Back up every company each night
 
 ```gherkin
@@ -282,22 +230,12 @@ And its agent answers its members again
 And no other company on the host changed
 ```
 
-### UC-CC10: Keep a company's limits as the operator set them
-
-```gherkin
-Given an operator has set what a company's agent may do and what its container reaches
-When someone working in the company's container tries to loosen those limits, directly or through the company's agent
-Then the limits stay as the operator set them
-And the company's agent still reaches nothing beyond its container
-```
-
 ### UC-CC11: Start a company's environment without leaving a credential in its log
 
 ```gherkin
 Given an operator runs a company on a host
 When the company's container starts or restarts
 Then no credential that opens the company's environment is kept in any log or diagnostic output
-But a credential the operator issues for someone is handed once to the person who asked for it
 ```
 
 ## Known caveats
@@ -306,12 +244,6 @@ But a credential the operator issues for someone is handed once to the person wh
   can read, change or erase anything of its own company's that the container
   holds, the company's secrets file and its login included. A restore from
   the last archive brings it back, and work since that night is lost.
-- Inside its container a company is one trust zone. Whoever may steer an
-  agent there, the owner and everyone the owner admits, can reach what that
-  company's agents can reach, the logins its people stored for the company's
-  services included. The operator keeps companies apart from each other and
-  from the host; this contract keeps no boundary between people inside one
-  company.
 - A connector open to people outside the company needs an agent with no
   tools. A company's container does not provide one.
 - A Mac is for testing the container, not for hosting companies.

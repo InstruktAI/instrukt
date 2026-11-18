@@ -114,7 +114,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
   container each company's sessions run in on a host, its state, its tools,
-  its shared defaults, its owner's access and its nightly backup; resolving
+  its shared defaults and its nightly backup; resolving
   a session's assignment from work's, its own and the company context's facts;
   agents'
   access to declared MCP servers (which declarations a caller sees and the
@@ -410,7 +410,7 @@ has no origin, as declared in Canonical fields.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
 - **Company containers** — [project/instrukt/spec/feature/runner/company-containers](../feature/runner/company-containers.md)
-  — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image, let its owner in without the operator's credentials and back it up each night.
+  — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and back it up each night.
 
 - **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
 - **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
