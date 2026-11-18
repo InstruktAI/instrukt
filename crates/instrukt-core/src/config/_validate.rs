@@ -8,7 +8,7 @@ use serde_yaml_ng::Value;
 
 use super::_effective::effective_value;
 use super::_error::{ConfigError, Finding, FindingKind};
-use super::_features::{Feature, Unavailable, availability};
+use super::_features::{Feature, availability};
 use super::_interpolate::{Interpolator, Mode, join, key_text};
 use super::_layer::{Layer, read_usable};
 use super::_module::Module;
@@ -23,18 +23,46 @@ pub(crate) fn findings_for(
     path: &Path,
     value: &Value,
 ) -> Result<Vec<Finding>, ConfigError> {
-    findings_in_scope(home, layer, path, value, true)
+    findings_in_scope(home, layer, path, value, true, Given::default())
 }
+
+/// What a judgement reads besides the layer itself, given when it was read
+/// already: admission judges and admits the same values. What is not given
+/// is read from its file.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Given<'a> {
+    /// The global layer as admitted (`Some(None)`: there is none).
+    pub global: Option<Option<&'a Value>>,
+    pub agents: Option<&'a super::Agents>,
+    /// Each published project's checkout and layer.
+    pub projects: Option<&'a [(std::path::PathBuf, Option<Value>)]>,
+    /// The judged company's secrets file, read once.
+    pub secrets: Option<&'a super::_secrets::SecretSnapshot>,
+}
+
+/// [`findings_for`], with what was read already.
+pub(crate) fn findings_given(
+    home: &Home,
+    layer: &Layer,
+    path: &Path,
+    value: &Value,
+    given: Given<'_>,
+) -> Result<Vec<Finding>, ConfigError> {
+    findings_in_scope(home, layer, path, value, true, given)
+}
+
 fn findings_in_scope(
     home: &Home,
     layer: &Layer,
     path: &Path,
     value: &Value,
     other_projects: bool,
+    given: Given<'_>,
 ) -> Result<Vec<Finding>, ConfigError> {
-    let global = match layer.kind() {
-        LayerKind::Global => None,
-        LayerKind::Project | LayerKind::Company => read_usable(home, &Layer::Global)?,
+    let global = match (layer.kind(), given.global) {
+        (LayerKind::Global, _) => None,
+        (_, Some(global)) => global.cloned(),
+        (LayerKind::Project | LayerKind::Company, None) => read_usable(home, &Layer::Global)?,
     };
     let this = crate::machine::existing_machine_id(home).ok().flatten();
     let mut found = judge(value, layer.kind(), global.as_ref(), this.as_ref());
@@ -44,9 +72,24 @@ fn findings_in_scope(
             // A missing agents.yaml reads as the shipped defaults; one that
             // cannot be read or is invalid leaves the names unchecked, which
             // is this company's finding.
-            let declared = super::Agents::load(&home.for_inspection());
+            let declared = match given.agents {
+                Some(agents) => Ok(agents.clone()),
+                None => super::Agents::load(&home.for_inspection()),
+            };
             super::_company::check_profiles(name, profiles, &declared, &mut found);
         }
+        let read;
+        let secrets = match given.secrets {
+            Some(secrets) => secrets,
+            None => {
+                read = super::_secrets::SecretSnapshot::read(
+                    home,
+                    &super::SecretSource::Company(name.clone()),
+                );
+                &read
+            }
+        };
+        found.extend(connector_secrets(secrets, name, value));
         let effective = effective_value(global.as_ref(), None)?;
         found.extend(ingress_signing(
             home,
@@ -91,9 +134,13 @@ fn findings_in_scope(
                 "name a profile in github.apps",
             ));
         }
-        if let Ok(text) = std::fs::read_to_string(home.agents_file())
-            && let Ok(agents) = super::Agents::parse(&text)
-        {
+        let declared = match given.agents {
+            Some(agents) => Some(agents.clone()),
+            None => std::fs::read_to_string(home.agents_file())
+                .ok()
+                .and_then(|text| super::Agents::parse(&text).ok()),
+        };
+        if let Some(agents) = declared {
             for (role, selection) in agents.roles {
                 if selection
                     .github_app
@@ -125,14 +172,24 @@ fn findings_in_scope(
             .and_then(Value::as_bool)
             == Some(true)
     {
-        let projects = crate::publication::PublishedRecord::load_all(home).map_err(|error| {
-            ConfigError::InvalidValue {
-                key: "modules.todos".into(),
-                message: error.to_string(),
+        let projects: Vec<Option<Value>> = match given.projects {
+            Some(projects) => projects.iter().map(|(_, value)| value.clone()).collect(),
+            None => {
+                let records =
+                    crate::publication::PublishedRecord::load_all(home).map_err(|error| {
+                        ConfigError::InvalidValue {
+                            key: "modules.todos".into(),
+                            message: error.to_string(),
+                        }
+                    })?;
+                records
+                    .into_iter()
+                    .filter(|p| p.checkout.is_dir())
+                    .map(|p| read_usable(home, &Layer::Project(p.checkout)))
+                    .collect::<Result<_, _>>()?
             }
-        })?;
-        for project in projects.into_iter().filter(|p| p.checkout.is_dir()) {
-            let project_value = read_usable(home, &Layer::Project(project.checkout))?;
+        };
+        for project_value in projects {
             let selected = effective_value(Some(value), project_value.as_ref())?;
             // The default flow was checked above; project-specific selections join admission too.
             if selected
@@ -184,6 +241,35 @@ fn ingress_signing(
         }
     }
     found
+}
+
+/// The secrets a company's declared Slack connector references are present
+/// and nonblank in the company's own secrets file: a finding at each that is
+/// not, naming the door.
+fn connector_secrets(
+    secrets: &super::_secrets::SecretSnapshot,
+    name: &crate::ids::ProjectSlug,
+    value: &Value,
+) -> Vec<KeyFinding> {
+    let Some(slack) = value
+        .get("connectors")
+        .and_then(|c| c.get(super::CONNECTORS[0]))
+    else {
+        return Vec::new();
+    };
+    ["app_token", "bot_token"]
+        .into_iter()
+        .filter_map(|field| {
+            let reference = slack.get(field).and_then(Value::as_str)?;
+            secrets.resolve(reference).err().map(|error| {
+                KeyFinding::new(
+                    &join("connectors", &join(super::CONNECTORS[0], field)),
+                    FindingKind::Missing,
+                    format!("{error}; set it with `instrukt secrets set <NAME> --company {name}`"),
+                )
+            })
+        })
+        .collect()
 }
 
 /// A company home's document names the company its folder is named for.
@@ -298,7 +384,7 @@ pub fn validate_local(home: &Home, layer: &Layer) -> Result<Vec<Finding>, Config
             door: layer.init_door(),
         });
     };
-    let mut found = findings_in_scope(home, layer, &view.path, &value, false)?;
+    let mut found = findings_in_scope(home, layer, &view.path, &value, false, Given::default())?;
     if layer.kind() == LayerKind::Global
         && let Err(error) = super::Agents::load(&home.for_inspection())
     {
@@ -358,9 +444,13 @@ pub(crate) fn judge(
         }
     };
     match kind {
-        LayerKind::Project => required_modules(value, &effective, &mut found),
+        LayerKind::Project => {
+            required_modules(value, &effective, &mut found);
+            event_transport(&effective, &mut found);
+        }
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);
+            event_transport(&effective, &mut found);
         }
         LayerKind::Company => {}
     }
@@ -399,21 +489,22 @@ fn connector_capabilities(effective: &Value, out: &mut Vec<KeyFinding>) {
         .get("runner")
         .and_then(|r| r.get("runtime"))
         .and_then(Value::as_str);
-    let chosen = name.and_then(Runtime::named);
-    if name.is_some() && chosen.is_none() {
-        return;
-    }
+    // An unset runtime is the compiled one; one naming no entry is its own
+    // finding and is not judged again here.
+    let chosen = match name {
+        Some(name) => match Runtime::named(name) {
+            Some(runtime) => runtime,
+            None => return,
+        },
+        None => Runtime::COMPILED,
+    };
     let features = &[Feature::Conversations];
     let Some(unavailable) = availability(chosen, features) else {
         return;
     };
-    let kind = match unavailable {
-        Unavailable::NoRuntime => FindingKind::NoRuntimeChosen,
-        Unavailable::MissingCapabilities { .. } => FindingKind::RuntimeCapabilityMissing,
-    };
     out.push(KeyFinding::new(
         "connectors",
-        kind,
+        FindingKind::RuntimeCapabilityMissing,
         unavailable.describe(features),
     ));
 }
@@ -433,10 +524,15 @@ fn feature_capabilities(
         .get("runner")
         .and_then(|r| r.get("runtime"))
         .and_then(Value::as_str);
-    let chosen = name.and_then(Runtime::named);
-    if name.is_some() && chosen.is_none() {
-        return;
-    }
+    // An unset runtime is the compiled one; one naming no entry is its own
+    // finding and is not judged again here.
+    let chosen = match name {
+        Some(name) => match Runtime::named(name) {
+            Some(runtime) => runtime,
+            None => return,
+        },
+        None => Runtime::COMPILED,
+    };
     for module in ["events", "todos"] {
         let on = value
             .get("modules")
@@ -455,13 +551,9 @@ fn feature_capabilities(
         let Some(unavailable) = availability(chosen, features) else {
             continue;
         };
-        let kind = match unavailable {
-            Unavailable::NoRuntime => FindingKind::NoRuntimeChosen,
-            Unavailable::MissingCapabilities { .. } => FindingKind::RuntimeCapabilityMissing,
-        };
         out.push(KeyFinding::new(
             &join("modules", module),
-            kind,
+            FindingKind::RuntimeCapabilityMissing,
             unavailable.describe(features),
         ));
     }
@@ -506,6 +598,39 @@ fn required_modules(value: &Value, effective: &Value, out: &mut Vec<KeyFinding>)
                 format!("requires module `{}`, which is switched off", module.key()),
             ));
         }
+    }
+}
+
+/// Whether event responses are on in `effective`.
+pub(crate) fn events_on(effective: &Value) -> bool {
+    effective
+        .get("modules")
+        .and_then(|m| m.get(Module::Events.key()))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Event responses need the event transport they are carried on: a finding
+/// at `modules.events` while it is on and `redis.cluster.url` is not set.
+/// Whether `effective` switches event responses on without naming the
+/// event transport they are carried on.
+pub(crate) fn needs_transport(effective: &Value) -> bool {
+    let url = effective
+        .get("redis")
+        .and_then(|r| r.get("cluster"))
+        .and_then(|c| c.get("url"))
+        .and_then(Value::as_str)
+        .filter(|url| !url.trim().is_empty());
+    events_on(effective) && url.is_none()
+}
+
+fn event_transport(effective: &Value, out: &mut Vec<KeyFinding>) {
+    if needs_transport(effective) {
+        out.push(KeyFinding::new(
+            "modules.events",
+            FindingKind::EventsNeedTransport,
+            "event responses need the event transport, and `redis.cluster.url` is not set; set it in the global layer first (`instrukt config patch --global`)",
+        ));
     }
 }
 
@@ -664,7 +789,9 @@ mod tests {
     }
     #[test]
     fn t3_supports_todos_and_queued_event_delivery() {
-        let doc = current_document("runner: {runtime: t3}\nmodules: {todos: true, events: true}");
+        let doc = current_document(
+            "runner: {runtime: t3}\nmodules: {todos: true, events: true}\nredis: {cluster: {url: 'redis://127.0.0.1:6379'}}",
+        );
         let found = judge(&doc, LayerKind::Global, None, None);
         assert!(found.is_empty());
     }
@@ -679,10 +806,8 @@ mod tests {
                 .map(|f| (f.key.clone(), f.kind))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            found(&current_document("ticks: 'on'")),
-            [("connectors".to_owned(), FindingKind::NoRuntimeChosen)]
-        );
+        // An unset runtime is the compiled one, which carries conversations.
+        assert!(found(&current_document("ticks: 'on'")).is_empty());
         assert!(found(&current_document("runner: {runtime: t3}")).is_empty());
     }
     #[test]

@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 
 use instrukt_connector::{Accompanying, Incoming, Sender};
-use instrukt_core::config::{COMPANY_AGENT_ROLE, ConfigError, Configuration, SlackConnector};
+use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, ConfigError, SlackConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
 use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
@@ -496,6 +496,20 @@ pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, SlackConnector)>, Convers
     Ok(hosted)
 }
 
+/// The admitted company homes whose declared connector the runner hosts.
+pub fn admitted_demand(admitted: &Admitted) -> Vec<(ProjectSlug, SlackConnector)> {
+    admitted
+        .companies()
+        .iter()
+        .filter_map(|company| {
+            company
+                .slack
+                .as_ref()
+                .map(|slack| (company.name.clone(), slack.connector.clone()))
+        })
+        .collect()
+}
+
 struct Conversation {
     company: ProjectSlug,
     connector: String,
@@ -703,11 +717,12 @@ fn opening_procedure(
 /// The runner-authored opening assignment of a conversation session: the
 /// loader of its procedure, with the facts it is assigned.
 fn assignment(
-    home: &Home,
+    admitted: &Admitted,
     c: &Conversation,
     procedure: &SnippetId,
 ) -> Result<String, ConversationError> {
-    let capabilities = instrukt_core::config::Agents::load(home)?
+    let capabilities = admitted
+        .agents()
         .capabilities(COMPANY_AGENT_ROLE)?
         .describe();
     Ok(Control::Assignment.frame(&format!(
@@ -786,6 +801,7 @@ fn accepted(
 /// finished. Failures stay with the message until it is delivered.
 fn deliver_one(
     invocation: &RuntimeInvocation,
+    admitted: &Admitted,
     adapter: &dyn RuntimeAdapter,
     source: &dyn ConversationSource,
     state: &RunnerState,
@@ -810,7 +826,7 @@ fn deliver_one(
         return Ok(());
     }
     let result = match &c.session {
-        None => start(invocation, adapter, source, state, c, next, now),
+        None => start(invocation, admitted, adapter, source, c, next, now),
         Some(session) => send(adapter, state, c, session, next, now),
     };
     // A runtime failure is retained through the adapter's safe diagnostic,
@@ -837,14 +853,15 @@ fn deliver_one(
 
 fn start(
     invocation: &RuntimeInvocation,
+    admitted: &Admitted,
     adapter: &dyn RuntimeAdapter,
     source: &dyn ConversationSource,
-    state: &RunnerState,
     c: &Conversation,
     next: &Message,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
     let home = invocation.home();
+    let state = &RunnerState::new(home);
     let request = match &c.request {
         Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
         None => {
@@ -856,15 +873,23 @@ fn start(
                     .id
                     .clone();
             let checkout: PathBuf = home.company_dir(&c.company);
-            let company = Configuration::load_company(home, &c.company)?;
-            let config = Configuration::load_global(home)?;
+            let company = &admitted
+                .company(&c.company)
+                .ok_or_else(|| {
+                    ConversationError::Refused(format!(
+                        "company `{}` is not admitted; `instrukt config validate --company {}` names why",
+                        c.company, c.company
+                    ))
+                })?
+                .config;
+            let config = admitted.global();
             let preferences = crate::agents::role_order(
-                &config,
+                config,
                 None,
                 Some(COMPANY_AGENT_ROLE),
                 company.profiles()?.as_deref(),
             )?;
-            let selection = crate::agents::selections(&config, home, &preferences, now)?
+            let selection = crate::agents::selections(config, home, &preferences, now)?
                 .into_iter()
                 .next();
             let input = next.content.as_deref().ok_or_else(|| {
@@ -882,8 +907,9 @@ fn start(
                     &c.semantic_key,
                 ),
                 key: c.semantic_key.clone(),
-                brief: format!("{}\n{input}", assignment(home, c, &procedure)?),
+                brief: format!("{}\n{input}", assignment(admitted, c, &procedure)?),
                 worktree: None,
+                profiles: crate::runtime::Profiles(Some(admitted.shared_agents())),
             };
             let position = opening_position(source)?;
             state.write::<_, StateError>(|tx| {
@@ -1131,7 +1157,7 @@ fn harvest(
 /// Post the conversation's retained answer pieces in order. A failed piece
 /// keeps its cause, and the pieces after it wait.
 fn post(
-    home: &Home,
+    admitted: &Admitted,
     state: &RunnerState,
     endpoint: &SlackEndpoint,
     c: &Conversation,
@@ -1154,7 +1180,7 @@ fn post(
     }
     // A failure before any request is the cause of the first outstanding
     // piece, kept until that same post succeeds.
-    let api = match SlackApi::for_company(home, &c.company, endpoint) {
+    let api = match SlackApi::admitted(admitted, &c.company, endpoint) {
         Ok(api) => api,
         Err(error) => {
             let (turn, piece, _) = &pending[0];
@@ -1194,6 +1220,7 @@ fn post(
 /// answers, post what is retained, then deliver its next addressed message.
 pub fn relay(
     home: &Home,
+    admitted: &Admitted,
     source: &dyn ConversationSource,
     adapter: &dyn RuntimeAdapter,
     endpoint: &SlackEndpoint,
@@ -1225,7 +1252,7 @@ pub fn relay(
                 }
             }
         }
-        if !answers(home, &state, source, endpoint, &c)? {
+        if !answers(admitted, &state, source, endpoint, &c)? {
             continue;
         }
         let Some(c) = reread(&state, &c)? else {
@@ -1239,7 +1266,15 @@ pub fn relay(
         }
         if let Some(invocation) = &invocation {
             // Its failure stays with the message it concerns.
-            let _ = deliver_one(invocation, adapter, source, &state, &c, Timestamp::now());
+            let _ = deliver_one(
+                invocation,
+                admitted,
+                adapter,
+                source,
+                &state,
+                &c,
+                Timestamp::now(),
+            );
         }
         // A session bound just now may be one a recovery found with its
         // opening turn already finished while the runner was down: its answer
@@ -1248,7 +1283,7 @@ pub fn relay(
             && let Some(bound) = reread(&state, &c)?
             && bound.session.is_some()
         {
-            answers(home, &state, source, endpoint, &bound)?;
+            answers(admitted, &state, source, endpoint, &bound)?;
         }
     }
     Ok(())
@@ -1258,7 +1293,7 @@ pub fn relay(
 /// retained. Returns whether the read succeeded; its cause is kept on the
 /// conversation until a later read recovers.
 fn answers(
-    home: &Home,
+    admitted: &Admitted,
     state: &RunnerState,
     source: &dyn ConversationSource,
     endpoint: &SlackEndpoint,
@@ -1274,7 +1309,7 @@ fn answers(
         tracing::warn!(event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
         return Ok(false);
     }
-    if let Err(error) = post(home, state, endpoint, c) {
+    if let Err(error) = post(admitted, state, endpoint, c) {
         tracing::warn!(event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
     Ok(true)

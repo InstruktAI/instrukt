@@ -135,6 +135,12 @@ impl Tracked {
         Self::build(autostart, modules, "todos: true", false)
     }
 
+    /// As [`Tracked::new`], with the project's own `modules` switches;
+    /// the machine's global layer switches only todos on.
+    pub fn with_project_modules(autostart: bool, project_modules: &str) -> Self {
+        Self::build(autostart, "todos: true", project_modules, false)
+    }
+
     /// A project integrating through the standing integrator: work and
     /// events on, pickup deliberate, the flavor publishing an `integrator`
     /// procedure subscribed to `workflow.finalized`, `runner.ci_completed`,

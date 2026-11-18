@@ -117,19 +117,17 @@ fn native_discussion_directs_agents_to_the_membership_commands() {
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS6
 #[test]
-fn installed_t3_does_not_select_itself() {
+fn an_unset_runtime_is_the_compiled_one() {
     let p = Tracked::new(false);
     std::fs::write(
         p.env.instrukt_home().join("instrukt.yaml"),
         "schema_version: 1\n",
     )
     .unwrap();
-    let out = p
-        .env
+    p.env
         .run(p.repo.path(), ["sessions", "list", "--json"])
-        .failure();
-    insta::assert_snapshot!("no-selected-runtime", shown(&p, &out.get_output().stderr));
-    assert_eq!(p.rt.calls().len(), 0);
+        .success();
+    assert!(!p.rt.calls().is_empty());
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS19
 #[test]

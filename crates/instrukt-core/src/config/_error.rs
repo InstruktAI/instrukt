@@ -49,8 +49,6 @@ pub enum FindingKind {
     ModuleSwitchedOff,
     /// `runner.runtime` names no runtime-mapping entry.
     UnknownRuntime,
-    /// A module switch turns on features while no runtime is chosen.
-    NoRuntimeChosen,
     /// A module switch turns on features whose verbs the chosen runtime
     /// leaves empty.
     RuntimeCapabilityMissing,
@@ -60,6 +58,9 @@ pub enum FindingKind {
     ReferenceCycle,
     /// `modules.todos` is on for a project whose code is not on GitHub.
     TodosNeedGitHub,
+    /// `modules.events` is on while the event transport has no
+    /// `redis.cluster.url`.
+    EventsNeedTransport,
 }
 
 /// The findings that refused a write, one per line.

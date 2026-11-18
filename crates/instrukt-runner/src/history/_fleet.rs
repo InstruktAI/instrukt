@@ -148,10 +148,17 @@ pub(crate) struct SearchWorker {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
+/// The worker's name in `runner_workers`.
+const SEARCH: &str = "history-search";
+
 impl SearchWorker {
+    /// The query responder for other computers' merged searches. Cluster
+    /// Redis is retried inside its thread after a growing delay, and its
+    /// failure is recorded in `runner_workers` while it lasts.
     pub(crate) fn start(
         home: &Home,
         env: &Env,
+        current: instrukt_core::config::Current,
         transport: &ScopedTransport,
     ) -> Result<Self, HistoryError> {
         let computer = machine::machine_id(home)?.to_string();
@@ -165,9 +172,14 @@ impl SearchWorker {
             .spawn(move || {
                 let endpoint = transport.endpoint(EventScope::Cluster);
                 let queue = format!("{PREFIX}:requests:{computer}");
+                let mut failing: Option<String> = None;
+                // An earlier process's record is cleared by this worker's first
+                // success; a later failure records again.
+                let mut shown_healthy = false;
+                let mut delay = Duration::from_secs(1);
                 while !stopping.load(Ordering::Relaxed) {
                     let outcome = (|| -> Result<(), HistoryError> {
-                        if !super::enabled(&home)? {
+                        if !current.get().history_enabled()? {
                             return Err(HistoryError::Disabled);
                         }
                         endpoint.command::<()>(
@@ -198,7 +210,7 @@ impl SearchWorker {
                                 "invalid remote history request".into(),
                             ));
                         }
-                        if !super::enabled(&home)? { return Err(HistoryError::Disabled); }
+                        if !current.get().history_enabled()? { return Err(HistoryError::Disabled); }
                         let answer = match local_search(&home, &env, &request.query, request.limit)
                         {
                             Ok(answer) => answer,
@@ -227,16 +239,36 @@ impl SearchWorker {
                         })?;
                         Ok(())
                     })();
-                    if let Err(error) = outcome {
-                        tracing::error!(event="history_query_failed",error=%error);
-                        if matches!(error, HistoryError::Disabled | HistoryError::Config(_)) { break; }
-                        if matches!(error, HistoryError::Transport(_))
-                            && !stopping.load(Ordering::Relaxed)
-                        {
-                            std::thread::park_timeout(Duration::from_secs(5));
+                    match outcome {
+                        Ok(()) => {
+                            if let Some(cause) = failing.take() {
+                                tracing::info!(event = "history_worker_recovered", worker = SEARCH, cause = %cause);
+                            }
+                            if !shown_healthy {
+                                crate::state::worker_state(&home, SEARCH, None);
+                                shown_healthy = true;
+                            }
+                            delay = Duration::from_secs(1);
                         }
+                        Err(HistoryError::Disabled) => break,
+                        Err(error @ HistoryError::Transport(_)) => {
+                            let cause = error.to_string();
+                            shown_healthy = false;
+                            if failing.as_deref() != Some(cause.as_str()) {
+                                tracing::warn!(event = "history_worker_failing", worker = SEARCH, error = %error);
+                                crate::state::worker_state(&home, SEARCH, Some(&cause));
+                                failing = Some(cause);
+                            }
+                            if !stopping.load(Ordering::Relaxed) {
+                                std::thread::park_timeout(delay);
+                            }
+                            delay = (delay * 2).min(Duration::from_secs(60));
+                        }
+                        Err(error) => tracing::error!(event="history_query_failed",error=%error),
                     }
                 }
+                // A worker that ends leaves no record of an earlier failure.
+                crate::state::worker_state(&home, SEARCH, None);
             })
             .map_err(|source| HistoryError::Io {
                 path: std::path::PathBuf::from("history search worker"),
@@ -247,11 +279,12 @@ impl SearchWorker {
             handle: Some(handle),
         })
     }
-    pub(crate) fn check(&self) -> Result<(), HistoryError> {
-        if self.handle.as_ref().is_some_and(|h| h.is_finished()) {
-            return Err(HistoryError::Source("history query worker stopped; restart the runner after restoring cluster transport".into()));
-        }
-        Ok(())
+    /// Whether the worker's thread has ended: history switched off, or
+    /// unwound.
+    pub(crate) fn ended(&self) -> bool {
+        self.handle
+            .as_ref()
+            .is_none_or(std::thread::JoinHandle::is_finished)
     }
 }
 impl Drop for SearchWorker {

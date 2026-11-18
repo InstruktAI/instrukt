@@ -83,7 +83,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
     }
     let (selected, runtime_unreadable) =
         match Configuration::load_global(&home).and_then(|c| c.runner_runtime()) {
-            Ok(selected) => (selected, false),
+            Ok(selected) => (Some(selected), false),
             Err(reason) => {
                 runtime_errors.push(error(&home.global_config(), reason));
                 (None, true)
@@ -267,14 +267,13 @@ fn features(runtime: Option<Runtime>, unreadable: bool) -> Value {
         ("linked_session_input", Feature::LinkedSessionInput),
         ("worktree_attachment", Feature::WorktreeAttachment),
     ] {
-        if unreadable {
+        let (false, Some(runtime)) = (unreadable, runtime) else {
             result.insert(key.into(),json!({"available":null,"missing":[],"errors":["runtime configuration could not be read"]}));
             continue;
-        }
+        };
         let unavailable = config::feature_availability(runtime, &[feature]);
         let missing = match &unavailable {
             None => vec![],
-            Some(Unavailable::NoRuntime) => vec!["no runtime chosen"],
             Some(Unavailable::MissingCapabilities { capabilities, .. }) => capabilities.clone(),
         };
         result.insert(

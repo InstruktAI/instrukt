@@ -1,0 +1,23 @@
+---
+source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+expression: admission
+---
+{
+  "error": null,
+  "runner": null,
+  "projects": [
+    {
+      "project": "demo",
+      "todos": true,
+      "events": false,
+      "history": true
+    }
+  ],
+  "findings": [
+    {
+      "document": "[REPO]/instrukt.yaml",
+      "key": "modules.events",
+      "message": "event responses need the event transport, and `redis.cluster.url` is not set; set it in the global layer first (`instrukt config patch --global`)"
+    }
+  ]
+}

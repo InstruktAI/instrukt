@@ -15,7 +15,8 @@ fn fresh_status_is_complete_and_writes_nothing() {
     let report = status(&env, repo.path());
     assert_eq!(report["machine"]["configured"], false);
     assert_eq!(report["modules"]["history"]["enabled"], true);
-    assert_eq!(report["runtime"]["selected"], serde_json::Value::Null);
+    // An unset runtime is the one compiled runtime.
+    assert_eq!(report["runtime"]["selected"], "t3");
     insta::assert_json_snapshot!(report["repository"]["adoption"], @r#"
 "not_adopted"
 "#);

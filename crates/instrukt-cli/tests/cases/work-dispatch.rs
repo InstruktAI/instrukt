@@ -60,6 +60,30 @@ fn a_project_choosing_automatic_pickup_in_its_own_layer_is_dispatched_by_the_mac
     assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 }
 
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD3
+#[test]
+fn todos_are_picked_up_when_a_projects_event_responses_are_not_admitted() {
+    // The project switches event responses on in its own layer; the
+    // machine has no event transport, so only its todos are admitted.
+    let project = Tracked::with_project_modules(true, "todos: true, events: true");
+    create_change(&project);
+
+    project.tick();
+
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
+    // The computer's status names the project's event responses as not
+    // admitted, with the setting they need.
+    let out = project
+        .env
+        .run(project.env.home(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let admission = serde_json::to_string_pretty(&status["admission"])
+        .unwrap()
+        .replace(&project.repo.path().display().to_string(), "[REPO]");
+    insta::assert_snapshot!("events-not-admitted-in-status", admission);
+}
+
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
 fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() {

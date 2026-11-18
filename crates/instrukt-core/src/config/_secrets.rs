@@ -73,28 +73,70 @@ fn read(
     source: &SecretSource,
     name: &str,
 ) -> Result<BTreeMap<String, String>, ConfigError> {
-    let error = |cause: &str| error(source, name, cause);
+    read_values(home, source).map_err(|cause| error(source, name, cause))
+}
+
+/// The values of `source`'s file, or why it cannot be read.
+fn read_values(
+    home: &Home,
+    source: &SecretSource,
+) -> Result<BTreeMap<String, String>, &'static str> {
     let path = source.path(home);
-    let link = std::fs::symlink_metadata(&path).map_err(|_| error("missing or unreadable file"))?;
+    let link = std::fs::symlink_metadata(&path).map_err(|_| "missing or unreadable file")?;
     if !link.file_type().is_file() {
-        return Err(error("expected a regular owner-only file"));
+        return Err("expected a regular owner-only file");
     }
-    let mut file = std::fs::File::open(&path).map_err(|_| error("unreadable file"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| error("cannot inspect permissions"))?;
+    let mut file = std::fs::File::open(&path).map_err(|_| "unreadable file")?;
+    let metadata = file.metadata().map_err(|_| "cannot inspect permissions")?;
     let owner = rustix::process::geteuid().as_raw();
     if metadata.uid() != owner || metadata.mode() & 0o077 != 0 || metadata.mode() & 0o400 == 0 {
-        return Err(error("file must be readable by its owner only (chmod 600)"));
+        return Err("file must be readable by its owner only (chmod 600)");
     }
     let mut text = String::new();
     file.read_to_string(&mut text)
-        .map_err(|_| error("unreadable UTF-8 file"))?;
+        .map_err(|_| "unreadable UTF-8 file")?;
     // Escape interpolation before dotenv parsing: stored material is literal.
     let literal = literal_values(&text);
     dotenvy::from_read_iter(literal.as_bytes())
         .collect::<Result<_, _>>()
-        .map_err(|_| error("malformed secret file"))
+        .map_err(|_| "malformed secret file")
+}
+
+/// One read of a secrets file, from which every reference resolves: what is
+/// judged and what is used are then the same values.
+pub(crate) struct SecretSnapshot {
+    source: SecretSource,
+    values: Result<BTreeMap<String, String>, &'static str>,
+}
+
+impl SecretSnapshot {
+    pub(crate) fn read(home: &Home, source: &SecretSource) -> Self {
+        Self {
+            source: source.clone(),
+            values: read_values(home, source),
+        }
+    }
+
+    /// As [`resolve_secret_from`], from this read.
+    pub(crate) fn resolve(&self, reference_text: &str) -> Result<String, ConfigError> {
+        let name = reference(reference_text)
+            .ok_or_else(|| error(&self.source, "secret reference", "expected exact ${NAME}"))?;
+        let values = self
+            .values
+            .as_ref()
+            .map_err(|cause| error(&self.source, reference_text, cause))?;
+        values
+            .get(name)
+            .filter(|v| !v.trim().is_empty())
+            .cloned()
+            .ok_or_else(|| {
+                error(
+                    &self.source,
+                    reference_text,
+                    "missing or blank required value",
+                )
+            })
+    }
 }
 
 /// Resolve a reference from the machine's protected secrets file.

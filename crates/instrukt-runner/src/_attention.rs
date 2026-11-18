@@ -79,11 +79,7 @@ pub fn deliver_approval_attention(
     home: &instrukt_core::home::Home,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
-    let Some(runtime) =
-        instrukt_core::config::Configuration::load_global(home)?.runner_runtime()?
-    else {
-        return Ok(());
-    };
+    let runtime = instrukt_core::config::Configuration::load_global(home)?.runner_runtime()?;
     let Some(invocation) = RuntimeInvocation::try_acquire(home)? else {
         return Ok(());
     };

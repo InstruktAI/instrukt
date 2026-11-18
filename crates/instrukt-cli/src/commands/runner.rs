@@ -341,7 +341,17 @@ where
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
     let executable = executable()?;
-    let env = crate::wiring::environment(ctx)?;
+    // An inspection reports what it can read: a machine layer that cannot
+    // be read leaves it without the caller's identity, and the inspection
+    // names what it could not read.
+    let env = match crate::wiring::environment(ctx) {
+        Ok(env) => env,
+        Err(error) if check => {
+            tracing::debug!(event = "inspection_without_caller", %error);
+            instrukt_core::config::Env::from_process()
+        }
+        Err(error) => return Err(error),
+    };
     action(&instrukt_runner::installation::Request {
         home: &ctx.home,
         cwd: &ctx.cwd,
