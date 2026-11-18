@@ -11,10 +11,12 @@ framework once, `uv tool install pre-commit==<version>` with the version in
 `scripts/test-tools.env`, and keep `make hooks` as the way to enable the hook:
 the framework's own `install` refuses while `core.hooksPath` is set. A
 `core.hooksPath` set to the relative `.githooks`, as `make hooks` sets it,
-lets each linked worktree run its own checkout's hook.
+lets each linked worktree run its own checkout's hook. A `v*` tag builds and
+publishes release binaries only after the checks `main` requires pass on the
+tagged revision.
 
 The hook directory also holds instrukt's own sections
-(`docs/project/spec/feature/repository/hook-sections.md`): in `pre-commit`
+(`project/instrukt/spec/feature/repository/hook-sections`): in `pre-commit`
 before the framework call, and as `post-commit`, `post-merge`, `post-rewrite`
 and `post-checkout`, so that documents are published from main without a
 command. They run the installed `instrukt` from the path; without it a commit
