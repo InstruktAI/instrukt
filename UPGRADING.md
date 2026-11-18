@@ -77,9 +77,11 @@ The global agent files go to the agent runtimes the selected runtime reports
 as configured, in each one's own home, instead of to every agent program
 whose user directory exists. With `runner.runtime: t3` these are T3's enabled
 provider instances; T3 must be running when the `docs/general/` owner syncs,
-or the files stay as they were. The next such sync removes the file of a
-runtime no longer configured, DeepSeek's among them unless the runtime
-reports it, and writes new files for the newly supported runtimes. An
+or the files stay as they were. The next such sync writes new files for the
+newly supported runtimes and removes the file of a runtime that no enabled
+instance uses any more, DeepSeek's among them unless the runtime reports it;
+while an enabled instance of a runtime reports no home, that runtime's
+earlier files are kept and `instrukt status` shows them as kept. An
 existing file in a new destination that instrukt did not write stops that
 sync: move its content into documentation or the file out of the way.
 `agents` keys in `docs/general/index.yaml` name the runtimes instrukt deploys
