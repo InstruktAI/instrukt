@@ -15,7 +15,7 @@
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
-use instrukt_core::index::{GlobalIndex, IndexEntry};
+use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
 use instrukt_core::state_db::StateDbError;
 use instrukt_core::state_db::rusqlite::{Transaction, params};
 use jiff::Timestamp;
@@ -397,11 +397,23 @@ pub fn procedure_for_role<'i>(
     role: &RoleName,
 ) -> Option<&'i IndexEntry> {
     let domain = config.workflow_domain().ok()?;
-    index.snippets.iter().find(|entry| {
-        entry.taxonomy == "procedure"
-            && entry.domain == domain.as_str()
-            && entry.role.as_deref() == Some(role.as_str())
-    })
+    declared_in(index, domain.as_str(), role)
+}
+
+/// The procedure of `domain` declaring `role`. Dispatch launches it
+/// whether or not it is still pending.
+fn declared_in<'i>(
+    index: &'i GlobalIndex,
+    domain: &str,
+    role: &RoleName,
+) -> Option<&'i IndexEntry> {
+    index
+        .procedures_declaring(role)
+        .into_iter()
+        .find_map(|declared| {
+            let (RoleProcedure::Delivered(entry) | RoleProcedure::Pending(entry)) = declared;
+            (entry.domain == domain).then_some(entry)
+        })
 }
 
 /// A task failure the runner holds and reports: its occurrence's
@@ -615,5 +627,24 @@ fn notify_task_failures(cx: &DispatchContext<'_>, config: &Configuration, projec
         if let Err(err) = save_task_failure(cx.state, failure) {
             tracing::warn!(event = "task_failures_unwritable", error = %err);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "test fixtures")]
+    use super::*;
+
+    #[test]
+    fn dispatch_launches_the_flavors_procedure_for_a_role_even_while_it_is_pending() {
+        let index: GlobalIndex = serde_yaml_ng::from_str(
+            "schema_version: 2\nsnippets:\n\
+             - id: other/procedure/run\n  description: Another flavor's.\n  type: procedure\n  scope: global\n  domain: other\n  path: other/procedure/run.md\n  source_project: demo\n  role: task-runner\n\
+             - id: sdlc/procedure/run\n  description: The flavor's.\n  type: procedure\n  scope: global\n  domain: sdlc\n  path: sdlc/procedure/run.md\n  source_project: demo\n  role: task-runner\n  delivered_by: [run-it]\n",
+        )
+        .unwrap();
+        let role = RoleName::parse(TASK_RUNNER_ROLE).unwrap();
+        assert_eq!(declared_in(&index, "sdlc", &role), Some(&index.snippets[1]));
+        assert_eq!(declared_in(&index, "absent", &role), None);
     }
 }

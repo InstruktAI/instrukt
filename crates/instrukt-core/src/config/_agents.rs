@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 
 pub const SHIPPED_AGENTS: &str = include_str!("shipped/agents.yaml");
-const VERSION: u64 = 2;
+pub(super) const VERSION: u64 = 3;
 const DEPLOYMENT_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,7 +83,7 @@ impl Profile {
 }
 
 /// The role the runner gives a conversation session.
-pub const CONVERSATION_ROLE: &str = "conversation";
+pub const COMPANY_AGENT_ROLE: &str = "company-agent";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -266,30 +266,10 @@ impl Agents {
             .map(super::_agents_migrate::current)
             .transpose()?
             .flatten();
-        let prior: Option<Deployment> = match std::fs::read(&state) {
-            Ok(bytes) => Some(
-                serde_json::from_slice(&bytes)
-                    .map_err(|_| invalid("invalid defaults deployment record"))?,
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(source) => {
-                return Err(ConfigError::Read {
-                    path: state,
-                    source,
-                });
-            }
-        };
-        if prior
+        let prior = Deployment::load(&state)?;
+        let unedited = current
             .as_ref()
-            .is_some_and(|p| p.schema_version != DEPLOYMENT_VERSION)
-        {
-            return Err(invalid("unsupported defaults deployment schema"));
-        }
-        let unedited = current.as_ref().is_none_or(|b| {
-            prior.as_ref().is_some_and(|p| {
-                p.digest == digest(b) || p.pending.as_deref() == Some(digest(b).as_str())
-            })
-        });
+            .is_none_or(|b| prior.as_ref().is_some_and(|p| p.recognises(b)));
         if unedited {
             if current.as_deref() != Some(defaults.as_bytes()) {
                 let prepared = Deployment {
@@ -323,10 +303,10 @@ impl Agents {
             Ok(None)
         } else {
             if let Some(converted) = migrated {
-                atomic_write(&path, &converted)?;
+                atomic_write(&path, &converted.bytes)?;
                 tracing::info!(
                     event = "agents_shape_migrated",
-                    from_version = 1,
+                    from_version = converted.from,
                     to_version = VERSION
                 );
             }
@@ -361,7 +341,28 @@ impl Agents {
             source,
         })?;
         if let Some(converted) = super::_agents_migrate::current(&current)? {
-            atomic_write(&path, &converted)?;
+            // A deployed file left unedited stays recognisable through its
+            // conversion: its converted bytes are recorded as instrukt's own
+            // write, so the defaults upgrade still replaces it.
+            let state = home.agents_deployment_file();
+            if let Some(prior) = Deployment::load(&state)?
+                && prior.recognises(&current)
+            {
+                let carried = Deployment {
+                    pending: Some(hex::encode(Sha256::digest(&converted.bytes))),
+                    ..prior
+                };
+                atomic_write(
+                    &state,
+                    &serde_json::to_vec(&carried).map_err(|e| invalid(e.to_string()))?,
+                )?;
+            }
+            atomic_write(&path, &converted.bytes)?;
+            tracing::info!(
+                event = "agents_shape_migrated",
+                from_version = converted.from,
+                to_version = VERSION
+            );
         }
         Ok(())
     }
@@ -380,7 +381,10 @@ impl Agents {
         if home.is_inspection() {
             let path = home.agents_file();
             let existing = match std::fs::read(&path) {
-                Ok(bytes) => Some(super::_agents_migrate::current(&bytes)?.unwrap_or(bytes)),
+                Ok(bytes) => Some(
+                    super::_agents_migrate::current(&bytes)?
+                        .map_or(bytes, |converted| converted.bytes),
+                ),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(source) => return Err(ConfigError::Read { path, source }),
             };
@@ -437,10 +441,10 @@ impl Agents {
         self.roles
             .keys()
             .map(String::as_str)
-            // `conversation` is the runner-supplied role of conversation
-            // sessions, which have no procedure.
+            // `company-agent` is the role the runner gives conversation
+            // sessions, whatever procedure is published for it.
             .filter(|r| {
-                !matches!(*r, "default" | "event-handler" | CONVERSATION_ROLE)
+                !matches!(*r, "default" | "event-handler" | COMPANY_AGENT_ROLE)
                     && !installed.contains(r)
             })
             .collect()
@@ -519,6 +523,34 @@ struct Deployment {
     digest: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pending: Option<String>,
+}
+
+impl Deployment {
+    /// The defaults deployment record at `state`; `None` before the first.
+    fn load(state: &std::path::Path) -> Result<Option<Self>, ConfigError> {
+        let prior: Self = match std::fs::read(state) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|_| invalid("invalid defaults deployment record"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(ConfigError::Read {
+                    path: state.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        if prior.schema_version != DEPLOYMENT_VERSION {
+            return Err(invalid("unsupported defaults deployment schema"));
+        }
+        Ok(Some(prior))
+    }
+
+    /// Whether `bytes` are what instrukt itself last wrote: the deployed
+    /// defaults, or a write it recorded before making it.
+    fn recognises(&self, bytes: &[u8]) -> bool {
+        let found = hex::encode(Sha256::digest(bytes));
+        self.digest == found || self.pending.as_deref() == Some(found.as_str())
+    }
 }
 
 /// Runtime-neutral effort vocabulary; harness membership is checked before selection.
@@ -737,15 +769,27 @@ mod tests {
     use super::{Agents, ConfigError, SHIPPED_AGENTS};
     #[test]
     fn a_newer_schema_is_refused_before_interpreting_its_profile_shape() {
-        let newer = "schema_version: 3\nprofiles: {future: {kind: future-harness}}\n";
+        let newer = "schema_version: 4\nprofiles: {future: {kind: future-harness}}\n";
         assert!(matches!(
             Agents::parse(newer),
             Err(ConfigError::NewerSchema {
-                found: 3,
-                current: 2,
+                found: 4,
+                current: 3,
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn the_conversation_role_is_never_reported_undeclared_while_an_ordinary_role_is() {
+        let agents = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let installed: Vec<&str> = agents
+            .roles
+            .keys()
+            .map(String::as_str)
+            .filter(|role| *role != "builder" && *role != super::COMPANY_AGENT_ROLE)
+            .collect();
+        assert_eq!(agents.undeclared_roles(&installed), vec!["builder"]);
     }
 
     #[test]

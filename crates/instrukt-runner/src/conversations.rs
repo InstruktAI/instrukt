@@ -13,9 +13,10 @@
 //! until the connector accepted its post.
 use std::path::PathBuf;
 
-use instrukt_core::config::{CONVERSATION_ROLE, ConfigError, Configuration, SlackConnector};
+use instrukt_core::config::{COMPANY_AGENT_ROLE, ConfigError, Configuration, SlackConnector};
 use instrukt_core::home::Home;
-use instrukt_core::ids::{ProjectSlug, SessionRef};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
+use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,12 @@ pub enum ConversationError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Slack(#[from] crate::connectors::SlackError),
+    #[error(transparent)]
+    Index(#[from] instrukt_core::index::IndexError),
+    #[error(
+        "conversation: no published procedure declares the role `{role}`; a conversation starts once one does"
+    )]
+    NoProcedure { role: &'static str },
     #[error("conversation: {0}")]
     Refused(String),
 }
@@ -550,6 +557,8 @@ struct Message {
     content: Option<String>,
     /// A send to the runtime was begun; its acceptance may be unrecorded.
     attempted: bool,
+    /// The cause retained from its last failed delivery.
+    failure: Option<String>,
 }
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
@@ -625,7 +634,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) ORDER BY written_us, message")
+                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) ORDER BY written_us, message")
                 .map_err(state::sql(path))?;
             q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), Stage::Refused.as_str()], |r| {
                 Ok((
@@ -634,6 +643,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                     r.get::<_, Option<String>>(2)?,
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, bool>(4)?,
+                    r.get::<_, Option<String>>(5)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -642,7 +652,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
         })?
         .unwrap_or_default();
     rows.into_iter()
-        .map(|(message, stage, boundary, content, attempted)| {
+        .map(|(message, stage, boundary, content, attempted, failure)| {
             Ok(Message {
                 message,
                 stage: Stage::parse(&stage).ok_or_else(|| {
@@ -651,6 +661,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                 boundary,
                 content,
                 attempted,
+                failure,
             })
         })
         .collect()
@@ -707,13 +718,40 @@ fn framed(
     Ok((token, input))
 }
 
-/// The runner-authored opening assignment of a conversation session.
-fn assignment(home: &Home, c: &Conversation) -> Result<String, ConversationError> {
+/// Whether a failed delivery is logged. A message waiting for its procedure
+/// is logged once, when its cause starts or changes: each retry finds the
+/// same cause already retained with the message, which status shows. Every
+/// other failure is logged as it happens.
+fn reports(error: &ConversationError, retained: Option<&str>, cause: &str) -> bool {
+    !matches!(error, ConversationError::NoProcedure { .. }) || retained != Some(cause)
+}
+
+/// The procedure a conversation's session starts from: the delivered
+/// procedure declaring the role. A pending one, like none at all, leaves the
+/// conversation without one, and its first message waits.
+fn opening_procedure(
+    declared: Option<RoleProcedure<'_>>,
+) -> Result<&IndexEntry, ConversationError> {
+    match declared {
+        Some(RoleProcedure::Delivered(entry)) => Ok(entry),
+        Some(RoleProcedure::Pending(_)) | None => Err(ConversationError::NoProcedure {
+            role: COMPANY_AGENT_ROLE,
+        }),
+    }
+}
+
+/// The runner-authored opening assignment of a conversation session: the
+/// loader of its procedure, with the facts it is assigned.
+fn assignment(
+    home: &Home,
+    c: &Conversation,
+    procedure: &SnippetId,
+) -> Result<String, ConversationError> {
     let capabilities = instrukt_core::config::Agents::load(home)?
-        .capabilities(CONVERSATION_ROLE)?
+        .capabilities(COMPANY_AGENT_ROLE)?
         .describe();
     Ok(Control::Assignment.frame(&format!(
-        "instrukt conversation assignment\nCompany: {}\nConnector: {}\nConversation: {}\nRole: {CONVERSATION_ROLE}\nResolved role capabilities: {capabilities}\nYou answer people of this company who address you in this conversation. Each of their messages arrives as its own turn in a member envelope naming who wrote it, after a conversation context envelope holding what was said before as data.\nYour conversational output of a turn started by such a message is posted back to this conversation; nothing else you write is posted. Answer with `NOOP` to post nothing.",
+        "instrukt conversation assignment\nProcedure: {procedure}\nRole: {COMPANY_AGENT_ROLE}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\nConversation: {}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.\n",
         c.company, c.connector, c.conversation
     )))
 }
@@ -828,8 +866,10 @@ fn deliver_one(
             .to_string(),
         other => other.to_string(),
     });
-    if let Some(error) = &failure {
-        tracing::warn!(event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+    if let (Err(error), Some(cause)) = (&result, &failure)
+        && reports(error, next.failure.as_deref(), cause)
+    {
+        tracing::warn!(event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
     }
     set_message_failure(state, c, &next.message, failure.as_deref())?;
     result
@@ -848,13 +888,20 @@ fn start(
     let request = match &c.request {
         Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
         None => {
+            let index = GlobalIndex::load(home)?.unwrap_or_default();
+            let role = RoleName::parse(COMPANY_AGENT_ROLE)
+                .map_err(|e| ConversationError::Refused(e.to_string()))?;
+            let procedure =
+                opening_procedure(index.procedures_declaring(&role).into_iter().next())?
+                    .id
+                    .clone();
             let checkout: PathBuf = home.company_dir(&c.company);
             let company = Configuration::load_company(home, &c.company)?;
             let config = Configuration::load_global(home)?;
             let preferences = crate::agents::role_order(
                 &config,
                 None,
-                Some(CONVERSATION_ROLE),
+                Some(COMPANY_AGENT_ROLE),
                 company.profiles()?.as_deref(),
             )?;
             let selection = crate::agents::selections(&config, home, &preferences, now)?
@@ -875,7 +922,7 @@ fn start(
                     &c.semantic_key,
                 ),
                 key: c.semantic_key.clone(),
-                brief: format!("{}\n{input}", assignment(home, c)?),
+                brief: format!("{}\n{input}", assignment(home, c, &procedure)?),
                 worktree: None,
             };
             let position = opening_position(source)?;
@@ -1468,7 +1515,59 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionState, Stage, split};
+    use super::{
+        COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage, opening_procedure,
+        split,
+    };
+
+    /// An index holding the procedure declaring the conversation role,
+    /// pending its delivering todo when `pending`.
+    fn declared(pending: bool) -> instrukt_core::index::GlobalIndex {
+        let delivered_by = if pending {
+            "  delivered_by: [draft-it]\n"
+        } else {
+            ""
+        };
+        serde_yaml_ng::from_str(&format!(
+                "schema_version: 2\nsnippets:\n- id: general/procedure/company-assistance\n  description: Assist.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/company-assistance.md\n  source_project: demo\n  role: company-agent\n{delivered_by}"
+            ),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_conversation_starts_only_from_a_delivered_procedure_declaring_its_role() {
+        let delivered = declared(false);
+        let found = opening_procedure(
+            delivered
+                .procedures_declaring(&RoleName::parse(COMPANY_AGENT_ROLE).unwrap())
+                .into_iter()
+                .next(),
+        );
+        assert_eq!(found.unwrap(), &delivered.snippets[0]);
+        let pending = declared(true);
+        let refused = opening_procedure(
+            pending
+                .procedures_declaring(&RoleName::parse(COMPANY_AGENT_ROLE).unwrap())
+                .into_iter()
+                .next(),
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(ConversationError::NoProcedure {
+                    role: "company-agent"
+                })
+            ),
+            "{refused:?}"
+        );
+        assert!(matches!(
+            opening_procedure(None),
+            Err(ConversationError::NoProcedure {
+                role: "company-agent"
+            })
+        ));
+    }
 
     /// The character count of each part, and whether the parts together
     /// are the text unchanged.

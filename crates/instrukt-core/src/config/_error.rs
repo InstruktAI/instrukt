@@ -146,6 +146,13 @@ pub enum ConfigError {
     #[error("`{key}` {message}")]
     InvalidValue { key: String, message: String },
     #[error(
+        "agents.yaml holds both `roles.{retired}` and `roles.{current}`; remove one, then run instrukt again"
+    )]
+    AgentsRoleConflict {
+        retired: &'static str,
+        current: &'static str,
+    },
+    #[error(
         "the configuration changed since revision {expected} (current revision {current}); the patch was not applied — read it again"
     )]
     RevisionMismatch { expected: String, current: String },

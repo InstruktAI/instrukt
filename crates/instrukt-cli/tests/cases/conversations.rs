@@ -24,7 +24,7 @@ fn destinations(c: &Company) -> Vec<(String, Option<String>)> {
 fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // History is off, so the conversation relay is the stand-in's only
     // source reader while the runner runs.
-    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    let mut c = Company::without_procedure(common::TestEnv::new(), ", history: false", "", "");
     // The company starts its sessions on its own order of profiles.
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     patch_company(&c.env, COMPANY, &format!("profiles: [{profile}]"));
@@ -35,11 +35,27 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let gate = c.store.gate();
     c.run();
     let channel = "C1";
-    // The runner dies before the runtime accepted the question's opening.
-    c.runtime.flag("die-before-start", true);
+    // No published procedure declares the role conversations start under:
+    // the question waits, no session starts, and the cause names the role.
     let question = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
+    wait("the waiting question's cause", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|pending| !pending.failures.is_empty())
+    });
+    let waiting = c.status()["conversations"]["conversations"].clone();
+    insta::assert_snapshot!(
+        "no-procedure-status",
+        serde_json::to_string_pretty(&waiting).unwrap()
+    );
+    assert!(c.sessions().is_empty());
+    // Once the procedure is published, the runner starts the session and
+    // dies before the runtime accepted the question's opening.
+    c.runtime.flag("die-before-start", true);
+    c.publish_procedure();
     c.runner_ended();
     assert!(c.sessions().is_empty());
     // Restarted, the question stays pending with its cause: a start that
@@ -49,11 +65,8 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     wait("the working status on the thread", || {
         c.slack.status(channel, &question).as_deref() == Some(WORKING)
     });
-    wait("the pending question's cause", || {
-        c.conversations()
-            .conversations
-            .iter()
-            .any(|pending| !pending.failures.is_empty())
+    wait("the pending question's new cause", || {
+        c.status()["conversations"]["conversations"] != waiting
     });
     insta::assert_snapshot!(
         "unresolved-opening-status",
@@ -98,7 +111,9 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
     c.finish_turn(&session, 0, &reply);
     c.run();
-    // A plain agent in the company's home under the runner-supplied role.
+    // The session opens with its procedure's loader under the role, then the
+    // question; its recorded assignment is the role in the company's home.
+    insta::assert_snapshot!("opening-from-procedure", c.opening(&session));
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
     let caller = instrukt_core::ids::SessionRef::parse(&format!(
         "{}:{session}",
@@ -117,9 +132,8 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let assignment = resolved().unwrap();
     assert_eq!(
         assignment.role.as_str(),
-        instrukt_core::config::CONVERSATION_ROLE
+        instrukt_core::config::COMPANY_AGENT_ROLE
     );
-    assert_eq!(assignment.procedure, None);
     assert_eq!(assignment.company, Some(c.company()));
     wait("the answer's pieces", || c.slack.posts().len() >= 2);
     wait("nothing left to post", || {

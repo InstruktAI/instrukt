@@ -5,7 +5,7 @@ use common::TestEnv;
 use instrukt_core::config::{Agents, Tier};
 
 const CONFIG: &str = r#"
-schema_version: 2
+schema_version: 3
 default: {class: agent, can: [], order: [personal, work], tier: standard}
 roles:
   builder: {class: focused, can: [read], github_app: author, order: [work, personal], tier: strong}
@@ -158,7 +158,7 @@ fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), SHIPPED_AGENTS);
     let edited = format!("{prior}# user customization\n");
     std::fs::write(&file, &edited).unwrap();
-    std::fs::write(record, deployed.to_string()).unwrap();
+    std::fs::write(&record, deployed.to_string()).unwrap();
     let result = env
         .run(env.home(), ["config", "init", "--global"])
         .success();
@@ -169,7 +169,33 @@ fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
             "[TMP]"
         )
     );
-    assert_eq!(std::fs::read_to_string(file).unwrap(), edited);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
+    // The defaults a release with the version-two file shape deployed: left
+    // unedited, they still receive the new defaults through the shape's
+    // conversion, and the record names what was deployed.
+    let older = include_str!("../fixtures/agents-shipped-v2.yaml");
+    let older_record = serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(older.as_bytes()))});
+    std::fs::write(&file, older).unwrap();
+    std::fs::write(&record, older_record.to_string()).unwrap();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), SHIPPED_AGENTS);
+    let recorded: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert_eq!(
+        recorded,
+        serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(SHIPPED_AGENTS.as_bytes()))})
+    );
+    // Edited, the older file keeps its settings through the conversion: the
+    // edited profile as the agents configuration shows it afterwards.
+    let edited_older = older.replace("gpt-6.1-sol", "edited-strong-model");
+    std::fs::write(&file, &edited_older).unwrap();
+    std::fs::write(&record, older_record.to_string()).unwrap();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    let shown = env.run(env.home(), ["config", "show", "agents"]).success();
+    let shown: serde_json::Value = serde_json::from_slice(&shown.get_output().stdout).unwrap();
+    insta::assert_json_snapshot!("edited-older-defaults-kept", shown["profiles"]["codex"]);
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3
@@ -181,7 +207,7 @@ fn a_version_one_agents_file_is_inspected_in_memory_and_converted_on_the_next_wr
     let file = env.instrukt_home().join("agents.yaml");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let old = CONFIG
-        .replace("schema_version: 2", "schema_version: 1")
+        .replace("schema_version: 3", "schema_version: 1")
         .replace("effort: high", "reasoningEffort: high");
     std::fs::write(&file, &old).unwrap();
     let output = env.run(env.home(), ["config", "show", "agents"]).success();

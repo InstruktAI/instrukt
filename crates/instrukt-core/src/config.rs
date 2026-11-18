@@ -32,7 +32,7 @@ mod _webhooks;
 use std::path::Path;
 
 pub use _agents::{
-    AgentSelection, Agents, CONVERSATION_ROLE, Effort, HarnessKind, Profile, RoleSelection,
+    AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile, RoleSelection,
     SHIPPED_AGENTS,
 };
 

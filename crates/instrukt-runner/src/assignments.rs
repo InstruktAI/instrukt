@@ -78,8 +78,8 @@ fn standing_assignment(
     Ok(found)
 }
 
-/// A conversation session's assignment: the runner-supplied `conversation`
-/// role in its company's home, with no procedure.
+/// A conversation session's assignment: the `company-agent` role the runner
+/// gives it, in its company's home; the record names no procedure.
 fn conversation_assignment(
     home: &Home,
     caller: &SessionRef,
@@ -103,7 +103,7 @@ fn conversation_assignment(
         .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))?;
     Ok(Some(Assignment {
         worker: false,
-        role: RoleName::parse(instrukt_core::config::CONVERSATION_ROLE)
+        role: RoleName::parse(instrukt_core::config::COMPANY_AGENT_ROLE)
             .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))?,
         project: None,
         procedure: None,

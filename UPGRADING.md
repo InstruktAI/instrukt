@@ -274,6 +274,30 @@ Before declaring a server with sign-in:
 The Slack app needs no new permission: the sign-in link is posted to the
 person's direct messages with the bot's existing `chat:write`.
 
+### A company's agent starts from its procedure
+
+A conversation's session now starts from the published procedure that
+declares the role `company-agent`. instrukt ships no doctrine: the docs
+repository the computer adopted publishes that procedure (instrukt's own
+publishes it as `general/procedure/company-assistance`).
+
+On a computer that serves conversations, in this order:
+
+1. Bring the adopted docs repository to a commit that holds a delivered
+   procedure declaring `company-agent`, and let its sync publish it
+   (`instrukt sync` in that repository, or its hook when main moves).
+2. Replace the program, then run `instrukt install` so the runner restarts on
+   it.
+
+Until a delivered procedure declares the role, a conversation's first message
+waits: no session starts, nothing is replied, and `instrukt events status`
+names the missing role. Once one is published the message starts without
+being sent again. Sessions started earlier keep the opening they started with.
+
+The agents file converts by itself: its `roles.conversation` entry becomes
+`roles.company-agent` with its settings kept. A file holding both entries is
+refused, and left as it is, until one of them is removed.
+
 ### Protected secrets and owned files
 
 Existing development installations need machine-local secret setup before using
