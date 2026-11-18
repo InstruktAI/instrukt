@@ -45,11 +45,19 @@ default test commands run without a T3 release or provider.
 Each feature use case is realized by exactly one named test checking its
 complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 
-- This repository's pre-commit checks run fmt, clippy and test, in seconds
-  without services. These are project tooling, not quality hooks installed by
-  instrukt in adopting repositories.
-- GitHub CI runs fmt, clippy and test on Linux and macOS, exercising filesystem
-  case behavior, hooks and paths.
+- This repository's pre-commit check runs what the content of the commit
+  needs, in seconds and without services. `.pre-commit-config.yaml` assigns
+  each check the pattern of the files it applies to, and a check runs when the
+  commit changes a file its pattern matches: the document validation for
+  documents, shellcheck for shell scripts and hook files, fmt, clippy and the
+  colocated unit tests for Rust sources and manifests, and the configuration
+  validation for `instrukt.yaml`. No commit runs the functional tests. These
+  are project tooling, not quality hooks installed by instrukt in adopting
+  repositories.
+- GitHub CI runs that configuration over every file, and the whole test
+  suite, on every pull request, on Linux and macOS, exercising filesystem case
+  behavior, hooks and paths. `main` requires these checks, so a functional
+  test that fails stops a pull request, not a commit.
 - A version tag produces release binaries for macOS arm64 and Linux
   x86_64/arm64.
 - Parity against the corpus instrukt was extracted from is a one-off
