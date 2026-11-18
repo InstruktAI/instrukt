@@ -177,10 +177,10 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             deltas: 0,
         }
     }
-    /// T3's server descriptor as a named pipe this test serves, with the
-    /// content the descriptor had. Every read of T3's durable source opens
-    /// the descriptor first, so each source read becomes a point the test
-    /// sees, and can hold.
+    /// T3's server descriptor, served by the test with the content it had.
+    /// Every read of T3's durable source opens the descriptor first, so while
+    /// the gate is held each source read becomes a point the test sees, and
+    /// can hold.
     #[allow(dead_code, reason = "shared by the source-reading scenarios")]
     pub fn gate(&self) -> Gate {
         let state = self.file.parent().unwrap();
@@ -323,7 +323,7 @@ fn delta(db: &Connection, text: &str, streaming: bool) {
 
 #[derive(Default)]
 struct Gating {
-    /// Source reads served so far.
+    /// Held source reads served so far.
     served: usize,
     /// Whether a source read is waiting at the gate.
     waiting: bool,
@@ -331,26 +331,35 @@ struct Gating {
     held: bool,
     /// Reads admitted while the gate is held.
     admitted: usize,
+    /// The pipe the server is opening for the next held read, while it waits
+    /// for a reader of it.
+    opening: Option<PathBuf>,
     stop: bool,
 }
 
-/// See [`T3Store::gate`]. Open, it serves every read at once; held, each
-/// read waits until admitted, so the process reading stands still at the
-/// start of a source read with everything before it done. Each read is
-/// served through a named pipe of its own, which the descriptor points to
-/// until that read arrives, so a reader still closing the previous pipe is
-/// never taken for the next read. The pipes and the link that points to the
-/// current one live in a directory of their own, so T3's state directory,
-/// which the source watches, sees no change per read. Dropping it restores
-/// the descriptor as it was.
+/// See [`T3Store::gate`]. Open, the descriptor is a regular file and every
+/// read passes at once. Held, the descriptor is a link to a named pipe of the
+/// next read's own, so the process reading stands still at the start of a
+/// source read with everything before it done, until it is admitted. The
+/// pipes and the link they are reached through live in a directory of their
+/// own, so T3's state directory, which the source watches, changes only when
+/// the gate is held or opened. Dropping it restores the descriptor as it was.
+///
+/// A held read ends on its pipe's end of file, and macOS can leave a reader
+/// asleep in `read` when the pipe's last writer closes. After each held read
+/// the server therefore opens the pipe for writing and closes it again for as
+/// long as a reader still holds the pipe: each close signals end of file once
+/// more, and the read counts as served only once no reader holds the pipe.
 pub struct Gate {
     descriptor: PathBuf,
     pipes: PathBuf,
     content: Option<Vec<u8>>,
+    /// What every read of the descriptor receives.
+    served: Vec<u8>,
     shared: std::sync::Arc<(std::sync::Mutex<Gating>, std::sync::Condvar)>,
     server: Option<std::thread::JoinHandle<()>>,
 }
-/// The `n`th read's named pipe.
+/// The `n`th held read's named pipe.
 fn make_pipe(pipes: &std::path::Path, n: usize) -> PathBuf {
     let pipe = pipes.join(format!("pipe-{n}"));
     nix::unistd::mkfifo(
@@ -366,37 +375,70 @@ fn point(pipes: &std::path::Path, pipe: &std::path::Path) {
     std::os::unix::fs::symlink(pipe, &link).unwrap();
     std::fs::rename(&link, pipes.join("current")).unwrap();
 }
+/// The descriptor becomes a link through the current link, in one rename.
+fn link_descriptor(pipes: &std::path::Path, descriptor: &std::path::Path) {
+    let next = pipes.join("descriptor-link");
+    std::os::unix::fs::symlink(pipes.join("current"), &next).unwrap();
+    std::fs::rename(&next, descriptor).unwrap();
+}
+/// The descriptor becomes a regular file holding `content`, in one rename.
+fn file_descriptor(pipes: &std::path::Path, descriptor: &std::path::Path, content: &[u8]) {
+    let next = pipes.join("descriptor-file");
+    std::fs::write(&next, content).unwrap();
+    std::fs::rename(&next, descriptor).unwrap();
+}
+/// Whether a reader still holds `pipe`. Opening it for writing without
+/// waiting succeeds only then, and closing that writer signals end of file to
+/// the reader once more.
+fn reader_holds(pipe: &std::path::Path) -> bool {
+    let opened = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+        .open(pipe);
+    if opened.as_ref().err().and_then(std::io::Error::raw_os_error)
+        == Some(nix::errno::Errno::ENXIO as i32)
+    {
+        return false;
+    }
+    drop(opened.unwrap());
+    true
+}
 #[allow(dead_code, reason = "shared by the source-reading scenarios")]
 impl Gate {
     fn serve(descriptor: PathBuf, pipes: PathBuf) -> Self {
         let content = std::fs::read(&descriptor).ok();
-        if content.is_some() {
-            std::fs::remove_file(&descriptor).unwrap();
-        }
         let served = content.clone().unwrap_or_else(|| b"{}".to_vec());
+        std::fs::create_dir_all(&pipes).unwrap();
+        file_descriptor(&pipes, &descriptor, &served);
         let shared = std::sync::Arc::new((
             std::sync::Mutex::new(Gating::default()),
             std::sync::Condvar::new(),
         ));
         let serving = shared.clone();
-        std::fs::create_dir_all(&pipes).unwrap();
         let path = pipes.clone();
+        let bytes = served.clone();
         let mut pipe = make_pipe(&path, 0);
         point(&path, &pipe);
-        std::os::unix::fs::symlink(path.join("current"), &descriptor).unwrap();
-        let mut next = make_pipe(&path, 1);
         let server = std::thread::spawn(move || {
             let (lock, changed) = &*serving;
-            for n in 2.. {
-                if lock.lock().unwrap().stop {
-                    return;
+            for n in 1.. {
+                {
+                    let mut gating = lock.lock().unwrap();
+                    while !gating.held && !gating.stop {
+                        gating = changed.wait(gating).unwrap();
+                    }
+                    if gating.stop {
+                        return;
+                    }
+                    gating.opening = Some(pipe.clone());
                 }
                 // Blocks until a reader opens this read's pipe.
-                let mut reader = std::fs::OpenOptions::new().write(true).open(&pipe).unwrap();
+                let mut writer = std::fs::OpenOptions::new().write(true).open(&pipe).unwrap();
                 // Later readers wait at the next read's pipe.
+                let next = make_pipe(&path, n);
                 point(&path, &next);
-                let current = std::mem::replace(&mut pipe, next.clone());
                 let mut gating = lock.lock().unwrap();
+                gating.opening = None;
                 gating.waiting = true;
                 changed.notify_all();
                 while gating.held && gating.admitted == 0 && !gating.stop {
@@ -405,28 +447,27 @@ impl Gate {
                 if gating.admitted > 0 {
                     gating.admitted -= 1;
                 }
-                gating.waiting = false;
-                gating.served += 1;
-                let stop = gating.stop;
-                changed.notify_all();
                 drop(gating);
                 // A reader that ended while it waited is no longer there.
-                let _ = std::io::Write::write_all(&mut reader, &served);
-                // Gone before its writer closes, the pipe is never opened
-                // again by a reader no writer would serve.
-                std::fs::remove_file(&current).unwrap();
-                drop(reader);
-                if stop {
-                    let _ = std::fs::remove_file(&pipe);
-                    return;
+                let _ = std::io::Write::write_all(&mut writer, &bytes);
+                drop(writer);
+                while reader_holds(&pipe) {
+                    std::thread::yield_now();
                 }
-                next = make_pipe(&path, n);
+                std::fs::remove_file(&pipe).unwrap();
+                let mut gating = lock.lock().unwrap();
+                gating.waiting = false;
+                gating.served += 1;
+                changed.notify_all();
+                drop(gating);
+                pipe = next;
             }
         });
         Self {
             descriptor,
             pipes,
             content,
+            served,
             shared,
             server: Some(server),
         }
@@ -441,11 +482,30 @@ impl Gate {
         drop(gating);
         assert!(!timeout.timed_out(), "timed out waiting for {what}");
     }
+    /// A server waiting for a reader at a pipe nobody reads any more is
+    /// given a reader of its own, held until the server has opened the pipe.
+    fn release(changed: &std::sync::Condvar, mut gating: std::sync::MutexGuard<'_, Gating>) {
+        let Some(pipe) = gating.opening.clone() else {
+            return;
+        };
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+            .open(&pipe);
+        while gating.opening.is_some() {
+            gating = changed
+                .wait(gating)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        drop(gating);
+        drop(reader);
+    }
     /// Later source reads wait at the gate.
     pub fn hold(&self) {
         let (lock, changed) = &*self.shared;
         lock.lock().unwrap().held = true;
         changed.notify_all();
+        link_descriptor(&self.pipes, &self.descriptor);
     }
     /// Waits until a source read stands at the held gate.
     pub fn held(&self) {
@@ -453,7 +513,8 @@ impl Gate {
             gating.held && gating.waiting
         });
     }
-    /// Lets the source read standing at the held gate through.
+    /// Lets the source read standing at the held gate through, and waits
+    /// until that read has ended.
     pub fn admit(&self) {
         self.held();
         let served = {
@@ -465,11 +526,15 @@ impl Gate {
         };
         self.until("the admitted source read", |gating| gating.served > served);
     }
-    /// Every source read passes at once again.
+    /// Every source read passes at once again: later reads find the
+    /// descriptor a regular file.
     pub fn open(&self) {
+        file_descriptor(&self.pipes, &self.descriptor, &self.served);
         let (lock, changed) = &*self.shared;
-        lock.lock().unwrap().held = false;
+        let mut gating = lock.lock().unwrap();
+        gating.held = false;
         changed.notify_all();
+        Self::release(changed, gating);
     }
 }
 impl Drop for Gate {
@@ -482,16 +547,11 @@ impl Drop for Gate {
             gating.stop = true;
             gating.held = false;
             changed.notify_all();
+            Self::release(changed, gating);
         }
-        // A reader of its own releases a server waiting for one.
-        let release = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
-            .open(&self.descriptor);
         if let Some(server) = self.server.take() {
             let _ = server.join();
         }
-        drop(release);
         let _ = std::fs::remove_file(&self.descriptor);
         let _ = std::fs::remove_dir_all(&self.pipes);
         if let Some(content) = &self.content {
