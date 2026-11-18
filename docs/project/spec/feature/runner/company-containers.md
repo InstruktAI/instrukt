@@ -160,9 +160,8 @@ environment).
 ### Backup and restore
 
 - Every night the operator's home `~/.instrukt` on the host, which holds every
-  company's folder, is archived and uploaded to S3-compatible storage as one
-  timestamped archive. The operator's hosts use S3-compatible storage at
-  DigitalOcean, the same kind of backup location itsUP's backup uses. The last
+  company's folder, is archived and uploaded as one timestamped archive to
+  S3-compatible storage the operator sets through configuration. The last
   ten archives are kept; older ones are removed. No separate snapshot exists
   (`sdlc/policy/state-storage`: state whose loss forces more than cheap local
   recomputation is persisted and survives restarts).
