@@ -219,13 +219,15 @@ When it is not, the call is refused naming the server and the missing
 
 #### When a sign-in starts
 
-A call with a speaker to a server declared with `speaker_login: sign-in`, for
-which the speaker has no usable login, starts a sign-in. The call finds the
-authorization server and the registration (see Discovery and Registrations),
-makes the link and, in one transaction, records a pending sign-in in the state
-database with the link, and itself as waiting on it. A company, person and
-server have at most one pending sign-in, open or being exchanged; a call that
-finds one records itself as waiting on that one, and no second link is made.
+A `call` or `list-tools` with a speaker to a server declared with
+`speaker_login: sign-in`, for which the speaker has no usable login, starts a
+sign-in. `list-tools` waits and ends as a call does: what this section says of
+a call holds for both. The call finds the authorization server and the
+registration (see Discovery and Registrations), makes the link and, in one
+transaction, records a pending sign-in in the state database with the link,
+and itself as waiting on it. A company, person and server have at most one
+pending sign-in, open or being exchanged; a call that finds one records itself
+as waiting on that one, and no second link is made.
 
 The runner sends the link to the speaker as a direct message through the
 connector the turn came from
