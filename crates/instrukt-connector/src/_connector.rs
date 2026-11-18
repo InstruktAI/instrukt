@@ -1,0 +1,64 @@
+//! The operations of a channel provider and of one company's connector, and
+//! the host's side they call back into.
+use crate::_declaration::{Declaration, Declared};
+use crate::_values::{Admission, Captured, ConnectorError, Incoming, Limits, Place};
+
+/// The host's side of [`Connector::listen`].
+pub trait Inbox: Sync {
+    /// Retain an addressed message; returns once it is durably retained, so
+    /// the connector acknowledges its provider only afterwards.
+    fn retain(&self, incoming: Incoming) -> Result<(), ConnectorError>;
+    /// The connection is up; an earlier unretained cause no longer holds.
+    fn connected(&self);
+    /// A message could not be retained and awaits the provider's retry.
+    fn unretained(&self, cause: &str);
+}
+
+/// One company's channel.
+pub trait Connector: Send + Sync {
+    /// What this channel allows.
+    fn limits(&self) -> Limits;
+    /// Hold the connection until it drops or `quit` says so, handing each
+    /// addressed message to `inbox`. A kind whose messages are delivered to
+    /// instrukt rather than received over a connection it holds returns at
+    /// once.
+    fn listen(&self, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), ConnectorError>;
+    /// Whether `sender`, a provider identity, is one of the company's own.
+    fn admit(&self, sender: &str) -> Admission;
+    /// The addressed message `message` of `conversation` as the agent reads
+    /// it, with what accompanies it: since `previous`, the conversation's
+    /// previous addressed message, or from the conversation's start.
+    fn capture(
+        &self,
+        conversation: &str,
+        message: &str,
+        previous: Option<&str>,
+        text: &str,
+    ) -> Result<Captured, ConnectorError>;
+    /// Post one part of an answer to `conversation`.
+    fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError>;
+    /// Post the connector's fixed reply to someone who is not answered.
+    fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
+    /// Where the working indicator for `message` of `conversation` sits.
+    fn place(&self, conversation: &str, message: &str) -> Place;
+    /// Set or clear the working indicator at `place`; best effort.
+    fn working(&self, place: &Place, on: bool) -> Result<(), ConnectorError>;
+}
+
+/// Resolves a `${NAME}` reference against the declaring company's secrets.
+pub trait SecretResolver: Send + Sync {
+    fn resolve(&self, reference: &str) -> Result<String, ConnectorError>;
+}
+
+/// One channel provider.
+pub trait Kind: Send + Sync {
+    /// The fields its `connectors.<kind>` entry takes.
+    fn declaration(&self) -> &'static Declaration;
+    /// One company's connector, from what that company declared.
+    fn open(
+        &self,
+        company: &str,
+        declared: &Declared,
+        secrets: &dyn SecretResolver,
+    ) -> Result<Box<dyn Connector>, ConnectorError>;
+}
