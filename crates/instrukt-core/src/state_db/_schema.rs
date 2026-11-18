@@ -36,7 +36,9 @@ pub(super) const MIGRATIONS: &[Migration] = &[
 /// extraction and the query responder. One row per worker, written by that
 /// worker when its state changes; a worker without a failure has no row.
 /// And the run loop's last skipped wake: its time and cause, one row at most,
-/// removed by the next wake that is not skipped.
+/// removed by the next wake that is not skipped. And what the run loop did
+/// with the configuration it last admitted: when, and whether it replaced
+/// the generation in force or kept it.
 const V19: &str = r#"
 CREATE TABLE IF NOT EXISTS runner_workers (
     worker  TEXT PRIMARY KEY,
@@ -47,6 +49,11 @@ CREATE TABLE IF NOT EXISTS runner_skipped_wake (
     id    INTEGER PRIMARY KEY CHECK (id = 1),
     at    TEXT NOT NULL,
     cause TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runner_admission (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    at      TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('replaced', 'kept'))
 );
 "#;
 

@@ -636,6 +636,69 @@ pub fn ticks_status(
 }
 /// Read retained transport/activation facts without enabling events or creating groups.
 pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
+    use instrukt_core::state_db::rusqlite::OptionalExtension as _;
+    let state = crate::state::RunnerState::new(request.home);
+    // What the runner keeps in its state is reported whatever the files say
+    // now: an invalid machine layer must not hide why the runner holds on.
+    let failures=state.read(|conn,path| {
+        let mut stmt=conn.prepare("SELECT event_id, state, failure FROM procedure_activations WHERE failure IS NOT NULL").map_err(crate::state::sql(path))?;
+        let rows=stmt.query_map([],|row| Ok(serde_json::json!({"id":row.get::<_,String>(0)?,"state":row.get::<_,String>(1)?,"failure":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
+    })?.unwrap_or_default();
+    // This computer's own machine ID, as it reads it, for comparison with the
+    // other computers; reading creates no ID.
+    let computer = instrukt_core::machine::existing_machine_id(request.home)
+        .map_err(|e| inspection_error("machine ID", e))?
+        .map(|id| id.as_str().to_owned());
+    // The history workers' current failures, while they last.
+    let workers = state.read(|conn, path| {
+        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
+        let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
+    })?.unwrap_or_default();
+    // The run loop's last skipped wake, until a wake is not skipped.
+    let skipped_wake = state.read(|conn, path| {
+        conn.query_row("SELECT at,cause FROM runner_skipped_wake WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"cause":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))
+    })?.flatten();
+    // What the running runner last did with the configuration it admitted:
+    // replaced its generation, or kept the one in force.
+    let runner = state.read(|conn, path| {
+        conn.query_row("SELECT at,outcome FROM runner_admission WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"outcome":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))
+    })?.flatten();
+    let links = crate::links::status(request.home)
+        .map_err(|e| inspection_error("conversation links", e))?;
+    let conversations = crate::conversations::status(request.home)
+        .map_err(|e| inspection_error("conversations", e))?;
+    // What the files admit now: each project's admitted modules, the findings
+    // of what is left out, or why no generation can be admitted at all.
+    let candidate = instrukt_core::config::Admitted::load(request.home);
+    let admission = match &candidate {
+        Ok(candidate) => serde_json::json!({
+            "error": null,
+            "runner": runner,
+            "projects": candidate.generation.projects().iter().map(|project| serde_json::json!({
+                "project": project.slug.as_str(),
+                "todos": project.todos,
+                "events": project.events,
+                "history": project.history,
+            })).collect::<Vec<_>>(),
+            "findings": candidate.findings.iter().map(|finding| serde_json::json!({
+                "document": finding.document,
+                "key": finding.key,
+                "message": finding.message,
+            })).collect::<Vec<_>>(),
+        }),
+        Err(error) => {
+            serde_json::json!({"error": error.to_string(), "runner": runner, "projects": [], "findings": []})
+        }
+    };
+    if candidate.is_err() {
+        // Nothing read from the configuration can be shown: what depends on
+        // it is absent, and the admission error says why.
+        return Ok(
+            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"links":links,"conversations":conversations,"runner_service":null}),
+        );
+    }
     let mut report = Report::default();
     let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
@@ -651,61 +714,14 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         ..request.clone()
     })?
     .runner_service;
-    let configured = Configuration::load_global(request.home)?
-        .get(None, request.env)?
-        .get("redis")
-        .is_some();
+    let global = Configuration::load_global(request.home)?.get(None, request.env)?;
+    let configured = global.get("redis").is_some();
     let redis = if demand.events.is_empty() && !configured {
         vec![]
     } else {
         _redis::inspect(request, &mut report).map_err(|e| inspection_error("Redis", e))?
     };
-    let state = crate::state::RunnerState::new(request.home);
-    let failures=state.read(|conn,path| {
-        let mut stmt=conn.prepare("SELECT event_id, state, failure FROM procedure_activations WHERE failure IS NOT NULL").map_err(crate::state::sql(path))?;
-        let rows=stmt.query_map([],|row| Ok(serde_json::json!({"id":row.get::<_,String>(0)?,"state":row.get::<_,String>(1)?,"failure":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
-        rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
-    })?.unwrap_or_default();
-    // This computer's own machine ID and its own two ingress settings, as it
-    // reads them, for comparison with the other computers; reading creates
-    // no ID.
-    let computer = instrukt_core::machine::existing_machine_id(request.home)
-        .map_err(|e| inspection_error("machine ID", e))?
-        .map(|id| id.as_str().to_owned());
-    // What the runner's next wake admits: each project's admitted modules,
-    // the findings of what it leaves out, or why no generation can be
-    // admitted at all.
-    let admission = match instrukt_core::config::Admitted::load(request.home) {
-        Ok(candidate) => serde_json::json!({
-            "error": null,
-            "projects": candidate.generation.projects().iter().map(|project| serde_json::json!({
-                "project": project.slug.as_str(),
-                "todos": project.todos,
-                "events": project.events,
-                "history": project.history,
-            })).collect::<Vec<_>>(),
-            "findings": candidate.findings.iter().map(|finding| serde_json::json!({
-                "document": finding.document,
-                "key": finding.key,
-                "message": finding.message,
-            })).collect::<Vec<_>>(),
-        }),
-        Err(error) => {
-            serde_json::json!({"error": error.to_string(), "projects": [], "findings": []})
-        }
-    };
-    // The history workers' current failures, while they last.
-    let workers = state.read(|conn, path| {
-        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
-        let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
-    })?.unwrap_or_default();
-    // The run loop's last skipped wake, until a wake is not skipped.
-    use instrukt_core::state_db::rusqlite::OptionalExtension as _;
-    let skipped_wake = state.read(|conn, path| {
-        conn.query_row("SELECT at,cause FROM runner_skipped_wake WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"cause":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))
-    })?.flatten();
-    let global = Configuration::load_global(request.home)?.get(None, request.env)?;
+    // This computer's own two ingress settings, as it reads them.
     let setting = |key: &str| {
         global
             .get("ingress")
@@ -714,7 +730,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             .map(str::to_owned)
     };
     Ok(
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"links":crate::links::status(request.home).map_err(|e|inspection_error("conversation links",e))?,"conversations":crate::conversations::status(request.home).map_err(|e|inspection_error("conversations",e))?,"runner_service":runner_service}),
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"links":links,"conversations":conversations,"runner_service":runner_service}),
     )
 }
 

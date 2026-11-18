@@ -6,13 +6,22 @@
 //! current generation for every consumer at once, and an invalid one leaves
 //! the current generation in force while its findings are reported. A hand
 //! edit made while the runner runs is therefore used whole or not at all.
+//!
+//! Each document is read once per generation: what is validated is what is
+//! admitted. A runner serves its current generation ([`serve`]): in its
+//! process the configuration and profile loaders answer the admitted values
+//! instead of the files, so no part of it reads them on its own.
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use serde_yaml_ng::Value;
+
 use super::_error::{ConfigError, Finding, FindingKind};
-use super::_layer::{Layer, read_usable};
+use super::_layer::{Layer, inspected, read};
 use super::_module::Module;
+use super::_secrets::SecretSnapshot;
+use super::_validate::{Given, findings_given};
 use super::{Agents, Configuration, SecretSource, SlackConnector};
 use crate::home::Home;
 use crate::ids::ProjectSlug;
@@ -32,9 +41,13 @@ pub enum AdmissionError {
 #[derive(Debug, Clone)]
 pub struct Admitted {
     global: Configuration,
+    /// The machine layer as admitted, from which project layers combine.
+    global_layer: Option<Value>,
     agents: Arc<Agents>,
     companies: Vec<AdmittedCompany>,
     projects: Vec<AdmittedProject>,
+    /// Some project is published here, admitted or not.
+    published: bool,
 }
 
 /// A company home admitted with its generation.
@@ -91,38 +104,93 @@ pub struct Candidate {
     pub generation: Admitted,
     /// Why a company, a project or a project's events were not admitted.
     pub findings: Vec<Finding>,
-    /// Every company home was admitted. Only a complete candidate replaces a
-    /// running generation; a project's own findings never block one.
+    /// Every company home and every published project's layer was admitted.
+    /// Only a complete candidate replaces a running generation; a finding
+    /// that withholds a module of a project never blocks one.
     pub complete: bool,
 }
 
 impl Admitted {
-    /// Builds a generation from the files. An invalid machine layer or
-    /// `agents.yaml` refuses it: nothing can run on them. A company home or a
-    /// project that does not validate is left out with its findings.
+    /// Builds a generation from the files, reading each once. An invalid
+    /// machine layer or `agents.yaml` refuses it: nothing can run on them. A
+    /// company home that does not validate, or a project whose layer cannot
+    /// be read, is left out with its findings and makes the candidate
+    /// incomplete; a finding against a project's module withholds that module.
     pub fn load(home: &Home) -> Result<Candidate, AdmissionError> {
-        let global_layer = Layer::Global;
-        let global_value = read_usable(home, &global_layer)?;
-        if let Some(value) = &global_value {
-            let found = super::_validate::findings_for(
-                home,
-                &global_layer,
-                &global_layer.path(home),
-                value,
-            )?;
+        // Admission reads and never writes: older documents are converted in
+        // memory, and the profiles are the shipped ones when there is no file.
+        let global_path = home.global_config();
+        let raw_global = read(&global_path)?.map(|doc| doc.value);
+        let global_layer = raw_global
+            .clone()
+            .map(|raw| inspected(home, &Layer::Global, &global_path, raw))
+            .transpose()?;
+        let agents_path = home.agents_file();
+        let agents_bytes = match std::fs::read(&agents_path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(ConfigError::Read {
+                    path: agents_path,
+                    source,
+                }
+                .into());
+            }
+        };
+        let agents = Arc::new(Agents::from_documents(
+            home,
+            agents_bytes,
+            raw_global.as_ref(),
+        )?);
+        let records: Vec<PublishedRecord> = PublishedRecord::load_all(home)?;
+        let published = !records.is_empty();
+        let mut layers = Vec::new();
+        for record in &records {
+            if !record.checkout.is_dir() {
+                tracing::warn!(event = "project_checkout_missing", project = %record.project, checkout = %record.checkout.display());
+                continue;
+            }
+            let layer = Layer::Project(record.checkout.clone());
+            let document = record.checkout.join(super::CONFIG_FILE_NAME);
+            let value = read(&document)
+                .and_then(|doc| {
+                    doc.map(|doc| inspected(home, &layer, &document, doc.value))
+                        .transpose()
+                })
+                .map_err(|error| unreadable(document.clone(), &error));
+            layers.push((record, value));
+        }
+        let read_layers: Vec<(PathBuf, Option<Value>)> = layers
+            .iter()
+            .filter_map(|(record, value)| {
+                value
+                    .as_ref()
+                    .ok()
+                    .map(|value| (record.checkout.clone(), value.clone()))
+            })
+            .collect();
+        let given = Given {
+            global: Some(global_layer.as_ref()),
+            agents: Some(&agents),
+            projects: Some(&read_layers),
+            secrets: None,
+        };
+        if let Some(value) = &global_layer {
+            let found = findings_given(home, &Layer::Global, &global_path, value, given)?;
             if !found.is_empty() {
                 return Err(ConfigError::Invalid(super::Findings(found)).into());
             }
         }
-        // Admission reads and never writes: the profiles as they are, or the
-        // shipped ones when there is no file, without deploying them.
-        let agents = Arc::new(Agents::load(&home.for_inspection())?);
-        let global = Configuration::load_global(home)?.pinned(&agents);
+        let global = Configuration::from_layers(home, global_layer.clone(), None)?.pinned(&agents);
         let mut findings = Vec::new();
         let mut complete = true;
         let mut companies = Vec::new();
-        for (name, loaded) in super::company_homes(home)? {
-            match admit_company(home, &name, loaded, &agents) {
+        for (name, unreadable_folder) in super::company_folders(home)? {
+            let admitted = match unreadable_folder {
+                Some(error) => Err(vec![unreadable(home.company_dir(&name), &error)]),
+                None => admit_company(home, &name, &agents, given),
+            };
+            match admitted {
                 Ok(Some(company)) => companies.push(company),
                 Ok(None) => {}
                 Err(found) => {
@@ -132,29 +200,50 @@ impl Admitted {
             }
         }
         let mut projects = Vec::new();
-        for record in PublishedRecord::load_all(home)? {
-            if !record.checkout.is_dir() {
-                tracing::warn!(event = "project_checkout_missing", project = %record.project, checkout = %record.checkout.display());
-                continue;
-            }
-            match admit_project(home, &record, &agents) {
+        for (record, value) in layers {
+            match value.and_then(|value| admit_project(home, record, value, &agents, given)) {
                 Ok((project, found)) => {
                     findings.extend(found);
                     projects.push(project);
                 }
-                Err(finding) => findings.push(finding),
+                Err(finding) => {
+                    complete = false;
+                    findings.push(finding);
+                }
             }
         }
         Ok(Candidate {
             generation: Self {
                 global,
+                global_layer,
                 agents,
                 companies,
                 projects,
+                published,
             },
             findings,
             complete,
         })
+    }
+
+    /// The machine layer as admitted, before any project layer combines
+    /// with it.
+    pub(super) fn global_layer(&self) -> Option<&Value> {
+        self.global_layer.as_ref()
+    }
+
+    /// The admitted configuration for a caller in the repository at
+    /// `repo_root`: the machine layer for `None`, a published project's for
+    /// its checkout, none for any other repository.
+    pub(super) fn layer(&self, repo_root: Option<&std::path::Path>) -> Option<&Configuration> {
+        match repo_root {
+            None => Some(&self.global),
+            Some(root) => self
+                .projects
+                .iter()
+                .find(|project| project.checkout == root)
+                .map(|project| &project.config),
+        }
     }
 
     /// The machine layer.
@@ -188,9 +277,10 @@ impl Admitted {
     }
 
     /// Whether history extraction is on: the machine's switch while no
-    /// project is published here, otherwise any admitted project's.
+    /// project is published here, otherwise any admitted project's; a
+    /// published project not admitted for history enables nothing.
     pub fn history_enabled(&self) -> Result<bool, ConfigError> {
-        if self.projects.is_empty() {
+        if !self.published {
             return self.global.module_enabled(Module::History);
         }
         Ok(self.projects.iter().any(|project| project.history))
@@ -208,38 +298,47 @@ impl Admitted {
     }
 }
 
-/// The company home `name` as admitted, `None` when its folder is not a
-/// company, or its findings.
+/// The company home `name` as admitted, `None` when its folder holds no
+/// document, or its findings. Its document and its secrets file are each
+/// read once: what is judged is what is admitted.
 fn admit_company(
     home: &Home,
     name: &ProjectSlug,
-    loaded: Result<Configuration, ConfigError>,
     agents: &Arc<Agents>,
+    given: Given<'_>,
 ) -> Result<Option<AdmittedCompany>, Vec<Finding>> {
     let layer = Layer::Company(name.clone());
     let document = layer.path(home);
-    // The document is judged whenever it can be read, so every finding it
-    // has is reported together, the secrets it references among them.
-    let value = match read_usable(home, &layer) {
-        Ok(Some(value)) => value,
-        Ok(None) => return Ok(None),
-        Err(error) => return Err(vec![unreadable(document, &error)]),
+    let value = read(&document)
+        .and_then(|doc| {
+            doc.map(|doc| inspected(home, &layer, &document, doc.value))
+                .transpose()
+        })
+        .map_err(|error| vec![unreadable(document.clone(), &error)])?;
+    let Some(value) = value else {
+        return Ok(None);
     };
-    let found = super::_validate::findings_for(home, &layer, &document, &value)
+    let secrets = SecretSnapshot::read(home, &SecretSource::Company(name.clone()));
+    let given = Given {
+        secrets: Some(&secrets),
+        ..given
+    };
+    // Every finding the document has is reported together, the secrets it
+    // references among them.
+    let found = findings_given(home, &layer, &document, &value, given)
         .map_err(|error| vec![unreadable(document.clone(), &error)])?;
     if !found.is_empty() {
         return Err(found);
     }
-    let config = match loaded {
-        Ok(config) => config.pinned(agents),
-        Err(ConfigError::NoLayer { .. }) => return Ok(None),
-        Err(error) => return Err(vec![unreadable(document, &error)]),
-    };
+    let config = Configuration::company_from_value(home, name, &value)
+        .map_err(|error| vec![unreadable(document.clone(), &error)])?
+        .pinned(agents);
     let slack = match config.slack_connector() {
         Ok(Some(connector)) => {
-            let source = SecretSource::Company(name.clone());
-            let resolve = |reference: &str| super::resolve_secret_from(home, &source, reference);
-            match (resolve(&connector.app_token), resolve(&connector.bot_token)) {
+            match (
+                secrets.resolve(&connector.app_token),
+                secrets.resolve(&connector.bot_token),
+            ) {
                 (Ok(app_token), Ok(bot_token)) => Some(AdmittedSlack {
                     connector,
                     app_token,
@@ -260,18 +359,31 @@ fn admit_company(
     }))
 }
 
-/// The published project of `record` as admitted, with the findings that
-/// left something out of it, or why it is not admitted at all.
+/// The published project of `record`, whose layer read `value` (`None`:
+/// it has none), as admitted with the findings that withhold a module of
+/// it, or why it is not admitted at all.
 fn admit_project(
     home: &Home,
     record: &PublishedRecord,
+    value: Option<Value>,
     agents: &Arc<Agents>,
+    given: Given<'_>,
 ) -> Result<(AdmittedProject, Vec<Finding>), Finding> {
     let layer = Layer::Project(record.checkout.clone());
     let document = record.checkout.join(super::CONFIG_FILE_NAME);
-    let config = Configuration::load(home, Some(&record.checkout))
-        .map_err(|error| unreadable(document.clone(), &error))?
-        .pinned(agents);
+    // The layer is judged as `config validate` judges it.
+    let findings = match &value {
+        Some(value) => findings_given(home, &layer, &document, value, given)
+            .map_err(|error| unreadable(document.clone(), &error))?,
+        None => Vec::new(),
+    };
+    let config = Configuration::from_layers(
+        home,
+        given.global.flatten().cloned(),
+        value.map(|value| (record.checkout.clone(), value)),
+    )
+    .map_err(|error| unreadable(document.clone(), &error))?
+    .pinned(agents);
     let on = |module| {
         config
             .module_enabled(module)
@@ -281,14 +393,6 @@ fn admit_project(
         todos: on(Module::Todos)?,
         events: on(Module::Events)?,
         history: on(Module::History)?,
-    };
-    // The layer is judged as `config validate` judges it, read without
-    // converting it.
-    let findings = match read_usable(home, &layer) {
-        Ok(Some(value)) => super::_validate::findings_for(home, &layer, &document, &value)
-            .map_err(|error| unreadable(document.clone(), &error))?,
-        Ok(None) => Vec::new(),
-        Err(error) => return Err(unreadable(document, &error)),
     };
     let Modules {
         todos,
@@ -377,6 +481,33 @@ impl Current {
     }
 }
 
+/// The generation a runner serves in its process, for its home.
+static SERVED: RwLock<Option<(PathBuf, Current)>> = RwLock::new(None);
+
+/// Serves `current` to every configuration and profile loader in this
+/// process for `home`: from now on they answer its admitted values instead
+/// of reading the files. A runner calls this once its first generation is
+/// admitted.
+pub fn serve(home: &Home, current: &Current) {
+    let entry = Some((home.root().to_path_buf(), current.clone()));
+    match SERVED.write() {
+        Ok(mut served) => *served = entry,
+        Err(poisoned) => *poisoned.into_inner() = entry,
+    }
+}
+
+/// The generation served for `home` in this process, if any.
+pub(super) fn served(home: &Home) -> Option<Arc<Admitted>> {
+    let served = match SERVED.read() {
+        Ok(served) => served,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    served
+        .as_ref()
+        .filter(|(root, _)| root == home.root())
+        .map(|(_, current)| current.get())
+}
+
 /// A value shared by every holder, replaced only whole and only by a
 /// complete successor.
 #[derive(Debug)]
@@ -462,13 +593,55 @@ mod tests {
         );
     }
 
+    /// A generation with nothing in it but whether a project is published.
+    fn generation(published: bool) -> Admitted {
+        let home = Home::at_user_home(PathBuf::from("/nonexistent"));
+        let agents = Arc::new(Agents::from_documents(&home, None, None).unwrap());
+        Admitted {
+            global: Configuration::from_layers(&home, None, None).unwrap(),
+            global_layer: None,
+            agents,
+            companies: Vec::new(),
+            projects: Vec::new(),
+            published,
+        }
+    }
+
     #[test]
     fn an_incomplete_candidate_leaves_the_current_generation_for_every_holder() {
-        let current = Swap::new(1);
+        let current = Current::new(generation(false));
         let holder = current.clone();
-        assert_eq!(current.offer(2, false), Offer::Kept);
-        assert_eq!(*holder.get(), 1);
-        assert_eq!(current.offer(3, true), Offer::Replaced);
-        assert_eq!(*holder.get(), 3);
+        let incomplete = Candidate {
+            generation: generation(true),
+            findings: Vec::new(),
+            complete: false,
+        };
+        assert_eq!(current.offer(incomplete), Offer::Kept);
+        assert!(!holder.get().published);
+        let complete = Candidate {
+            generation: generation(true),
+            findings: Vec::new(),
+            complete: true,
+        };
+        assert_eq!(current.offer(complete), Offer::Replaced);
+        assert!(holder.get().published);
+    }
+
+    #[test]
+    fn the_machines_history_switch_counts_only_while_no_project_is_published() {
+        let home = Home::at_user_home(PathBuf::from("/nonexistent"));
+        let machine: Value = serde_yaml_ng::from_str(&format!(
+            "schema_version: {}\nmodules: {{history: true}}\n",
+            super::super::CURRENT_SCHEMA_VERSION
+        ))
+        .unwrap();
+        let with_switch = |published| Admitted {
+            global: Configuration::from_layers(&home, Some(machine.clone()), None).unwrap(),
+            global_layer: Some(machine.clone()),
+            ..generation(published)
+        };
+        assert!(with_switch(false).history_enabled().unwrap());
+        // A published project left out of the generation enables nothing.
+        assert!(!with_switch(true).history_enabled().unwrap());
     }
 }

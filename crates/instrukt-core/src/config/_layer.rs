@@ -275,21 +275,35 @@ pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, Conf
         value: None,
     };
     if let Some(document) = document {
-        let mut value = document.value;
+        let value = document.value;
         view.schema_version = value.get("schema_version").and_then(Value::as_u64);
         if let Version::Older(from) = version(&value) {
-            super::_migrate::selection(home, layer, &mut value, false)?;
-            value = migrate_value(value, from, layer.kind());
             view.migration = Some(format!(
                 "{}: schema_version {from} inspected as {}; file migrates on the next writing command",
                 path.display(),
                 CURRENT_SCHEMA_VERSION
             ));
         }
-        require_usable(layer, &path, &value)?;
-        view.value = Some(value);
+        view.value = Some(inspected(home, layer, &path, value)?);
     }
     Ok(view)
+}
+
+/// `raw`, a document of `layer` as read from `path`, as a read command uses
+/// it: an older schema converted in memory, an unusable one refused. Nothing
+/// is read or written.
+pub(crate) fn inspected(
+    home: &Home,
+    layer: &Layer,
+    path: &Path,
+    mut value: Value,
+) -> Result<Value, ConfigError> {
+    if let Version::Older(from) = version(&value) {
+        super::_migrate::selection(home, layer, &mut value, false)?;
+        value = migrate_value(value, from, layer.kind());
+    }
+    require_usable(layer, path, &value)?;
+    Ok(value)
 }
 
 /// The current revision of `layer`.
@@ -377,14 +391,16 @@ pub fn patch(
     let mut next = before.clone();
     merge_patch(&mut next, patch);
     let mut findings = findings_for(&home.for_inspection(), layer, &path, &next)?;
-    // Todos or event responses already on stay a validation finding; only a
-    // write that switches them on is refused for it.
+    // Todos already on stay a validation finding; only a write that
+    // switches them on is refused for it. Event responses that already
+    // lacked their transport stay a finding too; a write that switches them
+    // on without it, or removes it from under them, is refused.
     if layer.kind() == LayerKind::Project {
         let global = read_usable(home, &Layer::Global)?;
         if todos_on(&before, global.as_ref())? {
             findings.retain(|f| f.kind != FindingKind::TodosNeedGitHub);
         }
-        if super::_validate::events_on(&super::_effective::effective_value(
+        if super::_validate::needs_transport(&super::_effective::effective_value(
             global.as_ref(),
             Some(&before),
         )?) {
@@ -392,7 +408,10 @@ pub fn patch(
         }
     }
     if layer.kind() == LayerKind::Global
-        && super::_validate::events_on(&super::_effective::effective_value(Some(&before), None)?)
+        && super::_validate::needs_transport(&super::_effective::effective_value(
+            Some(&before),
+            None,
+        )?)
     {
         findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
     }

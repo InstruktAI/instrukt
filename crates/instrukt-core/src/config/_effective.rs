@@ -96,13 +96,46 @@ impl Configuration {
     /// The effective configuration for a caller in the repository rooted at
     /// `repo_root` (the global layer alone when `None`, or when that
     /// repository has no project layer).
+    ///
+    /// In a runner serving its admitted generation, the machine layer and a
+    /// published project's layer are the admitted ones; any other
+    /// repository's layer is read from its file and combined with the
+    /// admitted machine layer.
     pub fn load(home: &Home, repo_root: Option<&Path>) -> Result<Self, ConfigError> {
+        if let Some(admitted) = super::_admitted::served(home) {
+            converted_in_place(home, &Layer::Global);
+            if let Some(config) = admitted.layer(repo_root) {
+                return Ok(config.clone());
+            }
+            let project = match repo_root {
+                Some(root) => read_usable(home, &Layer::Project(root.to_path_buf()))?,
+                None => None,
+            };
+            let project = project
+                .zip(repo_root)
+                .map(|(value, root)| (root.to_path_buf(), value));
+            let config = Self::from_layers(home, admitted.global_layer().cloned(), project)?;
+            return Ok(config.pinned(&admitted.shared_agents()));
+        }
         let global = read_usable(home, &Layer::Global)?;
         let project = match repo_root {
             Some(root) => read_usable(home, &Layer::Project(root.to_path_buf()))?,
             None => None,
         };
-        let project_root = project.as_ref().and(repo_root).map(Path::to_path_buf);
+        let project = project
+            .zip(repo_root)
+            .map(|(value, root)| (root.to_path_buf(), value));
+        Self::from_layers(home, global, project)
+    }
+
+    /// The effective configuration of the global layer `global` and the
+    /// project layer `project` (its repository root and value), as read.
+    pub(crate) fn from_layers(
+        home: &Home,
+        global: Option<Value>,
+        project: Option<(PathBuf, Value)>,
+    ) -> Result<Self, ConfigError> {
+        let (project_root, project) = project.unzip();
         let mut config = Self::from_value(
             effective_value(global.as_ref(), project.as_ref())?,
             project_root,
@@ -127,8 +160,31 @@ impl Configuration {
     /// A company home's document alone (`--company <name>`): it combines
     /// with no layer and answers no defaults. A home whose document is
     /// absent, or names another company, is not a company and is refused.
+    ///
+    /// In a runner serving its admitted generation, only an admitted company
+    /// home is one, as it was admitted.
     pub fn load_company(home: &Home, name: &ProjectSlug) -> Result<Self, ConfigError> {
         let layer = Layer::Company(name.clone());
+        if let Some(admitted) = super::_admitted::served(home) {
+            converted_in_place(home, &layer);
+            if let Some(company) = admitted.company(name) {
+                return Ok(company.config.clone());
+            }
+            // A home the runner did not admit is refused as its file refuses
+            // it; one its file would serve waits for the next wake to admit it.
+            let path = layer.path(home);
+            let Some(value) = read_usable(home, &layer)? else {
+                return Err(ConfigError::NoLayer {
+                    path,
+                    door: layer.init_door(),
+                });
+            };
+            Self::company_from_value(home, name, &value)?;
+            return Err(ConfigError::NotACompany {
+                dir: home.company_dir(name),
+                finding: "not admitted by the running runner yet; its next wake admits it".into(),
+            });
+        }
         let path = layer.path(home);
         let Some(value) = read_usable(home, &layer)? else {
             return Err(ConfigError::NoLayer {
@@ -136,11 +192,21 @@ impl Configuration {
                 door: layer.init_door(),
             });
         };
+        Self::company_from_value(home, name, &value)
+    }
+
+    /// The company home `name`'s document `value`, as read, as its
+    /// configuration; refused when it is no valid company document.
+    pub(crate) fn company_from_value(
+        home: &Home,
+        name: &ProjectSlug,
+        value: &Value,
+    ) -> Result<Self, ConfigError> {
         // Only a valid settings document makes its folder a company: the
         // schema and the identity are judged together, here, for every
         // consumer that serves or executes for the company.
-        let mut findings = _schema::check(&value, LayerKind::Company);
-        findings.extend(super::_validate::company_identity(name, &value));
+        let mut findings = _schema::check(value, LayerKind::Company);
+        findings.extend(super::_validate::company_identity(name, value));
         if !findings.is_empty() {
             return Err(ConfigError::NotACompany {
                 dir: home.company_dir(name),
@@ -152,7 +218,7 @@ impl Configuration {
             });
         }
         Ok(Self::from_value(
-            _schema::permitted(&value, LayerKind::Company),
+            _schema::permitted(value, LayerKind::Company),
             None,
             home.clone(),
         ))
@@ -699,6 +765,17 @@ fn invalid(key: &str, message: &str) -> ConfigError {
 
 /// Defaults, then the global layer, then the project layer — each layer
 /// contributing only the keys it may hold.
+/// A writing command keeps converting an older document of `layer` in
+/// place, as reading it always did, while it uses the admitted values: the
+/// conversion changes how the document is written, not what it says.
+fn converted_in_place(home: &Home, layer: &Layer) {
+    if !home.is_inspection()
+        && let Err(error) = read_usable(home, layer)
+    {
+        tracing::debug!(event = "served_layer_unconverted", %error);
+    }
+}
+
 pub(crate) fn effective_value(
     global: Option<&Value>,
     project: Option<&Value>,

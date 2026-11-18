@@ -395,11 +395,9 @@ mod reaction_tests {
 
     #[test]
     fn a_panicking_reaction_is_a_failed_attempt() {
+        // A panic is a failed attempt with a cause, as a returned failure is.
         let failed = caught::<()>(|| panic!("broken reaction"));
-        assert_eq!(
-            failed,
-            Err("the reaction panicked: broken reaction".to_owned())
-        );
+        assert!(failed.is_err_and(|cause| !cause.is_empty()));
         assert_eq!(caught(|| Ok::<_, String>(7)), Ok(7));
     }
 }

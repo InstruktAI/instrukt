@@ -287,6 +287,8 @@ pub fn enabled(home: &Home) -> Result<bool, HistoryError> {
 pub(crate) struct Readers {
     extraction: Option<_watch::Worker>,
     search: Option<SearchWorker>,
+    /// The cluster transport settings the search worker was started on.
+    search_transport: Option<serde_yaml_ng::Value>,
 }
 impl Readers {
     /// Starts what the current generation switches on and stops what it
@@ -299,6 +301,10 @@ impl Readers {
             Ok(false) => {
                 self.search = None;
                 self.extraction = None;
+                // Nothing demanded is failing: no record stays, an earlier
+                // process's included.
+                crate::state::worker_state(home, "history-extraction", None);
+                crate::state::worker_state(home, "history-search", None);
                 return;
             }
             Err(error) => {
@@ -312,6 +318,17 @@ impl Readers {
                 worker = "history-extraction"
             );
             self.extraction = None;
+        }
+        // A search worker holds the transport it started on: a generation
+        // admitting other cluster settings starts it again on them.
+        let transport_settings = admitted.global().get(Some("redis"), env).ok();
+        if self.search.is_some() && self.search_transport != transport_settings {
+            tracing::info!(
+                event = "history_worker_restarted",
+                worker = "history-search",
+                cause = "transport settings changed"
+            );
+            self.search = None;
         }
         if self.search.as_ref().is_some_and(SearchWorker::ended) {
             tracing::warn!(
@@ -339,7 +356,10 @@ impl Readers {
             ) {
                 Ok(transport) => {
                     match SearchWorker::start(home, env, current.clone(), &transport) {
-                        Ok(worker) => self.search = Some(worker),
+                        Ok(worker) => {
+                            self.search = Some(worker);
+                            self.search_transport = transport_settings;
+                        }
                         Err(error) => {
                             tracing::error!(event = "history_worker_unstarted", worker = "history-search", %error)
                         }

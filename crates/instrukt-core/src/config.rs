@@ -39,7 +39,7 @@ pub use _agents::{
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSlack, Candidate, Current,
-    Offer,
+    Offer, serve,
 };
 pub use _company::{CONNECTORS, DEFAULT_CONTEXT_MESSAGES, Member, Members, SlackConnector};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
@@ -118,13 +118,31 @@ pub type CompanyHome = (ProjectSlug, Result<Configuration, ConfigError>);
 /// without a valid settings document is listed with the reason it is not a
 /// company; nothing is served or run for it.
 pub fn company_homes(home: &Home) -> Result<Vec<CompanyHome>, ConfigError> {
+    Ok(company_folders(home)?
+        .into_iter()
+        .map(|(name, unreadable)| {
+            let config = match unreadable {
+                Some(error) => Err(error),
+                None => Configuration::load_company(home, &name),
+            };
+            (name, config)
+        })
+        .collect())
+}
+
+/// The folders below `~/.instrukt/companies/` whose name is a valid company
+/// name, sorted, each with why it cannot be inspected; nothing in them is
+/// read.
+pub(crate) fn company_folders(
+    home: &Home,
+) -> Result<Vec<(ProjectSlug, Option<ConfigError>)>, ConfigError> {
     let dir = home.companies_dir();
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => return Err(ConfigError::Read { path: dir, source }),
     };
-    let mut homes = Vec::new();
+    let mut folders = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| ConfigError::Read {
             path: dir.clone(),
@@ -132,20 +150,19 @@ pub fn company_homes(home: &Home) -> Result<Vec<CompanyHome>, ConfigError> {
         })?;
         let folder = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
-        let config = match std::fs::metadata(&path) {
+        let unreadable = match std::fs::metadata(&path) {
             Ok(metadata) if !metadata.is_dir() => continue,
             Ok(_) => None,
-            Err(source) => Some(Err(ConfigError::Read { path, source })),
+            Err(source) => Some(ConfigError::Read { path, source }),
         };
         let Ok(name) = ProjectSlug::parse(&folder) else {
             tracing::warn!(event = "company_home_invalid", folder = %folder, "not a valid company name");
             continue;
         };
-        let config = config.unwrap_or_else(|| Configuration::load_company(home, &name));
-        homes.push((name, config));
+        folders.push((name, unreadable));
     }
-    homes.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-    Ok(homes)
+    folders.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+    Ok(folders)
 }
 
 /// Whether text is an exact protected machine-local secret reference.

@@ -201,7 +201,11 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
     };
     let candidate = Admitted::load(cx.home)?;
     Admission::default().report(&candidate.findings);
-    let admitted = candidate.generation;
+    // The wake uses what it admitted: nothing in this process reads the
+    // configuration files on its own.
+    let current = Current::new(candidate.generation);
+    instrukt_core::config::serve(cx.home, &current);
+    let admitted = current.get();
     let considered = considered(&admitted);
     let platform = event_platform(cx, &state, &admitted)?;
     wake(
@@ -261,7 +265,13 @@ pub fn run(
     let candidate = Admitted::load(cx.home)?;
     admission.report(&candidate.findings);
     let current = Current::new(candidate.generation);
+    // From here on every part of this runner uses the generation in force:
+    // nothing in its process reads the configuration files on its own.
+    instrukt_core::config::serve(cx.home, &current);
+    crate::state::admission_outcome(cx.home, clock(), true);
     let mut platform: Option<EventPlatform> = None;
+    // The transport settings the event platform was prepared on.
+    let mut platform_transport: Option<serde_yaml_ng::Value> = None;
     let mut _readers = None;
     let mut history = crate::history::Readers::default();
     // The relay serves links and, while a company declares a connector and
@@ -330,16 +340,30 @@ pub fn run(
         match Admitted::load(cx.home) {
             Ok(candidate) => {
                 admission.report(&candidate.findings);
-                if current.offer(candidate) == Offer::Kept {
+                let offered = current.offer(candidate);
+                if offered == Offer::Kept {
                     tracing::debug!(event = "configuration_kept");
                 }
+                crate::state::admission_outcome(cx.home, clock(), offered == Offer::Replaced);
             }
             Err(error) => {
                 admission.report(&[]);
                 tracing::warn!(event = "configuration_kept", error = %error);
+                crate::state::admission_outcome(cx.home, clock(), false);
             }
         }
         let admitted = current.get();
+        // An event platform holds the transport it was prepared on: a
+        // generation admitting other transport settings prepares it again.
+        let transport_settings = admitted.global().get(Some("redis"), cx.env).ok();
+        if platform.is_some() && platform_transport != transport_settings {
+            tracing::info!(
+                event = "event_platform_replaced",
+                cause = "transport settings changed"
+            );
+            _readers = None;
+            platform = None;
+        }
         history.refresh(cx.home, cx.env, &current);
         let considered = considered(&admitted);
         let events_enabled = admitted.module_anywhere(Module::Events).unwrap_or(false);
@@ -349,6 +373,7 @@ pub fn run(
                     Ok(readers) => {
                         _readers = Some(readers);
                         platform = Some(prepared);
+                        platform_transport = transport_settings;
                     }
                     Err(error) => tracing::error!(event = "event_readers_unstarted", %error),
                 },
@@ -384,8 +409,15 @@ pub fn run(
         }
         // Wait for the interval, an activation wake-up, or a supervised
         // worker's end, which is observed within a second.
+        // The interval passes in real time, or on the operator's clock when
+        // that has moved past it.
         let until = std::time::Instant::now() + interval;
-        while std::time::Instant::now() < until {
+        let woke_at = clock();
+        let interval_on_clock =
+            jiff::SignedDuration::try_from(interval).unwrap_or(jiff::SignedDuration::MAX);
+        while std::time::Instant::now() < until
+            && clock().duration_since(woke_at) < interval_on_clock
+        {
             // Supervision runs each second, independently of the wake-up.
             if supervision.try_recv().is_ok() || relay.is_none() {
                 supervise_relay(&mut relay);

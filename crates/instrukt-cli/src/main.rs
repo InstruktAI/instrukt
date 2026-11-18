@@ -200,12 +200,27 @@ fn run() -> ExitCode {
             }
             Ok(())
         })();
-        if let Err(error) = notice_result {
-            return report(&error);
+        // An inspection reports a configuration it cannot read itself; a
+        // notice about converting it does not stand in its way.
+        match notice_result {
+            Ok(()) => {}
+            Err(error) if authorization::strict_inspection(&matches) => {
+                tracing::debug!(event = "inspection_notice_unavailable", %error);
+            }
+            Err(error) => return report(&error),
         }
     }
-    if let Err(error) = authorization::check(&ctx, &matches) {
-        return report(&error);
+    // As for `instrukt status`: an inspection whose caller cannot be
+    // determined still runs, and a refused permission still refuses it.
+    match authorization::check(&ctx, &matches) {
+        Ok(()) => {}
+        Err(error)
+            if authorization::strict_inspection(&matches)
+                && !error.is::<authorization::PermissionRefused>() =>
+        {
+            tracing::debug!(event = "inspection_caller_undetermined", %error);
+        }
+        Err(error) => return report(&error),
     }
     if deferred_patch {
         ctx.home = ctx.home.for_writing();

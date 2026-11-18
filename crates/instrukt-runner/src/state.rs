@@ -189,3 +189,26 @@ pub(crate) fn skipped_wake(
         tracing::error!(event = "runner_skipped_wake_unrecorded", error = %error);
     }
 }
+
+/// Records what the run loop did with the configuration it admitted at
+/// `at`: replaced the generation in force, or kept it.
+pub(crate) fn admission_outcome(
+    home: &instrukt_core::home::Home,
+    at: jiff::Timestamp,
+    replaced: bool,
+) {
+    use instrukt_core::state_db::rusqlite::params;
+    let state = RunnerState::new(home);
+    let outcome = if replaced { "replaced" } else { "kept" };
+    let result = state.write::<_, StateError>(|tx| {
+        tx.execute(
+            "INSERT INTO runner_admission(id,at,outcome) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET at=excluded.at,outcome=excluded.outcome",
+            params![at.to_string(), outcome],
+        )
+        .map_err(sql(&db_path(tx)))?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::error!(event = "runner_admission_unrecorded", error = %error);
+    }
+}

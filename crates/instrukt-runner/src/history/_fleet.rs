@@ -173,6 +173,9 @@ impl SearchWorker {
                 let endpoint = transport.endpoint(EventScope::Cluster);
                 let queue = format!("{PREFIX}:requests:{computer}");
                 let mut failing: Option<String> = None;
+                // An earlier process's record is cleared by this worker's first
+                // success; a later failure records again.
+                let mut shown_healthy = false;
                 let mut delay = Duration::from_secs(1);
                 while !stopping.load(Ordering::Relaxed) {
                     let outcome = (|| -> Result<(), HistoryError> {
@@ -240,13 +243,17 @@ impl SearchWorker {
                         Ok(()) => {
                             if let Some(cause) = failing.take() {
                                 tracing::info!(event = "history_worker_recovered", worker = SEARCH, cause = %cause);
+                            }
+                            if !shown_healthy {
                                 crate::state::worker_state(&home, SEARCH, None);
+                                shown_healthy = true;
                             }
                             delay = Duration::from_secs(1);
                         }
                         Err(HistoryError::Disabled) => break,
                         Err(error @ HistoryError::Transport(_)) => {
                             let cause = error.to_string();
+                            shown_healthy = false;
                             if failing.as_deref() != Some(cause.as_str()) {
                                 tracing::warn!(event = "history_worker_failing", worker = SEARCH, error = %error);
                                 crate::state::worker_state(&home, SEARCH, Some(&cause));
@@ -260,6 +267,8 @@ impl SearchWorker {
                         Err(error) => tracing::error!(event="history_query_failed",error=%error),
                     }
                 }
+                // A worker that ends leaves no record of an earlier failure.
+                crate::state::worker_state(&home, SEARCH, None);
             })
             .map_err(|source| HistoryError::Io {
                 path: std::path::PathBuf::from("history search worker"),

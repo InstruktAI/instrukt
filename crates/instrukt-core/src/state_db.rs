@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn version_19_adds_the_worker_state_and_the_skipped_wake_and_keeps_the_relays() {
+    fn version_19_adds_the_runners_own_state_and_keeps_the_relays() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(18) {
             let tx = conn.transaction().unwrap();
@@ -407,16 +407,18 @@ mod tests {
             tx.commit().unwrap();
         }
         conn.pragma_update(None, "user_version", 18).unwrap();
-        conn.execute("INSERT INTO conversation_relay(id,failure,updated_at) VALUES(1,'T3 is unreachable','2026-11-18T10:00:00Z')", []).unwrap();
+        let seeded = "T3 is unreachable";
+        conn.execute("INSERT INTO conversation_relay(id,failure,updated_at) VALUES(1,?1,'2026-11-18T10:00:00Z')", [seeded]).unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
-        let relay: String = conn
+        // The relay's recorded failure is kept as it was stored.
+        let kept: i64 = conn
             .query_row(
-                "SELECT failure FROM conversation_relay WHERE id=1",
-                [],
+                "SELECT count(*) FROM conversation_relay WHERE id=1 AND failure=?1",
+                [seeded],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(relay, "T3 is unreachable");
+        assert_eq!(kept, 1);
         conn.execute("INSERT INTO runner_workers(worker,failure,since) VALUES('history-extraction','unwatchable','2026-11-18T10:00:00Z')", []).unwrap();
         let workers: i64 = conn
             .query_row("SELECT count(*) FROM runner_workers", [], |row| row.get(0))
@@ -427,6 +429,16 @@ mod tests {
             conn.execute("INSERT INTO runner_skipped_wake(id,at,cause) VALUES(2,'2026-11-18T10:01:00Z','again')", [])
                 .is_err(),
             "one skipped wake at most"
+        );
+        conn.execute(
+            "INSERT INTO runner_admission(id,at,outcome) VALUES(1,'2026-11-18T10:00:00Z','kept')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute("INSERT INTO runner_admission(id,at,outcome) VALUES(1,'2026-11-18T10:01:00Z','lost') ON CONFLICT(id) DO UPDATE SET outcome=excluded.outcome", [])
+                .is_err(),
+            "an outcome is replaced or kept"
         );
     }
 
