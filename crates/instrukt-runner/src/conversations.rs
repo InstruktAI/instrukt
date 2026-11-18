@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use instrukt_core::config::{COMPANY_AGENT_ROLE, ConfigError, Configuration, SlackConnector};
 use instrukt_core::home::Home;
-use instrukt_core::ids::{ProjectSlug, SessionRef, SnippetId};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
 use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
@@ -557,6 +557,8 @@ struct Message {
     content: Option<String>,
     /// A send to the runtime was begun; its acceptance may be unrecorded.
     attempted: bool,
+    /// The cause retained from its last failed delivery.
+    failure: Option<String>,
 }
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
@@ -632,7 +634,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) ORDER BY written_us, message")
+                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) ORDER BY written_us, message")
                 .map_err(state::sql(path))?;
             q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), Stage::Refused.as_str()], |r| {
                 Ok((
@@ -641,6 +643,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                     r.get::<_, Option<String>>(2)?,
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, bool>(4)?,
+                    r.get::<_, Option<String>>(5)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -649,7 +652,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
         })?
         .unwrap_or_default();
     rows.into_iter()
-        .map(|(message, stage, boundary, content, attempted)| {
+        .map(|(message, stage, boundary, content, attempted, failure)| {
             Ok(Message {
                 message,
                 stage: Stage::parse(&stage).ok_or_else(|| {
@@ -658,6 +661,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                 boundary,
                 content,
                 attempted,
+                failure,
             })
         })
         .collect()
@@ -712,6 +716,14 @@ fn framed(
         )
     );
     Ok((token, input))
+}
+
+/// Whether a failed delivery is logged. A message waiting for its procedure
+/// is logged once, when its cause starts or changes: each retry finds the
+/// same cause already retained with the message, which status shows. Every
+/// other failure is logged as it happens.
+fn reports(error: &ConversationError, retained: Option<&str>, cause: &str) -> bool {
+    !matches!(error, ConversationError::NoProcedure { .. }) || retained != Some(cause)
 }
 
 /// The procedure a conversation's session starts from: the delivered
@@ -854,8 +866,10 @@ fn deliver_one(
             .to_string(),
         other => other.to_string(),
     });
-    if let Some(error) = &failure {
-        tracing::warn!(event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+    if let (Err(error), Some(cause)) = (&result, &failure)
+        && reports(error, next.failure.as_deref(), cause)
+    {
+        tracing::warn!(event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
     }
     set_message_failure(state, c, &next.message, failure.as_deref())?;
     result
@@ -875,14 +889,12 @@ fn start(
         Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
         None => {
             let index = GlobalIndex::load(home)?.unwrap_or_default();
-            let procedure = opening_procedure(
-                index
-                    .procedures_declaring(COMPANY_AGENT_ROLE)
-                    .into_iter()
-                    .next(),
-            )?
-            .id
-            .clone();
+            let role = RoleName::parse(COMPANY_AGENT_ROLE)
+                .map_err(|e| ConversationError::Refused(e.to_string()))?;
+            let procedure =
+                opening_procedure(index.procedures_declaring(&role).into_iter().next())?
+                    .id
+                    .clone();
             let checkout: PathBuf = home.company_dir(&c.company);
             let company = Configuration::load_company(home, &c.company)?;
             let config = Configuration::load_global(home)?;
@@ -1504,8 +1516,23 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPANY_AGENT_ROLE, ConnectionState, ConversationError, Stage, opening_procedure, split,
+        COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage, opening_procedure,
+        reports, split,
     };
+
+    #[test]
+    fn a_message_waiting_for_its_procedure_is_logged_when_its_cause_starts_or_changes() {
+        let waiting = ConversationError::NoProcedure {
+            role: COMPANY_AGENT_ROLE,
+        };
+        let cause = waiting.to_string();
+        assert!(reports(&waiting, None, &cause));
+        assert!(reports(&waiting, Some("an earlier cause"), &cause));
+        assert!(!reports(&waiting, Some(&cause), &cause));
+        let other = ConversationError::Refused("the message is not framed yet".into());
+        let repeated = other.to_string();
+        assert!(reports(&other, Some(&repeated), &repeated));
+    }
 
     /// An index holding the procedure declaring the conversation role,
     /// pending its delivering todo when `pending`.
@@ -1527,7 +1554,7 @@ mod tests {
         let delivered = declared(false);
         let found = opening_procedure(
             delivered
-                .procedures_declaring(COMPANY_AGENT_ROLE)
+                .procedures_declaring(&RoleName::parse(COMPANY_AGENT_ROLE).unwrap())
                 .into_iter()
                 .next(),
         );
@@ -1535,7 +1562,7 @@ mod tests {
         let pending = declared(true);
         let refused = opening_procedure(
             pending
-                .procedures_declaring(COMPANY_AGENT_ROLE)
+                .procedures_declaring(&RoleName::parse(COMPANY_AGENT_ROLE).unwrap())
                 .into_iter()
                 .next(),
         );

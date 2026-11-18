@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fsx::FsError;
 use crate::home::Home;
-use crate::ids::{ProjectSlug, SnippetId, ThirdPartyId, TodoSlug};
+use crate::ids::{ProjectSlug, RoleName, SnippetId, ThirdPartyId, TodoSlug};
 use crate::subscription::{SubscriptionAttendance, SubscriptionHome, SubscriptionIdentity};
 
 /// The global index could not be read or written.
@@ -135,13 +135,13 @@ impl GlobalIndex {
     /// The procedures of the published positions (`general` and the
     /// domains, never a project's) that declare `role`, in index order.
     /// Validation lets one procedure declare a role, so there is at most one.
-    pub fn procedures_declaring(&self, role: &str) -> Vec<RoleProcedure<'_>> {
+    pub fn procedures_declaring(&self, role: &RoleName) -> Vec<RoleProcedure<'_>> {
         self.snippets
             .iter()
             .filter(|entry| {
                 entry.taxonomy == "procedure"
                     && entry.scope == IndexScope::Global
-                    && entry.role.as_deref() == Some(role)
+                    && entry.role.as_deref() == Some(role.as_str())
             })
             .map(|entry| {
                 if entry.delivered_by.is_empty() {
@@ -299,14 +299,17 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            index.procedures_declaring("helper"),
+            index.procedures_declaring(&RoleName::parse("helper").unwrap()),
             [RoleProcedure::Delivered(&index.snippets[2])]
         );
         assert_eq!(
-            index.procedures_declaring("drafter"),
+            index.procedures_declaring(&RoleName::parse("drafter").unwrap()),
             [RoleProcedure::Pending(&index.snippets[3])]
         );
-        assert_eq!(index.procedures_declaring("nobody"), []);
+        assert_eq!(
+            index.procedures_declaring(&RoleName::parse("nobody").unwrap()),
+            []
+        );
     }
 
     #[test]

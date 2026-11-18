@@ -408,7 +408,7 @@ fn declared_in<'i>(
     role: &RoleName,
 ) -> Option<&'i IndexEntry> {
     index
-        .procedures_declaring(role.as_str())
+        .procedures_declaring(role)
         .into_iter()
         .find_map(|declared| {
             let (RoleProcedure::Delivered(entry) | RoleProcedure::Pending(entry)) = declared;
