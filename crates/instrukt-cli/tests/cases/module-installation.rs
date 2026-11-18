@@ -356,6 +356,17 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
           "user service manager: the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`; it is needed by the receiver's socket and service, the private local Redis service, the minute timer"
         ]
         "#);
+        // Installation reports the same one finding, and leaves the
+        // prerequisite as it is: the check after it still reports it.
+        let install = env.run(env.home(), ["install", "--json"]).failure();
+        let report: serde_json::Value =
+            serde_json::from_slice(&install.get_output().stdout).unwrap();
+        insta::assert_json_snapshot!(report["findings"], @r#"
+        [
+          "user service manager: the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`; it is needed by the receiver's socket and service, the private local Redis service, the minute timer"
+        ]
+        "#);
+        env.run(env.home(), ["install", "--check"]).failure();
         std::fs::remove_file(off).unwrap();
     }
 
