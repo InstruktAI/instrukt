@@ -11,7 +11,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 2
+      "const": 3
     },
     "default": {
       "$ref": "#/$defs/role",

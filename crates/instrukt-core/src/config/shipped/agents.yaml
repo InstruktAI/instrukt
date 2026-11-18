@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/InstruktAI/instrukt/main/schemas/agents.schema.json
-schema_version: 2
+schema_version: 3
 default: {class: agent, can: [all], order: [claude, codex, antigravity], tier: standard}
 roles:
   builder: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}

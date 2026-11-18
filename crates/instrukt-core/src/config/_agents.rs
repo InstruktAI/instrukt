@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 
 pub const SHIPPED_AGENTS: &str = include_str!("shipped/agents.yaml");
-const VERSION: u64 = 2;
+pub(super) const VERSION: u64 = 3;
 const DEPLOYMENT_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,10 +323,10 @@ impl Agents {
             Ok(None)
         } else {
             if let Some(converted) = migrated {
-                atomic_write(&path, &converted)?;
+                atomic_write(&path, &converted.bytes)?;
                 tracing::info!(
                     event = "agents_shape_migrated",
-                    from_version = 1,
+                    from_version = converted.from,
                     to_version = VERSION
                 );
             }
@@ -361,7 +361,12 @@ impl Agents {
             source,
         })?;
         if let Some(converted) = super::_agents_migrate::current(&current)? {
-            atomic_write(&path, &converted)?;
+            atomic_write(&path, &converted.bytes)?;
+            tracing::info!(
+                event = "agents_shape_migrated",
+                from_version = converted.from,
+                to_version = VERSION
+            );
         }
         Ok(())
     }
@@ -380,7 +385,10 @@ impl Agents {
         if home.is_inspection() {
             let path = home.agents_file();
             let existing = match std::fs::read(&path) {
-                Ok(bytes) => Some(super::_agents_migrate::current(&bytes)?.unwrap_or(bytes)),
+                Ok(bytes) => Some(
+                    super::_agents_migrate::current(&bytes)?
+                        .map_or(bytes, |converted| converted.bytes),
+                ),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(source) => return Err(ConfigError::Read { path, source }),
             };
@@ -737,12 +745,12 @@ mod tests {
     use super::{Agents, ConfigError, SHIPPED_AGENTS};
     #[test]
     fn a_newer_schema_is_refused_before_interpreting_its_profile_shape() {
-        let newer = "schema_version: 3\nprofiles: {future: {kind: future-harness}}\n";
+        let newer = "schema_version: 4\nprofiles: {future: {kind: future-harness}}\n";
         assert!(matches!(
             Agents::parse(newer),
             Err(ConfigError::NewerSchema {
-                found: 3,
-                current: 2,
+                found: 4,
+                current: 3,
                 ..
             })
         ));

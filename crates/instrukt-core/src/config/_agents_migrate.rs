@@ -1,21 +1,56 @@
-//! Version-one agents fields are converted at the owned-file boundary only.
+//! Older agents files are converted at the owned-file boundary only: a
+//! version-one file's retired effort fields, then a version-two file's
+//! `conversation` role, which version three names `company-agent`.
 use super::ConfigError;
 use serde_yaml_ng::Value;
 
-pub(super) fn current(bytes: &[u8]) -> Result<Option<Vec<u8>>, ConfigError> {
+/// The role name a version-two file gives conversation sessions.
+const RETIRED_ROLE: &str = "conversation";
+/// The name version three gives that role.
+const RENAMED_ROLE: &str = "company-agent";
+
+/// A file converted to the current version, with the version it had.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Converted {
+    pub(super) from: u64,
+    pub(super) bytes: Vec<u8>,
+}
+
+/// `bytes` converted to the current version, or `None` when they need no
+/// conversion. A newer file, or one this conversion cannot carry over
+/// without choosing for the user, is refused and nothing is converted.
+pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
     let mut value: Value = serde_yaml_ng::from_slice(bytes).map_err(|e| invalid(e.to_string()))?;
-    if let Some(found) = value.get("schema_version").and_then(Value::as_u64)
-        && found > 2
+    let found = value.get("schema_version").and_then(Value::as_u64);
+    if let Some(found) = found
+        && found > super::_agents::VERSION
     {
         return Err(ConfigError::NewerSchema {
             path: "agents.yaml".into(),
             found,
-            current: 2,
+            current: super::_agents::VERSION,
         });
     }
-    if value.get("schema_version").and_then(Value::as_u64) != Some(1) {
-        return Ok(None);
+    let from = match found {
+        Some(from @ (1 | 2)) => from,
+        _ => return Ok(None),
+    };
+    if from == 1 {
+        efforts(&mut value)?;
     }
+    rename_role(&mut value)?;
+    value["schema_version"] = super::_agents::VERSION.into();
+    let text = super::render_yaml(&value).map_err(|e| invalid(e.to_string()))?;
+    super::Agents::parse(&text)?;
+    let mut out = crate::modeline::leading(bytes)
+        .map(|line| [line, b"\n"].concat())
+        .unwrap_or_default();
+    out.extend_from_slice(text.as_bytes());
+    Ok(Some(Converted { from, bytes: out }))
+}
+
+/// Version one to two: retired per-kind effort spellings become `effort`.
+fn efforts(value: &mut Value) -> Result<(), ConfigError> {
     if let Some(profiles) = value.get_mut("profiles").and_then(Value::as_mapping_mut) {
         for profile in profiles.values_mut() {
             let kind = profile
@@ -53,18 +88,118 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Vec<u8>>, ConfigError> {
             }
         }
     }
-    value["schema_version"] = 2.into();
-    let text = super::render_yaml(&value).map_err(|e| invalid(e.to_string()))?;
-    super::Agents::parse(&text)?;
-    let mut out = crate::modeline::leading(bytes)
-        .map(|line| [line, b"\n"].concat())
-        .unwrap_or_default();
-    out.extend_from_slice(text.as_bytes());
-    Ok(Some(out))
+    Ok(())
+}
+
+/// Version two to three: `roles.conversation` becomes `roles.company-agent`
+/// in its place, every field as it was. A file holding both is refused.
+fn rename_role(value: &mut Value) -> Result<(), ConfigError> {
+    let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) else {
+        return Ok(());
+    };
+    if !roles.contains_key(RETIRED_ROLE) {
+        return Ok(());
+    }
+    if roles.contains_key(RENAMED_ROLE) {
+        return Err(ConfigError::AgentsRoleConflict {
+            retired: RETIRED_ROLE,
+            current: RENAMED_ROLE,
+        });
+    }
+    *roles = std::mem::take(roles)
+        .into_iter()
+        .map(|(key, entry)| {
+            if key.as_str() == Some(RETIRED_ROLE) {
+                (Value::from(RENAMED_ROLE), entry)
+            } else {
+                (key, entry)
+            }
+        })
+        .collect();
+    Ok(())
 }
 fn invalid(message: impl Into<String>) -> ConfigError {
     ConfigError::InvalidValue {
         key: "agents.yaml migration".into(),
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "test fixtures")]
+    use super::*;
+
+    const PROFILES: &str = "profiles:\n  claude:\n    instance: claudeAgent\n    kind: claude\n    light: [{model: haiku, effort: high}]\n    standard: [{model: sonnet, effort: high}]\n    strong: [{model: opus, effort: high}]\n    premium: [{model: opus, effort: high}]\n  codex:\n    instance: codex\n    kind: codex\n    light: [{model: luna, EFFORT: high}]\n    standard: [{model: sol, EFFORT: high}]\n    strong: [{model: sol, EFFORT: high}]\n    premium: [{model: astra, EFFORT: high}]\n";
+
+    /// An agents file of `version` whose `roles` are `roles`, with codex's
+    /// effort spelled `effort` (`effort`, current) or `reasoningEffort`
+    /// (retired in version two).
+    fn file(version: u64, roles: &str, effort: &str) -> String {
+        format!(
+            "# yaml-language-server: $schema=agents.schema.json\nschema_version: {version}\ndefault: {{class: agent, can: [all], order: [claude], tier: standard}}\nroles:\n{roles}{}",
+            PROFILES.replace("EFFORT", effort)
+        )
+    }
+
+    const BEFORE_AND_AFTER: &str = "  builder: {class: focused, can: [read], order: [claude]}\n";
+    const AFTER: &str = "  reviewer: {class: focused, can: [read], order: [codex]}\n";
+
+    /// The `conversation` role entry as version two spells it.
+    const CONVERSATION: &str =
+        "  conversation: {class: standing, can: [read, tools], order: [claude], tier: strong}\n";
+    /// The same entry already under its version-three name.
+    const COMPANY_AGENT: &str =
+        "  company-agent: {class: standing, can: [read], order: [codex], tier: light}\n";
+    /// What both older files convert to: the role renamed in its place,
+    /// every field as it was, efforts in their current spelling.
+    const CONVERTED: &str = "# yaml-language-server: $schema=agents.schema.json\nschema_version: 3\ndefault:\n  class: agent\n  can:\n  - all\n  order:\n  - claude\n  tier: standard\nroles:\n  builder:\n    class: focused\n    can:\n    - read\n    order:\n    - claude\n  company-agent:\n    class: standing\n    can:\n    - read\n    - tools\n    order:\n    - claude\n    tier: strong\n  reviewer:\n    class: focused\n    can:\n    - read\n    order:\n    - codex\nprofiles:\n  claude:\n    instance: claudeAgent\n    kind: claude\n    light:\n    - model: haiku\n      effort: high\n    standard:\n    - model: sonnet\n      effort: high\n    strong:\n    - model: opus\n      effort: high\n    premium:\n    - model: opus\n      effort: high\n  codex:\n    instance: codex\n    kind: codex\n    light:\n    - model: luna\n      effort: high\n    standard:\n    - model: sol\n      effort: high\n    strong:\n    - model: sol\n      effort: high\n    premium:\n    - model: astra\n      effort: high\n";
+
+    #[test]
+    fn a_version_two_file_names_its_conversation_role_company_agent() {
+        let roles = format!("{BEFORE_AND_AFTER}{CONVERSATION}{AFTER}");
+        let converted = current(file(2, &roles, "effort").as_bytes()).unwrap();
+        assert_eq!(
+            converted,
+            Some(Converted {
+                from: 2,
+                bytes: CONVERTED.as_bytes().to_vec()
+            })
+        );
+    }
+
+    #[test]
+    fn a_version_two_file_holding_both_role_entries_is_refused_and_not_converted() {
+        let roles = format!("{BEFORE_AND_AFTER}{CONVERSATION}{COMPANY_AGENT}{AFTER}");
+        let refused = current(file(2, &roles, "effort").as_bytes());
+        assert!(
+            matches!(
+                refused,
+                Err(ConfigError::AgentsRoleConflict {
+                    retired: "conversation",
+                    current: "company-agent"
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_version_one_file_reaches_version_three_through_both_steps() {
+        let roles = format!("{BEFORE_AND_AFTER}{CONVERSATION}{AFTER}");
+        let converted = current(file(1, &roles, "reasoningEffort").as_bytes()).unwrap();
+        assert_eq!(
+            converted,
+            Some(Converted {
+                from: 1,
+                bytes: CONVERTED.as_bytes().to_vec()
+            })
+        );
+    }
+
+    #[test]
+    fn a_current_file_needs_no_conversion() {
+        let roles = format!("{BEFORE_AND_AFTER}{COMPANY_AGENT}{AFTER}");
+        assert_eq!(current(file(3, &roles, "effort").as_bytes()).unwrap(), None);
     }
 }
