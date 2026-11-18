@@ -179,11 +179,9 @@ Status: active
   participant row supplies provenance without a lifecycle log
   (`general/spec/scratchpad-workspaces`).
 
-- **A record that Last agreed covers is questioned again.** A session checks
-  it once more, asks the human to confirm it, or proposes a check of it. Stop
-  that act and work from the record as it stands. Words of the human that
-  contradict the record are new intent and become a new record
-  (`general/policy/human-contract`).
+- **The human's later words contradict a record that Last agreed covers.**
+  They are new intent: write them as a new record, listed as open, and leave
+  the covered record as it stands (`general/policy/human-contract`).
 - **Needed shared material is still in a local working directory.** Publish
   the material the collaborator or handoff recipient needs and index it, using
   the routing contract in `general/spec/scratchpad-workspaces`.
