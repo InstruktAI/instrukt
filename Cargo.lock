@@ -906,6 +906,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "instrukt-connector"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "serde",
+]
+
+[[package]]
 name = "instrukt-core"
 version = "0.1.0"
 dependencies = [
@@ -942,6 +950,7 @@ dependencies = [
  "hmac",
  "insta",
  "instrukt-blueprint",
+ "instrukt-connector",
  "instrukt-core",
  "jiff",
  "notify",
