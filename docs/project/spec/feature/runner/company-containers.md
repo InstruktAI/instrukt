@@ -121,30 +121,35 @@ enter logs).
 
 ### Backup and restore
 
-- Every night the operator's home `~/.instrukt` on the host, which holds every
-  company's folder, is archived and uploaded as one timestamped archive to
-  S3-compatible storage the operator sets through configuration. The newest
-  archives, as many as the backup's settings name, are kept and older ones are
-  removed; a night whose backup fails removes none. No separate snapshot exists
-  (`sdlc/policy/state-storage`: state whose loss forces more than cheap local
-  recomputation is persisted and survives restarts).
-- Each company's folder in an archive is restorable on its own, and a company
-  restored from it starts and works: the archive holds its stores in a
-  consistent state.
-- An archive holds every company's secrets and logins. It is written only to
-  the storage the operator configures, read only with the operator's
-  credentials for that storage, and never left where a company's container
-  can read it (`sdlc/policy/security-awareness`: scope secret access to the
-  component that needs it).
-- Restoring a company puts its folder back as it was in a chosen archive, on a
-  host where the operator's prerequisites for companies are in place, and
-  touches no other company. A host prepared the same way can take a company
-  restored from an archive; nothing here moves a company by itself or keeps a
-  second copy of it running.
-- A night whose backup fails leaves the archives already kept in place and is
-  reported as an anomaly through
-  `project/instrukt/spec/feature/runner/anomaly-notification`, which reaches
-  the operator as far as that contract's notification is configured.
+- Every night the platform backs up each company from the host, with the
+  operator's permissions; a company's container takes no part in it. It goes
+  to S3-compatible storage the operator sets through configuration. The
+  newest nights, as many as the backup's settings name, are kept and older
+  ones are removed (`sdlc/policy/state-storage`: state whose loss forces more
+  than cheap local recomputation is persisted and survives restarts).
+- What is backed up is what exists nowhere else: the company's settings and
+  secrets, its conversations, its agent's sessions with their history, and
+  the logins kept for it. What a repository governs, the company's own
+  documents and every checkout under its projects, and what can be installed
+  again, the agent tools, is not backed up.
+- Work in a checkout that is not committed and pushed is in no backup. Each
+  night's run names every such checkout to the operator.
+- A backup holds every company's secrets and logins. It is written only to the
+  storage the operator configures, read only with the operator's credentials
+  for that storage, and never left where a company's container can read it
+  (`sdlc/policy/security-awareness`: scope secret access to the component that
+  needs it).
+- Restoring one company brings back its settings, secrets, conversations,
+  sessions and logins from a chosen night, on a host where the operator's
+  prerequisites for companies are in place, and touches no other company. Its
+  documents and projects come from their repositories and its tools are
+  installed again. A company restored this way starts and works: what is
+  restored for it is consistent as of that night. Nothing here moves a
+  company by itself or keeps a second copy of it running.
+- A night whose backup fails removes nothing already kept and is reported as an
+  anomaly through `project/instrukt/spec/feature/runner/anomaly-notification`,
+  which reaches the operator as far as that contract's notification is
+  configured.
 
 ## Use cases
 
@@ -214,18 +219,21 @@ And no company had to be changed on its own
 ```gherkin
 Given an operator runs several companies on a host and has configured their backup storage
 When a night passes
-Then one new archive holding every company's folder is in the storage
-And only the configured number of newest archives is kept
-And no company's container can read any archive
-But a night whose backup fails leaves the archives already kept in place and is reported as an anomaly where anomaly notification is configured
+Then each company's settings, secrets, conversations, sessions and logins of that night are in the storage
+And no checkout of a repository and no installed tool is in it
+And the operator is told of every checkout that holds work not committed and pushed
+And only the configured number of newest nights is kept
+And no company's container can read any of it
+But a night whose backup fails removes nothing already kept and is reported as an anomaly where anomaly notification is configured
 ```
 
-### UC-CC9: Restore a company whose folder was damaged
+### UC-CC9: Restore a company whose folder was lost
 
 ```gherkin
-Given a company's agent erased the company's projects
-When the operator restores that company from the archive of the night before
-Then the company's projects, conversations and login are as they were that night
+Given a company's folder on the host was lost
+When the operator restores that company from a chosen night on a prepared host
+Then its settings, secrets, conversations, sessions and logins are as they were that night
+And its documents and projects come back from their repositories and its tools are installed again
 And its agent answers its members again
 And no other company on the host changed
 ```
@@ -242,8 +250,10 @@ Then no credential that opens the company's environment is kept in any log or di
 
 - Inside its container a company's team agent is not confined further: it
   can read, change or erase anything of its own company's that the container
-  holds, the company's secrets file and its login included. A restore from
-  the last archive brings it back, and work since that night is lost.
+  holds, the company's secrets file and its login included. A restore brings
+  back what the last night's backup holds and what the repositories hold;
+  work since that night, and work in a checkout that was not committed and
+  pushed, is lost.
 - A connector open to people outside the company needs an agent with no
   tools. A company's container does not provide one.
 - A Mac is for testing the container, not for hosting companies.
