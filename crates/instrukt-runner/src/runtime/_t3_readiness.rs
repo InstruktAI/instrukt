@@ -303,45 +303,83 @@ fn publish(observed: &std::sync::Arc<ObservedSnapshot>) {
 /// logged; the token lapses with its lifetime.
 pub(crate) struct Readiness {
     env: Env,
+    slot: std::sync::Arc<std::sync::Mutex<Slot>>,
+}
+
+/// The one token the runner keeps: the token reads use and the token a stop
+/// revokes are this slot's, replaced in one step.
+#[derive(Default)]
+struct Slot {
+    /// The kept token and when it is renewed.
     kept: Option<(Token, Timestamp)>,
-    /// The session of the token kept now, for the stop to revoke.
-    session: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// A stop has taken the slot: no token is kept in it any more.
+    claimed: bool,
+}
+
+fn lock(slot: &std::sync::Mutex<Slot>) -> std::sync::MutexGuard<'_, Slot> {
+    match slot.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
 
 impl Readiness {
     pub(super) fn new(env: Env) -> Self {
         Self {
             env,
-            kept: None,
-            session: std::sync::Arc::default(),
+            slot: std::sync::Arc::default(),
         }
     }
 
-    /// The token to read with at `now`, issuing or renewing it as due.
-    fn token(&mut self, now: Timestamp) -> Result<&Token, SessionsError> {
-        let due = self
-            .kept
-            .as_ref()
-            .is_none_or(|(_, renew_at)| now >= *renew_at);
-        if due {
-            let next = Token::issue()?;
-            let renew_at = now
-                .checked_add(jiff::SignedDuration::from_secs(
-                    TOKEN_LIFETIME_SECONDS - RENEW_BEFORE_SECONDS,
-                ))
-                .map_err(|_| refused("cannot compute the token's renewal time"))?;
-            let session = next.session.clone();
-            // The earlier token is revoked once the next one is in hand.
-            drop(self.kept.replace((next, renew_at)));
-            match self.session.lock() {
-                Ok(mut kept) => *kept = Some(session),
-                Err(poisoned) => *poisoned.into_inner() = Some(session),
+    /// The secret of the token to read with at `now`, issuing or renewing
+    /// it as due. A replacement is issued outside the slot and kept in one
+    /// step; the earlier token is revoked after that, outside the slot. Once
+    /// a stop has claimed the slot nothing is kept: a replacement issued
+    /// meanwhile is revoked here.
+    fn token(&mut self, now: Timestamp) -> Result<String, SessionsError> {
+        {
+            let slot = lock(&self.slot);
+            if slot.claimed {
+                return Err(refused("the runner is stopping"));
+            }
+            if let Some((token, renew_at)) = &slot.kept
+                && now < *renew_at
+            {
+                return Ok(token.secret.clone());
             }
         }
-        match &self.kept {
-            Some((token, _)) => Ok(token),
-            None => Err(refused("no readiness token")),
-        }
+        let next = Token::issue()?;
+        let renew_at = now
+            .checked_add(jiff::SignedDuration::from_secs(
+                TOKEN_LIFETIME_SECONDS - RENEW_BEFORE_SECONDS,
+            ))
+            .map_err(|_| refused("cannot compute the token's renewal time"))?;
+        let secret = next.secret.clone();
+        let earlier = {
+            let mut slot = lock(&self.slot);
+            if slot.claimed {
+                drop(slot);
+                // Revoked as it is dropped: the stop took the slot first.
+                drop(next);
+                return Err(refused("the runner is stopping"));
+            }
+            slot.kept.replace((next, renew_at))
+        };
+        // Revoked as it is dropped, the slot already holding the next one.
+        drop(earlier);
+        Ok(secret)
+    }
+}
+
+impl Drop for Readiness {
+    /// A readiness that ends revokes the token it keeps.
+    fn drop(&mut self) {
+        let kept = {
+            let mut slot = lock(&self.slot);
+            slot.claimed = true;
+            slot.kept.take()
+        };
+        drop(kept);
     }
 }
 
@@ -352,8 +390,8 @@ impl super::Readiness for Readiness {
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<std::sync::Arc<ObservedSnapshot>, SessionsError> {
         let endpoint = endpoint(home, &self.env)?;
-        let token = self.token(clock())?;
-        let source = read_rpc(&endpoint, &token.secret)?;
+        let secret = self.token(clock())?;
+        let source = read_rpc(&endpoint, &secret)?;
         // Observed when the read returned, however long it took.
         let observed = std::sync::Arc::new(ObservedSnapshot {
             snapshot: translate(source),
@@ -364,33 +402,30 @@ impl super::Readiness for Readiness {
     }
 
     fn stopper(&self) -> Box<dyn Fn() + Send + Sync> {
-        let session = std::sync::Arc::clone(&self.session);
+        let slot = std::sync::Arc::clone(&self.slot);
         Box::new(move || {
-            let kept = match session.lock() {
-                Ok(mut kept) => kept.take(),
-                Err(poisoned) => poisoned.into_inner().take(),
+            let kept = {
+                let mut slot = lock(&slot);
+                slot.claimed = true;
+                slot.kept.take()
             };
-            let Some(session) = kept else {
+            let Some((mut token, _)) = kept else {
                 return;
             };
-            // One attempt, bounded in real time: the process ends after it
-            // whatever the operator's clock says.
-            let (done, finished) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = done.send(command(
-                    &["auth", "session", "revoke", "--", &session],
-                    "cannot revoke readiness session",
-                ));
-            });
-            match finished.recv_timeout(TIMEOUT) {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => {
-                    tracing::error!(event = "readiness_token_cleanup_failed", %error, message = "readiness session revocation failed at stop; its five-minute TTL remains")
-                }
-                Err(_) => tracing::error!(
+            // One attempt at the kept token, bounded in real time whatever
+            // the operator's clock says: past the bound its command's process
+            // group is ended and reaped before the process ends.
+            token.revoked = true;
+            let attempt =
+                Invocation::program("t3", &["auth", "session", "revoke", "--", &token.session])
+                    .run_in_real_time(TIMEOUT);
+            if let Err(failure) = command_output(attempt) {
+                tracing::error!(
                     event = "readiness_token_cleanup_failed",
-                    message = "readiness session revocation did not finish at stop; its five-minute TTL remains"
-                ),
+                    category = failure.as_str(),
+                    message =
+                        "readiness session revocation failed at stop; its five-minute TTL remains"
+                );
             }
         })
     }

@@ -204,6 +204,24 @@ impl<'a> Invocation<'a> {
     /// killed (descendants still holding its pipes included) and the
     /// timeout reported.
     pub fn run(&self, timeout: Duration) -> Result<Finished, ProcessError> {
+        let started = Instant::now();
+        let limit = self.limit(timeout, started)?;
+        self.finish(limit, started)
+    }
+
+    /// As [`Invocation::run`], with `timeout` measured in real time even
+    /// when the operator's clock is set: for what must end within a real
+    /// bound, as a process's stop does.
+    pub fn run_in_real_time(&self, timeout: Duration) -> Result<Finished, ProcessError> {
+        let started = Instant::now();
+        let limit = Limit {
+            limit: timeout,
+            start: Start::Real(started + timeout),
+        };
+        self.finish(limit, started)
+    }
+
+    fn finish(&self, limit: Limit, started: Instant) -> Result<Finished, ProcessError> {
         let mut command = Command::new(&self.program);
         command
             .args(&self.args)
@@ -211,7 +229,7 @@ impl<'a> Invocation<'a> {
         if let Some(cwd) = self.cwd {
             command.current_dir(cwd);
         }
-        let output = self.execute(&mut command, Some(timeout))?;
+        let output = self.execute(&mut command, Some(limit), started)?;
         Ok(Finished {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -223,12 +241,9 @@ impl<'a> Invocation<'a> {
     fn execute(
         &self,
         command: &mut Command,
-        timeout: Option<Duration>,
+        limit: Option<Limit>,
+        started: Instant,
     ) -> Result<std::process::Output, ProcessError> {
-        let started = Instant::now();
-        let limit = timeout
-            .map(|timeout| self.limit(timeout, started))
-            .transpose()?;
         command
             .stdin(if self.input.is_some() {
                 Stdio::piped()
@@ -562,7 +577,9 @@ pub fn output(
     let name = command.get_program().to_string_lossy().into_owned();
     let mut invocation = Invocation::program(&name, &[]);
     invocation.input = input;
-    invocation.execute(command, Some(timeout))
+    let started = Instant::now();
+    let limit = invocation.limit(timeout, started)?;
+    invocation.execute(command, Some(limit), started)
 }
 
 /// Executes a native command as [`output`] does, waiting for it to its end
@@ -576,5 +593,5 @@ pub fn output_to_end(
     let name = command.get_program().to_string_lossy().into_owned();
     let mut invocation = Invocation::program(&name, &[]);
     invocation.input = input;
-    invocation.execute(command, None)
+    invocation.execute(command, None, Instant::now())
 }
