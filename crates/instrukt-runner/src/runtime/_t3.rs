@@ -169,6 +169,14 @@ impl RuntimeAdapter for T3 {
     ) -> Result<super::ProviderSnapshot, SessionsError> {
         super::_t3_readiness::snapshot(home, &self.env)
     }
+    fn readiness(&self) -> Option<Box<dyn super::Readiness>> {
+        Some(Box::new(super::_t3_readiness::Readiness::new(
+            self.env.clone(),
+        )))
+    }
+    fn last_snapshot(&self) -> Option<std::sync::Arc<super::ObservedSnapshot>> {
+        super::_t3_readiness::last()
+    }
     fn selection_realization(&self, operation: super::SelectionOperation) -> String {
         match operation {
             super::SelectionOperation::ThreadStart=>"T3 thread start accepts provider instance/model; requested effort/options are not expressible through this CLI operation.".into(),

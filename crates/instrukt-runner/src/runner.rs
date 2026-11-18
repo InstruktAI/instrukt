@@ -37,6 +37,7 @@ use crate::transport::{EventScope, ScopedTransport, TransportError};
 const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 
 mod _holder;
+mod _readiness;
 mod _service;
 pub use _service::{ServiceRecord, published_service, service_identity};
 
@@ -206,6 +207,17 @@ pub fn tick(cx: &RunnerContext<'_>, now: Timestamp) -> Result<TickOutcome, Runne
     let current = Current::new(candidate.generation);
     instrukt_core::config::serve(cx.home, &current);
     let admitted = current.get();
+    // Readiness is refreshed once, on entry, before any start; a failure
+    // leaves the starts with the configured order. The token is revoked when
+    // the tick ends.
+    let mut readiness = admitted
+        .global()
+        .runner_runtime()
+        .ok()
+        .and_then(|runtime| crate::runtime::adapter(runtime).readiness());
+    if let Some(readiness) = readiness.as_mut() {
+        _readiness::refresh(cx.home, readiness.as_mut(), now, &mut true);
+    }
     let considered = considered(&admitted);
     let platform = event_platform(cx, &state, &admitted)?;
     wake(
@@ -269,6 +281,26 @@ pub fn run(
     // nothing in its process reads the configuration files on its own.
     instrukt_core::config::serve(cx.home, &current);
     crate::state::admission_outcome(cx.home, clock(), true);
+    // Readiness is kept on a thread of its own: refreshed now and on each
+    // wake, never by a start.
+    let readiness = match current
+        .get()
+        .global()
+        .runner_runtime()
+        .ok()
+        .and_then(|runtime| crate::runtime::adapter(runtime).readiness())
+    {
+        Some(readiness) => {
+            match _readiness::Worker::start(cx.home, readiness, Arc::clone(&clock)) {
+                Ok(worker) => Some(worker),
+                Err(error) => {
+                    tracing::error!(event = "readiness_worker_unstarted", %error);
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     let mut platform: Option<EventPlatform> = None;
     // The transport settings the event platform was prepared on.
     let mut platform_transport: Option<serde_yaml_ng::Value> = None;
@@ -331,6 +363,9 @@ pub fn run(
     // one left by an earlier runner is cleared by this runner's first.
     let mut skipped = true;
     loop {
+        // The interval on the operator's clock runs from when this wake
+        // began, however long its work takes.
+        let woke_at = clock();
         supervise_relay(&mut relay);
         if let Some(connections) = &mut connections {
             connections.check();
@@ -353,6 +388,9 @@ pub fn run(
             }
         }
         let admitted = current.get();
+        if let Some(readiness) = &readiness {
+            readiness.wake();
+        }
         // An event platform holds the transport it was prepared on: a
         // generation admitting other transport settings prepares it again.
         let transport_settings = admitted.global().get(Some("redis"), cx.env).ok();
@@ -410,9 +448,8 @@ pub fn run(
         // Wait for the interval, an activation wake-up, or a supervised
         // worker's end, which is observed within a second.
         // The interval passes in real time, or on the operator's clock when
-        // that has moved past it.
+        // that has moved past it since the wake began.
         let until = std::time::Instant::now() + interval;
-        let woke_at = clock();
         let interval_on_clock =
             jiff::SignedDuration::try_from(interval).unwrap_or(jiff::SignedDuration::MAX);
         while std::time::Instant::now() < until

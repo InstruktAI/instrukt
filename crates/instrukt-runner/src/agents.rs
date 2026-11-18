@@ -245,21 +245,25 @@ pub(crate) fn mark_quota(
     Ok(())
 }
 
-/// Apply capacity and ordered selection policy to adapter-translated readiness facts.
-pub(crate) fn prepare_start(
+/// Marks the models of each profile whose provider a snapshot reports at a
+/// full usage window, until the window resets: once, by the refresh that
+/// read the snapshot. A missing reset defaults to one hour after the
+/// snapshot was observed, so a snapshot read again never moves the expiry.
+pub(crate) fn apply_usage(
     home: &instrukt_core::home::Home,
-    adapter: &dyn crate::runtime::RuntimeAdapter,
-    request: &crate::runtime::RuntimeStart,
-    now: jiff::Timestamp,
-) -> Result<crate::runtime::RuntimeStart, crate::sessions::SessionsError> {
-    let snapshot = adapter.provider_snapshot(home)?;
-    // A start prepared in an admitted generation carries its profiles; one
-    // read back from its record or made by a command reads them here.
-    let agents = match &request.profiles.0 {
-        Some(profiles) => (**profiles).clone(),
-        None => Configuration::load(home, Some(&request.checkout))?.agents()?,
-    };
+    observed: &crate::runtime::ObservedSnapshot,
+) -> Result<(), crate::sessions::SessionsError> {
+    apply_windows(home, &observed.snapshot, observed.at)
+}
+
+/// Marks the full usage windows of `snapshot`, observed at `observed_at`.
+fn apply_windows(
+    home: &instrukt_core::home::Home,
+    snapshot: &crate::runtime::ProviderSnapshot,
+    observed_at: jiff::Timestamp,
+) -> Result<(), crate::sessions::SessionsError> {
     const QUOTA_DEFAULT_SECONDS: i64 = 3600;
+    let agents = instrukt_core::config::Agents::load(home)?;
     for (name, profile) in &agents.profiles {
         let Some(provider) = snapshot
             .providers
@@ -277,7 +281,8 @@ pub(crate) fn prepare_start(
             let (until, defaulted) = match window.resets_at {
                 Some(until) => (until, false),
                 None => (
-                    now.checked_add(jiff::SignedDuration::from_secs(QUOTA_DEFAULT_SECONDS))
+                    observed_at
+                        .checked_add(jiff::SignedDuration::from_secs(QUOTA_DEFAULT_SECONDS))
                         .map_err(|_| {
                             crate::sessions::SessionsError::Refused(
                                 "cannot compute quota expiry".into(),
@@ -286,7 +291,7 @@ pub(crate) fn prepare_start(
                     true,
                 ),
             };
-            if until <= now {
+            if until <= observed_at {
                 continue;
             }
             let cause = format!(
@@ -323,6 +328,26 @@ pub(crate) fn prepare_start(
             )?;
         }
     }
+    Ok(())
+}
+
+/// Apply capacity and ordered selection policy to the last readiness facts
+/// the runner observed. A start never acquires readiness and is never
+/// refused for it: with no snapshot known yet it proceeds in the configured
+/// order, and T3's own refusal of the start is the signal.
+pub(crate) fn prepare_start(
+    home: &instrukt_core::home::Home,
+    adapter: &dyn crate::runtime::RuntimeAdapter,
+    request: &crate::runtime::RuntimeStart,
+    now: jiff::Timestamp,
+) -> Result<crate::runtime::RuntimeStart, crate::sessions::SessionsError> {
+    let observed = adapter.last_snapshot();
+    // A start prepared in an admitted generation carries its profiles; one
+    // read back from its record or made by a command reads them here.
+    let agents = match &request.profiles.0 {
+        Some(profiles) => (**profiles).clone(),
+        None => Configuration::load(home, Some(&request.checkout))?.agents()?,
+    };
     let candidates = if request.preferences.is_empty() {
         request.selection.iter().cloned().collect()
     } else {
@@ -330,6 +355,14 @@ pub(crate) fn prepare_start(
     };
     let mut tried = Vec::new();
     for selection in candidates {
+        let Some(snapshot) = observed.as_ref().map(|observed| &observed.snapshot) else {
+            let mut prepared = request.clone();
+            prepared.selection = Some(selection);
+            prepared.selection_evidence = Some(
+                adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
+            );
+            return Ok(prepared);
+        };
         let cause = match snapshot
             .providers
             .iter()

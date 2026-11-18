@@ -1,6 +1,12 @@
 //! Protocol- and shape-validated translation of T3's internal read-scoped provider snapshot.
 //! Wire source: https://github.com/pingdotgg/t3code/tree/6417151c09/apps/server/src
-use super::{ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
+//!
+//! Readiness is off the start path. A runner keeps one read-scoped token,
+//! issued when it starts and renewed before it expires, and refreshes the
+//! provider snapshot on its own wake ([`Readiness`]). Each snapshot read is
+//! published with the time it was observed; a start reads the last one
+//! published ([`last`]) and never waits on an acquisition in progress.
+use super::{ObservedSnapshot, ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
 use crate::{process::Invocation, sessions::SessionsError};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{
@@ -19,7 +25,13 @@ use std::{
 use tungstenite::{Message, client::IntoClientRequest};
 
 const RPC_REQUEST_ID: &str = "instrukt-readiness";
+/// The limit on one T3 CLI launch and on one snapshot read.
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// The lifetime T3 gives a readiness token (`--ttl`).
+const TOKEN_LIFETIME: &str = "5m";
+const TOKEN_LIFETIME_SECONDS: i64 = 300;
+/// How long before its expiry a token is replaced.
+const RENEW_BEFORE_SECONDS: i64 = 60;
 fn refused(cause: &str) -> SessionsError {
     SessionsError::Refused(format!("T3 readiness: {cause}"))
 }
@@ -170,7 +182,7 @@ impl Token {
                 "--scope",
                 "orchestration:read",
                 "--ttl",
-                "5m",
+                TOKEN_LIFETIME,
                 "--token-only",
                 "--label",
                 "instrukt-readiness",
@@ -225,7 +237,8 @@ impl Drop for Token {
         }
     }
 }
-fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
+/// The local server's WebSocket endpoint, from its runtime descriptor.
+fn endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
     let cli = match command(&["--version"], "cannot inspect CLI release") {
         Ok(release) => Some(release),
         Err(error) => {
@@ -259,6 +272,90 @@ fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
         .map_err(|_| refused("invalid server transport"))?;
     endpoint.set_path("/ws");
     endpoint.set_query(Some("orchestrationProtocol=2"));
+    Ok(endpoint)
+}
+
+/// The snapshot a start reads: the last one any refresh in this process
+/// published, with the time it was observed.
+static LAST: std::sync::RwLock<Option<std::sync::Arc<ObservedSnapshot>>> =
+    std::sync::RwLock::new(None);
+
+/// The last snapshot published in this process, if any.
+pub(super) fn last() -> Option<std::sync::Arc<ObservedSnapshot>> {
+    match LAST.read() {
+        Ok(last) => last.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+fn publish(observed: &std::sync::Arc<ObservedSnapshot>) {
+    let next = Some(std::sync::Arc::clone(observed));
+    match LAST.write() {
+        Ok(mut last) => *last = next,
+        Err(poisoned) => *poisoned.into_inner() = next,
+    }
+}
+
+/// The runner's one readiness token and the refresh of the provider
+/// snapshot it reads. The token is issued on the first refresh and replaced
+/// before it expires: the next is issued, then the earlier one revoked. The
+/// last one is revoked when this is dropped. A revocation that fails is
+/// logged; the token lapses with its lifetime.
+pub(crate) struct Readiness {
+    env: Env,
+    kept: Option<(Token, Timestamp)>,
+}
+
+impl Readiness {
+    pub(super) fn new(env: Env) -> Self {
+        Self { env, kept: None }
+    }
+
+    /// The token to read with at `now`, issuing or renewing it as due.
+    fn token(&mut self, now: Timestamp) -> Result<&Token, SessionsError> {
+        let due = self
+            .kept
+            .as_ref()
+            .is_none_or(|(_, renew_at)| now >= *renew_at);
+        if due {
+            let next = Token::issue()?;
+            let renew_at = now
+                .checked_add(jiff::SignedDuration::from_secs(
+                    TOKEN_LIFETIME_SECONDS - RENEW_BEFORE_SECONDS,
+                ))
+                .map_err(|_| refused("cannot compute the token's renewal time"))?;
+            // The earlier token is revoked once the next one is in hand.
+            drop(self.kept.replace((next, renew_at)));
+        }
+        match &self.kept {
+            Some((token, _)) => Ok(token),
+            None => Err(refused("no readiness token")),
+        }
+    }
+}
+
+impl super::Readiness for Readiness {
+    fn refresh(
+        &mut self,
+        home: &Home,
+        now: Timestamp,
+    ) -> Result<std::sync::Arc<ObservedSnapshot>, SessionsError> {
+        let endpoint = endpoint(home, &self.env)?;
+        let token = self.token(now)?;
+        let source = read_rpc(&endpoint, &token.secret)?;
+        let observed = std::sync::Arc::new(ObservedSnapshot {
+            snapshot: translate(source),
+            at: now,
+        });
+        publish(&observed);
+        Ok(observed)
+    }
+}
+
+/// One snapshot read with a token of its own, revoked after it: for a
+/// command that reads readiness once, never for a start.
+fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
+    let endpoint = endpoint(home, env)?;
     let mut token = Token::issue()?;
     let result = read_rpc(&endpoint, &token.secret);
     let cleanup = token.revoke();
@@ -417,8 +514,11 @@ fn unavailable(provider: &Provider) -> Option<String> {
     None
 }
 pub(super) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, SessionsError> {
-    let source = acquire(home, env)?;
-    Ok(ProviderSnapshot {
+    Ok(translate(acquire(home, env)?))
+}
+
+fn translate(source: Snapshot) -> ProviderSnapshot {
+    ProviderSnapshot {
         native_picks: vec!["auto".into(), "default".into()],
         providers: source
             .providers
@@ -450,7 +550,7 @@ pub(super) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, Sessi
                 }
             })
             .collect(),
-    })
+    }
 }
 
 #[cfg(test)]

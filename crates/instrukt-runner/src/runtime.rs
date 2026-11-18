@@ -197,6 +197,23 @@ pub struct AssignmentEvidence {
     pub observed_at: jiff::Timestamp,
 }
 
+/// A provider snapshot with the time it was observed.
+pub struct ObservedSnapshot {
+    pub snapshot: ProviderSnapshot,
+    pub at: jiff::Timestamp,
+}
+
+/// A runtime's readiness kept by the runner: refreshed on the runner's own
+/// wake, never on a start.
+pub trait Readiness: Send {
+    /// Reads the provider snapshot now and publishes it for starts to read.
+    fn refresh(
+        &mut self,
+        home: &instrukt_core::home::Home,
+        now: jiff::Timestamp,
+    ) -> Result<std::sync::Arc<ObservedSnapshot>, SessionsError>;
+}
+
 /// Adapter-translated provider facts; expiry and selection belong to runner policy.
 pub struct ProviderSnapshot {
     pub providers: Vec<ProviderFacts>,
@@ -239,10 +256,20 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
         _diagnostics::diagnose(self.runtime().name(), operation, error, None)
     }
     fn runtime(&self) -> Runtime;
+    /// One provider snapshot read now, with a token of its own: for a
+    /// command that reads readiness once, never for a start.
     fn provider_snapshot(
         &self,
         home: &instrukt_core::home::Home,
     ) -> Result<ProviderSnapshot, SessionsError>;
+    /// The readiness a runner keeps for this runtime, if it has any.
+    fn readiness(&self) -> Option<Box<dyn Readiness>> {
+        None
+    }
+    /// The last provider snapshot published in this process, if any.
+    fn last_snapshot(&self) -> Option<std::sync::Arc<ObservedSnapshot>> {
+        None
+    }
     fn selection_realization(&self, operation: SelectionOperation) -> String;
     fn native_selection(
         &self,
