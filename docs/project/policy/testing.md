@@ -69,8 +69,8 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 - A check's tool that is not installed yet is installed when it is first
   needed: by `make hooks`, which installs the tools `.pre-commit-config.yaml`
   pins when it enables the hook, or by the first commit or every-file run
-  that needs it. That installation is not counted in the ten seconds. No
-  commit is refused because a tool is missing.
+  that needs it. That installation and the tool's first run after it are not
+  counted in the ten seconds. No commit is refused because a tool is missing.
 - GitHub CI runs that configuration over every file, and the whole test
   suite, on every pull request, on Linux and macOS, exercising filesystem case
   behavior, hooks and paths. `main` requires these checks, so a functional
