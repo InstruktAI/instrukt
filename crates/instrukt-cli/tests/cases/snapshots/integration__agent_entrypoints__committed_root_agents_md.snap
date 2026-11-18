@@ -9,6 +9,8 @@ The demo project.
 
 # Project
 
+- sdlc/policy/tests — `instrukt docs get sdlc/policy/tests --closure`
+
 ## House — Policy
 
 ### Rules
@@ -31,6 +33,5 @@ House: Enforcement.
 
 House: Exceptions.
 
-- sdlc/policy/tests — `instrukt docs get sdlc/policy/tests --closure`
 - project/demo/policy/style: About Style. — `instrukt docs get project/demo/policy/style`
 - project/demo/procedure/release: About Release. — when: When cutting a release. — `instrukt docs get project/demo/procedure/release --closure`

@@ -76,6 +76,10 @@ pub struct InFull {
     /// A procedure's `activation_trigger`, shown directly under its
     /// heading.
     pub trigger: Option<String>,
+    /// The reference lines the traversal reached just before this snippet:
+    /// required reads the rendering does not hold, each in the place its
+    /// body would have had, so a dependency stays before what requires it.
+    pub references: Vec<String>,
 }
 
 /// What one position's selection renders.
@@ -86,10 +90,11 @@ pub struct Selection {
     /// The snippets in full, in traversal order: each required read before
     /// the snippet requiring it, each once.
     pub in_full: Vec<InFull>,
-    /// What another repository publishes, named rather than copied: one
-    /// [`reference_line`] or [`domain_reference_line`] per required read
-    /// the rendering does not hold, in traversal order. Only a committed
-    /// rendering has any.
+    /// What another repository publishes, named rather than copied, that
+    /// the traversal reached after the last snippet in full: one
+    /// [`reference_line`] or [`domain_reference_line`] each, in traversal
+    /// order. One reached before a snippet in full is that snippet's
+    /// ([`InFull::references`]). Only a committed rendering has any.
     pub references: Vec<String>,
     /// The `listed` snippets, in the order the index lists them.
     pub listed: Vec<Listing>,
@@ -145,6 +150,11 @@ impl Selection {
             if snippet.position != current {
                 current = &snippet.position;
                 blocks.push(heading(current));
+            }
+            // What the traversal named just before this snippet sits under
+            // its heading, before it.
+            if !snippet.references.is_empty() {
+                blocks.push(snippet.references.join("\n"));
             }
             blocks.push(in_full(snippet));
         }

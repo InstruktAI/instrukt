@@ -699,6 +699,7 @@ pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
             position: position_name(&loaded.entry.id),
             body: rendered.text,
             trigger: trigger_of(loaded.entry).map(str::to_owned),
+            references: Vec::new(),
         });
     }
     let mut listed = Vec::new();

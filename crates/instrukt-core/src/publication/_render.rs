@@ -84,7 +84,8 @@ pub(super) struct Renderer<'a> {
 /// The snippets one rendered file holds in full so far, in traversal
 /// order, the domains whose `expanded` set a bare-domain read already
 /// brought in, and the reference lines naming what the source does not
-/// hold.
+/// hold that no snippet in full has followed yet: the next one takes them,
+/// so each keeps its place in the traversal.
 #[derive(Default, Clone)]
 struct Expansion {
     order: Vec<InFull>,
@@ -403,6 +404,7 @@ impl Rendering<'_> {
                     position: position_name(id),
                     body: rendered.text,
                     trigger: self.entry(id).and_then(trigger_of).map(str::to_owned),
+                    references: std::mem::take(&mut into.references),
                 });
                 Ok(())
             }
@@ -415,7 +417,7 @@ impl Rendering<'_> {
                         .push(docs::domain_reference_line(domain.as_str()));
                     return Ok(());
                 }
-                match self.source.domain_index(domain) {
+                match self.source.domain_index(domain)? {
                     Some(index) => self.expand(index.expanded(), file, into),
                     None => Err(self
                         .source
@@ -500,9 +502,9 @@ trait Source {
         file: &str,
     ) -> Result<Option<(Rendered, String)>, PublicationError>;
 
-    /// The `index.yaml` of the position addressed by `domain`; `None` when
-    /// it has none.
-    fn domain_index(&self, domain: &DomainName) -> Option<&PositionIndex>;
+    /// The `index.yaml` of the position addressed by `domain`, read when a
+    /// rendering asks for it; `None` when it has none.
+    fn domain_index(&self, domain: &DomainName) -> Result<Option<PositionIndex>, PublicationError>;
 
     /// The refusal for a read of `file` into `domain` when no adopted docs
     /// repository publishes that domain on this computer; `None` when the
@@ -582,8 +584,8 @@ impl Source for Published<'_> {
         Ok(Some((rendered, shown)))
     }
 
-    fn domain_index(&self, domain: &DomainName) -> Option<&PositionIndex> {
-        self.indexes.get(domain)
+    fn domain_index(&self, domain: &DomainName) -> Result<Option<PositionIndex>, PublicationError> {
+        Ok(self.indexes.get(domain).cloned())
     }
 
     fn missing_domain(&self, domain: &DomainName, file: &str) -> Option<PublicationError> {
@@ -599,16 +601,18 @@ impl Source for Published<'_> {
 /// The repository source: one tree of the repository and nothing from the
 /// computer. It holds the positions the tree holds — its own
 /// `docs/project/`, `docs/general/` and each `docs/domain/<x>/` — and
-/// reads their snippets and `index.yaml` files from the tree alone.
+/// reads their snippets, and an `index.yaml` when a rendering asks for it,
+/// from the tree alone. A document it would hold that carries an `@exec`
+/// or `@include` directive is refused, as validation reports it.
 struct Repository<'a> {
     project: Option<&'a ProjectSlug>,
+    /// The tree it reads.
+    tree: &'a Committed,
     /// The tree's documentation, read without a home.
     corpus: &'a Corpus,
     /// The published positions the tree holds, by the domain name each is
     /// addressed by.
     held: &'a BTreeSet<DomainName>,
-    /// The tree's own `index.yaml` of each position it holds.
-    indexes: &'a BTreeMap<DomainName, PositionIndex>,
     values: Values<'static>,
 }
 
@@ -640,6 +644,10 @@ impl Source for Repository<'_> {
         let View::Visible { version, .. } = snippet.view(Lens::Current) else {
             return Ok(None);
         };
+        let findings = docs::unsupported_directives(version.path(), version.body());
+        if !findings.is_empty() {
+            return Err(PublicationError::CommittedDirectives { findings });
+        }
         let cx = RenderContext {
             home: None,
             values: &self.values,
@@ -651,8 +659,8 @@ impl Source for Repository<'_> {
         Ok(Some((rendered, source)))
     }
 
-    fn domain_index(&self, domain: &DomainName) -> Option<&PositionIndex> {
-        self.indexes.get(domain)
+    fn domain_index(&self, domain: &DomainName) -> Result<Option<PositionIndex>, PublicationError> {
+        super::_sync::committed_index(self.tree, &Position::of_domain(domain))
     }
 
     fn missing_domain(&self, _domain: &DomainName, _file: &str) -> Option<PublicationError> {
@@ -720,6 +728,10 @@ pub enum RenderFindingKind {
     ConfigInCommittedRendering { document: String },
     /// The rendering keeps a reference an agent program would try to load.
     ImportInCommittedRendering { reference: String },
+    /// A master, or a document the rendering would hold in full, carries a
+    /// directive the format does not support (`@exec`, `@include`), as
+    /// validation reports it.
+    UnsupportedDirective { finding: docs::Finding },
     /// An `AGENTS.override.md` beside the root master.
     OverrideBesideMaster,
     /// The root master carries `## Required reads`.
@@ -741,6 +753,7 @@ impl std::fmt::Display for RenderFinding {
                 f,
                 "{path}: the rendering keeps `{reference}`, which an agent program would try to load; name the document by its id instead"
             ),
+            RenderFindingKind::UnsupportedDirective { finding } => write!(f, "{path}: {finding}"),
             RenderFindingKind::OverrideBesideMaster => write!(
                 f,
                 "{path}: Codex reads it in place of {AGENTS_FILE}, so it hides every committed update; instrukt never deletes it, so remove it unless it is your own"
@@ -828,19 +841,12 @@ fn render_project(
             .unwrap_or_default(),
         ..GlobalIndex::default()
     };
-    let mut indexes = BTreeMap::new();
-    for domain in &held {
-        if let Some(index) = super::_sync::committed_index(tree, &Position::of_domain(domain))? {
-            indexes.insert(domain.clone(), index);
-        }
-    }
-    let project_index = super::_sync::committed_index(tree, &Position::Project)?;
     let held: BTreeSet<DomainName> = held.into_iter().collect();
     let source = Repository {
         project,
+        tree,
         corpus: &corpus,
         held: &held,
-        indexes: &indexes,
         values: Values::committed(),
     };
     let rendering = Rendering {
@@ -871,16 +877,36 @@ fn render_project(
             });
             continue;
         }
-        if root && project_index.is_none() {
-            plan.notices.push(project_without_index());
+        let unsupported = docs::unsupported_directives(Path::new(master), &text);
+        if !unsupported.is_empty() {
+            plan.findings
+                .extend(unsupported.into_iter().map(|finding| RenderFinding {
+                    path: path.clone(),
+                    kind: RenderFindingKind::UnsupportedDirective { finding },
+                }));
+            continue;
         }
         let rendered = if root {
+            // The project's index is read only for the root rendering
+            // that selects from it.
+            let project_index = super::_sync::committed_index(tree, &Position::Project)?;
+            if project_index.is_none() {
+                plan.notices.push(project_without_index());
+            }
             rendering.root_agents(master, &text, project_index.as_ref())
         } else {
             rendering.nested(master, &text)
         };
         let text = match rendered {
             Ok(text) => text,
+            Err(PublicationError::CommittedDirectives { findings }) => {
+                plan.findings
+                    .extend(findings.into_iter().map(|finding| RenderFinding {
+                        path: path.clone(),
+                        kind: RenderFindingKind::UnsupportedDirective { finding },
+                    }));
+                continue;
+            }
             Err(PublicationError::CommittedConfig { document }) => {
                 plan.findings.push(RenderFinding {
                     path,
@@ -1061,27 +1087,37 @@ mod tests {
             .unwrap()
     }
 
-    fn id(text: &str) -> SnippetId {
-        SnippetId::parse(text).unwrap()
-    }
-
     #[test]
     fn an_unheld_read_is_exactly_its_reference_line() {
         let plan = plan(&policy("Be kind.", &["sdlc/policy/tests"]), &[]);
-        let naming: Vec<&str> = root(&plan)
-            .text
-            .lines()
-            .filter(|line| line.contains("sdlc"))
-            .collect();
-        assert_eq!(naming, [docs::reference_line(&id("sdlc/policy/tests"))]);
+        assert_eq!(plan.findings, []);
+        insta::assert_snapshot!(root(&plan).text);
     }
 
     #[test]
     fn a_held_snippet_is_inlined() {
-        let rule = "Every change keeps the house kind.";
-        let plan = plan(&policy(rule, &[]), &[]);
-        assert!(root(&plan).text.lines().any(|line| line == rule));
-        assert!(root(&plan).text.starts_with(GENERATED_LINE));
+        let plan = plan(&policy("Every change keeps the house kind.", &[]), &[]);
+        let written: Vec<&Path> = plan.writes.iter().map(|file| file.path.as_path()).collect();
+        assert_eq!(written, [Path::new(AGENTS_FILE)]);
+        assert!(is_rendering(root(&plan).text.as_bytes()));
+        insta::assert_snapshot!(root(&plan).text);
+    }
+
+    #[test]
+    fn a_required_read_keeps_its_place_whether_held_or_named() {
+        let care = "---\ndescription: Care.\n---\n\n# Care — Policy\n\n## Rules\n\nTake care.\n";
+        let plan = plan(
+            &policy("Be kind.", &["general", "sdlc", "sdlc/policy/tests"]),
+            &[
+                (
+                    "docs/general/index.yaml",
+                    "expanded:\n  - general/policy/care\n",
+                ),
+                ("docs/general/policy/care.md", care),
+            ],
+        );
+        assert_eq!(plan.findings, []);
+        insta::assert_snapshot!(root(&plan).text);
     }
 
     #[test]

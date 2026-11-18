@@ -153,6 +153,10 @@ pub enum PublicationError {
     /// value, which differs per computer.
     #[error("{document} reads a configured value, which a committed rendering cannot hold")]
     CommittedConfig { document: String },
+    /// A document a committed rendering would hold carries a directive the
+    /// format does not support.
+    #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    CommittedDirectives { findings: Vec<crate::docs::Finding> },
     /// A company home's rendering, which this build does not carry yet.
     #[error("company rendering is not available in this build")]
     CompanyRenderingUnavailable,

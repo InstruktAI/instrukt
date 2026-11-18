@@ -131,6 +131,15 @@ fn rendered_in_full(index: &PositionIndex) -> Vec<&crate::ids::SnippetId> {
     ids
 }
 
+/// A finding for each `@exec` and `@include` directive of the source text
+/// `text` at `path` (its frontmatter, if any, aside): the rule validation
+/// applies, for a rendering that holds the text.
+pub(crate) fn unsupported_directives(path: &Path, text: &str) -> Vec<Finding> {
+    let mut out = Vec::new();
+    unsupported_in(path, _text::split_frontmatter(text).body, &mut out);
+    out
+}
+
 /// A finding for each `@exec` and `@include` directive in `body`, naming
 /// its command or path as written.
 fn unsupported_in(path: &Path, body: &str, out: &mut Vec<Finding>) {
