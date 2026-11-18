@@ -248,6 +248,70 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         || messages_of("later") == 1,
     );
     assert_eq!(runner.running(), pid, "the same runner process");
+    // T3's database becomes unreadable for history while the runner runs: the
+    // extraction worker shows its failure in status and goes on trying.
+    let failing = || -> Vec<String> {
+        let out = env
+            .run(env.home(), ["events", "status", "--json"])
+            .success();
+        let status: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+        status["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["worker"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let extraction = || failing().contains(&"history-extraction".to_owned());
+    recreated.break_shape();
+    crate::common::wait_until(
+        "the extraction failure in status",
+        Duration::from_secs(20),
+        extraction,
+    );
+    // Meanwhile the machine layer is broken by hand. Once T3's database reads
+    // again, the same worker extracts with the configuration the runner
+    // admitted, which clears its failure, and holds what was begun.
+    let machine = env.instrukt_home().join("instrukt.yaml");
+    let admitted = std::fs::read_to_string(&machine).unwrap();
+    std::fs::write(&machine, format!("{admitted}modules: [\n")).unwrap();
+    recreated.restore_shape();
+    recreated.thread("repaired", None, None, "2026-11-08T13:00:00.000Z");
+    recreated.message(
+        "repaired",
+        "message-repaired",
+        "Begun while the runner held on.",
+        "2026-11-08T13:00:00.000Z",
+        false,
+    );
+    crate::common::wait_until(
+        "the extraction failure to clear",
+        Duration::from_secs(20),
+        || !extraction(),
+    );
+    std::fs::write(&machine, &admitted).unwrap();
+    crate::common::wait_until(
+        "the repaired conversation to be held",
+        Duration::from_secs(20),
+        || messages_of("repaired") == 1,
+    );
+    assert_eq!(runner.running(), pid, "the same runner process");
+    // A failure one runner process recorded is cleared by the next one's
+    // worker once it extracts.
+    recreated.break_shape();
+    crate::common::wait_until(
+        "the extraction failure in status",
+        Duration::from_secs(20),
+        extraction,
+    );
+    drop(runner);
+    recreated.restore_shape();
+    let _next = fixture::runner(&env);
+    crate::common::wait_until(
+        "the earlier runner's failure to clear",
+        Duration::from_secs(20),
+        || !extraction(),
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/history UC-HI3

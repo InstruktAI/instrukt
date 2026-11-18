@@ -368,4 +368,29 @@ fn switching_on_event_responses_asks_for_the_event_transport_first() {
     .success();
     patch(&env, &repo, &read, "modules: {events: true}").success();
     assert_eq!(layer(&repo)["modules"]["events"], Value::from(true));
+    // With event responses on, the transport cannot be taken from under them.
+    let global_patch = |yaml: &str| {
+        let out = env
+            .run(&outside, ["config", "get", "--global", "--revision"])
+            .success();
+        let revision = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+        env.run(
+            &outside,
+            [
+                "config",
+                "patch",
+                "--global",
+                "--revision",
+                revision.trim(),
+                "--yaml",
+                yaml,
+            ],
+        )
+    };
+    global_patch("modules: {events: true}").success();
+    let machine = env.instrukt_home().join("instrukt.yaml");
+    let before = std::fs::read_to_string(&machine).unwrap();
+    let refused = global_patch("redis: null").failure();
+    insta::assert_snapshot!("transport-removed-under-events", stderr(&env, &refused));
+    assert_eq!(std::fs::read_to_string(&machine).unwrap(), before);
 }

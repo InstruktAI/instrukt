@@ -509,6 +509,26 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         .map(|p| p["events"].clone())
         .collect();
     assert_eq!(reacting, [serde_json::Value::Bool(false)]);
+    // The runner's wakes are brought about on the clock; each admits the
+    // files again, and status shows what the last one did with them.
+    let runner_admission = |c: &Company| c.status()["admission"]["runner"].clone();
+    let mut next_wake = |c: &Company, outcome: &str| {
+        let before = runner_admission(c);
+        wait(&format!("a wake that {outcome} the generation"), || {
+            now += jiff::SignedDuration::from_mins(3);
+            std::fs::write(&clock, now.to_string()).unwrap();
+            let admission = runner_admission(c);
+            admission["at"] != before["at"] && admission["outcome"] == outcome
+        });
+    };
+    // A published project's layer that cannot be read leaves the generation
+    // in force rather than one without that project.
+    let project_layer = events.path().join("instrukt.yaml");
+    let readable = std::fs::read_to_string(&project_layer).unwrap();
+    std::fs::write(&project_layer, "schema_version: [\n").unwrap();
+    next_wake(&c, "kept");
+    std::fs::write(&project_layer, &readable).unwrap();
+    next_wake(&c, "replaced");
     // While the runner runs, the company's document is broken by hand and its
     // bot token's secret blanked.
     let company_dir = c.env.instrukt_home().join(format!("companies/{COMPANY}"));
@@ -541,6 +561,8 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     ];
     expected.sort();
     assert_eq!(found, expected);
+    // The runner's next wake keeps the generation in force.
+    next_wake(&c, "kept");
     // The member's next question still starts the agent on the company's
     // profile from the last valid generation, and is answered over the last
     // valid connection.
@@ -562,4 +584,26 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     );
     c.finish_turn(&second, 0, "They are ready.");
     wait("the second answer", || c.slack.posts().len() == 2);
+    // The machine layer is broken by hand as well: status still says why it
+    // is not admitted, the runner keeps its generation, and the member is
+    // answered.
+    let machine = c.env.instrukt_home().join("instrukt.yaml");
+    let admitted = std::fs::read_to_string(&machine).unwrap();
+    std::fs::write(&machine, format!("{admitted}modules: [\n")).unwrap();
+    next_wake(&c, "kept");
+    assert!(
+        c.status()["admission"]["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty())
+    );
+    c.slack
+        .mention(channel, "USTEVEN", "<@UAGENT> And the date?", None);
+    wait("the third session", || c.sessions().len() == 3);
+    let third = c
+        .sessions()
+        .into_iter()
+        .find(|session| *session != first && *session != second)
+        .unwrap();
+    c.finish_turn(&third, 0, "Friday the 20th.");
+    wait("the third answer", || c.slack.posts().len() == 3);
 }
