@@ -47,9 +47,9 @@ The commit check uses the pre-commit framework at the version pinned in
 functional suite runs in CI on every pull request. The Python lint and type
 check are the framework's own hooks for ruff and mypy at pinned commits.
 `make hooks` installs them into the framework's cache (`~/.cache/pre-commit`),
-which needs network access; run it again when a pinned tool changes. A commit
-never installs a tool: without them it is refused, naming `make hooks`.
-`make commit-checks` and CI install what is missing themselves.
+which needs network access. A commit made before that, or after a pinned tool
+changes, installs what it needs itself and takes longer that one time;
+`make commit-checks` and CI do the same.
 
 Command-line tests run the built binary against a temporary `HOME` and
 temporary git repositories (`crates/instrukt-cli/tests/common`); they never

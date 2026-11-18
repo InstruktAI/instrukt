@@ -14,9 +14,9 @@ the framework's own `install` refuses while `core.hooksPath` is set. A
 lets each linked worktree run its own checkout's hook. The Python lint and
 type check are the framework's own hooks for ruff and mypy at pinned commits.
 `make hooks` installs them into `~/.cache/pre-commit`, which needs network
-access, and is run again when a pinned tool changes; a commit never installs a
-tool and is refused without them, naming `make hooks`. In a clone that
-enabled the hook before this change, run `make hooks` once. A `v*` tag builds and
+access. A commit made before that, or after a pinned tool changes, installs
+what it needs itself and takes longer that one time. A clone that enabled the
+hook before this change needs nothing done. A `v*` tag builds and
 publishes release binaries only after the checks `main` requires pass on the
 tagged revision.
 

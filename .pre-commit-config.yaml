@@ -9,9 +9,9 @@
 # the pipeline. Document and configuration checks build nothing: they run an
 # instrukt that is already there (scripts/instrukt-for-checks). Python scripts
 # are linted and type-checked by the framework's own hooks for ruff and mypy,
-# at the commits their tags name. `make hooks` installs them; a commit never
-# does and is refused without them (scripts/commit-checks.sh). A commit that
-# only removes a Python script leaves them nothing to read. The Rust check takes the shared target directory's lock
+# at the commits their tags name. `make hooks` installs them; a commit or
+# every-file run that needs one not installed yet installs it itself. A commit
+# that only removes a Python script leaves them nothing to read. The Rust check takes the shared target directory's lock
 # (scripts/with-build-lock.sh) and builds only the crates the commit touches or
 # whose unit tests read what it touches, and those that depend on them.
 default_install_hook_types: [pre-commit]
