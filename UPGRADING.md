@@ -2,6 +2,17 @@
 
 ## 0.1.0
 
+### This repository's commit check
+
+For developers of instrukt itself. The pre-commit hook runs the checks the
+staged files need, as `.pre-commit-config.yaml` assigns them, through the
+pre-commit framework; the functional suite runs in CI. Install the pinned
+framework once, `uv tool install pre-commit==<version>` with the version in
+`scripts/test-tools.env`, and keep `make hooks` as the way to enable the hook:
+the framework's own `install` refuses while `core.hooksPath` is set. A
+`core.hooksPath` set to the relative `.githooks`, as `make hooks` sets it,
+lets each linked worktree run its own checkout's hook.
+
 ### Agent instructions are committed, and reach the runtimes you configured
 
 A repository's `AGENTS.md` files are now committed. instrukt's `pre-commit`

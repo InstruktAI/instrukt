@@ -18,8 +18,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Read pinned test tools
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: ${{ steps.test-tools.outputs.UV_VERSION }}
+      - name: Install the commit-check framework
+        run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
       - name: shellcheck
-        run: shellcheck -x scripts/*.sh .githooks/pre-commit
+        run: pre-commit run shellcheck --all-files
 
   check:
     name: fmt, clippy, test (${{ matrix.os }})
@@ -45,11 +53,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
       - name: Install disposable-test Redis (macOS)
         if: runner.os == 'macOS'
-        run: brew install redis
-      - name: fmt
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: brew install redis shellcheck
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: ${{ steps.test-tools.outputs.UV_VERSION }}
+      - name: Install the commit-check framework
+        run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
+      # Every check of .pre-commit-config.yaml over every file: document and
+      # configuration validation, shellcheck, fmt, clippy and the colocated
+      # unit tests.
+      - name: commit checks over every file
+        run: pre-commit run --all-files --show-diff-on-failure
       - name: test
         run: cargo nextest run --workspace --locked --profile ci
       - name: doctests

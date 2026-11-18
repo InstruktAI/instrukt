@@ -1,25 +1,18 @@
 #!/bin/sh
-# instrukt repository checks: shellcheck, fmt, clippy, test
-# (docs/project/policy/testing.md). Needs shellcheck, the Rust toolchain and
-# the cargo-nextest version in scripts/test-tools.env.
-# Enable once per clone with `make hooks`.
+# instrukt repository commit check: the checks the staged files need, as
+# .pre-commit-config.yaml assigns them by file pattern
+# (docs/project/policy/testing.md); the functional suite runs in CI.
+# Needs the pre-commit version in scripts/test-tools.env, shellcheck and the
+# Rust toolchain. Enable once per clone with `make hooks`: pre-commit's own
+# `install` refuses while core.hooksPath is set, so this file runs it.
 set -e
-# Checkouts sharing one CARGO_TARGET_DIR take turns: the whole check runs
-# under the target directory's lock (scripts/with-build-lock.sh).
 # Linked worktrees build into the main checkout's target directory unless
-# CARGO_TARGET_DIR says otherwise, so no worktree grows a target of its own.
+# CARGO_TARGET_DIR says otherwise, so no worktree grows a target of its own;
+# its cargo checks take that directory's lock (scripts/with-build-lock.sh).
 if [ -z "${CARGO_TARGET_DIR:-}" ]; then
     common=$(git rev-parse --path-format=absolute --git-common-dir)
     CARGO_TARGET_DIR="$(dirname "$common")/target"
     export CARGO_TARGET_DIR
 fi
-if [ -z "${INSTRUKT_BUILD_LOCKED:-}" ]; then
-    exec scripts/with-build-lock.sh "$0" "$@"
-fi
-shellcheck -x scripts/*.sh scripts/dev-instrukt .githooks/pre-commit
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-scripts/check-test-tool.sh nextest
-cargo nextest run --workspace --locked
-cargo test --workspace --locked --doc
-scripts/check-coverage.sh
+scripts/check-test-tool.sh pre-commit
+exec pre-commit run --hook-stage pre-commit

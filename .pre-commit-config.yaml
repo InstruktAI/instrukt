@@ -1,0 +1,44 @@
+# The checks a commit's content needs (docs/project/policy/testing.md). Each
+# check runs only when the commit changes a file its `files` pattern matches;
+# the pipeline runs every check over every file. No check here runs the
+# functional tests: they run in the pipeline. Cargo checks take the shared
+# target directory's lock (scripts/with-build-lock.sh).
+default_install_hook_types: [pre-commit]
+repos:
+  - repo: local
+    hooks:
+      - id: docs-validate
+        name: document validation
+        entry: scripts/dev-instrukt docs validate
+        language: system
+        files: ^docs/
+        pass_filenames: false
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck -x
+        language: system
+        files: ^(scripts/[^/]+\.sh|scripts/dev-instrukt|\.githooks/[^/]+)$
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: scripts/with-build-lock.sh cargo fmt --all -- --check
+        language: system
+        files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml|^clippy\.toml)$
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: scripts/with-build-lock.sh cargo clippy --workspace --all-targets --locked -- -D warnings
+        language: system
+        files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml|^clippy\.toml)$
+        pass_filenames: false
+      - id: unit-tests
+        name: colocated unit tests
+        entry: scripts/with-build-lock.sh cargo test --workspace --locked --lib --bins
+        language: system
+        files: (\.rs|(^|/)Cargo\.(toml|lock)|^rust-toolchain\.toml)$
+        pass_filenames: false
+      - id: config-validate
+        name: configuration validation
+        entry: scripts/dev-instrukt config validate
+        language: system
+        files: ^instrukt\.yaml$
+        pass_filenames: false
