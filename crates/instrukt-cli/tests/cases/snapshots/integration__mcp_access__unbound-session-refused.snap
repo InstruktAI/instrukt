@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stderr(&unbound)
+---
+instrukt: the call is refused: this session works in company acme's home and no binding records it as that company's session yet; retry once the runner has recorded it

@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: failures.concat()
+---
+instrukt: MCP server `erpnext` reports a failure: the login ${STEVEN_ERP} may not do this
+instrukt: MCP server `erpnext` reports a failure: HTTP 400 to tools/call: {"error":"refused","login":"${STEVEN_ERP}"}
+instrukt: MCP server `erpnext` reports a failure: the request was refused: {"login":"${STEVEN_ERP}"}
+instrukt: MCP server `erpnext` reports a failure: its tool result holds a `text` content block that lacks what that type requires

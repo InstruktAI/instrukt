@@ -11,6 +11,8 @@ Commands:
   bugs       Park, inspect and remove known-issue dispositions for the log bug hunter
   discuss    Open or close this native thread's conversation link
   agents     Configured profiles and expiring profile/model availability
+  mcp        Reach the MCP servers declared for this caller: list them, list one's tools, call a
+             tool
   secrets    Store or generate protected machine-local secrets
   config     Read, edit, initialize and validate `instrukt.yaml`
   docs       Validate, list and read documentation snippets

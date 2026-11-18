@@ -64,5 +64,6 @@ pub mod assignments;
 
 pub mod envelopes;
 pub mod links;
+pub mod mcp;
 
 pub mod installation;

@@ -10,6 +10,7 @@ pub mod docs;
 pub mod eval;
 pub mod events;
 pub mod history;
+pub mod mcp;
 pub mod repository;
 pub mod runner;
 pub mod specs;
