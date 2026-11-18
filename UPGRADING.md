@@ -36,8 +36,10 @@ order:
 
 A company home is now the checkout of the company's repository, and its
 `AGENTS.md` is committed there; the runner no longer renders it before a
-start. A repository whose root holds `AGENTS.master.md` and that tracks no
-`instrukt.yaml` renders as a company home. For an existing company home that
+start. A repository renders as a company home when its root `instrukt.yaml`
+declares `company`, or when its root holds `AGENTS.master.md` and no
+`instrukt.yaml` at all, as a clone of the company's repository does; a root
+project layer always renders as a project. For an existing company home that
 is a plain folder, in this order:
 
 1. In the home, run `instrukt config init --company <name>`: it writes the
@@ -134,8 +136,6 @@ minute timer) needs the user's service manager to start at boot.
 `loginctl enable-linger` once for the user that runs instrukt, then
 `instrukt install --check` again.
 
-||||||| parent of 32ae4f9 (Specs: instructions reach every agent — committed AGENTS.md, global files for the configured runtimes)
-
 ### T3 release contract and failure routing
 
 Instrukt's own project enables events with an empty watch list and selects
@@ -192,11 +192,11 @@ inside the selected instrukt home. A host `graphify` on PATH no longer supplies
 the shipped adapter; existing configured `blueprint.engine` commands retain
 their command behavior.
 
-Run `instrukt hooks install` in each adopted repository to retain its
-post-checkout section. Existing published projects render their baseline into
-new linked worktrees. For a previously created worktree without an entrypoint,
-run `instrukt hooks run post-checkout` there. An unpublished linked worktree
-requires one `instrukt sync` from its primary checkout first.
+Run `instrukt hooks install` in each adopted repository so its sections are
+current. A checkout renders no agent instructions: every checkout, linked
+worktrees included, holds the `AGENTS.md` files committed at its revision
+(see “Agent instructions are committed, and reach the runtimes you
+configured” above).
 
 ### GitHub App identities
 

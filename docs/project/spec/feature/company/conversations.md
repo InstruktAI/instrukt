@@ -204,8 +204,9 @@ And no subscribed procedure is activated by that message
   answer to an addressed message. The direct messages instrukt sends about a
   person's sign-ins are instrukt's own, not the agent's.
 - A post whose acceptance was lost can be sent twice.
-- A conversation session loads its procedure, and instrukt renders the
-  company's knowledge, when the session starts. A later change to either
+- A conversation session loads its procedure, and its agent program reads
+  the company's knowledge from the home's committed `AGENTS.md`, when the
+  session starts. A later change to either
   reaches a session already running only as far as its agent program reads
   its instructions again.
 - That the agent acts on the addressed message for its writer, reads the

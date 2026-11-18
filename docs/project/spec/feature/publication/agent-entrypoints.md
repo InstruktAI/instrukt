@@ -169,12 +169,24 @@ company-assistance procedure reaches the agent through its role
 doctrine, not company knowledge. instrukt writes no other instruction file in
 the home and leaves any other there as it is.
 
-- **What makes a repository a company home.** A repository renders as a
-  company home when its root holds `AGENTS.master.md` and its committed
-  content holds no project layer: no tracked `instrukt.yaml` at its root. A
-  project always commits its layer, and a company home keeps its settings
-  document out of git, so the same committed content decides it in the home,
-  in a clone and in CI.
+- **What makes a repository a company home.** The rendering mode comes from
+  what the working tree's root holds, tracked or not:
+  - a root `instrukt.yaml` that declares `company` is a company's settings
+    document: company rendering — the company's home, where that file is
+    present and ignored;
+  - any other root `instrukt.yaml` is the project layer: project rendering,
+    from the moment `instrukt init` writes it
+    (`project/instrukt/spec/feature/repository/project-initialization`);
+  - no root `instrukt.yaml` and a root `AGENTS.master.md`: company rendering —
+    a clone of the company's repository, or its CI.
+
+  A project's root master never stands without its layer: initialization
+  writes the two together, and the layer is committed with the project. A
+  company's home and a clone of its repository therefore render the same
+  bytes. A root `instrukt.yaml` that cannot be read is a finding naming it,
+  handled as every finding is. A company's settings document tracked by
+  mistake changes no rendering; `instrukt config validate --company <name>`
+  reports it.
 - **The company passage.** Between the generated line and the master's
   content, every company rendering carries one fixed passage: an agent
   working in this home may change the company's documents here and commit
@@ -434,7 +446,8 @@ Then every global instruction file is left as it was and the developer is told w
 - After a sync during which the selected runtime could not be asked, the
   global files stay as they were until the next sync that publishes them: a
   new revision of main in the project that owns `docs/general/`, or
-  `instrukt sync --force` there. A sync of an unchanged main does nothing.
+  `instrukt sync --force` there, since a sync of an unchanged main publishes
+  nothing (`project/instrukt/spec/feature/publication/project-publication`).
 - How a runtime combines the rendering with other instruction files in a
   home, and whether it reads it again during a session or when it resumes
   one, is that runtime's.
