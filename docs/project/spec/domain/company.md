@@ -138,8 +138,9 @@ The company context has no governing design or decision record of its own.
 - **Runner** — customer / supplier, both ways: runner supplies the runtime
   adapter, the conversation source and turn relay, keyed start, identity
   envelopes and the state database handle; this context supplies the hosting
-  and the conversation assignment lookup that runner declares, and the speaker
-  that MCP access uses.
+  and the conversation assignment lookup that runner declares, the speaker
+  that MCP access uses, and the direct messages to one person that MCP
+  sign-in sends through a connector.
 - **Configuration** — customer / supplier: configuration supplies company
   homes, their members, resolved secrets and declared connectors. Published
   language: this context's connector declarations, which configuration

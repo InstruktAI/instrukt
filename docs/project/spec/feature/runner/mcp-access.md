@@ -231,7 +231,7 @@ as waiting on that one, and no second link is made.
 
 The runner sends the link to the speaker as a direct message through the
 connector the turn came from
-(`project/instrukt/spec/feature/runner/conversations`); the link is never
+(`project/instrukt/spec/feature/company/conversations`); the link is never
 posted in a channel and never passes through the agent. Once the connector has
 accepted it, the link is removed from the database. A failure the connector's
 provider documents as final closes the sign-in as `undelivered`; another
@@ -469,7 +469,7 @@ undone. The next call of that person to that server starts a new sign-in.
 
 The runner sends these to the speaker, `<name>` being the server's name. Each
 is posted for that person alone and accompanies no later message
-(`project/instrukt/spec/feature/runner/slack-connector`).
+(`project/instrukt/spec/feature/company/slack-connector`).
 
 | When | Text |
 | --- | --- |

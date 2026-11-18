@@ -662,7 +662,7 @@ credential.
 
 **`connector_private_messages`** — the messages a connector posted for one
 person alone, such as a sign-in link
-(`project/instrukt/spec/feature/runner/slack-connector`). Key: `(company,
+(`project/instrukt/spec/feature/company/slack-connector`). Key: `(company,
 connector, channel, message)`, the provider's identity of the posted message.
 Column: `posted_at`. These messages, and every message that carries the
 connector's private-message marker whether or not its identity was recorded,
