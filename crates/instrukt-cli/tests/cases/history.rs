@@ -191,7 +191,9 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
     fixture::computer(&env, "aaaaaaaaaaaaaaaa");
     fixture::configure_cluster(&env, &redis.url);
     // The runner starts on a computer where T3's database does not exist.
-    let _runner = fixture::runner(&env);
+    let mut runner = fixture::runner(&env);
+    let pid = runner.running();
+    assert!(pid.is_some(), "the runner is running");
     // The source's identity, read without a search: a search catches up by
     // itself.
     let home = instrukt_core::home::Home::at_user_home(env.home().into());
@@ -204,8 +206,8 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         .to_owned();
     // How many of the conversation's messages history holds; a conversation
     // it does not hold yet is refused.
-    let messages = || {
-        let out = env.run(env.home(), ["history", "show", &source_id, "child"]);
+    let messages_of = |conversation: &str| {
+        let out = env.run(env.home(), ["history", "show", &source_id, conversation]);
         let output = out.get_output();
         if !output.status.success() {
             return 0;
@@ -213,6 +215,7 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         let document: Value = serde_json::from_slice(&output.stdout).unwrap();
         document["messages"].as_array().map_or(0, Vec::len)
     };
+    let messages = || messages_of("child");
     // T3 creates its database with a conversation, and history holds it.
     let source = fixture::T3Store::create(&env);
     crate::common::wait_until(
@@ -226,6 +229,25 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
     crate::common::wait_until("the completion to be held", Duration::from_secs(20), || {
         messages() == 2
     });
+    // T3's database is removed and created again while the runner runs; a
+    // conversation begun after that is held, read without a search or a
+    // tick, by the same runner process.
+    source.remove();
+    let recreated = fixture::T3Store::create(&env);
+    recreated.thread("later", None, None, "2026-11-08T12:00:00.000Z");
+    recreated.message(
+        "later",
+        "message-later",
+        "Begun after the database came back.",
+        "2026-11-08T12:00:00.000Z",
+        false,
+    );
+    crate::common::wait_until(
+        "the later conversation to be held",
+        Duration::from_secs(20),
+        || messages_of("later") == 1,
+    );
+    assert_eq!(runner.running(), pid, "the same runner process");
 }
 
 // spec: project/instrukt/spec/feature/runner/history UC-HI3

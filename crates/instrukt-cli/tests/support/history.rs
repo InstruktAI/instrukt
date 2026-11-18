@@ -210,6 +210,18 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             );
         }
     }
+    /// T3's database removed: the connection closed and the database, its
+    /// WAL and its shared memory deleted.
+    pub fn remove(self) {
+        let Self { file, db } = self;
+        db.close().unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            let path = std::path::PathBuf::from(format!("{}{suffix}", file.display()));
+            if path.exists() {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+    }
     pub fn complete(&self) {
         self.message(
             "child",
@@ -597,6 +609,13 @@ impl Drop for Runner {
     fn drop(&mut self) {
         self.0.kill().unwrap();
         self.0.wait().unwrap();
+    }
+}
+impl Runner {
+    /// The runner process this fixture started, still running and the same
+    /// process (its pid).
+    pub fn running(&mut self) -> Option<u32> {
+        self.0.try_wait().unwrap().is_none().then(|| self.0.id())
     }
 }
 pub fn runner(env: &TestEnv) -> Runner {
