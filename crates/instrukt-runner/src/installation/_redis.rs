@@ -146,6 +146,12 @@ pub(super) fn ensure(
             };
             private_socket(&endpoint)?;
             if !request.check {
+                // Answering is not ready: within the same bound, the
+                // diagnostic waits until Redis has finished loading its data.
+                // Past it, the diagnostic reports what Redis answers.
+                while started.elapsed() < REDIS_START_WAIT && !loaded(&mut conn) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
                 diagnose(&mut conn)?;
             }
             if settings.local.is_none() && !request.check {
@@ -394,6 +400,24 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+/// Whether the Redis on `connection` has finished loading its data: it
+/// answers a command without `LOADING` and reports `loading:0`. Any other
+/// failure counts as loaded, and the diagnostic that follows reports it.
+fn loaded(connection: &mut redis::Connection) -> bool {
+    use redis::{ErrorKind, ServerErrorKind};
+    let busy = |e: &redis::RedisError| e.kind() == ErrorKind::Server(ServerErrorKind::BusyLoading);
+    match redis::cmd("PING").query::<String>(connection) {
+        Err(e) if busy(&e) => false,
+        Err(_) => true,
+        Ok(_) => match redis::cmd("INFO")
+            .arg("persistence")
+            .query::<redis::InfoDict>(connection)
+        {
+            Ok(info) => info.get::<i64>("loading") == Some(0),
+            Err(e) => !busy(&e),
+        },
+    }
 }
 fn diagnose(connection: &mut redis::Connection) -> anyhow::Result<()> {
     let key = format!(
