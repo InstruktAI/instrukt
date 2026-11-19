@@ -30,5 +30,5 @@ if [ "${1:-}" = "--script" ]; then
 fi
 home=$(mktemp -d)
 trap 'rm -rf "$home"' EXIT
-unset XDG_STATE_HOME INSTRUKT_HOME
+unset XDG_STATE_HOME INSTRUKT_HOME INSTRUKT_DEVELOPMENT
 HOME="$home" "$bin" "$@"

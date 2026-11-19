@@ -149,6 +149,14 @@ connector gives.
   conversation source, completed-turn evidence and retained positions as
   conversation links. A position advances only after the connector accepted
   the post; a failed post stays pending and is retried.
+- A person receives each part of an answer once. Each part is recorded as
+  being posted before its post is sent. A part the connector accepted is never
+  posted again: when recording that acceptance fails, only the record is
+  retried. A part left being posted with no acceptance recorded, because its
+  post's response was lost or the runner stopped in between, is first looked
+  for among the connector's own posts in the conversation since its first
+  addressed message: when more of them carry its text than parts with that
+  text are recorded posted, it is recorded posted; otherwise it is posted.
 - Completion comes only from the conversation source. A turn running however
   long is left to run. A turn that ended failed has its message delivered again
   to the session after a growing delay, at the end of the conversation's queue,
@@ -371,6 +379,20 @@ And a message that did not address it gets nothing
 But a message older than the answering bound is not answered and is named to the operator
 ```
 
+### UC-CV14: Receive each answer once
+
+```gherkin
+Scenario Outline: An answer is posted once
+  Given a member's message reached the agent and the connector accepted the post of its answer
+  When <interruption>
+  Then the member gets that answer exactly once
+
+  Examples:
+    | interruption |
+    | recording that the connector accepted the post fails |
+    | the runner stops before it records that the connector accepted the post |
+```
+
 ## Known caveats
 
 - Read-back reads what the provider still serves; its retention, the app's
@@ -380,7 +402,9 @@ But a message older than the answering bound is not answered and is named to the
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message. The direct messages instrukt sends about a
   person's sign-ins are instrukt's own, not the agent's.
-- A post whose acceptance was lost can be sent twice.
+- A part whose post lost its response is recognised by its text as the
+  connector's provider returns it; where the provider returns different text,
+  the part is posted again.
 - A conversation session loads its procedure, and its agent program reads
   the company's knowledge from the home's committed `AGENTS.md`, when the
   session starts. A later change to either

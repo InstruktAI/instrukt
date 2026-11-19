@@ -63,6 +63,10 @@ const NOTICES: [&str; 20] = [
 /// posted in parts, in order.
 pub const SLACK_MESSAGE_LIMIT: usize = 12_000;
 
+/// The upper end of a read that reaches to now: a Slack time no message
+/// carries yet.
+const UNTIL_NOW: &str = "9999999999.999999";
+
 /// How many earlier messages accompany an addressed message when the
 /// declaration names none.
 const DEFAULT_CONTEXT_MESSAGES: u64 = 30;
@@ -848,6 +852,32 @@ impl Connector for Slack {
 
     fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError> {
         self.api.answer(conversation, part).map_err(failed)
+    }
+
+    /// Read as the accompanying messages are: the thread's replies for a
+    /// channel, the direct-message channel's history otherwise.
+    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError> {
+        let me = self.me().map_err(failed)?;
+        let (channel, thread) = split_conversation(conversation);
+        let (messages, _) = self
+            .api
+            .read(channel, thread, Some(since), UNTIL_NOW, usize::MAX)
+            .map_err(failed)?;
+        Ok(messages
+            .iter()
+            .filter(|m| {
+                m.get("bot_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|bot| Some(bot) == me.bot.as_deref())
+                    || m.get("user").and_then(Value::as_str) == Some(me.user.as_str())
+            })
+            .map(|m| {
+                m.get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect())
     }
 
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError> {

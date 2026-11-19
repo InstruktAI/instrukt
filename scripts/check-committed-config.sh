@@ -24,7 +24,7 @@ if [ -z "$instrukt" ]; then
 fi
 home="$(mktemp -d)"
 trap 'rm -rf "$home"' EXIT
-unset XDG_STATE_HOME INSTRUKT_HOME
+unset XDG_STATE_HOME INSTRUKT_HOME INSTRUKT_DEVELOPMENT
 # The machine layer is written from outside the repository: a configuration
 # writing verb run inside it would convert the very layer under check.
 (

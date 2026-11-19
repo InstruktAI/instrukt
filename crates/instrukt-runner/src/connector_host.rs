@@ -760,6 +760,9 @@ mod test_connector {
         fn answer(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
             Ok(())
         }
+        fn own_posts(&self, _: &str, _: &str) -> Result<Vec<String>, ConnectorError> {
+            Ok(Vec::new())
+        }
         fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
             Ok(())
         }

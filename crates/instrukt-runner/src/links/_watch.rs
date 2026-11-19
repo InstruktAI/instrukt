@@ -16,6 +16,8 @@ pub(crate) struct Worker {
 #[derive(Clone)]
 pub(crate) struct Destinations {
     pub(crate) connectors: std::sync::Arc<dyn crate::connector_host::Connectors>,
+    /// Answer pieces accepted but not yet recorded, kept across passes.
+    pub(crate) accepted: std::sync::Arc<crate::conversations::Accepted>,
     pub(crate) arrivals: std::sync::Arc<std::sync::Mutex<mpsc::Receiver<()>>>,
 }
 /// Wakes the run loop's supervision when the relay ends, whether it
@@ -144,6 +146,7 @@ fn serve(
                 source.as_ref(),
                 adapter.as_ref(),
                 destinations.connectors.as_ref(),
+                &destinations.accepted,
             )
         {
             tracing::warn!(event = "conversation_relay_failed", error = %error);

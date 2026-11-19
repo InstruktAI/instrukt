@@ -37,6 +37,10 @@ pub trait Connector: Send + Sync {
     ) -> Result<Captured, ConnectorError>;
     /// Post one part of an answer to `conversation`.
     fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError>;
+    /// The text of each post of this connector's own in `conversation` after
+    /// its provider message `since`, oldest first: how a part whose post lost
+    /// its response, or whose acceptance went unrecorded, is recognised.
+    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
     /// Where the working indicator for `message` of `conversation` sits.

@@ -339,6 +339,7 @@ pub fn run(
         .as_ref()
         .map(|connectors| crate::links::Destinations {
             connectors: Arc::clone(connectors),
+            accepted: Arc::default(),
             arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
         });
     // The relay retries T3 inside its own thread; it is started again here
