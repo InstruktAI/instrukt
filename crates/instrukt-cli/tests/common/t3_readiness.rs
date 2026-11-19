@@ -166,20 +166,21 @@ fn serve(dir: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
     };
     let request: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
     std::fs::write(dir.join("request.json"), request.to_string()).unwrap();
-    // A held read stays open until the test releases it, unless its client
-    // gives up first: it is recorded when it arrived, and whether the client
-    // ended it.
+    // A held read stays open until the test releases it, every held read or
+    // this one by its number, unless its client gives up first: it is
+    // recorded when it arrived, and whether the client ended it.
     if dir.join("hold-read").exists() {
-        let record = dir
-            .join("held-reads")
-            .join((held.fetch_add(1, Ordering::SeqCst) + 1).to_string());
+        let number = held.fetch_add(1, Ordering::SeqCst) + 1;
+        let record = dir.join("held-reads").join(number.to_string());
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
         std::fs::write(&record, "arrived").unwrap();
         socket
             .get_mut()
             .set_read_timeout(Some(Duration::from_millis(50)))
             .unwrap();
-        while !dir.join("release-read").exists() {
+        while !dir.join("release-read").exists()
+            && !dir.join(format!("release-read-{number}")).exists()
+        {
             match socket.read() {
                 Err(tungstenite::Error::Io(error))
                     if matches!(
@@ -215,6 +216,12 @@ pub fn held_reads(env: &TestEnv) -> usize {
 pub fn held_read_open(env: &TestEnv, n: usize) -> bool {
     std::fs::read_to_string(env.path(&format!("t3-readiness/held-reads/{n}")))
         .is_ok_and(|state| state == "arrived")
+}
+
+/// Lets the `n`th held read (from 1) through, and no other.
+#[allow(dead_code, reason = "shared by the readiness scenarios")]
+pub fn release_read(env: &TestEnv, n: usize) {
+    std::fs::write(env.path(&format!("t3-readiness/release-read-{n}")), "").unwrap();
 }
 
 /// The session each snapshot read used, in order; `refused` for a read

@@ -973,6 +973,10 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
         }
     });
     let fake = runtime::FakeT3::create(&p.env);
+    // The runner reads T3's snapshot twice as it starts: once on its own,
+    // once for its first wake. Each read is held until the test lets it
+    // through.
+    std::fs::write(p.env.path("t3-readiness/hold-read"), "").unwrap();
     let _runner = crate::fixtures::conversing::Running::spawn(
         p.env
             .instrukt_process(p.env.home())
@@ -981,15 +985,80 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
             .stderr(std::process::Stdio::null()),
     );
     crate::common::wait_until(
-        "the first snapshot",
+        "the first snapshot read",
         std::time::Duration::from_secs(20),
-        || !common::t3_readiness::reads(&p.env).is_empty(),
+        || common::t3_readiness::held_read_open(&p.env, 1),
     );
-    // Every later refresh fails: the token cannot be renewed.
+    common::t3_readiness::release_read(&p.env, 1);
+    // The snapshot's marks are applied once its refresh is done: the first
+    // profile shows its restriction.
+    let availability = || {
+        let out = p
+            .env
+            .run(p.repo.path(), ["agents", "availability"])
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+    };
+    crate::common::wait_until(
+        "the first snapshot's marks",
+        std::time::Duration::from_secs(20),
+        || {
+            availability()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|mark| mark["profile"] == "claude")
+        },
+    );
+    // Every later read fails, the second one included: the snapshot of t=0
+    // is the only one the runner publishes. That read is let through once
+    // it stands held, and the runner shows its refresh failing; no refresh
+    // is then under way, and every later one fails too, its token not
+    // renewed and its read failing.
+    std::fs::write(p.env.path("t3-readiness/malformed"), "").unwrap();
     fake.flag("issue-failure", true);
-    // At t=30 min the first profile is still restricted: the second starts.
-    create_change(&p);
+    crate::common::wait_until(
+        "the second snapshot read",
+        std::time::Duration::from_secs(20),
+        || common::t3_readiness::held_read_open(&p.env, 2),
+    );
+    common::t3_readiness::release_read(&p.env, 2);
+    crate::common::wait_until(
+        "the second refresh failing",
+        std::time::Duration::from_secs(20),
+        || readiness_failing(&p),
+    );
+    // The runner has woken at `at` once its last admission reads it: every
+    // wake admits the configuration first and takes its own time after, and
+    // wakes run one after another, so none that began earlier is still
+    // running and work created from now on is dispatched at `at` or later.
+    let woken_at = |at: jiff::Timestamp| {
+        crate::common::wait_until(
+            "the runner's wake at the moved clock",
+            std::time::Duration::from_secs(20),
+            || {
+                let out = p
+                    .env
+                    .run(p.env.home(), ["events", "status", "--json"])
+                    .success();
+                let status: serde_json::Value =
+                    serde_json::from_slice(&out.get_output().stdout).unwrap();
+                status["admission"]["runner"]["at"]
+                    .as_str()
+                    .and_then(|last| last.parse::<jiff::Timestamp>().ok())
+                    .is_some_and(|last| last >= at)
+            },
+        );
+    };
+    // At t=30 min the first profile is still restricted: work created then
+    // starts on the second, at t=30 or the minute after.
     now += jiff::SignedDuration::from_mins(30);
+    set_clock(now);
+    woken_at(now);
+    create_change(&p);
+    // Creating work wakes no runner here: a wake already under way, or the
+    // one the next minute on the clock brings, dispatches it.
+    now += jiff::SignedDuration::from_mins(1);
     set_clock(now);
     crate::common::wait_until(
         "the start at t=30",
@@ -999,13 +1068,12 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
     assert_eq!(fake.provider("s1"), profile("codex").instance);
     // The start reused the snapshot of t=0: the restriction still expires
     // at t=60 min, and the manual one is as set.
-    let marks = p
-        .env
-        .run(p.repo.path(), ["agents", "availability"])
-        .success();
-    let marks: serde_json::Value = serde_json::from_slice(&marks.get_output().stdout).unwrap();
-    insta::assert_json_snapshot!("reused-snapshot-quota-marks", marks);
-    // At t=61 min its restriction has lapsed: the first profile starts.
+    insta::assert_json_snapshot!("reused-snapshot-quota-marks", availability());
+    // At t=61 min its restriction has lapsed: work created then starts on the
+    // first profile, at t=61 or the minute after.
+    now += jiff::SignedDuration::from_mins(30);
+    set_clock(now);
+    woken_at(now);
     p.todo([
         "create",
         "sort-docs",
@@ -1014,7 +1082,7 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
         "change",
         "--approved",
     ]);
-    now += jiff::SignedDuration::from_mins(31);
+    now += jiff::SignedDuration::from_mins(1);
     set_clock(now);
     crate::common::wait_until(
         "the start at t=61",
