@@ -268,6 +268,12 @@ response, the connector reads the conversation (`conversations.replies` for a
 thread, `conversations.history` for a direct message) from that person's epoch
 for a post of its own beginning with that mention and sentence.
 
+To recognise a part of an answer whose post lost its response, or whose
+acceptance went unrecorded, the connector reads the conversation the same way
+(`conversations.replies` for a thread, `conversations.history` for a direct
+message) from the conversation's first addressed message, and gives back the
+text of each post of its own: one its bot user wrote or its bot posted.
+
 ### Reading back after a connection
 
 After every connection is established, the connector reads back what was written
@@ -390,6 +396,9 @@ And the member is answered
   documented; the connector passes them on unchanged.
 - The agent's earlier answers come back among the accompanying messages as
   Slack returns their text, which can differ from what the agent wrote.
+- A part of an answer whose post lost its response is recognised by its text as
+  Slack returns it; where that differs from what was posted, the part is posted
+  again.
 - One Slack workspace serves one company home.
 - Two people with the same name look alike to the agent.
 - Slack does not promise the order in which it sends messages. A message that
