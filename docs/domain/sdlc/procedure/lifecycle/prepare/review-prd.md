@@ -2,8 +2,6 @@
 eval: true
 description: Independently review a drafted PRD's horizon, enrichment, scope reasoning,
   assumptions, and observable outcomes before human approval.
-activation_trigger: The prepare state machine routes a feature from PRD drafting to
-  PRD review.
 role: prd-reviewer
 parameters:
   - name: slug
