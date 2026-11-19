@@ -177,6 +177,13 @@ impl RuntimeAdapter for T3 {
     fn last_snapshot(&self) -> Option<std::sync::Arc<super::ObservedSnapshot>> {
         super::_t3_readiness::last()
     }
+    fn configured_agent_runtimes(
+        &self,
+        home: &instrukt_core::home::Home,
+        env: &instrukt_core::config::Env,
+    ) -> Result<Vec<instrukt_core::interfaces::ConfiguredInstance>, SessionsError> {
+        super::_t3_readiness::configured(home, env)
+    }
     fn selection_realization(&self, operation: super::SelectionOperation) -> String {
         match operation {
             super::SelectionOperation::ThreadStart=>"T3 thread start accepts provider instance/model; requested effort/options are not expressible through this CLI operation.".into(),
@@ -259,6 +266,7 @@ impl RuntimeAdapter for T3 {
                 | Capability::AgentSelection
                 | Capability::InputConsumption
                 | Capability::AssignmentEvidence
+                | Capability::ConfiguredRuntimes
         )
     }
     fn observe_input(

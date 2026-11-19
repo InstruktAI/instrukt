@@ -6,6 +6,12 @@
 //! provider snapshot on its own wake ([`Readiness`]). Each snapshot read is
 //! published with the time it was observed; a start reads the last one
 //! published ([`last`]) and never waits on an acquisition in progress.
+//!
+//! The same read answers which agent instances are configured
+//! ([`configured`]): the enabled providers, with the home each one's
+//! settings and instance environment name, interpreted at T3 `v0.1.8`'s
+//! semantics (`packages/contracts/src/settings.ts`, `providerInstance.ts`,
+//! `apps/server/src/provider/Drivers/CodexDriver.ts`).
 use super::{ObservedSnapshot, ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
 use crate::{process::Invocation, sessions::SessionsError};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -13,13 +19,15 @@ use instrukt_core::{
     config::{Env, HarnessKind},
     home::Home,
     ids::ProviderInstanceId,
+    interfaces::ConfiguredInstance,
 };
 use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     net::TcpStream,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tungstenite::{Message, client::IntoClientRequest};
@@ -48,6 +56,44 @@ struct RuntimeState {
 #[derive(Deserialize)]
 struct Snapshot {
     providers: Vec<Provider>,
+    settings: Settings,
+}
+/// The configured instances' settings, decoded apart from the provider
+/// facts: what an instance's home is depends on them.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Settings {
+    #[serde(default)]
+    provider_instances: BTreeMap<ProviderInstanceId, InstanceSettings>,
+}
+#[derive(Deserialize)]
+struct InstanceSettings {
+    #[serde(default)]
+    environment: Vec<Variable>,
+    /// Each driver decodes its own `config`; only the home settings are read.
+    #[serde(default)]
+    config: serde_json::Value,
+}
+/// An instance-environment variable. T3 sends a sensitive variable's value
+/// redacted (empty, or a secret reference), so it counts as absent.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Variable {
+    name: String,
+    #[serde(default)]
+    value: serde_json::Value,
+    #[serde(default)]
+    sensitive: bool,
+    #[serde(default)]
+    value_redacted: bool,
+}
+/// The homes T3 reports for a managed Codex instance.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimePaths {
+    home_path: String,
+    #[serde(default)]
+    shadow_home_path: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +111,8 @@ struct Provider {
     models: Vec<Model>,
     #[serde(default, deserialize_with = "present")]
     usage_limits: Option<Usage>,
+    #[serde(default, deserialize_with = "present")]
+    runtime_paths: Option<RuntimePaths>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -596,6 +644,120 @@ pub(super) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, Sessi
     Ok(translate(acquire(home, env)?))
 }
 
+/// The enabled instances T3 reports, each with the home this adapter resolves
+/// for it.
+pub(super) fn configured(home: &Home, env: &Env) -> Result<Vec<ConfiguredInstance>, SessionsError> {
+    Ok(configured_instances(
+        acquire(home, env)?,
+        home.machine_user_home(),
+    ))
+}
+
+/// The enabled set is the provider snapshot's: it includes the default
+/// `codex` and `claudeAgent` instances T3 runs without a settings entry.
+/// Homes are interpreted here and only here, at T3 `v0.1.8`'s semantics.
+fn configured_instances(source: Snapshot, user_home: &Path) -> Vec<ConfiguredInstance> {
+    let mut settings = source.settings.provider_instances;
+    source
+        .providers
+        .into_iter()
+        .filter(|provider| provider.enabled)
+        .filter_map(|provider| {
+            let runtime = runtime_name(kind(&provider.driver)?)?;
+            let instance = settings.remove(&provider.instance_id);
+            let read = Instance {
+                settings: instance.as_ref(),
+                user_home,
+            };
+            let mut home = None;
+            let mut link_folders = Vec::new();
+            let mut registry_agent = None;
+            match provider.driver.as_str() {
+                "claudeAgent" => {
+                    home = read
+                        .config("homePath")
+                        .or_else(|| read.variable("CLAUDE_CONFIG_DIR"));
+                }
+                "codex" => {
+                    if let Some(paths) = &provider.runtime_paths {
+                        home = read.path(&paths.home_path);
+                        link_folders
+                            .extend(paths.shadow_home_path.as_deref().and_then(|p| read.path(p)));
+                    } else if let Some(shadow) = read.config("shadowHomePath") {
+                        // At v0.1.8 an instance-environment `CODEX_HOME` is
+                        // ignored once a shadow home is set.
+                        home = read.config("homePath");
+                        link_folders.push(shadow);
+                    } else {
+                        home = read
+                            .config("homePath")
+                            .or_else(|| read.variable("CODEX_HOME"));
+                    }
+                }
+                "pi" => home = read.variable("PI_CODING_AGENT_DIR"),
+                "opencode" => {
+                    home = read.variable("OPENCODE_CONFIG_DIR").or_else(|| {
+                        read.variable("XDG_CONFIG_HOME")
+                            .map(|config| config.join("opencode"))
+                    });
+                }
+                "kiro" => home = read.variable("KIRO_HOME"),
+                "fx" => home = read.variable("FX_HOME"),
+                "acpRegistry" => registry_agent = read.text("agentId").map(str::to_owned),
+                _ => {}
+            }
+            Some(ConfiguredInstance {
+                instance: provider.instance_id,
+                runtime,
+                registry_agent,
+                home,
+                link_folders,
+            })
+        })
+        .collect()
+}
+fn runtime_name(kind: HarnessKind) -> Option<String> {
+    serde_json::to_value(kind).ok()?.as_str().map(str::to_owned)
+}
+/// One instance's settings, read for its home.
+struct Instance<'a> {
+    settings: Option<&'a InstanceSettings>,
+    user_home: &'a Path,
+}
+impl Instance<'_> {
+    fn text(&self, key: &str) -> Option<&str> {
+        self.settings?.config.get(key)?.as_str()
+    }
+    fn config(&self, key: &str) -> Option<PathBuf> {
+        self.path(self.text(key)?)
+    }
+    /// The instance environment only; the server's own is not read.
+    fn variable(&self, name: &str) -> Option<PathBuf> {
+        let variable = self
+            .settings?
+            .environment
+            .iter()
+            .rev()
+            .find(|variable| variable.name == name)?;
+        if variable.sensitive || variable.value_redacted {
+            return None;
+        }
+        self.path(variable.value.as_str()?)
+    }
+    /// A non-empty value, with a leading `~` expanded against the user's home.
+    fn path(&self, value: &str) -> Option<PathBuf> {
+        let value = value.trim();
+        match value.strip_prefix('~') {
+            _ if value.is_empty() => None,
+            Some("") => Some(self.user_home.to_path_buf()),
+            Some(rest) if rest.starts_with('/') => {
+                Some(self.user_home.join(rest.trim_start_matches('/')))
+            }
+            _ => Some(PathBuf::from(value)),
+        }
+    }
+}
+
 fn translate(source: Snapshot) -> ProviderSnapshot {
     ProviderSnapshot {
         native_picks: vec!["auto".into(), "default".into()],
@@ -634,9 +796,146 @@ fn translate(source: Snapshot) -> ProviderSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandFailure, command_output};
+    use super::{CommandFailure, Snapshot, command_output, configured_instances};
     use crate::process::{Finished, ProcessError};
-    use std::{io, time::Duration};
+    use serde_json::json;
+    use std::{io, path::Path, time::Duration};
+
+    /// A provider entry as T3 `v0.1.8` reports it (`ServerProvider`), with
+    /// only the fields this adapter decodes.
+    fn provider(id: &str, driver: &str, enabled: bool) -> serde_json::Value {
+        json!({"instanceId":id,"driver":driver,"enabled":enabled,"installed":true,
+            "status":if enabled {"ready"} else {"disabled"},"auth":{"status":"unknown"},
+            "checkedAt":"2026-11-19T10:00:00.000Z","models":[]})
+    }
+    fn variable(name: &str, value: &str) -> serde_json::Value {
+        json!({"name":name,"value":value,"sensitive":false})
+    }
+
+    /// u15: the `server.getConfig` value of a T3 `v0.1.8` server, shaped by
+    /// its contracts (`ServerConfig`, `ProviderInstanceConfig`, the redaction
+    /// of `redactServerSettingsForClient`), resolved to homes.
+    #[test]
+    fn configured_instances_carry_the_homes_the_adapter_resolves() {
+        let mut managed = provider("codex-managed", "codex", true);
+        managed["runtimePaths"] =
+            json!({"homePath":"/srv/t3/codex","shadowHomePath":"/srv/t3/codex-auth"});
+        let value = json!({
+            "providers": [
+                provider("codex", "codex", true),
+                provider("claudeAgent", "claudeAgent", true),
+                provider("pi-work", "pi", true),
+                provider("opencode", "opencode", true),
+                provider("kiro", "kiro", false),
+                provider("acp-gemini", "acpRegistry", true),
+                provider("claude-secret", "claudeAgent", true),
+                provider("codex-overlay", "codex", true),
+                provider("codex-overlay-env", "codex", true),
+                managed,
+            ],
+            "settings": {"providerInstances": {
+                "pi-work": {"driver":"pi","enabled":true,
+                    "environment":[variable("PI_CODING_AGENT_DIR","~/agents/pi")]},
+                "opencode": {"driver":"opencode","enabled":true,"environment":[
+                    variable("XDG_CONFIG_HOME","/srv/xdg"),
+                    variable("OPENCODE_CONFIG_DIR","/srv/opencode")]},
+                "kiro": {"driver":"kiro","enabled":false,
+                    "environment":[variable("KIRO_HOME","/srv/kiro")]},
+                "acp-gemini": {"driver":"acpRegistry","config":{"agentId":"gemini"}},
+                "claude-secret": {"driver":"claudeAgent","environment":[
+                    {"name":"CLAUDE_CONFIG_DIR","value":"","sensitive":true,"valueRedacted":true}]},
+                "codex-overlay": {"driver":"codex","config":{
+                    "homePath":"/srv/codex","shadowHomePath":"/srv/codex-personal"}},
+                "codex-overlay-env": {"driver":"codex",
+                    "environment":[variable("CODEX_HOME","/srv/env-codex")],
+                    "config":{"homePath":"","shadowHomePath":"/srv/codex-work"}},
+                "codex-managed": {"driver":"codex","config":{"setupMode":"managed"}},
+            }},
+        });
+        let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
+        let instances = configured_instances(snapshot, Path::new("/home/user"));
+        assert!(!instances.is_empty());
+        let resolved: Vec<_> = instances
+            .iter()
+            .map(|i| {
+                json!({"instance":i.instance,"runtime":i.runtime,"registry_agent":i.registry_agent,
+                    "home":i.home,"link_folders":i.link_folders})
+            })
+            .collect();
+        insta::assert_json_snapshot!(resolved, @r###"
+        [
+          {
+            "instance": "codex",
+            "runtime": "codex",
+            "registry_agent": null,
+            "home": null,
+            "link_folders": []
+          },
+          {
+            "instance": "claudeAgent",
+            "runtime": "claude",
+            "registry_agent": null,
+            "home": null,
+            "link_folders": []
+          },
+          {
+            "instance": "pi-work",
+            "runtime": "pi",
+            "registry_agent": null,
+            "home": "/home/user/agents/pi",
+            "link_folders": []
+          },
+          {
+            "instance": "opencode",
+            "runtime": "opencode",
+            "registry_agent": null,
+            "home": "/srv/opencode",
+            "link_folders": []
+          },
+          {
+            "instance": "acp-gemini",
+            "runtime": "acpRegistry",
+            "registry_agent": "gemini",
+            "home": null,
+            "link_folders": []
+          },
+          {
+            "instance": "claude-secret",
+            "runtime": "claude",
+            "registry_agent": null,
+            "home": null,
+            "link_folders": []
+          },
+          {
+            "instance": "codex-overlay",
+            "runtime": "codex",
+            "registry_agent": null,
+            "home": "/srv/codex",
+            "link_folders": [
+              "/srv/codex-personal"
+            ]
+          },
+          {
+            "instance": "codex-overlay-env",
+            "runtime": "codex",
+            "registry_agent": null,
+            "home": null,
+            "link_folders": [
+              "/srv/codex-work"
+            ]
+          },
+          {
+            "instance": "codex-managed",
+            "runtime": "codex",
+            "registry_agent": null,
+            "home": "/srv/t3/codex",
+            "link_folders": [
+              "/srv/t3/codex-auth"
+            ]
+          }
+        ]
+        "###);
+    }
     #[test]
     fn launch_failure_keeps_its_safe_category() {
         let result = command_output(Err(ProcessError::Spawn {

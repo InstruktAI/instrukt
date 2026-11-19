@@ -10,13 +10,14 @@
 //! Implementors: [`TodoExistence`] — work (`instrukt_todos::work`);
 //! [`FlavorRoles`] — workflow (`instrukt_todos::workflow`); [`FlavorSchema`]
 //! — workflow's `WorkflowSchema`, always wired; [`GraphGeneration`] —
-//! blueprint (`instrukt_blueprint`). The CLI fills each slot from its
-//! module's wiring file (`crates/instrukt-cli/src/wiring/`).
+//! blueprint (`instrukt_blueprint`); [`ConfiguredAgentRuntimes`] — the
+//! selected runtime's adapter (`instrukt_runner::runtime`). The CLI fills
+//! each slot from its module's wiring file (`crates/instrukt-cli/src/wiring/`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::ids::{CommitSha, ProjectSlug, RoleName, SnippetId, TodoSlug};
+use crate::ids::{CommitSha, ProjectSlug, ProviderInstanceId, RoleName, SnippetId, TodoSlug};
 
 /// Caller identity supplied by the explicitly selected runtime adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +126,39 @@ pub trait GraphGeneration: Send + Sync {
     fn start_generation(&self, request: &GenerationRequest) -> Result<(), InterfaceError>;
 }
 
+/// One enabled agent instance of the selected runtime, with what the
+/// runtime's adapter resolved for it. Publication reads only these facts: no
+/// runtime settings or environment reach it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfiguredInstance {
+    pub instance: ProviderInstanceId,
+    /// The agent runtime the instance runs (`codex`, `claude`, `pi`, ...).
+    pub runtime: String,
+    /// The registry agent an ACP-registry instance runs.
+    pub registry_agent: Option<String>,
+    /// The home the instance reads its user-scope files from, when its
+    /// configuration names one; `None` means the runtime's default home.
+    pub home: Option<PathBuf>,
+    /// Each folder in which a link to the instance's file must exist.
+    pub link_folders: Vec<PathBuf>,
+}
+
+/// What the selected runtime reported about its configured agent instances.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// The enabled instances, each with its resolved home.
+    Reported(Vec<ConfiguredInstance>),
+    /// The runtime could not be asked; `cause` says why.
+    Unreachable { runtime: String, cause: String },
+}
+
+/// The agent instances the selected runtime has configured (runner, through
+/// the selected runtime's adapter). Publication chooses the global agent
+/// files' targets from the answer.
+pub trait ConfiguredAgentRuntimes: Send + Sync {
+    fn configured(&self, home: &crate::home::Home, env: &crate::config::Env) -> Answer;
+}
+
 /// The optional-module implementations the CLI wired for this invocation.
 /// Built once in the CLI's composition root; core contexts receive it by
 /// reference.
@@ -137,6 +171,7 @@ pub struct CoreWiring {
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
     pub graph_generation: Option<Arc<dyn GraphGeneration>>,
+    pub configured_runtimes: Option<Arc<dyn ConfiguredAgentRuntimes>>,
 }
 
 impl std::fmt::Debug for CoreWiring {
@@ -149,6 +184,7 @@ impl std::fmt::Debug for CoreWiring {
             .field("flavor_roles", &self.flavor_roles.is_some())
             .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())
+            .field("configured_runtimes", &self.configured_runtimes.is_some())
             .finish()
     }
 }

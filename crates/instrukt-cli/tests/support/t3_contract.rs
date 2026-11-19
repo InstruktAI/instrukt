@@ -196,20 +196,25 @@ pub struct Token {
 }
 impl Token {
     pub fn issue(operate: bool) -> Result<Self> {
+        let mut scopes = vec!["orchestration:read"];
+        if operate {
+            scopes.push("orchestration:operate");
+        }
+        Self::scoped(&scopes)
+    }
+    pub fn scoped(scopes: &[&str]) -> Result<Self> {
         let mut args = vec![
             "auth",
             "session",
             "issue",
-            "--scope",
-            "orchestration:read",
             "--ttl",
             "5m",
             "--token-only",
             "--label",
             "instrukt-contract",
         ];
-        if operate {
-            args.extend(["--scope", "orchestration:operate"]);
+        for scope in scopes {
+            args.extend(["--scope", scope]);
         }
         let secret = cli(&args, None)?.trim().to_owned();
         let payload = secret.split_once('.').context("token envelope")?.0;
@@ -487,6 +492,64 @@ pub fn readiness() -> Result<Value> {
     )
 }
 
+/// Configures, through T3's own settings mutation, a Codex instance with a
+/// home setting and a pi instance with a home variable in its instance
+/// environment, and requires the adapter to report the homes they name.
+pub fn configured_homes(root: &Path) -> Result<Value> {
+    let codex_home = root.join("contract-codex-home");
+    let pi_home = root.join("contract-pi-home");
+    fs::create_dir_all(&codex_home)?;
+    fs::create_dir_all(&pi_home)?;
+    let mut token = Token::scoped(&["providers:manage"])?;
+    for (id, instance) in [
+        (
+            "contract-codex",
+            json!({"driver":"codex","enabled":true,"config":{"homePath":codex_home}}),
+        ),
+        (
+            "contract-pi",
+            json!({"driver":"pi","enabled":true,"environment":[{"name":"PI_CODING_AGENT_DIR","value":pi_home,"sensitive":false}]}),
+        ),
+    ] {
+        rpc(
+            &token.secret,
+            "server.updateSettings",
+            json!({"patch":{},"providerInstanceMutation":{"operation":"create","instanceId":id,"instance":instance}}),
+        )?;
+    }
+    token.revoke()?;
+    let adapter = T3::default();
+    let home = Home::from_env()?;
+    let env = instrukt_core::config::Env::from_process();
+    let mut configured = Vec::new();
+    // T3 hydrates a created instance into its provider snapshot after the
+    // mutation returns.
+    common::wait_until("configured instances reported", BOUND, || {
+        if let Ok(instances) = adapter.configured_agent_runtimes(&home, &env) {
+            configured = instances;
+        }
+        ["contract-codex", "contract-pi"]
+            .iter()
+            .all(|id| configured.iter().any(|i| i.instance.as_str() == *id))
+    });
+    let reported = |id: &str| configured.iter().find(|i| i.instance.as_str() == id);
+    let codex = reported("contract-codex").context("configured Codex instance")?;
+    let pi = reported("contract-pi").context("configured pi instance")?;
+    ensure!(
+        codex.runtime == "codex" && codex.home.as_deref() == Some(codex_home.as_path()),
+        "decoded Codex home differs from its homePath setting"
+    );
+    ensure!(
+        pi.runtime == "pi" && pi.home.as_deref() == Some(pi_home.as_path()),
+        "decoded pi home differs from its instance-environment PI_CODING_AGENT_DIR"
+    );
+    ensure!(
+        codex.link_folders.is_empty() && pi.link_folders.is_empty(),
+        "an instance without a shadow home reported link folders"
+    );
+    Ok(json!({"codex_home_decoded":true,"pi_home_decoded":true,"instances":configured.len()}))
+}
+
 /// Source-grounded steering data is a fixture control, not live provider execution.
 pub fn fake_steering(root: &Path) -> Result<Value> {
     let path = root.join("t3-state/contract-thread.json");
@@ -534,6 +597,7 @@ pub fn real(root: &Path) -> Result<()> {
     let home = Home::from_env()?;
     let env = instrukt_core::config::Env::from_process();
     let readiness = readiness()?;
+    let configured = configured_homes(root)?;
     let mut token = Token::issue(true)?;
     let db = instrukt_core::state_db::rusqlite::Connection::open_with_flags(
         Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/statev2.sqlite"),
@@ -635,7 +699,8 @@ pub fn real(root: &Path) -> Result<()> {
     );
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness}).to_string(),
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured})
+            .to_string(),
     )?;
     token.revoke()?;
     Ok(())
