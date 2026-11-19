@@ -668,4 +668,77 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
         )
     );
     assert_eq!(home.git(["show", "HEAD:AGENTS.md"]), committed);
+
+    // Each of these leaves the home's rendering as it is, and the render
+    // names why.
+    let refused = |step: &str| {
+        let before = home.read("AGENTS.md");
+        let output = env.run(home.path(), ["docs", "render"]).failure();
+        assert_eq!(home.read("AGENTS.md"), before);
+        format!(
+            "{step}:\n{}{}",
+            stdout(&env, &output),
+            shown(&env, &output.get_output().stderr)
+        )
+    };
+    let mut refusals = Vec::new();
+
+    // A read through a linked folder is never read, though the index holds
+    // the file below it.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n- docs/team/people.md\n",
+    )
+    .write("docs/team/people.md", "# Team\n");
+    home.git(["add", "AGENTS.master.md", "docs/team/people.md"]);
+    std::fs::remove_dir_all(home.path().join("docs/team")).unwrap();
+    home.write("outside/people.md", "# Outside\n\nNot the company's.\n");
+    std::os::unix::fs::symlink("../outside", home.path().join("docs/team")).unwrap();
+    refusals.push(refused("a linked folder"));
+    std::fs::remove_file(home.path().join("docs/team")).unwrap();
+    home.git(["reset", "--quiet"]);
+
+    // Nor through a linked `docs/`.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n- docs/people.md\n",
+    );
+    std::fs::rename(home.path().join("docs"), home.path().join("shelf")).unwrap();
+    std::os::unix::fs::symlink("shelf", home.path().join("docs")).unwrap();
+    refusals.push(refused("a linked docs folder"));
+    std::fs::remove_file(home.path().join("docs")).unwrap();
+    std::fs::rename(home.path().join("shelf"), home.path().join("docs")).unwrap();
+
+    // A configured value among the required reads is a directive all the
+    // same; configuration's validation names it too.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n<!-- @config: company -->\n- docs/people.md\n",
+    );
+    refusals.push(refused("a configured value among the required reads"));
+    let validated = env
+        .run(&env.path(""), ["config", "validate", "--company", "acme"])
+        .failure();
+    refusals.push(format!(
+        "config validate --company acme:\n{}",
+        stdout(&env, &validated)
+    ));
+
+    // Documents requiring each other have no order.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n- docs/a.md\n",
+    )
+    .write("docs/a.md", "# A\n\n## Required reads\n\n- b.md\n")
+    .write("docs/b.md", "# B\n\n## Required reads\n\n- a.md\n");
+    refusals.push(refused("a cycle"));
+
+    // Every reference form in the text is held to the company's own
+    // documents; a reference to one of them stays.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nSee @general/policy/commits for details.\nSee @general for details.\nRead [Outside](../secret.md).\nSee @docs/people.md for details.\n\n## See Also\n\n- general/policy/commits\n",
+    );
+    refusals.push(refused("references in the text"));
+    insta::assert_snapshot!("company_rendering_refusals", refusals.join("\n"));
 }

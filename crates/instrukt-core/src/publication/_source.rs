@@ -106,8 +106,9 @@ pub(super) fn canonical_main(primary: &Path) -> Result<(String, CommitSha), Publ
 /// The files of one view of a repository that publication reads: the
 /// documentation, the root `instrukt.yaml`, every master and every
 /// `AGENTS.md` and `AGENTS.override.md`. Regular files only; symbolic links
-/// and submodules are never followed. A symbolic link among them is
-/// recorded by its path and never read, so what names one can say so.
+/// and submodules are never followed. A symbolic link is recorded by its
+/// path and nothing is read through it, itself or a folder above a file,
+/// so what names a file through one can say so.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Committed {
     files: BTreeMap<String, Vec<u8>>,
@@ -133,7 +134,7 @@ impl Committed {
             else {
                 continue;
             };
-            if kind == "blob" && mode == LINK_MODE && is_read(path) {
+            if kind == "blob" && mode == LINK_MODE {
                 links.insert(path.to_owned());
             }
             if kind != "blob" || !matches!(mode, "100644" | "100755") || !is_read(path) {
@@ -166,7 +167,7 @@ impl Committed {
             else {
                 continue;
             };
-            if stage == "0" && mode == LINK_MODE && is_read(path) {
+            if stage == "0" && mode == LINK_MODE {
                 links.insert(path.to_owned());
             }
             if stage != "0" || !matches!(mode, "100644" | "100755") || !is_read(path) {
@@ -256,6 +257,10 @@ impl Committed {
         let mut files = BTreeMap::new();
         let mut links = BTreeSet::new();
         for path in paths.into_iter().filter(|path| is_read(path)) {
+            if let Some(link) = linked_folder(root, &path)? {
+                links.insert(link);
+                continue;
+            }
             let full = root.join(safe_relative(&path)?);
             match std::fs::symlink_metadata(&full) {
                 Ok(meta) if meta.is_file() => {}
@@ -290,10 +295,19 @@ impl Committed {
         self.files.get(path).map(Vec::as_slice)
     }
 
-    /// Whether the view holds a symbolic link at `path`, which it never
-    /// reads.
+    /// Whether `path`, or a folder above it, is a symbolic link, through
+    /// which the view reads nothing.
     pub(super) fn is_link(&self, path: &str) -> bool {
-        self.links.contains(path)
+        let mut prefix = path;
+        loop {
+            if self.links.contains(prefix) {
+                return true;
+            }
+            match prefix.rsplit_once('/') {
+                Some((parent, _)) => prefix = parent,
+                None => return false,
+            }
+        }
     }
 
     /// The files below `prefix` (which ends with `/`), with their paths
@@ -350,6 +364,30 @@ impl Committed {
 
 /// `path` as a relative path of normal components; anything else is
 /// refused rather than written outside its root.
+/// The first folder above `path` below `root` that is a symbolic link, by
+/// its repository-relative path.
+fn linked_folder(root: &Path, path: &str) -> Result<Option<String>, PublicationError> {
+    let mut folder = String::new();
+    let mut parts = path.split('/').peekable();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            break;
+        }
+        if !folder.is_empty() {
+            folder.push('/');
+        }
+        folder.push_str(part);
+        let full = root.join(safe_relative(&folder)?);
+        match std::fs::symlink_metadata(&full) {
+            Ok(meta) if meta.file_type().is_symlink() => return Ok(Some(folder)),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(PublicationError::Io { path: full, source }),
+        }
+    }
+    Ok(None)
+}
+
 pub(super) fn safe_relative(path: &str) -> Result<PathBuf, PublicationError> {
     let rel = PathBuf::from(path);
     if path.is_empty()

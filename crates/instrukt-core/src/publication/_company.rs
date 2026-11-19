@@ -8,9 +8,9 @@
 //! documents read only the home's own documents, each named by its path
 //! relative to the file that reads it and confined to the home's `docs/`
 //! folder. A read or a reference to a snippet, a domain or a file outside
-//! `docs/`, a read of a file the home does not hold or of a symbolic link,
-//! and an `@config`, `@exec` or `@include` are findings, and a home with a
-//! finding is not rendered.
+//! `docs/`, a read of a file the home does not hold or through a symbolic
+//! link, a cycle of required reads, and an `@config`, `@exec` or `@include`
+//! are findings, and a home with a finding is not rendered.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ use super::_render::{
     RenderPlan, finish,
 };
 use super::_source::{Committed, MASTER_FILE_NAME};
-use crate::docs::{self, CompanyDocument, Directive};
+use crate::docs::{self, CompanyDocument, CompanyReference, Directive};
 use crate::ids::{DomainName, SnippetId};
 
 /// The passage every company rendering carries between the generated line
@@ -42,7 +42,8 @@ pub enum CompanyReadProblem {
     OutsideDocs,
     /// It names a file the home does not hold.
     Missing,
-    /// It names a symbolic link, which is never read.
+    /// It names a symbolic link, or a file in a linked folder, which is
+    /// never read.
     Link,
 }
 
@@ -61,7 +62,7 @@ impl CompanyReadProblem {
             }
             Self::Missing => "which the home does not hold; add the document or correct the path",
             Self::Link => {
-                "a symbolic link, which is never read; replace the link with the file, or read its target directly"
+                "a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to"
             }
         }
     }
@@ -85,7 +86,8 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
     let mut walk = Walk {
         tree,
         path: &path,
-        seen: BTreeSet::new(),
+        visiting: vec![MASTER_FILE_NAME.to_owned()],
+        done: BTreeSet::new(),
         order: Vec::new(),
         findings: Vec::new(),
     };
@@ -112,7 +114,10 @@ struct Walk<'t> {
     tree: &'t Committed,
     /// The rendering the findings leave as it is.
     path: &'t Path,
-    seen: BTreeSet<String>,
+    /// The documents being brought in, each requiring the next.
+    visiting: Vec<String>,
+    /// The documents already brought in.
+    done: BTreeSet<String>,
     /// Each document's text without its required reads, in traversal order.
     order: Vec<String>,
     findings: Vec<RenderFinding>,
@@ -134,14 +139,23 @@ impl Walk<'_> {
                     continue;
                 }
             };
-            if !self.seen.insert(path.clone()) {
+            if let Some(at) = self.visiting.iter().position(|open| *open == path) {
+                let mut documents = self.visiting[at..].to_vec();
+                documents.push(path);
+                self.found(RenderFindingKind::CompanyCycle { documents });
+                continue;
+            }
+            if self.done.contains(&path) {
                 continue;
             }
             let text =
                 String::from_utf8_lossy(self.tree.file(&path).unwrap_or_default()).into_owned();
             let document = docs::company_document(&text);
             self.check(&path, &text, &document);
+            self.visiting.push(path.clone());
             self.follow(&path, &document.reads);
+            self.visiting.pop();
+            self.done.insert(path);
             self.order.push(document.body);
         }
     }
@@ -162,10 +176,14 @@ impl Walk<'_> {
             self.found(RenderFindingKind::UnsupportedDirective { finding });
         }
         for reference in &document.references {
-            if let Err(problem) = self.document(path, reference) {
+            let (written, problem) = match reference {
+                CompanyReference::Name(name) => (name, named(name)),
+                CompanyReference::Path(file) => (file, self.file(path, file).err()),
+            };
+            if let Some(problem) = problem {
                 self.found(RenderFindingKind::CompanyReference {
                     document: path.to_owned(),
-                    reference: reference.clone(),
+                    reference: written.clone(),
                     problem,
                 });
             }
@@ -175,16 +193,20 @@ impl Walk<'_> {
     /// The home's document that `read`, written in the document at
     /// `reader`, names: its repository-relative path, or why it names none.
     fn document(&self, reader: &str, read: &str) -> Result<String, CompanyReadProblem> {
-        let read = read.strip_prefix('@').unwrap_or(read);
-        if !read.ends_with(".md") {
-            if SnippetId::parse(read).is_ok() {
-                return Err(CompanyReadProblem::Snippet);
-            }
-            if DomainName::parse(read).is_ok() {
-                return Err(CompanyReadProblem::Domain);
-            }
+        if !read.ends_with(".md")
+            && let Some(problem) = named(read)
+        {
+            return Err(problem);
         }
-        let path = relative_to(reader, read).ok_or(CompanyReadProblem::OutsideDocs)?;
+        self.file(reader, read)
+    }
+
+    /// The home's document that the file reference `file`, written in the
+    /// document at `reader`, names: its repository-relative path, or why it
+    /// names none.
+    fn file(&self, reader: &str, file: &str) -> Result<String, CompanyReadProblem> {
+        let file = file.strip_prefix('@').unwrap_or(file);
+        let path = relative_to(reader, file).ok_or(CompanyReadProblem::OutsideDocs)?;
         if !path.starts_with(DOCS) {
             return Err(CompanyReadProblem::OutsideDocs);
         }
@@ -202,6 +224,19 @@ impl Walk<'_> {
             path: self.path.to_path_buf(),
             kind,
         });
+    }
+}
+
+/// What the name `name` (its `@` aside) references outside the home: a
+/// snippet or a domain; `None` when it names neither.
+fn named(name: &str) -> Option<CompanyReadProblem> {
+    let name = name.strip_prefix('@').unwrap_or(name);
+    if SnippetId::parse(name).is_ok() {
+        Some(CompanyReadProblem::Snippet)
+    } else if DomainName::parse(name).is_ok() {
+        Some(CompanyReadProblem::Domain)
+    } else {
+        None
     }
 }
 

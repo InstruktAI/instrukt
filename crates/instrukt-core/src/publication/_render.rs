@@ -733,6 +733,10 @@ pub enum RenderFindingKind {
     },
     /// A company document reads a configured value.
     CompanyConfig { document: String },
+    /// Company documents require each other in a cycle, so no order puts
+    /// each after what it requires: each document of the cycle, in order,
+    /// the first again last.
+    CompanyCycle { documents: Vec<String> },
 }
 
 impl std::fmt::Display for RenderFinding {
@@ -775,12 +779,17 @@ impl std::fmt::Display for RenderFinding {
                 problem,
             } => write!(
                 f,
-                "{path}: {document} references `@{reference}`, {}; nothing is rendered until it is fixed",
+                "{path}: {document} references `{reference}`, {}; nothing is rendered until it is fixed",
                 problem.sentence()
             ),
             RenderFindingKind::CompanyConfig { document } => write!(
                 f,
                 "{path}: {document} reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead"
+            ),
+            RenderFindingKind::CompanyCycle { documents } => write!(
+                f,
+                "{path}: {} require each other in a cycle, so no order puts each document after what it requires; nothing is rendered until one of these required reads is removed",
+                documents.join(" → ")
             ),
         }
     }
