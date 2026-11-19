@@ -176,8 +176,8 @@ status line for it, with the text the message's state gives
 Slack puts the app's name in front of it. Each status pass sets the text that
 matches the state as it then stands, so a change of state shows at the next
 pass. Where one status serves several unfinished messages, the unavailable text
-shows while every one of them has its interval open, the working text
-otherwise.
+shows while every one of them has its interval open; otherwise the running
+turn's latest status update, or the working text before it has one.
 
 | Where | The status sits on | It stays while |
 | --- | --- | --- |
