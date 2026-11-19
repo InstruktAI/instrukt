@@ -161,7 +161,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     env.run(repo.path(), ["hooks", "install"]).success();
     repo.write("notes.md", "a note\n");
     repo.git(["commit", "--quiet", "-m", "note", "--", "notes.md"]);
-    wait_for_post_commit_sync(&env, repo.head());
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
     insta::assert_snapshot!(repo.git(["show", "HEAD:instrukt.yaml"]), @r"
     # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
     schema_version: 6
@@ -179,7 +179,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     // reports it.
     repo.write("instrukt.yaml", project);
     repo.git(["commit", "--quiet", "--no-verify", "-am", "bypass"]);
-    wait_for_post_commit_sync(&env, repo.head());
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
     let validated = env.run(repo.path(), ["config", "validate"]).failure();
     insta::assert_snapshot!(
         String::from_utf8_lossy(&validated.get_output().stdout)
@@ -198,7 +198,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     repo.git(["add", "instrukt.yaml"]);
     repo.write("notes.md", "another note\n");
     repo.git(["commit", "--quiet", "-m", "another note", "--", "notes.md"]);
-    wait_for_post_commit_sync(&env, repo.head());
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
     assert_eq!(
         schema_version(&repo.git(["show", "HEAD:instrukt.yaml"])),
         current
@@ -206,7 +206,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     assert_eq!(repo.git(["show", ":instrukt.yaml"]), staged.trim_end());
     assert_eq!(repo.read("instrukt.yaml"), staged);
     repo.git(["commit", "--quiet", "-m", "staged layer"]);
-    wait_for_post_commit_sync(&env, repo.head());
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
     insta::assert_snapshot!(repo.git(["show", "HEAD:instrukt.yaml"]), @r"
     # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
     schema_version: 6
@@ -222,7 +222,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     let unconvertible = "project: migrating\n";
     repo.write("instrukt.yaml", unconvertible);
     repo.git(["commit", "--quiet", "-am", "unversioned"]);
-    wait_for_post_commit_sync(&env, repo.head());
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
     assert_eq!(
         repo.git(["show", "HEAD:instrukt.yaml"]),
         unconvertible.trim_end()
@@ -231,25 +231,6 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     pre-commit: current
       last run: staging failed: [REPO]/instrukt.yaml: schema_version is missing or not a positive integer
     ");
-}
-
-/// Waits, within a bound, until the post-commit run for `commit` has seen
-/// its detached sync end.
-fn wait_for_post_commit_sync(env: &TestEnv, commit: String) {
-    let record = env
-        .instrukt_home()
-        .join("state/hooks/migrating/post-commit.yaml");
-    common::wait_until(
-        &format!("the post-commit sync of {commit}"),
-        std::time::Duration::from_secs(60),
-        || {
-            std::fs::read_to_string(&record).is_ok_and(|text| {
-                let record: instrukt_core::repository::HookRunRecord =
-                    serde_yaml_ng::from_str(&text).unwrap();
-                record.sync != Some(instrukt_core::repository::SyncOutcome::Running)
-            })
-        },
-    );
 }
 
 /// The pre-commit section's lines of `instrukt hooks status`, with the

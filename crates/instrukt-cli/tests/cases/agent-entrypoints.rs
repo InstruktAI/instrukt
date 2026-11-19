@@ -56,124 +56,6 @@ fn stdout(env: &TestEnv, assert: &Assert) -> String {
     shown(env, &assert.get_output().stdout)
 }
 
-/// A project whose root master states its purpose and whose index selects
-/// one snippet in full (with a required read of its own), lists another,
-/// beside a triggered procedure and a nested master.
-fn demo_project(env: &TestEnv) -> Repo {
-    let repo = env.git_repo("demo");
-    repo.write("instrukt.yaml", &layer("demo"))
-        .write(
-            "AGENTS.master.md",
-            "<!-- LOCKED_FILE: edit only on request. -->\n\n## Purpose\n\nThe demo project.\n\n\
-             ## Notes\n\n<!-- @config: project -->\n\n\
-             Written as ``@docs/project/policy/house.md`` it is quoted.\n\n\
-             ```\n@docs/project/policy/not-a-snippet.md\n```\n",
-        )
-        .write(
-            "tools/AGENTS.master.md",
-            "## Tools\n\nOnly the tools.\n\n## Required reads\n\n- project/demo/policy/style\n",
-        )
-        .write(
-            "docs/project/index.yaml",
-            "expanded:\n  - project/demo/policy/house\nlisted:\n  - project/demo/policy/style\n",
-        )
-        .write(
-            "docs/project/policy/house.md",
-            &snippet("policy", "House", "", &["project/demo/principle/care"]),
-        )
-        .write(
-            "docs/project/principle/care.md",
-            &snippet("principle", "Care", "", &[]),
-        )
-        .write(
-            "docs/project/policy/style.md",
-            &snippet("policy", "Style", "", &[]),
-        )
-        .write(
-            "docs/project/procedure/release.md",
-            &snippet(
-                "procedure",
-                "Release",
-                "activation_trigger: When cutting a release.\n",
-                &[],
-            ),
-        );
-    repo.commit("instructions");
-    repo
-}
-
-#[test]
-fn an_agent_opened_in_the_project_reads_its_purpose_and_its_selection() {
-    let env = TestEnv::new();
-    // Codex is installed: it reads the project override file.
-    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
-    let repo = demo_project(&env);
-
-    env.run(repo.path(), ["sync"]).success();
-
-    insta::assert_snapshot!("root_agents_md", repo.read("AGENTS.md"));
-    assert_eq!(repo.read("AGENTS.override.md"), repo.read("AGENTS.md"));
-}
-
-#[test]
-fn a_nested_master_renders_beside_itself_with_its_required_reads() {
-    let env = TestEnv::new();
-    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
-    let repo = demo_project(&env);
-
-    env.run(repo.path(), ["sync"]).success();
-
-    insta::assert_snapshot!("nested_agents_md", repo.read("tools/AGENTS.md"));
-    assert!(!repo.path().join("tools/AGENTS.override.md").exists());
-}
-
-#[test]
-fn a_root_master_with_required_reads_is_refused_naming_the_project_index() {
-    let env = TestEnv::new();
-    let repo = env.git_repo("demo");
-    repo.write("instrukt.yaml", &layer("demo"))
-        .write(
-            "AGENTS.master.md",
-            "## Purpose\n\nThe demo project.\n\n## Required reads\n\n- project/demo/policy/house\n",
-        )
-        .write(
-            "docs/project/policy/house.md",
-            &snippet("policy", "House", "", &[]),
-        );
-    repo.commit("master with reads");
-
-    let refused = env.run(repo.path(), ["sync"]).failure();
-
-    insta::assert_snapshot!("root_master_with_required_reads", stdout(&env, &refused));
-    assert!(!repo.path().join("AGENTS.md").exists());
-}
-
-#[test]
-fn without_a_project_index_the_root_agents_md_holds_the_purpose_and_procedures() {
-    let env = TestEnv::new();
-    let repo = env.git_repo("demo");
-    repo.write("instrukt.yaml", &layer("demo"))
-        .write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
-        .write(
-            "docs/project/procedure/release.md",
-            &snippet(
-                "procedure",
-                "Release",
-                "activation_trigger: When cutting a release.\n",
-                &[],
-            ),
-        );
-    repo.commit("no index");
-
-    let synced = env.run(repo.path(), ["sync"]).success();
-
-    insta::assert_snapshot!(
-        "sync_without_project_index",
-        stdout(&env, &synced).replace(&repo.head(), "[SHA]")
-    );
-    insta::assert_snapshot!("root_agents_md_without_index", repo.read("AGENTS.md"));
-}
-
 /// Every file below `dir` outside `.git`, with its bytes.
 fn files_below(dir: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
     walkdir::WalkDir::new(dir)
@@ -482,214 +364,208 @@ fn a_domain_without_an_index_is_published_but_absent_from_the_global_files() {
     );
 }
 
-fn checkout_machine() -> TestEnv {
+/// A test machine whose `PATH` holds the built `instrukt`, as an installed
+/// one would: a repository's hook sections call it by name.
+fn hooked_machine() -> TestEnv {
     let mut env = TestEnv::new();
     let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
         .parent()
         .unwrap();
-    env.set_env(
-        "PATH",
-        &format!("{}:{}", bin.display(), env.injected("PATH").unwrap()),
-    );
+    let path = format!("{}:{}", bin.display(), env.injected("PATH").unwrap());
+    env.set_env("PATH", &path);
     env
 }
 
-fn checkout_project(env: &TestEnv) -> Repo {
-    let repo = env.git_repo("checkout");
+/// Commits everything through the hooks and waits for the post-commit
+/// run's sync.
+fn commit_through_hook(env: &TestEnv, repo: &Repo, message: &str) {
+    repo.commit(message);
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
+}
+
+/// A project whose index expands a policy that requires `sdlc`'s tests
+/// policy, which another repository publishes; adopted with `init`.
+fn selecting_project(env: &TestEnv) -> Repo {
+    let repo = env.git_repo("demo");
+    repo.write("README.md", "# demo\n");
+    repo.commit("the developer's first commit");
+    env.run(repo.path(), ["init"]).success();
     repo.write(
-        "instrukt.yaml",
-        "schema_version: 6\nproject: checkout\nmodules: {history: false}\n",
+        "docs/project/policy/house.md",
+        &snippet("policy", "House", "", &["sdlc/policy/tests"]),
     )
-    .write("AGENTS.master.md", "## Purpose\n\nPublished purpose.\n")
     .write(
         "docs/project/index.yaml",
-        "expanded: [project/checkout/policy/rules]\n",
-    )
-    .write(
-        "docs/project/policy/rules.md",
-        &snippet("policy", "Published rules", "", &[]),
-    )
-    .write(".gitignore", "AGENTS.md\n");
-    repo.commit("docs: main baseline");
-    env.run(repo.path(), ["hooks", "install"]).success();
+        "expanded:\n  - project/demo/policy/house\n",
+    );
     repo
 }
 
-fn publication_bytes(env: &TestEnv) -> Vec<u8> {
-    std::fs::read(env.instrukt_home().join("state/publication/checkout.yaml")).unwrap()
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE10
+#[test]
+fn two_computers_commit_the_same_instructions() {
+    // Two computers that publish different doctrine and hold different
+    // configuration.
+    let first = hooked_machine();
+    let second = hooked_machine();
+    env_doctrine(&first, "Test first.");
+    env_doctrine(&second, "Ship daily.");
+    second
+        .run(second.home(), ["config", "init", "--global"])
+        .success();
+    let first_repo = selecting_project(&first);
+    let second_repo = selecting_project(&second);
+
+    // Each commits the same content through the hook.
+    commit_through_hook(&first, &first_repo, "instructions");
+    commit_through_hook(&second, &second_repo, "instructions");
+    let blob = first_repo.git(["rev-parse", "HEAD:AGENTS.md"]);
+    assert_eq!(second_repo.git(["rev-parse", "HEAD:AGENTS.md"]), blob);
+
+    // A selected snippet that reads a configured value is a finding: the
+    // commit carries the instructions as they were.
+    first_repo.write(
+        "docs/project/policy/house.md",
+        &snippet("policy", "House", "", &["sdlc/policy/tests"])
+            .replace("House: Rules.", "<!-- @config: project -->"),
+    );
+    commit_through_hook(&first, &first_repo, "a configured value");
+    assert_eq!(first_repo.git(["rev-parse", "HEAD:AGENTS.md"]), blob);
+    let status = first.run(first_repo.path(), ["hooks", "status"]).success();
+    insta::assert_snapshot!(
+        "status_naming_a_configured_value",
+        stdout(&first, &status).replace(&first_repo.head(), "[SHA]")
+    );
 }
 
-#[test]
-fn linked_checkout_renders_published_baseline_before_return_without_publication() {
-    let env = checkout_machine();
-    let repo = checkout_project(&env);
+/// Publishes `sdlc` on `env`'s computer with its tests policy ruling `rule`.
+fn env_doctrine(env: &TestEnv, rule: &str) {
+    let repo = env.git_repo("engineering");
+    repo.write("instrukt.yaml", &layer("engineering"))
+        .write("docs/domain/sdlc/index.yaml", "description: Code work\n")
+        .write(
+            "docs/domain/sdlc/policy/tests.md",
+            &snippet("policy", "Tests", "", &[]).replace("Tests: Rules.", rule),
+        );
+    repo.commit("sdlc");
     env.run(repo.path(), ["sync"]).success();
-    let published = publication_bytes(&env);
-    let baseline = std::fs::read(repo.path().join("AGENTS.md")).unwrap();
-    let blocked = instrukt_core::fsx::LockGuard::acquire(
-        &env.instrukt_home().join("locks/docs.lock"),
-        std::time::Duration::from_secs(5),
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE1
+#[test]
+fn an_agent_that_checks_out_the_project_starts_with_what_it_selected() {
+    let env = hooked_machine();
+    // Another repository publishes `general` with a distinctive sentence.
+    let platform = env.git_repo("platform");
+    platform
+        .write("instrukt.yaml", &layer("platform"))
+        .write(
+            "docs/general/policy/care.md",
+            &snippet("policy", "Care", "", &[])
+                .replace("Care: Rules.", "Only the platform says this sentence."),
+        )
+        .write(
+            "docs/general/index.yaml",
+            "expanded:\n  - general/policy/care\n",
+        );
+    platform.commit("general");
+    env.run(platform.path(), ["sync"]).success();
+
+    // The project selects a snippet that requires it, lists another, has a
+    // triggered procedure, and a nested master requiring a held snippet and
+    // the unheld one.
+    let repo = env.git_repo("demo");
+    repo.write("README.md", "# demo\n");
+    repo.commit("the developer's first commit");
+    env.run(repo.path(), ["init"]).success();
+    repo.write(
+        "docs/project/policy/house.md",
+        &snippet("policy", "House", "", &["general/policy/care"]),
     )
-    .unwrap();
+    .write(
+        "docs/project/policy/style.md",
+        &snippet("policy", "Style", "", &[]),
+    )
+    .write(
+        "docs/project/procedure/release.md",
+        &snippet(
+            "procedure",
+            "Release",
+            "activation_trigger: When cutting a release.\n",
+            &[],
+        ),
+    )
+    .write(
+        "docs/project/index.yaml",
+        "expanded:\n  - project/demo/policy/house\nlisted:\n  - project/demo/policy/style\n",
+    )
+    .write(
+        "tools/AGENTS.master.md",
+        "## Tools\n\nOnly the tools.\n\n## Required reads\n\n- project/demo/policy/style\n- general/policy/care\n",
+    );
+
+    // The commit right after init carries both renderings.
+    commit_through_hook(&env, &repo, "adopt instrukt");
+    let root = repo.git(["show", "HEAD:AGENTS.md"]);
+    let tools = repo.git(["show", "HEAD:tools/AGENTS.md"]);
+    insta::assert_snapshot!("committed_root_instructions", root);
+    insta::assert_snapshot!("committed_nested_instructions", tools);
+
+    // A clone on a computer without instrukt holds the same files.
+    let clone = env.path("clone");
+    let empty_home = env.path("empty-home");
+    std::fs::create_dir_all(&empty_home).unwrap();
+    let cloned = std::process::Command::new("git")
+        .args(["clone", "--quiet"])
+        .arg(repo.path())
+        .arg(&clone)
+        .env_clear()
+        .env("HOME", &empty_home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap();
+    assert!(cloned.success());
+    assert_eq!(
+        std::fs::read_to_string(clone.join("AGENTS.md"))
+            .unwrap()
+            .trim_end(),
+        root
+    );
+    assert_eq!(
+        std::fs::read_to_string(clone.join("tools/AGENTS.md"))
+            .unwrap()
+            .trim_end(),
+        tools
+    );
+
+    // A checkout renders nothing: a branch whose committed file is no
+    // rendering keeps it, in a linked worktree and in the primary checkout.
+    env.run(repo.path(), ["sync"]).success();
+    repo.git(["checkout", "--quiet", "-b", "hand-edited"]);
+    repo.write("AGENTS.md", "# Edited by hand on this branch\n");
+    repo.git(["add", "AGENTS.md"]);
+    repo.git(["commit", "--quiet", "--no-verify", "-m", "hand edit"]);
+    let on_branch = repo.git(["show", "hand-edited:AGENTS.md"]);
+    repo.git(["checkout", "--quiet", "main"]);
     let linked = env.path("linked");
     repo.git([
-        std::ffi::OsStr::new("worktree"),
-        std::ffi::OsStr::new("add"),
-        linked.as_os_str(),
-        std::ffi::OsStr::new("-b"),
-        std::ffi::OsStr::new("proposal"),
+        "worktree",
+        "add",
+        "--quiet",
+        linked.to_str().unwrap(),
+        "hand-edited",
     ]);
-    assert_eq!(std::fs::read(linked.join("AGENTS.md")).unwrap(), baseline);
-    std::fs::write(
-        linked.join("AGENTS.master.md"),
-        "## Purpose\n\nProposed purpose.\n",
-    )
-    .unwrap();
-    std::fs::write(
-        linked.join("docs/project/policy/rules.md"),
-        snippet("policy", "Proposed rules", "", &[]),
-    )
-    .unwrap();
-    env.git(&linked, ["add", "--all"]);
-    env.git(
-        &linked,
-        ["commit", "--quiet", "-m", "docs: propose a new baseline"],
-    );
-    std::fs::remove_file(linked.join("AGENTS.md")).unwrap();
-    env.git(&linked, ["checkout", "--detach"]);
-    assert_eq!(std::fs::read(linked.join("AGENTS.md")).unwrap(), baseline);
-    drop(blocked);
-    assert_eq!(publication_bytes(&env), published);
     assert_eq!(
-        std::fs::read(repo.path().join("AGENTS.md")).unwrap(),
-        baseline
+        std::fs::read_to_string(linked.join("AGENTS.md"))
+            .unwrap()
+            .trim_end(),
+        on_branch
     );
-    let status = instrukt_core::repository::last_run(
-        &instrukt_core::home::Home::at_user_home(env.home().to_path_buf()),
-        &instrukt_core::ids::ProjectSlug::parse("checkout").unwrap(),
-        instrukt_core::repository::Hook::PostCheckout,
-    )
-    .unwrap()
-    .unwrap();
-    assert_eq!(
-        status.checkout,
-        Some(instrukt_core::repository::CheckoutOutcome::Rendered)
-    );
-}
-
-#[test]
-fn primary_checkout_bootstraps_once_and_later_renders_published_state() {
-    let env = checkout_machine();
-    let repo = checkout_project(&env);
-    let own = repo.path().join(".git/hooks/post-checkout");
-    let mut hook = std::fs::read_to_string(&own).unwrap();
-    hook.push_str("if [ -f AGENTS.md ]; then echo ran > own-checkout-ran; fi\n");
-    std::fs::write(&own, hook).unwrap();
-    repo.git(["checkout", "-b", "feature"]);
-    assert!(repo.path().join("AGENTS.md").is_file());
-    assert!(repo.path().join("own-checkout-ran").is_file());
-    let published = publication_bytes(&env);
-    let baseline = std::fs::read(repo.path().join("AGENTS.md")).unwrap();
-    repo.write("docs/project/policy/rules.md", "invalid proposed snippet");
-    std::fs::remove_file(repo.path().join("AGENTS.md")).unwrap();
-    repo.git(["checkout", "-b", "another"]);
-    assert_eq!(
-        std::fs::read(repo.path().join("AGENTS.md")).unwrap(),
-        baseline
-    );
-    assert_eq!(publication_bytes(&env), published);
-}
-
-#[test]
-fn unpublished_linked_checkout_reports_prerequisite_without_publishing_or_failing_git() {
-    let env = checkout_machine();
-    let repo = checkout_project(&env);
-    let linked = env.path("unpublished");
-    repo.git([
-        std::ffi::OsStr::new("worktree"),
-        std::ffi::OsStr::new("add"),
-        linked.as_os_str(),
-        std::ffi::OsStr::new("-b"),
-        std::ffi::OsStr::new("proposal"),
-    ]);
-    assert!(!linked.join("AGENTS.md").exists());
-    assert!(
-        !env.instrukt_home()
-            .join("state/publication/checkout.yaml")
-            .exists()
-    );
-    let result = env
-        .run(&linked, ["hooks", "run", "post-checkout"])
-        .success();
-    assert!(!result.get_output().stderr.is_empty());
-    let status = instrukt_core::repository::last_run(
-        &instrukt_core::home::Home::at_user_home(env.home().to_path_buf()),
-        &instrukt_core::ids::ProjectSlug::parse("checkout").unwrap(),
-        instrukt_core::repository::Hook::PostCheckout,
-    )
-    .unwrap()
-    .unwrap();
-    assert!(matches!(
-        status.checkout,
-        Some(instrukt_core::repository::CheckoutOutcome::Failed { .. })
-    ));
-    let status = env.run(&linked, ["hooks", "status"]).success();
-    insta::assert_snapshot!(stdout(&env, &status));
-}
-
-#[test]
-fn a_linked_checkout_retracts_its_own_withdrawn_generated_instructions() {
-    let env = checkout_machine();
-    let repo = checkout_project(&env);
-    repo.write(
-        "nested/AGENTS.master.md",
-        "## Nested\n\nPublished nested instructions.\n",
-    );
-    repo.commit("docs: add nested instructions");
-    env.run(repo.path(), ["sync"]).success();
-    let linked = env.path("withdrawal-linked");
-    env.git(
-        repo.path(),
-        ["worktree", "add", linked.to_str().unwrap(), "-b", "linked"],
-    );
-    assert!(linked.join("nested/AGENTS.md").is_file());
-    // A user-owned AGENTS.md never written by publication is not a withdrawal target.
-    std::fs::create_dir_all(linked.join("manual")).unwrap();
-    std::fs::write(
-        linked.join("manual/AGENTS.md"),
-        "developer owned instructions\n",
-    )
-    .unwrap();
-    std::fs::remove_file(repo.path().join("nested/AGENTS.master.md")).unwrap();
-    repo.commit("docs: withdraw nested instructions");
-    env.run(repo.path(), ["sync"]).success();
-    assert!(!repo.path().join("nested/AGENTS.md").exists());
-    let published = publication_bytes(&env);
-    env.git(&linked, ["checkout", "--detach", &repo.head()]);
-    assert!(!linked.join("nested/AGENTS.md").exists());
-    assert!(linked.join("manual/AGENTS.md").is_file());
-    assert_eq!(publication_bytes(&env), published);
-}
-
-// spec: project/instrukt/spec/feature/configuration/owned-files UC-OF3
-#[test]
-fn development_checkout_rendering_preserves_the_installed_checkouts_instructions() {
-    let mut env = checkout_machine();
-    let repo = checkout_project(&env);
-    env.run(repo.path(), ["sync"]).success();
-    env.run(repo.path(), ["hooks", "run", "post-checkout"])
-        .success();
-    let instructions = std::fs::read(repo.path().join("AGENTS.md")).unwrap();
-    let published = publication_bytes(&env);
-    let development = env.path("private-development-home");
-    env.set_env("INSTRUKT_HOME", development.to_str().unwrap());
-    env.set_env("INSTRUKT_DEVELOPMENT", "1");
-    env.run(repo.path(), ["sync"]).success();
-    env.run(repo.path(), ["hooks", "run", "post-checkout"])
-        .success();
-    assert_eq!(
-        std::fs::read(repo.path().join("AGENTS.md")).unwrap(),
-        instructions
-    );
-    assert_eq!(publication_bytes(&env), published);
+    assert_eq!(env.git(&linked, ["status", "--porcelain"]), "");
+    repo.git(["worktree", "remove", "--force", linked.to_str().unwrap()]);
+    repo.git(["checkout", "--quiet", "hand-edited"]);
+    env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCheckout);
+    assert_eq!(repo.read("AGENTS.md").trim_end(), on_branch);
+    assert_eq!(repo.git(["status", "--porcelain"]), "");
 }

@@ -107,41 +107,10 @@ pub(super) fn stage_position(
     Ok(())
 }
 
-/// What one project's last publication wrote outside the home, so the next
-/// sync can retract what it no longer yields: the rendered `AGENTS.md`
-/// files. Nothing records the global agent files; a record holding an older
-/// `entrypoints` list still loads, the key ignored, and the next write
-/// drops it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Outputs {
-    /// Rendered `AGENTS.md` files, relative to the primary worktree.
-    #[serde(default)]
-    pub agents: Vec<PathBuf>,
-}
-
-impl Outputs {
-    pub(super) fn record_path(home: &Home, project: &ProjectSlug) -> PathBuf {
-        home.publication_outputs_dir()
-            .join(format!("{}.yaml", project.as_str()))
-    }
-
-    pub(super) fn load(home: &Home, project: &ProjectSlug) -> Result<Self, PublicationError> {
-        let path = Self::record_path(home, project);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(source) => return Err(PublicationError::Io { path, source }),
-        };
-        serde_yaml_ng::from_str(&text).map_err(|source| PublicationError::Parse { path, source })
-    }
-
-    /// The record's path and contents.
-    pub(super) fn rendered(
-        &self,
-        home: &Home,
-        project: &ProjectSlug,
-    ) -> Result<(PathBuf, Vec<u8>), PublicationError> {
-        let text = serde_yaml_ng::to_string(self).map_err(PublicationError::Render)?;
-        Ok((Self::record_path(home, project), text.into_bytes()))
-    }
+/// Where an earlier release recorded the repository files one project's
+/// publication wrote. Nothing reads it: the next sync that publishes
+/// deletes it.
+pub(super) fn earlier_outputs_record(home: &Home, project: &ProjectSlug) -> PathBuf {
+    home.publication_outputs_dir()
+        .join(format!("{}.yaml", project.as_str()))
 }

@@ -1,9 +1,9 @@
 ---
 source: crates/instrukt-cli/tests/cases/hook-sections.rs
-assertion_line: 493
 expression: "stdout(&env, &status)"
 ---
 hooks directory: [TMP]/demo/.manager-hooks (set by core.hooksPath)
+runs recorded for the repository at [TMP]/demo/.git
 pre-commit: current
   last run: staged in committed form: instrukt.yaml
 post-commit: absent

@@ -9,11 +9,10 @@
 
 use crate::common;
 use std::path::Path;
-use std::time::Duration;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use instrukt_core::repository::{Hook, HookRunRecord, SyncOutcome};
+use instrukt_core::repository::{Hook, SyncOutcome};
 
 /// A computer whose `PATH` holds the built `instrukt`, as an installed one
 /// would: an adopted repository's hook sections and docs filter call it by
@@ -109,32 +108,6 @@ fn consumer(env: &TestEnv) -> Repo {
         );
     app.commit("app");
     app
-}
-
-/// Waits, within a bound, until the detached sync of `hook`'s last run in
-/// `project` has ended.
-fn wait_for_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
-    let path = env
-        .instrukt_home()
-        .join("state/hooks")
-        .join(project)
-        .join(format!("{}.yaml", hook.name()));
-    let mut finished = None;
-    crate::common::wait_until(
-        &format!("{hook} sync for {project}"),
-        Duration::from_secs(30),
-        || {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
-                if record.sync != Some(SyncOutcome::Running) {
-                    finished = Some(record);
-                    return true;
-                }
-            }
-            false
-        },
-    );
-    finished.unwrap()
 }
 
 /// Whether `path` is a symbolic link itself.
@@ -236,8 +209,10 @@ fn a_developer_gives_their_computer_its_doctrine() {
         .run(app.path(), ["docs", "get", "sdlc/policy/rules"])
         .success();
     insta::assert_snapshot!("consumer-reads-doctrine", stdout(&env, &got));
-    env.run(app.path(), ["sync"]).success();
-    insta::assert_snapshot!("consumer-instructions", app.read("AGENTS.md"));
+    env.run(app.path(), ["hooks", "install"]).success();
+    app.commit("instructions");
+    env.finished_hook_run(app.path(), Hook::PostCommit);
+    insta::assert_snapshot!("consumer-instructions", app.git(["show", "HEAD:AGENTS.md"]));
 }
 
 // spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR2
@@ -272,7 +247,7 @@ fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version(
     // Only the retirement is committed; what init added stays uncommitted.
     first.git(["add", "--all", "instrukt.yaml", "docs"]);
     first.git(["commit", "--quiet", "-m", "stop publishing sdlc"]);
-    let retracted = wait_for_run(&env, "doctrine", Hook::PostCommit);
+    let retracted = env.finished_hook_run(first.path(), Hook::PostCommit);
     assert!(
         matches!(
             retracted.sync,

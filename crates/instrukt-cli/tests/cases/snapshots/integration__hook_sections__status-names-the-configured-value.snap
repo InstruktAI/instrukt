@@ -1,0 +1,17 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "hooks_status(&env, &repo)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+runs recorded for the repository at [TMP]/demo/.git
+pre-commit: current
+  last run: every file was already in committed form; 1 finding(s) left files as they were
+  finding: AGENTS.md: AGENTS.master.md reads a configured value, which a committed rendering cannot hold; list that snippet in `listed` instead, so it is read where `instrukt docs get` resolves the value
+post-commit: current
+  last run: sync exited 1: instrukt: demo at [SHA] is not published: the committed documentation has 1 validation finding(s)
+post-merge: current
+  last run: none
+post-rewrite: current
+  last run: none
+post-checkout: current
+  last run: sync succeeded

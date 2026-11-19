@@ -237,6 +237,48 @@ impl TestEnv {
         self.home.join(".instrukt")
     }
 
+    /// Where the last run of `hook` in the repository at `repo` is recorded:
+    /// `state/hook-runs/<key>/<hook>.yaml`, the key computed as the product
+    /// computes it from the repository's git common directory.
+    pub fn hook_record_path(&self, repo: &Path, hook: instrukt_core::repository::Hook) -> PathBuf {
+        let common = self.git(
+            repo,
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        );
+        let common = PathBuf::from(common.trim()).canonicalize().unwrap();
+        self.instrukt_home()
+            .join("state/hook-runs")
+            .join(instrukt_core::repository::repository_key(&common))
+            .join(format!("{}.yaml", hook.name()))
+    }
+
+    /// The last run of `hook` in the repository at `repo` once its detached
+    /// sync has ended: waits, failing the test after a bound.
+    pub fn finished_hook_run(
+        &self,
+        repo: &Path,
+        hook: instrukt_core::repository::Hook,
+    ) -> instrukt_core::repository::HookRunRecord {
+        use instrukt_core::repository::{HookRunRecord, SyncOutcome};
+        let path = self.hook_record_path(repo, hook);
+        let mut finished = None;
+        wait_until(
+            &format!("{hook} sync in {}", repo.display()),
+            std::time::Duration::from_secs(60),
+            || {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
+                    if record.sync != Some(SyncOutcome::Running) {
+                        finished = Some(record);
+                        return true;
+                    }
+                }
+                false
+            },
+        );
+        finished.unwrap()
+    }
+
     /// A path inside the test's directory, outside `HOME`.
     pub fn injected(&self, name: &str) -> Option<&str> {
         self.vars.get(name).map(String::as_str)

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "stdout(&env, &check)"
+---
+AGENTS.override.md: Codex reads it in place of AGENTS.md, so it hides every committed update; instrukt never deletes it, so remove it unless it is your own

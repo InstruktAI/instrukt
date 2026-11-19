@@ -19,7 +19,6 @@
 
 mod _adoption;
 mod _agents;
-mod _checkout;
 mod _editor;
 mod _fingerprint;
 mod _patch;
@@ -36,9 +35,7 @@ use serde::{Deserialize, Serialize};
 
 pub use _adoption::{
     ClaimStatus, ClaimsPreview, GlobalFiles, PublishedSchema, preview_claims, published_schema,
-    wrote_project_file,
 };
-pub(crate) use _checkout::{Checkout, checkout_entrypoints};
 pub use _editor::{
     EditorChange, EditorChangeKind, SCHEMAS_DIR, committed_modeline, editor_schema_describes,
     refresh_editor_schemas,
@@ -66,6 +63,13 @@ pub enum RepositoryView<'a> {
     /// The working tree whose root is this directory, tracked and
     /// untracked files alike.
     WorkingTree(&'a Path),
+    /// The index a commit is being made from in the repository whose root
+    /// is `root`: `index` (git's `GIT_INDEX_FILE` for the hook run), or the
+    /// repository's own index when `None`.
+    Index {
+        root: &'a Path,
+        index: Option<&'a Path>,
+    },
 }
 
 /// Renders every entrypoint of the repository in `view` from that view
@@ -74,10 +78,25 @@ pub enum RepositoryView<'a> {
 /// rendering found and noticed. Reads nothing from the computer and writes
 /// nothing.
 pub fn render_repository(view: RepositoryView<'_>) -> Result<RenderPlan, PublicationError> {
-    let tree = match view {
-        RepositoryView::WorkingTree(root) => _source::Committed::working_tree(root)?,
+    // An `AGENTS.override.md` is never committed by instrukt: the view
+    // holds it, or, for a commit, the working tree beside the index does.
+    let (tree, override_beside_root) = match view {
+        RepositoryView::WorkingTree(root) => {
+            let tree = _source::Committed::working_tree(root)?;
+            let present = tree.file(_render::OVERRIDE_FILE).is_some();
+            (tree, present)
+        }
+        RepositoryView::Index { root, index } => {
+            let path = root.join(_render::OVERRIDE_FILE);
+            let present = match std::fs::symlink_metadata(&path) {
+                Ok(_) => true,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+                Err(source) => return Err(PublicationError::Io { path, source }),
+            };
+            (_source::Committed::read_index(root, index)?, present)
+        }
     };
-    _render::render_tree(&tree)
+    _render::render_tree(&tree, override_beside_root)
 }
 
 /// Applies `plan` to the working tree whose root is `root`: each rendering

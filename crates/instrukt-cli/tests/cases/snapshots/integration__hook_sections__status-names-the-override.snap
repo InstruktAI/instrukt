@@ -1,0 +1,17 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "hooks_status(&env, &repo)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+runs recorded for the repository at [TMP]/demo/.git
+pre-commit: current
+  last run: every file was already in committed form; 1 finding(s) left files as they were
+  finding: AGENTS.override.md: Codex reads it in place of AGENTS.md, so it hides every committed update; instrukt never deletes it, so remove it unless it is your own
+post-commit: current
+  last run: sync succeeded
+post-merge: current
+  last run: none
+post-rewrite: current
+  last run: none
+post-checkout: current
+  last run: sync succeeded

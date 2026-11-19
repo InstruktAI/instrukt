@@ -4,5 +4,4 @@ expression: "repo.read(\".gitignore\")"
 ---
 /build
 *.log
-AGENTS.md
 .instrukt/

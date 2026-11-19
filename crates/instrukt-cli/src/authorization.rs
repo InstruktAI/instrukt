@@ -99,14 +99,15 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 }
 
 /// The commands that work on the repository the caller stands in and need
-/// nothing else of the computer: `docs render [--check]`, `hooks run` and
-/// `hooks status`. They load no project layer and skip the layer notices;
-/// whether the caller is in its project comes from what the working
-/// tree's root document is.
+/// nothing else of the computer: `docs render [--check]`, `hooks run`, the
+/// detached `hooks worker` a run starts, and `hooks status`. They load no
+/// project layer and skip the layer notices, so a root document that cannot
+/// be read still has its runs recorded and shown; whether the caller is in
+/// its project comes from what the working tree's root document is.
 pub fn repository_local(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
-        ["docs", "render"] | ["hooks", "run" | "status"]
+        ["docs", "render"] | ["hooks", "run" | "worker" | "status"]
     )
 }
 
