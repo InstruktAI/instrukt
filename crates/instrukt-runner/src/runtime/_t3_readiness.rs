@@ -798,8 +798,13 @@ fn translate(source: Snapshot) -> ProviderSnapshot {
 mod tests {
     use super::{CommandFailure, Snapshot, command_output, configured_instances};
     use crate::process::{Finished, ProcessError};
+    use instrukt_core::{ids::ProviderInstanceId, interfaces::ConfiguredInstance};
     use serde_json::json;
-    use std::{io, path::Path, time::Duration};
+    use std::{
+        io,
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
     /// A provider entry as T3 `v0.1.8` reports it (`ServerProvider`), with
     /// only the fields this adapter decodes.
@@ -854,87 +859,49 @@ mod tests {
         });
         let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
         let instances = configured_instances(snapshot, Path::new("/home/user"));
-        assert!(!instances.is_empty());
-        let resolved: Vec<_> = instances
-            .iter()
-            .map(|i| {
-                json!({"instance":i.instance,"runtime":i.runtime,"registry_agent":i.registry_agent,
-                    "home":i.home,"link_folders":i.link_folders})
-            })
-            .collect();
-        insta::assert_json_snapshot!(resolved, @r###"
-        [
-          {
-            "instance": "codex",
-            "runtime": "codex",
-            "registry_agent": null,
-            "home": null,
-            "link_folders": []
-          },
-          {
-            "instance": "claudeAgent",
-            "runtime": "claude",
-            "registry_agent": null,
-            "home": null,
-            "link_folders": []
-          },
-          {
-            "instance": "pi-work",
-            "runtime": "pi",
-            "registry_agent": null,
-            "home": "/home/user/agents/pi",
-            "link_folders": []
-          },
-          {
-            "instance": "opencode",
-            "runtime": "opencode",
-            "registry_agent": null,
-            "home": "/srv/opencode",
-            "link_folders": []
-          },
-          {
-            "instance": "acp-gemini",
-            "runtime": "acpRegistry",
-            "registry_agent": "gemini",
-            "home": null,
-            "link_folders": []
-          },
-          {
-            "instance": "claude-secret",
-            "runtime": "claude",
-            "registry_agent": null,
-            "home": null,
-            "link_folders": []
-          },
-          {
-            "instance": "codex-overlay",
-            "runtime": "codex",
-            "registry_agent": null,
-            "home": "/srv/codex",
-            "link_folders": [
-              "/srv/codex-personal"
+        let instance = |id: &str,
+                        runtime: &str,
+                        registry_agent: Option<&str>,
+                        home: Option<&str>,
+                        link_folders: &[&str]| ConfiguredInstance {
+            instance: ProviderInstanceId::parse(id).expect("instance id"),
+            runtime: runtime.into(),
+            registry_agent: registry_agent.map(str::to_owned),
+            home: home.map(PathBuf::from),
+            link_folders: link_folders.iter().map(PathBuf::from).collect(),
+        };
+        assert_eq!(
+            instances,
+            vec![
+                instance("codex", "codex", None, None, &[]),
+                instance("claudeAgent", "claude", None, None, &[]),
+                instance("pi-work", "pi", None, Some("/home/user/agents/pi"), &[]),
+                instance("opencode", "opencode", None, Some("/srv/opencode"), &[]),
+                instance("acp-gemini", "acpRegistry", Some("gemini"), None, &[]),
+                instance("claude-secret", "claude", None, None, &[]),
+                instance(
+                    "codex-overlay",
+                    "codex",
+                    None,
+                    Some("/srv/codex"),
+                    &["/srv/codex-personal"],
+                ),
+                instance(
+                    "codex-overlay-env",
+                    "codex",
+                    None,
+                    None,
+                    &["/srv/codex-work"]
+                ),
+                instance(
+                    "codex-managed",
+                    "codex",
+                    None,
+                    Some("/srv/t3/codex"),
+                    &["/srv/t3/codex-auth"],
+                ),
             ]
-          },
-          {
-            "instance": "codex-overlay-env",
-            "runtime": "codex",
-            "registry_agent": null,
-            "home": null,
-            "link_folders": [
-              "/srv/codex-work"
-            ]
-          },
-          {
-            "instance": "codex-managed",
-            "runtime": "codex",
-            "registry_agent": null,
-            "home": "/srv/t3/codex",
-            "link_folders": [
-              "/srv/t3/codex-auth"
-            ]
-          }
-        ]
-        "###);
+        );
     }
     #[test]
     fn launch_failure_keeps_its_safe_category() {
