@@ -675,10 +675,61 @@ pub struct RunnerWiring {
     pub github_credentials: Option<Arc<dyn GitHubCredentials>>,
     pub work: Option<WorkPorts>,
     pub workflow: Option<Arc<dyn WorkflowAssignments>>,
-    /// How each connector kind of this build is built: the same registry
-    /// whose declarations configuration validates against. The runner builds
-    /// each once, when it starts hosting connectors.
-    pub connector_kinds: Vec<BuildKind>,
+    /// The company the runner hosts: its conversations. `None` hosts none.
+    pub company: Option<Arc<dyn CompanyPorts>>,
+}
+
+/// Why a company port could not do what was asked, as the company words it.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct CompanyError(pub String);
+
+/// The company as the runner hosts it: its connections, the conversation
+/// work the relay serves beside links, and its section of the inspection
+/// report. The runner names no company type; the CLI wires the
+/// implementation.
+pub trait CompanyPorts: Send + Sync {
+    /// Whether `admitted` hosts any company's connector.
+    fn demand(&self, admitted: &instrukt_core::config::Admitted) -> bool;
+    /// Opens the hosted connections and supervises them. Each connector kind
+    /// is built here, once; a setting a kind refuses is the error, and stops
+    /// the runner at its start. `wake` tells the relay a message arrived;
+    /// `supervise` tells the run loop a connection thread ended.
+    fn start(&self, start: CompanyStart<'_>) -> Result<Box<dyn CompanySupervision>, CompanyError>;
+    /// One pass of conversation work beside links: finished turns read into
+    /// answers and posted, the next message delivered. Before
+    /// [`CompanyPorts::start`] it does nothing.
+    fn relay(
+        &self,
+        home: &instrukt_core::home::Home,
+        admitted: &instrukt_core::config::Admitted,
+        source: &dyn crate::runtime::conversations::ConversationSource,
+        adapter: &dyn crate::runtime::RuntimeAdapter,
+    ) -> Result<(), CompanyError>;
+    /// Whether conversation work is outstanding.
+    fn outstanding(&self, home: &instrukt_core::home::Home) -> Result<bool, CompanyError>;
+    /// Records whether the relay serving conversations runs: its failure, or
+    /// none.
+    fn relay_state(&self, home: &instrukt_core::home::Home, failure: Option<&str>);
+    /// The conversations section of the inspection report.
+    fn status(&self, home: &instrukt_core::home::Home) -> Result<serde_json::Value, CompanyError>;
+}
+
+/// What [`CompanyPorts::start`] opens the connections with.
+pub struct CompanyStart<'a> {
+    pub home: &'a instrukt_core::home::Home,
+    pub current: &'a instrukt_core::config::Current,
+    pub env: &'a instrukt_core::config::Env,
+    pub clock: instrukt_connector::Clock,
+    pub wake: std::sync::mpsc::SyncSender<()>,
+    pub supervise: std::sync::mpsc::SyncSender<()>,
+}
+
+/// The hosted connections, supervised by the run loop; dropping them ends
+/// them.
+pub trait CompanySupervision: Send {
+    /// Restarts every connection whose thread ended unexpectedly.
+    fn check(&mut self);
 }
 
 /// How a connector kind is built once for a process, from its environment
@@ -695,7 +746,7 @@ impl std::fmt::Debug for RunnerWiring {
             .field("work", &self.work.is_some())
             .field("github_credentials", &self.github_credentials.is_some())
             .field("workflow", &self.workflow.is_some())
-            .field("connector_kinds", &self.connector_kinds.len())
+            .field("company", &self.company.is_some())
             .finish()
     }
 }

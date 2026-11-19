@@ -3,7 +3,7 @@ use instrukt_core::{
     capabilities::Assignment,
     home::Home,
     ids::{ProjectSlug, RoleName, SessionRef, SnippetId},
-    state_db::{StateDbError, StateRead, rusqlite::OptionalExtension},
+    state_db::{StateDbError, StateRead},
 };
 
 fn standing_assignment(
@@ -78,55 +78,21 @@ fn standing_assignment(
     Ok(found)
 }
 
-/// A conversation session's assignment: the `company-agent` role the runner
-/// gives it, in its company's home; the record names no procedure.
-fn conversation_assignment(
-    home: &Home,
-    caller: &SessionRef,
-) -> Result<Option<Assignment>, StateDbError> {
-    let Some(db) = StateRead::open(home)? else {
-        return Ok(None);
-    };
-    let row = db
-        .conn()
-        .query_row(
-            "SELECT company,semantic_key FROM connected_conversations WHERE session=?1",
-            [caller.to_string()],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(StateDbError::sqlite(db.path()))?;
-    let Some((company, key)) = row else {
-        return Ok(None);
-    };
-    let company = ProjectSlug::parse(&company)
-        .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))?;
-    Ok(Some(Assignment {
-        worker: false,
-        role: RoleName::parse(instrukt_core::config::COMPANY_AGENT_ROLE)
-            .map_err(|e| StateDbError::invalid(db.path(), e.to_string()))?,
-        project: None,
-        procedure: None,
-        todo: None,
-        workspace: Some(home.company_dir(&company)),
-        key,
-        platform: false,
-        company: Some(company),
-        dispatcher: None,
-    }))
-}
-
 /// Work owns its bindings; runner composes those facts with its own standing/start records.
 pub type WorkLookup = fn(&Home, &SessionRef) -> Result<Option<Assignment>, StateDbError>;
+/// The company owns its conversation sessions' bindings, as work owns its
+/// own: the assignment of a session one of its conversations bound.
+pub type CompanyLookup = fn(&Home, &SessionRef) -> Result<Option<Assignment>, StateDbError>;
 pub fn resolve(
     home: &Home,
     caller: &SessionRef,
     work: WorkLookup,
+    company: CompanyLookup,
 ) -> Result<Option<Assignment>, StateDbError> {
     let work = work(home, caller)?;
     let standing = match standing_assignment(home, caller)? {
         Some(standing) => Some(standing),
-        None => conversation_assignment(home, caller)?,
+        None => company(home, caller)?,
     };
     if work.is_some() && standing.is_some() {
         return Err(StateDbError::invalid(

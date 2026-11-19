@@ -205,6 +205,9 @@ pub struct Request<'a> {
     pub conversations: bool,
     pub github: &'a dyn crate::interfaces::GitHubReadiness,
     pub now: jiff::Timestamp,
+    /// The company hosted here, whose conversations section the report
+    /// shows; none shows none.
+    pub company: Option<&'a dyn crate::interfaces::CompanyPorts>,
 }
 /// A failed resource leaves completed resources recorded, so a rerun repairs
 /// observed drift rather than trusting the previous overall outcome.
@@ -694,8 +697,12 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     })?.flatten();
     let links = crate::links::status(request.home)
         .map_err(|e| inspection_error("conversation links", e))?;
-    let conversations = crate::conversations::status(request.home)
-        .map_err(|e| inspection_error("conversations", e))?;
+    let conversations = request
+        .company
+        .map(|company| company.status(request.home))
+        .transpose()
+        .map_err(|e| inspection_error("conversations", e))?
+        .unwrap_or(serde_json::Value::Null);
     // What the files admit now: each project's admitted modules, the findings
     // of what is left out, or why no generation can be admitted at all.
     let candidate = instrukt_core::config::Admitted::load(request.home);

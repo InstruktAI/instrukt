@@ -201,6 +201,7 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
             &home,
             &caller,
             instrukt_todos::work::recorded_assignment,
+            instrukt_runner::conversations::conversation_assignment,
         )
         .unwrap()
     };
@@ -1203,4 +1204,35 @@ fn an_answer_accepted_as_the_runner_stopped_is_posted_once() {
         destinations(&c),
         [("C1".to_owned(), Some("1700000001.000100".to_owned()))]
     );
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV1
+#[test]
+fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
+    // History is off, so the conversation relay is the stand-in's only
+    // source reader while the runner runs.
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    let gate = c.store.gate();
+    // Every source read is held while the runner starts: its connections
+    // start before the relay, which reads nothing yet. The connector takes
+    // the member's question meanwhile.
+    gate.hold();
+    c.run();
+    let question = c
+        .slack
+        .mention("C1", "USTEVEN", "<@UAGENT> When do we ship?", None);
+    wait("the question retained", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|conversation| conversation.pending_messages > 0)
+    });
+    assert!(c.sessions().is_empty());
+    // Once the relay reads, the question reaches the agent and its answer is
+    // posted where it was asked.
+    gate.open();
+    let session = c.session();
+    c.finish_turn(&session, 0, "On Friday.");
+    wait("the answer", || c.slack.posts().len() == 1);
+    assert_eq!(destinations(&c), [("C1".to_owned(), Some(question))]);
 }

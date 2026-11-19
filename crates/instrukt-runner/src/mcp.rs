@@ -14,11 +14,8 @@ use std::collections::BTreeMap;
 use instrukt_core::config::{ConfigError, Configuration, LayerKind, McpServer};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef};
-use instrukt_core::state_db::{StateDbError, StateRead, rusqlite::OptionalExtension};
+use instrukt_core::state_db::StateDbError;
 use serde_json::Value;
-
-use crate::envelopes::{self, Span};
-use crate::runtime::RuntimeAdapter;
 
 pub use _client::{CALL_TOOL, INITIALIZE, INITIALIZED, LIST_TOOLS, PROTOCOL_VERSIONS, Tool};
 pub use _logins::StoredLogins;
@@ -245,83 +242,6 @@ pub fn view(home: &Home, caller: &Caller, asked: Option<&ProjectSlug>) -> Result
         unbound: None,
         speaker: None,
     })
-}
-
-/// The speaker of `session`'s current turn: the sender recorded with the
-/// addressed message that opened the turn the runtime has in progress. The
-/// turn is correlated with its stored delivery by the delivery's boundary
-/// token, which the member envelope of the turn's opening input carries. A
-/// session bound to no conversation, and a turn whose opening input carries
-/// no member envelope, have no speaker. Any other uncertainty refuses.
-pub fn speaker(
-    home: &Home,
-    session: &SessionRef,
-    adapter: &dyn RuntimeAdapter,
-) -> Result<Option<Speaker>, McpError> {
-    let Some(db) = StateRead::open(home)? else {
-        return Ok(None);
-    };
-    let conversation = db
-        .conn()
-        .query_row(
-            "SELECT company,connector,conversation FROM connected_conversations WHERE session=?1",
-            [session.to_string()],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(StateDbError::sqlite(db.path()))?;
-    let Some((company, connector, conversation)) = conversation else {
-        return Ok(None);
-    };
-    let opening = adapter
-        .active_turn_input(session)
-        .map_err(|error| McpError::Turn {
-            cause: error.to_string(),
-        })?
-        .ok_or_else(|| McpError::Turn {
-            cause: "the runtime has no turn of this session in progress".into(),
-        })?;
-    let boundary = envelopes::segment(&opening)
-        .into_iter()
-        .find_map(|span| match span {
-            Span::Member { boundary, .. } => Some(boundary.to_owned()),
-            _ => None,
-        });
-    let Some(boundary) = boundary else {
-        return Ok(None);
-    };
-    let row = db
-        .conn()
-        .query_row(
-            "SELECT sender, sender_name, sender_email FROM conversation_messages
-             WHERE company=?1 AND connector=?2 AND conversation=?3 AND boundary=?4",
-            [&company, &connector, &conversation, &boundary],
-            |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, Option<String>>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(StateDbError::sqlite(db.path()))?;
-    let (identity, name, email) = row.ok_or_else(|| McpError::Turn {
-        cause: "the turn's addressed message is not one this conversation delivered".into(),
-    })?;
-    Ok(Some(Speaker {
-        name: name
-            .or_else(|| identity.clone())
-            .unwrap_or_else(|| "an unnamed sender".to_owned()),
-        identity,
-        email: email.filter(|email| !email.trim().is_empty()),
-    }))
 }
 
 impl View {
