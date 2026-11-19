@@ -112,6 +112,27 @@ def reload(folder: str, units: dict[str, Unit]) -> None:
             del units[name]
 
 
+def shell_maybe_quote(text: str) -> str:
+    """As systemctl show prints an assignment (systemd's shell_maybe_quote):
+    in double quotes when it holds whitespace or a shell-special character,
+    with " \\ ` $ backslash-escaped and control characters C-escaped."""
+    special = " \t\n\r\"\\`$*?['()<>|&;!"
+    if not any(c in special or ord(c) < 32 or ord(c) == 127 for c in text):
+        return text
+    names = {"\a": "a", "\b": "b", "\f": "f", "\n": "n", "\r": "r", "\t": "t", "\v": "v"}
+    out = []
+    for c in text:
+        if c in names:
+            out.append("\\" + names[c])
+        elif ord(c) < 32 or ord(c) == 127:
+            out.append("\\%03o" % ord(c))
+        elif c in "\"\\`$":
+            out.append("\\" + c)
+        else:
+            out.append(c)
+    return '"' + "".join(out) + '"'
+
+
 def handle(args: list[str], folder: str, units: dict[str, Unit], state: dict[str, str]) -> dict:
     if args and args[0] == "--user":
         args = args[1:]
@@ -152,7 +173,10 @@ def handle(args: list[str], folder: str, units: dict[str, Unit], state: dict[str
         if prop == "LoadState":
             result["stdout"] = "loaded" if unit is not None else "not-found"
         elif prop == "Environment":
-            result["stdout"] = " ".join(f"{key}={value}" for key, value in (unit.environment if unit is not None else {}).items())
+            result["stdout"] = " ".join(
+                shell_maybe_quote(f"{key}={value}")
+                for key, value in (unit.environment if unit is not None else {}).items()
+            )
         elif prop == "MainPID":
             result["stdout"] = str(unit.pid if unit is not None and unit.pid else 0)
         elif prop == "Linger":

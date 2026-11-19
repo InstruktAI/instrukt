@@ -242,10 +242,71 @@ fn registered_home(scheduler: Scheduler, unit: &str) -> anyhow::Result<Option<St
         if let Some(value) = line.strip_prefix("INSTRUKT_HOME => ") {
             return Some(value.to_owned());
         }
-        line.split_whitespace()
-            .find_map(|word| word.strip_prefix("INSTRUKT_HOME="))
-            .map(str::to_owned)
+        systemd_assignments(line)
+            .into_iter()
+            .find_map(|word| word.strip_prefix("INSTRUKT_HOME=").map(str::to_owned))
     }))
+}
+
+/// The assignments of systemd's `Environment` property as `systemctl show`
+/// prints them: separated by spaces, each one that needs it in double quotes
+/// with `"`, `\`, `` ` `` and `$` escaped by a backslash and control
+/// characters as C escapes (systemd's `shell_maybe_quote`).
+fn systemd_assignments(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word: Vec<u8> = Vec::new();
+    let mut started = false;
+    let mut quoted = false;
+    let mut bytes = line.bytes().peekable();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'"' => {
+                quoted = !quoted;
+                started = true;
+            }
+            b'\\' if quoted => {
+                let Some(next) = bytes.next() else { break };
+                match next {
+                    b'a' => word.push(0x07),
+                    b'b' => word.push(0x08),
+                    b'f' => word.push(0x0c),
+                    b'n' => word.push(b'\n'),
+                    b'r' => word.push(b'\r'),
+                    b't' => word.push(b'\t'),
+                    b'v' => word.push(0x0b),
+                    b'0'..=b'7' => {
+                        let mut value = u32::from(next - b'0');
+                        for _ in 0..2 {
+                            match bytes.peek() {
+                                Some(digit @ b'0'..=b'7') => {
+                                    value = value * 8 + u32::from(digit - b'0');
+                                    bytes.next();
+                                }
+                                _ => break,
+                            }
+                        }
+                        word.push(u8::try_from(value & 0xff).unwrap_or_default());
+                    }
+                    other => word.push(other),
+                }
+            }
+            b' ' | b'\t' if !quoted => {
+                if started {
+                    words.push(String::from_utf8_lossy(&word).into_owned());
+                    word.clear();
+                    started = false;
+                }
+            }
+            other => {
+                word.push(other);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(String::from_utf8_lossy(&word).into_owned());
+    }
+    words
 }
 
 /// This home's definitions of `kind` present under every manager on the
@@ -1248,4 +1309,24 @@ pub(super) fn launchd_receiver(home: &Home, port: u16) -> Option<String> {
         .join(format!("{label}.plist"))
         .is_file()
         .then_some(label)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::systemd_assignments;
+
+    #[test]
+    fn systemd_environment_assignments_are_decoded_whole() {
+        let printed =
+            r#"HOME=/home/dev "INSTRUKT_HOME=/tmp/another home" "X=a\"b\$c\\d\te\001" PATH=/a:/b"#;
+        assert_eq!(
+            systemd_assignments(printed),
+            vec![
+                "HOME=/home/dev".to_owned(),
+                "INSTRUKT_HOME=/tmp/another home".to_owned(),
+                "X=a\"b$c\\d\te\u{1}".to_owned(),
+                "PATH=/a:/b".to_owned(),
+            ]
+        );
+    }
 }

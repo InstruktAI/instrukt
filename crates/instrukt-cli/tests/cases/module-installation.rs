@@ -1102,6 +1102,42 @@ fi
     env.run(env.home(), ["install"]).success();
     assert!(!socket.exists());
     assert!(!service.exists());
+    // A runner registration systemd keeps with its unit file gone, whose
+    // environment names a home with a space: systemd prints that assignment
+    // quoted. The default home leaves another home's registration, and the
+    // home it names withdraws its own legacy one.
+    let wrapper = std::fs::read_to_string(&systemctl).unwrap();
+    std::fs::write(
+        &systemctl,
+        wrapper.replacen(
+            "operation=$1",
+            "operation=$1\nif [ \"$operation\" = show ] && [ \"$3\" = --property=Environment ]; then printf '%s\\n' \"$SYSTEMD_ENVIRONMENT\"; exit 0; fi",
+            1,
+        ),
+    )
+    .unwrap();
+    let registration = env.path("runtime-bin/unit-instrukt-runner.service");
+    let another = env.path("another home");
+    std::fs::create_dir_all(&another).unwrap();
+    env.set_env(
+        "SYSTEMD_ENVIRONMENT",
+        &format!(
+            "HOME=/home/fixture \"INSTRUKT_HOME={}\" OTHER=value",
+            another.display()
+        ),
+    );
+    std::fs::write(&registration, "").unwrap();
+    env.run(env.home(), ["install"]).success();
+    assert!(registration.exists());
+    std::fs::write(
+        another.join("instrukt.yaml"),
+        "schema_version: 6\nmodules: {history: false}\n",
+    )
+    .unwrap();
+    env.set_env("INSTRUKT_HOME", another.to_str().unwrap());
+    env.run(env.home(), ["install"]).success();
+    assert!(!registration.exists());
+    env.remove_env("INSTRUKT_HOME");
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
