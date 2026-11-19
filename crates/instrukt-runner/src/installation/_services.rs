@@ -597,10 +597,11 @@ impl Owned {
     }
 
     /// Reconcile the runner service: its definition and registration, and a
-    /// live service process that runs the desired executable and
-    /// configuration. A service that cannot be shown to run them is
-    /// restarted, and the result is verified before it counts. Returns
-    /// why the service is unmet, `None` when it runs as desired.
+    /// live service process. Installing writes the definition and restarts
+    /// the service every time, so the installed executable and configuration
+    /// are the ones running; nothing records what the process executes.
+    /// `--check` reports a missing, stopped or unloaded service. Returns why
+    /// the service is unmet, `None` when it is loaded and alive.
     pub fn runner_service(
         &mut self,
         request: &Request<'_>,
@@ -640,17 +641,15 @@ impl Owned {
             desired.unit
         );
         let registered = self.registered(desired.name) && !self.updates.contains_key(&desired.name);
-        let identity = crate::runner::service_identity(request.home, request.wake.executable)?;
-        let stale = runner_stale(request.home, &process, &identity);
         let paths = desired.files.keys().cloned().collect::<Vec<_>>();
         let cause = if changed {
             Some("its definition is missing or stale".to_owned())
         } else if !registered {
             Some("it is not registered".to_owned())
         } else {
-            stale
+            not_alive(&process)
         };
-        if request.check || cause.is_none() {
+        if request.check {
             report.resource(
                 desired.name,
                 if cause.is_some() {
@@ -681,27 +680,29 @@ impl Owned {
         }
         start(desired)?;
         let started = std::time::Instant::now();
-        let mut stale = runner_stale(request.home, &service_process(desired)?, &identity);
-        while stale.is_some() && started.elapsed() < RUNNER_START_WAIT {
+        let mut unmet = restarted(&service_process(desired)?, process.pid);
+        while unmet.is_some() && started.elapsed() < RUNNER_START_WAIT {
             std::thread::sleep(Duration::from_millis(250));
-            stale = runner_stale(request.home, &service_process(desired)?, &identity);
+            unmet = restarted(&service_process(desired)?, process.pid);
         }
         let mut recorded = desired.clone();
         recorded.registered = true;
         self.resources.insert(desired.name, recorded);
         self.updates.remove(&desired.name);
         self.save(request.home)?;
-        if let Some(stale) = stale {
+        if let Some(unmet) = unmet {
             anyhow::bail!(
-                "the restarted runner service is not running the installed executable and configuration: {stale}; inspect the service manager's log and rerun instrukt install"
+                "the restarted runner service is not running: {unmet}; inspect the service manager's log and rerun instrukt install"
             );
         }
         report.resource(
             desired.name,
-            if repaired {
+            if !repaired {
+                Disposition::Installed
+            } else if cause.is_some() {
                 Disposition::Repaired
             } else {
-                Disposition::Installed
+                Disposition::Reused
             },
             paths,
             projects,
@@ -1061,16 +1062,14 @@ const RUNNER: &str = "runner";
 /// The seconds between two starts of a runner service that exited.
 const RETRY_SECONDS: u32 = 5;
 
-/// How long installation waits for a started runner service to publish
-/// that it runs the desired executable and configuration.
+/// How long installation waits for a started runner service to have a new
+/// live process.
 const RUNNER_START_WAIT: Duration = Duration::from_secs(30);
 
 /// What the service manager knows of a service: whether it has the unit
-/// loaded, whether it is enabled to start at login or boot, and the id of
-/// its live process. Each is a separate fact.
+/// loaded, and the id of its live process. Each is a separate fact.
 struct ServiceProcess {
     loaded: bool,
-    enabled: bool,
     pid: Option<u32>,
 }
 
@@ -1089,12 +1088,10 @@ fn service_process(d: &Definition) -> anyhow::Result<ServiceProcess> {
             // A loaded user agent is the one launchd starts at login.
             Ok(ServiceProcess {
                 loaded: row.is_some(),
-                enabled: row.is_some(),
                 pid: row.flatten(),
             })
         }
         Scheduler::SystemdUser => {
-            let enabled = command(&["systemctl", "--user", "is-enabled", "--quiet", &d.unit])?;
             let result = Invocation::program(
                 "systemctl",
                 &["--user", "show", &d.unit, "--property=MainPID", "--value"],
@@ -1103,7 +1100,6 @@ fn service_process(d: &Definition) -> anyhow::Result<ServiceProcess> {
             anyhow::ensure!(result.success, "cannot inspect systemd unit {}", d.unit);
             Ok(ServiceProcess {
                 loaded: systemd_loaded(&d.unit)?,
-                enabled,
                 pid: result
                     .stdout
                     .trim()
@@ -1114,30 +1110,30 @@ fn service_process(d: &Definition) -> anyhow::Result<ServiceProcess> {
         }
         Scheduler::Crontab => Ok(ServiceProcess {
             loaded: false,
-            enabled: false,
             pid: None,
         }),
     }
 }
 
-/// Why the runner service is not current: not enabled to start at login or
-/// boot, no live process, or a process that does not run the desired
-/// executable and configuration. `None` when the manager's live process is
-/// the incarnation that published `identity`.
-fn runner_stale(home: &Home, process: &ServiceProcess, identity: &str) -> Option<String> {
-    if !process.enabled {
-        return Some("the service manager does not have it enabled".into());
+/// Why the runner service is not running: not loaded, or no live process.
+/// `None` when the manager has it loaded with a live process, which may be
+/// waiting for the runner lock.
+fn not_alive(process: &ServiceProcess) -> Option<String> {
+    if !process.loaded {
+        return Some("the service manager does not have it loaded".into());
     }
-    let Some(pid) = process.pid else {
+    if process.pid.is_none() {
         return Some("no live service process".into());
-    };
-    match crate::runner::published_service(home) {
-        Some(record) if record.describes(pid) && record.identity == identity => None,
-        Some(record) if record.describes(pid) => Some(
-            "its process runs another executable or configuration than the installed ones".into(),
-        ),
-        _ => Some("its process has not published what it runs".into()),
     }
+    None
+}
+
+/// Why a service just started is not yet running: `not_alive`, or a live
+/// process that is still the one the restart stopped.
+fn restarted(process: &ServiceProcess, stopped: Option<u32>) -> Option<String> {
+    not_alive(process).or_else(|| {
+        (process.pid == stopped).then(|| "the stopped process is still its live process".into())
+    })
 }
 
 /// The owned service that runs the installed binary's `instrukt run` as the

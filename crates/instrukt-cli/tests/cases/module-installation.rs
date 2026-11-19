@@ -2475,13 +2475,17 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
         assert_eq!(service.state, ServiceState::Running);
         insta::assert_json_snapshot!(service.cause, @r#""the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`""#);
         manager.linger(true);
-        // Installing again finds the right process running and keeps it.
-        let pid = manager.pid();
-        assert!(instrukt(&c, &["install"]).status.success());
-        assert_eq!(manager.pid(), pid);
     } else {
         assert!(first.status.success());
     }
+    // Installing again restarts the service: a new process, which connects
+    // the connector again.
+    let pid = manager.pid();
+    assert!(instrukt(&c, &["install"]).status.success());
+    assert_ne!(manager.pid(), pid);
+    wait("the reinstalled service's connection", || {
+        c.slack.connections() == 2
+    });
     assert!(instrukt(&c, &["install", "--check"]).status.success());
     assert_eq!(state(&c), ServiceState::Running);
     // While the service runs, a run started by hand is refused naming it.
@@ -2494,7 +2498,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     // Its process is killed: the manager starts it again.
     manager.kill();
     wait("the restarted service's connection", || {
-        c.slack.connections() == 2
+        c.slack.connections() == 3
     });
     // Registered but stopped, it is unmet until installation starts it.
     manager.hold();
@@ -2502,10 +2506,11 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     assert_eq!(state(&c), ServiceState::Unmet);
     assert!(instrukt(&c, &["install"]).status.success());
     wait("the started service's connection", || {
-        c.slack.connections() == 3
+        c.slack.connections() == 4
     });
-    // The executable is upgraded in place, its definition unchanged:
-    // installation restarts the service on the new executable.
+    // The executable is upgraded in place, its definition unchanged: the
+    // service is still loaded and alive, and installation restarts it on the
+    // new executable.
     let definition = |c: &Company| {
         status(c)
             .paths
@@ -2515,16 +2520,20 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     };
     let before = definition(&c);
     if cfg!(target_os = "linux") {
-        // Disabled while its process keeps running, it is still restarted.
+        // Disabled while its process keeps running, it is enabled again and
+        // restarted.
         manager.request(&["disable", manager.unit]);
         assert!(manager.pid().is_some());
+        assert!(!manager.registered());
     }
     std::fs::remove_file(&installed).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_instrukt"), &installed).unwrap();
-    assert!(!instrukt(&c, &["install", "--check"]).status.success());
+    assert!(instrukt(&c, &["install", "--check"]).status.success());
+    let pid = manager.pid();
     assert!(instrukt(&c, &["install"]).status.success());
+    assert_ne!(manager.pid(), pid);
     wait("the upgraded service's connection", || {
-        c.slack.connections() == 4
+        c.slack.connections() == 5
     });
     assert_eq!(definition(&c), before);
     assert_eq!(state(&c), ServiceState::Running);
@@ -2540,7 +2549,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     wait("two failed starts", || manager.starts() >= starts + 2);
     std::fs::write(&global, &configuration).unwrap();
     wait("the recovered service's connection", || {
-        c.slack.connections() == 5
+        c.slack.connections() == 6
     });
     // The definition changes: installation repairs it and restarts the
     // service with it.
@@ -2548,7 +2557,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     c.env.set_env("PATH", &format!("{path}:/changed-tools"));
     assert!(instrukt(&c, &["install"]).status.success());
     wait("the repaired service's connection", || {
-        c.slack.connections() == 6
+        c.slack.connections() == 7
     });
     assert_ne!(definition(&c), before);
     // A run started by hand holds the runner lock, and a second one started
@@ -2562,7 +2571,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
             .stderr(std::process::Stdio::null()),
     );
     wait("the hand-started run's connection", || {
-        c.slack.connections() == 7
+        c.slack.connections() == 8
     });
     let said = c.env.path("waiting-run.stderr");
     let mut waiting = Running::spawn(
@@ -2578,14 +2587,14 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     // The service started meanwhile runs and waits too.
     manager.start();
     wait("the waiting service", || state(&c) == ServiceState::Running);
-    assert_eq!(c.slack.connections(), 7);
+    assert_eq!(c.slack.connections(), 8);
     // The holder dies without letting go while the run waiting by hand is
     // held still: the service takes the lock. Resumed, that run is refused
     // naming the service.
     waiting.signal(rustix::process::Signal::STOP);
     wait("the waiting run held still", || waiting.stopped());
     drop(by_hand);
-    wait("the service taking over", || c.slack.connections() == 8);
+    wait("the service taking over", || c.slack.connections() == 9);
     waiting.signal(rustix::process::Signal::CONT);
     wait("the waiting run's end", || waiting.exited().is_some());
     assert!(!waiting.exited().unwrap().success());
@@ -2597,7 +2606,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     let pid = manager.pid();
     manager.reboot();
     wait("the service's connection after the restart", || {
-        c.slack.connections() == 9
+        c.slack.connections() == 10
     });
     assert_ne!(manager.pid(), pid);
     // A neighbouring company home that cannot be read leaves the demand

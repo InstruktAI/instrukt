@@ -231,8 +231,9 @@ impl Home {
         self.state_dir().join("runner-hosts.json")
     }
 
-    /// `~/.instrukt/state/runner-service.json` — what the runner service
-    /// executes, published by the service when it starts.
+    /// `~/.instrukt/state/runner-service.json` — an earlier release's record
+    /// of what the runner service executed; the service deletes it when it
+    /// starts, and nothing reads it.
     pub fn runner_service_file(&self) -> PathBuf {
         self.state_dir().join("runner-service.json")
     }

@@ -38,8 +38,6 @@ const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 
 mod _holder;
 mod _readiness;
-mod _service;
-pub use _service::{ServiceRecord, published_service, service_identity};
 
 /// What a running `instrukt run` publishes about the connectors it hosts.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -111,10 +109,6 @@ pub enum RunnerError {
         path: std::path::PathBuf,
         source: std::io::Error,
     },
-    #[error(
-        "cannot publish the runner service's identity: {0}; restore write access to the state directory"
-    )]
-    ServiceUnpublished(String),
     #[error("the event worker panicked; retained entries remain recoverable")]
     EventWorkerPanicked,
     #[error(transparent)]
@@ -277,7 +271,18 @@ pub fn run(
 ) -> Result<(), RunnerError> {
     let state = RunnerState::new(cx.home);
     if service {
-        _service::publish(cx.home)?;
+        // An earlier release's service identity record: nothing reads it.
+        let record = cx.home.runner_service_file();
+        match instrukt_core::fsx::remove_file(&record) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                event = "runner_service_record_kept",
+                path = %record.display(),
+                %error,
+                "the earlier release's runner service record could not be removed; startup continues, since nothing reads it"
+            ),
+        }
     }
     let _runner = _holder::run(cx.home, service)?;
     // Initialize the shared schema before independent workers open connections.
