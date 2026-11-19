@@ -140,6 +140,8 @@ struct Workspace {
     hold_reads: bool,
     /// A post Slack accepted is answered only once released.
     hold_posts: bool,
+    /// Every post fails, accepting nothing.
+    fail_posts: bool,
     /// How many accepted posts were held back.
     held_posts: usize,
     /// `users.info` answers wait until released.
@@ -406,6 +408,9 @@ impl FakeSlack {
             }
             "chat.postMessage" if arg("markdown_text").is_none() && arg("text").is_none() => {
                 json!({"ok": false, "error": "no_text"})
+            }
+            "chat.postMessage" if w.fail_posts => {
+                json!({"ok": false, "error": "fatal_error"})
             }
             "chat.postMessage" => {
                 let post = Post {
@@ -701,6 +706,28 @@ impl FakeSlack {
             .iter()
             .filter(|(c, t, _)| c == channel && t == thread)
             .count()
+    }
+
+    /// Every text set as the status line on a channel's thread or a direct
+    /// message's message, in order; a clearing is an empty text.
+    pub fn status_texts(&self, channel: &str, thread: &str) -> Vec<String> {
+        self.workspace
+            .lock()
+            .unwrap()
+            .statuses
+            .iter()
+            .filter(|(c, t, _)| c == channel && t == thread)
+            .map(|(_, _, text)| text.clone())
+            .collect()
+    }
+
+    /// Every later post fails, until [`FakeSlack::accept_posts`].
+    pub fn fail_posts(&self) {
+        self.workspace.lock().unwrap().fail_posts = true;
+    }
+
+    pub fn accept_posts(&self) {
+        self.workspace.lock().unwrap().fail_posts = false;
     }
 
     /// Lookups of people wait until [`FakeSlack::release_lookups`].

@@ -164,6 +164,27 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         .unwrap();
         tx.commit().unwrap();
     }
+    /// The agent writes `text` in the running turn `run` of `thread`: an
+    /// assistant message T3 records in that turn, `ordinal` among its items.
+    #[allow(dead_code, reason = "used by the conversation scenarios")]
+    pub fn agent_writes(&self, thread: &str, run: &str, ordinal: u64, text: &str) {
+        let at = "2026-11-08T10:00:00.000Z";
+        let id = format!("{run}-written-{ordinal}");
+        let message = json!({"id":id,"threadId":thread,"runId":run,"role":"assistant","text":text,"streaming":false,"createdAt":at,"updatedAt":at,"createdBy":"agent","creationSource":"provider","attachments":[]});
+        let item = json!({"id":id,"threadId":thread,"runId":run,"type":"assistant_message","messageId":id,"ordinal":ordinal,"status":"completed","streaming":false,"text":text,"createdAt":at,"updatedAt":at,"completedAt":at});
+        let tx = self.db.unchecked_transaction().unwrap();
+        tx.execute(
+            "INSERT INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',0,?3,?3,?4)",
+            params![id, thread, at, message.to_string()],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,?2,'assistant_message','completed',?3,?4)",
+            params![id, thread, at, item.to_string()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
     /// Other work on the computer: `count` finished threads beside the
     /// scenario's own, each saying `said`, and one more whose answer is
     /// still streaming; [`Elsewhere::stream`] keeps rewriting it until

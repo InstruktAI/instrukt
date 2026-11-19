@@ -122,6 +122,12 @@ Version 20 records when the post of each answer piece was begun
 (`conversation_answers.attempted_at`). Pieces stored before it have none: an
 outstanding one is posted as before, and a posted one keeps its `posted_at`.
 
+Version 21 gives each addressed message its admission time, its no-work
+interval and the newest message the agent has written in its running turn
+(`conversation_messages.admitted_at`, `unavailable_since`, `turn_update`).
+Messages stored before it have none of them: none has an interval open, and
+the relay-wide failure counts for one from that failure's start.
+
 Persisted runtime requests and manual standing reservations enter domain code
 with a required captured title. Migration fills a missing or null title with
 the request's original key and preserves supplied titles. It covers unresolved
@@ -660,7 +666,9 @@ and `message`, the connector's identity of that message.
 | `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
 | `turn` | The native turn that answered it; `NULL` until then. |
 | `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
+| `admitted_at` | When its sender was admitted; `NULL` until then, and for a message admitted before it was recorded. |
 | `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
+| `turn_update` | The newest message the agent has written in its running turn, as the runtime records it, which its status shows; `NULL` until the agent has written one, and once its turn has ended. |
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
 address, `turn` and `piece`. Columns: `text`, the piece's text;

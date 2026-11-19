@@ -432,6 +432,33 @@ mod tests {
     }
 
     #[test]
+    fn version_21_keeps_stored_messages_with_nothing_open() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(20) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 20).unwrap();
+        conn.execute_batch("INSERT INTO conversation_messages(company,connector,conversation,message,sender,sender_name,written_us,written_at,arrived_at,state,text) VALUES('acme','slack','C1/1','1.1','USTEVEN','Steven',1,'2026-11-18T10:00:00Z','2026-11-18T10:00:01Z','sent','When do we ship?');").unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        // A stored message keeps its stage, with no admission time, no open
+        // interval and no update.
+        let message: (String, Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT state,admitted_at,unavailable_since,turn_update FROM conversation_messages",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(message, ("sent".to_owned(), None, None, None));
+    }
+
+    #[test]
     fn version_19_adds_the_runners_own_state_and_keeps_the_relays() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(18) {

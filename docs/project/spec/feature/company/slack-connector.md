@@ -170,14 +170,15 @@ status line for it, with the text the message's state gives
 | The message's state | Text |
 | --- | --- |
 | its no-work interval is open, the relay-wide failure included (the interval the notice reads) | `is temporarily unavailable — your message is saved` |
-| its turn runs and the runtime has reported a status for it | the runtime's latest status update, as the runtime reports it |
+| its turn runs and the agent has written in it | the newest message the agent has written in the running turn, as written |
 | otherwise, from its admission | `is working on your request` |
 
 Slack puts the app's name in front of it. Each status pass sets the text that
 matches the state as it then stands, so a change of state shows at the next
 pass. Where one status serves several unfinished messages, the unavailable text
-shows while every one of them has its interval open; otherwise the running
-turn's latest status update, or the working text before it has one.
+shows while every one of them has its interval open; otherwise the newest
+message the agent has written in the running turn, or the working text before
+there is one.
 
 | Where | The status sits on | It stays while |
 | --- | --- | --- |

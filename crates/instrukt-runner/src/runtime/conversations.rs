@@ -133,6 +133,11 @@ pub trait ConversationSource: Send {
         scope: Scope<'_>,
     ) -> Result<ConversationChanges, SourceError>;
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError>;
+    /// The newest assistant message the runtime has recorded in `thread`'s
+    /// running turn, taken whole, whatever its phase: what a person is shown
+    /// while that turn runs. `None` when no turn of the thread runs, or the
+    /// running one has written nothing yet.
+    fn latest_update(&self, thread: &SessionId) -> Result<Option<String>, SourceError>;
 }
 
 impl RecordKind {

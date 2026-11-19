@@ -7,7 +7,7 @@ use crate::common;
 use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
 use crate::fixtures::documented;
 use instrukt_company::conversations;
-use instrukt_connector_slack::{SLACK, SLACK_MESSAGE_LIMIT, TURN_AWAY, WORKING};
+use instrukt_connector_slack::{SLACK, SLACK_MESSAGE_LIMIT, TURN_AWAY, UNAVAILABLE, WORKING};
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// The source position the state database keeps for the conversation of
@@ -109,11 +109,12 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     c.runner_ended();
     assert!(c.sessions().is_empty());
     // Restarted, the question stays pending with its cause: a start that
-    // remains unresolved, its key and the command that resolves it. Its
-    // asker is admitted, so Slack shows the agent working on the thread.
+    // remains unresolved, its key and the command that resolves it. That
+    // start failed, so Slack shows on the thread that the assistant is
+    // temporarily unavailable.
     c.run();
-    wait("the working status on the thread", || {
-        c.slack.status(channel, &question).as_deref() == Some(WORKING)
+    wait("the unavailable status on the thread", || {
+        c.slack.status(channel, &question).as_deref() == Some(UNAVAILABLE)
     });
     wait("the pending question's new cause", || {
         c.status()["conversations"]["conversations"] != waiting
@@ -498,6 +499,354 @@ fn a_conversation_message_activates_no_subscribed_procedure() {
     };
     wait("the event reader's activation", || !activated().is_empty());
     assert_eq!(activated(), [barrier]);
+}
+
+/// The texts a conversation's status line showed, in order, each change
+/// once: a clearing is an empty text.
+fn shown(c: &Company, channel: &str, thread: &str) -> Vec<String> {
+    let mut texts = c.slack.status_texts(channel, thread);
+    texts.dedup();
+    texts
+}
+
+/// The next session the runtime starts has its thread in T3's projection
+/// from its creation, as T3 projects it.
+fn projected(c: &Company) {
+    c.store.thread(
+        &format!("s{}", c.sessions().len() + 1),
+        None,
+        None,
+        "2026-11-08T10:00:00.000Z",
+    );
+}
+
+/// The operator's clock in the file `path`, running `rate` times faster than
+/// real time from `from` until stopped: a lock's two-minute wait passes in
+/// moments, while a write's short wait for the state database still outlasts
+/// any write.
+struct RunningClock {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    mover: Option<std::thread::JoinHandle<jiff::Timestamp>>,
+}
+impl RunningClock {
+    fn start(path: std::path::PathBuf, from: jiff::Timestamp, rate: u32) -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = std::sync::Arc::clone(&stop);
+        let mover = std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let mut now = from;
+            while !stopping.load(std::sync::atomic::Ordering::Acquire) {
+                now = from + jiff::SignedDuration::try_from(started.elapsed() * rate).unwrap();
+                let next = path.with_extension("next");
+                std::fs::write(&next, now.to_string()).unwrap();
+                std::fs::rename(&next, &path).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            now
+        });
+        Self {
+            stop,
+            mover: Some(mover),
+        }
+    }
+    /// Stops the clock where it stands, and returns that time.
+    fn stop(mut self) -> jiff::Timestamp {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        self.mover.take().unwrap().join().unwrap()
+    }
+}
+
+/// The session a message started, beside `before`, the sessions before it.
+fn started(c: &Company, before: &[String]) -> String {
+    wait("the message's session", || {
+        c.sessions().len() > before.len()
+    });
+    c.sessions()
+        .into_iter()
+        .find(|session| !before.contains(session))
+        .unwrap()
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() {
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    // The operator's clock, moved by the test alone.
+    let clock = c.env.path("clock");
+    std::fs::write(&clock, "2026-11-19T10:00:00Z").unwrap();
+    c.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    c.run();
+    let channel = "C1";
+
+    // The status tells the state. While the message waits for its start the
+    // member sees the working text; once the start's listing is refused, the
+    // unavailable text; once the runtime accepts the message, the working
+    // text again; while its turn runs, the newest message the agent has
+    // written in it, as written; and nothing once the answer is posted.
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let dispatch = || {
+        instrukt_core::fsx::LockGuard::acquire(
+            &home.state_dir().join("runtime-dispatch.lock"),
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap()
+    };
+    let held = dispatch();
+    projected(&c);
+    let asked = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
+    wait("the working text", || {
+        c.slack.status(channel, &asked).as_deref() == Some(WORKING)
+    });
+    c.runtime.flag("list-failure", true);
+    drop(held);
+    wait("the unavailable text", || {
+        c.slack.status(channel, &asked).as_deref() == Some(UNAVAILABLE)
+    });
+    c.runtime.flag("list-failure", false);
+    let session = started(&c, &[]);
+    wait("the working text after the start", || {
+        c.slack.status(channel, &asked).as_deref() == Some(WORKING)
+    });
+    let run = c.runtime.active_run(&session);
+    c.store
+        .agent_writes(&session, &run, 1, "Looking at the release plan.");
+    wait("the agent's message", || {
+        c.slack.status(channel, &asked).as_deref() == Some("Looking at the release plan.")
+    });
+    c.store.agent_writes(
+        &session,
+        &run,
+        2,
+        "Two items are still open — *both small*.",
+    );
+    wait("the agent's newest message", || {
+        c.slack.status(channel, &asked).as_deref()
+            == Some("Two items are still open — *both small*.")
+    });
+    c.finish_turn(&session, 0, "On Friday.");
+    wait("the answer", || c.slack.posts().len() == 1);
+    wait("the status cleared", || {
+        shown(&c, channel, &asked).last().map(String::as_str) == Some("")
+    });
+    // Between the turn's end and the answer's post the working text may show
+    // again: the status follows the message until its answer is posted.
+    let texts = shown(&c, channel, &asked);
+    let newest = texts
+        .iter()
+        .position(|text| text == "Two items are still open — *both small*.")
+        .unwrap();
+    insta::assert_json_snapshot!("status-tells-the-state", &texts[..=newest]);
+    assert!(
+        texts[newest + 1..]
+            .iter()
+            .all(|text| text == WORKING || text.is_empty())
+    );
+
+    // A start that is slow but healthy shows the working text throughout.
+    let before = c.sessions();
+    c.runtime.flag("hold-start", true);
+    projected(&c);
+    let slow = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who reviews it?", None);
+    wait("the working text", || {
+        c.slack.status(channel, &slow).as_deref() == Some(WORKING)
+    });
+    c.runtime.flag("hold-start", false);
+    let session = started(&c, &before);
+    c.finish_turn(&session, 0, "Ada reviews it.");
+    wait("the slow start's answer", || c.slack.posts().len() == 2);
+    wait("the status cleared", || {
+        shown(&c, channel, &slow).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(shown(&c, channel, &slow), [WORKING, ""]);
+
+    // A message waits on the runtime's dispatch lock past the wait: the
+    // working text, then the unavailable text; once the lock is had, the
+    // message is started and answered.
+    let held = dispatch();
+    let before = c.sessions();
+    projected(&c);
+    let locked = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Is the build green?", None);
+    wait("the working text", || {
+        c.slack.status(channel, &locked).as_deref() == Some(WORKING)
+    });
+    // The clock runs until the lock's wait has passed, from whenever the
+    // relay began it.
+    let running = RunningClock::start(clock.clone(), "2026-11-19T10:00:00Z".parse().unwrap(), 30);
+    common::wait_until(
+        "the unavailable text",
+        std::time::Duration::from_secs(60),
+        || c.slack.status(channel, &locked).as_deref() == Some(UNAVAILABLE),
+    );
+    let now = running.stop();
+    drop(held);
+    let session = started(&c, &before);
+    wait("the working text after the start", || {
+        c.slack.status(channel, &locked).as_deref() == Some(WORKING)
+    });
+    c.finish_turn(&session, 0, "It is green.");
+    wait("the locked message's answer", || c.slack.posts().len() == 3);
+    wait("the status cleared", || {
+        shown(&c, channel, &locked).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(
+        shown(&c, channel, &locked),
+        [WORKING, UNAVAILABLE, WORKING, ""]
+    );
+
+    // The relay cannot read the conversation source after the message was
+    // handed over: the unavailable text; once it reads again, the answer.
+    let before = c.sessions();
+    projected(&c);
+    let outage = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Where are the notes?", None);
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(channel, &outage).as_deref() == Some(WORKING)
+    });
+    c.store.break_shape();
+    wait("the unavailable text", || {
+        c.slack.status(channel, &outage).as_deref() == Some(UNAVAILABLE)
+    });
+    c.store.restore_shape();
+    wait("the working text once the source reads again", || {
+        c.slack.status(channel, &outage).as_deref() == Some(WORKING)
+    });
+    c.finish_turn(&session, 0, "In the wiki.");
+    wait("the answer after the outage", || c.slack.posts().len() == 4);
+    wait("the status cleared", || {
+        shown(&c, channel, &outage).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(
+        shown(&c, channel, &outage),
+        [WORKING, UNAVAILABLE, WORKING, ""]
+    );
+
+    // The turn completed, but its answer cannot be posted: the status stays,
+    // with the unavailable text, until the answer is posted.
+    let before = c.sessions();
+    projected(&c);
+    let unposted = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who owns billing?", None);
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(channel, &unposted).as_deref() == Some(WORKING)
+    });
+    c.slack.fail_posts();
+    c.finish_turn(&session, 0, "Grace owns billing.");
+    wait("the unavailable text", || {
+        c.slack.status(channel, &unposted).as_deref() == Some(UNAVAILABLE)
+    });
+    c.slack.accept_posts();
+    wait("the answer once posts are taken", || {
+        c.slack.posts().len() == 5
+    });
+    wait("the status cleared", || {
+        shown(&c, channel, &unposted).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(shown(&c, channel, &unposted), [WORKING, UNAVAILABLE, ""]);
+
+    // A turn that completes with a bare `NOOP` completes its message:
+    // nothing is posted, and the status is cleared without ever saying the
+    // assistant is unavailable.
+    let before = c.sessions();
+    projected(&c);
+    let quiet = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Thanks!", None);
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(channel, &quiet).as_deref() == Some(WORKING)
+    });
+    c.finish_turn(&session, 0, "NOOP");
+    wait("the status cleared", || {
+        shown(&c, channel, &quiet).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(shown(&c, channel, &quiet), [WORKING, ""]);
+    assert_eq!(c.slack.posts().len(), 5);
+
+    // A second message waits behind the conversation's running turn: the
+    // status shows that turn's work, never the unavailable text, and both
+    // are answered in order.
+    let before = c.sessions();
+    projected(&c);
+    let first = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> What is next?", None);
+    let session = started(&c, &before);
+    let run = c.runtime.active_run(&session);
+    c.store
+        .agent_writes(&session, &run, 1, "Checking the board.");
+    wait("the agent's message", || {
+        c.slack.status(channel, &first).as_deref() == Some("Checking the board.")
+    });
+    c.slack.mention(
+        channel,
+        "USTEVEN",
+        "<@UAGENT> And after that?",
+        Some(&first),
+    );
+    wait("the second message retained", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|conversation| conversation.pending_messages == 2)
+    });
+    c.finish_turn(&session, 0, "The release.");
+    wait("the second message handed over", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "The roadmap.");
+    wait("both answers", || c.slack.posts().len() == 7);
+    wait("the status cleared", || {
+        shown(&c, channel, &first).last().map(String::as_str) == Some("")
+    });
+    assert!(!shown(&c, channel, &first).contains(&UNAVAILABLE.to_owned()));
+
+    // Another conversation's lock is held past its wait: that conversation
+    // is left for later, and a member in this one is still answered.
+    use sha2::Digest as _;
+    let other = conversations::key(&c.company(), SLACK, &format!("{channel}/{first}"));
+    let other_lock = instrukt_core::fsx::LockGuard::acquire(
+        &home.locks_dir().join(format!(
+            "conversation-{}.lock",
+            hex::encode(&sha2::Sha256::digest(other.as_bytes())[..8])
+        )),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    let before = c.sessions();
+    projected(&c);
+    let apart = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who is on call?", None);
+    // Each pass waits out the held lock first, a few seconds on a clock
+    // running thirty times faster.
+    let running = RunningClock::start(clock.clone(), now, 30);
+    common::wait_until(
+        "the session past the held lock",
+        std::time::Duration::from_secs(60),
+        || c.sessions().len() > before.len(),
+    );
+    running.stop();
+    let session = started(&c, &before);
+    c.finish_turn(&session, 0, "Linus is on call.");
+    wait("the answer beside the held lock", || {
+        c.slack.posts().len() == 8
+    });
+    assert_eq!(
+        c.slack.posts().last().unwrap().thread.as_deref(),
+        Some(apart.as_str())
+    );
+    drop(other_lock);
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12

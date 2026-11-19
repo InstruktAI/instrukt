@@ -86,7 +86,19 @@ pub struct Limits {
     pub working_refresh: Option<Duration>,
 }
 
-/// Where the working indicator for an addressed message sits, as its
-/// connector names it.
+/// Where the status for an addressed message sits, as its connector names
+/// it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Place(pub String, pub String);
+
+/// What a status shows a person of their unfinished message.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Status {
+    /// The assistant is working on the request.
+    Working,
+    /// The assistant cannot work on it now, and the message is saved.
+    Unavailable,
+    /// The newest message the agent has written in the running turn, as
+    /// written: shown as it is.
+    Update(String),
+}

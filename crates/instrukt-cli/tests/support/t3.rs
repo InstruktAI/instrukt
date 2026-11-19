@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use crate::common::TestEnv;
 
 const SCRIPT: &str = r###"#!/usr/bin/env python3
-import json, os, pathlib, sqlite3, subprocess, sys
+import json, os, pathlib, sqlite3, subprocess, sys, time
 root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
@@ -149,6 +149,7 @@ if command=='list':
         copy=dict(threads[0]); copy['threadId']='duplicate'; threads.append(copy)
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
+    while (root/'hold-start').exists(): time.sleep(0.02)
     if (root/'empty-start').exists(): sys.exit(0)
     if (root/'die-before-start').exists():
         (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
@@ -319,6 +320,10 @@ impl FakeT3 {
         } else if p.exists() {
             std::fs::remove_file(p).unwrap();
         }
+    }
+    /// The run thread `id` has active, as the fake records it.
+    pub fn active_run(&self, id: &str) -> String {
+        self.read(id)["activeRunId"].as_str().unwrap().to_owned()
     }
     pub fn set_status(&self, id: &str, value: &str) {
         if matches!(value, "idle" | "completed" | "stopped" | "failed") {

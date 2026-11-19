@@ -1,7 +1,7 @@
 //! The operations of a channel provider and of one company's connector, and
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
-use crate::_values::{Admission, Captured, ConnectorError, Incoming, Limits, Place};
+use crate::_values::{Admission, Captured, ConnectorError, Incoming, Limits, Place, Status};
 
 /// The host's side of [`Connector::listen`].
 pub trait Inbox: Sync {
@@ -43,10 +43,11 @@ pub trait Connector: Send + Sync {
     fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
-    /// Where the working indicator for `message` of `conversation` sits.
+    /// Where the status for `message` of `conversation` sits.
     fn place(&self, conversation: &str, message: &str) -> Place;
-    /// Set or clear the working indicator at `place`; best effort.
-    fn working(&self, place: &Place, on: bool) -> Result<(), ConnectorError>;
+    /// Show `state` at `place`, or clear what is shown there with `None`;
+    /// best effort.
+    fn status(&self, place: &Place, state: Option<&Status>) -> Result<(), ConnectorError>;
 }
 
 /// Resolves a `${NAME}` reference against the declaring company's secrets.
