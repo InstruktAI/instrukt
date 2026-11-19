@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stdout(&tools)
+---
+whoami: Say whose login reached the server
+  input: {"type":"object","properties":{}}
+fail: Report a failure
+  input: {"type":"object","properties":{}}
