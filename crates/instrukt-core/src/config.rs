@@ -12,6 +12,7 @@ mod _admitted;
 mod _agents;
 mod _agents_migrate;
 mod _company;
+mod _connectors;
 mod _edit;
 mod _effective;
 mod _error;
@@ -40,9 +41,10 @@ pub use _agents::{
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,
-    Current, DeclaredConnector, Offer, serve,
+    Current, Offer, serve,
 };
-pub use _company::{CONNECTORS, DEFAULT_CONTEXT_MESSAGES, Member, Members, SlackConnector};
+pub use _company::{Member, Members};
+pub use _connectors::{DeclaredConnector, install_connector_declarations};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable, availability as feature_availability};

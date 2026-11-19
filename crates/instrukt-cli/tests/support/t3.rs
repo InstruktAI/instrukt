@@ -49,7 +49,13 @@ if args[:3]==['auth','session','issue']:
             if time.monotonic()>given_up: sys.exit(1)
             time.sleep(0.02)
     if (root/'issue-failure').exists(): print('cannot issue a session',file=sys.stderr); sys.exit(1)
-    counter=root/'sessions'; n=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(n))
+    # The next session number is reserved under the counter's lock, which
+    # FakeT3::issued takes too: a late issue takes the next unused number and
+    # never writes a lower one.
+    import fcntl
+    with open(root/'sessions.lock','a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        counter=root/'sessions'; n=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(n))
     sid='00000000-0000-4000-8000-%012d'%n
     ttl=args[args.index('--ttl')+1]
     seconds=int(ttl[:-1])*{'s':1,'m':60,'h':3600}[ttl[-1]]
@@ -376,10 +382,19 @@ impl FakeT3 {
     pub fn archive(&self, id: &str) {
         self.change(id, "archived", true.into());
     }
-    /// The sessions issued so far, in order.
+    /// The sessions issued so far, in order: read under the lock the fake's
+    /// issue takes to reserve each number, so the count never goes back.
     pub fn issued(&self) -> usize {
-        std::fs::read_to_string(self.state.join("sessions"))
-            .map_or(0, |n| n.trim().parse().unwrap())
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.state.join("sessions.lock"))
+            .unwrap();
+        rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockShared).unwrap();
+        let issued = std::fs::read_to_string(self.state.join("sessions"))
+            .map_or(0, |n| n.trim().parse().unwrap());
+        drop(lock);
+        issued
     }
     /// How many `auth session revoke` launches were held so far.
     pub fn held_revokes(&self) -> usize {

@@ -5,6 +5,15 @@ use serde_json::{Value, json};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::{path::PathBuf, process::Child, time::Duration};
 
+/// How a write to T3's database waits while the other work streams: the
+/// stream takes the database for a moment every millisecond, so the write is
+/// tried again every millisecond, for up to 20 seconds, rather than on a
+/// backoff the stream could outpace.
+pub fn retry_soon(attempt: i32) -> bool {
+    std::thread::sleep(Duration::from_millis(1));
+    attempt < 20_000
+}
+
 pub struct T3Store {
     pub file: PathBuf,
     db: Connection,
@@ -26,7 +35,8 @@ impl T3Store {
     pub fn create(env: &TestEnv) -> Self {
         let file = env.home().join(".t3/userdata/statev2.sqlite");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let db = Connection::open(&file).unwrap();
+        let mut db = Connection::open(&file).unwrap();
+        db.busy_handler(Some(retry_soon)).unwrap();
         db.execute_batch("PRAGMA journal_mode=WAL;
 CREATE TABLE effect_sql_migrations(migration_id INTEGER PRIMARY KEY,name TEXT);
 INSERT INTO effect_sql_migrations VALUES(79,'fixture');
@@ -350,6 +360,8 @@ struct Gating {
     held: bool,
     /// Reads admitted while the gate is held.
     admitted: usize,
+    /// `served` when the gate was last held.
+    armed_at: usize,
     /// The pipe the server is opening for the next held read, while it waits
     /// for a reader of it.
     opening: Option<PathBuf>,
@@ -522,7 +534,10 @@ impl Gate {
     /// Later source reads wait at the gate.
     pub fn hold(&self) {
         let (lock, changed) = &*self.shared;
-        lock.lock().unwrap().held = true;
+        let mut gating = lock.lock().unwrap();
+        gating.held = true;
+        gating.armed_at = gating.served;
+        drop(gating);
         changed.notify_all();
         link_descriptor(&self.pipes, &self.descriptor);
     }
@@ -544,6 +559,29 @@ impl Gate {
             gating.served
         };
         self.until("the admitted source read", |gating| gating.served > served);
+    }
+    /// One step of admission, decided under the gate's own lock: whether
+    /// `stop` holds, given how many reads were served since the gate was last
+    /// held. When it does not and a read stands at the gate, that read is let
+    /// through and the step waits until it has ended. A read that arrives once
+    /// `stop` holds is never let through: it stays held. Returns whether
+    /// `stop` held.
+    pub fn admit_unless(&self, stop: impl Fn(usize) -> bool) -> bool {
+        let served = {
+            let (lock, changed) = &*self.shared;
+            let mut gating = lock.lock().unwrap();
+            if stop(gating.served - gating.armed_at) {
+                return true;
+            }
+            if !(gating.held && gating.waiting) {
+                return false;
+            }
+            gating.admitted += 1;
+            changed.notify_all();
+            gating.served
+        };
+        self.until("the admitted source read", |gating| gating.served > served);
+        false
     }
     /// Every source read passes at once again: later reads find the
     /// descriptor a regular file.

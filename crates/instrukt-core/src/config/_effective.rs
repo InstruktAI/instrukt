@@ -415,9 +415,10 @@ impl Configuration {
         super::_mcp::servers(self.value.get("mcp"), layer)
     }
 
-    /// A company document's Slack connector, if it declares one.
-    pub fn slack_connector(&self) -> Result<Option<super::SlackConnector>, ConfigError> {
-        super::_company::slack(self.value.get("connectors"))
+    /// The connectors a company document declares, each as declared,
+    /// references unresolved; none when it declares none.
+    pub fn connectors(&self) -> Result<Vec<super::DeclaredConnector>, ConfigError> {
+        super::_company::connectors(self.value.get("connectors"))
     }
 
     pub fn webhooks(&self) -> Result<super::WebhookSources, ConfigError> {

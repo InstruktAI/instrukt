@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 dotenvy.workspace = true
 hex.workspace = true
+instrukt-connector.workspace = true
 indexmap.workspace = true
 jiff.workspace = true
 regex.workspace = true

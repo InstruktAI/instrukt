@@ -17,6 +17,7 @@ use std::sync::{Arc, RwLock};
 
 use serde_yaml_ng::Value;
 
+use super::_connectors::DeclaredConnector;
 use super::_error::{ConfigError, Finding, FindingKind};
 use super::_layer::{Layer, inspected, read};
 use super::_module::Module;
@@ -66,14 +67,6 @@ pub struct AdmittedCompany {
     /// Each `${NAME}` reference its connectors make, resolved from its own
     /// secrets file by the read admission validated.
     pub secrets: AdmittedSecrets,
-}
-
-/// One connector a company declared: the kind's key under `connectors` and
-/// the entry's fields as its document holds them, references unresolved.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeclaredConnector {
-    pub key: String,
-    pub entry: Value,
 }
 
 /// The secrets a company's declared connectors reference, by `${NAME}`
@@ -375,25 +368,23 @@ fn admit_company(
     .pinned(agents);
     // Each connector as declared, and each secret reference its entry
     // makes, resolved from the same read of the secrets file validation used.
-    let mut connectors = Vec::new();
+    let connectors = config
+        .connectors()
+        .map_err(|error| vec![unreadable(document.clone(), &error)])?;
     let mut resolved = std::collections::BTreeMap::new();
-    if let Some(declared) = value.get("connectors").and_then(Value::as_mapping) {
-        for (key, entry) in declared {
-            let Some(key) = key.as_str() else {
-                continue;
-            };
-            for field in entry.as_mapping().into_iter().flat_map(|e| e.values()) {
-                if let Some(reference) = field.as_str().filter(|t| super::is_secret_reference(t)) {
-                    let secret = secrets
-                        .resolve(reference)
-                        .map_err(|error| vec![unreadable(document.clone(), &error)])?;
-                    resolved.insert(reference.to_owned(), secret);
-                }
+    for declared in &connectors {
+        for field in declared
+            .entry
+            .as_mapping()
+            .into_iter()
+            .flat_map(|e| e.values())
+        {
+            if let Some(reference) = field.as_str().filter(|t| super::is_secret_reference(t)) {
+                let secret = secrets
+                    .resolve(reference)
+                    .map_err(|error| vec![unreadable(document.clone(), &error)])?;
+                resolved.insert(reference.to_owned(), secret);
             }
-            connectors.push(DeclaredConnector {
-                key: key.to_owned(),
-                entry: entry.clone(),
-            });
         }
     }
     Ok(Some(AdmittedCompany {

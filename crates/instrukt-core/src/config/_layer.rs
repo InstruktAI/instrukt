@@ -558,7 +558,10 @@ fn migrate_value(mut value: Value, from: u64, layer: LayerKind) -> Value {
             if let Some(Value::Mapping(members)) = map.get_mut("members") {
                 for (_, entry) in members.iter_mut() {
                     if let Value::Mapping(fields) = entry {
-                        for connector in super::_company::CONNECTORS {
+                        // The connectors that existed when schema 6 was
+                        // written, whatever this binary supports later.
+                        const V6_CONNECTOR_KEYS: [&str; 1] = ["slack"];
+                        for connector in V6_CONNECTOR_KEYS {
                             fields.remove(connector);
                         }
                     }
