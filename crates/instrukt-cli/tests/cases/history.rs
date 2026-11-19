@@ -37,7 +37,7 @@ fn extracted_conversations_survive_restart_and_source_deletion() {
         .instrukt_process(env.home())
         .args(["history", "search", "Elsewheretoken", "--json"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     gate.admit();
@@ -50,8 +50,14 @@ fn extracted_conversations_survive_restart_and_source_deletion() {
         false,
     );
     gate.open();
-    let incomplete: Value =
-        serde_json::from_slice(&searching.wait_with_output().unwrap().stdout).unwrap();
+    let searched = searching.wait_with_output().unwrap();
+    let incomplete: Value = serde_json::from_slice(&searched.stdout).unwrap();
+    // Its one line, after the configuration's notice, points at the
+    // failures the JSON holds.
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&searched.stderr).lines().last().unwrap_or_default(),
+        @"instrukt: the search is incomplete: 1 computer could not be searched; each is named in the output's `failures`"
+    );
     assert_eq!(incomplete["matches"].as_array().unwrap().len(), 39);
     let failures: Vec<instrukt_runner::history::Failure> =
         serde_json::from_value(incomplete["failures"].clone()).unwrap();
@@ -269,12 +275,17 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         Duration::from_secs(20),
         extraction,
     );
-    // Meanwhile the machine layer is broken by hand. Once T3's database reads
-    // again, the same worker extracts with the configuration the runner
-    // admitted, which clears its failure, and holds what was begun.
+    // Meanwhile the machine layer is broken by hand, which stops every
+    // command, status among them. T3's database reads again and a
+    // conversation begins while it is broken; the runner holds on with the
+    // configuration it admitted. Once the layer is mended, the same worker
+    // has cleared its failure and holds what was begun.
     let machine = env.instrukt_home().join("instrukt.yaml");
     let admitted = std::fs::read_to_string(&machine).unwrap();
     std::fs::write(&machine, format!("{admitted}modules: [\n")).unwrap();
+    env.run(env.home(), ["events", "status", "--json"])
+        .failure()
+        .code(1);
     recreated.restore_shape();
     recreated.thread("repaired", None, None, "2026-11-08T13:00:00.000Z");
     recreated.message(
@@ -284,12 +295,12 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         "2026-11-08T13:00:00.000Z",
         false,
     );
+    std::fs::write(&machine, &admitted).unwrap();
     crate::common::wait_until(
         "the extraction failure to clear",
         Duration::from_secs(20),
         || !extraction(),
     );
-    std::fs::write(&machine, &admitted).unwrap();
     crate::common::wait_until(
         "the repaired conversation to be held",
         Duration::from_secs(20),

@@ -517,3 +517,58 @@ fn a_legacy_edited_file_yields_a_focused_handler_and_its_preserved_native_model_
     read_but_not_configure(&h, "legacy-inherited-handler-scope");
     native_selection(&h, "legacy-inherited-handler-selection");
 }
+
+/// A company's agent: a standing session of the `company-agent` role.
+fn company_agent() -> TestEnv {
+    let env = TestEnv::new();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let mut db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+    db.write::<_, instrukt_core::state_db::StateDbError>(|tx| {
+        tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES ('assistance','general/procedure/company-assistance','platform',1,'assistance',?1,?2,'{}','t3:company')", instrukt_core::state_db::rusqlite::params![env.home().to_string_lossy(),r#"{"role":"company-agent"}"#]).unwrap();
+        Ok(())
+    }).unwrap();
+    drop(db);
+    env
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP3
+#[test]
+fn a_company_agent_may_report_defects_and_change_no_other_work() {
+    let env = company_agent();
+    let help = |args: &[&str]| {
+        let output = env
+            .instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "company")
+            .args(args)
+            .assert()
+            .success();
+        String::from_utf8_lossy(&output.get_output().stdout).into_owned()
+    };
+    // Its help names what it may do: reading the record and reporting a
+    // defect into any project, and no other work-record write.
+    insta::assert_snapshot!("company-agent-help", help(&["--help"]));
+
+    // An agents.yaml edited before `report` existed keeps working: its
+    // company agent holds what that file gives it, and no `bug-report`.
+    let file = env.instrukt_home().join("agents.yaml");
+    let edited = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("can: [read, tools, report]", "can: [read, tools]")
+        .replace("  report:\n    - {action: bug-report, scope: any}\n", "")
+        .replace("    - {action: bug-report, scope: own}\n", "")
+        .replace("    - {action: bug-report, scope: any}\n", "");
+    std::fs::write(&file, edited).unwrap();
+    let without = help(&["--help"]);
+    insta::assert_snapshot!(
+        without.lines().skip_while(|line| !line.starts_with("Role:")).collect::<Vec<_>>().join("\n"),
+        @r"
+    Role: company-agent · class: standing. Scope comes from assignment assistance. Object claims, phase
+    and writer constraints apply.
+    Usual capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any,
+    artifact-read:any, agents-read:any, config-read:any, repository-read:any, code-check:any,
+    eval-read:any, events-read:any, installation-read:any, mcp-access:own
+    "
+    );
+}

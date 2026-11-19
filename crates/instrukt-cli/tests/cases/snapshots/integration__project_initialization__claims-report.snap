@@ -28,5 +28,5 @@ claims of the first sync (nothing is published until it runs):
   docs/domain/free/: free; the sync claims it
   docs/domain/ops/: owned by project `other`; the sync would be refused
   docs/domain/project/: refused: a reserved name; no domain may be called `general`, `project` or `third-party`
-  global agent file of claude: the sync writes [TMP]/home/.claude/CLAUDE.md
-  global agent file of codex: the sync writes [TMP]/home/.codex/AGENTS.md
+  global agent file of claude (claudeAgent): the sync writes [TMP]/home/.claude/CLAUDE.md
+  global agent file of codex (codex): the sync writes [TMP]/home/.codex/AGENTS.md

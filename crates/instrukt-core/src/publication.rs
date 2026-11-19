@@ -35,7 +35,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use _adoption::{
-    ClaimStatus, ClaimsPreview, GlobalFiles, PublishedSchema, preview_claims, published_schema,
+    ClaimStatus, ClaimsPreview, GlobalFiles, PlannedGlobalFile, PublishedSchema, preview_claims,
+    published_schema,
 };
 pub use _company::CompanyReadProblem;
 pub use _editor::{
@@ -48,7 +49,8 @@ pub use _render::{
     GENERATED_LINE, PlannedFile, RenderFinding, RenderFindingKind, RenderPlan, is_rendering,
 };
 pub use _sync::{
-    GlobalDestination, Refusal, SyncError, SyncFinding, SyncOutcome, SyncReport, SyncRequest, sync,
+    EnsuredLink, GlobalDestination, LinkState, Refusal, SyncError, SyncFinding, SyncOutcome,
+    SyncReport, SyncRequest, sync,
 };
 
 use crate::config::ConfigError;

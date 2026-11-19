@@ -45,12 +45,12 @@ impl Clock {
                     );
                     let limits = Arc::clone(&path);
                     instrukt_core::process::measure_limits_on(Box::new(move || {
-                        read_file(&limits).map_err(|error| format!("{error:#}"))
+                        read_file(&limits).map_err(|error| crate::output::error_line(&error))
                     }));
                     return Ok(Clock::File(path));
                 }
                 let at = parse_rfc3339(text).with_context(|| {
-                    format!("{OVERRIDE_VAR}={text:?} is not an RFC 3339 time; unset it or give one")
+                    format!("{OVERRIDE_VAR}=`{text}` is not an RFC 3339 time; unset it or give one")
                 })?;
                 eprintln!("instrukt: clock overridden to {at}");
                 Ok(Clock::Fixed(at))
@@ -65,7 +65,7 @@ impl Clock {
             Clock::System => Timestamp::now(),
             Clock::Fixed(at) => *at,
             Clock::File(path) => read_file(path).unwrap_or_else(|error| {
-                eprintln!("instrukt: {error:#}");
+                eprintln!("instrukt: {}", crate::output::error_line(&error));
                 instrukt_core::process::exit_stopping_owned(1)
             }),
         }

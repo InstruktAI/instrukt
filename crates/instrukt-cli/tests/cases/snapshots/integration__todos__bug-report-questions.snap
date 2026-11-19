@@ -1,0 +1,47 @@
+---
+source: crates/instrukt-cli/tests/cases/todos.rs
+expression: "stderr(&project, &shown)"
+---
+Nothing was filed. Face each question before filing this defect:
+
+- Bug or change: which current contract does the behaviour break? A failure
+  shows that something happened, not that it is wrong. Where no current
+  contract states otherwise it is not a bug: file a change with
+  `instrukt todo create <slug> <content> --kind change --approved` only when
+  the behaviour is wanted, and otherwise file nothing. A report whose premise
+  is that nothing followed up first establishes whether the sanctioned
+  recovery was attempted.
+- Validity: have the intended outcome and every contract it rests on
+  converged, with no pending authoring, review or commit still expected to
+  change them? A todo enters the lifecycle valid
+  (sdlc/policy/todo-creation-discipline); work that has not converged is not
+  filed through this door yet.
+- Fix in context or file: is the repair settled work you already hold
+  authority for: the approach known, the edit bounded, needing neither a
+  plan, a builder nor a handoff, with authority from an explicit execution
+  request, a bounded brief, or a completed human conversation in which every
+  active participant agreed the outcome and the human released the edit
+  (sdlc/policy/todo-creation-discipline, Execute settled code work in
+  context)? Then make it in context and file nothing. Human presence alone
+  supplies no authority, and a change whose correctness is contested belongs
+  in the lifecycle. A company's agent never holds repair authority: for it
+  the answer is always to report.
+- Evidence: an occurrence or a dangerous path in hand
+  (sdlc/concept/defect-evidence). Put the observations and their addresses
+  first, and keep any causal account apart from them: each transition with
+  its evidence, the alternatives checked and what remains unknown, or that
+  the cause is not established.
+- Duplication: already reported, already being fixed, or a triaged known
+  issue? In the owning project:
+    instrukt todo list --project <slug>
+    instrukt bugs list --project <slug>
+    instrukt bugs suppressions --project <slug>
+- Ordering and dependency: downstream of, or dependent on, work already in
+  flight? Route it to that work under sdlc/policy/todo-creation-discipline
+  instead of filing.
+- Owning project: the project that owns the defect, named with --project. A
+  symptom that stops once the observing project's own configuration matches
+  an instrukt default is that project's to fix, there.
+
+Once every question is faced, file it:
+  instrukt bugs report --approved '<description>' [--slug <slug>] [--body <text>] [--project <slug>] [--human-involved true|false]

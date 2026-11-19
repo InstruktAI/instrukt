@@ -188,12 +188,15 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     .subject_kind
                     .map_or("any reference", |kind| kind.as_str());
                 ctx.out.line(&format!(
-                    "{} v{} — {} (subject: {}, delivery: {:?})",
+                    "{} v{} — {} (subject: {}, delivery: {})",
                     declaration.name,
                     declaration.version,
                     declaration.description,
                     subject,
-                    declaration.delivery_kind
+                    match declaration.delivery_kind {
+                        instrukt_core::event_type::DeliveryKind::Occurrence => "occurrence",
+                        instrukt_core::event_type::DeliveryKind::State => "state",
+                    }
                 ))?;
                 ctx.out
                     .line(&format!("  instrukt events schema {}", declaration.name))?;

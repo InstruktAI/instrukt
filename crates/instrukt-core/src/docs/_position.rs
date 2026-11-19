@@ -87,7 +87,10 @@ impl fmt::Display for Position {
     }
 }
 
-/// A supported agent CLI: a deployment target of the global agent files.
+/// An agent runtime instrukt deploys to: one with a user-scope instruction
+/// file, a destination of the global agent files
+/// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "Global
+/// agent files").
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -95,8 +98,42 @@ impl fmt::Display for Position {
 pub enum AgentCli {
     Claude,
     Codex,
-    Gemini,
-    Deepseek,
+    Pi,
+    Opencode,
+    Kiro,
+    Antigravity,
+    Fx,
+}
+
+impl AgentCli {
+    /// Every runtime instrukt deploys to.
+    pub const ALL: [AgentCli; 7] = [
+        AgentCli::Claude,
+        AgentCli::Codex,
+        AgentCli::Pi,
+        AgentCli::Opencode,
+        AgentCli::Kiro,
+        AgentCli::Antigravity,
+        AgentCli::Fx,
+    ];
+
+    /// The runtime's name, as `agents` and a runtime's adapter name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            AgentCli::Claude => "claude",
+            AgentCli::Codex => "codex",
+            AgentCli::Pi => "pi",
+            AgentCli::Opencode => "opencode",
+            AgentCli::Kiro => "kiro",
+            AgentCli::Antigravity => "antigravity",
+            AgentCli::Fx => "fx",
+        }
+    }
+
+    /// The runtime named `name`; `None` for one instrukt does not deploy to.
+    pub fn named(name: &str) -> Option<AgentCli> {
+        AgentCli::ALL.into_iter().find(|cli| cli.name() == name)
+    }
 }
 
 /// `docs/general/index.yaml`.
@@ -363,11 +400,22 @@ mod tests {
     }
 
     #[test]
-    fn the_general_index_schema_admits_only_the_supported_agent_clis() {
+    fn the_general_index_schema_admits_only_the_runtimes_instrukt_deploys_to() {
         let schema = GeneralIndex::editor_schema();
         let (mut names, open) = keys(&schema["properties"]["agents"]);
         names.sort();
-        assert_eq!(names, ["claude", "codex", "deepseek", "gemini"]);
+        assert_eq!(
+            names,
+            [
+                "antigravity",
+                "claude",
+                "codex",
+                "fx",
+                "kiro",
+                "opencode",
+                "pi"
+            ]
+        );
         assert!(!open);
     }
 

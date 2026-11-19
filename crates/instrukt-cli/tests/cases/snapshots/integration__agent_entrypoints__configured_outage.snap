@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: outage
+---
+outage:
+published platform at [SHA]
+notice: runtime `t3` could not be asked which agent runtimes are configured (T3 readiness: cannot connect to local server); no global agent file was written, and the next sync writes them

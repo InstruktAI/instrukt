@@ -304,7 +304,7 @@ impl FactValue {
 pub enum FactError {
     #[error("`{0}` is not a fact the workflow declares")]
     Unknown(String),
-    #[error("fact `{name}` is {expected}, not {given:?}")]
+    #[error("fact `{name}` is {expected}, not `{}`", given.render())]
     WrongType {
         name: FactName,
         expected: FactType,

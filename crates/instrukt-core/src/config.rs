@@ -51,7 +51,7 @@ pub use _features::{Feature, Unavailable, availability as feature_availability};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,
-    revision,
+    revision, unloadable_machine_layer,
 };
 pub use _mcp::{McpServer, admitted_address as mcp_address_admitted};
 pub use _module::Module;

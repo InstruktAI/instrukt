@@ -10,7 +10,7 @@ Composed: <time>
 instrukt system-origin procedure assignment
 Procedure: fork/procedure/upstream-watch
 Role: upstream-watcher
-Resolved role capabilities: role: upstream-watcher; class: standing; grants: docs-read:any, todo-read:any, todo-write:own, artifact-read:any, artifact-write:own, stamp:own, agents-read:any, config-read:any, repository-read:any, code-check:any, eval-read:any, events-read:any, installation-read:any
+Resolved role capabilities: role: upstream-watcher; class: standing; grants: docs-read:any, todo-read:any, todo-write:own, bug-report:own, artifact-read:any, artifact-write:own, stamp:own, agents-read:any, config-read:any, repository-read:any, code-check:any, eval-read:any, events-read:any, installation-read:any
 Home: project:fork
 Assignment facts: {"procedure":"fork/procedure/upstream-watch","home":"project:fork","subject":null,"role":"upstream-watcher","attendance":"attended","interruptible":true,"system_origin":true}
 Subject: none

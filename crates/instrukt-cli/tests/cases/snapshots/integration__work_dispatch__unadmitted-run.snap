@@ -2,5 +2,4 @@
 source: crates/instrukt-cli/tests/cases/work-dispatch.rs
 expression: "String::from_utf8_lossy(&refused.get_output().stderr).replace(&env.home().display().to_string(),\n\"[HOME]\")"
 ---
-instrukt: refused; nothing was written:
-[HOME]/.instrukt/instrukt.yaml: bogus: unknown key
+instrukt: refused; nothing was written: [HOME]/.instrukt/instrukt.yaml: bogus: unknown key

@@ -268,7 +268,7 @@ pub enum FsError {
     Write { path: PathBuf, source: io::Error },
     #[error("cannot lock {path}: {source}")]
     Lock { path: PathBuf, source: io::Error },
-    #[error("{path} is held by another instrukt process; gave up after {waited:?}")]
+    #[error("{path} is held by another instrukt process; gave up after {} s", crate::process::whole_seconds(*waited))]
     LockTimeout { path: PathBuf, waited: Duration },
     #[error("{path} has no parent directory")]
     NoParent { path: PathBuf },

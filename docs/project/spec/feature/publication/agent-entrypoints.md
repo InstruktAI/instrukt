@@ -284,7 +284,10 @@ publishes. They are the computer's own, never committed anywhere.
   file in the runtime vendor's default home, and the sync's output names
   that instance and says its home was not reported. Instances that share a
   home share one file; an instance with a home of its own receives its file
-  there.
+  there. An instance whose home the runtime names relative to its own working
+  directory, which it does not report, has no known home: the sync names it
+  and writes no file and no link for it, never resolving such a path against
+  its own working directory.
 - **What the sync reports.** Every sync that writes global files names in
   its output each destination it wrote or found current, with the runtime
   and the instances it serves, and each link it ensured, beside the notices
@@ -324,11 +327,14 @@ publishes. They are the computer's own, never committed anywhere.
   them, or one instrukt has no destination for —
   receives no global file. Its agents read the repository's committed
   `AGENTS.md`.
-- **No runtime, no files.** Without a selected runtime, no agent runtime is
-  configured and no global file is written. When the selected runtime cannot
-  be asked, no global file is written in that sync: it reports a notice
-  naming the runtime and the cause, publishes the rest, and the next sync of
-  that project writes them, whether or not main has moved.
+- **No runtime, no files.** An unset `runner.runtime` selects the runtime
+  compiled into this instrukt
+  (`project/instrukt/spec/feature/configuration/layered-configuration`), and
+  the sync asks it. When `runner.runtime` names no compiled adapter, no agent
+  runtime is configured and no global file is written. When the selected
+  runtime cannot be asked, no global file is written in that sync: it
+  reports a notice naming the runtime and the cause, publishes the rest, and
+  the next sync of that project writes them, whether or not main has moved.
 - **`agents` names** are validated against the runtimes instrukt deploys to,
   whatever is configured on the computer.
 - **Written whole, every time.** Each destination is written whole by every

@@ -309,6 +309,17 @@ Every finding names the document and key; the exit status is non-zero when
 there is at least one finding. Validation judges the document as written;
 references are checked for unresolved keys and cycles without executing commands.
 
+### A machine layer that cannot be loaded
+
+The machine layer cannot be loaded when it cannot be read, is not YAML, is not
+a mapping, or its `schema_version` is missing or newer than this instrukt
+knows. Then every command fails with exit status 1 and one line naming the
+file, the reason and `instrukt config validate --global`; that command fails
+with the file's own problem and where it is. A layer that loads is never
+judged again by the commands that read it: its validation findings, an
+unknown key among them, are `instrukt config validate`'s, and stop no other
+command.
+
 ### Schema versions and migration
 
 - Every document carries `schema_version`; `init` writes the current one.
@@ -392,7 +403,7 @@ And the commands that read it work as before
 ```gherkin
 Given a developer's configuration was written by a newer instrukt than the one they run
 When they read, change or validate that configuration
-Then each command refuses and prints the command that installs the current instrukt
+Then each command refuses and says how to bring instrukt up to date
 And the configuration is unchanged
 ```
 
@@ -437,8 +448,11 @@ But a cloned project cannot replace the machine's agent-action values
   editor schema; it is a comment and never a setting
   (`project/instrukt/spec/feature/publication/editor-schemas`).
 - Every entry path migrates older configuration before refusal or skip. All
-  commands refuse a newer schema version and print the command that installs the
-  current instrukt, `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`.
+  commands refuse a newer schema version. For a project's layer they print the
+  command that installs the current instrukt,
+  `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`.
+  A machine layer of a newer schema cannot be loaded: every command names
+  `instrukt config validate --global`, which says to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
 - With `INSTRUKT_NOW=@<path>` real time bounds no started program while the
   file is readable: its limit runs out only when the time in the file moves past

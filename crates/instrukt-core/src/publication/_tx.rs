@@ -46,6 +46,19 @@ enum Step {
     Link { target: PathBuf, points_to: PathBuf },
     /// The directory `target` was created where nothing stood.
     CreatedDir { target: PathBuf },
+    /// A symbolic link was made at `target` where nothing stood.
+    MadeLink { target: PathBuf },
+}
+
+/// What [`Transaction::ensure_link`] found and did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LinkOutcome {
+    /// Nothing stood there; the link was made.
+    Made,
+    /// A file, or a link pointing elsewhere, stood there and was replaced.
+    Repaired,
+    /// The link already pointed at the target.
+    Current,
 }
 
 /// The pending writes of one sync.
@@ -135,6 +148,76 @@ impl Transaction {
             previous,
         });
         Ok(true)
+    }
+
+    /// Makes `link` a symbolic link to `points_to`, the absolute path a
+    /// runtime makes its own links with. A link already resolving to
+    /// `points_to` is left; a file, or a link pointing elsewhere, is replaced
+    /// by the link. A missing folder is created; an existing one is used as
+    /// it stands. Undone by removing the link
+    /// and putting back what stood there.
+    pub(super) fn ensure_link(
+        &mut self,
+        link: &Path,
+        points_to: &Path,
+    ) -> Result<LinkOutcome, PublicationError> {
+        let io = |source| PublicationError::Io {
+            path: link.to_path_buf(),
+            source,
+        };
+        let folder = link.parent().ok_or_else(|| PublicationError::Unconfined {
+            path: link.to_path_buf(),
+        })?;
+        let outcome = match std::fs::symlink_metadata(link) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let current = std::fs::read_link(link).map_err(io)?;
+                if folder.join(&current) == points_to {
+                    return Ok(LinkOutcome::Current);
+                }
+                // Reported as a repaired link, not as a link replaced at one
+                // of publication's own destinations.
+                crate::fsx::remove_file(link).map_err(io)?;
+                self.steps.push(Step::Link {
+                    target: link.to_path_buf(),
+                    points_to: current,
+                });
+                LinkOutcome::Repaired
+            }
+            Ok(meta) if meta.is_file() => {
+                let previous = std::fs::read(link).map_err(io)?;
+                crate::fsx::remove_file(link).map_err(io)?;
+                self.steps.push(Step::RemovedFile {
+                    target: link.to_path_buf(),
+                    previous,
+                });
+                LinkOutcome::Repaired
+            }
+            Ok(_) => {
+                return Err(PublicationError::Unconfined {
+                    path: link.to_path_buf(),
+                });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // The folder is the runtime's: one that exists is used as it
+                // stands, a link included; only a missing one is created.
+                if std::fs::symlink_metadata(folder).is_err() {
+                    crate::fsx::create_dir_all(folder).map_err(|source| PublicationError::Io {
+                        path: folder.to_path_buf(),
+                        source,
+                    })?;
+                    self.steps.push(Step::CreatedDir {
+                        target: folder.to_path_buf(),
+                    });
+                }
+                LinkOutcome::Made
+            }
+            Err(source) => return Err(io(source)),
+        };
+        crate::fsx::symlink(points_to, link).map_err(io)?;
+        self.steps.push(Step::MadeLink {
+            target: link.to_path_buf(),
+        });
+        Ok(outcome)
     }
 
     /// Makes `target` a directory: a link there is replaced, and a missing
@@ -296,6 +379,11 @@ impl Transaction {
                     }
                     if let Some(saved) = saved {
                         restore_dir(&saved, &target);
+                    }
+                }
+                Step::MadeLink { target } => {
+                    if let Err(error) = crate::fsx::remove_file(&target) {
+                        tracing::error!(event = "sync_rollback_failed", path = %target.display(), %error);
                     }
                 }
                 Step::CreatedDir { target } => {

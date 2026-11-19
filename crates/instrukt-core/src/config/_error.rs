@@ -66,6 +66,27 @@ pub enum FindingKind {
     LeavesTheComputer,
 }
 
+impl FindingKind {
+    /// The kind's plain name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NotPermittedInLayer => "not_permitted_in_layer",
+            Self::UnknownKey => "unknown_key",
+            Self::Missing => "missing",
+            Self::InvalidValue => "invalid_value",
+            Self::SchemaVersionNotCurrent => "schema_version_not_current",
+            Self::ModuleSwitchedOff => "module_switched_off",
+            Self::UnknownRuntime => "unknown_runtime",
+            Self::RuntimeCapabilityMissing => "runtime_capability_missing",
+            Self::UnresolvedReference => "unresolved_reference",
+            Self::ReferenceCycle => "reference_cycle",
+            Self::TodosNeedGitHub => "todos_need_github",
+            Self::EventsNeedTransport => "events_need_transport",
+            Self::LeavesTheComputer => "leaves_the_computer",
+        }
+    }
+}
+
 /// The findings that refused a write, one per line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Findings(pub Vec<Finding>);
@@ -179,4 +200,32 @@ pub enum ConfigError {
     Fs(#[from] FsError),
     #[error(transparent)]
     Git(#[from] GitError),
+}
+
+impl ConfigError {
+    /// Why a document cannot be loaded, without its path: for an unreadable
+    /// document, one that is not YAML or not a mapping, or one whose
+    /// `schema_version` is missing or newer than this instrukt knows.
+    pub fn unloadable_reason(&self) -> Option<(&std::path::Path, String)> {
+        match self {
+            Self::Read { path, source } => Some((path, source.to_string())),
+            Self::Parse { path, source } => Some((path, format!("it is not valid YAML: {source}"))),
+            Self::NotAMapping { path } => Some((path, "it is not a YAML mapping".to_owned())),
+            Self::NewerSchema {
+                path,
+                found,
+                current,
+            } => Some((
+                path,
+                format!(
+                    "its schema_version {found} is newer than this instrukt supports ({current})"
+                ),
+            )),
+            Self::UnknownSchema { path } => Some((
+                path,
+                "its schema_version is missing or not a positive integer".to_owned(),
+            )),
+            _ => None,
+        }
+    }
 }

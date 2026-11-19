@@ -174,6 +174,15 @@ fn ci_catches_instructions_a_commit_left_stale() {
             format!("unsupported_directive_{name}"),
             stdout(&env, &refused)
         );
+        insta::allow_duplicates! {
+            // The render meant to write and ends with one line saying so; the
+            // check is a report, and its findings are its output.
+            insta::assert_snapshot!(
+                shown(&env, &refused.get_output().stderr),
+                @"instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again"
+            );
+            insta::assert_snapshot!(shown(&env, &checked.get_output().stderr), @"");
+        }
         assert_eq!(repo.read("AGENTS.md"), committed);
     }
     assert!(!instrukt_home.exists());
@@ -253,13 +262,32 @@ fn general_owner(env: &TestEnv, agents: &str) -> Repo {
 
 const CLAUDE_AGENTS: &str = "agents:\n  claude:\n    - general/policy/agents/claude\n";
 
+/// T3 reporting one enabled `claudeAgent` instance, reading `~/.claude`.
+fn claude_configured(env: &TestEnv) {
+    use common::t3_readiness::{configure, provider};
+    crate::fixtures::t3::FakeT3::create(env);
+    configure(
+        env,
+        vec![provider("claudeAgent", "claudeAgent", true)],
+        serde_json::json!({}),
+    );
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE3
 #[test]
-fn an_agents_snippet_ends_only_its_own_clis_global_file() {
+fn a_policy_mapped_to_one_runtime_reaches_only_that_runtime() {
+    use common::t3_readiness::{configure, provider};
     let env = TestEnv::new();
     let home = env.home();
-    for dir in [".claude", ".codex"] {
-        std::fs::create_dir_all(home.join(dir)).unwrap();
-    }
+    crate::fixtures::t3::FakeT3::create(&env);
+    configure(
+        &env,
+        vec![
+            provider("claudeAgent", "claudeAgent", true),
+            provider("codex", "codex", true),
+        ],
+        serde_json::json!({}),
+    );
     env.run(engineering(&env).path(), ["sync"]).success();
     let platform = general_owner(&env, CLAUDE_AGENTS);
 
@@ -268,29 +296,39 @@ fn an_agents_snippet_ends_only_its_own_clis_global_file() {
     let read = |rel: &str| std::fs::read_to_string(home.join(rel)).unwrap();
     insta::assert_snapshot!("claude_global_file", read(".claude/CLAUDE.md"));
     insta::assert_snapshot!("codex_global_file", read(".codex/AGENTS.md"));
-}
 
-#[test]
-fn mapping_a_snippet_to_an_unsupported_agent_cli_is_refused_naming_the_supported_ones() {
-    let env = TestEnv::new();
-    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
-    env.run(engineering(&env).path(), ["sync"]).success();
-    let platform = general_owner(
-        &env,
-        "agents:\n  cursor:\n    - general/policy/agents/claude\n",
-    );
-
+    // A policy mapped to a runtime instrukt does not deploy to is refused,
+    // naming the ones it does.
+    let claude = std::fs::read(home.join(".claude/CLAUDE.md")).unwrap();
+    platform
+        .write(
+            "docs/general/index.yaml",
+            "expanded:\n  - general/policy/care\nagents:\n  cursor:\n    - general/policy/agents/claude\n",
+        )
+        .commit("map a policy to cursor");
     let refused = env.run(platform.path(), ["sync"]).failure();
-
     insta::assert_snapshot!("unsupported_agent_cli", stdout(&env, &refused));
-    assert!(!env.home().join(".claude/CLAUDE.md").exists());
+    assert_eq!(
+        std::fs::read(home.join(".claude/CLAUDE.md")).unwrap(),
+        claude
+    );
 }
 
 #[test]
 fn a_global_file_keeping_a_reference_is_written_and_named() {
     let env = TestEnv::new();
     let home = env.home();
-    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    // Two Claude instances, each in a home of its own.
+    let second = env.path("claude-second");
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        vec![
+            common::t3_readiness::provider("claudeAgent", "claudeAgent", true),
+            common::t3_readiness::provider("claude-second", "claudeAgent", true),
+        ],
+        serde_json::json!({"claude-second": {"driver":"claudeAgent","config":{"homePath":second}}}),
+    );
     // Another project publishes `ops`; its published snippet then reads as
     // an earlier release left it, with a visible reference validation
     // refuses today.
@@ -335,7 +373,7 @@ fn a_global_file_keeping_a_reference_is_written_and_named() {
 #[test]
 fn a_domain_without_an_index_is_published_but_absent_from_the_global_files() {
     let env = TestEnv::new();
-    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
+    claude_configured(&env);
     env.run(engineering(&env).path(), ["sync"]).success();
     let platform = general_owner(&env, "");
     platform
@@ -362,6 +400,262 @@ fn a_domain_without_an_index_is_published_but_absent_from_the_global_files() {
         "unindexed_domain_listing",
         common::mask_published_commits(&stdout(&env, &listed))
     );
+}
+
+/// The files at `paths`, each under its path with the test's directory
+/// shown as `[TMP]`: one snapshot of what the agent runtimes read.
+fn files_at(env: &TestEnv, paths: &[&std::path::Path]) -> String {
+    paths
+        .iter()
+        .map(|path| {
+            format!(
+                "== {}\n{}",
+                shown(env, path.display().to_string().as_bytes()),
+                std::fs::read_to_string(path).unwrap()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every global file below the test's directory, by path, with its bytes:
+/// what a sync that writes nothing leaves byte-identical.
+fn global_bytes(paths: &[&std::path::Path]) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    paths
+        .iter()
+        .map(|path| (path.to_path_buf(), std::fs::read(path).unwrap()))
+        .collect()
+}
+
+/// A settings entry naming a Codex home and, optionally, an overlay home.
+fn codex_settings(home: &std::path::Path, overlay: Option<&std::path::Path>) -> serde_json::Value {
+    let mut config = serde_json::json!({"homePath": home});
+    if let Some(overlay) = overlay {
+        config["shadowHomePath"] = serde_json::json!(overlay);
+    }
+    serde_json::json!({"driver":"codex","config":config})
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE2
+#[test]
+fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
+    use common::t3_readiness::{configure, provider};
+    use serde_json::json;
+    let env = TestEnv::new();
+    let home = env.home().to_path_buf();
+    let custom = env.path("codex-home");
+    let custom2 = env.path("pi-home");
+    std::fs::create_dir_all(&custom).unwrap();
+    std::fs::create_dir_all(&custom2).unwrap();
+    // An agent program installed but not configured.
+    std::fs::create_dir_all(home.join(".fx")).unwrap();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::write(
+        home.join(".claude/settings.json"),
+        "{\"theme\": \"dark\"}\n",
+    )
+    .unwrap();
+    std::fs::write(custom.join("AGENTS.md"), "Text another tool wrote.\n").unwrap();
+    crate::fixtures::t3::FakeT3::create(&env);
+    let mut providers = vec![
+        provider("codex", "codex", true),
+        provider("claudeAgent", "claudeAgent", true),
+        provider("claude-work", "claudeAgent", true),
+        provider("pi-work", "pi", true),
+        provider("fx", "fx", false),
+    ];
+    let mut instances = json!({
+        "codex": codex_settings(&custom, None),
+        "pi-work": {"driver":"pi","environment":[{"name":"PI_CODING_AGENT_DIR","value":custom2}]},
+        "fx": {"driver":"fx","enabled":false},
+    });
+    configure(&env, providers.clone(), instances.clone());
+    env.run(engineering(&env).path(), ["sync"]).success();
+    let platform = general_owner(&env, "");
+    let sync = |step: &str| {
+        let synced = env.run(platform.path(), ["sync"]).success();
+        format!(
+            "{step}:\n{}",
+            stdout(&env, &synced).replace(&platform.head(), "[SHA]")
+        )
+    };
+
+    // 1. Each configured runtime reads the rendering in its own home; the
+    // other tool's text is gone; the unconfigured program receives nothing;
+    // the settings keep the developer's key and gain the loading key.
+    let first = sync("first sync");
+    let claude = home.join(".claude/CLAUDE.md");
+    let codex = custom.join("AGENTS.md");
+    let pi = custom2.join("AGENTS.md");
+    insta::assert_snapshot!(
+        "configured_global_files",
+        files_at(&env, &[&codex, &pi, &claude])
+    );
+    assert!(!home.join(".fx/AGENTS.md").exists());
+    insta::assert_snapshot!(
+        "configured_claude_settings",
+        std::fs::read_to_string(home.join(".claude/settings.json")).unwrap()
+    );
+    // 2. The report names each destination with its runtime and every
+    // instance it serves, and each instance whose home was not reported.
+    insta::assert_snapshot!("configured_first_sync", first);
+
+    // 3. Links where an instance reads through another folder: one made,
+    // one replacing a file, one replacing a link pointing elsewhere.
+    let (a, b) = (env.path("codex-shared"), env.path("codex-overlay"));
+    let (c, d) = (env.path("codex-second"), env.path("codex-second-overlay"));
+    let (e, f) = (env.path("codex-third"), env.path("codex-third-overlay"));
+    for dir in [&a, &b, &c, &d, &e, &f] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(d.join("AGENTS.md"), "A file in the overlay.\n").unwrap();
+    std::fs::write(env.path("elsewhere.md"), "Another file.\n").unwrap();
+    std::os::unix::fs::symlink(env.path("elsewhere.md"), f.join("AGENTS.md")).unwrap();
+    providers.extend([
+        provider("codex-overlay", "codex", true),
+        provider("codex-second", "codex", true),
+        provider("codex-third", "codex", true),
+    ]);
+    instances["codex-overlay"] = codex_settings(&a, Some(&b));
+    instances["codex-second"] = codex_settings(&c, Some(&d));
+    instances["codex-third"] = codex_settings(&e, Some(&f));
+    configure(&env, providers.clone(), instances.clone());
+    let linked = sync("links");
+    for (folder, file) in [(&b, &a), (&d, &c), (&f, &e)] {
+        assert_eq!(
+            std::fs::read_link(folder.join("AGENTS.md")).unwrap(),
+            file.join("AGENTS.md")
+        );
+    }
+    insta::assert_snapshot!("configured_links", linked);
+
+    // 4. Again, main unchanged: every destination current, every link in
+    // place.
+    insta::assert_snapshot!("configured_current", sync("again"));
+
+    // 5. Settings that are not an object, or a link into dotfiles, are
+    // left byte-identical and named; every instruction file is written.
+    let dotfiles = env.path("dotfiles");
+    let claude_home = env.path("claude-dotfiles-home");
+    std::fs::create_dir_all(&dotfiles).unwrap();
+    std::fs::create_dir_all(&claude_home).unwrap();
+    std::fs::write(dotfiles.join("settings.json"), "{\"mine\": true}\n").unwrap();
+    std::os::unix::fs::symlink(
+        dotfiles.join("settings.json"),
+        claude_home.join("settings.json"),
+    )
+    .unwrap();
+    std::fs::write(home.join(".claude/settings.json"), "[1, 2]\n").unwrap();
+    providers.push(provider("claude-dotfiles", "claudeAgent", true));
+    instances["claude-dotfiles"] =
+        json!({"driver":"claudeAgent","config":{"homePath":claude_home}});
+    configure(&env, providers.clone(), instances.clone());
+    let settings = sync("settings");
+    assert_eq!(
+        std::fs::read_to_string(home.join(".claude/settings.json")).unwrap(),
+        "[1, 2]\n"
+    );
+    assert_eq!(
+        std::fs::read_link(claude_home.join("settings.json")).unwrap(),
+        dotfiles.join("settings.json")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dotfiles.join("settings.json")).unwrap(),
+        "{\"mine\": true}\n"
+    );
+    assert_eq!(
+        std::fs::read(claude_home.join("CLAUDE.md")).unwrap(),
+        std::fs::read(&claude).unwrap()
+    );
+    insta::assert_snapshot!("configured_settings_left", settings);
+
+    // 6. An instance disabled in its settings keeps its file and its link,
+    // through every later sync.
+    let shared = a.join("AGENTS.md");
+    let before = std::fs::read(&shared).unwrap();
+    providers
+        .iter_mut()
+        .filter(|p| p["instanceId"] == "codex-overlay")
+        .for_each(|p| p["enabled"] = json!(false));
+    instances["codex-overlay"]["enabled"] = json!(false);
+    configure(&env, providers.clone(), instances.clone());
+    sync("disabled");
+    assert_eq!(std::fs::read(&shared).unwrap(), before);
+    assert_eq!(std::fs::read_link(b.join("AGENTS.md")).unwrap(), shared);
+
+    // Instances naming a home relative to T3's own working directory, which
+    // T3 does not report: nothing is written for them, and nothing under the
+    // repository the sync runs in.
+    providers.extend([
+        provider("codex-relative", "codex", true),
+        provider("codex-dot", "codex", true),
+    ]);
+    instances["codex-relative"] =
+        json!({"driver":"codex","config":{"homePath":"contract-codex-shared"}});
+    instances["codex-dot"] = json!({"driver":"codex","config":{"homePath":"."}});
+    configure(&env, providers.clone(), instances.clone());
+    let relative = sync("relative homes");
+    // Only the editor schemas every sync writes stand in the repository.
+    assert_eq!(
+        platform.git([
+            "status",
+            "--porcelain",
+            "--ignored",
+            "--",
+            ".",
+            ":!.instrukt"
+        ]),
+        ""
+    );
+    insta::assert_snapshot!("configured_relative_homes", relative);
+
+    // 7. The doctrine changes while T3 cannot be asked: the rest is
+    // published, every global file stays as it was, and the sync says why.
+    let (second, third) = (c.join("AGENTS.md"), e.join("AGENTS.md"));
+    let dotfiles_claude = claude_home.join("CLAUDE.md");
+    let globals = [
+        &codex,
+        &pi,
+        &claude,
+        &shared,
+        &second,
+        &third,
+        &dotfiles_claude,
+    ]
+    .map(|path| path.as_path());
+    let held = global_bytes(&globals);
+    platform
+        .write(
+            "docs/general/policy/later.md",
+            &snippet("policy", "Later", "", &[]),
+        )
+        .write(
+            "docs/general/index.yaml",
+            "expanded:\n  - general/policy/care\n  - sdlc/policy/tests\n  - general/policy/kind\n  - general/policy/later\n\
+             listed:\n  - general/policy/style\n",
+        )
+        .commit("later");
+    env.stop_readiness_server();
+    let outage = sync("outage");
+    assert!(
+        env.instrukt_home()
+            .join("docs/general/policy/later.md")
+            .is_file()
+    );
+    assert_eq!(global_bytes(&globals), held);
+    insta::assert_snapshot!("configured_outage", outage);
+
+    // 8. With T3 back, every configured runtime's file holds the change.
+    env.readiness_server();
+    sync("caught up");
+    insta::assert_snapshot!(
+        "configured_caught_up",
+        files_at(&env, &[&codex, &pi, &claude])
+    );
+    // The disabled instance's file still holds the doctrine before the
+    // change, and its link still points at it.
+    assert_eq!(std::fs::read(&shared).unwrap(), before);
+    assert_eq!(std::fs::read_link(b.join("AGENTS.md")).unwrap(), shared);
 }
 
 /// A test machine whose `PATH` holds the built `instrukt`, as an installed

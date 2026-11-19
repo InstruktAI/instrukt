@@ -1408,18 +1408,18 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     );
     c.finish_turn(&second, 0, "They are ready.");
     wait("the second answer", || c.slack.posts().len() == 3);
-    // The machine layer is broken by hand as well: status still says why it
-    // is not admitted, the runner keeps its generation, and the member is
-    // answered.
+    // The machine layer is broken by hand as well: every command stops on
+    // it, status among them, while the runner keeps its generation through
+    // its next wake and the member is answered.
     let machine = c.env.instrukt_home().join("instrukt.yaml");
     let admitted = std::fs::read_to_string(&machine).unwrap();
     std::fs::write(&machine, format!("{admitted}modules: [\n")).unwrap();
-    next_wake(&c, "kept");
-    assert!(
-        c.status()["admission"]["error"]
-            .as_str()
-            .is_some_and(|error| !error.is_empty())
-    );
+    now += jiff::SignedDuration::from_mins(3);
+    set_clock(&now.to_string());
+    c.env
+        .run(c.env.home(), ["events", "status", "--json"])
+        .failure()
+        .code(1);
     c.slack
         .mention(channel, "USTEVEN", "<@UAGENT> And the date?", None);
     wait("the third session", || c.sessions().len() == 4);

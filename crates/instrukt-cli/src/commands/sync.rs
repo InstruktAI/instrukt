@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use instrukt_core::publication::{
-    self, GlobalDestination, Refusal, SyncError, SyncFinding, SyncOutcome, SyncReport, SyncRequest,
+    self, EnsuredLink, GlobalDestination, LinkState, Refusal, SyncError, SyncFinding, SyncOutcome,
+    SyncReport, SyncRequest,
 };
 
 use crate::context::Ctx;
@@ -40,6 +41,7 @@ pub fn run(_args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         editor,
         notices,
         global_files,
+        links,
         replaced_links,
         findings,
     } = match synced {
@@ -76,7 +78,7 @@ pub fn run(_args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     for notice in &notices {
         ctx.out.line(&format!("notice: {notice}"))?;
     }
-    for line in global_lines(&global_files, &replaced_links, &findings) {
+    for line in global_lines(&global_files, &links, &replaced_links, &findings) {
         ctx.out.line(&line)?;
     }
     for line in crate::commands::repository::editor_lines(&editor) {
@@ -100,10 +102,13 @@ fn report_leftovers(ctx: &mut Ctx, leftovers: &[PathBuf]) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// One line per global agent file a sync wrote or found current, per link
-/// it replaced, and per finding about an agent file.
+/// One line per global agent file a sync wrote or found current, with its
+/// runtime and the instances it serves; per link it ensured; per link it
+/// replaced at one of its own destinations; and per finding about an agent
+/// file.
 fn global_lines(
     global_files: &[GlobalDestination],
+    links: &[EnsuredLink],
     replaced_links: &[PathBuf],
     findings: &[SyncFinding],
 ) -> Vec<String> {
@@ -111,9 +116,22 @@ fn global_lines(
     for file in global_files {
         let state = if file.written { "written" } else { "current" };
         lines.push(format!(
-            "{} ({}): {state}",
+            "{} ({}: {}): {state}",
             file.path.display(),
-            file.runtime
+            file.runtime,
+            file.instances.join(", ")
+        ));
+    }
+    for link in links {
+        let state = match link.state {
+            LinkState::Made => "made",
+            LinkState::Repaired => "repaired",
+            LinkState::Current => "already in place",
+        };
+        lines.push(format!(
+            "{}: link to {} ensured: {state}",
+            link.path.display(),
+            link.target.display()
         ));
     }
     for link in replaced_links {
@@ -130,6 +148,25 @@ fn global_lines(
             SyncFinding::ReferenceKept { path, reference } => format!(
                 "{}: keeps {reference} for an agent program to resolve",
                 path.display()
+            ),
+            SyncFinding::HomeNotReported {
+                instance,
+                runtime,
+                home,
+            } => format!(
+                "notice: instance `{instance}` ({runtime}) reported no home; its file is written in the default home {}",
+                home.display()
+            ),
+            SyncFinding::HomeUnknown {
+                instance,
+                runtime,
+                path,
+            } => format!(
+                "notice: instance `{instance}` ({runtime}) names `{}` relative to its runtime's own working directory, which the runtime does not report; no file is written for it until its home is absolute",
+                path.display()
+            ),
+            SyncFinding::RuntimeUnreachable { runtime, cause } => format!(
+                "notice: runtime `{runtime}` could not be asked which agent runtimes are configured ({cause}); no global agent file was written, and the next sync writes them"
             ),
         });
     }

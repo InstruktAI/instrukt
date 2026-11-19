@@ -19,7 +19,9 @@ mod context;
 mod output;
 mod wiring;
 
+use std::io::Write as _;
 use std::process::ExitCode;
+use std::sync::OnceLock;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
@@ -92,7 +94,12 @@ enum Command {
     Install(runner::InstallArgs),
 }
 
+/// The log source of this run, once tracing writes to it: the panic hook
+/// names its file.
+static LOG_SOURCE: OnceLock<&'static str> = OnceLock::new();
+
 fn main() -> ExitCode {
+    install_panic_hook();
     // The connector kinds this binary supports reach configuration before
     // anything reads it.
     instrukt_core::config::install_connector_declarations(&connectors::DECLARATIONS);
@@ -134,6 +141,11 @@ fn run() -> ExitCode {
         Ok(cli) => cli,
         Err(error) => error.exit(),
     };
+    // A machine configuration that cannot be loaded stops every command;
+    // `config validate --global` names the file's own problem.
+    if let Some(code) = unloadable_machine_layer(&matches) {
+        return code;
+    }
     if let Command::Status(args) = &cli.command {
         return match Ctx::inspection().and_then(|mut ctx| {
             let caller_error = match authorization::check(&ctx, &matches) {
@@ -193,7 +205,17 @@ fn run() -> ExitCode {
     {
         let notice_result = (|| -> anyhow::Result<()> {
             let mut layers = vec![instrukt_core::config::Layer::Global];
-            if let Some(root) = instrukt_core::git::worktree_root(&ctx.cwd)? {
+            // A read naming its owning project reads that project's layer,
+            // wherever the caller stands; one this computer does not record is
+            // refused by the command itself.
+            let root = match authorization::named_project(&matches) {
+                Some(named) => {
+                    instrukt_core::publication::PublishedRecord::load(&ctx.home, &named)?
+                        .map(|record| record.checkout)
+                }
+                None => instrukt_core::git::worktree_root(&ctx.cwd)?,
+            };
+            if let Some(root) = root {
                 layers.push(instrukt_core::config::Layer::Project(root));
             }
             if matches.subcommand().is_some_and(|(name, args)| {
@@ -272,11 +294,90 @@ fn run() -> ExitCode {
     }
 }
 
-/// Records an error, prints it to stderr and returns the generic failure status.
+/// Records an error, prints it to stderr as one line and returns the generic
+/// failure status. A machine configuration that cannot be loaded, wherever a
+/// command met it, is named as such.
 fn report(err: &anyhow::Error) -> ExitCode {
-    tracing::error!(event = "command_failed", error = %format!("{err:#}"));
-    eprintln!("instrukt: {err:#}");
+    let line = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<instrukt_core::config::ConfigError>())
+        .and_then(machine_layer_line)
+        .unwrap_or_else(|| output::error_line(err));
+    tracing::error!(event = "command_failed", error = %line);
+    eprintln!("instrukt: {line}");
     ExitCode::FAILURE
+}
+
+/// The line for `error` when it says the machine layer cannot be loaded.
+fn machine_layer_line(error: &instrukt_core::config::ConfigError) -> Option<String> {
+    let (path, reason) = error.unloadable_reason()?;
+    let home = instrukt_core::home::Home::from_env().ok()?;
+    (path == home.global_config()).then(|| {
+        format!(
+            "the machine configuration {} cannot be read: {reason}; run `instrukt config validate --global` to see what to fix",
+            path.display()
+        )
+    })
+}
+
+/// The failure status when the machine layer cannot be loaded, after its one
+/// line: the file's own problem for `config validate --global`, which is
+/// how it is found; for every other command, the line naming that door.
+fn unloadable_machine_layer(matches: &clap::ArgMatches) -> Option<ExitCode> {
+    let home = match instrukt_core::home::Home::from_env() {
+        Ok(home) => home,
+        Err(error) => return Some(report(&error.into())),
+    };
+    let error = instrukt_core::config::unloadable_machine_layer(&home)?;
+    let validating = matches.subcommand().is_some_and(|(name, config)| {
+        name == "config"
+            && config
+                .subcommand()
+                .is_some_and(|(name, args)| name == "validate" && args.get_flag("global"))
+    });
+    let line = if validating {
+        output::error_line(&error.into())
+    } else {
+        machine_layer_line(&error).unwrap_or_else(|| error.to_string())
+    };
+    tracing::error!(event = "command_failed", error = %line);
+    eprintln!("instrukt: {line}");
+    Some(ExitCode::FAILURE)
+}
+
+/// A panic ends the command with one line naming the log, never the panic's
+/// message, location or backtrace; those go to the log.
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let location = info.location().map_or_else(String::new, |location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        });
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("a panic without a message");
+        tracing::error!(event = "panic", %location, message);
+        let log = LOG_SOURCE
+            .get()
+            .and_then(|source| instrukt_ai_logging::resolve_log_file("instrukt", Some(source)).ok())
+            .or_else(|| instrukt_ai_logging::resolve_log_dir("instrukt").ok())
+            .map_or_else(
+                || "instrukt's log".to_owned(),
+                |path| path.display().to_string(),
+            );
+        // A hook that panics aborts the process: a write that fails is left.
+        let _ = writeln!(
+            std::io::stderr(),
+            "instrukt stopped unexpectedly; the details are in {log}"
+        );
+    }));
 }
 
 /// Initialise the contract writer before constructing the invocation context.
@@ -338,6 +439,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         });
     }
     builder.init()?;
+    let _ = LOG_SOURCE.set(source);
     Ok(())
 }
 

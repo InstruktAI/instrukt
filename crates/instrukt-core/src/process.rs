@@ -28,6 +28,11 @@ pub struct Finished {
     pub stderr: String,
 }
 
+/// `duration` in whole seconds, a started second counted.
+pub fn whole_seconds(duration: Duration) -> u64 {
+    duration.as_secs() + u64::from(duration.subsec_nanos() > 0)
+}
+
 /// A command could not be run to its end.
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessError {
@@ -36,7 +41,7 @@ pub enum ProcessError {
         program: String,
         source: std::io::Error,
     },
-    #[error("`{program}` did not finish within {timeout:?} and was stopped")]
+    #[error("`{program}` did not finish within {} s and was stopped", whole_seconds(*timeout))]
     Timeout { program: String, timeout: Duration },
     #[error("cannot talk to `{program}`: {source}")]
     Io {

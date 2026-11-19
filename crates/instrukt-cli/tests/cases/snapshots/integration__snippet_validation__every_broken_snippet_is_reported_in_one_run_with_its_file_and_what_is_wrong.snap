@@ -43,6 +43,7 @@ docs/project/spec/pending.md: pending-marker-unbalanced: <!-- /planned:a -->
 docs/project/spec/pending.md: pending-marker-unbalanced: <!-- planned:open -->
 docs/third-party/tool/broken.md: frontmatter-description-missing
 docs/third-party/tool/broken.md: third-party-source-invalid: somewhere on the web
+docs/third-party/tool/broken.md: third-party-field-not-allowed: true
 docs/third-party/tool/broken.md: third-party-field-not-allowed: type
 docs/third-party/tool/broken.md: third-party-field-not-allowed: visibility
 notice: docs/domain/acme/concept/fields.md: unreferenced-snippet: acme/concept/fields

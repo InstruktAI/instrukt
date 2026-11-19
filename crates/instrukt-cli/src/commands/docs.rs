@@ -195,10 +195,14 @@ fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             ctx.out.line(&format!("notice: {notice}"))?;
         }
     }
-    Ok(if failed {
+    Ok(if !failed {
+        ExitCode::SUCCESS
+    } else if args.check {
         ExitCode::FAILURE
     } else {
-        ExitCode::SUCCESS
+        crate::output::could_not(
+            "the findings above leave their files as they were; fix them and run `instrukt docs render` again",
+        )
     })
 }
 
@@ -256,7 +260,9 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     };
     ctx.out.text(&reading.text)?;
     Ok(if reading.unresolved {
-        ExitCode::FAILURE
+        crate::output::could_not(
+            "a configured value in what was asked could not be resolved; the output says where",
+        )
     } else {
         ExitCode::SUCCESS
     })
@@ -306,7 +312,9 @@ fn schema(args: SchemaArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         for finding in &folder.findings {
             ctx.out.line(&finding.to_string())?;
         }
-        return Ok(ExitCode::FAILURE);
+        return Ok(crate::output::could_not(
+            "the folder's schema cannot be shown until the findings above are fixed",
+        ));
     }
     let mut text = String::new();
     for (index, effective) in folder.types.iter().enumerate() {

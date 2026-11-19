@@ -17,12 +17,12 @@ editor schemas (.instrukt/schemas/): created
   docs/project/index.yaml: modeline inserted
 ignores of .instrukt/ (.gitignore): created
 hook sections: created
-  hooks directory: [TMP]/ops-docs/.git/hooks
+  hooks directory: [TMP]/runbook-docs/.git/hooks
   pre-commit: written
   post-commit: written
   post-merge: written
   post-rewrite: written
   post-checkout: written
 claims of the first sync (nothing is published until it runs):
-  docs/domain/ops/: free; the sync claims it
+  docs/domain/runbooks/: free; the sync claims it
   global agent files: not written; the repository holds no docs/general/

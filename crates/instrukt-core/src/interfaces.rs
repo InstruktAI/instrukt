@@ -141,6 +141,11 @@ pub struct ConfiguredInstance {
     pub home: Option<PathBuf>,
     /// Each folder in which a link to the instance's file must exist.
     pub link_folders: Vec<PathBuf>,
+    /// A home or link folder the instance's settings name relative to the
+    /// runtime's own working directory, which the runtime does not report:
+    /// the instance's home cannot be known, so `home` is `None`, it has no
+    /// link folders, and publication writes nothing for it.
+    pub unknown_home: Option<PathBuf>,
 }
 
 /// What the selected runtime reported about its configured agent instances.

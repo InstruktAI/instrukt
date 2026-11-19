@@ -267,4 +267,41 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     let refused = env.run(repo.path(), ["config", "validate"]).failure();
     insta::assert_snapshot!("newer-schema-validate", stderr(&env, &refused));
     unchanged(&repo, &bytes);
+
+    // The machine's layer written by a newer instrukt stops every command:
+    // a repository command names the door, and the door says to upgrade.
+    let machine = format!(
+        "schema_version: {}\nrunner: {{runtime: t3}}\n",
+        CURRENT_SCHEMA_VERSION + 1
+    );
+    write_global(&env, &machine);
+    let path = env.instrukt_home().join("instrukt.yaml");
+    let machine_bytes = std::fs::read(&path).unwrap();
+    // A repository command stops on it with one line naming the door.
+    let refused = env.run(repo.path(), ["docs", "render"]).failure().code(1);
+    // The door says to upgrade.
+    let validated = env
+        .run(repo.path(), ["config", "validate", "--global"])
+        .failure()
+        .code(1);
+    insta::assert_snapshot!(
+        format!(
+            "docs render:\nstdout:\n{}stderr:\n{}config validate --global:\nstdout:\n{}stderr:\n{}",
+            stdout(&env, &refused),
+            stderr(&env, &refused),
+            stdout(&env, &validated),
+            stderr(&env, &validated)
+        ),
+        @r"
+    docs render:
+    stdout:
+    stderr:
+    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 7 is newer than this instrukt supports (6); run `instrukt config validate --global` to see what to fix
+    config validate --global:
+    stdout:
+    stderr:
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 7, newer than this instrukt supports (6); upgrade instrukt
+    "
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);
 }

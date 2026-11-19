@@ -6,13 +6,13 @@
 
 use std::path::{Path, PathBuf};
 
-use super::_agents::TARGETS;
+use super::_agents::targets;
 use super::_tree;
-use super::_tx::resolved;
 use super::PublicationError;
 use crate::docs::{GENERAL, Position, SCHEMA_FILE, is_reserved_domain_folder};
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
+use crate::interfaces::{Answer, ConfiguredAgentRuntimes};
 
 /// Who holds a position a repository's first sync would claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,12 +33,23 @@ pub enum GlobalFiles {
     /// `docs/general/` is owned by another project; the sync would be
     /// refused.
     OwnedElsewhere(ProjectSlug),
-    /// The sync writes the global file of each supported agent CLI
-    /// installed here, whatever the file holds.
+    /// The sync writes the global file of each agent runtime the selected
+    /// runtime reports as configured, whatever the file holds.
     Rendered {
-        /// Each installed agent CLI with its global file.
-        agents: Vec<(&'static str, PathBuf)>,
+        /// Each file, with its runtime and the instances it serves.
+        files: Vec<PlannedGlobalFile>,
     },
+    /// The selected runtime cannot be asked: the sync would write no global
+    /// file until it can.
+    Unreachable { runtime: String, cause: String },
+}
+
+/// One global agent file the first sync will write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedGlobalFile {
+    pub runtime: &'static str,
+    pub path: PathBuf,
+    pub instances: Vec<String>,
 }
 
 /// The claims a repository's first sync would make, read from its working
@@ -63,10 +74,13 @@ impl ClaimsPreview {
 
 /// The claims the repository whose working tree is `root`, declaring
 /// `project`, would make on this computer.
+/// The global agent files come from what `runtimes`, the selected runtime's
+/// adapter, reports, as the sync asks it.
 pub fn preview_claims(
     home: &Home,
     root: &Path,
     project: &ProjectSlug,
+    runtimes: Option<&dyn ConfiguredAgentRuntimes>,
 ) -> Result<ClaimsPreview, PublicationError> {
     let owners = _tree::claims(home)?;
     let status = |domain: &DomainName| match owners.get(domain) {
@@ -115,7 +129,7 @@ pub fn preview_claims(
     let global_files = match positions.iter().find(|(p, _)| *p == Position::General) {
         None => GlobalFiles::NotHeld,
         Some((_, ClaimStatus::OwnedBy(owner))) => GlobalFiles::OwnedElsewhere(owner.clone()),
-        Some(_) => rendered_global_files(home)?,
+        Some(_) => rendered_global_files(home, runtimes),
     };
     Ok(ClaimsPreview {
         positions,
@@ -124,20 +138,29 @@ pub fn preview_claims(
     })
 }
 
-/// The installed agent CLIs' global files: each one the first sync writes.
-fn rendered_global_files(home: &Home) -> Result<GlobalFiles, PublicationError> {
-    let user_home = home.user_home();
-    let mut agents = Vec::new();
-    for target in TARGETS {
-        if !resolved(user_home, Path::new(target.dir))?.is_dir() {
-            continue;
-        }
-        agents.push((
-            target.name,
-            user_home.join(target.dir).join(target.entrypoint),
-        ));
+/// The global files the first sync writes: those of the configured
+/// runtimes, as the selected runtime reports them.
+fn rendered_global_files(
+    home: &Home,
+    runtimes: Option<&dyn ConfiguredAgentRuntimes>,
+) -> GlobalFiles {
+    let Some(runtimes) = runtimes else {
+        return GlobalFiles::Rendered { files: Vec::new() };
+    };
+    match runtimes.configured(home, &crate::config::Env::from_process()) {
+        Answer::Unreachable { runtime, cause } => GlobalFiles::Unreachable { runtime, cause },
+        Answer::Reported(instances) => GlobalFiles::Rendered {
+            files: targets(home.user_home(), &instances)
+                .files
+                .into_iter()
+                .map(|file| PlannedGlobalFile {
+                    runtime: file.destination.cli.name(),
+                    path: file.path(),
+                    instances: file.instances,
+                })
+                .collect(),
+        },
     }
-    Ok(GlobalFiles::Rendered { agents })
 }
 
 /// Whether `dir` holds at least one file, at any depth.

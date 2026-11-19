@@ -69,8 +69,21 @@ impl Project {
         )
     }
 
-    /// Files `slug` of `kind` with `intent`.
+    /// Files `slug` of `kind` with `intent`: a bug through the bug front
+    /// door, every other kind with `todo create`.
     pub fn create(&self, slug: &str, kind: &str, intent: &str) -> String {
+        if kind == "bug" {
+            let filed = self
+                .env
+                .instrukt(self.repo.path())
+                .args(["bugs", "report", "--approved", intent, "--slug", slug])
+                .assert()
+                .success();
+            return stdout(&filed).replace(
+                self.env.path("").to_str().unwrap().trim_end_matches('/'),
+                "[TMP]",
+            );
+        }
         self.ok(["create", slug, intent, "--kind", kind, "--approved"])
     }
 }

@@ -253,7 +253,7 @@ fn connect(settings: &config::RedisEndpoint) -> anyhow::Result<redis::Connection
     info = info.set_redis_settings(auth);
     let client =
         redis::Client::open(info).map_err(|_| anyhow::anyhow!("invalid Redis endpoint"))?;
-    let connection=client.get_connection_with_timeout(Duration::from_secs(3)).map_err(|e|anyhow::anyhow!("Redis connection/authentication failed ({:?}); restore endpoint and secret references",e.kind()))?;
+    let connection=client.get_connection_with_timeout(Duration::from_secs(3)).map_err(|e|anyhow::anyhow!("Redis connection/authentication failed ({}); restore endpoint and secret references",e.category()))?;
     connection.set_read_timeout(Some(Duration::from_secs(3)))?;
     connection.set_write_timeout(Some(Duration::from_secs(3)))?;
     Ok(connection)
@@ -278,8 +278,8 @@ fn server_version(connection: &mut redis::Connection) -> anyhow::Result<()> {
             .query(connection)
             .map_err(|e| {
                 anyhow::anyhow!(
-                    "cannot inspect Redis version ({:?}); grant INFO and use Redis 7.0 or later",
-                    e.kind()
+                    "cannot inspect Redis version ({}); grant INFO and use Redis 7.0 or later",
+                    e.category()
                 )
             })?;
     let version = server.get::<String>("redis_version").ok_or_else(|| {
@@ -317,8 +317,8 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
         .query(connection)
         .map_err(|e| {
             anyhow::anyhow!(
-                "cannot inspect required Redis commands ({:?}); grant Streams, Lua and ACL access",
-                e.kind()
+                "cannot inspect required Redis commands ({}); grant Streams, Lua and ACL access",
+                e.category()
             )
         })?;
     anyhow::ensure!(
@@ -328,7 +328,7 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
     let user: String = redis::cmd("ACL")
         .arg("WHOAMI")
         .query(connection)
-        .map_err(|e| anyhow::anyhow!("Redis ACL inspection failed ({:?})", e.kind()))?;
+        .map_err(|e| anyhow::anyhow!("Redis ACL inspection failed ({})", e.category()))?;
     let claim_key = format!(
         "instrukt:ingress:claim:{}",
         crate::events::occurrence_id(&["installation-check"])
@@ -394,8 +394,8 @@ fn permissions(connection: &mut redis::Connection) -> anyhow::Result<()> {
                 "Redis ACL denies required transport operations"
             ),
             Err(e) => anyhow::bail!(
-                "Redis ACL capability check failed ({:?}); grant transport permissions",
-                e.kind()
+                "Redis ACL capability check failed ({}); grant transport permissions",
+                e.category()
             ),
         }
     }
@@ -454,11 +454,11 @@ fn diagnose(connection: &mut redis::Connection) -> anyhow::Result<()> {
     let cleaned = redis::cmd("DEL").arg(&key).query::<u64>(connection);
     checked.map_err(|e| {
         anyhow::anyhow!(
-            "Redis diagnostic failed ({:?}); grant Streams, Lua and ACL operations",
-            e.kind()
+            "Redis diagnostic failed ({}); grant Streams, Lua and ACL operations",
+            e.category()
         )
     })?;
-    cleaned.map_err(|e| anyhow::anyhow!("Redis diagnostic cleanup failed ({:?})", e.kind()))?;
+    cleaned.map_err(|e| anyhow::anyhow!("Redis diagnostic cleanup failed ({})", e.category()))?;
     Ok(())
 }
 pub(super) fn inspect(request: &Request<'_>, report: &mut Report) -> anyhow::Result<Vec<Value>> {
@@ -516,8 +516,8 @@ pub(super) fn inspect(request: &Request<'_>, report: &mut Report) -> anyhow::Res
                 .query(&mut connection)
                 .map_err(|e| {
                     anyhow::anyhow!(
-                        "retained reader inspection failed ({:?}); run instrukt install",
-                        e.kind()
+                        "retained reader inspection failed ({}); run instrukt install",
+                        e.category()
                     )
                 })?;
             use instrukt_core::state_db::rusqlite::OptionalExtension;
@@ -576,8 +576,8 @@ pub(super) fn dead_letters(request: &Request<'_>) -> anyhow::Result<Vec<Value>> 
             .query(&mut connection)
             .map_err(|e| {
                 anyhow::anyhow!(
-                    "dead-letter inspection failed for {scope} ({:?}); restore Redis access",
-                    e.kind()
+                    "dead-letter inspection failed for {scope} ({}); restore Redis access",
+                    e.category()
                 )
             })?;
         for entry in entries.ids {

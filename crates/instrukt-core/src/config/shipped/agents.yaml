@@ -24,7 +24,7 @@ roles:
   bug-hunter: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
   upstream-watcher: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
   event-handler: {github_app: project, class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
-  company-agent: {github_app: project, class: standing, can: [read, tools], order: [claude, codex, antigravity], tier: strong}
+  company-agent: {github_app: project, class: standing, can: [read, tools, report], order: [claude, codex, antigravity], tier: strong}
   prd-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   architecture-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   plan-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
@@ -54,6 +54,9 @@ bundles:
     - {action: todo-write, scope: own}
     - {action: artifact-write, scope: own}
     - {action: stamp, scope: own}
+    - {action: bug-report, scope: own}
+  report:
+    - {action: bug-report, scope: any}
   orchestrate:
     - {action: todo-orchestration, scope: own}
     - {action: assignment-write, scope: own}
@@ -78,6 +81,7 @@ bundles:
     - {action: docs-write, scope: any}
     - {action: todo-read, scope: any}
     - {action: todo-write, scope: any}
+    - {action: bug-report, scope: any}
     - {action: artifact-read, scope: any}
     - {action: artifact-write, scope: any}
     - {action: stamp, scope: any}

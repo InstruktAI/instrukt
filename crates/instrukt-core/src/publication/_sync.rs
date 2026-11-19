@@ -5,14 +5,14 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::_agents::{MergeRefusal, TARGETS, merge_key};
+use super::_agents::{MergeRefusal, merge_key, targets};
 use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
 use super::_render::Renderer;
 use super::_source::{self, Committed, Project};
 use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
-use super::_tx::{STAGING_PREFIX, Transaction, destination, own_destination, resolved, sweep};
+use super::_tx::{LinkOutcome, STAGING_PREFIX, Transaction, destination, own_destination, sweep};
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
 use crate::docs::{
@@ -24,7 +24,7 @@ use crate::git;
 use crate::home::Home;
 use crate::ids::{CommitSha, DomainName, ProjectSlug};
 use crate::index::GlobalIndex;
-use crate::interfaces::CoreWiring;
+use crate::interfaces::{Answer, CoreWiring};
 
 /// How long a sync waits for another sync to release the docs lock.
 const DOCS_LOCK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -120,6 +120,9 @@ pub struct SyncReport {
     pub notices: Vec<Notice>,
     /// Each global agent file a publishing sync wrote or found current.
     pub global_files: Vec<GlobalDestination>,
+    /// Each link to a global agent file a publishing sync ensured in a
+    /// folder an instance reads through.
+    pub links: Vec<EnsuredLink>,
     /// Each symbolic link that stood at one of publication's own
     /// destinations and was replaced by the file or directory.
     pub replaced_links: Vec<PathBuf>,
@@ -132,11 +135,33 @@ pub struct SyncReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalDestination {
     pub path: PathBuf,
-    /// The agent program that reads it.
+    /// The agent runtime that reads it.
     pub runtime: &'static str,
+    /// The configured instances it serves.
+    pub instances: Vec<String>,
     /// Whether this sync wrote it; `false` when it already held the
     /// rendering.
     pub written: bool,
+}
+
+/// One link to a global agent file a sync ensured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnsuredLink {
+    pub path: PathBuf,
+    /// The global agent file it points at.
+    pub target: PathBuf,
+    pub state: LinkState,
+}
+
+/// What a sync found where a link to a global agent file must exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkState {
+    /// Nothing stood there; the link was made.
+    Made,
+    /// A file, or a link pointing elsewhere, stood there and was replaced.
+    Repaired,
+    /// The link already pointed at the file.
+    Current,
 }
 
 /// What a sync reports about an agent file without refusing.
@@ -148,6 +173,24 @@ pub enum SyncFinding {
     /// A global agent file written with a reference left for an agent
     /// program to resolve.
     ReferenceKept { path: PathBuf, reference: String },
+    /// An enabled instance that reported no home: its runtime's file was
+    /// written in the vendor's default home.
+    HomeNotReported {
+        instance: String,
+        runtime: &'static str,
+        home: PathBuf,
+    },
+    /// An enabled instance whose home cannot be known: its settings name it
+    /// relative to the runtime's own working directory, which the runtime
+    /// does not report. Nothing is written for it.
+    HomeUnknown {
+        instance: String,
+        runtime: &'static str,
+        path: PathBuf,
+    },
+    /// The selected runtime could not be asked which agent runtimes are
+    /// configured: no global agent file was written in this sync.
+    RuntimeUnreachable { runtime: String, cause: String },
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -191,6 +234,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let mut editor = Vec::new();
     let mut notices = Vec::new();
     let mut global_files = Vec::new();
+    let mut links = Vec::new();
     let mut replaced_links = Vec::new();
     let mut findings = Vec::new();
     let attempt = (|| {
@@ -214,6 +258,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
             editor: &mut editor,
             notices: &mut notices,
             global_files: &mut global_files,
+            links: &mut links,
             replaced_links: &mut replaced_links,
             findings: &mut findings,
         };
@@ -252,6 +297,7 @@ pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
         editor,
         notices,
         global_files,
+        links,
         replaced_links,
         findings,
     })
@@ -263,6 +309,7 @@ struct Reported<'r> {
     editor: &'r mut Vec<EditorChange>,
     notices: &'r mut Vec<Notice>,
     global_files: &'r mut Vec<GlobalDestination>,
+    links: &'r mut Vec<EnsuredLink>,
     replaced_links: &'r mut Vec<PathBuf>,
     findings: &'r mut Vec<SyncFinding>,
 }
@@ -278,11 +325,24 @@ struct Prepared {
     patched: GlobalIndex,
     /// Every claimed position's owner before this sync.
     owners: BTreeMap<DomainName, ProjectSlug>,
-    /// Global agent files, relative to the user's home directory, each with
-    /// the agent program that reads it.
-    global: Vec<(PathBuf, &'static str, String)>,
-    /// Merged settings files, relative to the user's home directory.
+    /// Global agent files, each with where it is written.
+    global: Vec<GlobalWrite>,
+    /// Merged settings files, by where each is written.
     settings: Vec<(PathBuf, Vec<u8>)>,
+    /// Links to global agent files, each `(where it stands, what it points
+    /// at)`.
+    links: Vec<(PathBuf, PathBuf)>,
+}
+
+/// One global agent file a sync writes.
+struct GlobalWrite {
+    /// Where it is written: its home's folders resolved through their links.
+    at: PathBuf,
+    /// Its path as the runtime's home names it.
+    path: PathBuf,
+    runtime: &'static str,
+    instances: Vec<String>,
+    text: String,
 }
 
 fn publish(
@@ -381,13 +441,18 @@ fn publish(
     let GlobalPlan {
         global,
         settings,
+        links,
         findings,
     } = if !home.is_development()
         && held
             .iter()
             .any(|d| Position::of_domain(d) == Position::General)
     {
-        global_files(home, &renderer)?
+        let answer = wiring
+            .configured_runtimes
+            .as_ref()
+            .map(|runtimes| runtimes.configured(home, &config::Env::from_process()));
+        global_files(home, &renderer, answer)?
     } else {
         GlobalPlan::default()
     };
@@ -404,6 +469,7 @@ fn publish(
         owners,
         global,
         settings,
+        links,
     };
     preflight(home, project, commit, &prepared)?;
     // Coordinate only publication application with checkout rendering. Validation
@@ -425,7 +491,7 @@ fn publish(
         write(home, project, commit, request.now, &prepared, &mut tx)
     });
     match written {
-        Ok(global_files) => {
+        Ok((global_files, links)) => {
             let changed = tx.changed()
                 || report
                     .editor
@@ -434,6 +500,7 @@ fn publish(
             *report.replaced_links = tx.replaced_links()[schema_links..].to_vec();
             report.leftovers.extend(tx.commit());
             *report.global_files = global_files;
+            *report.links = links;
             let (project, commit) = (project.slug.clone(), commit.clone());
             Ok(if changed {
                 SyncOutcome::Published { project, commit }
@@ -471,15 +538,6 @@ fn preflight(
     commit: &CommitSha,
     prepared: &Prepared,
 ) -> Result<(), PublicationError> {
-    let user_home = home.user_home();
-    for rel in prepared
-        .global
-        .iter()
-        .map(|(rel, _, _)| rel)
-        .chain(prepared.settings.iter().map(|(rel, _)| rel))
-    {
-        destination(user_home, rel)?;
-    }
     let root = home.root();
     let mine = |owner: &ProjectSlug| owner == &project.slug;
     let claimed: Vec<&DomainName> = prepared
@@ -574,45 +632,93 @@ pub(super) fn committed_index(
 /// what it reports about them without refusing.
 #[derive(Default)]
 struct GlobalPlan {
-    global: Vec<(PathBuf, &'static str, String)>,
+    global: Vec<GlobalWrite>,
     settings: Files<Vec<u8>>,
+    links: Vec<(PathBuf, PathBuf)>,
     findings: Vec<SyncFinding>,
 }
 
-/// The global agent file of every supported agent CLI installed here, and
-/// the settings files that take its entrypoint-loading key. Each file is
-/// written whole whatever it holds; one that keeps a reference for an
-/// agent program to resolve is written as rendered and named. A settings
-/// file that cannot take the key, or is a symbolic link, is the user's: it
-/// is left untouched and named, and the instruction file is still written.
-fn global_files(home: &Home, renderer: &Renderer<'_>) -> Result<GlobalPlan, PublicationError> {
-    let user_home = home.user_home();
+/// The global agent files of the agent runtimes the selected runtime
+/// reports as configured, with the settings files that take their
+/// entrypoint-loading keys and the links its instances read through
+/// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "Global
+/// agent files"). Without a runtime nothing is written; one that cannot be
+/// asked writes nothing this sync and is named. Each file is written whole
+/// whatever it holds; one that keeps a reference for an agent program to
+/// resolve is written as rendered and named. A settings file that cannot
+/// take the key, or is a symbolic link, is the user's: it is left untouched
+/// and named, and the instruction file is still written.
+fn global_files(
+    home: &Home,
+    renderer: &Renderer<'_>,
+    answer: Option<Answer>,
+) -> Result<GlobalPlan, PublicationError> {
     let mut plan = GlobalPlan::default();
-    for target in TARGETS {
-        let dir = resolved(user_home, Path::new(target.dir))?;
-        if !dir.is_dir() {
-            tracing::debug!(event = "sync_agent_skipped", agent = target.name, dir = %dir.display());
-            continue;
+    let instances = match answer {
+        None => return Ok(plan),
+        Some(Answer::Unreachable { runtime, cause }) => {
+            plan.findings
+                .push(SyncFinding::RuntimeUnreachable { runtime, cause });
+            return Ok(plan);
         }
-        let rendered = renderer.global_file(target.cli)?;
-        let rel = Path::new(target.dir).join(target.entrypoint);
+        Some(Answer::Reported(instances)) => instances,
+    };
+    let targets = targets(home.user_home(), &instances);
+    plan.findings
+        .extend(targets.defaulted.iter().map(|(instance, runtime, home)| {
+            SyncFinding::HomeNotReported {
+                instance: instance.clone(),
+                runtime,
+                home: home.clone(),
+            }
+        }));
+    plan.findings
+        .extend(
+            targets
+                .unknown
+                .iter()
+                .map(|(instance, runtime, path)| SyncFinding::HomeUnknown {
+                    instance: instance.clone(),
+                    runtime,
+                    path: path.clone(),
+                }),
+        );
+    // One rendering per runtime, with the references it keeps: every file
+    // written from it is named with them.
+    let mut rendered = BTreeMap::new();
+    for file in &targets.files {
+        let runtime = file.destination;
+        let global = match rendered.entry(runtime.cli) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(renderer.global_file(runtime.cli)?)
+            }
+        };
         plan.findings
             .extend(
-                rendered
+                global
                     .references
                     .iter()
                     .map(|reference| SyncFinding::ReferenceKept {
-                        path: user_home.join(&rel),
+                        path: file.path(),
                         reference: reference.clone(),
                     }),
             );
-        plan.global.push((rel, target.name, rendered.text));
-        let Some(loading) = target.loading else {
+        let text = &global.text;
+        plan.global.push(GlobalWrite {
+            at: destination(&file.home, Path::new(runtime.file))?,
+            path: file.path(),
+            runtime: runtime.cli.name(),
+            instances: file.instances.clone(),
+            text: text.clone(),
+        });
+        let Some(loading) = runtime.loading else {
             continue;
         };
-        let path = destination(user_home, Path::new(loading.settings))?;
+        let shown = file.home.join(loading.settings);
+        let path = destination(&file.home, Path::new(loading.settings))?;
         let left = |reason: &str| SyncFinding::SettingsLeft {
-            path: user_home.join(loading.settings),
+            path: shown.clone(),
             reason: reason.to_owned(),
         };
         let existing = match std::fs::symlink_metadata(&path) {
@@ -630,9 +736,7 @@ fn global_files(home: &Home, renderer: &Renderer<'_>) -> Result<GlobalPlan, Publ
             Err(source) => return Err(PublicationError::Io { path, source }),
         };
         match merge_key(existing.as_deref(), loading.key, (loading.value)()) {
-            Ok(Some(merged)) => plan
-                .settings
-                .push((PathBuf::from(loading.settings), merged)),
+            Ok(Some(merged)) => plan.settings.push((path, merged)),
             Ok(None) => {}
             Err(MergeRefusal::NotAnObject) => {
                 plan.findings.push(left("it is not a JSON object"));
@@ -642,6 +746,16 @@ fn global_files(home: &Home, renderer: &Renderer<'_>) -> Result<GlobalPlan, Publ
                     .push(left(&format!("its `{member}` is not an object")));
             }
         }
+    }
+    for link in &targets.links {
+        let folder = link.link.parent().unwrap_or(Path::new("/"));
+        let name = link
+            .link
+            .file_name()
+            .map(Path::new)
+            .unwrap_or(Path::new(""));
+        plan.links
+            .push((destination(folder, name)?, link.target.clone()));
     }
     Ok(plan)
 }
@@ -654,7 +768,7 @@ fn write(
     now: jiff::Timestamp,
     prepared: &Prepared,
     tx: &mut Transaction,
-) -> Result<Vec<GlobalDestination>, PublicationError> {
+) -> Result<(Vec<GlobalDestination>, Vec<EnsuredLink>), PublicationError> {
     let root = home.root();
     let in_home = |path: &Path| own_destination(root, &relative_to(root, path)?);
     let staging = crate::fsx::temp_dir_in(tempfile::Builder::new().prefix(STAGING_PREFIX), root)
@@ -737,18 +851,32 @@ fn write(
     // files with their settings keys, written whole and never removed;
     // nothing records them. A sync writes no file of the repository: its
     // `AGENTS.md` files change only in a commit.
-    let user_home = home.user_home();
     let mut global_files = Vec::new();
-    for (rel, runtime, text) in &prepared.global {
-        let written = tx.write(&destination(user_home, rel)?, text.as_bytes())?;
+    for file in &prepared.global {
+        let written = tx.write(&file.at, file.text.as_bytes())?;
         global_files.push(GlobalDestination {
-            path: user_home.join(rel),
-            runtime,
+            path: file.path.clone(),
+            runtime: file.runtime,
+            instances: file.instances.clone(),
             written,
         });
     }
-    for (rel, bytes) in &prepared.settings {
-        tx.write(&destination(user_home, rel)?, bytes)?;
+    for (path, bytes) in &prepared.settings {
+        tx.write(path, bytes)?;
+    }
+    // The links the instances read through, ensured after their files.
+    let mut links = Vec::new();
+    for (link, target) in &prepared.links {
+        let state = match tx.ensure_link(link, target)? {
+            LinkOutcome::Made => LinkState::Made,
+            LinkOutcome::Repaired => LinkState::Repaired,
+            LinkOutcome::Current => LinkState::Current,
+        };
+        links.push(EnsuredLink {
+            path: link.clone(),
+            target: target.clone(),
+            state,
+        });
     }
 
     let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;
@@ -772,7 +900,7 @@ fn write(
         &in_home(&record_path(home, &project.slug))?,
         text.as_bytes(),
     )?;
-    Ok(global_files)
+    Ok((global_files, links))
 }
 
 /// The URL of the `origin` remote of the repository at `dir`; `None` when
