@@ -126,6 +126,7 @@ pub enum Capability {
     AgentSelection,
     InputConsumption,
     AssignmentEvidence,
+    ConfiguredRuntimes,
 }
 impl std::fmt::Display for Capability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -138,6 +139,7 @@ impl std::fmt::Display for Capability {
             Self::AgentSelection => "agent/model selection",
             Self::InputConsumption => "input consumption observation",
             Self::AssignmentEvidence => "assignment evidence recovery",
+            Self::ConfiguredRuntimes => "configured agent runtimes",
         })
     }
 }
@@ -273,6 +275,20 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     /// The last provider snapshot published in this process, if any.
     fn last_snapshot(&self) -> Option<std::sync::Arc<ObservedSnapshot>> {
         None
+    }
+    /// The enabled agent instances this runtime has configured, each with
+    /// the home the adapter resolved from the instance's settings and
+    /// environment: read now, with a token of its own. Interpreting a
+    /// runtime's home is the adapter's alone.
+    fn configured_agent_runtimes(
+        &self,
+        _home: &instrukt_core::home::Home,
+        _env: &Env,
+    ) -> Result<Vec<instrukt_core::interfaces::ConfiguredInstance>, SessionsError> {
+        Err(SessionsError::MissingCapability {
+            runtime: self.runtime().name().into(),
+            capability: Capability::ConfiguredRuntimes,
+        })
     }
     fn selection_realization(&self, operation: SelectionOperation) -> String;
     fn native_selection(

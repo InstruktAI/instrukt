@@ -53,7 +53,7 @@ impl Server {
         }
         std::fs::write(
             dir.join("snapshot.json"),
-            json!({"providers":providers}).to_string(),
+            json!({"providers":providers,"settings":{"providerInstances":{}}}).to_string(),
         )
         .unwrap();
         let runtime = env.home().join(".t3/userdata/server-runtime.json");

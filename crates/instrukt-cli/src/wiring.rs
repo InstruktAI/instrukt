@@ -67,6 +67,7 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         flavor_roles: _workflow::flavor_roles(ctx)?,
         flavor_schema: Some(Arc::new(WorkflowSchema)),
         graph_generation: _blueprint::graph_generation(ctx)?,
+        configured_runtimes: None,
     })
 }
 
@@ -82,6 +83,7 @@ pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         flavor_roles: Some(_workflow::available_flavor_roles(ctx)),
         flavor_schema: Some(Arc::new(WorkflowSchema)),
         graph_generation: _blueprint::graph_generation(ctx)?,
+        configured_runtimes: None,
     })
 }
 

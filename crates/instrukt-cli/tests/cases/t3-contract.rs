@@ -154,6 +154,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
             json!(real["adapter"]["relationships"].as_array().unwrap().len());
         manifest["observations"] = observed;
         manifest["readiness"] = json!({"explicitly_unready":real["readiness"]["explicitly_unready"],"translated":real["readiness"]["translated"],"real_revoked_denied":real["readiness"]["revoked_denied"],"fake_revoked_denied":emulated["readiness"]["revoked_denied"]});
+        manifest["configured_homes"] = real["configured"].clone();
         manifest["steering_fixture"] = emulated["steering"].clone();
         manifest["fake_operations"]["version"] = json!(
             "diagnostic response only; content is not compared and release equality is not an adapter gate"
