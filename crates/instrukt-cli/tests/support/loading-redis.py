@@ -10,6 +10,7 @@ The stand-in ends when the real server does: its parent is the server, which
 the stand-in's shell became, so a new parent means the server is gone.
 """
 
+import io
 import os
 import socket
 import sys
@@ -31,14 +32,14 @@ lock = threading.Lock()
 SETUP = {b"AUTH", b"HELLO", b"CLIENT", b"SELECT"}
 
 
-def read_line(stream):
+def read_line(stream: io.BufferedReader) -> bytes:
     line = stream.readline()
     if not line:
         raise EOFError
     return line
 
 
-def read_reply(stream):
+def read_reply(stream: io.BufferedReader) -> bytes:
     """One RESP reply, as the bytes it arrived as."""
     line = read_line(stream)
     kind = line[:1]
@@ -57,23 +58,23 @@ def read_reply(stream):
     raise ValueError(f"unknown reply {line!r}")
 
 
-def read_command(stream):
+def read_command(stream: io.BufferedReader) -> tuple[bytes, bytes]:
     """One command: its bytes and its upper-cased name."""
     line = read_line(stream)
     if not line.startswith(b"*"):
         return line, line.split()[0].upper()
     parts = [line]
-    name = None
+    name: bytes | None = None
     for _ in range(int(line[1:])):
         header = read_line(stream)
         body = stream.read(int(header[1:]) + 2)
         parts += [header, body]
         if name is None:
             name = body[:-2].upper()
-    return b"".join(parts), name
+    return b"".join(parts), name or b""
 
 
-def count_answer():
+def count_answer() -> None:
     with lock:
         try:
             with open(asked) as file:
@@ -85,7 +86,7 @@ def count_answer():
         os.replace(asked + ".next", asked)
 
 
-def serve(client):
+def serve(client: socket.socket) -> None:
     with client:
         inner = socket.socket(socket.AF_UNIX)
         inner.connect(inner_path)
@@ -113,13 +114,13 @@ def serve(client):
                     return
 
 
-def watch_parent():
+def watch_parent() -> None:
     while os.getppid() == parent:
         threading.Event().wait(0.05)
     os._exit(0)
 
 
-def main():
+def main() -> None:
     threading.Thread(target=watch_parent, daemon=True).start()
     # The real server's socket exists once it listens.
     while not os.path.exists(inner_path):
