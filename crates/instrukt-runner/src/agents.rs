@@ -256,6 +256,15 @@ pub(crate) fn apply_usage(
     apply_windows(home, &observed.snapshot, observed.at)
 }
 
+/// The family a configured model id names: its second `-`-separated
+/// segment, after the provider prefix (`claude-fable-5-1` is `fable`), or
+/// the whole id when it has one segment (`opus`), lowercase.
+fn model_family(model: &str) -> String {
+    let mut segments = model.split('-');
+    let first = segments.next().unwrap_or(model);
+    segments.next().unwrap_or(first).to_lowercase()
+}
+
 /// Marks the full usage windows of `snapshot`, observed at `observed_at`.
 fn apply_windows(
     home: &instrukt_core::home::Home,
@@ -272,7 +281,17 @@ fn apply_windows(
         else {
             continue;
         };
-        let mut exhausted = None;
+        let mut models = std::collections::BTreeSet::new();
+        for tier in [Tier::Light, Tier::Standard, Tier::Strong, Tier::Premium] {
+            for entry in agents.model_chain(name, tier)? {
+                models.insert(entry.model);
+            }
+        }
+        // Each model keeps the latest active reset among the full windows
+        // that apply to it: a window scoped to a model family applies to
+        // that family's models only.
+        let mut exhausted: std::collections::BTreeMap<String, (jiff::Timestamp, String)> =
+            std::collections::BTreeMap::new();
         for window in provider
             .usage
             .iter()
@@ -303,20 +322,28 @@ fn apply_windows(
                     ""
                 }
             );
-            if exhausted
-                .as_ref()
-                .is_none_or(|(latest, _): &(jiff::Timestamp, String)| until > *latest)
-            {
-                exhausted = Some((until, cause));
-            }
-        }
-        if let Some((until, cause)) = exhausted {
-            let mut models = std::collections::BTreeSet::new();
-            for tier in [Tier::Light, Tier::Standard, Tier::Strong, Tier::Premium] {
-                for entry in agents.model_chain(name, tier)? {
-                    models.insert(entry.model);
+            for model in models.iter().filter(|model| {
+                window
+                    .model_family
+                    .as_deref()
+                    .is_none_or(|family| model_family(model) == family)
+            }) {
+                if exhausted
+                    .get(model)
+                    .is_none_or(|(latest, _)| until > *latest)
+                {
+                    exhausted.insert(model.clone(), (until, cause.clone()));
                 }
             }
+        }
+        let mut marks: std::collections::BTreeMap<
+            (jiff::Timestamp, String),
+            std::collections::BTreeSet<String>,
+        > = std::collections::BTreeMap::new();
+        for (model, key) in exhausted {
+            marks.entry(key).or_default().insert(model);
+        }
+        for ((until, cause), models) in marks {
             mark_quota(
                 home,
                 &QuotaMark {

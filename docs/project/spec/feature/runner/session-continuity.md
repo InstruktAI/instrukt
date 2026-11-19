@@ -449,8 +449,17 @@ Reported model slugs and aliases are acquisition facts; T3's native `auto` and
 
 Runner policy applies those facts in configured order. Automatic starts skip
 unavailable and degraded marks until expiry at the command clock; available
-clears the addressed restriction. A usage window at 100% restricts that profile's
-configured models until its reset. Missing resets use one hour from the time the
+clears the addressed restriction. A usage window at 100% restricts the profile's
+configured models it applies to until its reset. The adapter reports a window's
+scope: at the pinned T3 release a Claude window scoped to one model family is
+reported under the id `seven_day_<name>`, labelled `Weekly · <Name>`, and applies
+to the profile's configured models whose family is `<name>`. A configured model's
+family is the second `-`-separated segment of its id, after the provider prefix
+(`claude-fable-5-1` is `fable`), or the whole id when it has one segment,
+compared lowercase; T3's reported aliases tie only the current model of a family
+to that family's name, so they are not used. Every other window applies to all
+of the profile's configured models, and a scoped window matching none of them
+restricts nothing. Missing resets use one hour from the time the
 snapshot was observed and record that default. A snapshot's windows are applied
 once, when the snapshot is read; a start applies the restrictions in force and
 never applies the windows of a snapshot it reuses again, so a reused snapshot
