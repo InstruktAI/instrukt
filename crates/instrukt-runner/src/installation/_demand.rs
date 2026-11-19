@@ -214,7 +214,7 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
                     return Err(error.into());
                 }
             };
-            if config.slack_connector()?.is_some() {
+            if !config.connectors()?.is_empty() {
                 demand.conversations.push(label.clone());
                 let features = [Feature::Conversations];
                 if let Some(unavailable) = global.unavailable(&features)? {

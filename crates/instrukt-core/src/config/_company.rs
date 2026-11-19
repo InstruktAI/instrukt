@@ -5,14 +5,13 @@ use std::collections::BTreeMap;
 
 use serde_yaml_ng::Value;
 
+use instrukt_connector::{Declaration, Rule};
+
+use super::_connectors::DeclaredConnector;
 use super::_error::{ConfigError, FindingKind};
 use super::_interpolate::{join, key_text};
 use super::_schema::KeyFinding;
 use crate::ids::ProjectSlug;
-
-/// The connectors this instrukt supports, by their key under `connectors`.
-/// Older member entries named a person's identity under the same keys.
-pub const CONNECTORS: [&str; 1] = ["slack"];
 
 /// Why an empty `profiles` list is a finding.
 pub(super) const EMPTY_PROFILES: &str = "lists no profile; name the profiles its sessions start on, or remove profiles to use the machine-wide order";
@@ -69,10 +68,6 @@ pub(super) fn check_profiles(
     }
 }
 
-/// The largest number of earlier messages that accompany an addressed
-/// message when a Slack declaration does not say.
-pub const DEFAULT_CONTEXT_MESSAGES: u64 = 30;
-
 /// One person as a company home lists them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
@@ -104,45 +99,46 @@ impl Members {
     }
 }
 
-/// A company home's Slack connector.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlackConnector {
-    /// Reference to the app-level connection token.
-    pub app_token: String,
-    /// Reference to the bot token used to read and post.
-    pub bot_token: String,
-    /// The largest number of earlier messages that accompany an addressed
-    /// message.
-    pub context_messages: u64,
-}
-
-/// What `context_messages` is, as its finding and editor schema say it.
-const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted";
-
-/// The editor schema of a company home's `connectors` map.
+/// The editor schema of a company home's `connectors` map: one property
+/// per installed kind, its fields as its declaration states them.
 pub(super) fn connectors_schema() -> serde_json::Value {
     let reference =
         serde_json::json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
+    let mut kinds = serde_json::Map::new();
+    for declaration in super::_connectors::declarations() {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+        for field in declaration.fields {
+            let schema = match field.rule {
+                Rule::SecretReference { required: needed } => {
+                    if needed {
+                        required.push(field.name);
+                    }
+                    reference.clone()
+                }
+                Rule::PositiveCount { default, meaning } => serde_json::json!({
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": default,
+                    "description": meaning,
+                }),
+            };
+            properties.insert(field.name.to_owned(), schema);
+        }
+        kinds.insert(
+            declaration.key.to_owned(),
+            serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": required,
+                "properties": properties,
+            }),
+        );
+    }
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "properties": {
-            "slack": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["app_token", "bot_token"],
-                "properties": {
-                    "app_token": reference,
-                    "bot_token": reference,
-                    "context_messages": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": DEFAULT_CONTEXT_MESSAGES,
-                        "description": CONTEXT_MESSAGES,
-                    },
-                },
-            },
-        },
+        "properties": kinds,
     })
 }
 
@@ -253,7 +249,7 @@ fn check_credentials(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
     }
 }
 
-/// The findings of a `connectors` map.
+/// The findings of a `connectors` map, against the installed kinds.
 pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
     let Some(connectors) = value.as_mapping() else {
         out.push(finding(
@@ -266,17 +262,18 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
     for (name, declaration) in connectors {
         let name = key_text(name);
         let at = join(path, &name);
-        if name != "slack" {
+        let Some(kind) = super::_connectors::declaration(&name) else {
+            let supported: Vec<&str> = super::_connectors::declarations()
+                .iter()
+                .map(|declaration| declaration.key)
+                .collect();
             out.push(finding(
                 &at,
                 FindingKind::UnknownKey,
-                format!(
-                    "unsupported connector; supported: {}",
-                    CONNECTORS.join(", ")
-                ),
+                format!("unsupported connector; supported: {}", supported.join(", ")),
             ));
             continue;
-        }
+        };
         let Some(fields) = declaration.as_mapping() else {
             out.push(finding(
                 &at,
@@ -285,10 +282,12 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
             ));
             continue;
         };
-        for required in ["app_token", "bot_token"] {
-            if !fields.contains_key(required) {
+        for field in kind.fields {
+            if matches!(field.rule, Rule::SecretReference { required: true })
+                && !fields.contains_key(field.name)
+            {
                 out.push(finding(
-                    &join(&at, required),
+                    &join(&at, field.name),
                     FindingKind::Missing,
                     "missing; a ${NAME} reference into the home's secrets file",
                 ));
@@ -297,32 +296,50 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
         for (field, value) in fields {
             let field = key_text(field);
             let field_at = join(&at, &field);
-            match field.as_str() {
-                "app_token" | "bot_token" => {
-                    if !value.as_str().is_some_and(super::is_secret_reference) {
-                        out.push(finding(
-                            &field_at,
-                            FindingKind::InvalidValue,
-                            "expected an exact ${NAME} reference; a literal token is not stored",
-                        ));
+            match kind.fields.iter().find(|known| known.name == field) {
+                Some(known) => match known.rule {
+                    Rule::SecretReference { .. } => {
+                        if !value.as_str().is_some_and(super::is_secret_reference) {
+                            out.push(finding(
+                                &field_at,
+                                FindingKind::InvalidValue,
+                                "expected an exact ${NAME} reference; a literal token is not stored",
+                            ));
+                        }
                     }
-                }
-                "context_messages" => {
-                    if !value.as_u64().is_some_and(|count| count > 0) {
-                        out.push(finding(
-                            &field_at,
-                            FindingKind::InvalidValue,
-                            CONTEXT_MESSAGES,
-                        ));
+                    Rule::PositiveCount { meaning, .. } => {
+                        if !value.as_u64().is_some_and(|count| count > 0) {
+                            out.push(finding(&field_at, FindingKind::InvalidValue, meaning));
+                        }
                     }
-                }
-                _ => out.push(finding(
+                },
+                None => out.push(finding(
                     &field_at,
                     FindingKind::UnknownKey,
-                    "unknown field; slack takes app_token, bot_token and context_messages",
+                    format!("unknown field; {} takes {}", kind.key, listed(kind)),
                 )),
             }
         }
+    }
+}
+
+/// The findings of a `connectors` value at `path`, by key and kind, against
+/// the installed kinds.
+pub fn connector_findings(value: &Value, path: &str) -> Vec<(String, FindingKind)> {
+    let mut out = Vec::new();
+    check_connectors(value, path, &mut out);
+    out.into_iter()
+        .map(|found| (found.key, found.kind))
+        .collect()
+}
+
+/// A kind's field names, as a sentence lists them: `a, b and c`.
+fn listed(kind: &Declaration) -> String {
+    let names: Vec<&str> = kind.fields.iter().map(|field| field.name).collect();
+    match names.split_last() {
+        None => String::new(),
+        Some((last, [])) => (*last).to_owned(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -373,34 +390,26 @@ pub(super) fn members(raw: Option<&Value>) -> Result<Members, ConfigError> {
     Ok(Members(members))
 }
 
-/// The Slack connector a company document declares, if any.
-pub(super) fn slack(raw: Option<&Value>) -> Result<Option<SlackConnector>, ConfigError> {
+/// The connectors a company document's `connectors` value declares, each
+/// as declared, references unresolved.
+pub(super) fn connectors(raw: Option<&Value>) -> Result<Vec<DeclaredConnector>, ConfigError> {
     let Some(raw) = raw else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let mut found = Vec::new();
     check_connectors(raw, "connectors", &mut found);
     if let Some(first) = found.first() {
         return Err(invalid(&first.key, &first.message));
     }
-    let Some(slack) = raw.get("slack") else {
-        return Ok(None);
-    };
-    let text = |field: &str| {
-        slack
-            .get(field)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    Ok(Some(SlackConnector {
-        app_token: text("app_token"),
-        bot_token: text("bot_token"),
-        context_messages: slack
-            .get("context_messages")
-            .and_then(Value::as_u64)
-            .unwrap_or(DEFAULT_CONTEXT_MESSAGES),
-    }))
+    Ok(raw
+        .as_mapping()
+        .into_iter()
+        .flatten()
+        .map(|(key, entry)| DeclaredConnector {
+            key: key_text(key),
+            entry: entry.clone(),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -451,30 +460,5 @@ mod tests {
                 ("members.c.email".to_owned(), Missing),
             ]
         );
-    }
-
-    #[test]
-    fn a_slack_declaration_needs_both_references_and_a_positive_context() {
-        use FindingKind::{InvalidValue, Missing, UnknownKey};
-        assert_eq!(
-            judged(
-                "slack: {app_token: literal, context_messages: 0, extra: 1}\nteams: {}\n",
-                check_connectors,
-                "connectors"
-            ),
-            [
-                ("connectors.slack.bot_token".to_owned(), Missing),
-                ("connectors.slack.app_token".to_owned(), InvalidValue),
-                ("connectors.slack.context_messages".to_owned(), InvalidValue),
-                ("connectors.slack.extra".to_owned(), UnknownKey),
-                ("connectors.teams".to_owned(), UnknownKey),
-            ]
-        );
-        let declared = slack(Some(&yaml(
-            "slack: {app_token: '${A}', bot_token: '${B}'}\n",
-        )))
-        .unwrap()
-        .unwrap();
-        assert_eq!(declared.context_messages, DEFAULT_CONTEXT_MESSAGES);
     }
 }
