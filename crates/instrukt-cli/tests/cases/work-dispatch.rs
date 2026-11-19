@@ -973,6 +973,10 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
         }
     });
     let fake = runtime::FakeT3::create(&p.env);
+    // The runner reads T3's snapshot twice as it starts: once on its own,
+    // once for its first wake. Each read is held until the test lets it
+    // through.
+    std::fs::write(p.env.path("t3-readiness/hold-read"), "").unwrap();
     let _runner = crate::fixtures::conversing::Running::spawn(
         p.env
             .instrukt_process(p.env.home())
@@ -980,6 +984,12 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null()),
     );
+    crate::common::wait_until(
+        "the first snapshot read",
+        std::time::Duration::from_secs(20),
+        || common::t3_readiness::held_read_open(&p.env, 1),
+    );
+    common::t3_readiness::release_read(&p.env, 1);
     // The snapshot's marks are applied once its refresh is done: the first
     // profile shows its restriction.
     let availability = || {
@@ -1000,8 +1010,24 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
                 .any(|mark| mark["profile"] == "claude")
         },
     );
-    // Every later refresh fails: the token cannot be renewed.
+    // Every later read fails, the second one included: the snapshot of t=0
+    // is the only one the runner publishes. That read is let through once
+    // it stands held, and the runner shows its refresh failing; no refresh
+    // is then under way, and every later one fails too, its token not
+    // renewed and its read failing.
+    std::fs::write(p.env.path("t3-readiness/malformed"), "").unwrap();
     fake.flag("issue-failure", true);
+    crate::common::wait_until(
+        "the second snapshot read",
+        std::time::Duration::from_secs(20),
+        || common::t3_readiness::held_read_open(&p.env, 2),
+    );
+    common::t3_readiness::release_read(&p.env, 2);
+    crate::common::wait_until(
+        "the second refresh failing",
+        std::time::Duration::from_secs(20),
+        || readiness_failing(&p),
+    );
     // The runner has woken at `at` once its last admission reads it: every
     // wake admits the configuration first and takes its own time after, and
     // wakes run one after another, so none that began earlier is still
