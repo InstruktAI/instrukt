@@ -541,6 +541,45 @@ fn a_full_usage_window_marks_that_profiles_models_with_expiry() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
+fn a_full_window_scoped_to_one_model_marks_only_that_models_family() {
+    let p = Tracked::new(true);
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
+    // Fable's seven-day window is full; the session window for every model
+    // is not.
+    common::t3_readiness::update(&p.env, |snapshot| {
+        for provider in snapshot["providers"].as_array_mut().unwrap() {
+            if provider["instanceId"] == "claudeAgent" {
+                provider["usageLimits"] = serde_json::json!({"checkedAt":"2030-01-01T00:00:00Z","windows":[
+                    {"id":"five_hour","kind":"session","label":"Session","usedPercent":40,"resetsAt":"2099-01-01T00:00:00Z"},
+                    {"id":"seven_day_fable","kind":"weekly","label":"Weekly · Fable","usedPercent":100,"resetsAt":"2099-01-01T00:00:00Z"}
+                ]});
+            }
+        }
+    });
+    create_change(&p);
+    p.tick();
+    let marks = p
+        .env
+        .run(p.repo.path(), ["agents", "availability"])
+        .success();
+    let marks: serde_json::Value = serde_json::from_slice(&marks.get_output().stdout).unwrap();
+    // Only Fable's model is unavailable: claude-opus-5-5, claude-sonnet-5-5
+    // and claude-haiku-5-5 carry no mark.
+    insta::assert_json_snapshot!(marks, @r#"
+    [
+      {
+        "profile": "claude",
+        "model": "claude-fable-5-1",
+        "status": "unavailable",
+        "until": "2099-01-01T00:00:00Z",
+        "reason": "quota: window seven_day_fable at 100%"
+      }
+    ]
+    "#);
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
 fn compatible_protocol_and_shape_admit_different_release_diagnostics() {
     let p = Tracked::new(true);
     let file = common::t3_readiness::state_file(&p.env);
