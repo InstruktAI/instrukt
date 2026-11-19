@@ -192,7 +192,9 @@ events off; it prepares no event consumers solely for history. The private
 Redis's configuration and ACL are written from the stored secret on every
 install and the service is restarted when they change; an existing secret is
 reused and a missing one is generated, and the data Redis keeps stays reachable
-with it (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Read-only inspection reports a pending repair without changing
+with it (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Installation checks a Redis it started or restarted only
+once it answers and has finished loading its data, waiting a bounded time for
+both; past the bound the check reports what Redis answers. Read-only inspection reports a pending repair without changing
 files or services. An unused local
 event Redis is withdrawn when history points at an external cluster.
 
