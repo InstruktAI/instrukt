@@ -37,7 +37,7 @@ fn extracted_conversations_survive_restart_and_source_deletion() {
         .instrukt_process(env.home())
         .args(["history", "search", "Elsewheretoken", "--json"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     gate.admit();
@@ -50,8 +50,14 @@ fn extracted_conversations_survive_restart_and_source_deletion() {
         false,
     );
     gate.open();
-    let incomplete: Value =
-        serde_json::from_slice(&searching.wait_with_output().unwrap().stdout).unwrap();
+    let searched = searching.wait_with_output().unwrap();
+    let incomplete: Value = serde_json::from_slice(&searched.stdout).unwrap();
+    // Its one line, after the configuration's notice, points at the
+    // failures the JSON holds.
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&searched.stderr).lines().last().unwrap_or_default(),
+        @"instrukt: the search is incomplete: 1 computer could not be searched; each is named in the output's `failures`"
+    );
     assert_eq!(incomplete["matches"].as_array().unwrap().len(), 39);
     let failures: Vec<instrukt_runner::history::Failure> =
         serde_json::from_value(incomplete["failures"].clone()).unwrap();

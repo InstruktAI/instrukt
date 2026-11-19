@@ -267,20 +267,16 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     let refused = env.run(repo.path(), ["config", "validate"]).failure();
     insta::assert_snapshot!("newer-schema-validate", stderr(&env, &refused));
     unchanged(&repo, &bytes);
-}
 
-// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
-#[test]
-fn a_machine_layer_written_by_a_newer_instrukt_stops_a_repository_command_with_one_line() {
-    let env = TestEnv::new();
-    let repo = project(&env, "own", "schema_version: 1\nproject: own\n");
+    // The machine's layer written by a newer instrukt stops every command:
+    // a repository command names the door, and the door says to upgrade.
     let machine = format!(
         "schema_version: {}\nrunner: {{runtime: t3}}\n",
         CURRENT_SCHEMA_VERSION + 1
     );
     write_global(&env, &machine);
     let path = env.instrukt_home().join("instrukt.yaml");
-    let bytes = std::fs::read(&path).unwrap();
+    let machine_bytes = std::fs::read(&path).unwrap();
     // A repository command stops on it with one line naming the door.
     let refused = env.run(repo.path(), ["docs", "render"]).failure().code(1);
     // The door says to upgrade.
@@ -307,5 +303,5 @@ fn a_machine_layer_written_by_a_newer_instrukt_stops_a_repository_command_with_o
     instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 7, newer than this instrukt supports (6); upgrade instrukt
     "
     );
-    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);
 }

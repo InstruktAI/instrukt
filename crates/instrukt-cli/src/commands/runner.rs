@@ -326,9 +326,11 @@ pub fn run_install(args: InstallArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode>
     } else if args.check {
         ExitCode::FAILURE
     } else {
-        crate::output::could_not(
-            "the installation is incomplete; resolve each `unmet:` line above and run `instrukt install` again",
-        )
+        crate::output::could_not(if args.json {
+            "the installation is incomplete; resolve each entry of the output's `findings` and run `instrukt install` again"
+        } else {
+            "the installation is incomplete; resolve each `unmet:` line above and run `instrukt install` again"
+        })
     })
 }
 
