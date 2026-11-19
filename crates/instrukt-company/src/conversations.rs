@@ -23,12 +23,19 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::connector_host::Connectors;
-use crate::envelopes::{self, ContextEntry, Control, Span};
-use crate::keyed::{self, RuntimeInvocation};
-use crate::runtime::conversations::{AuthorKind, ConversationSource, Scope, SourcePosition};
-use crate::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeStart};
-use crate::sessions::{SessionState, SessionsError};
-use crate::state::{self, RunnerState, StateError};
+use instrukt_runner::envelopes::{self, ContextEntry, Control, Span};
+use instrukt_runner::keyed::{self, RuntimeInvocation};
+use instrukt_runner::runtime::conversations::{
+    AuthorKind, ConversationSource, Scope, SourcePosition,
+};
+use instrukt_runner::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeStart};
+use instrukt_runner::sessions::{SessionState, SessionsError};
+use instrukt_runner::state::{self, RunnerState, StateError};
+
+/// The target every log statement here carries: the module path it logged
+/// under before the company context became its own crate, so the same
+/// settings select it.
+const LOG_TARGET: &str = "instrukt_runner::conversations";
 
 /// A connector's connection state, as `instrukt events status` shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +113,7 @@ pub enum ConversationError {
     #[error(transparent)]
     Sessions(#[from] SessionsError),
     #[error(transparent)]
-    Source(#[from] crate::runtime::conversations::SourceError),
+    Source(#[from] instrukt_runner::runtime::conversations::SourceError),
     #[error(transparent)]
     Lock(#[from] instrukt_core::fsx::FsError),
     #[error(transparent)]
@@ -188,7 +195,7 @@ pub fn retain(
     if inserted == 0 {
         return Ok(Intake::Repeated);
     }
-    tracing::info!(event = "conversation_message_accepted", company = %company, connector = %incoming.connector, conversation = %incoming.conversation);
+    tracing::info!(target: LOG_TARGET, event = "conversation_message_accepted", company = %company, connector = %incoming.connector, conversation = %incoming.conversation);
     Ok(Intake::Retained)
 }
 
@@ -288,7 +295,7 @@ pub fn refused(
         }
         Ok(())
     })?;
-    tracing::info!(event = "conversation_sender_refused", company = %company, connector, conversation = %unread.conversation);
+    tracing::info!(target: LOG_TARGET, event = "conversation_sender_refused", company = %company, connector, conversation = %unread.conversation);
     Ok(())
 }
 
@@ -493,7 +500,7 @@ pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, DeclaredConnector)>, Conv
             ),
             Err(ConfigError::NoLayer { .. }) => {}
             Err(error) => {
-                tracing::warn!(event = "connector_declaration_unreadable", company = %name, error = %error);
+                tracing::warn!(target: LOG_TARGET, event = "connector_declaration_unreadable", company = %name, error = %error);
             }
         }
     }
@@ -839,9 +846,9 @@ fn deliver_one(
     // and the command that resolves it.
     let failure = result.as_ref().err().map(|error| match error {
         ConversationError::Sessions(
-            crate::sessions::SessionsError::Unresolved { key }
-            | crate::sessions::SessionsError::Uncertain { key, .. },
-        ) => crate::sessions::SessionsError::Unresolved { key: key.clone() }.to_string(),
+            instrukt_runner::sessions::SessionsError::Unresolved { key }
+            | instrukt_runner::sessions::SessionsError::Uncertain { key, .. },
+        ) => instrukt_runner::sessions::SessionsError::Unresolved { key: key.clone() }.to_string(),
         ConversationError::Sessions(native) => adapter
             .diagnostic("conversation delivery", native)
             .to_string(),
@@ -850,7 +857,7 @@ fn deliver_one(
     if let (Err(error), Some(cause)) = (&result, &failure)
         && reports(error, next.failure.as_deref(), cause)
     {
-        tracing::warn!(event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
+        tracing::warn!(target: LOG_TARGET, event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
     }
     set_message_failure(state, c, &next.message, failure.as_deref())?;
     result
@@ -888,13 +895,13 @@ fn start(
                 })?
                 .config;
             let config = admitted.global();
-            let preferences = crate::agents::role_order(
+            let preferences = instrukt_runner::agents::role_order(
                 config,
                 None,
                 Some(COMPANY_AGENT_ROLE),
                 company.profiles()?.as_deref(),
             )?;
-            let selection = crate::agents::selections(config, home, &preferences, now)?
+            let selection = instrukt_runner::agents::selections(config, home, &preferences, now)?
                 .into_iter()
                 .next();
             let input = next.content.as_deref().ok_or_else(|| {
@@ -903,18 +910,18 @@ fn start(
             let request = RuntimeStart {
                 preferences,
                 selection,
-                selection_evidence: Some(
-                    adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
-                ),
+                selection_evidence: Some(adapter.selection_realization(
+                    instrukt_runner::runtime::SelectionOperation::ThreadStart,
+                )),
                 checkout,
-                title: crate::runtime::thread_title(
+                title: instrukt_runner::runtime::thread_title(
                     &format!("conversation · {}", c.connector),
                     &c.semantic_key,
                 ),
                 key: c.semantic_key.clone(),
                 brief: format!("{}\n{input}", assignment(admitted, c, &procedure)?),
                 worktree: None,
-                profiles: crate::runtime::Profiles(Some(admitted.shared_agents())),
+                profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
             };
             let position = opening_position(source)?;
             state.write::<_, StateError>(|tx| {
@@ -945,7 +952,7 @@ fn start(
         now,
     })?;
     accepted(state, c, &next.message, Some(&thread.session))?;
-    tracing::info!(event = "conversation_session_started", company = %c.company, connector = %c.connector, key = %c.semantic_key, session = %thread.session);
+    tracing::info!(target: LOG_TARGET, event = "conversation_session_started", company = %c.company, connector = %c.connector, key = %c.semantic_key, session = %thread.session);
     Ok(())
 }
 
@@ -1000,7 +1007,9 @@ fn reconcile(
     let Some(content) = message.content.as_deref() else {
         return Ok(false);
     };
-    if adapter.observe_input(session, content, now)?.state == crate::runtime::InputState::Unknown {
+    if adapter.observe_input(session, content, now)?.state
+        == instrukt_runner::runtime::InputState::Unknown
+    {
         return Ok(false);
     }
     accepted(state, c, &message.message, None)?;
@@ -1458,11 +1467,11 @@ fn answers(
         read.as_ref().err().map(ToString::to_string).as_deref(),
     )?;
     if let Err(error) = read {
-        tracing::warn!(event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+        tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
         return Ok(false);
     }
     if let Err(error) = post(admitted, state, connectors, accepted, c) {
-        tracing::warn!(event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+        tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
     Ok(true)
 }
@@ -1494,7 +1503,7 @@ pub fn relay_state(home: &Home, failure: Option<&str>) {
         Ok(())
     });
     if let Err(error) = result {
-        tracing::error!(event = "conversation_relay_state_unrecorded", error = %error);
+        tracing::error!(target: LOG_TARGET, event = "conversation_relay_state_unrecorded", error = %error);
     }
 }
 
@@ -1551,7 +1560,7 @@ pub struct Status {
 /// connector no run ever hosted is listed as stopped too.
 pub fn status(home: &Home) -> Result<Status, ConversationError> {
     let state = RunnerState::new(home);
-    let hosted = crate::runner::hosted(home);
+    let hosted = instrukt_runner::runner::hosted(home);
     let mut connectors = state
         .read(|conn, path| {
             let mut q = conn
@@ -1711,7 +1720,7 @@ pub fn speaker(
     home: &Home,
     session: &SessionRef,
     adapter: &dyn RuntimeAdapter,
-) -> Result<Option<crate::mcp::Speaker>, crate::mcp::McpError> {
+) -> Result<Option<instrukt_runner::mcp::Speaker>, instrukt_runner::mcp::McpError> {
     let Some(db) = instrukt_core::state_db::StateRead::open(home)? else {
         return Ok(None);
     };
@@ -1735,10 +1744,10 @@ pub fn speaker(
     };
     let opening = adapter
         .active_turn_input(session)
-        .map_err(|error| crate::mcp::McpError::Turn {
+        .map_err(|error| instrukt_runner::mcp::McpError::Turn {
             cause: error.to_string(),
         })?
-        .ok_or_else(|| crate::mcp::McpError::Turn {
+        .ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
             cause: "the runtime has no turn of this session in progress".into(),
         })?;
     let boundary = envelopes::segment(&opening)
@@ -1766,10 +1775,10 @@ pub fn speaker(
         )
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let (identity, name, email) = row.ok_or_else(|| crate::mcp::McpError::Turn {
+    let (identity, name, email) = row.ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
         cause: "the turn's addressed message is not one this conversation delivered".into(),
     })?;
-    Ok(Some(crate::mcp::Speaker {
+    Ok(Some(instrukt_runner::mcp::Speaker {
         name: name
             .or_else(|| identity.clone())
             .unwrap_or_else(|| "an unnamed sender".to_owned()),
@@ -1783,13 +1792,13 @@ pub fn speaker(
 /// hosting and keeps the directory they make, and the answer pieces accepted
 /// but not yet recorded, for its own relay.
 pub struct Ports {
-    builders: Vec<crate::interfaces::BuildKind>,
+    builders: Vec<crate::BuildKind>,
     hosted: std::sync::Mutex<Option<std::sync::Arc<dyn Connectors>>>,
     accepted: Accepted,
 }
 
 impl Ports {
-    pub fn new(builders: Vec<crate::interfaces::BuildKind>) -> Self {
+    pub fn new(builders: Vec<crate::BuildKind>) -> Self {
         Self {
             builders,
             hosted: std::sync::Mutex::default(),
@@ -1805,26 +1814,31 @@ impl Ports {
     }
 }
 
-fn company_error(error: impl std::fmt::Display) -> crate::interfaces::CompanyError {
-    crate::interfaces::CompanyError(error.to_string())
+fn company_error(error: impl std::fmt::Display) -> instrukt_runner::interfaces::CompanyError {
+    instrukt_runner::interfaces::CompanyError(error.to_string())
 }
 
-impl crate::interfaces::CompanyPorts for Ports {
+impl instrukt_runner::interfaces::CompanyPorts for Ports {
     fn demand(&self, admitted: &Admitted) -> bool {
         !admitted_demand(admitted).is_empty()
     }
 
     fn start(
         &self,
-        start: crate::interfaces::CompanyStart<'_>,
-    ) -> Result<Box<dyn crate::interfaces::CompanySupervision>, crate::interfaces::CompanyError>
-    {
+        start: instrukt_runner::interfaces::CompanyStart<'_>,
+    ) -> Result<
+        Box<dyn instrukt_runner::interfaces::CompanySupervision>,
+        instrukt_runner::interfaces::CompanyError,
+    > {
         let kinds = self
             .builders
             .iter()
-            .map(|build| build(start.env, std::sync::Arc::clone(&start.clock)))
+            .map(|build| {
+                let lookup = |name: &str| start.env.get(name).map(str::to_owned);
+                build(&lookup, std::sync::Arc::clone(&start.clock))
+            })
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| crate::interfaces::CompanyError(error.cause))?;
+            .map_err(|error| instrukt_runner::interfaces::CompanyError(error.cause))?;
         let directory: std::sync::Arc<dyn Connectors> =
             std::sync::Arc::new(crate::connector_host::Directory::new(kinds, start.clock));
         *self
@@ -1839,7 +1853,9 @@ impl crate::interfaces::CompanyPorts for Ports {
             start.wake,
             start.supervise,
         )
-        .map(|connections| Box::new(connections) as Box<dyn crate::interfaces::CompanySupervision>)
+        .map(|connections| {
+            Box::new(connections) as Box<dyn instrukt_runner::interfaces::CompanySupervision>
+        })
         .map_err(company_error)
     }
 
@@ -1849,7 +1865,7 @@ impl crate::interfaces::CompanyPorts for Ports {
         admitted: &Admitted,
         source: &dyn ConversationSource,
         adapter: &dyn RuntimeAdapter,
-    ) -> Result<(), crate::interfaces::CompanyError> {
+    ) -> Result<(), instrukt_runner::interfaces::CompanyError> {
         let Some(connectors) = self.hosted() else {
             return Ok(());
         };
@@ -1864,7 +1880,7 @@ impl crate::interfaces::CompanyPorts for Ports {
         .map_err(company_error)
     }
 
-    fn outstanding(&self, home: &Home) -> Result<bool, crate::interfaces::CompanyError> {
+    fn outstanding(&self, home: &Home) -> Result<bool, instrukt_runner::interfaces::CompanyError> {
         outstanding(home).map_err(company_error)
     }
 
@@ -1872,13 +1888,16 @@ impl crate::interfaces::CompanyPorts for Ports {
         relay_state(home, failure);
     }
 
-    fn status(&self, home: &Home) -> Result<serde_json::Value, crate::interfaces::CompanyError> {
+    fn status(
+        &self,
+        home: &Home,
+    ) -> Result<serde_json::Value, instrukt_runner::interfaces::CompanyError> {
         let status = status(home).map_err(company_error)?;
         serde_json::to_value(status).map_err(company_error)
     }
 }
 
-impl crate::interfaces::CompanySupervision for crate::connector_host::Connections {
+impl instrukt_runner::interfaces::CompanySupervision for crate::connector_host::Connections {
     fn check(&mut self) {
         crate::connector_host::Connections::check(self);
     }

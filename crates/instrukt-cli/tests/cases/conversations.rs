@@ -6,8 +6,8 @@
 use crate::common;
 use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
 use crate::fixtures::documented;
-use instrukt_runner::conversations;
-use instrukt_runner::slack::{SLACK, SLACK_MESSAGE_LIMIT, TURN_AWAY, WORKING};
+use instrukt_company::conversations;
+use instrukt_connector_slack::{SLACK, SLACK_MESSAGE_LIMIT, TURN_AWAY, WORKING};
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// The source position the state database keeps for the conversation of
@@ -201,7 +201,7 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
             &home,
             &caller,
             instrukt_todos::work::recorded_assignment,
-            instrukt_runner::conversations::conversation_assignment,
+            instrukt_company::conversations::conversation_assignment,
         )
         .unwrap()
     };

@@ -1,0 +1,24 @@
+[package]
+name = "instrukt-company"
+description = "instrukt company context: the connector host and the conversations a company's people have with its agent."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hex.workspace = true
+instrukt-connector.workspace = true
+instrukt-core.workspace = true
+instrukt-runner.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

@@ -29,7 +29,7 @@ try:
 except FileNotFoundError:
     last = ""
 if last != here:
-    packages = ["instrukt-cli", "instrukt-core", "instrukt-blueprint", "instrukt-runner", "instrukt-todos", "instrukt-connector"]
+    packages = ["instrukt-cli", "instrukt-core", "instrukt-blueprint", "instrukt-runner", "instrukt-todos", "instrukt-connector", "instrukt-company", "instrukt-connector-slack"]
     args = ["cargo", "clean", "--quiet"]
     for package in packages:
         args += ["-p", package]

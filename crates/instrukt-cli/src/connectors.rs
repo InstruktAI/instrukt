@@ -3,9 +3,9 @@
 //! is built for a process from its environment and clock.
 use std::sync::LazyLock;
 
+use instrukt_company::BuildKind;
 use instrukt_connector::Declaration;
-use instrukt_runner::interfaces::BuildKind;
-use instrukt_runner::slack::{SLACK_DECLARATION, SlackKind};
+use instrukt_connector_slack::{SLACK_DECLARATION, SlackKind};
 
 /// Every connector kind of this build.
 pub static REGISTRY: [(&Declaration, BuildKind); 1] = [(&SLACK_DECLARATION, SlackKind::build)];

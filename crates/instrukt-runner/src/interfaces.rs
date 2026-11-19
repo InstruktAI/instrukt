@@ -720,7 +720,8 @@ pub struct CompanyStart<'a> {
     pub home: &'a instrukt_core::home::Home,
     pub current: &'a instrukt_core::config::Current,
     pub env: &'a instrukt_core::config::Env,
-    pub clock: instrukt_connector::Clock,
+    /// The operator's clock, as the connectors read it.
+    pub clock: std::sync::Arc<dyn Fn() -> jiff::Timestamp + Send + Sync>,
     pub wake: std::sync::mpsc::SyncSender<()>,
     pub supervise: std::sync::mpsc::SyncSender<()>,
 }
@@ -731,14 +732,6 @@ pub trait CompanySupervision: Send {
     /// Restarts every connection whose thread ended unexpectedly.
     fn check(&mut self);
 }
-
-/// How a connector kind is built once for a process, from its environment
-/// and clock; a setting the kind refuses stops the runner at its start.
-pub type BuildKind =
-    fn(
-        &instrukt_core::config::Env,
-        instrukt_connector::Clock,
-    ) -> Result<Box<dyn instrukt_connector::Kind>, instrukt_connector::ConnectorError>;
 
 impl std::fmt::Debug for RunnerWiring {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

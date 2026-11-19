@@ -25,7 +25,7 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
         &ctx.home,
         &session,
         instrukt_todos::work::recorded_assignment,
-        instrukt_runner::conversations::conversation_assignment,
+        instrukt_company::conversations::conversation_assignment,
     )?;
     assignment
         .map(|assignment| {

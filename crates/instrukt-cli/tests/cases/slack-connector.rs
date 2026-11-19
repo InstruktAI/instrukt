@@ -5,9 +5,9 @@
 
 use crate::fixtures::conversing::{Company, company_home, slack_settings, wait};
 use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN, Post};
+use instrukt_company::conversations::{ConnectionState, Status};
+use instrukt_connector_slack::{API_URL_SETTING, WORKING};
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::conversations::{ConnectionState, Status};
-use instrukt_runner::slack::{API_URL_SETTING, WORKING};
 
 /// What `instrukt run` says on standard error as it refuses to start. It
 /// refuses before it serves anything: a runner that starts instead is

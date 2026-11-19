@@ -53,7 +53,7 @@ impl RunnerState {
     }
 
     /// Runs `change` in one write transaction under the writer lock.
-    pub(crate) fn write<T, E: From<StateError>>(
+    pub fn write<T, E: From<StateError>>(
         &self,
         change: impl FnOnce(&Transaction<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
@@ -69,7 +69,7 @@ impl RunnerState {
 
     /// Runs `read` against the database; `None` when none exists yet,
     /// which is empty state.
-    pub(crate) fn read<T>(
+    pub fn read<T>(
         &self,
         read: impl FnOnce(&Connection, &Path) -> Result<T, StateError>,
     ) -> Result<Option<T>, StateError> {
@@ -81,9 +81,7 @@ impl RunnerState {
 }
 
 /// Maps a SQLite failure on the database at `path` into a state error.
-pub(crate) fn sql(
-    path: &Path,
-) -> impl Fn(instrukt_core::state_db::rusqlite::Error) -> StateError + '_ {
+pub fn sql(path: &Path) -> impl Fn(instrukt_core::state_db::rusqlite::Error) -> StateError + '_ {
     move |source| {
         StateError::Db(StateDbError::Sqlite {
             path: path.to_path_buf(),
@@ -93,12 +91,12 @@ pub(crate) fn sql(
 }
 
 /// The path of the transaction's database, for error messages.
-pub(crate) fn db_path(conn: &Connection) -> PathBuf {
+pub fn db_path(conn: &Connection) -> PathBuf {
     conn.path().map(PathBuf::from).unwrap_or_default()
 }
 
 /// A stored value the runner cannot read.
-pub(crate) fn invalid(path: &Path, message: impl std::fmt::Display) -> StateError {
+pub fn invalid(path: &Path, message: impl std::fmt::Display) -> StateError {
     StateError::Db(StateDbError::invalid(path, message.to_string()))
 }
 

@@ -48,7 +48,7 @@ pub fn run(args: DiscussArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let result = links::manage(
         &ctx.home,
         instrukt_todos::work::recorded_assignment,
-        instrukt_runner::conversations::conversation_assignment,
+        instrukt_company::conversations::conversation_assignment,
         &Discussion {
             adapter: adapter.as_ref(),
             env: &env,
