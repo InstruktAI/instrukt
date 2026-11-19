@@ -323,16 +323,6 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
     }
 }
 
-/// The findings of a `connectors` value at `path`, by key and kind, against
-/// the installed kinds.
-pub fn connector_findings(value: &Value, path: &str) -> Vec<(String, FindingKind)> {
-    let mut out = Vec::new();
-    check_connectors(value, path, &mut out);
-    out.into_iter()
-        .map(|found| (found.key, found.kind))
-        .collect()
-}
-
 /// A kind's field names, as a sentence lists them: `a, b and c`.
 fn listed(kind: &Declaration) -> String {
     let names: Vec<&str> = kind.fields.iter().map(|field| field.name).collect();
@@ -442,6 +432,35 @@ mod tests {
         let sam = members.by_email("SAM@example.com").unwrap();
         assert_eq!(ProjectSlug::parse(&sam.name).as_ref(), Ok(&sam.key));
         assert_eq!(members.by_email("other@example.com"), None);
+    }
+
+    #[test]
+    fn a_slack_declaration_needs_both_references_and_a_positive_context() {
+        use FindingKind::{InvalidValue, Missing, UnknownKey};
+        crate::config::_connectors::install_fixture();
+        assert_eq!(
+            judged(
+                "slack: {app_token: literal, context_messages: 0, extra: 1}\nteams: {}\n",
+                check_connectors,
+                "connectors"
+            ),
+            [
+                ("connectors.slack.bot_token".to_owned(), Missing),
+                ("connectors.slack.app_token".to_owned(), InvalidValue),
+                ("connectors.slack.context_messages".to_owned(), InvalidValue),
+                ("connectors.slack.extra".to_owned(), UnknownKey),
+                ("connectors.teams".to_owned(), UnknownKey),
+            ]
+        );
+        // Both references suffice.
+        assert_eq!(
+            judged(
+                "slack: {app_token: '${A}', bot_token: '${B}'}\n",
+                check_connectors,
+                "connectors"
+            ),
+            []
+        );
     }
 
     #[test]

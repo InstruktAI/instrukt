@@ -322,18 +322,24 @@ pub fn run(
     // the intake. Both report their unexpected end to this loop at once.
     let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
     let demand = !crate::conversations::admitted_demand(&current.get()).is_empty();
+    // Each kind of the build's registry is built once, when connectors are
+    // hosted; a setting a kind refuses stops the runner here.
     let connectors = demand
         .then(|| {
-            let lookup = |name: &str| cx.env.get(name).map(str::to_owned);
-            crate::slack::SlackEndpoint::from_lookup(&lookup, Arc::clone(&clock)).map(|endpoint| {
-                Arc::new(crate::connector_host::Directory::new(
-                    vec![Box::new(crate::slack::SlackKind::new(endpoint))],
-                    Arc::clone(&clock),
-                )) as Arc<dyn crate::connector_host::Connectors>
-            })
+            cx.wiring
+                .connector_kinds
+                .iter()
+                .map(|build| build(cx.env, Arc::clone(&clock)))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|kinds| {
+                    Arc::new(crate::connector_host::Directory::new(
+                        kinds,
+                        Arc::clone(&clock),
+                    )) as Arc<dyn crate::connector_host::Connectors>
+                })
         })
         .transpose()
-        .map_err(|e| RunnerError::Conversations(e.to_string()))?;
+        .map_err(|e| RunnerError::Conversations(e.cause))?;
     let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
     let destinations = connectors
         .as_ref()

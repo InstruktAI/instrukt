@@ -43,7 +43,7 @@ pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,
     Current, Offer, serve,
 };
-pub use _company::{Member, Members, connector_findings};
+pub use _company::{Member, Members};
 pub use _connectors::{DeclaredConnector, install_connector_declarations};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};

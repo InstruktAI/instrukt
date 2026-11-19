@@ -675,7 +675,19 @@ pub struct RunnerWiring {
     pub github_credentials: Option<Arc<dyn GitHubCredentials>>,
     pub work: Option<WorkPorts>,
     pub workflow: Option<Arc<dyn WorkflowAssignments>>,
+    /// How each connector kind of this build is built: the same registry
+    /// whose declarations configuration validates against. The runner builds
+    /// each once, when it starts hosting connectors.
+    pub connector_kinds: Vec<BuildKind>,
 }
+
+/// How a connector kind is built once for a process, from its environment
+/// and clock; a setting the kind refuses stops the runner at its start.
+pub type BuildKind =
+    fn(
+        &instrukt_core::config::Env,
+        instrukt_connector::Clock,
+    ) -> Result<Box<dyn instrukt_connector::Kind>, instrukt_connector::ConnectorError>;
 
 impl std::fmt::Debug for RunnerWiring {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -683,6 +695,7 @@ impl std::fmt::Debug for RunnerWiring {
             .field("work", &self.work.is_some())
             .field("github_credentials", &self.github_credentials.is_some())
             .field("workflow", &self.workflow.is_some())
+            .field("connector_kinds", &self.connector_kinds.len())
             .finish()
     }
 }
