@@ -249,7 +249,7 @@ fn run_hook(args: &RunArgs, ctx: &Ctx) -> anyhow::Result<ExitCode> {
     if let Err(err) = start_hook_run(hook, args, ctx) {
         tracing::warn!(event = "hook_run_failed", hook = %hook, error = %format!("{err:#}"));
         if matches!(hook, Hook::PreCommit | Hook::PostCheckout) {
-            eprintln!("instrukt {hook}: {err:#}");
+            eprintln!("instrukt {hook}: {}", crate::output::error_line(&err));
         }
     }
     Ok(ExitCode::SUCCESS)

@@ -58,9 +58,12 @@ every visit with it.
   configuration layers, publication state, the repository's hook sections
   and its git remotes. Nothing is re-derived from other repositories, and
   GitHub is not contacted.
-- A part that cannot be read (an unparsable layer, unreadable publication
-  state) is reported in its section with the path and the reason; the other
-  sections are still reported, and the exit status is non-zero.
+- A part that cannot be read (an unparsable project layer, unreadable
+  publication state) is reported in its section with the path and the
+  reason; the other sections are still reported, and the exit status is
+  non-zero. A machine layer that cannot be loaded stops status as it stops
+  every command
+  (`project/instrukt/spec/feature/configuration/layered-configuration`).
 - With every part read, the exit status is zero whatever the report says:
   an unconfigured computer or an unadopted repository is an answer, not a
   failure.

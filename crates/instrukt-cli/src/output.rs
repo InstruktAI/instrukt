@@ -51,3 +51,52 @@ impl Output {
         }
     }
 }
+
+/// `error` as the one line a failing command ends with: its causes after it,
+/// each only when the message before it does not already hold it, and a
+/// message of several lines joined with `; ` (after a line ending in `:`,
+/// with a space).
+pub fn error_line(error: &anyhow::Error) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for cause in error.chain() {
+        let text = cause.to_string();
+        if parts
+            .last()
+            .is_some_and(|before| before.contains(text.trim()))
+        {
+            continue;
+        }
+        parts.push(text);
+    }
+    let mut line = String::new();
+    for piece in parts
+        .join(": ")
+        .lines()
+        .map(str::trim)
+        .filter(|piece| !piece.is_empty())
+    {
+        if !line.is_empty() {
+            line.push_str(if line.ends_with(':') { " " } else { "; " });
+        }
+        line.push_str(piece);
+    }
+    line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::error_line;
+
+    #[test]
+    fn an_error_is_one_line_holding_each_cause_once() {
+        let error = anyhow::anyhow!("did not find expected ']' at line 2 column 1")
+            .context(
+                "/m/instrukt.yaml is not valid YAML: did not find expected ']' at line 2 column 1",
+            )
+            .context("cannot read adopted-project demand");
+        insta::assert_snapshot!(error_line(&error), @"cannot read adopted-project demand: /m/instrukt.yaml is not valid YAML: did not find expected ']' at line 2 column 1");
+        let refused =
+            anyhow::anyhow!("refused; nothing was written:\na: unknown key\nb: not a list\n");
+        insta::assert_snapshot!(error_line(&refused), @"refused; nothing was written: a: unknown key; b: not a list");
+    }
+}

@@ -309,6 +309,17 @@ Every finding names the document and key; the exit status is non-zero when
 there is at least one finding. Validation judges the document as written;
 references are checked for unresolved keys and cycles without executing commands.
 
+### A machine layer that cannot be loaded
+
+The machine layer cannot be loaded when it cannot be read, is not YAML, is not
+a mapping, or its `schema_version` is missing or newer than this instrukt
+knows. Then every command fails with exit status 1 and one line naming the
+file, the reason and `instrukt config validate --global`; that command fails
+with the file's own problem and where it is. A layer that loads is never
+judged again by the commands that read it: its validation findings, an
+unknown key among them, are `instrukt config validate`'s, and stop no other
+command.
+
 ### Schema versions and migration
 
 - Every document carries `schema_version`; `init` writes the current one.

@@ -269,12 +269,17 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         Duration::from_secs(20),
         extraction,
     );
-    // Meanwhile the machine layer is broken by hand. Once T3's database reads
-    // again, the same worker extracts with the configuration the runner
-    // admitted, which clears its failure, and holds what was begun.
+    // Meanwhile the machine layer is broken by hand, which stops every
+    // command, status among them. T3's database reads again and a
+    // conversation begins while it is broken; the runner holds on with the
+    // configuration it admitted. Once the layer is mended, the same worker
+    // has cleared its failure and holds what was begun.
     let machine = env.instrukt_home().join("instrukt.yaml");
     let admitted = std::fs::read_to_string(&machine).unwrap();
     std::fs::write(&machine, format!("{admitted}modules: [\n")).unwrap();
+    env.run(env.home(), ["events", "status", "--json"])
+        .failure()
+        .code(1);
     recreated.restore_shape();
     recreated.thread("repaired", None, None, "2026-11-08T13:00:00.000Z");
     recreated.message(
@@ -284,12 +289,12 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         "2026-11-08T13:00:00.000Z",
         false,
     );
+    std::fs::write(&machine, &admitted).unwrap();
     crate::common::wait_until(
         "the extraction failure to clear",
         Duration::from_secs(20),
         || !extraction(),
     );
-    std::fs::write(&machine, &admitted).unwrap();
     crate::common::wait_until(
         "the repaired conversation to be held",
         Duration::from_secs(20),

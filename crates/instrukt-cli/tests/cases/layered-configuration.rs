@@ -268,3 +268,26 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     insta::assert_snapshot!("newer-schema-validate", stderr(&env, &refused));
     unchanged(&repo, &bytes);
 }
+
+// The contract is the spec's "A machine layer that cannot be loaded"; a
+// broken machine layer is a failure of every goal, not a goal of its own.
+#[test]
+fn a_machine_layer_that_cannot_be_loaded_stops_a_repository_command_with_one_line() {
+    let env = TestEnv::new();
+    let repo = project(&env, "own", "schema_version: 1\nproject: own\n");
+    write_global(&env, "schema_version: [oops\n");
+    let refused = env.run(repo.path(), ["docs", "render"]).failure().code(1);
+    insta::assert_snapshot!(
+        format!("stdout:\n{}stderr:\n{}", stdout(&env, &refused), stderr(&env, &refused)),
+        @r"
+    stdout:
+    stderr:
+    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: it is not valid YAML: did not find expected ',' or ']' at line 2 column 1, while parsing a flow sequence at line 1 column 17; run `instrukt config validate --global` to see what to fix
+    "
+    );
+
+    // A layer that loads is judged by validation alone: an unknown key stops
+    // no other command.
+    write_global(&env, &format!("{MACHINE}bogus: 1\n"));
+    env.run(repo.path(), ["docs", "render"]).success();
+}

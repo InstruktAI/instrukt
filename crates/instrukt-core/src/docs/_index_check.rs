@@ -262,9 +262,7 @@ impl Index<'_, '_> {
         let mut described = false;
         for (key, value) in &mapping {
             let Some(name) = key.as_str().filter(|k| allowed.contains(k)) else {
-                let shown = key
-                    .as_str()
-                    .map_or_else(|| format!("{key:?}"), str::to_owned);
+                let shown = key.as_str().map_or_else(|| shown_value(key), str::to_owned);
                 self.finding(FindingCode::IndexKeyNotAllowed, shown);
                 continue;
             };
@@ -318,7 +316,7 @@ impl Index<'_, '_> {
             let Some(id) = item.as_str().and_then(|raw| SnippetId::parse(raw).ok()) else {
                 let shown = item
                     .as_str()
-                    .map_or_else(|| format!("{item:?}"), str::to_owned);
+                    .map_or_else(|| shown_value(item), str::to_owned);
                 self.finding(
                     FindingCode::IndexShapeInvalid,
                     format!("{key}: {shown} is not a snippet id"),
@@ -364,9 +362,7 @@ impl Index<'_, '_> {
         };
         let supported: Vec<&str> = AGENT_CLIS.iter().map(|(name, _)| *name).collect();
         for (key, ids) in map {
-            let name = key
-                .as_str()
-                .map_or_else(|| format!("{key:?}"), str::to_owned);
+            let name = key.as_str().map_or_else(|| shown_value(key), str::to_owned);
             if !supported.contains(&name.as_str()) {
                 self.finding(
                     FindingCode::IndexAgentUnsupported,
@@ -402,6 +398,13 @@ pub(super) fn pending_in(
         .iter()
         .find(|entry| &entry.id == id)
         .map(|entry| !entry.delivered_by.is_empty())
+}
+
+/// A YAML value that is no string, as the operator wrote it.
+fn shown_value(value: &serde_yaml_ng::Value) -> String {
+    serde_yaml_ng::to_string(value)
+        .map(|text| text.trim().to_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

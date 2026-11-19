@@ -165,6 +165,14 @@ contract without executing its operation: what the command, each flag and
 each setting it touches is for, and when to choose it. `instrukt -h` lists the
 commands. Docs name `-h`.
 
+A failing command ends one way: one readable line on stderr, `instrukt: `
+and then what failed, where, and what to run when there is a door; it is
+printed once and the exit status is non-zero. An error's causes follow it
+on that line, each once; findings that read as a list are joined with `; `.
+Nothing on the terminal is a program's debug rendering of a value: durations
+are whole seconds, kinds and verdicts their plain names. Usage errors keep
+the command-line parser's own text and exit status 2.
+
 ### External surfaces
 
 | Surface | Used by | How |
@@ -398,6 +406,11 @@ Runtime delivery retains procedure-first briefing, untrusted event provenance an
 session-fixed timing through A3's bounded batch log.
 
 ## Failure modes
+
+- **The program panics:** the terminal shows only `instrukt stopped
+  unexpectedly; the details are in <log path>`; the panic's message and
+  location go to that log, and the exit status is 101. A panic before the
+  command's log is open names the log folder and records nothing.
 
 - **A hook did not fire** (a reset): the next `sync` from any trigger catches
   up, because every sync converges on main; `docs get` warns when

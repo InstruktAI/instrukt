@@ -263,6 +263,28 @@ pub(super) fn current_view(
     require_usable(layer, path, &value)?;
     Ok(value)
 }
+/// Why the machine layer cannot be loaded at all: it is unreadable, not
+/// YAML, not a mapping, or its `schema_version` is missing or newer than this
+/// instrukt knows. `None` when it is absent or loads; what validation finds
+/// in a layer that loads stays with `instrukt config validate`.
+pub fn unloadable_machine_layer(home: &Home) -> Option<ConfigError> {
+    let path = Layer::Global.path(home);
+    let document = match read(&path) {
+        Ok(Some(document)) => document,
+        Ok(None) => return None,
+        Err(error) => return Some(error),
+    };
+    match version(&document.value) {
+        Version::Newer(found) => Some(ConfigError::NewerSchema {
+            path,
+            found,
+            current: CURRENT_SCHEMA_VERSION,
+        }),
+        Version::Unknown => Some(ConfigError::UnknownSchema { path }),
+        Version::Current | Version::Older(_) => None,
+    }
+}
+
 /// A current in-memory view, retaining the on-disk version and migration notice.
 pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, ConfigError> {
     let path = layer.path(home);
