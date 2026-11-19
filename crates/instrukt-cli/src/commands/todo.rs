@@ -1428,7 +1428,13 @@ fn fact(fact: &StampFact) -> String {
             verdict,
             head,
             report,
-        } => format!("preparation head: {verdict:?}; {head}; report {report}"),
+        } => format!(
+            "preparation head: {}; {head}; report {report}",
+            match verdict {
+                ReviewVerdict::Approve => "approve",
+                ReviewVerdict::NeedsWork => "needs_work",
+            }
+        ),
         StampFact::RoleComplete {
             head,
             role,

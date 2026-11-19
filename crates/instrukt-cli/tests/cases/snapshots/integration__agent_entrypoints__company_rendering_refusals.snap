@@ -4,23 +4,29 @@ expression: "refusals.join(\"\\n\")"
 ---
 a linked folder:
 AGENTS.md: AGENTS.master.md requires `docs/team/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
 
 a linked docs folder:
 AGENTS.md: AGENTS.master.md requires `docs/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
 
 a staged docs link:
 AGENTS.md: AGENTS.master.md requires `docs/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
 
 a configured value among the required reads:
 AGENTS.md: AGENTS.master.md reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
 
 config validate --company acme:
 AGENTS.md: AGENTS.master.md reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead
 
 a cycle:
 AGENTS.md: docs/a.md → docs/b.md → docs/a.md require each other in a cycle, so no order puts each document after what it requires; nothing is rendered until one of these required reads is removed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
 
 references in the text:
 AGENTS.md: AGENTS.master.md references `@general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
 AGENTS.md: AGENTS.master.md references `../secret.md`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
 AGENTS.md: AGENTS.master.md references `general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again

@@ -174,6 +174,15 @@ fn ci_catches_instructions_a_commit_left_stale() {
             format!("unsupported_directive_{name}"),
             stdout(&env, &refused)
         );
+        insta::allow_duplicates! {
+            // The render meant to write and ends with one line saying so; the
+            // check is a report, and its findings are its output.
+            insta::assert_snapshot!(
+                shown(&env, &refused.get_output().stderr),
+                @"instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again"
+            );
+            insta::assert_snapshot!(shown(&env, &checked.get_output().stderr), @"");
+        }
         assert_eq!(repo.read("AGENTS.md"), committed);
     }
     assert!(!instrukt_home.exists());

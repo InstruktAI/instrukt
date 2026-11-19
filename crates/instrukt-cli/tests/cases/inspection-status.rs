@@ -118,10 +118,18 @@ fn status_reports_claim_owner_and_keeps_sections_when_configuration_is_broken() 
 "owner"
 "#);
     assert_eq!(report["repository"]["positions"][0]["conflict"], true);
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"), "broken: [").unwrap();
+    // A project layer that cannot be read is reported in its section, the
+    // others still reported; a machine layer that cannot be loaded stops
+    // status as it stops every command.
+    std::fs::write(contender.path().join("instrukt.yaml"), "broken: [").unwrap();
     let result = env.run(contender.path(), ["status", "--json"]).failure();
     let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
-    assert!(!report["machine"]["errors"].as_array().unwrap().is_empty());
+    assert!(
+        !report["repository"]["errors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(report["instrukt"]["version"], env!("CARGO_PKG_VERSION"));
     insta::assert_json_snapshot!(report["published"][0]["owner"], @r#"
 "owner"

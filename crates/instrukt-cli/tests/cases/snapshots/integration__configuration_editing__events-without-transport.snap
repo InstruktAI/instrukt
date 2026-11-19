@@ -2,5 +2,4 @@
 source: crates/instrukt-cli/tests/cases/configuration-editing.rs
 expression: "stderr(&env, &refused)"
 ---
-instrukt: refused; nothing was written:
-[TMP]/demo/instrukt.yaml: modules.events: event responses need the event transport, and `redis.cluster.url` is not set; set it in the global layer first (`instrukt config patch --global`)
+instrukt: refused; nothing was written: [TMP]/demo/instrukt.yaml: modules.events: event responses need the event transport, and `redis.cluster.url` is not set; set it in the global layer first (`instrukt config patch --global`)

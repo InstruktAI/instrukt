@@ -25,6 +25,16 @@ pub enum GraphifyState {
     Drifted { detail: String },
 }
 
+impl std::fmt::Display for GraphifyState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing => f.write_str("it is not installed"),
+            Self::Ready => f.write_str("it is ready"),
+            Self::Drifted { detail } => f.write_str(detail),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GraphifyError {
     #[error("cannot resolve the instrukt tool directory: {0}")]
@@ -36,7 +46,7 @@ pub enum GraphifyError {
     )]
     Install(String),
     #[error(
-        "Graphify did not converge to {expected}: {0:?}; rerun `instrukt install`",
+        "Graphify did not converge to {expected}: {0}; rerun `instrukt install`",
         expected = graphify_version()
     )]
     Verification(GraphifyState),

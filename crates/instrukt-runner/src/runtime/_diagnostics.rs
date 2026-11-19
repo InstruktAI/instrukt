@@ -40,7 +40,10 @@ impl fmt::Display for NativeCause {
                 phase,
                 kind,
                 os_code,
-            } => write!(f, "native {phase} failed ({kind:?}, OS code {os_code:?})"),
+            } => match os_code {
+                Some(code) => write!(f, "native {phase} failed ({kind}, OS code {code})"),
+                None => write!(f, "native {phase} failed ({kind})"),
+            },
             Self::InvalidResponse {
                 category,
                 line,
