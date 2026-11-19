@@ -609,6 +609,16 @@ fn kind(driver: &str) -> Option<HarnessKind> {
         _ => None,
     }
 }
+/// The model family a usage window is scoped to. At the pinned release T3
+/// reports a Claude window scoped to one model as `seven_day_<name>`
+/// (`apps/server/src/provider/claudeUsageLimits.ts`, `scopedWindowId`):
+/// its name lowercased. Every other window applies to all models.
+fn scoped_family(id: &str) -> Option<String> {
+    id.strip_prefix("seven_day_")
+        .filter(|name| !name.is_empty())
+        .map(str::to_lowercase)
+}
+
 fn unavailable(provider: &Provider) -> Option<String> {
     if !provider.enabled || matches!(provider.status, Status::Disabled) {
         return Some("instance disabled".into());
@@ -783,6 +793,7 @@ fn translate(source: Snapshot) -> ProviderSnapshot {
                         .into_iter()
                         .flat_map(|usage| usage.windows)
                         .map(|window| UsageWindow {
+                            model_family: scoped_family(&window.id),
                             id: window.id,
                             used_percent: window.used_percent,
                             resets_at: window.resets_at,

@@ -240,6 +240,10 @@ pub struct UsageWindow {
     pub id: String,
     pub used_percent: f64,
     pub resets_at: Option<jiff::Timestamp>,
+    /// The model family the window applies to, lowercase, as the runtime
+    /// reports it (`fable` for a Claude window scoped to Fable); `None` for
+    /// a window that applies to all of the profile's models.
+    pub model_family: Option<String>,
 }
 #[derive(Debug, Clone, Copy)]
 pub enum SelectionOperation {

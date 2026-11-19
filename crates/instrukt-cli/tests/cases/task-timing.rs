@@ -30,7 +30,7 @@ fn registrar_stubs(env: &mut TestEnv) -> PathBuf {
     let log = dir.join("calls");
     for name in ["launchctl", "systemctl", "crontab"] {
         let script = format!(
-            "#!/bin/sh\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = list ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = load ]; then touch '{dir}/loaded'; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = is-active ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = enable ]; then touch '{dir}/loaded'; fi\nprintf '%s' \"{name}\" >> '{log}'\nfor a in \"$@\"; do printf ' %s' \"$a\" >> '{log}'; done\necho >> '{log}'\n\
+            "#!/bin/sh\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = list-units ]; then exit 0; fi\nif [ \"{name}\" = launchctl ] && [ \"$*\" = list ]; then printf 'PID\\tStatus\\tLabel\\n'; exit 0; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = list ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = load ]; then touch '{dir}/loaded'; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = is-active ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = enable ]; then touch '{dir}/loaded'; fi\nprintf '%s' \"{name}\" >> '{log}'\nfor a in \"$@\"; do printf ' %s' \"$a\" >> '{log}'; done\necho >> '{log}'\n\
              if [ \"{name}\" = crontab ] && [ \"${{1:-}}\" = - ]; then cat > '{dir}/crontab'; fi\n\
              if [ \"{name}\" = crontab ] && [ \"${{1:-}}\" = -l ]; then cat '{dir}/crontab' 2>/dev/null || exit 1; fi\n",
             log = log.display(),
@@ -84,6 +84,7 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
     insta::assert_snapshot!(
         calls.replace(plist_path.to_str().unwrap(), "<plist>"),
         @r"
+    crontab -l
     launchctl unload <plist>
     launchctl load -w <plist>
     "
@@ -115,8 +116,10 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
 #[cfg(not(target_os = "macos"))]
 fn registered(env: &TestEnv, calls: &str) -> Registered {
     insta::assert_snapshot!(calls, @r"
+    crontab -l
     systemctl --user daemon-reload
     systemctl --user enable --now instrukt-tick.timer
+    crontab -l
     ");
     let units = env.home().join(".config/systemd/user");
     let timer = std::fs::read_to_string(units.join("instrukt-tick.timer")).unwrap();

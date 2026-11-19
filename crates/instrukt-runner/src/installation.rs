@@ -1,5 +1,7 @@
 //! Converge only machine infrastructure demanded by adopted projects. Inspection
-//! shares the demand and ownership model and executes no infrastructure mutation steps.
+//! shares the demand model and executes no infrastructure mutation steps.
+//! instrukt's services are found by the names this home gives them; nothing
+//! records what installation wrote.
 mod _demand;
 pub(crate) mod _launch;
 mod _package;
@@ -20,8 +22,6 @@ use std::path::PathBuf;
 pub enum InstallationError {
     #[error("cannot read adopted-project demand: {0}")]
     Demand(String),
-    #[error("cannot read infrastructure ownership: {0}")]
-    Ownership(String),
     #[error("{resource} inspection failed: {detail}")]
     Inspection {
         resource: &'static str,
@@ -134,9 +134,8 @@ pub enum ServiceState {
     /// The service is loaded and its process is alive; it may be waiting
     /// for the runner lock.
     Running,
-    /// There is demand, and its service is missing, stale, stopped, in
-    /// conflict with a definition instrukt does not own, or cannot be
-    /// inspected.
+    /// There is demand, and its service is missing, stale, stopped,
+    /// unloaded or cannot be inspected.
     Unmet,
     /// An owned service remains and there is no demand.
     Obsolete,
@@ -206,6 +205,9 @@ pub struct Request<'a> {
     pub conversations: bool,
     pub github: &'a dyn crate::interfaces::GitHubReadiness,
     pub now: jiff::Timestamp,
+    /// The company hosted here, whose conversations section the report
+    /// shows; none shows none.
+    pub company: Option<&'a dyn crate::interfaces::CompanyPorts>,
 }
 /// A failed resource leaves completed resources recorded, so a rerun repairs
 /// observed drift rather than trusting the previous overall outcome.
@@ -259,18 +261,30 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     if request.module == Some(Module::Blueprint) {
         return Ok(report);
     }
-    let mut owned = _services::Owned::load(request.home)
-        .map_err(|e| InstallationError::Ownership(e.to_string()))?;
     if !request.check {
-        owned
-            .persist_migration(request.home)
-            .map_err(|e| InstallationError::Ownership(e.to_string()))?;
+        // An earlier release's record of what installation wrote: the names
+        // this home gives its services replace it.
+        match instrukt_core::fsx::remove_file(
+            request.home.state_dir().join("installation/owned.json"),
+        ) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => report.finding("installation record", error),
+        }
+    }
+    if request.module.is_none()
+        && let Err(error) = _services::withdraw_legacy(request, demand.complete, &mut report)
+    {
+        report.finding("earlier registrations", error);
+    }
+    if request.module.is_none() && !request.conversations {
+        events_transport(request, &mut report);
     }
     if request.module.is_none() {
-        runner_service(request, &mut owned, &demand, &mut report);
+        runner_service(request, &demand, &mut report);
     }
     if request.conversations {
-        boot_prerequisite(request, &owned, &demand, &mut report);
+        boot_prerequisite(request, &demand, &mut report);
         return Ok(report);
     }
     if request.module != Some(Module::History)
@@ -279,7 +293,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         let required = !demand.projects().is_empty() && global.ticks_enabled()?;
         let projects = demand.projects();
         let tick = _services::tick(request);
-        if let Err(error) = owned.reconcile(
+        if let Err(error) = _services::reconcile(
             request,
             &tick,
             required,
@@ -303,13 +317,17 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         if (request.module != Some(Module::History) && !demand.events.is_empty())
             || (request.module != Some(Module::Events) && !demand.history_owned_redis.is_empty())
         {
-            if let Err(error) = _redis::ensure(request, &mut owned, &demand, &mut report) {
+            if let Err(error) = _redis::ensure(request, &demand, &mut report) {
                 report.finding("Redis", error);
             }
         } else if demand.redis_references.is_empty()
             && demand.events.is_empty()
-            && let Err(error) =
-                owned.withdraw_named(request, ResourceKind::Redis, demand.complete, &mut report)
+            && let Err(error) = _services::withdraw_named(
+                request,
+                ResourceKind::Redis,
+                demand.complete,
+                &mut report,
+            )
         {
             report.finding("Redis", error);
         }
@@ -320,25 +338,44 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             report.finding("history Redis", error);
         }
         if request.module != Some(Module::History)
-            && let Err(error) = receiver(request, &mut owned, &demand, &mut report)
+            && let Err(error) = receiver(request, &demand, &mut report)
         {
             report.finding("receiver", error);
         }
     }
-    boot_prerequisite(request, &owned, &demand, &mut report);
+    if request.module.is_none()
+        && let Err(error) = _services::report_unknown(request, &mut report)
+    {
+        report.finding("registrations", error);
+    }
+    boot_prerequisite(request, &demand, &mut report);
     Ok(report)
+}
+
+/// Event responses switched on without the event transport they are carried
+/// on: the admission finding at `modules.events`, which keeps that project's
+/// events from being admitted on this computer.
+fn events_transport(request: &Request<'_>, report: &mut Report) {
+    let Ok(candidate) = instrukt_core::config::Admitted::load(request.home) else {
+        return;
+    };
+    for finding in candidate
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == instrukt_core::config::FindingKind::EventsNeedTransport)
+    {
+        report.finding(
+            format!("{} `{}`", finding.document.display(), finding.key),
+            &finding.message,
+        );
+    }
 }
 
 /// On Linux every owned unit is a systemd user unit that has to run without
 /// a login; one finding names those that need the user's service manager to
 /// start at boot when it does not. A wake-up registered with cron needs no
 /// such setting, and instrukt never changes it.
-fn boot_prerequisite(
-    request: &Request<'_>,
-    owned: &_services::Owned,
-    demand: &_demand::Demand,
-    report: &mut Report,
-) {
+fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &mut Report) {
     if request.scheduler != Scheduler::SystemdUser {
         return;
     }
@@ -350,8 +387,8 @@ fn boot_prerequisite(
     ]
     .into_iter()
     .filter(|(kind, _)| {
-        owned.registered(*kind)
-            || (*kind == ResourceKind::Runner && !demand.conversations.is_empty())
+        (*kind == ResourceKind::Runner && !demand.conversations.is_empty())
+            || _services::registered(request, *kind)
     })
     .map(|(_, unit)| unit)
     .collect();
@@ -368,12 +405,7 @@ fn boot_prerequisite(
 /// The owned service that keeps `instrukt run` running while a company
 /// home declares a connector; withdrawn when that
 /// demand ends. Its state is recorded in the report as it was found.
-fn runner_service(
-    request: &Request<'_>,
-    owned: &mut _services::Owned,
-    demand: &Demand,
-    report: &mut Report,
-) {
+fn runner_service(request: &Request<'_>, demand: &Demand, report: &mut Report) {
     let desired = _services::runner(request);
     let paths = desired.files.keys().cloned().collect::<Vec<_>>();
     let status = |state, cause: Option<String>| ServiceStatus {
@@ -392,11 +424,12 @@ fn runner_service(
         report.finding(ResourceKind::Runner, &cause);
         status(ServiceState::Unmet, Some(cause))
     } else if demand.conversations.is_empty() {
-        if !owned.registered(ResourceKind::Runner) {
+        if !_services::registered(request, ResourceKind::Runner) {
             status(ServiceState::NoDemand, None)
         } else {
             let check = request.check;
-            match owned.withdraw_named(request, ResourceKind::Runner, demand.complete, report) {
+            match _services::withdraw_named(request, ResourceKind::Runner, demand.complete, report)
+            {
                 Ok(()) if check => status(
                     ServiceState::Obsolete,
                     Some("no company home declares a connector".into()),
@@ -430,16 +463,21 @@ fn runner_service(
         } else {
             None
         };
-        let (state, cause) =
-            match owned.runner_service(request, &desired, &demand.conversations, report) {
-                Ok(None) => (ServiceState::Running, None),
-                Ok(Some(cause)) => (ServiceState::Unmet, Some(cause)),
-                Err(error) => {
-                    let cause = error.to_string();
-                    report.finding(ResourceKind::Runner, &cause);
-                    (ServiceState::Unmet, Some(cause))
-                }
-            };
+        let (state, cause) = match _services::runner_service(
+            request,
+            &desired,
+            demand.complete,
+            &demand.conversations,
+            report,
+        ) {
+            Ok(None) => (ServiceState::Running, None),
+            Ok(Some(cause)) => (ServiceState::Unmet, Some(cause)),
+            Err(error) => {
+                let cause = error.to_string();
+                report.finding(ResourceKind::Runner, &cause);
+                (ServiceState::Unmet, Some(cause))
+            }
+        };
         let cause = match (cause, boot) {
             (Some(cause), Some(boot)) => Some(format!("{cause}; {boot}")),
             (cause, boot) => cause.or(boot),
@@ -509,12 +547,7 @@ fn graphify(request: &Request<'_>, projects: &[String], report: &mut Report) {
     );
 }
 
-fn receiver(
-    request: &Request<'_>,
-    owned: &mut _services::Owned,
-    demand: &Demand,
-    report: &mut Report,
-) -> anyhow::Result<()> {
+fn receiver(request: &Request<'_>, demand: &Demand, report: &mut Report) -> anyhow::Result<()> {
     let global = Configuration::load_global(request.home)?;
     let mut projects = Vec::new();
     let mut ingress_port = None;
@@ -565,15 +598,15 @@ fn receiver(
         let route = health_route
             .clone()
             .ok_or_else(|| anyhow::anyhow!("receiver has no valid health route"))?;
-        let receiver = owned.receiver_definition(request, port, route)?;
-        owned.reconcile(request, &receiver, true, demand.complete, &projects, report)?;
+        let receiver = _services::receiver_definition(request, port, route)?;
+        _services::reconcile(request, &receiver, true, demand.complete, &projects, report)?;
         if !request.check
             && let Some(route) = health_route
         {
             receiver_health(port, &route)?;
         }
     } else {
-        owned.withdraw_named(request, ResourceKind::Receiver, demand.complete, report)?;
+        _services::withdraw_named(request, ResourceKind::Receiver, demand.complete, report)?;
     }
     Ok(())
 }
@@ -593,8 +626,6 @@ pub fn ticks_status(
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let enabled = !demand.projects().is_empty();
     let policy = Configuration::load_global(request.home)?.ticks_enabled()?;
-    let mut owned = _services::Owned::load(request.home)
-        .map_err(|e| InstallationError::Ownership(e.to_string()))?;
     let tick = _services::tick(request);
     let mut inspection = Request {
         check: true,
@@ -602,16 +633,15 @@ pub fn ticks_status(
     };
     inspection.module = None;
     if enabled && policy {
-        owned
-            .reconcile(
-                &inspection,
-                &tick,
-                true,
-                demand.complete,
-                &demand.projects(),
-                &mut registration,
-            )
-            .map_err(|e| inspection_error("wake-up", e))?;
+        _services::reconcile(
+            &inspection,
+            &tick,
+            true,
+            demand.complete,
+            &demand.projects(),
+            &mut registration,
+        )
+        .map_err(|e| inspection_error("wake-up", e))?;
     }
     let last = crate::ticks::last_wakeup(&crate::state::RunnerState::new(request.home))?;
     let stale = enabled && crate::ticks::status(last, now).stale;
@@ -667,8 +697,12 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     })?.flatten();
     let links = crate::links::status(request.home)
         .map_err(|e| inspection_error("conversation links", e))?;
-    let conversations = crate::conversations::status(request.home)
-        .map_err(|e| inspection_error("conversations", e))?;
+    let conversations = request
+        .company
+        .map(|company| company.status(request.home))
+        .transpose()
+        .map_err(|e| inspection_error("conversations", e))?
+        .unwrap_or(serde_json::Value::Null);
     // What the files admit now: each project's admitted modules, the findings
     // of what is left out, or why no generation can be admitted at all.
     let candidate = instrukt_core::config::Admitted::load(request.home);
