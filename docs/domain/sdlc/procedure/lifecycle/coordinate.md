@@ -246,7 +246,7 @@ source evidence is unavailable, state that concrete observation gap.
 - the configured runtime message instruction — address-only intervention or peer challenge.
 - the configured runtime delegation instruction — establish the judgment peer, never dispatch production.
 - the configured runtime discussion instruction — joint reasoning where supported.
-- `instrukt todo create <slug> '<content>' --kind bug --approved` — evidenced ownerless defects only.
+- `instrukt bugs report '<description>'`, then `--approved` once its questions are faced — evidenced ownerless defects only.
 - Filtered `instrukt docs index` / `get` — current governing contracts.
 
 ## Outputs

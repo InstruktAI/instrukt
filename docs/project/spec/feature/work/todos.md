@@ -32,6 +32,8 @@ kind, dependency or grouping rejects creation before partial work is recorded.
 [--tier light|standard|strong|premium]` sets its optional agent preference, which
 dispatch uses before the role mapping in `~/.instrukt/agents.yaml`. Admission is the agent's judgment;
 there is no machine proof gate.
+A defect is reported through `instrukt bugs report`, which puts the
+bug-specific questions first (Bug reports, below).
 `instrukt todo create` accepts `--human-involved true|false` as an action-scoped,
 audit-only declaration under `general/policy/human-involvement-recording`.
 It records observed human involvement and supplies no authorization.
@@ -52,6 +54,50 @@ repository edits or commits belong to a repository-work kind. Preparation routin
 `project/instrukt/spec/feature/workflow/preparation`. Creation never
 authorizes a task, even when a complete plan is supplied: the plan passes the
 configured approval gate.
+
+### Bug reports
+
+`instrukt bugs report '<description>'` is the front door for filing a defect
+(`general/policy/system-defects`).
+
+- **Without `--approved`** it files nothing. It prints the pre-filing
+  questions to stderr and exits 0: serving the questions is that invocation's
+  successful outcome. Only this output names how to complete the filing.
+- **With `--approved`** it files a bug-kind todo in the owning project through
+  the same creation transaction as `instrukt todo create`, with the
+  description as the reported symptom and `--body <text>` beneath it. The bug
+  enters preparation as every bug does
+  (`project/instrukt/spec/feature/workflow/preparation`). `--slug <slug>`
+  names it; without one the slug is `fix-` followed by the description's
+  words, at most 40 characters. `--human-involved true|false` is the
+  audit-only declaration `instrukt todo create` takes. The output names the
+  filed slug and its reflection, as `instrukt todo create` does.
+- **The owning project** is `--project <slug>`: a project publication state
+  records on this computer (`project/instrukt/spec/feature/publication/instrukt-status`,
+  `projects`), filed into its checkout. Without `--project` it is the project
+  the caller stands in. An unknown slug, or no `--project` outside an adopted
+  project, is refused before anything is filed, naming `--project` and the
+  projects this computer records.
+
+The questions, each with the sources it names:
+
+| Question | What the filer faces |
+| --- | --- |
+| Bug or change | Which current contract does the behaviour break? A failure shows that something happened, not that it is wrong. Where no current contract states otherwise it is not a bug: file a change with `instrukt todo create <slug> <content> --kind change --approved` only when the behaviour is wanted, and otherwise file nothing. A report whose premise is that nothing followed up first establishes whether the sanctioned recovery was attempted. |
+| Validity and evidence | An occurrence or a dangerous path in hand (`sdlc/concept/defect-evidence`). The report puts the observations and their addresses first, and keeps any causal account apart from them: each transition with its evidence, the alternatives checked and what remains unknown, or that the cause is not established. |
+| Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list`, `instrukt bugs list` and `instrukt bugs suppressions` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
+| Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
+| Owning project | The project that owns the defect, named with `--project`. A symptom that stops once the observing project's own configuration matches an instrukt default is that project's to fix, there. |
+
+The output ends with the approved form:
+`instrukt bugs report --approved '<description>' [--slug <slug>] [--body <text>] [--project <slug>] [--human-involved true|false]`.
+The command verifies that the questions were faced, never that the answers
+are true: judging the answers stays with the filer and with preparation.
+
+`instrukt bugs list [--project <slug>] [--json]` lists the open bug-kind todos
+of the project the caller stands in, or of the named project: every bug that
+is neither delivered nor removed, with its slug, status and phase. Like
+`instrukt todo list` it reads only this computer's state database.
 
 ### Task schedule
 
@@ -284,6 +330,37 @@ Then the same attempt and assignment remain outstanding
 And it recovers the child from native delegation evidence and records the binding
 But missing local evidence or an empty project thread list does not permit another child
 And retry is admitted only after recorded proof or explicit confirmation of no native start
+```
+
+### UC-TD9: An agent faces the pre-filing questions before reporting a defect
+
+```gherkin
+Given an agent has met behaviour of the system it works through that appears to break a current contract
+When it reports the defect without confirming it has faced the questions
+Then it is shown the questions to face: bug or change, evidence, duplication, ordering and owning project
+And it is told how to complete the filing once they are faced
+And nothing is filed
+And the report counts as answered, not failed
+```
+
+### UC-TD10: An agent files a faced defect report into the project that owns it
+
+```gherkin
+Given an agent has faced the pre-filing questions for a defect owned by a project on its computer
+When it reports the defect, confirming the questions were faced, and names that project
+Then that project holds a new bug carrying the reported symptom and the agent's account
+And the bug enters preparation as every bug does
+But when it names a project this computer does not hold
+Then nothing is filed and it is told which projects it can name
+```
+
+### UC-TD11: An agent checks which defects are already reported
+
+```gherkin
+Given a project holds open bugs beside other work and bugs already delivered
+When an agent asks for that project's bugs
+Then it sees each open bug with its state
+And no other kind of work and no delivered or withdrawn bug is listed
 ```
 
 ## Known caveats

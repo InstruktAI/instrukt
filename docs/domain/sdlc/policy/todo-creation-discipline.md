@@ -62,8 +62,9 @@ Apply these configured action values to the identified assignment and session.
 ### Unexpected bugs
 
 Agents report unexpected bugs encountered during their work, with observed
-behavior and its expected contract under this policy's evidence standard. They
-check existing work and add evidence there when it already owns the defect;
+behavior and its expected contract under this policy's evidence standard,
+through the front door `instrukt bugs report` (`general/policy/system-defects`).
+They check existing work and add evidence there when it already owns the defect;
 reporting does not authorize widening the active implementation. When main is
 red, the integrator judges whether the failure warrants a bug and files it
 once, deduplicated, while preserving the existing restoration obligation.
@@ -212,7 +213,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 - **A filed defect claim carries its evidence.** A todo whose premise is a
   defect, or a defense against one, cites an occurrence or a dangerous path,
   and is filed by its kind: a defect through
-  `instrukt todo create <slug> <content> --kind bug --approved`, a defense as the work it is. A claim that can cite neither stays an observation with the
+  `instrukt bugs report --approved '<description>'` once its questions are faced, a defense as the work it is. A claim that can cite neither stays an observation with the
   session that holds it.
 
 - **A bug report keeps what was observed apart from what it concludes.** It

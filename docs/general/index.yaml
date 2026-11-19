@@ -16,6 +16,7 @@ expanded:
   - general/policy/message-identity-headers
   - general/policy/no-output-turn
   - general/policy/shared-machine-resources
+  - general/policy/system-defects
 listed:
   - general/principle/evolution
   - general/principle/continuity

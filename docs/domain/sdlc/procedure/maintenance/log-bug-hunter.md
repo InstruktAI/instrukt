@@ -105,7 +105,7 @@ suppressions are consulted before filing; the scan checkpoint is not their store
 - Read `outstanding_signals` from the checkpoint and re-evaluate them against current logs, work, and code history. Retain only signals that still require a retry or the next window's recurrence check. A completed window with no recurrence after the recorded repair removes that signal from the checkpoint.
 - New evidence for an already tracked failure updates its outstanding state when it remains unresolved; it does not create a second bug for the same failure. Route amendments per `sdlc/policy/todo-creation-discipline`.
 
-4. File every remaining error signal through the todos module as a todo of kind `bug`.
+4. File every remaining error signal as a bug through `instrukt bugs report`, facing its questions before `--approved`.
    - State the operation and the observed consequence the records support,
      distinguishing the operation's outcome from how that outcome is surfaced.
      An operation the records identify as attempted is stated as the report's
