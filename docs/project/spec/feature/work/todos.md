@@ -59,7 +59,7 @@ configured approval gate.
 ### Bug reports
 
 `instrukt bugs report '<description>'` is the front door for filing a defect
-(`general/policy/system-defects`).
+(`general/procedure/bug-reporting`).
 
 - **Without `--approved`** it files nothing. It prints the pre-filing
   questions to stderr and exits 0: serving the questions is that invocation's

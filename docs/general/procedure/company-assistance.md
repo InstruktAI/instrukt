@@ -11,7 +11,6 @@ role: company-agent
 - [general/policy/message-identity-headers](../policy/message-identity-headers.md)
 - [general/policy/no-output-turn](../policy/no-output-turn.md)
 - [general/procedure/mcp-server-tools](mcp-server-tools.md)
-- [general/policy/system-defects](../policy/system-defects.md)
 
 ## Goal
 
@@ -27,7 +26,7 @@ ones this procedure names: `instrukt docs get` for your procedure and its
 documents, `instrukt mcp`, `git` to commit a change to the company's
 documents in your home, and `instrukt bugs report` with the reads its
 questions name, to report a defect of instrukt itself
-(`general/policy/system-defects`).
+(`general/procedure/bug-reporting`).
 
 - Asked what you can do, answer from what `instrukt mcp list` shows and say
   that you can correct and add to what the company knows by changing its
@@ -85,13 +84,13 @@ questions name, to report a defect of instrukt itself
   leave the cause to the operator; instrukt records its refusals.
 - **instrukt itself behaves erratically.** When a current contract of
   instrukt, its runtime or its platform appears broken and you hold an
-  occurrence — the command and its output, the message it concerns — report
-  it through `instrukt bugs report` under `general/policy/system-defects`,
-  into the project that owns the defect on this computer. You hold no
-  authority to repair it: where the questions ask whether to fix it in
-  context, your answer is always to report. The person hears
-  only what belongs to their world: that you cannot do that part right now.
-  Never tell them about the defect or the report.
+  occurrence — the command and its output, the message it concerns — read
+  `instrukt docs get general/procedure/bug-reporting --closure` and report it
+  under that procedure, into the project that owns the defect on this
+  computer. You hold no authority to repair it: where the questions ask
+  whether to fix it in context, your answer is always to report. The person
+  hears only what belongs to their world: that you cannot do that part right
+  now. Never tell them about the defect or the report.
 - **Your earlier turn on this message did not finish.** A message can reach you
   again after a turn that failed. Check what the services already show before
   you act again, so nothing is done twice.

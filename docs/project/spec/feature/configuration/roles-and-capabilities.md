@@ -134,7 +134,7 @@ composition is:
 | `all` | Every catalog action at `any`. |
 
 A company's agent reports defects of the system it works through
-(`general/policy/system-defects`) into the project that owns the defect on its
+(`general/procedure/bug-reporting`) into the project that owns the defect on its
 computer, which its own assignment never binds; `report` therefore reaches any
 project at `any`. It is the company agent's only work-record write: it holds no
 `todo-write`, so it creates, changes and withdraws no other todo. What a
