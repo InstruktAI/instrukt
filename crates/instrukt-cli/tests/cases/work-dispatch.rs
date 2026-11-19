@@ -646,6 +646,63 @@ fn a_full_window_scoped_to_one_model_marks_only_that_models_family() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
+fn automatic_quota_marks_follow_the_latest_snapshot() {
+    let p = Tracked::new(true);
+    selection_config(&p, "default: {order: [claude, codex], tier: strong}\n");
+    let windows = |windows: serde_json::Value| {
+        common::t3_readiness::update(&p.env, |snapshot| {
+            for provider in snapshot["providers"].as_array_mut().unwrap() {
+                if provider["instanceId"] == "claudeAgent" {
+                    provider["usageLimits"] =
+                        serde_json::json!({"checkedAt":"2030-01-01T00:00:00Z","windows":windows});
+                }
+            }
+        });
+    };
+    let marks = || {
+        let out = p
+            .env
+            .run(p.repo.path(), ["agents", "availability"])
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+    };
+    // A snapshot marks every model of the profile.
+    windows(serde_json::json!([
+        {"id":"weekly","kind":"weekly","label":"Weekly","usedPercent":100,"resetsAt":"2099-01-01T00:00:00Z"}
+    ]));
+    create_change(&p);
+    p.tick();
+    assert_eq!(marks().as_array().unwrap().len(), 4);
+    // The operator restricts one of them by hand meanwhile.
+    p.env
+        .run(
+            p.repo.path(),
+            [
+                "agents",
+                "status",
+                "claude",
+                "unavailable",
+                "--model",
+                "claude-opus-5-5",
+                "--until",
+                "2099-01-01T00:00:00Z",
+                "--reason",
+                "operator restriction",
+            ],
+        )
+        .success();
+    // The next snapshot has only Fable's window full: only Fable keeps its
+    // automatic mark, and the manual restriction stays as set.
+    windows(serde_json::json!([
+        {"id":"weekly","kind":"weekly","label":"Weekly","usedPercent":40,"resetsAt":"2099-01-01T00:00:00Z"},
+        {"id":"seven_day_fable","kind":"weekly","label":"Weekly · Fable","usedPercent":100,"resetsAt":"2099-01-01T00:00:00Z"}
+    ]));
+    p.tick();
+    insta::assert_json_snapshot!("quota-marks-follow-the-snapshot", marks());
+}
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
+#[test]
 fn compatible_protocol_and_shape_admit_different_release_diagnostics() {
     let p = Tracked::new(true);
     let file = common::t3_readiness::state_file(&p.env);
