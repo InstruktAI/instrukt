@@ -16,8 +16,15 @@ use serde_json::{Map, Value, json};
 use super::{McpError, Target};
 
 /// The protocol versions instrukt speaks, newest first: each one's Streamable
-/// HTTP transport (2024-11-05's HTTP+SSE transport is not spoken).
-pub(super) const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
+/// HTTP transport (2024-11-05's HTTP+SSE transport is not spoken). The first
+/// is the one offered.
+pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
+
+/// The JSON-RPC methods the client sends, in a session's order.
+pub const INITIALIZE: &str = "initialize";
+pub const INITIALIZED: &str = "notifications/initialized";
+pub const LIST_TOOLS: &str = "tools/list";
+pub const CALL_TOOL: &str = "tools/call";
 
 /// How long establishing a connection may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -78,7 +85,7 @@ impl<'a> Session<'a> {
             next: 1,
         };
         let initialized = session.request(
-            "initialize",
+            INITIALIZE,
             json!({
                 "protocolVersion": PROTOCOL_VERSIONS[0],
                 "capabilities": {},
@@ -115,7 +122,7 @@ impl<'a> Session<'a> {
             }
         }
         session.version = Some(version);
-        session.notify("notifications/initialized")?;
+        session.notify(INITIALIZED)?;
         Ok(session)
     }
 
@@ -132,7 +139,7 @@ impl<'a> Session<'a> {
                 Some(cursor) => json!({ "cursor": cursor }),
                 None => json!({}),
             };
-            let page = self.request("tools/list", params)?;
+            let page = self.request(LIST_TOOLS, params)?;
             let listed = page
                 .get("tools")
                 .and_then(Value::as_array)
@@ -190,10 +197,7 @@ impl<'a> Session<'a> {
     /// The result of calling `tool`; a result the server marks as an error
     /// is a failure carrying its content.
     pub(super) fn call(mut self, tool: &str, arguments: Value) -> Result<Value, McpError> {
-        let result = self.request(
-            "tools/call",
-            json!({ "name": tool, "arguments": arguments }),
-        )?;
+        let result = self.request(CALL_TOOL, json!({ "name": tool, "arguments": arguments }))?;
         let Some(content) = result.get("content").and_then(Value::as_array) else {
             return Err(self.failure("its tool result lacks `content`".into()));
         };
@@ -326,13 +330,15 @@ impl Drop for Session<'_> {
         let Some(session) = self.session.take() else {
             return;
         };
+        // Without an agreed version, the version instrukt offered.
         let mut request = self
             .agent
             .delete(self.target.url)
-            .header("Mcp-Session-Id", &session);
-        if let Some(version) = self.version {
-            request = request.header("MCP-Protocol-Version", version);
-        }
+            .header("Mcp-Session-Id", &session)
+            .header(
+                "MCP-Protocol-Version",
+                self.version.unwrap_or(PROTOCOL_VERSIONS[0]),
+            );
         if let Some(authorization) = self.target.authorization {
             request = request.header("Authorization", authorization);
         }

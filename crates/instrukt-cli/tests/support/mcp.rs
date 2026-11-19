@@ -42,8 +42,8 @@ fn escaped(login: &str) -> String {
 /// One request the stand-in received.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Received {
-    /// The JSON-RPC method, or `DELETE` for the session's end.
-    pub method: String,
+    /// The JSON-RPC method; `None` for the DELETE that ends the session.
+    pub method: Option<String>,
     /// The `Authorization` header it carried.
     pub authorization: Option<String>,
     /// The `MCP-Protocol-Version` header it carried.
@@ -119,7 +119,7 @@ impl FakeMcp {
                     let protocol_version = carried("MCP-Protocol-Version");
                     if *request.method() == tiny_http::Method::Delete {
                         received.lock().unwrap().push(Received {
-                            method: "DELETE".into(),
+                            method: None,
                             authorization,
                             protocol_version,
                         });
@@ -131,7 +131,7 @@ impl FakeMcp {
                     let message: Value = serde_json::from_str(&body).unwrap();
                     let method = message["method"].as_str().unwrap_or_default().to_owned();
                     received.lock().unwrap().push(Received {
-                        method: method.clone(),
+                        method: Some(method.clone()),
                         authorization: authorization.clone(),
                         protocol_version,
                     });

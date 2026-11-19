@@ -14,6 +14,7 @@ use crate::fixtures::mcp::{FakeMcp, Flaw};
 use crate::fixtures::t3::FakeT3;
 use common::TestEnv;
 use common::redis::RedisServer;
+use instrukt_runner::mcp::{CALL_TOOL, INITIALIZE, INITIALIZED, LIST_TOOLS, PROTOCOL_VERSIONS};
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// Steven's own login for the company's ERP.
@@ -438,7 +439,9 @@ fn each_companys_server_of_one_name_is_reached_at_its_own_address() {
 #[test]
 fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
     let mut c = Company::new("");
-    let erp = FakeMcp::answering("erp", &[(STEVEN_LOGIN, "steven")], "2025-03-26");
+    // The earliest version instrukt speaks.
+    let earlier = PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.len() - 1];
+    let erp = FakeMcp::answering("erp", &[(STEVEN_LOGIN, "steven")], earlier);
     let future = FakeMcp::answering("future", &[], "2099-01-01");
     secret(&c.env, COMPANY, "STEVEN_ERP", STEVEN_LOGIN);
     patch_company(
@@ -487,27 +490,30 @@ fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
             .map(|r| (r.method, r.protocol_version))
             .collect::<Vec<_>>()
     };
-    let answered = || Some("2025-03-26".to_owned());
+    let rpc =
+        |method: &str, version: Option<&str>| (Some(method.to_owned()), version.map(str::to_owned));
+    let end = |version: &str| (None, Some(version.to_owned()));
     assert_eq!(
         seen(&erp),
         vec![
-            ("initialize".to_owned(), None),
-            ("notifications/initialized".to_owned(), answered()),
-            ("tools/list".to_owned(), answered()),
-            ("tools/list".to_owned(), answered()),
-            ("DELETE".to_owned(), answered()),
-            ("initialize".to_owned(), None),
-            ("notifications/initialized".to_owned(), answered()),
-            ("tools/call".to_owned(), answered()),
-            ("DELETE".to_owned(), answered()),
+            rpc(INITIALIZE, None),
+            rpc(INITIALIZED, Some(earlier)),
+            rpc(LIST_TOOLS, Some(earlier)),
+            rpc(LIST_TOOLS, Some(earlier)),
+            end(earlier),
+            rpc(INITIALIZE, None),
+            rpc(INITIALIZED, Some(earlier)),
+            rpc(CALL_TOOL, Some(earlier)),
+            end(earlier),
         ]
     );
     // A server answering a version instrukt does not speak is refused,
-    // naming both; nothing follows its initialization but the session's end.
+    // naming both; nothing follows its initialization but the session's end,
+    // which carries the version instrukt offered.
     let refused = mcp_in(&c.env, &home, &session, &["list-tools", "future"]).failure();
     insta::assert_snapshot!("unspoken-version-refused", stderr(&refused));
     assert_eq!(
         seen(&future),
-        vec![("initialize".to_owned(), None), ("DELETE".to_owned(), None)]
+        vec![rpc(INITIALIZE, None), end(PROTOCOL_VERSIONS[0])]
     );
 }
