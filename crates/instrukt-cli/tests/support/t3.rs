@@ -133,6 +133,12 @@ def sync_inputs():
                     native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':status,'startedAt':at if entered else None,'requestedAt':at,'completedAt':completed}
                     if lifecycle: native['ordinal']=len(runs)
                     upsert('orchestration_v2_projection_runs',dict(run_id=run,thread_id=thread['threadId'],status=native['status'],requested_at=at,completed_at=completed,payload_json=json.dumps(native)))
+        # With `hide-inputs`, a thread whose id the flag file names keeps no
+        # input in the projection: its running turn's opening cannot be read.
+        hidden=root/'hide-inputs'
+        if hidden.exists():
+            for thread in hidden.read_text().split():
+                connection.execute("DELETE FROM orchestration_v2_projection_messages WHERE message_id LIKE ?",('fake:'+thread+':input:%',))
 def save(t):
     temporary=root/(t['threadId']+'.'+str(os.getpid())+'.tmp')
     temporary.write_text(json.dumps(t)); temporary.replace(root/(t['threadId']+'.json')); sync_inputs()
@@ -149,7 +155,9 @@ if command=='list':
         copy=dict(threads[0]); copy['threadId']='duplicate'; threads.append(copy)
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
-    while (root/'hold-start').exists(): time.sleep(0.02)
+    while (root/'hold-start').exists():
+        (root/'start-held').touch(); time.sleep(0.02)
+    if (root/'start-failure').exists(): print('start failed',file=sys.stderr); sys.exit(1)
     if (root/'empty-start').exists(): sys.exit(0)
     if (root/'die-before-start').exists():
         (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
@@ -321,9 +329,21 @@ impl FakeT3 {
             std::fs::remove_file(p).unwrap();
         }
     }
+    /// Whether a start has been held by the `hold-start` flag.
+    pub fn start_held(&self) -> bool {
+        self.state.join("start-held").exists()
+    }
     /// The run thread `id` has active, as the fake records it.
     pub fn active_run(&self, id: &str) -> String {
         self.read(id)["activeRunId"].as_str().unwrap().to_owned()
+    }
+    /// Thread `id`'s inputs leave T3's projection and stay out until
+    /// [`FakeT3::show_inputs`].
+    pub fn hide_inputs(&self, id: &str) {
+        std::fs::write(self.state.join("hide-inputs"), id).unwrap();
+    }
+    pub fn show_inputs(&self) {
+        self.flag("hide-inputs", false);
     }
     pub fn set_status(&self, id: &str, value: &str) {
         if matches!(value, "idle" | "completed" | "stopped" | "failed") {

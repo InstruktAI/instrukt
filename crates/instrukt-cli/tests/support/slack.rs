@@ -142,6 +142,10 @@ struct Workspace {
     hold_posts: bool,
     /// Every post fails, accepting nothing.
     fail_posts: bool,
+    /// A post waits until released, then fails, accepting nothing.
+    hold_failing_posts: bool,
+    /// How many posts waited to fail.
+    held_failing_posts: usize,
     /// How many accepted posts were held back.
     held_posts: usize,
     /// `users.info` answers wait until released.
@@ -190,80 +194,104 @@ impl FakeSlack {
                     let Ok(Some(mut request)) = http.recv_timeout(Duration::from_millis(50)) else {
                         continue;
                     };
-                    let method = request.url().trim_start_matches("/api/").to_owned();
-                    let token = request
-                        .headers()
-                        .iter()
-                        .find(|h| h.field.equiv("Authorization"))
-                        .map(|h| h.value.as_str().trim_start_matches("Bearer ").to_owned())
-                        .unwrap_or_default();
-                    let mut body = String::new();
-                    request.as_reader().read_to_string(&mut body).unwrap();
-                    // Held reads answer only once released.
-                    let mut counted = false;
-                    while method.starts_with("conversations.")
-                        && workspace.lock().unwrap().hold_reads
-                        && !stop.load(Ordering::Acquire)
-                    {
-                        if !counted {
-                            workspace.lock().unwrap().held += 1;
-                            counted = true;
-                        }
-                        std::thread::sleep(Duration::from_millis(20));
-                    }
-                    let mut counted = false;
-                    while method == "users.info"
-                        && workspace.lock().unwrap().hold_lookups
-                        && !stop.load(Ordering::Acquire)
-                    {
-                        if !counted {
-                            workspace.lock().unwrap().held_lookups += 1;
-                            counted = true;
-                        }
-                        std::thread::sleep(Duration::from_millis(20));
-                    }
-                    let limited = {
-                        let mut w = workspace.lock().unwrap();
-                        if method == "users.info" {
-                            w.lookups += 1;
-                            w.limit_lookup.take()
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some(seconds) = limited {
-                        // As Slack does: HTTP 429, and the wait in Retry-After.
-                        let header =
-                            tiny_http::Header::from_bytes("Retry-After", seconds.to_string())
-                                .unwrap();
-                        request
-                            .respond(
-                                tiny_http::Response::from_string(
-                                    json!({"ok": false, "error": "ratelimited"}).to_string(),
-                                )
-                                .with_status_code(429)
-                                .with_header(header),
-                            )
-                            .unwrap();
-                        continue;
-                    }
-                    let answer =
-                        Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
-                    // A held post is accepted, and its answer waits: the
-                    // poster may be gone by the time it is sent.
-                    if method == "chat.postMessage" && workspace.lock().unwrap().hold_posts {
-                        workspace.lock().unwrap().held_posts += 1;
-                        while workspace.lock().unwrap().hold_posts && !stop.load(Ordering::Acquire)
+                    // Each request is served on its own, as Slack serves
+                    // them: one that is held holds no other.
+                    let workspace = Arc::clone(&workspace);
+                    let stop = Arc::clone(&stop);
+                    let socket_url = socket_url.clone();
+                    std::thread::spawn(move || {
+                        let method = request.url().trim_start_matches("/api/").to_owned();
+                        let token = request
+                            .headers()
+                            .iter()
+                            .find(|h| h.field.equiv("Authorization"))
+                            .map(|h| h.value.as_str().trim_start_matches("Bearer ").to_owned())
+                            .unwrap_or_default();
+                        let mut body = String::new();
+                        request.as_reader().read_to_string(&mut body).unwrap();
+                        // Held reads answer only once released.
+                        let mut counted = false;
+                        while method.starts_with("conversations.")
+                            && workspace.lock().unwrap().hold_reads
+                            && !stop.load(Ordering::Acquire)
                         {
+                            if !counted {
+                                workspace.lock().unwrap().held += 1;
+                                counted = true;
+                            }
                             std::thread::sleep(Duration::from_millis(20));
                         }
-                        let _ =
-                            request.respond(tiny_http::Response::from_string(answer.to_string()));
-                        continue;
-                    }
-                    request
-                        .respond(tiny_http::Response::from_string(answer.to_string()))
-                        .unwrap();
+                        let mut counted = false;
+                        while method == "users.info"
+                            && workspace.lock().unwrap().hold_lookups
+                            && !stop.load(Ordering::Acquire)
+                        {
+                            if !counted {
+                                workspace.lock().unwrap().held_lookups += 1;
+                                counted = true;
+                            }
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        let limited = {
+                            let mut w = workspace.lock().unwrap();
+                            if method == "users.info" {
+                                w.lookups += 1;
+                                w.limit_lookup.take()
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(seconds) = limited {
+                            // As Slack does: HTTP 429, and the wait in Retry-After.
+                            let header =
+                                tiny_http::Header::from_bytes("Retry-After", seconds.to_string())
+                                    .unwrap();
+                            request
+                                .respond(
+                                    tiny_http::Response::from_string(
+                                        json!({"ok": false, "error": "ratelimited"}).to_string(),
+                                    )
+                                    .with_status_code(429)
+                                    .with_header(header),
+                                )
+                                .unwrap();
+                            return;
+                        }
+                        // A post held to fail waits, then is refused, nothing
+                        // accepted.
+                        if method == "chat.postMessage"
+                            && workspace.lock().unwrap().hold_failing_posts
+                        {
+                            workspace.lock().unwrap().held_failing_posts += 1;
+                            while workspace.lock().unwrap().hold_failing_posts
+                                && !stop.load(Ordering::Acquire)
+                            {
+                                std::thread::sleep(Duration::from_millis(20));
+                            }
+                            let _ = request.respond(tiny_http::Response::from_string(
+                                json!({"ok": false, "error": "fatal_error"}).to_string(),
+                            ));
+                            return;
+                        }
+                        let answer =
+                            Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
+                        // A held post is accepted, and its answer waits: the
+                        // poster may be gone by the time it is sent.
+                        if method == "chat.postMessage" && workspace.lock().unwrap().hold_posts {
+                            workspace.lock().unwrap().held_posts += 1;
+                            while workspace.lock().unwrap().hold_posts
+                                && !stop.load(Ordering::Acquire)
+                            {
+                                std::thread::sleep(Duration::from_millis(20));
+                            }
+                            let _ = request
+                                .respond(tiny_http::Response::from_string(answer.to_string()));
+                            return;
+                        }
+                        request
+                            .respond(tiny_http::Response::from_string(answer.to_string()))
+                            .unwrap();
+                    });
                 }
             }));
         }
@@ -719,6 +747,21 @@ impl FakeSlack {
             .filter(|(c, t, _)| c == channel && t == thread)
             .map(|(_, _, text)| text.clone())
             .collect()
+    }
+
+    /// Every later post waits until [`FakeSlack::fail_held_posts`], then
+    /// fails, accepting nothing.
+    pub fn hold_posts_to_fail(&self) {
+        self.workspace.lock().unwrap().hold_failing_posts = true;
+    }
+
+    pub fn fail_held_posts(&self) {
+        self.workspace.lock().unwrap().hold_failing_posts = false;
+    }
+
+    /// How many posts waited to fail.
+    pub fn held_failing_posts(&self) -> usize {
+        self.workspace.lock().unwrap().held_failing_posts
     }
 
     /// Every later post fails, until [`FakeSlack::accept_posts`].

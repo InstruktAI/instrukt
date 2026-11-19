@@ -556,6 +556,56 @@ impl RunningClock {
     }
 }
 
+/// When the no-work interval of the addressed message `message` opened, as
+/// the state database keeps it; `None` while none is open.
+fn interval(c: &Company, message: &str) -> Option<String> {
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.query_row(
+        "SELECT unavailable_since FROM conversation_messages WHERE message=?1",
+        [message],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+/// When the relay's current failure began, as the state database keeps it;
+/// `None` while the relay reads its source.
+fn relay_since(c: &Company) -> Option<String> {
+    use instrukt_core::state_db::rusqlite::OptionalExtension as _;
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.query_row(
+        "SELECT updated_at FROM conversation_relay WHERE id=1 AND failure IS NOT NULL",
+        [],
+        |row| row.get(0),
+    )
+    .optional()
+    .unwrap()
+}
+
+/// The operator's clock in the file `path` set to `at`, replaced whole.
+fn set_clock(path: &std::path::Path, at: jiff::Timestamp) {
+    let next = path.with_extension("next");
+    std::fs::write(&next, at.to_string()).unwrap();
+    std::fs::rename(&next, path).unwrap();
+}
+
+/// The texts a status showed up to its answer's post: between the turn's
+/// end and that post the message's interval is open, so the unavailable text
+/// may show for that moment before the status is cleared.
+fn answered(mut texts: Vec<String>) -> Vec<String> {
+    let n = texts.len();
+    if n >= 2 && texts[n - 1].is_empty() && texts[n - 2] == UNAVAILABLE {
+        texts.remove(n - 2);
+    }
+    texts
+}
+
 /// The session a message started, beside `before`, the sessions before it.
 fn started(c: &Company, before: &[String]) -> String {
     wait("the message's session", || {
@@ -631,8 +681,8 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     wait("the status cleared", || {
         shown(&c, channel, &asked).last().map(String::as_str) == Some("")
     });
-    // Between the turn's end and the answer's post the working text may show
-    // again: the status follows the message until its answer is posted.
+    // Between the turn's end and the answer's post the message's interval
+    // is open: the status follows the message until its answer is posted.
     let texts = shown(&c, channel, &asked);
     let newest = texts
         .iter()
@@ -642,7 +692,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     assert!(
         texts[newest + 1..]
             .iter()
-            .all(|text| text == WORKING || text.is_empty())
+            .all(|text| text == UNAVAILABLE || text.is_empty())
     );
 
     // A start that is slow but healthy shows the working text throughout.
@@ -662,7 +712,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     wait("the status cleared", || {
         shown(&c, channel, &slow).last().map(String::as_str) == Some("")
     });
-    assert_eq!(shown(&c, channel, &slow), [WORKING, ""]);
+    assert_eq!(answered(shown(&c, channel, &slow)), [WORKING, ""]);
 
     // A message waits on the runtime's dispatch lock past the wait: the
     // working text, then the unavailable text; once the lock is had, the
@@ -684,7 +734,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         std::time::Duration::from_secs(60),
         || c.slack.status(channel, &locked).as_deref() == Some(UNAVAILABLE),
     );
-    let now = running.stop();
+    running.stop();
     drop(held);
     let session = started(&c, &before);
     wait("the working text after the start", || {
@@ -696,7 +746,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         shown(&c, channel, &locked).last().map(String::as_str) == Some("")
     });
     assert_eq!(
-        shown(&c, channel, &locked),
+        answered(shown(&c, channel, &locked)),
         [WORKING, UNAVAILABLE, WORKING, ""]
     );
 
@@ -725,7 +775,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         shown(&c, channel, &outage).last().map(String::as_str) == Some("")
     });
     assert_eq!(
-        shown(&c, channel, &outage),
+        answered(shown(&c, channel, &outage)),
         [WORKING, UNAVAILABLE, WORKING, ""]
     );
 
@@ -809,11 +859,42 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     wait("the status cleared", || {
         shown(&c, channel, &first).last().map(String::as_str) == Some("")
     });
-    assert!(!shown(&c, channel, &first).contains(&UNAVAILABLE.to_owned()));
+    assert!(!answered(shown(&c, channel, &first)).contains(&UNAVAILABLE.to_owned()));
+}
+
+/// A company whose conversations run on a runner under the operator's clock
+/// in the file it returns, set to `at`.
+fn status_company(at: jiff::Timestamp) -> (Company, std::path::PathBuf) {
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    let clock = c.env.path("clock");
+    set_clock(&clock, at);
+    c.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    c.run();
+    (c, clock)
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let now: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
+    let channel = "C1";
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
 
     // Another conversation's lock is held past its wait: that conversation
     // is left for later, and a member in this one is still answered.
     use sha2::Digest as _;
+    let posts = c.slack.posts().len();
+    projected(&c);
+    let first = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> What is next?", None);
+    let session = started(&c, &[]);
+    c.finish_turn(&session, 0, "The release.");
+    wait("the other conversation's answer", || {
+        c.slack.posts().len() == posts + 1
+    });
     let other = conversations::key(&c.company(), SLACK, &format!("{channel}/{first}"));
     let other_lock = instrukt_core::fsx::LockGuard::acquire(
         &home.locks_dir().join(format!(
@@ -836,17 +917,246 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         std::time::Duration::from_secs(60),
         || c.sessions().len() > before.len(),
     );
-    running.stop();
+    let now = running.stop();
     let session = started(&c, &before);
     c.finish_turn(&session, 0, "Linus is on call.");
     wait("the answer beside the held lock", || {
-        c.slack.posts().len() == 8
+        c.slack.posts().len() == posts + 2
     });
     assert_eq!(
         c.slack.posts().last().unwrap().thread.as_deref(),
         Some(apart.as_str())
     );
     drop(other_lock);
+
+    // A start under way a minute and a half, then refused: the message's
+    // interval opens when the refusal is established, on the clock then.
+    let posts = c.slack.posts().len();
+    let asked_at = now + jiff::SignedDuration::from_mins(10);
+    set_clock(&clock, asked_at);
+    let before = c.sessions();
+    c.runtime.flag("hold-start", true);
+    projected(&c);
+    let late = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who signs it off?", None);
+    wait("the start under way", || c.runtime.start_held());
+    assert_eq!(c.slack.status(channel, &late).as_deref(), Some(WORKING));
+    let refused_at = asked_at + jiff::SignedDuration::from_secs(90);
+    set_clock(&clock, refused_at);
+    c.runtime.flag("start-failure", true);
+    c.runtime.flag("hold-start", false);
+    wait("the unavailable text once the start is refused", || {
+        c.slack.status(channel, &late).as_deref() == Some(UNAVAILABLE)
+    });
+    assert_eq!(interval(&c, &late), Some(refused_at.to_string()));
+    // Once the start is resolved as never made, it is made and answered.
+    c.runtime.flag("start-failure", false);
+    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{late}"));
+    c.env
+        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
+        .success();
+    let session = started(&c, &before);
+    c.finish_turn(&session, 0, "Margaret signs it off.");
+    wait("the late start's answer", || {
+        c.slack.posts().len() == posts + 1
+    });
+
+    // A turn completes while its answer's post is slow and then fails: from
+    // the turn's end the status says the assistant is unavailable, and the
+    // interval counts from that end, not from when the post gave up.
+    let posts = c.slack.posts().len();
+    let done_at = refused_at + jiff::SignedDuration::from_mins(10);
+    set_clock(&clock, done_at);
+    let before = c.sessions();
+    projected(&c);
+    let slowly = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Where is the contract?", None);
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(channel, &slowly).as_deref() == Some(WORKING)
+    });
+    c.slack.hold_posts_to_fail();
+    let held_before = c.slack.held_failing_posts();
+    c.finish_turn(&session, 0, "In the shared drive.");
+    wait("the answer's post under way", || {
+        c.slack.held_failing_posts() > held_before
+    });
+    wait("the unavailable text while the post is under way", || {
+        c.slack.status(channel, &slowly).as_deref() == Some(UNAVAILABLE)
+    });
+    set_clock(&clock, done_at + jiff::SignedDuration::from_secs(90));
+    c.slack.fail_held_posts();
+    assert_eq!(interval(&c, &slowly), Some(done_at.to_string()));
+    wait("the answer once posts are taken", || {
+        c.slack.posts().len() == posts + 1
+    });
+    wait("the status cleared", || {
+        shown(&c, channel, &slowly).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(interval(&c, &slowly), None);
+
+    // In a direct message each message has a status of its own. A message
+    // queued behind the running turn and that turn's own message both have
+    // their interval opened while the conversation's lock is held past its
+    // wait; once the running turn is observed again, both close.
+    let posts = c.slack.posts().len();
+    let direct = "D7";
+    let before = c.sessions();
+    projected(&c);
+    let own = c.slack.direct(direct, "USTEVEN", "What is on today?");
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(direct, &own).as_deref() == Some(WORKING)
+    });
+    let queued = c.slack.direct(direct, "USTEVEN", "And tomorrow?");
+    wait("the queued message's working text", || {
+        c.slack.status(direct, &queued).as_deref() == Some(WORKING)
+    });
+    let key = conversations::key(&c.company(), SLACK, direct);
+    let held = instrukt_core::fsx::LockGuard::acquire(
+        &home.locks_dir().join(format!(
+            "conversation-{}.lock",
+            hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
+        )),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    let running = RunningClock::start(
+        clock.clone(),
+        done_at + jiff::SignedDuration::from_mins(10),
+        30,
+    );
+    common::wait_until(
+        "both statuses unavailable",
+        std::time::Duration::from_secs(60),
+        || {
+            c.slack.status(direct, &own).as_deref() == Some(UNAVAILABLE)
+                && c.slack.status(direct, &queued).as_deref() == Some(UNAVAILABLE)
+        },
+    );
+    running.stop();
+    drop(held);
+    wait(
+        "both statuses working once the turn is seen running",
+        || {
+            c.slack.status(direct, &own).as_deref() == Some(WORKING)
+                && c.slack.status(direct, &queued).as_deref() == Some(WORKING)
+        },
+    );
+    assert_eq!((interval(&c, &own), interval(&c, &queued)), (None, None));
+    c.finish_turn(&session, 0, "The standup.");
+    wait("the queued message handed over", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "The retro.");
+    wait("both direct answers", || c.slack.posts().len() == posts + 2);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
+
+    // The relay cannot acquire the conversation source at all: no read of
+    // it is made, so no message's own interval opens, and the relay's
+    // failure alone tells the member the assistant is unavailable.
+    let outage_at: jiff::Timestamp = "2026-11-19T11:00:00Z".parse().unwrap();
+    set_clock(&clock, outage_at);
+    let posts = c.slack.posts().len();
+    let before = c.sessions();
+    projected(&c);
+    let unread = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who has the keys?", None);
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(channel, &unread).as_deref() == Some(WORKING)
+    });
+    c.runner_dies();
+    // T3's database path holds a folder, which the source never watches.
+    let database = c.store.file.clone();
+    let away = database.with_extension("away");
+    std::fs::rename(&database, &away).unwrap();
+    std::fs::create_dir(&database).unwrap();
+    c.run();
+    wait("the unavailable text from the relay's failure", || {
+        c.slack.status(channel, &unread).as_deref() == Some(UNAVAILABLE)
+    });
+    assert_eq!(interval(&c, &unread), None);
+    assert_eq!(relay_since(&c), Some(outage_at.to_string()));
+    // A later runner meets the same failure under another cause: the
+    // failure keeps the start an earlier runner recorded.
+    c.runner_dies();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE conversation_relay SET failure='an earlier cause' WHERE id=1",
+        [],
+    )
+    .unwrap();
+    set_clock(&clock, outage_at + jiff::SignedDuration::from_mins(5));
+    c.run();
+    wait("this runner's cause", || {
+        c.conversations()
+            .relay_failure
+            .is_some_and(|cause| cause != "an earlier cause")
+    });
+    assert_eq!(relay_since(&c), Some(outage_at.to_string()));
+    // Restored while no runner runs: the next runner reads the source and
+    // ends the failure an earlier runner recorded.
+    c.runner_dies();
+    std::fs::remove_dir(&database).unwrap();
+    std::fs::rename(&away, &database).unwrap();
+    c.run();
+    wait("the working text once the source is acquired", || {
+        c.slack.status(channel, &unread).as_deref() == Some(WORKING)
+    });
+    assert_eq!(c.conversations().relay_failure, None);
+    c.finish_turn(&session, 0, "The office manager.");
+    wait("the answer after the restart", || {
+        c.slack.posts().len() == posts + 1
+    });
+
+    // The session's running turn cannot be observed: the message's own
+    // interval opens; once its turn is observed running again, it closes.
+    let posts = c.slack.posts().len();
+    let before = c.sessions();
+    projected(&c);
+    let unseen = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Is the VPN down?", None);
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(channel, &unseen).as_deref() == Some(WORKING)
+    });
+    c.runtime.hide_inputs(&session);
+    c.store.hide_messages(&format!("fake:{session}:input:"));
+    wait(
+        "the unavailable text while the turn cannot be observed",
+        || c.slack.status(channel, &unseen).as_deref() == Some(UNAVAILABLE),
+    );
+    assert!(interval(&c, &unseen).is_some());
+    // The fake runtime may still be removing them as they come back: they
+    // are put back until the turn is seen running.
+    c.runtime.show_inputs();
+    let mut shown_at: Option<std::time::Instant> = None;
+    wait("the working text once the turn is seen running", || {
+        if shown_at.is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(300)) {
+            c.store.show_messages();
+            shown_at = Some(std::time::Instant::now());
+        }
+        c.slack.status(channel, &unseen).as_deref() == Some(WORKING)
+    });
+    assert_eq!(interval(&c, &unseen), None);
+    c.finish_turn(&session, 0, "It is back up.");
+    wait("the answer once observed", || {
+        c.slack.posts().len() == posts + 1
+    });
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12

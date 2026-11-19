@@ -963,8 +963,9 @@ fn deliver_one(
     source: &dyn ConversationSource,
     state: &RunnerState,
     c: &Conversation,
-    now: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
+    let now = clock();
     let open = open_messages(state, c)?;
     let Some(next) = next_message(&open, c) else {
         return Ok(());
@@ -993,9 +994,10 @@ fn deliver_one(
     }
     set_message_failure(state, c, &next.message, failure.as_deref())?;
     // A start, send or listing that is refused or fails keeps the agent from
-    // the message: its no-work interval opens.
+    // the message: its no-work interval opens when the failure is
+    // established, read on the clock then.
     if result.is_err() {
-        unavailable(state, c, std::slice::from_ref(&next.message), now)?;
+        unavailable(state, c, std::slice::from_ref(&next.message), clock())?;
     }
     result
 }
@@ -1191,6 +1193,7 @@ fn harvest(
     source: &dyn ConversationSource,
     c: &Conversation,
     message_chars: usize,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
     let (Some(session), Some(mut position)) = (c.session.clone(), c.position.clone()) else {
         return Ok(());
@@ -1274,6 +1277,7 @@ fn harvest(
             ));
         }
         position = batch.position;
+        let ended = clock();
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
@@ -1286,9 +1290,12 @@ fn harvest(
                 }
                 tx.execute(
                     // The finished turn proves the message was accepted: its
-                    // resolved delivery cause is retired with it.
-                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                    params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn],
+                    // resolved delivery cause is retired with it. Its turn has
+                    // ended, so it shows no update any more; an answer to post
+                    // opens its no-work interval now, before any post is
+                    // tried, and one with nothing to post completes it.
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,turn_update=NULL,unavailable_since=CASE WHEN ?7 THEN coalesce(unavailable_since,?8) ELSE NULL END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                    params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
             }
@@ -1576,7 +1583,7 @@ pub fn relay(
         let Some(c) = reread(&state, &c)? else {
             continue;
         };
-        observe(adapter, source, &state, &c, connectors.now())?;
+        observe(adapter, source, &state, &c, &|| connectors.now())?;
         let ready = next_message(&open_messages(&state, &c)?, &c).map(|m| m.message.clone());
         let Some(ready) = ready else {
             continue;
@@ -1608,7 +1615,7 @@ pub fn relay(
             &c,
             // Restrictions are judged on the runner's clock, as dispatch
             // and `agents availability` judge them.
-            connectors.now(),
+            &|| connectors.now(),
         );
         // A session bound just now may be one a recovery found with its
         // opening turn already finished while the runner was down: its answer
@@ -1634,7 +1641,7 @@ fn observe(
     source: &dyn ConversationSource,
     state: &RunnerState,
     c: &Conversation,
-    now: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
     let Some(session) = &c.session else {
         return Ok(());
@@ -1655,7 +1662,7 @@ fn observe(
         Ok(None) => return Ok(()),
         Err(error) => {
             tracing::debug!(target: LOG_TARGET, event = "conversation_turn_unobserved", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
-            unavailable(state, c, &sent, now)?;
+            unavailable(state, c, &sent, clock())?;
             return Ok(());
         }
     };
@@ -1676,7 +1683,7 @@ fn observe(
         Ok(update) => turn_update(state, c, &own.message, update.as_deref())?,
         Err(error) => {
             tracing::debug!(target: LOG_TARGET, event = "conversation_turn_unobserved", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
-            unavailable(state, c, std::slice::from_ref(&own.message), now)?;
+            unavailable(state, c, std::slice::from_ref(&own.message), clock())?;
         }
     }
     Ok(())
@@ -1700,7 +1707,11 @@ fn answers(
     let read = connectors
         .open(admitted, &c.company, &c.connector)
         .map_err(ConversationError::from)
-        .and_then(|connector| harvest(state, source, c, connector.limits().message_chars));
+        .and_then(|connector| {
+            harvest(state, source, c, connector.limits().message_chars, &|| {
+                connectors.now()
+            })
+        });
     set_failure(
         state,
         c,
@@ -1723,9 +1734,10 @@ fn answers(
     Ok(true)
 }
 
-/// A message whose turn was read as ended has its no-work interval opened
-/// at `now` while its answer is not posted, and closed once it is, or when
-/// nothing was to be posted; either way its turn shows no update any more.
+/// A message whose turn was read as ended keeps its no-work interval open,
+/// from `now` at the latest, while its answer is not posted, and has it
+/// closed once it is; either way its turn shows no update any more. The
+/// interval opened when its completion was recorded, before any post.
 fn ended(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<(), StateError> {
     state.write(|tx| {
         let path = state::db_path(tx);

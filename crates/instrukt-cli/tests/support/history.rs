@@ -164,6 +164,26 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         .unwrap();
         tx.commit().unwrap();
     }
+    /// The messages whose id begins with `prefix` leave T3's projection, kept
+    /// aside until [`T3Store::show_messages`] puts them back.
+    #[allow(dead_code, reason = "used by the conversation scenarios")]
+    pub fn hide_messages(&self, prefix: &str) {
+        let pattern = format!("{prefix}%");
+        self.db.execute_batch("CREATE TABLE IF NOT EXISTS hidden_messages AS SELECT * FROM orchestration_v2_projection_messages WHERE 0;").unwrap();
+        self.db.execute("INSERT INTO hidden_messages SELECT * FROM orchestration_v2_projection_messages WHERE message_id LIKE ?1", [&pattern]).unwrap();
+        self.db
+            .execute(
+                "DELETE FROM orchestration_v2_projection_messages WHERE message_id LIKE ?1",
+                [&pattern],
+            )
+            .unwrap();
+    }
+    /// Puts back the messages [`T3Store::hide_messages`] kept aside; they
+    /// stay kept aside, so putting them back again is harmless.
+    #[allow(dead_code, reason = "used by the conversation scenarios")]
+    pub fn show_messages(&self) {
+        self.db.execute_batch("INSERT OR REPLACE INTO orchestration_v2_projection_messages SELECT * FROM hidden_messages;").unwrap();
+    }
     /// The agent writes `text` in the running turn `run` of `thread`: an
     /// assistant message T3 records in that turn, `ordinal` among its items.
     #[allow(dead_code, reason = "used by the conversation scenarios")]

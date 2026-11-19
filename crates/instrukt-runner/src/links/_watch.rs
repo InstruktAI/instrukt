@@ -122,9 +122,11 @@ fn serve(
     *delay = Duration::from_secs(1);
     if let Some(cause) = failing.take() {
         tracing::info!(event = "conversation_relay_recovered", cause = %cause);
-        if let Some(destinations) = destinations {
-            destinations.company.relay_state(home, None);
-        }
+    }
+    // The source is acquired: a failure recorded for the relay ends, whether
+    // this process recorded it or an earlier runner did.
+    if let Some(destinations) = destinations {
+        destinations.company.relay_state(home, None);
     }
     // Links catch up at startup and on source changes only (native
     // notifications, and a missing source file that is now watched);
