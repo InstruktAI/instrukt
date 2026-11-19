@@ -22,14 +22,6 @@ use super::DocsError;
 use crate::ids::{DomainName, SnippetId};
 use crate::index::GlobalIndex;
 
-/// The supported agent CLIs, as `agents` names them.
-const AGENT_CLIS: [(&str, AgentCli); 4] = [
-    ("claude", AgentCli::Claude),
-    ("codex", AgentCli::Codex),
-    ("gemini", AgentCli::Gemini),
-    ("deepseek", AgentCli::Deepseek),
-];
-
 /// What one position's `index.yaml` may hold.
 fn allowed_keys(position: &Position) -> &'static [&'static str] {
     match position {
@@ -356,18 +348,18 @@ impl Index<'_, '_> {
         let Value::Mapping(map) = value else {
             self.finding(
                 FindingCode::IndexShapeInvalid,
-                "agents: not a map from agent CLI to ids".to_owned(),
+                "agents: not a map from agent runtime to ids".to_owned(),
             );
             return;
         };
-        let supported: Vec<&str> = AGENT_CLIS.iter().map(|(name, _)| *name).collect();
+        let supported: Vec<&str> = AgentCli::ALL.iter().map(|cli| cli.name()).collect();
         for (key, ids) in map {
             let name = key.as_str().map_or_else(|| shown_value(key), str::to_owned);
             if !supported.contains(&name.as_str()) {
                 self.finding(
                     FindingCode::IndexAgentUnsupported,
                     format!(
-                        "agents: {name} (the supported agent CLIs are {})",
+                        "agents: {name} (the agent runtimes instrukt deploys to are {})",
                         supported.join(", ")
                     ),
                 );

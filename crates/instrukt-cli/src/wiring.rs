@@ -46,6 +46,44 @@ pub fn caller_lookup(
         }
     }
 }
+/// The selected runtime's adapter, asked which agent runtimes are configured,
+/// as [`caller_lookup`] selects it: an unset `runner.runtime` selects the
+/// compiled adapter. `None` only when the machine layer names no compiled
+/// adapter.
+pub fn configured_runtimes(
+    ctx: &Ctx,
+) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::ConfiguredAgentRuntimes>>> {
+    let config = instrukt_core::config::Configuration::load_global(&ctx.home)?;
+    match config.runner_runtime() {
+        Ok(runtime) => Ok(Some(Arc::new(ConfiguredRuntimes(Arc::from(
+            instrukt_runner::runtime::adapter(runtime),
+        ))))),
+        Err(error) => {
+            tracing::debug!(event = "configured_runtimes_unavailable", error = %error);
+            Ok(None)
+        }
+    }
+}
+
+/// The selected runtime's adapter, answering publication's question.
+struct ConfiguredRuntimes(Arc<dyn instrukt_runner::runtime::RuntimeAdapter>);
+
+impl instrukt_core::interfaces::ConfiguredAgentRuntimes for ConfiguredRuntimes {
+    fn configured(
+        &self,
+        home: &instrukt_core::home::Home,
+        env: &instrukt_core::config::Env,
+    ) -> instrukt_core::interfaces::Answer {
+        match self.0.configured_agent_runtimes(home, env) {
+            Ok(instances) => instrukt_core::interfaces::Answer::Reported(instances),
+            Err(error) => instrukt_core::interfaces::Answer::Unreachable {
+                runtime: self.0.runtime().name().to_owned(),
+                cause: error.to_string(),
+            },
+        }
+    }
+}
+
 pub fn environment(ctx: &Ctx) -> anyhow::Result<instrukt_core::config::Env> {
     let env = instrukt_core::config::Env::from_process();
     Ok(match caller_lookup(ctx)? {
@@ -83,7 +121,7 @@ pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         flavor_roles: Some(_workflow::available_flavor_roles(ctx)),
         flavor_schema: Some(Arc::new(WorkflowSchema)),
         graph_generation: _blueprint::graph_generation(ctx)?,
-        configured_runtimes: None,
+        configured_runtimes: configured_runtimes(ctx)?,
     })
 }
 

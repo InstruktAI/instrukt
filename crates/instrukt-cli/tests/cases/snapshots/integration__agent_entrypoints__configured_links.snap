@@ -1,0 +1,17 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: linked
+---
+links:
+published platform at [SHA]
+[TMP]/codex-home/AGENTS.md (codex: codex): current
+[TMP]/home/.claude/CLAUDE.md (claude: claudeAgent, claude-work): current
+[TMP]/pi-home/AGENTS.md (pi: pi-work): current
+[TMP]/codex-shared/AGENTS.md (codex: codex-overlay): written
+[TMP]/codex-second/AGENTS.md (codex: codex-second): written
+[TMP]/codex-third/AGENTS.md (codex: codex-third): written
+[TMP]/codex-overlay/AGENTS.md: link to [TMP]/codex-shared/AGENTS.md ensured: made
+[TMP]/codex-second-overlay/AGENTS.md: link to [TMP]/codex-second/AGENTS.md ensured: repaired
+[TMP]/codex-third-overlay/AGENTS.md: link to [TMP]/codex-third/AGENTS.md ensured: repaired
+notice: instance `claudeAgent` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
+notice: instance `claude-work` (claude) reported no home; its file is written in the default home [TMP]/home/.claude

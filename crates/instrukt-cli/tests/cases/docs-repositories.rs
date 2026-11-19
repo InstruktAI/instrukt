@@ -124,13 +124,21 @@ fn is_link(path: &Path) -> bool {
 #[test]
 fn a_developer_gives_their_computer_its_doctrine() {
     // Given a docs repository holding `general` and `sdlc`, a consumer
-    // project, and installed agents a dotfiles user keeps elsewhere:
-    // `~/.claude` links to a directory whose `CLAUDE.md` another tool wrote
-    // and whose `settings.json` is not an object; `~/.codex/AGENTS.md` links
-    // to a dotfiles file; the Antigravity settings file links into the
-    // dotfiles directory.
+    // project, and agent runtimes T3 has configured, which a dotfiles user
+    // keeps elsewhere: `~/.claude` links to a directory whose `CLAUDE.md`
+    // another tool wrote and whose `settings.json` is not an object;
+    // `~/.codex/AGENTS.md` links to a dotfiles file; Antigravity's old
+    // settings file links into the dotfiles directory.
     let env = machine();
     let home = env.home();
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        ["claudeAgent", "codex", "antigravity"]
+            .map(|driver| common::t3_readiness::provider(driver, driver, true))
+            .to_vec(),
+        serde_json::json!({}),
+    );
     let dotfiles = env.path("dotfiles");
     std::fs::create_dir_all(dotfiles.join("claude")).unwrap();
     let another_tools_text = "# Written by another tool\n\nAnswer in haiku.\n";
@@ -177,10 +185,7 @@ fn a_developer_gives_their_computer_its_doctrine() {
     assert!(!is_link(&home.join(".codex/AGENTS.md")));
     assert_eq!(read(&home.join(".codex/AGENTS.md")), claude);
     assert_eq!(read(&dotfiles.join("codex-AGENTS.md")), codex_dotfile);
-    assert_eq!(
-        read(&home.join(".gemini/antigravity-cli/AGENTS.md")),
-        claude
-    );
+    assert_eq!(read(&home.join(".gemini/AGENTS.md")), claude);
 
     // Settings: nothing is written to either, nor through the link.
     assert_eq!(read(&dotfiles.join("claude/settings.json")), "[1, 2]\n");

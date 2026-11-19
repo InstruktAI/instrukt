@@ -31,7 +31,13 @@ pub struct InitArgs {
 
 pub fn run_init(args: InitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let slug = args.slug.as_deref().map(ProjectSlug::parse).transpose()?;
-    let report = repository::init(&ctx.home, &ctx.cwd, slug.as_ref())?;
+    let wiring = crate::wiring::publication_wiring(ctx)?;
+    let report = repository::init(
+        &ctx.home,
+        &ctx.cwd,
+        slug.as_ref(),
+        wiring.configured_runtimes.as_deref(),
+    )?;
     for (part, outcome) in &report.parts {
         ctx.out.line(&format!(
             "{}: {}",
@@ -141,20 +147,25 @@ fn claims_lines(claims: &ClaimsPreview) -> Vec<String> {
         GlobalFiles::OwnedElsewhere(owner) => lines.push(format!(
             "  global agent files: not written; docs/general/ is owned by project `{owner}`"
         )),
-        GlobalFiles::Rendered { agents } => {
-            if agents.is_empty() {
+        GlobalFiles::Rendered { files } => {
+            if files.is_empty() {
                 lines.push(
-                    "  global agent files: none; no supported agent CLI is installed on this computer"
+                    "  global agent files: none; no agent runtime instrukt deploys to is configured"
                         .to_owned(),
                 );
             }
-            for (agent, path) in agents {
+            for file in files {
                 lines.push(format!(
-                    "  global agent file of {agent}: the sync writes {}",
-                    path.display()
+                    "  global agent file of {} ({}): the sync writes {}",
+                    file.runtime,
+                    file.instances.join(", "),
+                    file.path.display()
                 ));
             }
         }
+        GlobalFiles::Unreachable { runtime, cause } => lines.push(format!(
+            "  global agent files: not known; runtime `{runtime}` cannot be asked which agent runtimes are configured ({cause}); the sync writes them once it can"
+        )),
     }
     lines
 }

@@ -304,7 +304,16 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     let env = hooked_machine();
     let other = project(&env, "other", &["shared"]);
     sync(&env, &other).success();
-    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        vec![common::t3_readiness::provider(
+            "claudeAgent",
+            "claudeAgent",
+            true,
+        )],
+        serde_json::json!({}),
+    );
     let repo = project(&env, "demo", &["acme", "legacy", "general"]);
     env.run(repo.path(), ["hooks", "install"]).success();
     repo.write("docs/domain/acme/policy/retired.md", &policy("Retired", ""))
@@ -597,7 +606,16 @@ fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication(
 #[test]
 fn an_unresolvable_configured_value_fails_the_sync_and_keeps_the_previous_publication() {
     let env = TestEnv::new();
-    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        vec![common::t3_readiness::provider(
+            "claudeAgent",
+            "claudeAgent",
+            true,
+        )],
+        serde_json::json!({}),
+    );
     let repo = project(&env, "demo", &["acme"]);
     let published = repo.head();
     sync(&env, &repo).success();
