@@ -2,7 +2,8 @@
 //! transport on a loopback address, answering `initialize`, the initialized
 //! notification, a two-page `tools/list` as an event stream, `tools/call` and
 //! the closing DELETE. It records each request's JSON-RPC method and the
-//! `Authorization` header it carried.
+//! `Authorization` and `MCP-Protocol-Version` headers it carried. It answers
+//! initialization with the protocol version it is started with.
 //!
 //! It knows which principal each login it accepts belongs to. Its tools:
 //! `whoami` answers with its own name, the principal it authenticated and the
@@ -45,6 +46,8 @@ pub struct Received {
     pub method: String,
     /// The `Authorization` header it carried.
     pub authorization: Option<String>,
+    /// The `MCP-Protocol-Version` header it carried.
+    pub protocol_version: Option<String>,
 }
 
 pub struct FakeMcp {
@@ -61,11 +64,26 @@ impl FakeMcp {
     /// A server called `name` that accepts `principals`: each login it knows,
     /// with the principal it belongs to.
     pub fn start(name: &str, principals: &[(&str, &str)]) -> Self {
-        Self::flawed(name, principals, None)
+        Self::serve(name, principals, None, "2025-06-18")
     }
 
     /// A server like [`FakeMcp::start`] that departs from MCP as `flaw` says.
     pub fn flawed(name: &str, principals: &[(&str, &str)], flaw: Option<Flaw>) -> Self {
+        Self::serve(name, principals, flaw, "2025-06-18")
+    }
+
+    /// A server like [`FakeMcp::start`] that answers initialization with
+    /// protocol version `version`.
+    pub fn answering(name: &str, principals: &[(&str, &str)], version: &'static str) -> Self {
+        Self::serve(name, principals, None, version)
+    }
+
+    fn serve(
+        name: &str,
+        principals: &[(&str, &str)],
+        flaw: Option<Flaw>,
+        version: &'static str,
+    ) -> Self {
         let name = name.to_owned();
         let principals: std::collections::BTreeMap<String, String> = principals
             .iter()
@@ -90,15 +108,20 @@ impl FakeMcp {
                     let Ok(Some(mut request)) = http.recv_timeout(Duration::from_millis(50)) else {
                         continue;
                     };
-                    let authorization = request
-                        .headers()
-                        .iter()
-                        .find(|h| h.field.equiv("Authorization"))
-                        .map(|h| h.value.as_str().to_owned());
+                    let carried = |field: &'static str| {
+                        request
+                            .headers()
+                            .iter()
+                            .find(|h| h.field.equiv(field))
+                            .map(|h| h.value.as_str().to_owned())
+                    };
+                    let authorization = carried("Authorization");
+                    let protocol_version = carried("MCP-Protocol-Version");
                     if *request.method() == tiny_http::Method::Delete {
                         received.lock().unwrap().push(Received {
                             method: "DELETE".into(),
                             authorization,
+                            protocol_version,
                         });
                         request.respond(tiny_http::Response::empty(200)).unwrap();
                         continue;
@@ -110,6 +133,7 @@ impl FakeMcp {
                     received.lock().unwrap().push(Received {
                         method: method.clone(),
                         authorization: authorization.clone(),
+                        protocol_version,
                     });
                     let id = message["id"].clone();
                     let header = |name: &str, value: &str| {
@@ -125,7 +149,7 @@ impl FakeMcp {
                     let login = authorization.unwrap_or_else(|| "no login".to_owned());
                     let response = match method.as_str() {
                         "initialize" => json_answer(json!({
-                            "protocolVersion": "2025-06-18",
+                            "protocolVersion": version,
                             "capabilities": {"tools": {}},
                             "serverInfo": if flaw == Some(Flaw::ServerInfo) {
                                 json!({"name": "stand-in"})

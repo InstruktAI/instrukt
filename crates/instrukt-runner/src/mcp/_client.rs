@@ -1,7 +1,8 @@
-//! One MCP session over the Streamable HTTP transport of MCP version
-//! 2025-06-18, opened for one operation and ended after it: initialize, the
-//! initialized notification, the operation, then one request to end the
-//! session the server opened, on every path.
+//! One MCP session over the Streamable HTTP transport, opened for one
+//! operation and ended after it: initialize, the initialized notification,
+//! the operation, then one request to end the session the server opened, on
+//! every path. The client offers the newest version it speaks and continues
+//! with any version it speaks that the server answers.
 //!
 //! Every reply is checked here, at the one transport boundary: a reply that is
 //! not a well-formed JSON-RPC answer to the request it was sent, or that lacks
@@ -14,8 +15,9 @@ use serde_json::{Map, Value, json};
 
 use super::{McpError, Target};
 
-/// The protocol version instrukt speaks.
-pub(super) const PROTOCOL_VERSION: &str = "2025-06-18";
+/// The protocol versions instrukt speaks, newest first: each one's Streamable
+/// HTTP transport (2024-11-05's HTTP+SSE transport is not spoken).
+pub(super) const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 
 /// How long establishing a connection may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -45,8 +47,8 @@ pub(super) struct Session<'a> {
     target: &'a Target<'a>,
     agent: ureq::Agent,
     session: Option<String>,
-    /// Set once initialization agreed on the version.
-    initialized: bool,
+    /// The version initialization agreed on, sent on every later request.
+    version: Option<&'static str>,
     next: u64,
 }
 
@@ -72,24 +74,29 @@ impl<'a> Session<'a> {
             target,
             agent,
             session: None,
-            initialized: false,
+            version: None,
             next: 1,
         };
         let initialized = session.request(
             "initialize",
             json!({
-                "protocolVersion": PROTOCOL_VERSION,
+                "protocolVersion": PROTOCOL_VERSIONS[0],
                 "capabilities": {},
                 "clientInfo": {"name": "instrukt", "version": env!("CARGO_PKG_VERSION")},
             }),
         )?;
-        let version = initialized.get("protocolVersion").and_then(Value::as_str);
-        if version != Some(PROTOCOL_VERSION) {
+        let answered = initialized.get("protocolVersion").and_then(Value::as_str);
+        let Some(version) = answered.and_then(|answered| {
+            PROTOCOL_VERSIONS
+                .into_iter()
+                .find(|spoken| *spoken == answered)
+        }) else {
             return Err(session.failure(format!(
-                "it answers protocol version {}, and instrukt speaks {PROTOCOL_VERSION}",
-                version.unwrap_or("none")
+                "it answers protocol version {}, and instrukt speaks {}",
+                answered.unwrap_or("none"),
+                PROTOCOL_VERSIONS.join(", ")
             )));
-        }
+        };
         if !initialized
             .get("capabilities")
             .is_some_and(Value::is_object)
@@ -107,7 +114,7 @@ impl<'a> Session<'a> {
                 );
             }
         }
-        session.initialized = true;
+        session.version = Some(version);
         session.notify("notifications/initialized")?;
         Ok(session)
     }
@@ -213,8 +220,8 @@ impl<'a> Session<'a> {
             .post(self.target.url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream");
-        if self.initialized {
-            request = request.header("MCP-Protocol-Version", PROTOCOL_VERSION);
+        if let Some(version) = self.version {
+            request = request.header("MCP-Protocol-Version", version);
         }
         if let Some(session) = &self.session {
             request = request.header("Mcp-Session-Id", session);
@@ -322,8 +329,10 @@ impl Drop for Session<'_> {
         let mut request = self
             .agent
             .delete(self.target.url)
-            .header("Mcp-Session-Id", &session)
-            .header("MCP-Protocol-Version", PROTOCOL_VERSION);
+            .header("Mcp-Session-Id", &session);
+        if let Some(version) = self.version {
+            request = request.header("MCP-Protocol-Version", version);
+        }
         if let Some(authorization) = self.target.authorization {
             request = request.header("Authorization", authorization);
         }

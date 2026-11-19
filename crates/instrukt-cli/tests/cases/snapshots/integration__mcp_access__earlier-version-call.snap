@@ -1,0 +1,13 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stdout(&called)
+---
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "erp answered steven, carrying ${STEVEN_ERP}"
+    }
+  ],
+  "isError": false
+}

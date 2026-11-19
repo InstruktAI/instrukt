@@ -433,3 +433,81 @@ fn each_companys_server_of_one_name_is_reached_at_its_own_address() {
         .collect();
     insta::assert_snapshot!("each-company-own-server", answers.join("\n"));
 }
+
+// spec: project/instrukt/spec/feature/runner/mcp-access UC-MA11
+#[test]
+fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
+    let mut c = Company::new("");
+    let erp = FakeMcp::answering("erp", &[(STEVEN_LOGIN, "steven")], "2025-03-26");
+    let future = FakeMcp::answering("future", &[], "2099-01-01");
+    secret(&c.env, COMPANY, "STEVEN_ERP", STEVEN_LOGIN);
+    patch_company(
+        &c.env,
+        COMPANY,
+        &format!(
+            "members:\n  steven: {{name: Steven Sonneveld, email: Steven@Example.com, credentials: {{erpnext: '${{STEVEN_ERP}}'}}}}\nmcp:\n  erpnext: {{url: '{}', description: Operate the company's ERPNext records, credential: erpnext}}\n  future: {{url: '{}', description: A server of a later protocol version}}\n",
+            erp.url, future.url
+        ),
+    );
+    let home = c.env.instrukt_home().join("companies").join(COMPANY);
+    c.runtime.flag("lifecycle", true);
+    c.run();
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> Book the open invoice", None);
+    let session = c.session();
+    let state = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
+    wait("the session's recorded binding", || {
+        instrukt_runner::assignments::resolve(
+            &state,
+            &caller,
+            instrukt_todos::work::recorded_assignment,
+        )
+        .unwrap()
+        .is_some()
+    });
+    // A server answering an earlier version instrukt speaks gives its
+    // catalog and its tool's result.
+    let tools = mcp_in(&c.env, &home, &session, &["list-tools", "erpnext"]).success();
+    insta::assert_snapshot!("earlier-version-tools", stdout(&tools));
+    let called = mcp_in(
+        &c.env,
+        &home,
+        &session,
+        &["call", "erpnext", "whoami", "--json", "{}"],
+    )
+    .success();
+    insta::assert_snapshot!("earlier-version-call", stdout(&called));
+    // Every request of a session after its initialization names the version
+    // the server answered.
+    let seen = |server: &FakeMcp| {
+        server
+            .received()
+            .into_iter()
+            .map(|r| (r.method, r.protocol_version))
+            .collect::<Vec<_>>()
+    };
+    let answered = || Some("2025-03-26".to_owned());
+    assert_eq!(
+        seen(&erp),
+        vec![
+            ("initialize".to_owned(), None),
+            ("notifications/initialized".to_owned(), answered()),
+            ("tools/list".to_owned(), answered()),
+            ("tools/list".to_owned(), answered()),
+            ("DELETE".to_owned(), answered()),
+            ("initialize".to_owned(), None),
+            ("notifications/initialized".to_owned(), answered()),
+            ("tools/call".to_owned(), answered()),
+            ("DELETE".to_owned(), answered()),
+        ]
+    );
+    // A server answering a version instrukt does not speak is refused,
+    // naming both; nothing follows its initialization but the session's end.
+    let refused = mcp_in(&c.env, &home, &session, &["list-tools", "future"]).failure();
+    insta::assert_snapshot!("unspoken-version-refused", stderr(&refused));
+    assert_eq!(
+        seen(&future),
+        vec![("initialize".to_owned(), None), ("DELETE".to_owned(), None)]
+    );
+}
