@@ -15,6 +15,7 @@ expanded:
   - general/policy/conflict-resolution
   - general/policy/message-identity-headers
   - general/policy/no-output-turn
+  - general/policy/shared-machine-resources
 listed:
   - general/principle/evolution
   - general/principle/continuity
@@ -27,7 +28,6 @@ listed:
   - general/design/peer-discussion
   - general/policy/grounding
   - general/policy/orchestrator-jurisdiction
-  - general/policy/shared-machine-resources
   - general/policy/agent-artifact-governance
   - general/principle/expansion
   - general/principle/parallel-work
