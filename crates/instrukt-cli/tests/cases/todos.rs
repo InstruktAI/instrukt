@@ -339,6 +339,29 @@ fn a_report_without_approval_shows_the_questions_and_files_nothing() {
     assert!(stdout(&shown).is_empty());
     insta::assert_snapshot!("bug-report-questions", stderr(&project, &shown));
     insta::assert_snapshot!(project.ok(["list"]), @"no todos");
+    // Showing the questions reads and writes nothing: the project's layer
+    // as an older instrukt wrote it stays as it is.
+    let layer = project.repo.path().join("instrukt.yaml");
+    let older = std::fs::read_to_string(&layer).unwrap().replacen(
+        &format!(
+            "schema_version: {}",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+        "schema_version: 5",
+        1,
+    );
+    assert_ne!(older, std::fs::read_to_string(&layer).unwrap());
+    std::fs::write(&layer, &older).unwrap();
+    let shown = bugs(
+        &project,
+        project.repo.path(),
+        &["report", "Sync drops the ops domain"],
+    )
+    .success();
+    let shown = stderr(&project, &shown);
+    let notice = shown.split("Nothing was filed.").next().unwrap_or_default();
+    insta::assert_snapshot!(notice, @"instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command");
+    assert_eq!(std::fs::read_to_string(&layer).unwrap(), older);
 }
 
 // spec: project/instrukt/spec/feature/work/todos UC-TD10
@@ -408,11 +431,75 @@ fn the_open_bugs_of_a_project_are_listed_and_nothing_else() {
         .success();
     }
     project.ok(["remove", "fix-hook-waits-forever"]);
+    // One bug delivered, one parked in the icebox.
+    for description in ["Status hides a section", "Index skips a domain"] {
+        bugs(
+            &project,
+            project.repo.path(),
+            &["report", "--approved", description],
+        )
+        .success();
+    }
+    let head = project.repo.head();
+    project.ok(["deliver", "fix-status-hides-a-section", "--commit", &head]);
+    project.ok(["freeze", "fix-index-skips-a-domain"]);
+    // The project's layer as an older instrukt wrote it: reading the work
+    // converts it in memory and leaves the file as it is.
+    let layer = project.repo.path().join("instrukt.yaml");
+    let current = std::fs::read_to_string(&layer).unwrap();
+    let older = current.replacen(
+        &format!(
+            "schema_version: {}",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+        "schema_version: 5",
+        1,
+    );
+    assert_ne!(older, current);
+    std::fs::write(&layer, &older).unwrap();
     let listed = bugs(&project, project.env.home(), &["list", "--project", "demo"]).success();
     insta::assert_snapshot!(stdout(&listed), @r"
     fix-sync-drops-a-domain | active | not started
     fix-render-loses-a-heading | active | not started
+    fix-index-skips-a-domain | iceboxed | not started
     ");
+    // Each read reports the pending migration.
+    let mut notices = vec![stderr(&project, &listed)];
+    for (at, args) in [
+        (project.repo.path(), &["list"][..]),
+        (
+            project.env.home(),
+            &["suppressions", "--project", "demo"][..],
+        ),
+    ] {
+        notices.push(stderr(&project, &bugs(&project, at, args).success()));
+    }
+    // `--project` combines with every listing filter of the work.
+    let mut filtered = Vec::new();
+    for filter in ["--iceboxed", "--removed", "--delivered"] {
+        let listed = project
+            .env
+            .instrukt(project.env.home())
+            .args(["todo", "list", "--project", "demo", filter])
+            .assert()
+            .success();
+        filtered.push(format!("{filter}: {}", redact(&stdout(&listed))));
+        notices.push(stderr(&project, &listed));
+    }
+    insta::assert_snapshot!(notices.join(""), @r"
+    instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
+    ");
+    insta::assert_snapshot!(filtered.join(""), @r"
+    --iceboxed: fix-index-skips-a-domain · bug · iceboxed · unclaimed · last known <time> (less than a minute old)
+    --removed: fix-hook-waits-forever · bug · withdrawn · unclaimed · last known <time> (less than a minute old)
+    --delivered: fix-status-hides-a-section · bug · delivered · unclaimed · last known <time> (less than a minute old)
+    ");
+    assert_eq!(std::fs::read_to_string(&layer).unwrap(), older);
 }
 
 // spec: project/instrukt/spec/feature/work/todos UC-TD12

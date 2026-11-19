@@ -205,7 +205,17 @@ fn run() -> ExitCode {
     {
         let notice_result = (|| -> anyhow::Result<()> {
             let mut layers = vec![instrukt_core::config::Layer::Global];
-            if let Some(root) = instrukt_core::git::worktree_root(&ctx.cwd)? {
+            // A read naming its owning project reads that project's layer,
+            // wherever the caller stands; one this computer does not record is
+            // refused by the command itself.
+            let root = match authorization::named_project(&matches) {
+                Some(named) => {
+                    instrukt_core::publication::PublishedRecord::load(&ctx.home, &named)?
+                        .map(|record| record.checkout)
+                }
+                None => instrukt_core::git::worktree_root(&ctx.cwd)?,
+            };
+            if let Some(root) = root {
                 layers.push(instrukt_core::config::Layer::Project(root));
             }
             if matches.subcommand().is_some_and(|(name, args)| {

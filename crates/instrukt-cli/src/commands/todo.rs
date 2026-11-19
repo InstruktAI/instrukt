@@ -187,17 +187,16 @@ struct CreateArgs {
 }
 
 #[derive(Debug, clap::Args)]
-#[group(multiple = false)]
 struct ListArgs {
     /// The owning project, by its slug on this computer; without it, the
     /// project the caller stands in.
     #[arg(long, value_name = "SLUG")]
     project: Option<instrukt_core::ids::ProjectSlug>,
     /// The icebox instead of active work.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["removed", "delivered"])]
     iceboxed: bool,
     /// Withdrawn work within its recovery window.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "delivered")]
     removed: bool,
     /// Delivered work.
     #[arg(long)]

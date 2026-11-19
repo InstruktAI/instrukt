@@ -4,6 +4,7 @@ use clap::{ArgMatches, Command};
 use instrukt_core::{
     capabilities::{Action, Assignment, Capabilities, RoleClass, Scope},
     config::{Agents, Configuration},
+    ids::ProjectSlug,
 };
 
 #[derive(Debug)]
@@ -150,6 +151,22 @@ pub fn strict_inspection(matches: &ArgMatches) -> bool {
         ["events", "status" | "dead-letters"] | ["ticks", "status"] | ["status"]
     ) || (path == ["install"] && leaf.get_flag("check"))
 }
+/// The owning project a work read names with `--project`: the project whose
+/// layer it reads, wherever the caller stands.
+pub fn named_project(matches: &ArgMatches) -> Option<ProjectSlug> {
+    let mut path = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        path.push(name);
+        leaf = sub;
+    }
+    matches!(
+        path.as_slice(),
+        ["todo", "list"] | ["bugs", "list" | "suppressions" | "report"]
+    )
+    .then(|| leaf.get_one::<ProjectSlug>("project").cloned())
+    .flatten()
+}
 pub fn read_only(matches: &ArgMatches) -> bool {
     let mut path = Vec::new();
     let mut leaf = matches;
@@ -163,10 +180,15 @@ pub fn read_only(matches: &ArgMatches) -> bool {
     if path == ["install"] {
         return leaf.get_flag("check");
     }
+    // A report that is not approved files nothing: it reads, as a listing
+    // does.
+    if path == ["bugs", "report"] {
+        return !leaf.get_flag("approved");
+    }
     matches!(
         path.as_slice(),
         ["status"]
-            | ["bugs", "suppressions"]
+            | ["bugs", "suppressions" | "list"]
             | ["config", "get" | "show" | "validate"]
             | ["docs", "get" | "index" | "schema" | "validate"]
             | ["events", "list" | "schema" | "status" | "dead-letters"]
