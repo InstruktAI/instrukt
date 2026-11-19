@@ -178,8 +178,10 @@ in the mode it was asked for, text or JSON.
 
 A command whose job is to report findings keeps its report as its output
 and adds no line: its exit status says there are findings. `config
-validate`, `docs validate`, `docs render --check`, `install --check`,
-`status` and `specs coverage --check` exit 1 with findings; `specs reserve`
+validate`, `docs validate`, `docs render --check`, `install --check` and
+`specs coverage --check` exit 1 with findings; `status` exits 0 whatever its
+report says once every part was read, and 1 when a part could not be read
+(`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
 exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo prepare`
 and `todo work` exit 1 when the next obligation cannot be rendered, and
 their output says why.
