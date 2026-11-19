@@ -3,7 +3,8 @@ source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
 expression: "stdout(&env, &synced).replace(&platform.head(), \"[SHA]\")"
 ---
 published platform at [SHA]
-[TMP]/home/.claude/CLAUDE.md (claude): written
+[TMP]/home/.claude/CLAUDE.md (claude: claudeAgent): written
+notice: instance `claudeAgent` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
 [TMP]/home/.claude/CLAUDE.md: keeps @notes/house.md for an agent program to resolve
 .instrukt/schemas/general-index.schema.json: schema written
 .instrukt/schemas/domain-index.schema.json: schema written

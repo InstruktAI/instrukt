@@ -3,9 +3,11 @@ source: crates/instrukt-cli/tests/cases/docs-repositories.rs
 expression: "stdout(&env, &synced).replace(&head, \"[SHA]\")"
 ---
 published doctrine at [SHA]
-[TMP]/home/.claude/CLAUDE.md (claude): written
-[TMP]/home/.codex/AGENTS.md (codex): written
-[TMP]/home/.gemini/antigravity-cli/AGENTS.md (gemini): written
+[TMP]/home/.claude/CLAUDE.md (claude: claudeAgent): written
+[TMP]/home/.codex/AGENTS.md (codex: codex): written
+[TMP]/home/.gemini/AGENTS.md (antigravity: antigravity): written
 [TMP]/home/.codex/AGENTS.md: a symbolic link, replaced; what it pointed to is left as it is
+notice: instance `claudeAgent` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
+notice: instance `codex` (codex) reported no home; its file is written in the default home [TMP]/home/.codex
+notice: instance `antigravity` (antigravity) reported no home; its file is written in the default home [TMP]/home/.gemini
 [TMP]/home/.claude/settings.json: left untouched: it is not a JSON object
-[TMP]/home/.gemini/antigravity-cli/settings.json: left untouched: it is a symbolic link, and nothing is written through a link

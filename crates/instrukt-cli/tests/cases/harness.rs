@@ -252,7 +252,16 @@ struct Republication {
 
 fn republication(env: &mut TestEnv) -> Republication {
     let claude = env.home().join(".claude");
-    std::fs::create_dir_all(&claude).unwrap();
+    crate::fixtures::t3::FakeT3::create(env);
+    common::t3_readiness::configure(
+        env,
+        vec![common::t3_readiness::provider(
+            "claudeAgent",
+            "claudeAgent",
+            true,
+        )],
+        serde_json::json!({}),
+    );
     let care = |body: &str| documented::snippet("policy", "Care", "Care.", "", &[], body);
     let repo = documented::project(
         env,

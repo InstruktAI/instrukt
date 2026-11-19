@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: first
+---
+first sync:
+published platform at [SHA]
+[TMP]/codex-home/AGENTS.md (codex: codex): written
+[TMP]/home/.claude/CLAUDE.md (claude: claudeAgent, claude-work): written
+[TMP]/pi-home/AGENTS.md (pi: pi-work): written
+notice: instance `claudeAgent` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
+notice: instance `claude-work` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
+.instrukt/schemas/general-index.schema.json: schema written
+.instrukt/schemas/domain-index.schema.json: schema written
+.instrukt/schemas/project-index.schema.json: schema written
+.instrukt/schemas/snippet-schema.schema.json: schema written
+.instrukt/schemas/instrukt.schema.json: schema written

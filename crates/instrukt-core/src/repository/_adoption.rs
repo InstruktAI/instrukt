@@ -106,12 +106,15 @@ pub struct InitReport {
 }
 
 /// Adopts the repository whose working tree contains `cwd`. `slug`
-/// overrides the slug derived from the primary worktree's folder name.
-/// Refused outside a working tree; run again it changes nothing.
+/// overrides the slug derived from the primary worktree's folder name;
+/// `runtimes` is the selected runtime's adapter, asked which global agent
+/// files the first sync writes. Refused outside a working tree; run again it
+/// changes nothing.
 pub fn init(
     home: &Home,
     cwd: &Path,
     slug: Option<&ProjectSlug>,
+    runtimes: Option<&dyn crate::interfaces::ConfiguredAgentRuntimes>,
 ) -> Result<InitReport, RepositoryError> {
     let started = Instant::now();
     let root = _git::root(cwd)?;
@@ -185,7 +188,7 @@ pub fn init(
     parts.push((InitPart::Ignores, ensure_lines(&ignore, &IGNORED)?));
     let hooks = hooks_plan.apply()?;
     parts.push((InitPart::HookSections, hooks_outcome(&hooks)));
-    let claims = publication::preview_claims(home, &root, &project)?;
+    let claims = publication::preview_claims(home, &root, &project, runtimes)?;
     let claims = (!claims.is_empty()).then_some(claims);
     tracing::debug!(
         event = "repository_initialized",

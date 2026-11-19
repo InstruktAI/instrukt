@@ -115,9 +115,13 @@ agent may then change the company's documents in its home and commit them.
 
 The global agent files go to the agent runtimes the selected runtime reports
 as configured, in each one's own home, instead of to every agent program
-whose user directory exists. With `runner.runtime: t3` these are T3's enabled
-provider instances; T3 must be running when the `docs/general/` owner syncs,
-or that sync writes no global file. Each file is written whole by every sync
+whose user directory exists. With `runner.runtime: t3`, or with it unset,
+which selects T3, these are T3's enabled provider instances; T3 must be
+running when the `docs/general/` owner syncs, or that sync writes no global
+file and says so. Antigravity's file moves from
+`~/.gemini/antigravity-cli/AGENTS.md` to `~/.gemini/AGENTS.md`, which
+Antigravity reads without a settings key; the old file and the key instrukt
+set in `~/.gemini/antigravity-cli/settings.json` stay until you delete them. Each file is written whole by every sync
 that publishes it, over whatever the destination holds, a file TeleClaude or
 you wrote included: move instructions you want to keep into documentation
 before the first sync of this release that publishes. instrukt removes no

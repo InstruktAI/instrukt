@@ -24,6 +24,12 @@ expression: "String::from_utf8(bytes).unwrap()"
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "antigravity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnippetId"
+          }
+        },
         "claude": {
           "type": "array",
           "items": {
@@ -36,13 +42,25 @@ expression: "String::from_utf8(bytes).unwrap()"
             "$ref": "#/$defs/SnippetId"
           }
         },
-        "deepseek": {
+        "fx": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/SnippetId"
           }
         },
-        "gemini": {
+        "kiro": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnippetId"
+          }
+        },
+        "opencode": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnippetId"
+          }
+        },
+        "pi": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/SnippetId"

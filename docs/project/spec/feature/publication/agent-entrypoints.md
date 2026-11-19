@@ -324,11 +324,14 @@ publishes. They are the computer's own, never committed anywhere.
   them, or one instrukt has no destination for —
   receives no global file. Its agents read the repository's committed
   `AGENTS.md`.
-- **No runtime, no files.** Without a selected runtime, no agent runtime is
-  configured and no global file is written. When the selected runtime cannot
-  be asked, no global file is written in that sync: it reports a notice
-  naming the runtime and the cause, publishes the rest, and the next sync of
-  that project writes them, whether or not main has moved.
+- **No runtime, no files.** An unset `runner.runtime` selects the runtime
+  compiled into this instrukt
+  (`project/instrukt/spec/feature/configuration/layered-configuration`), and
+  the sync asks it. When `runner.runtime` names no compiled adapter, no agent
+  runtime is configured and no global file is written. When the selected
+  runtime cannot be asked, no global file is written in that sync: it
+  reports a notice naming the runtime and the cause, publishes the rest, and
+  the next sync of that project writes them, whether or not main has moved.
 - **`agents` names** are validated against the runtimes instrukt deploys to,
   whatever is configured on the computer.
 - **Written whole, every time.** Each destination is written whole by every

@@ -319,17 +319,28 @@ fn files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
         .collect()
 }
 
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN3
 #[test]
 fn adopting_a_docs_repository_reports_its_claims_before_anything_is_published() {
     let env = machine();
     publisher(&env, "other", "ops", &[]);
+    // T3 has Claude and Codex configured; Claude's destination already
+    // holds a file.
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        vec![
+            common::t3_readiness::provider("claudeAgent", "claudeAgent", true),
+            common::t3_readiness::provider("codex", "codex", true),
+        ],
+        serde_json::json!({}),
+    );
     std::fs::create_dir_all(env.home().join(".claude")).unwrap();
     std::fs::write(
         env.home().join(".claude/CLAUDE.md"),
         "My own instructions.\n",
     )
     .unwrap();
-    std::fs::create_dir_all(env.home().join(".codex")).unwrap();
     let published = |env: &TestEnv| {
         let home = env.instrukt_home();
         (files(&home.join("docs")), files(&home.join("state")))
@@ -358,16 +369,13 @@ fn adopting_a_docs_repository_reports_its_claims_before_anything_is_published() 
         !env.home().join(".codex/AGENTS.md").exists(),
         "no global agent file was written"
     );
-}
 
-// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN3
-#[test]
-fn a_repository_holding_only_domains_writes_no_global_agent_files() {
-    let env = machine();
-    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
-    let repo = env.git_repo("ops-docs");
-    repo.write("docs/domain/ops/policy/ops.md", &policy("Ops"));
-
+    // A repository holding only domains writes no global agent file.
+    let repo = env.git_repo("runbook-docs");
+    repo.write(
+        "docs/domain/runbooks/policy/runbooks.md",
+        &policy("Runbooks"),
+    );
     let init = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("claims-without-general", stdout(&env, &init));
 }

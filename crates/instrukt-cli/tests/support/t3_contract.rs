@@ -550,6 +550,119 @@ pub fn configured_homes(root: &Path) -> Result<Value> {
     Ok(json!({"codex_home_decoded":true,"pi_home_decoded":true,"instances":configured.len()}))
 }
 
+/// The instance the overlay-link check configures.
+const OVERLAY_INSTANCE: &str = "contract-overlay";
+
+/// Whether the overlay instance's provider snapshot carries T3's refusal to
+/// create it, once T3 has hydrated the instance after a start.
+fn overlay_refused() -> Result<bool> {
+    let mut refused = None;
+    common::wait_until("overlay instance hydrated", BOUND, || {
+        let Ok(mut token) = Token::issue(false) else {
+            return false;
+        };
+        let config = rpc(&token.secret, "server.getConfig", json!({}));
+        let _ = token.revoke();
+        refused = config.ok().and_then(|config| {
+            config["providers"]
+                .as_array()?
+                .iter()
+                .find(|provider| provider["instanceId"] == OVERLAY_INSTANCE)
+                .filter(|provider| provider["status"] != "pending")
+                .map(|provider| {
+                    provider
+                        .to_string()
+                        .contains("Driver 'codex' failed to create instance")
+                })
+        });
+        refused.is_some()
+    });
+    refused.context("overlay instance in the provider snapshot")
+}
+
+/// `instrukt sync` of the disposable owner of `docs/general/`, through the
+/// real binary, against the running T3.
+fn sync_docs_owner(root: &Path) -> Result<String> {
+    let mut sync = Command::new(env!("CARGO_BIN_EXE_instrukt"));
+    sync.current_dir(root.join("docs-owner")).arg("sync");
+    let output = process::output(&mut sync, None, BOUND)?;
+    ensure!(
+        output.status.success(),
+        "real instrukt sync failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// A Codex instance on an overlay home (A1): T3 materializes the overlay
+/// home B for the shared home A; the real sync writes A's file and the link
+/// to it in B, the form T3 makes, so T3 creates the instance again without
+/// a conflict. A real file in B's place is the control: T3 refuses the
+/// instance until a sync replaces it with the link.
+pub fn overlay_links(root: &Path) -> Result<Value> {
+    let shared = root.join("contract-codex-shared");
+    let overlay = root.join("contract-codex-overlay");
+    fs::create_dir_all(&shared)?;
+    {
+        let _server = Server::start(root)?;
+        let mut token = Token::scoped(&["providers:manage"])?;
+        rpc(
+            &token.secret,
+            "server.updateSettings",
+            json!({"patch":{},"providerInstanceMutation":{"operation":"create","instanceId":OVERLAY_INSTANCE,"instance":{"driver":"codex","enabled":true,"config":{"setupMode":"existing","homePath":shared,"shadowHomePath":overlay}}}}),
+        )?;
+        token.revoke()?;
+        common::wait_until("T3 materializes the overlay home", BOUND, || {
+            overlay.is_dir()
+        });
+        sync_docs_owner(root)?;
+    }
+    let link = overlay.join("AGENTS.md");
+    let file = shared.join("AGENTS.md");
+    ensure!(file.is_file(), "the sync wrote no file in the shared home");
+    ensure!(
+        fs::symlink_metadata(&link)?.file_type().is_symlink() && fs::read_link(&link)? == file,
+        "the sync made no link to the shared file in the overlay home"
+    );
+    {
+        let _server = Server::start(root)?;
+        ensure!(
+            !overlay_refused()?,
+            "T3 refused the overlay instance over instrukt's link"
+        );
+        ensure!(
+            fs::canonicalize(&link)? == fs::canonicalize(&file)?,
+            "the overlay's AGENTS.md no longer resolves to the shared file"
+        );
+    }
+    // Control: a real file in the link's place makes T3 refuse the instance.
+    fs::remove_file(&link)?;
+    fs::write(&link, "a file of the user's\n")?;
+    {
+        let _server = Server::start(root)?;
+        ensure!(
+            overlay_refused()?,
+            "T3 created the overlay instance over a conflicting file: the check sees no conflict"
+        );
+        sync_docs_owner(root)?;
+    }
+    ensure!(
+        fs::symlink_metadata(&link)?.file_type().is_symlink(),
+        "the sync left the conflicting file in place"
+    );
+    {
+        let _server = Server::start(root)?;
+        ensure!(
+            !overlay_refused()?,
+            "T3 still refused the overlay instance after the sync linked it"
+        );
+    }
+    Ok(
+        json!({"link_made":true,"created_over_link":true,"control_refused":true,"repaired_by_sync":true}),
+    )
+}
+
 /// Source-grounded steering data is a fixture control, not live provider execution.
 pub fn fake_steering(root: &Path) -> Result<Value> {
     let path = root.join("t3-state/contract-thread.json");
@@ -697,12 +810,14 @@ pub fn real(root: &Path) -> Result<()> {
         output.status.success(),
         "real instrukt history boundary failed"
     );
+    token.revoke()?;
+    drop(_server);
+    let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links})
             .to_string(),
     )?;
-    token.revoke()?;
     Ok(())
 }
 

@@ -3,4 +3,5 @@ source: crates/instrukt-cli/tests/cases/editor-schemas.rs
 expression: "stdout(&env, &synced).replace(&repo.head(), \"[SHA]\")"
 ---
 published demo at [SHA]
+notice: runtime `t3` could not be asked which agent runtimes are configured (T3 readiness: cannot discover the local running server); no global agent file was written, and the next sync writes them
 .instrukt/schemas/domain-index.schema.json: schema written

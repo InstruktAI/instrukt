@@ -51,11 +51,14 @@ impl Server {
             };
             providers.push(json!({"instanceId":profile.instance,"driver":driver,"enabled":true,"installed":true,"status":"ready","auth":{"status":"authenticated"},"availability":"available","models":models.into_iter().map(|slug|json!({"slug":slug})).collect::<Vec<_>>() }));
         }
-        std::fs::write(
-            dir.join("snapshot.json"),
-            json!({"providers":providers,"settings":{"providerInstances":{}}}).to_string(),
-        )
-        .unwrap();
+        // A restarted endpoint keeps the snapshot it served before.
+        if !dir.join("snapshot.json").exists() {
+            std::fs::write(
+                dir.join("snapshot.json"),
+                json!({"providers":providers,"settings":{"providerInstances":{}}}).to_string(),
+            )
+            .unwrap();
+        }
         let runtime = env.home().join(".t3/userdata/server-runtime.json");
         std::fs::create_dir_all(runtime.parent().unwrap()).unwrap();
         std::fs::write(runtime,json!({"version":1,"pid":std::process::id(),"port":address.port(),"origin":format!("http://{address}"),"serverVersion":"0.1.7"}).to_string()).unwrap();
@@ -262,4 +265,19 @@ pub fn update(env: &TestEnv, edit: impl FnOnce(&mut Value)) {
 }
 pub fn state_file(env: &TestEnv) -> PathBuf {
     env.home().join(".t3/userdata/server-runtime.json")
+}
+
+/// One provider instance as T3's snapshot reports it: installed, ready,
+/// authenticated, `enabled` as given.
+pub fn provider(instance: &str, driver: &str, enabled: bool) -> Value {
+    json!({"instanceId":instance,"driver":driver,"enabled":enabled,"installed":true,"status":"ready","auth":{"status":"authenticated"},"availability":"available","models":[]})
+}
+
+/// Gives T3 exactly `providers`, with `instances` as its settings'
+/// `providerInstances`: the agent runtimes it reports as configured.
+pub fn configure(env: &TestEnv, providers: Vec<Value>, instances: Value) {
+    update(env, |snapshot| {
+        snapshot["providers"] = Value::Array(providers);
+        snapshot["settings"]["providerInstances"] = instances;
+    });
 }

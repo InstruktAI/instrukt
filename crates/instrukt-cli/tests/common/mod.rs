@@ -218,6 +218,12 @@ impl TestEnv {
         server.get_or_insert_with(|| t3_readiness::Server::new(self));
     }
 
+    /// Stops T3's endpoint: its descriptor stays and names a port no one
+    /// listens on, so T3 cannot be asked until it starts again.
+    pub fn stop_readiness_server(&self) {
+        drop(self.readiness.lock().unwrap().take());
+    }
+
     /// Lazily start this temporary computer's Redis; it dies with the test.
     pub fn redis_url(&self) -> String {
         let mut server = self.redis.lock().unwrap();

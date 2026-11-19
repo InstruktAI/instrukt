@@ -1,0 +1,14 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "std::fs::read_to_string(home.join(\".claude/settings.json\")).unwrap()"
+---
+{
+  "theme": "dark",
+  "pluginConfigs": {
+    "agents-md@builtin": {
+      "options": {
+        "instructionFiles": "claude-md-and-agents-md"
+      }
+    }
+  }
+}

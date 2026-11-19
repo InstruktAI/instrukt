@@ -68,11 +68,18 @@ struct Settings {
 }
 #[derive(Deserialize)]
 struct InstanceSettings {
+    /// Whether the instance is enabled; T3 decodes an absent value as
+    /// enabled.
+    #[serde(default = "enabled_by_default")]
+    enabled: bool,
     #[serde(default)]
     environment: Vec<Variable>,
     /// Each driver decodes its own `config`; only the home settings are read.
     #[serde(default)]
     config: serde_json::Value,
+}
+fn enabled_by_default() -> bool {
+    true
 }
 /// An instance-environment variable. T3 sends a sensitive variable's value
 /// redacted (empty, or a secret reference), so it counts as absent.
@@ -663,18 +670,26 @@ pub(super) fn configured(home: &Home, env: &Env) -> Result<Vec<ConfiguredInstanc
     ))
 }
 
-/// The enabled set is the provider snapshot's: it includes the default
-/// `codex` and `claudeAgent` instances T3 runs without a settings entry.
-/// Homes are interpreted here and only here, at T3 `v0.1.8`'s semantics.
+/// An instance with a settings entry is enabled exactly when its settings
+/// say so: T3 reports an instance it failed to create as disabled in the
+/// provider snapshot, and publication can repair only what it is told of.
+/// The snapshot's flag decides only for a default instance (`codex`,
+/// `claudeAgent`) that T3 runs without a settings entry. Homes are
+/// interpreted here and only here, at T3 `v0.1.8`'s semantics.
 fn configured_instances(source: Snapshot, user_home: &Path) -> Vec<ConfiguredInstance> {
     let mut settings = source.settings.provider_instances;
     source
         .providers
         .into_iter()
-        .filter(|provider| provider.enabled)
         .filter_map(|provider| {
-            let runtime = runtime_name(kind(&provider.driver)?)?;
             let instance = settings.remove(&provider.instance_id);
+            let enabled = instance
+                .as_ref()
+                .map_or(provider.enabled, |settings| settings.enabled);
+            if !enabled {
+                return None;
+            }
+            let runtime = runtime_name(kind(&provider.driver)?)?;
             let read = Instance {
                 settings: instance.as_ref(),
                 user_home,
@@ -912,6 +927,42 @@ mod tests {
                     &["/srv/t3/codex-auth"],
                 ),
             ]
+        );
+    }
+
+    /// T3 reports an instance it failed to create as disabled in the provider
+    /// snapshot; its settings still enable it, so it is reported with its
+    /// link folder and publication can repair the link. A default instance
+    /// without a settings entry follows the snapshot, and a settings entry
+    /// switched off is not reported.
+    #[test]
+    fn an_instance_t3_failed_to_create_is_still_configured_by_its_settings() {
+        let mut failed = provider("codex-overlay", "codex", false);
+        failed["unavailableReason"] = json!(
+            "Driver 'codex' failed to create instance: Cannot create Codex shadow home entry 'AGENTS.md'"
+        );
+        let value = json!({
+            "providers": [
+                failed,
+                provider("claudeAgent", "claudeAgent", false),
+                provider("codex-off", "codex", true),
+            ],
+            "settings": {"providerInstances": {
+                "codex-overlay": {"driver":"codex","enabled":true,"config":{
+                    "homePath":"/srv/codex","shadowHomePath":"/srv/codex-personal"}},
+                "codex-off": {"driver":"codex","enabled":false},
+            }},
+        });
+        let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
+        assert_eq!(
+            configured_instances(snapshot, Path::new("/home/user")),
+            vec![ConfiguredInstance {
+                instance: ProviderInstanceId::parse("codex-overlay").expect("instance id"),
+                runtime: "codex".into(),
+                registry_agent: None,
+                home: Some(PathBuf::from("/srv/codex")),
+                link_folders: vec![PathBuf::from("/srv/codex-personal")],
+            }]
         );
     }
     #[test]

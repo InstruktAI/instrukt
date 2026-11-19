@@ -75,6 +75,28 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         let project = env.git_repo("project");
         project.write("instrukt.yaml", "schema_version: 6\nproject: contract\n");
         project.commit("feat: disposable contract project");
+        // The owner of `docs/general/` the overlay-link check publishes.
+        crate::fixtures::documented::project(
+            &env,
+            "docs-owner",
+            &[
+                (
+                    "docs/general/index.yaml",
+                    "expanded:\n  - general/policy/contract\n".to_owned(),
+                ),
+                (
+                    "docs/general/policy/contract.md",
+                    crate::fixtures::documented::snippet(
+                        "policy",
+                        "Contract",
+                        "The contract check's doctrine.",
+                        "",
+                        &[],
+                        "Every agent reads this.\n",
+                    ),
+                ),
+            ],
+        );
         fs::create_dir_all(env.instrukt_home()).unwrap();
         fs::write(
             env.instrukt_home().join("instrukt.yaml"),
@@ -155,6 +177,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         manifest["observations"] = observed;
         manifest["readiness"] = json!({"explicitly_unready":real["readiness"]["explicitly_unready"],"translated":real["readiness"]["translated"],"real_revoked_denied":real["readiness"]["revoked_denied"],"fake_revoked_denied":emulated["readiness"]["revoked_denied"]});
         manifest["configured_homes"] = real["configured"].clone();
+        manifest["overlay_links"] = real["overlay_links"].clone();
         manifest["steering_fixture"] = emulated["steering"].clone();
         manifest["fake_operations"]["version"] = json!(
             "diagnostic response only; content is not compared and release equality is not an adapter gate"
