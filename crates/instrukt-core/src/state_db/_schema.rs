@@ -30,7 +30,24 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V17),
     Step(v18),
     Sql(V19),
+    Step(v20),
 ];
+
+/// Version 20: when the post of each answer piece was begun, recorded before
+/// the connector can accept it, so a piece whose acceptance went unrecorded
+/// is looked for at the connector before it is posted again. A schema that
+/// already has the column keeps it.
+fn v20(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_answers') WHERE name='attempted_at')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !present {
+        tx.execute_batch("ALTER TABLE conversation_answers ADD COLUMN attempted_at TEXT;")?;
+    }
+    Ok(())
+}
 
 /// Version 19: the current state of the runner's two history workers,
 /// extraction and the query responder. One row per worker, written by that

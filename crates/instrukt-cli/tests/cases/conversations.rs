@@ -1032,3 +1032,98 @@ fn a_slow_stop_revocation_is_bounded_and_leaves_no_child() {
     assert!(!c.readiness_failing());
     c.runtime.flag("release-revoke", true);
 }
+
+/// Whether no conversation holds an answer piece still to be recorded
+/// posted: status lists a conversation only while it has work outstanding.
+fn answers_recorded(c: &Company) -> bool {
+    c.conversations()
+        .conversations
+        .iter()
+        .all(|conversation| conversation.pending_answers == 0)
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV14
+#[test]
+fn an_answer_whose_acceptance_could_not_be_recorded_is_posted_once() {
+    // History is off, so the conversation relay is the stand-in's only
+    // source reader while the runner runs.
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    // The runner measures its waits on a clock the scenario moves.
+    let clock = c.env.path("clock");
+    let set_clock = |at: &jiff::Timestamp| {
+        let next = clock.with_extension("next");
+        std::fs::write(&next, at.to_string()).unwrap();
+        std::fs::rename(&next, &clock).unwrap();
+    };
+    let start: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
+    set_clock(&start);
+    c.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    let gate = c.store.gate();
+    c.run();
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> When do we ship?", None);
+    let session = c.session();
+    // Slack accepts the post of the answer, and its answer is held.
+    c.slack.hold_posts();
+    c.finish_turn(&session, 0, "On Friday.");
+    wait("the accepted post", || c.slack.held_posts() == 1);
+    // While Slack's answer arrives, the state database is held by another
+    // process and the runner's clock moves on, so the runner's wait to
+    // record the acceptance ends unrecorded.
+    let held = instrukt_core::fsx::LockGuard::try_acquire(
+        &c.env.instrukt_home().join("state/writer.lock"),
+    )
+    .unwrap()
+    .unwrap();
+    gate.hold();
+    let ticking = std::sync::atomic::AtomicBool::new(true);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut now = start;
+            while ticking.load(std::sync::atomic::Ordering::Acquire) {
+                now += jiff::SignedDuration::from_mins(10);
+                set_clock(&now);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+        c.slack.release_posts();
+        // The relay's next pass reads the source only after the pass that
+        // posted has ended, the database still held.
+        gate.held();
+        ticking.store(false, std::sync::atomic::Ordering::Release);
+    });
+    drop(held);
+    gate.open();
+    wait("the answer's acceptance recorded", || answers_recorded(&c));
+    assert_eq!(
+        destinations(&c),
+        [("C1".to_owned(), Some("1700000001.000100".to_owned()))]
+    );
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV14
+#[test]
+fn an_answer_accepted_as_the_runner_stopped_is_posted_once() {
+    // History is off, so the conversation relay is the stand-in's only
+    // source reader while the runner runs.
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    c.run();
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> When do we ship?", None);
+    let session = c.session();
+    // Slack accepts the post of the answer, and the runner dies before
+    // Slack's answer reaches it.
+    c.slack.hold_posts();
+    c.finish_turn(&session, 0, "On Friday.");
+    wait("the accepted post", || c.slack.held_posts() == 1);
+    c.runner_dies();
+    c.slack.release_posts();
+    // The runner started again finds the answer among its own posts.
+    c.run();
+    wait("the answer's acceptance recorded", || answers_recorded(&c));
+    assert_eq!(
+        destinations(&c),
+        [("C1".to_owned(), Some("1700000001.000100".to_owned()))]
+    );
+}

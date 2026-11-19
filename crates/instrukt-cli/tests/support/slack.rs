@@ -138,6 +138,10 @@ struct Workspace {
     next: u64,
     refuse: bool,
     hold_reads: bool,
+    /// A post Slack accepted is answered only once released.
+    hold_posts: bool,
+    /// How many accepted posts were held back.
+    held_posts: usize,
     /// `users.info` answers wait until released.
     hold_lookups: bool,
     /// How many lookups were held back.
@@ -243,6 +247,18 @@ impl FakeSlack {
                     }
                     let answer =
                         Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
+                    // A held post is accepted, and its answer waits: the
+                    // poster may be gone by the time it is sent.
+                    if method == "chat.postMessage" && workspace.lock().unwrap().hold_posts {
+                        workspace.lock().unwrap().held_posts += 1;
+                        while workspace.lock().unwrap().hold_posts && !stop.load(Ordering::Acquire)
+                        {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        let _ =
+                            request.respond(tiny_http::Response::from_string(answer.to_string()));
+                        continue;
+                    }
                     request
                         .respond(tiny_http::Response::from_string(answer.to_string()))
                         .unwrap();
@@ -702,6 +718,20 @@ impl FakeSlack {
     }
 
     /// History and replies reads wait until [`FakeSlack::release_reads`].
+    /// Every later post is accepted, and its answer held until released.
+    pub fn hold_posts(&self) {
+        self.workspace.lock().unwrap().hold_posts = true;
+    }
+
+    pub fn release_posts(&self) {
+        self.workspace.lock().unwrap().hold_posts = false;
+    }
+
+    /// How many accepted posts had their answer held.
+    pub fn held_posts(&self) -> usize {
+        self.workspace.lock().unwrap().held_posts
+    }
+
     pub fn hold_reads(&self) {
         self.workspace.lock().unwrap().hold_reads = true;
     }
