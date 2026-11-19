@@ -326,33 +326,35 @@ pub fn run(
     // conversations are on, the connector destination; the connections take
     // the intake. Both report their unexpected end to this loop at once.
     let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
-    let demand = !crate::conversations::admitted_demand(&current.get()).is_empty();
-    // Each kind of the build's registry is built once, when connectors are
-    // hosted; a setting a kind refuses stops the runner here.
-    let connectors = demand
-        .then(|| {
-            cx.wiring
-                .connector_kinds
-                .iter()
-                .map(|build| build(cx.env, Arc::clone(&clock)))
-                .collect::<Result<Vec<_>, _>>()
-                .map(|kinds| {
-                    Arc::new(crate::connector_host::Directory::new(
-                        kinds,
-                        Arc::clone(&clock),
-                    )) as Arc<dyn crate::connector_host::Connectors>
-                })
-        })
-        .transpose()
-        .map_err(|e| RunnerError::Conversations(e.cause))?;
-    let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
-    let destinations = connectors
+    // The company is hosted when the admitted generation declares a
+    // connector: its connections start first, building each connector kind
+    // once; a setting a kind refuses stops the runner here. The relay then
+    // serves its conversations beside links.
+    let company = cx
+        .wiring
+        .company
         .as_ref()
-        .map(|connectors| crate::links::Destinations {
-            connectors: Arc::clone(connectors),
-            accepted: Arc::default(),
-            arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
-        });
+        .filter(|company| company.demand(&current.get()));
+    let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
+    let mut connections = match company {
+        Some(company) => Some(
+            company
+                .start(crate::interfaces::CompanyStart {
+                    home: cx.home,
+                    current: &current,
+                    env: cx.env,
+                    clock: Arc::clone(&clock),
+                    wake: arrive,
+                    supervise: supervise.clone(),
+                })
+                .map_err(|e| RunnerError::Conversations(e.0))?,
+        ),
+        None => None,
+    };
+    let destinations = company.map(|company| crate::links::Destinations {
+        company: Arc::clone(company),
+        arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
+    });
     // The relay retries T3 inside its own thread; it is started again here
     // only when its thread ended.
     let supervise_relay = |relay: &mut Option<crate::links::Worker>| {
@@ -378,19 +380,6 @@ pub fn run(
     };
     let mut relay = None;
     supervise_relay(&mut relay);
-    let mut connections = match &connectors {
-        Some(connectors) => Some(
-            crate::connector_host::Connections::start(
-                cx.home,
-                &current,
-                Arc::clone(connectors),
-                arrive,
-                supervise.clone(),
-            )
-            .map_err(|e| RunnerError::Conversations(e.to_string()))?,
-        ),
-        None => None,
-    };
     tracing::info!(event = "runner_started");
     // A skipped wake stays in status until the next wake that is not skipped;
     // one left by an earlier runner is cleared by this runner's first.

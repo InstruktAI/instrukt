@@ -11,13 +11,11 @@ pub(crate) struct Worker {
     failure: Option<LinkError>,
     home: Home,
 }
-/// The connector destination the relay serves beside links: the connectors
-/// it posts through and the intake's wake-ups.
+/// The company destination the relay serves beside links, through its
+/// ports, and the intake's wake-ups.
 #[derive(Clone)]
 pub(crate) struct Destinations {
-    pub(crate) connectors: std::sync::Arc<dyn crate::connector_host::Connectors>,
-    /// Answer pieces accepted but not yet recorded, kept across passes.
-    pub(crate) accepted: std::sync::Arc<crate::conversations::Accepted>,
+    pub(crate) company: std::sync::Arc<dyn crate::interfaces::CompanyPorts>,
     pub(crate) arrivals: std::sync::Arc<std::sync::Mutex<mpsc::Receiver<()>>>,
 }
 /// Wakes the run loop's supervision when the relay ends, whether it
@@ -71,8 +69,8 @@ impl Worker {
                     let cause = error.to_string();
                     if failing.as_deref() != Some(cause.as_str()) {
                         record(&home, &error);
-                        if destinations.is_some() {
-                            crate::conversations::relay_state(&home, Some(&cause));
+                        if let Some(destinations) = &destinations {
+                            destinations.company.relay_state(&home, Some(&cause));
                         }
                         failing = Some(cause);
                     }
@@ -124,8 +122,8 @@ fn serve(
     *delay = Duration::from_secs(1);
     if let Some(cause) = failing.take() {
         tracing::info!(event = "conversation_relay_recovered", cause = %cause);
-        if destinations.is_some() {
-            crate::conversations::relay_state(home, None);
+        if let Some(destinations) = destinations {
+            destinations.company.relay_state(home, None);
         }
     }
     // Links catch up at startup and on source changes only (native
@@ -140,21 +138,17 @@ fn serve(
             links_due = false;
         }
         if let Some(destinations) = destinations
-            && let Err(error) = crate::conversations::relay(
-                home,
-                &current.get(),
-                source.as_ref(),
-                adapter.as_ref(),
-                destinations.connectors.as_ref(),
-                &destinations.accepted,
-            )
+            && let Err(error) =
+                destinations
+                    .company
+                    .relay(home, &current.get(), source.as_ref(), adapter.as_ref())
         {
             tracing::warn!(event = "conversation_relay_failed", error = %error);
         }
         // Retained connector work that is not yet done is retried within a
         // bound; otherwise only a native change or new intake wakes the relay.
-        let retry =
-            destinations.is_some() && crate::conversations::outstanding(home).unwrap_or(true);
+        let retry = destinations
+            .is_some_and(|destinations| destinations.company.outstanding(home).unwrap_or(true));
         let until = std::time::Instant::now() + Duration::from_secs(2);
         loop {
             if stopping.try_recv().is_ok() {

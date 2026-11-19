@@ -220,6 +220,72 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
     });
 }
 
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD2
+#[test]
+fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
+    let mut env = TestEnv::new();
+    let slack = crate::fixtures::slack::FakeSlack::start();
+    env.set_env("INSTRUKT_SLACK_API_URL", &slack.api_url);
+    let _source = crate::fixtures::history::T3Store::new(&env);
+    // Every module is off: only a company's connector gives `instrukt run`
+    // something to serve.
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 1\nrunner: {runtime: t3}\nmodules: {todos: false, events: false, history: false}\n",
+    )
+    .unwrap();
+    crate::fixtures::conversing::company_home(
+        &env,
+        "acme",
+        crate::fixtures::slack::APP_TOKEN,
+        crate::fixtures::slack::BOT_TOKEN,
+        &crate::fixtures::conversing::slack_settings("{}", ""),
+    );
+    // Whether it has one is what the runner's admission decides for the
+    // same files. A machine layer admission refuses is the command's error,
+    // named, as the runner refuses to start on it, even where a module is on
+    // that would otherwise let the command go on: `instrukt sessions`, which
+    // asks admission only for this, says so.
+    let machine = env.instrukt_home().join("instrukt.yaml");
+    let valid_machine = std::fs::read_to_string(&machine).unwrap();
+    std::fs::write(
+        &machine,
+        format!(
+            "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{todos: true}}\nbogus: 1\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    let refused = env.run(env.home(), ["sessions", "list"]).failure().code(1);
+    insta::assert_snapshot!(
+        "unadmitted-run",
+        String::from_utf8_lossy(&refused.get_output().stderr)
+            .replace(&env.home().display().to_string(), "[HOME]")
+    );
+    std::fs::write(&machine, valid_machine).unwrap();
+    // A company document admission refuses leaves that company out: there is
+    // nothing to serve, as the runner would host nothing.
+    let document = env.instrukt_home().join("companies/acme/instrukt.yaml");
+    let valid = std::fs::read_to_string(&document).unwrap();
+    std::fs::write(&document, format!("{valid}bogus: 1\n")).unwrap();
+    let refused = env.run(env.home(), ["run"]).failure();
+    insta::assert_snapshot!(
+        "refused-run",
+        String::from_utf8_lossy(&refused.get_output().stderr)
+    );
+    // Admitted, the company is served: the runner connects its connector.
+    std::fs::write(&document, valid).unwrap();
+    let _runner = crate::fixtures::conversing::Running::spawn(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
+    crate::fixtures::conversing::wait("the runner's connector connection", || {
+        slack.connections() > 0
+    });
+}
+
 fn selection_config(project: &Tracked, settings: &str) {
     common::agent_profiles(&project.env, settings);
 }
