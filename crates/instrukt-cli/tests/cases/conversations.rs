@@ -1203,6 +1203,53 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
     wait("the queued message's answer", || {
         c.slack.posts().len() == posts + 1
     });
+
+    a_completed_turn_is_read_again_after_a_locked_read();
+}
+
+fn a_completed_turn_is_read_again_after_a_locked_read() {
+    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
+    projected(&c);
+    let asked = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
+    let session = started(&c, &[]);
+    let run = c.runtime.active_run(&session);
+    c.store
+        .agent_writes(&session, &run, 1, "Checking the release plan.");
+    wait("the relay to observe the running turn's update", || {
+        c.slack.status(channel, &asked).as_deref() == Some("Checking the release plan.")
+    });
+    c.store.exclude_readers();
+    c.store
+        .agent_writes(&session, &run, 2, "Checking the remaining items.");
+    let log = c
+        .env
+        .home()
+        .join(".local/state/instrukt-ai/instrukt/run.log");
+    let failed_reads = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| {
+                line.contains("conversation_answer_unread") && line.contains("database is locked")
+            })
+            .count()
+    };
+    wait("the relay's first locked read", || failed_reads() > 0);
+
+    c.finish_turn(&session, 0, "On Friday.");
+    let before = failed_reads();
+    wait("the completion's wake spent on a locked read", || {
+        failed_reads() > before
+    });
+    assert!(c.slack.posts().is_empty());
+    c.store.let_readers_in();
+    wait("the answer without another projection write", || {
+        c.slack.posts().len() == 1
+    });
+    assert_eq!(c.slack.posts()[0].thread.as_deref(), Some(asked.as_str()));
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12

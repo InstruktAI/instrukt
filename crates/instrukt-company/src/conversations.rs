@@ -1771,14 +1771,16 @@ fn unconfirmed(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<
     })
 }
 
-/// Whether any conversation work is outstanding: a message not yet
-/// accepted, an answer not yet posted or a refusal not yet sent.
+/// Whether any conversation work is outstanding. A sent message stays
+/// outstanding until its turn is harvested: a native wake can precede
+/// readable completion evidence, and that read needs another chance even
+/// when the source makes no further write.
 pub fn outstanding(home: &Home) -> Result<bool, ConversationError> {
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE state IN (?1,?2)) OR EXISTS(SELECT 1 FROM conversation_answers WHERE posted_at IS NULL) OR EXISTS(SELECT 1 FROM conversation_refusals WHERE replied_at IS NULL)",
-                [Stage::Received.as_str(), Stage::Pending.as_str()],
+                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE state IN (?1,?2,?3)) OR EXISTS(SELECT 1 FROM conversation_answers WHERE posted_at IS NULL) OR EXISTS(SELECT 1 FROM conversation_refusals WHERE replied_at IS NULL)",
+                [Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str()],
                 |r| r.get::<_, bool>(0),
             )
             .map_err(state::sql(path))

@@ -184,6 +184,25 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
     pub fn show_messages(&self) {
         self.db.execute_batch("INSERT OR REPLACE INTO orchestration_v2_projection_messages SELECT * FROM hidden_messages;").unwrap();
     }
+    /// Keep the WAL writer's exclusive lock across commits, so a native
+    /// wake can reach a relay that cannot read the just-written data.
+    #[allow(dead_code, reason = "used by the conversation scenarios")]
+    pub fn exclude_readers(&self) {
+        self.db
+            .execute_batch("PRAGMA locking_mode=EXCLUSIVE")
+            .unwrap();
+    }
+
+    /// Return to shared WAL access without writing another projection row.
+    #[allow(dead_code, reason = "used by the conversation scenarios")]
+    pub fn let_readers_in(&self) {
+        self.db
+            .execute_batch(
+                "PRAGMA locking_mode=NORMAL; BEGIN; SELECT 1 FROM effect_sql_migrations; COMMIT",
+            )
+            .unwrap();
+    }
+
     /// The agent writes `text` in the running turn `run` of `thread`: an
     /// assistant message T3 records in that turn, `ordinal` among its items.
     #[allow(dead_code, reason = "used by the conversation scenarios")]
