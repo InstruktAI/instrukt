@@ -82,6 +82,7 @@ impl FindingKind {
             Self::ReferenceCycle => "reference_cycle",
             Self::TodosNeedGitHub => "todos_need_github",
             Self::EventsNeedTransport => "events_need_transport",
+            Self::LeavesTheComputer => "leaves_the_computer",
         }
     }
 }
