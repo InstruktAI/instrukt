@@ -11,11 +11,11 @@ use crate::common;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use assert_cmd::assert::Assert;
 use common::TestEnv;
-use instrukt_core::repository::{Hook, HookRunRecord, SyncOutcome};
+use instrukt_core::repository::{Hook, SyncOutcome};
 
 /// A test machine whose `PATH` holds the built `instrukt`, as an installed
 /// one would: hook sections call it by name.
@@ -39,32 +39,6 @@ fn stdout(env: &TestEnv, assert: &Assert) -> String {
 
 fn stderr(env: &TestEnv, assert: &Assert) -> String {
     shown(env, &assert.get_output().stderr)
-}
-
-/// Waits, within a bound, until the detached worker of `hook`'s last run
-/// has recorded how sync ended.
-fn wait_for_run(env: &TestEnv, project: &str, hook: Hook) -> HookRunRecord {
-    let path = env
-        .instrukt_home()
-        .join("state/hooks")
-        .join(project)
-        .join(format!("{}.yaml", hook.name()));
-    let mut finished = None;
-    crate::common::wait_until(
-        &format!("{hook} sync for {project}"),
-        Duration::from_secs(30),
-        || {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                let record: HookRunRecord = serde_yaml_ng::from_str(&text).unwrap();
-                if record.sync != Some(SyncOutcome::Running) {
-                    finished = Some(record);
-                    return true;
-                }
-            }
-            false
-        },
-    );
-    finished.unwrap()
 }
 
 /// Every file below `dir` (the repository's git directory included) with
@@ -119,7 +93,7 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     );
 
     repo.commit("adopt instrukt");
-    let adopted = wait_for_run(&env, "my-demo", Hook::PostCommit);
+    let adopted = env.finished_hook_run(repo.path(), Hook::PostCommit);
     assert!(
         matches!(
             adopted.sync,
@@ -134,7 +108,11 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     env.run(repo.path(), ["sync"]).success();
     let validated = env.run(repo.path(), ["docs", "validate"]).success();
     insta::assert_snapshot!("adopted-docs-validate", stdout(&env, &validated));
-    insta::assert_snapshot!("compiled-seeded-master", repo.read("AGENTS.md"));
+    // The adopting commit carries the rendering, made by the hook.
+    insta::assert_snapshot!(
+        "compiled-seeded-master",
+        repo.git(["show", "HEAD:AGENTS.md"])
+    );
 }
 
 // spec: project/instrukt/spec/feature/repository/project-initialization UC-IN1
@@ -203,13 +181,18 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
 
 const HAND_WRITTEN: &str = "# Instructions\n\nWritten by hand.\n";
 
+/// A project policy with every required section, whose rule is `rule`.
+const MOVED: &str = "---\ndescription: The house rules.\n---\n\n# House — Policy\n\n## Rules\n\nAnswer in full sentences.\n\n## Rationale\n\nBecause.\n\n## Scope\n\nAll work.\n\n## Enforcement\n\nReview.\n\n## Exceptions\n\nNone.\n";
+
+// spec: project/instrukt/spec/feature/repository/project-initialization UC-IN5
 #[test]
-fn a_hand_written_agents_file_is_kept_aside_and_left_until_the_first_publication_renders_it() {
+fn a_hand_written_agents_file_is_kept_aside_and_the_rendering_takes_its_place() {
     let env = machine();
     let repo = env.git_repo("demo");
     repo.write("AGENTS.md", HAND_WRITTEN);
     repo.commit("the developer's own instructions");
 
+    // Init keeps the hand-written instructions aside and leaves the file.
     let first = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("init-beside-hand-written-agents", stdout(&env, &first));
     assert_eq!(
@@ -226,7 +209,6 @@ fn a_hand_written_agents_file_is_kept_aside_and_left_until_the_first_publication
         HAND_WRITTEN,
         "the hand-written file is left as it was"
     );
-
     let before = tree(repo.path());
     env.run(repo.path(), ["init"]).success();
     assert_eq!(
@@ -235,18 +217,31 @@ fn a_hand_written_agents_file_is_kept_aside_and_left_until_the_first_publication
         "nothing in the repository changed"
     );
 
-    repo.git(["rm", "--cached", "--quiet", "AGENTS.md"]);
+    // The next commit through the hook writes the rendering over the file.
     repo.commit("adopt instrukt");
-    wait_for_run(&env, "demo", Hook::PostCommit);
-    env.run(repo.path(), ["sync"]).success();
-    insta::assert_snapshot!("first-rendered-agents", repo.read("AGENTS.md"));
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    let committed = repo.git(["show", "HEAD:AGENTS.md"]);
+    insta::assert_snapshot!("first-rendered-agents", committed);
+    assert_eq!(repo.read("AGENTS.md").trim_end(), committed);
     assert_eq!(
         repo.read(".instrukt/adopted/AGENTS.md"),
         HAND_WRITTEN,
-        "the kept copy outlives the first publication"
+        "the kept copy outlives the rendering"
     );
-    let after = env.run(repo.path(), ["init"]).success();
-    insta::assert_snapshot!("init-after-first-publication", stdout(&env, &after));
+
+    // The developer places the instruction in documentation and drops the
+    // kept copy; the next commit carries it.
+    repo.write("docs/project/policy/house.md", MOVED).write(
+        "docs/project/index.yaml",
+        "expanded:\n  - project/demo/policy/house\n",
+    );
+    std::fs::remove_file(repo.path().join(".instrukt/adopted/AGENTS.md")).unwrap();
+    repo.commit("place the house rules");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    insta::assert_snapshot!(
+        "rendering-with-the-placed-instruction",
+        repo.git(["show", "HEAD:AGENTS.md"])
+    );
 }
 
 // spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2

@@ -5,11 +5,15 @@
 //!
 //! - An `@exec` or `@include` directive in a snippet, a companion, a
 //!   third-party doc or a master is a finding.
-//! - A `@config` directive with a `runtime.*` path is a finding in every
-//!   file rendered into an `AGENTS.md` or a global agent file: the masters,
-//!   and the snippets the repository's position indexes render in full
-//!   (`expanded`, `general`'s `agents`) and the masters require, with their
-//!   closure, as rendering reads them.
+//! - Any `@config` directive is a finding in what a committed `AGENTS.md`
+//!   holds in full: the masters, the snippets `docs/project/index.yaml`
+//!   expands and the masters require, with their closure, as rendering
+//!   reads them. A committed rendering resolves no configured value, so it
+//!   is the same on every computer.
+//! - A `@config` directive with a `runtime.*` path is a finding in what a
+//!   global agent file or a domain read renders in full: the snippets the
+//!   published positions' indexes render (`expanded`, `general`'s
+//!   `agents`), with their closure. Publication has no runtime session.
 //! - The repository-root master carrying `## Required reads` is a finding:
 //!   `docs/project/index.yaml` selects what the root `AGENTS.md` includes
 //!   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
@@ -63,30 +67,31 @@ pub(super) fn check(
         values,
         project: corpus.project(),
     };
-    let mut walk = Compiled {
-        corpus,
-        repo_root,
-        cx: &cx,
-        seen: BTreeSet::new(),
-        out,
-    };
-    for (rel, text) in compiled_sources(repo_root)? {
-        let body = _text::split_frontmatter(&text).body.to_owned();
-        unsupported_in(Path::new(&rel), &body, walk.out);
-        if rel == MASTER_FILE_NAME && carries_required_reads(&body) {
-            walk.out.push(Finding::new(
-                Path::new(&rel),
+    let index_of = |position: &Position| position_index(repo_root, position);
+    let masters = compiled_sources(repo_root)?;
+    for (rel, text) in &masters {
+        let body = _text::split_frontmatter(text).body;
+        unsupported_in(Path::new(rel), body, out);
+        if rel == MASTER_FILE_NAME && carries_required_reads(body) {
+            out.push(Finding::new(
+                Path::new(rel),
                 FindingCode::MasterRequiredReads,
                 Some(format!(
                     "the root master holds only `## Purpose`; `docs/project/{INDEX_FILE}` selects what the root AGENTS.md includes"
                 )),
             ));
         }
-        walk.file(Path::new(&rel), &body)?;
     }
-    let mut positions = vec![Position::Project];
-    positions.extend(corpus.published_domains().iter().map(Position::of_domain));
-    for position in positions {
+    committed_config(corpus, &masters, &index_of, &cx, out)?;
+    let mut walk = Compiled {
+        corpus,
+        index_of: &index_of,
+        cx: &cx,
+        committed: false,
+        seen: BTreeSet::new(),
+        out,
+    };
+    for position in corpus.published_domains().iter().map(Position::of_domain) {
         if let Some(index) = position_index(repo_root, &position)? {
             for id in rendered_in_full(&index) {
                 walk.reference(&Reference {
@@ -98,6 +103,42 @@ pub(super) fn check(
     }
     Ok(())
 }
+
+/// A finding for each `@config` directive in what the repository's committed
+/// `AGENTS.md` files hold in full: each of `masters` (`(path, text)`), the
+/// snippets `docs/project/index.yaml` expands, and what they require, with
+/// their closure. `index_of` reads a position's `index.yaml`.
+fn committed_config(
+    corpus: &Corpus,
+    masters: &[(String, String)],
+    index_of: &IndexOf<'_>,
+    cx: &RenderContext<'_>,
+    out: &mut Vec<Finding>,
+) -> Result<(), DocsError> {
+    let mut walk = Compiled {
+        corpus,
+        index_of,
+        cx,
+        committed: true,
+        seen: BTreeSet::new(),
+        out,
+    };
+    for (rel, text) in masters {
+        walk.file(Path::new(rel), _text::split_frontmatter(text).body)?;
+    }
+    if let Some(index) = index_of(&Position::Project)? {
+        for id in index.expanded() {
+            walk.reference(&Reference {
+                raw: id.as_str().to_owned(),
+                target: Some(RefTarget::Snippet(id.clone())),
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// How a walk reads a position's `index.yaml`; `None` without one.
+type IndexOf<'a> = dyn Fn(&Position) -> Result<Option<PositionIndex>, DocsError> + 'a;
 
 /// Whether a master's body carries a `## Required reads` heading outside
 /// fenced code.
@@ -153,11 +194,14 @@ fn unsupported_in(path: &Path, body: &str, out: &mut Vec<Finding>) {
     }
 }
 
-/// The walk over what publication renders, each target once.
+/// The walk over what a rendering holds in full, each target once: a
+/// committed `AGENTS.md`, where any `@config` is a finding, or a global file
+/// or domain read, where a `runtime.*` one is.
 struct Compiled<'w, 'c> {
     corpus: &'c Corpus,
-    repo_root: &'w Path,
+    index_of: &'w IndexOf<'w>,
     cx: &'w RenderContext<'w>,
+    committed: bool,
     seen: BTreeSet<RefTarget>,
     out: &'w mut Vec<Finding>,
 }
@@ -165,7 +209,7 @@ struct Compiled<'w, 'c> {
 impl Compiled<'_, '_> {
     /// Checks one compiled file, and then what it requires.
     fn file(&mut self, path: &Path, body: &str) -> Result<(), DocsError> {
-        self.runtime_in(path, &current(body));
+        self.config_in(path, &current(body));
         for read in _render::dependency_reads(body, Lens::Current, self.cx)? {
             self.reference(&read)?;
         }
@@ -195,7 +239,7 @@ impl Compiled<'_, '_> {
             // A bare-domain read renders that domain's `expanded` set.
             RefTarget::Domain(domain) => {
                 let position = Position::of_domain(domain);
-                if let Some(index) = position_index(self.repo_root, &position)? {
+                if let Some(index) = (self.index_of)(&position)? {
                     for id in index.expanded() {
                         self.reference(&Reference {
                             raw: id.as_str().to_owned(),
@@ -211,18 +255,21 @@ impl Compiled<'_, '_> {
         Ok(())
     }
 
-    /// A finding for each `runtime.*` `@config` directive in `body`.
-    fn runtime_in(&mut self, path: &Path, body: &str) {
+    /// A finding for each `@config` directive in `body` this walk refuses:
+    /// any in a committed rendering, a `runtime.*` one elsewhere.
+    fn config_in(&mut self, path: &Path, body: &str) {
         for directive in _text::directives(&_text::lines(body)) {
-            if let Directive::Config { path: value, .. } = directive
-                && is_runtime(&value)
-            {
-                self.out.push(Finding::new(
-                    path,
-                    FindingCode::ConfigRuntimeCompiled,
-                    Some(value),
-                ));
-            }
+            let Directive::Config { path: value, .. } = directive else {
+                continue;
+            };
+            let code = if self.committed {
+                FindingCode::ConfigCommitted
+            } else if is_runtime(&value) {
+                FindingCode::ConfigRuntimeCompiled
+            } else {
+                continue;
+            };
+            self.out.push(Finding::new(path, code, Some(value)));
         }
     }
 }
@@ -298,4 +345,51 @@ fn walk(root: &Path) -> Result<Vec<String>, DocsError> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::docs::_corpus::SourceFile;
+    use crate::ids::ProjectSlug;
+
+    const STYLE: &str = "---\ndescription: Style.\n---\n\n# Style — Policy\n\n## Rules\n\n<!-- @config: project -->\n";
+
+    #[test]
+    fn a_configured_value_in_a_master_is_a_finding_and_in_a_listed_snippet_none() {
+        let project = ProjectSlug::parse("demo").unwrap();
+        let corpus = Corpus::from_sources(
+            Some(project.clone()),
+            None,
+            [SourceFile {
+                path: "docs/project/policy/style.md".to_owned(),
+                text: STYLE.to_owned(),
+            }],
+        );
+        let index = "listed:\n  - project/demo/policy/style\n";
+        let index_of = |position: &Position| -> Result<Option<PositionIndex>, DocsError> {
+            Ok((*position == Position::Project)
+                .then(|| PositionIndex::parse(position, index).unwrap()))
+        };
+        let values = Values::committed();
+        let cx = RenderContext {
+            home: None,
+            values: &values,
+            project: Some(&project),
+        };
+        let masters = [(
+            MASTER_FILE_NAME.to_owned(),
+            "## Purpose\n\n<!-- @config: project -->\n".to_owned(),
+        )];
+        let mut out = Vec::new();
+        committed_config(&corpus, &masters, &index_of, &cx, &mut out).unwrap();
+        assert_eq!(
+            out,
+            [Finding::new(
+                Path::new(MASTER_FILE_NAME),
+                FindingCode::ConfigCommitted,
+                Some("project".to_owned()),
+            )]
+        );
+    }
 }

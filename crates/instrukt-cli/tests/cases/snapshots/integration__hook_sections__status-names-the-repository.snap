@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-cli/tests/cases/hook-sections.rs
+expression: "hooks_status(&env, &repo)"
+---
+hooks directory: [TMP]/demo/.git/hooks
+runs recorded for the repository at [TMP]/demo/.git
+pre-commit: current
+  last run: every file was already in committed form
+post-commit: current
+  last run: sync succeeded
+post-merge: current
+  last run: none
+post-rewrite: current
+  last run: none
+post-checkout: current
+  last run: sync succeeded

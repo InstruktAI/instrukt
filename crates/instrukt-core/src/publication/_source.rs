@@ -132,6 +132,38 @@ impl Committed {
             }
             wanted.push((object.to_owned(), path.to_owned()));
         }
+        Self::of_objects(repo, wanted)
+    }
+
+    /// Reads the files of the index a commit is being made from in the
+    /// repository at `repo`: `index` (git's `GIT_INDEX_FILE` for the run),
+    /// or the repository's own index when `None`. Stage-0 regular files
+    /// only, as [`Committed::read`] reads a commit.
+    pub(super) fn read_index(repo: &Path, index: Option<&Path>) -> Result<Self, PublicationError> {
+        let listing = git::run_on_index(repo, index, ["ls-files", "--stage", "-z"], b"")?;
+        let mut wanted: Vec<(String, String)> = Vec::new();
+        for record in listing.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let record = String::from_utf8_lossy(record);
+            // `<mode> <object> <stage>\t<path>`.
+            let Some((meta, path)) = record.split_once('\t') else {
+                continue;
+            };
+            let mut meta = meta.split(' ');
+            let (Some(mode), Some(object), Some(stage)) = (meta.next(), meta.next(), meta.next())
+            else {
+                continue;
+            };
+            if stage != "0" || !matches!(mode, "100644" | "100755") || !is_read(path) {
+                continue;
+            }
+            wanted.push((object.to_owned(), path.to_owned()));
+        }
+        Self::of_objects(repo, wanted)
+    }
+
+    /// The blobs `wanted` names, `(object, path)`, read through one
+    /// `cat-file --batch` in the repository at `repo`.
+    fn of_objects(repo: &Path, wanted: Vec<(String, String)>) -> Result<Self, PublicationError> {
         let input: String = wanted
             .iter()
             .map(|(object, _)| format!("{object}\n"))

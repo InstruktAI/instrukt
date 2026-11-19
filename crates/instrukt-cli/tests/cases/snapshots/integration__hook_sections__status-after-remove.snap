@@ -3,6 +3,7 @@ source: crates/instrukt-cli/tests/cases/hook-sections.rs
 expression: "stdout(&env, &status)"
 ---
 hooks directory: [TMP]/demo/.git/hooks
+runs recorded for the repository at [TMP]/demo/.git
 pre-commit: absent
   add this line to the tool that manages [TMP]/demo/.git/hooks/pre-commit: instrukt hooks run pre-commit "$@" || true
   last run: none

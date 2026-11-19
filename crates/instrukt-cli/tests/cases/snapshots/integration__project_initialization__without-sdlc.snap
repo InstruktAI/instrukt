@@ -15,7 +15,7 @@ editor schemas (.instrukt/schemas/): created
   .instrukt/schemas/instrukt.schema.json: schema written
   instrukt.yaml: modeline inserted
   docs/project/index.yaml: modeline inserted
-ignores of AGENTS.md and .instrukt/ (.gitignore): created
+ignores of .instrukt/ (.gitignore): created
 hook sections: created
   hooks directory: [TMP]/demo/.git/hooks
   pre-commit: written

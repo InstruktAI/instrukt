@@ -33,9 +33,6 @@ pub(super) struct AgentTarget {
     /// The setting it needs to load project instruction files; `None` when
     /// it loads them already.
     pub loading: Option<LoadingKey>,
-    /// The separate project instruction file it reads in a project's root
-    /// in place of `AGENTS.md`; `None` when it reads none.
-    pub project_override: Option<&'static str>,
 }
 
 /// The supported agent CLIs.
@@ -55,7 +52,6 @@ pub(super) const TARGETS: [AgentTarget; 4] = [
             ],
             value: || Value::String("claude-md-and-agents-md".to_owned()),
         }),
-        project_override: None,
     },
     AgentTarget {
         cli: AgentCli::Codex,
@@ -63,7 +59,6 @@ pub(super) const TARGETS: [AgentTarget; 4] = [
         dir: ".codex",
         entrypoint: "AGENTS.md",
         loading: None,
-        project_override: Some("AGENTS.override.md"),
     },
     AgentTarget {
         cli: AgentCli::Gemini,
@@ -80,7 +75,6 @@ pub(super) const TARGETS: [AgentTarget; 4] = [
                 ])
             },
         }),
-        project_override: None,
     },
     AgentTarget {
         cli: AgentCli::Deepseek,
@@ -88,7 +82,6 @@ pub(super) const TARGETS: [AgentTarget; 4] = [
         dir: ".dsh",
         entrypoint: "AGENTS.md",
         loading: None,
-        project_override: None,
     },
 ];
 

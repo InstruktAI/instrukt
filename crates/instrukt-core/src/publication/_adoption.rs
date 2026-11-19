@@ -183,16 +183,3 @@ pub fn published_schema(
         Err(source) => Err(PublicationError::Io { path, source }),
     }
 }
-
-/// Whether `project`'s last publication wrote the file `rel` (relative to
-/// its primary worktree).
-pub fn wrote_project_file(
-    home: &Home,
-    project: &ProjectSlug,
-    rel: &Path,
-) -> Result<bool, PublicationError> {
-    Ok(_tree::Outputs::load(home, project)?
-        .agents
-        .iter()
-        .any(|written| written == rel))
-}

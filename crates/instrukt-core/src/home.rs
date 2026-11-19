@@ -195,9 +195,16 @@ impl Home {
         self.publication_state_dir().join("claims")
     }
 
-    /// `~/.instrukt/state/hooks/<project>/` — each hook section's last run.
-    pub fn hooks_state_dir(&self, project: &ProjectSlug) -> PathBuf {
-        self.state_dir().join("hooks").join(project.as_str())
+    /// `~/.instrukt/state/hook-runs/<key>/` — each hook section's last run
+    /// in one repository, keyed by its git common directory.
+    pub fn hook_runs_dir(&self, key: &str) -> PathBuf {
+        self.state_dir().join("hook-runs").join(key)
+    }
+
+    /// `~/.instrukt/state/hooks/` — where an earlier release kept hook runs
+    /// per project; the first hook run that finds it removes it.
+    pub fn retired_hook_records_dir(&self) -> PathBuf {
+        self.state_dir().join("hooks")
     }
 
     /// `~/.instrukt/state/instrukt.db` — the state database: the local
@@ -262,9 +269,9 @@ impl Home {
         self.root.join("locks")
     }
 
-    /// `~/.instrukt/state/publication/outputs/` — per project, the files
-    /// outside the home its last publication wrote (compiled `AGENTS.md`
-    /// files, global agent entrypoints), so a later sync can retract them.
+    /// `~/.instrukt/state/publication/outputs/` — where an earlier release
+    /// kept a record per project; the first sync that publishes a project
+    /// deletes its record there unparsed.
     pub fn publication_outputs_dir(&self) -> PathBuf {
         self.publication_state_dir().join("outputs")
     }
@@ -289,7 +296,8 @@ mod tests {
             home.publication_state_dir(),
             home.publication_outputs_dir(),
             home.claims_dir(),
-            home.hooks_state_dir(&project),
+            home.hook_runs_dir("0123456789abcdef"),
+            home.retired_hook_records_dir(),
             home.state_db_file(),
             home.writer_lock_file(),
             home.runner_lock_file(),

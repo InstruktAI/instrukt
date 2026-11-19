@@ -37,7 +37,7 @@ pub use _hooks::{
     install_hooks, remove_hooks,
 };
 pub use _run::{
-    CheckoutOutcome, GenerationOutcome, HOOK_WORKER_COMMAND, HookInvocation, HookRunRecord,
-    StagingOutcome, SyncOutcome, last_run, run_hook, run_hook_worker,
+    GenerationOutcome, HOOK_WORKER_COMMAND, HookInvocation, HookRunRecord, StagingOutcome,
+    SyncOutcome, last_run, repository_key, run_hook, run_hook_worker,
 };
 pub use _section::{SECTION_END, SECTION_START, SectionError, hook_run_line};

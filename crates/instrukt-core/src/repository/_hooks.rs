@@ -5,10 +5,9 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::config::{self, Configuration, Module};
+use crate::config::{Configuration, Module};
 use crate::fsx;
 use crate::home::Home;
-use crate::ids::ProjectSlug;
 
 use super::_contain::Bounds;
 use super::_error::RepositoryError;
@@ -77,8 +76,7 @@ pub struct HookStatus {
     pub file: PathBuf,
     pub section: SectionStatus,
     pub not_executable: bool,
-    /// The last recorded run; `None` before the first, or without a project
-    /// slug to record it under.
+    /// The last recorded run; `None` before the first.
     pub last_run: Option<HookRunRecord>,
 }
 
@@ -86,7 +84,12 @@ pub struct HookStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HooksStatus {
     pub dir: HooksDir,
-    pub project: Option<ProjectSlug>,
+    /// The repository the runs belong to: its git common directory, shared
+    /// by all its worktrees.
+    pub repository: PathBuf,
+    /// Why whether the blueprint module is on could not be told, when it
+    /// could not; its hook is then left out.
+    pub blueprint_unknown: Option<String>,
     pub hooks: Vec<HookStatus>,
 }
 
@@ -219,8 +222,16 @@ pub fn remove_hooks(cwd: &Path) -> Result<HooksReport, RepositoryError> {
 pub fn hooks_status(home: &Home, cwd: &Path) -> Result<HooksStatus, RepositoryError> {
     let root = _git::root(cwd)?;
     let dir = _git::hooks_dir(&root)?;
-    let project = config::project_slug(&root)?;
-    let blueprint = Configuration::load(home, Some(&root))?.module_enabled(Module::Blueprint)?;
+    let repository = _run::repository_of(&root)?;
+    // The runs are the repository's, read without its configuration; only
+    // whether pre-push is in use asks it, and an answer it cannot give is
+    // shown, never a failure.
+    let (blueprint, blueprint_unknown) = match Configuration::load(home, Some(&root))
+        .and_then(|config| config.module_enabled(Module::Blueprint))
+    {
+        Ok(on) => (on, None),
+        Err(error) => (false, Some(error.to_string())),
+    };
     let mut hooks = Vec::new();
     for hook in Hook::ALL {
         if hook.needs_blueprint() && !blueprint {
@@ -238,10 +249,7 @@ pub fn hooks_status(home: &Home, cwd: &Path) -> Result<HooksStatus, RepositoryEr
                 },
             },
         };
-        let last_run = match &project {
-            Some(project) => _run::last_run(home, project, hook)?,
-            None => None,
-        };
+        let last_run = _run::last_run(home, &repository, hook)?;
         hooks.push(HookStatus {
             hook,
             file: file.path.clone(),
@@ -252,7 +260,8 @@ pub fn hooks_status(home: &Home, cwd: &Path) -> Result<HooksStatus, RepositoryEr
     }
     Ok(HooksStatus {
         dir,
-        project,
+        repository,
+        blueprint_unknown,
         hooks,
     })
 }

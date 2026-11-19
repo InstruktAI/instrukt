@@ -15,7 +15,8 @@ use common::{Repo, TestEnv};
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
 use instrukt_core::index::{GlobalIndex, IndexEntry, IndexScope};
-use instrukt_core::publication::{EvalFingerprint, PublishedRecord};
+use instrukt_core::publication::{EvalFingerprint, GENERATED_LINE, PublishedRecord};
+use instrukt_core::repository::Hook;
 
 /// A policy snippet with every required section.
 fn policy(title: &str, extra: &str) -> String {
@@ -300,17 +301,22 @@ fn published_commit(env: &TestEnv, project: &str) -> String {
 // spec: project/instrukt/spec/feature/publication/project-publication UC-PUB3
 #[test]
 fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
-    let env = TestEnv::new();
+    let env = hooked_machine();
     let other = project(&env, "other", &["shared"]);
     sync(&env, &other).success();
     std::fs::create_dir_all(env.home().join(".claude")).unwrap();
     let repo = project(&env, "demo", &["acme", "legacy", "general"]);
+    env.run(repo.path(), ["hooks", "install"]).success();
     repo.write("docs/domain/acme/policy/retired.md", &policy("Retired", ""))
         .write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
         .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n");
     repo.commit("retired");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
     sync(&env, &repo).success();
-    assert!(repo.path().join("tools/AGENTS.md").is_file());
+    assert!(
+        repo.git(["show", "HEAD:tools/AGENTS.md"])
+            .starts_with(GENERATED_LINE)
+    );
     let kept_instructions = repo.read("AGENTS.md");
     let global_file = env.home().join(".claude/CLAUDE.md");
     let global_text = std::fs::read(&global_file).unwrap();
@@ -323,18 +329,59 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
         .filter(|(path, _)| path.starts_with("shared"))
         .collect();
 
+    // The commit retiring the tools master removes its rendering, in the
+    // commit and in the working tree, and leaves the root one as it is.
     std::fs::remove_file(repo.path().join("docs/domain/acme/policy/retired.md")).unwrap();
     std::fs::remove_dir_all(repo.path().join("docs/domain/legacy")).unwrap();
     std::fs::remove_dir_all(repo.path().join("docs/general")).unwrap();
     std::fs::remove_file(repo.path().join("tools/AGENTS.master.md")).unwrap();
     repo.write("instrukt.yaml", &layer("demo"));
     repo.commit("retire");
+    env.finished_hook_run(repo.path(), Hook::PostCommit);
+    assert_eq!(
+        repo.git(["ls-tree", "-r", "--name-only", "HEAD", "--", "tools"]),
+        "",
+        "the commit holds no tools/AGENTS.md"
+    );
+    assert!(!repo.path().join("tools/AGENTS.md").exists());
+    assert_eq!(repo.read("AGENTS.md"), kept_instructions);
+
+    // The record an earlier release kept of the files it wrote, which no
+    // longer parses, beside the files it names.
+    let record = env
+        .instrukt_home()
+        .join("state/publication/outputs/demo.yaml");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        "agents:\n- AGENTS.md\n- tools/AGENTS.md\nentrypoints:\n- path: .claude/CLAUDE.md\n  digest: sha256:00\n: not yaml [\n",
+    )
+    .unwrap();
+    repo.write("tools/AGENTS.md", "# The developer's tools notes\n");
+    let named = [
+        repo.path().join("AGENTS.md"),
+        repo.path().join("tools/AGENTS.md"),
+        global_file.clone(),
+    ];
+    let named_before: Vec<Vec<u8>> = named
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
     sync(&env, &repo).success();
 
     let docs = env.instrukt_home().join("docs");
     assert!(!docs.join("acme/policy/retired.md").exists());
     assert!(!docs.join("legacy").exists());
     assert!(!docs.join("general").exists());
+    assert!(!record.exists(), "the earlier record is deleted");
+    let named_after: Vec<Vec<u8>> = named
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    assert_eq!(
+        named_after, named_before,
+        "nothing the record names is touched"
+    );
     assert_eq!(
         std::fs::read(&global_file).unwrap(),
         global_text,
@@ -350,8 +397,6 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
             "shared/policy/rules",
         ]
     );
-    assert!(!repo.path().join("tools/AGENTS.md").exists());
-    assert_eq!(repo.read("AGENTS.md"), kept_instructions);
     let other_after: Vec<IndexEntry> = owned_by(&after, "other").into_iter().cloned().collect();
     assert_eq!(other_after, other_entries);
     let other_tree_after: Vec<(PathBuf, Vec<u8>)> = published_tree(&env)
@@ -361,10 +406,20 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     assert_eq!(other_tree_after, other_tree);
 }
 
+/// A computer whose `PATH` holds the built `instrukt`, as an installed one
+/// would: a repository's hook sections call it by name.
+fn hooked_machine() -> TestEnv {
+    let mut env = TestEnv::new();
+    let bin = Path::new(env!("CARGO_BIN_EXE_instrukt")).parent().unwrap();
+    let path = format!("{}:{}", bin.display(), env.injected("PATH").unwrap());
+    env.set_env("PATH", &path);
+    env
+}
+
 /// Every durable output of publication, by path, with its content and
 /// modification time: in the home the published tree, the global index, the
-/// claims, outputs and published records, both eval-fingerprint records; in
-/// `repo` every file its sync writes, editor schemas included.
+/// claims and published records, both eval-fingerprint records; in `repo`
+/// what its sync writes there, the editor schemas.
 fn durable_outputs(
     env: &TestEnv,
     repo: &Repo,
@@ -375,7 +430,6 @@ fn durable_outputs(
         state.join("index.yaml"),
         state.join("publication"),
         state.join("eval-fingerprint"),
-        repo.path().join("AGENTS.md"),
         repo.path().join(".instrukt/schemas"),
     ];
     let mut out = BTreeMap::new();
@@ -441,7 +495,6 @@ fn publishing_again_restores_what_is_missing_without_a_new_commit() {
     insta::assert_snapshot!(text(&again.get_output().stdout, &[&sha]), @r"
     published demo at [SHA], nothing to change
     notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
-    notice: docs/project/index.yaml: project-without-index: the root AGENTS.md holds the purpose and the triggered procedures only; `docs/project/index.yaml` selects what else it includes
     ");
     assert_eq!(durable_outputs(&env, &repo), after_t1);
     assert_eq!(
@@ -544,21 +597,28 @@ fn committed_docs_with_findings_are_refused_and_retried_by_the_next_publication(
 #[test]
 fn an_unresolvable_configured_value_fails_the_sync_and_keeps_the_previous_publication() {
     let env = TestEnv::new();
+    std::fs::create_dir_all(env.home().join(".claude")).unwrap();
     let repo = project(&env, "demo", &["acme"]);
     let published = repo.head();
     sync(&env, &repo).success();
     let before = published_tree(&env);
+    // A snippet the global agent files hold in full reads a value the
+    // configuration does not hold.
     repo.write("docs/domain/acme/policy/later.md", &policy("Later", ""))
         .write(
-            "AGENTS.master.md",
-            "## Purpose\n\n<!-- @config: no.such.setting -->\n",
+            "docs/general/policy/house.md",
+            &policy("House", "").replace("Follow House.", "<!-- @config: no.such.setting -->"),
+        )
+        .write(
+            "docs/general/index.yaml",
+            "expanded:\n  - general/policy/house\n",
         );
     repo.commit("unresolvable value");
 
     let failed = sync(&env, &repo).failure();
     insta::assert_snapshot!(text(&failed.get_output().stderr, &[]));
     assert_eq!(published_tree(&env), before);
-    assert!(!repo.path().join("AGENTS.md").exists());
+    assert!(!env.home().join(".claude/CLAUDE.md").exists());
     assert_eq!(published_commit(&env, "demo"), published);
 }
 
@@ -575,25 +635,35 @@ fn an_output_that_is_a_symbolic_link_is_replaced_and_its_target_left_alone() {
     let env = TestEnv::new();
     let repo = project(&env, "demo", &["acme"]);
     sync(&env, &repo).success();
-    let git_config = repo.read(".git/config");
-    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
-        .write("docs/domain/acme/policy/later.md", &policy("Later", ""));
-    std::os::unix::fs::symlink(".git/config", repo.path().join("AGENTS.md")).unwrap();
-    let sha = repo.commit("aliased output");
+    let schemas = repo.path().join(".instrukt/schemas");
+    let elsewhere = env.path("schemas-elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("mine.json"), "{}\n").unwrap();
+    std::fs::remove_dir_all(&schemas).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &schemas).unwrap();
+    repo.write("docs/domain/acme/policy/later.md", &policy("Later", ""));
+    let sha = repo.commit("later");
 
     let synced = sync(&env, &repo).success();
     insta::assert_snapshot!(without_tmp(&env, &synced.get_output().stdout, &[&sha]), @r"
     published demo at [SHA]
     notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
-    notice: docs/project/index.yaml: project-without-index: the root AGENTS.md holds the purpose and the triggered procedures only; `docs/project/index.yaml` selects what else it includes
-    [TMP]/demo/AGENTS.md: a symbolic link, replaced; what it pointed to is left as it is
+    .instrukt/schemas: a symbolic link, replaced; what it pointed to is left as it is
+    .instrukt/schemas/general-index.schema.json: schema written
+    .instrukt/schemas/domain-index.schema.json: schema written
+    .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/snippet-schema.schema.json: schema written
+    .instrukt/schemas/instrukt.schema.json: schema written
     ");
-    let agents = std::fs::symlink_metadata(repo.path().join("AGENTS.md")).unwrap();
     assert!(
-        agents.file_type().is_file(),
-        "the link is replaced by the file"
+        std::fs::symlink_metadata(&schemas).unwrap().is_dir(),
+        "the link is replaced by the directory"
     );
-    assert_eq!(repo.read(".git/config"), git_config);
+    let left: Vec<_> = std::fs::read_dir(&elsewhere)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["mine.json"]);
     assert!(
         env.instrukt_home()
             .join("docs/acme/policy/later.md")
@@ -697,7 +767,6 @@ fn a_linked_later_output_is_replaced_by_the_file() {
     insta::assert_snapshot!(without_tmp(&env, &synced.get_output().stdout, &[&sha]), @r"
     published demo at [SHA]
     notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
-    notice: docs/project/index.yaml: project-without-index: the root AGENTS.md holds the purpose and the triggered procedures only; `docs/project/index.yaml` selects what else it includes
     [TMP]/home/.instrukt/state/eval-fingerprint/current.yaml: a symbolic link, replaced; what it pointed to is left as it is
     ");
     assert!(

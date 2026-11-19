@@ -201,6 +201,11 @@ codes! {
     /// A `@config` directive with a `runtime.*` path in a file publication
     /// compiles, which has no runtime session to resolve it against.
     ConfigRuntimeCompiled => "directive-config-runtime-compiled",
+    /// A `@config` directive in a master, or in a snippet a committed
+    /// `AGENTS.md` holds in full: a committed rendering resolves no
+    /// configured value; the snippet is listed instead, so it is read where
+    /// `instrukt docs get` resolves the value.
+    ConfigCommitted => "directive-config-committed",
 
     // Configuration
     /// `requires` names a module the effective switches turn off.
