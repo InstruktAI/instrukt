@@ -155,6 +155,7 @@ struct Hosted {
 struct Reach<'a> {
     current: &'a Current,
     connectors: &'a dyn Connectors,
+    accepted: &'a conversations::Accepted,
 }
 
 /// The connections `instrukt run` holds open, supervised by the run loop.
@@ -162,6 +163,7 @@ pub struct Connections {
     home: Home,
     current: Current,
     connectors: Arc<dyn Connectors>,
+    accepted: Arc<conversations::Accepted>,
     stop: Arc<AtomicBool>,
     wake: SyncSender<()>,
     supervise: SyncSender<()>,
@@ -176,6 +178,7 @@ impl Connections {
         home: &Home,
         current: &Current,
         connectors: Arc<dyn Connectors>,
+        accepted: Arc<conversations::Accepted>,
         wake: SyncSender<()>,
         supervise: SyncSender<()>,
     ) -> Result<Self, conversations::ConversationError> {
@@ -183,6 +186,7 @@ impl Connections {
             home: home.clone(),
             current: current.clone(),
             connectors,
+            accepted,
             stop: Arc::new(AtomicBool::new(false)),
             wake,
             supervise,
@@ -211,6 +215,7 @@ impl Connections {
         let home = self.home.clone();
         let current = self.current.clone();
         let connectors = Arc::clone(&self.connectors);
+        let accepted = Arc::clone(&self.accepted);
         let stop = Arc::clone(&self.stop);
         let wake = self.wake.clone();
         let notice = ExitNotice(self.supervise.clone());
@@ -223,6 +228,7 @@ impl Connections {
                 let reach = Reach {
                     current: &current,
                     connectors: connectors.as_ref(),
+                    accepted: &accepted,
                 };
                 connection(&home, reach, &company, &key, &stop, &wake);
             });
@@ -459,9 +465,18 @@ fn intake_worker(
 ) {
     let mut failures: u32 = 0;
     let mut retry_at = Instant::now();
+    let mut notice_at = Instant::now();
     let mut nudged = true;
     while !stop.load(Ordering::Acquire) {
-        if nudged || Instant::now() >= retry_at {
+        // The notice is evaluated at the start of every intake pass and on
+        // its own interval besides, whatever intake's backoff, from the state
+        // database and the clock alone.
+        let due = nudged || Instant::now() >= retry_at;
+        if due || Instant::now() >= notice_at {
+            notice_pass(home, reach, company, key);
+            notice_at = Instant::now() + conversations::INTAKE_INTERVAL;
+        }
+        if due {
             let clean = match reach.connectors.open(&reach.current.get(), company, key) {
                 Ok(connector) => intake(home, company, key, connector.as_ref(), wakes, &|| {
                     reach.connectors.now()
@@ -480,11 +495,85 @@ fn intake_worker(
             retry_at = Instant::now() + retry_wait(failures);
         }
         nudged = false;
-        while Instant::now() < retry_at && !stop.load(Ordering::Acquire) {
+        while Instant::now() < retry_at.min(notice_at) && !stop.load(Ordering::Acquire) {
             if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
                 nudged = true;
                 break;
             }
+        }
+    }
+}
+
+/// Decide who of the company is owed the one notice and settle each notice
+/// not yet posted: a notice whose post was sent is first looked for among the
+/// connector's own posts, outside the post lock; under it the decision is
+/// taken from the state as it stands, and at most one post made.
+fn notice_pass(home: &Home, reach: Reach<'_>, company: &ProjectSlug, key: &str) {
+    let notices = match conversations::notices(home, company, key, reach.connectors.now()) {
+        Ok(notices) => notices,
+        Err(error) => {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error);
+            return;
+        }
+    };
+    if notices.is_empty() {
+        return;
+    }
+    let connector = match reach.connectors.open(&reach.current.get(), company, key) {
+        Ok(connector) => connector,
+        Err(error) => {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error.cause);
+            return;
+        }
+    };
+    for notice in notices {
+        let text = connector.unavailable_notice(&notice.sender);
+        let reconciliation = if notice.posting {
+            let read_at = reach.connectors.now();
+            match connector.own_posts(&notice.conversation, &notice.since_message) {
+                Ok(posts) => Some((read_at, posts.iter().any(|post| post.starts_with(&text)))),
+                // Not knowing whether it landed, nothing is posted now.
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, event = "conversation_notice_unread", company = %company, connector = key, error = %error.cause);
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        let lock = conversations::post_lock(company, key, &notice.conversation);
+        let _held = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let step = conversations::notice_step(
+            home,
+            company,
+            key,
+            &notice,
+            reconciliation,
+            reach.accepted,
+            reach.connectors.now(),
+        );
+        let result = match step {
+            Ok(conversations::NoticeStep::Post) => {
+                let outcome = connector
+                    .answer(&notice.conversation, &text)
+                    .map_err(|error| error.cause);
+                tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
+                conversations::notice_posted(
+                    home,
+                    company,
+                    key,
+                    &notice,
+                    outcome,
+                    reach.connectors.now(),
+                )
+            }
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error);
         }
     }
 }
@@ -820,6 +909,9 @@ mod test_connector {
         fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
             Ok(())
         }
+        fn unavailable_notice(&self, member: &str) -> String {
+            format!("{member}: unavailable")
+        }
         fn place(&self, conversation: &str, message: &str) -> Place {
             if self.per_message {
                 Place(conversation.to_owned(), message.to_owned())
@@ -856,6 +948,8 @@ mod tests {
                 |(conversation, message, status)| conversations::Unfinished {
                     conversation: (*conversation).to_owned(),
                     message: (*message).to_owned(),
+                    sender: "USTEVEN".to_owned(),
+                    since: None,
                     status: status.clone(),
                 },
             )

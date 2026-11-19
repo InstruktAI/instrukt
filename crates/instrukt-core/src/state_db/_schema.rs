@@ -33,6 +33,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v20),
     Step(v21),
     Sql(V22),
+    Sql(V23),
 ];
 
 /// Version 22: a consumer's former source no longer in the configuration is
@@ -56,6 +57,33 @@ CREATE INDEX IF NOT EXISTS consumer_open_announcements ON consumer_outcomes (
     json_extract(outcome, '$.parked.announced')
 ) WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL
       AND json_extract(outcome, '$.parked.announced') = 0;
+";
+
+/// Version 23: the platform's replies owed to a sender carry their reason
+/// in the key: `not_own`, the one fixed reply to a sender the agent does not
+/// answer, or `unavailable`, the one notice of the sender's current epoch,
+/// whose decision is kept as `owed`, `posting` (with when the post was
+/// sent) or `posted`. The table is rebuilt for its key; every stored reply
+/// is kept as a `not_own` one, in its order.
+const V23: &str = "
+CREATE TABLE conversation_refusals_v23 (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    sender       TEXT NOT NULL,
+    reason       TEXT NOT NULL CHECK (reason IN ('not_own', 'unavailable')),
+    received_at  TEXT NOT NULL,
+    state        TEXT CHECK (CASE WHEN reason = 'not_own' THEN state IS NULL ELSE coalesce(state IN ('owed', 'posting', 'posted'), 0) END),
+    attempted_at TEXT,
+    replied_at   TEXT,
+    failure      TEXT,
+    CHECK (state != 'posting' OR attempted_at IS NOT NULL),
+    PRIMARY KEY (company, connector, conversation, sender, reason)
+);
+INSERT INTO conversation_refusals_v23 (company, connector, conversation, sender, reason, received_at, replied_at, failure)
+    SELECT company, connector, conversation, sender, 'not_own', received_at, replied_at, failure FROM conversation_refusals ORDER BY rowid;
+DROP TABLE conversation_refusals;
+ALTER TABLE conversation_refusals_v23 RENAME TO conversation_refusals;
 ";
 
 /// Version 21: what a person is shown while their message is unfinished.

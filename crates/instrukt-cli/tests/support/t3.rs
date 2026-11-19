@@ -113,6 +113,9 @@ def sync_inputs():
         # With `lifecycle`, a run is projected as T3 projects it: active while
         # it is the thread's running run, completed once it has ended.
         lifecycle=(root/'lifecycle').exists()
+        # finish_turn supplies a separate completed run. This mode removes
+        # the fake active projection when the corresponding native turn ends.
+        separate_completion=(root/'separate-completion').exists()
         for thread in all_threads():
             runs=set()
             for index,message in enumerate(thread['messages']):
@@ -124,6 +127,9 @@ def sync_inputs():
                 upsert('orchestration_v2_projection_messages',dict(message_id=identity,thread_id=thread['threadId'],role='user',run_id=run,node_id=None,streaming=0,created_at=at,updated_at=at,payload_json=json.dumps(payload)))
                 if run and run not in runs:
                     runs.add(run)
+                    if separate_completion and (run!=thread.get('activeRunId') or thread['status']=='idle'):
+                        connection.execute("DELETE FROM orchestration_v2_projection_runs WHERE thread_id=? AND run_id=?", (thread['threadId'],run))
+                        continue
                     queued=message.get('queued',False)
                     entered=not queued and thread['status'] not in ['preparing','queued']
                     status='queued' if queued else (thread['status'] if thread['status'] in ['preparing','queued'] else 'running')

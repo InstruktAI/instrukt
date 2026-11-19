@@ -40,6 +40,18 @@ pub struct Post {
     pub markdown: Option<String>,
 }
 
+/// What becomes of a post whose text begins with a given beginning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fate {
+    /// Refused: nothing is committed, and the poster is told it failed.
+    Refused,
+    /// Committed, and its response lost: the poster is told it failed.
+    Lost,
+    /// Committed only once [`FakeSlack::commit_late`] is called, invisible
+    /// until then; the poster is told it failed, as after its own timeout.
+    Late,
+}
+
 /// One person in Slack's records: their names, address and standing.
 #[derive(Debug, Clone)]
 pub struct Person {
@@ -154,6 +166,11 @@ struct Workspace {
     held_lookups: usize,
     reads: usize,
     held: usize,
+    /// The fate of the next posts beginning with each beginning: how many
+    /// more it meets (`usize::MAX` until cleared).
+    fates: Vec<(String, Fate, usize)>,
+    /// Posts committed late, not yet visible.
+    late: Vec<(Value, Post)>,
 }
 
 pub struct FakeSlack {
@@ -447,11 +464,30 @@ impl FakeSlack {
                     text: arg("text").map(str::to_owned),
                     markdown: arg("markdown_text").map(str::to_owned),
                 };
+                let shown = post
+                    .markdown
+                    .clone()
+                    .or(post.text.clone())
+                    .unwrap_or_default();
+                let fate = w
+                    .fates
+                    .iter_mut()
+                    .find(|(beginning, _, left)| *left > 0 && shown.starts_with(beginning.as_str()))
+                    .map(|(_, fate, left)| {
+                        *left = left.saturating_sub(usize::from(*left != usize::MAX));
+                        *fate
+                    });
+                if fate == Some(Fate::Refused) {
+                    return json!({"ok": false, "error": "fatal_error"});
+                }
                 let ts = Self::posted(&mut w);
-                let shown = post.markdown.as_ref().or(post.text.as_ref());
                 let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": shown});
                 if let Some(thread) = &post.thread {
                     message["thread_ts"] = json!(thread);
+                }
+                if fate == Some(Fate::Late) {
+                    w.late.push((message, post));
+                    return json!({"ok": false, "error": "request_timeout"});
                 }
                 w.messages.push(message);
                 // Slack drops the app's status in the place it posts to: the
@@ -461,6 +497,9 @@ impl FakeSlack {
                         || post.thread.as_ref().is_some_and(|posted| posted != thread)
                 });
                 w.posts.push(post);
+                if fate == Some(Fate::Lost) {
+                    return json!({"ok": false, "error": "request_timeout"});
+                }
                 json!({"ok": true, "ts": ts})
             }
             other => json!({"ok": false, "error": format!("unknown_method {other}")}),
@@ -827,6 +866,42 @@ impl FakeSlack {
 
     pub fn posts(&self) -> Vec<Post> {
         self.workspace.lock().unwrap().posts.clone()
+    }
+
+    /// The next `times` posts beginning with `beginning` meet `fate`
+    /// (`usize::MAX`: every one, until [`FakeSlack::clear_fates`]).
+    pub fn fate(&self, beginning: &str, fate: Fate, times: usize) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .fates
+            .push((beginning.to_owned(), fate, times));
+    }
+
+    pub fn clear_fates(&self) {
+        self.workspace.lock().unwrap().fates.clear();
+    }
+
+    /// Every post committed late becomes visible, as it lands at Slack.
+    pub fn commit_late(&self) {
+        let mut w = self.workspace.lock().unwrap();
+        for (message, post) in std::mem::take(&mut w.late) {
+            w.messages.push(message);
+            w.posts.push(post);
+        }
+    }
+
+    /// The posts that begin with `beginning`, as Slack shows them.
+    pub fn posts_beginning(&self, beginning: &str) -> usize {
+        self.posts()
+            .iter()
+            .filter(|post| {
+                post.markdown
+                    .as_deref()
+                    .or(post.text.as_deref())
+                    .is_some_and(|text| text.starts_with(beginning))
+            })
+            .count()
     }
 
     pub fn acknowledged(&self) -> Vec<String> {

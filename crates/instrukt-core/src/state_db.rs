@@ -531,6 +531,76 @@ mod tests {
     }
 
     #[test]
+    fn version_23_keeps_every_stored_reply_as_a_not_own_one() {
+        // The shape before version 23, the last migration.
+        let before = _schema::MIGRATIONS.len() - 1;
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(before) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", u32::try_from(before).unwrap())
+            .unwrap();
+        conn.execute_batch("INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,replied_at) VALUES('acme','slack','C1/1','UOTHER','2026-11-18T10:00:00Z','2026-11-18T10:00:02Z');INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,failure) VALUES('acme','slack','D1/2','UGUEST','2026-11-18T10:01:00Z','Slack chat.postMessage: timeout');").unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        type Row = (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let kept: Vec<Row> = conn
+            .prepare("SELECT sender,reason,state,replied_at,failure FROM conversation_refusals ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        insta::assert_debug_snapshot!(kept, @r#"
+        [
+            (
+                "UOTHER",
+                "not_own",
+                None,
+                Some(
+                    "2026-11-18T10:00:02Z",
+                ),
+                None,
+            ),
+            (
+                "UGUEST",
+                "not_own",
+                None,
+                None,
+                Some(
+                    "Slack chat.postMessage: timeout",
+                ),
+            ),
+        ]
+        "#);
+        // A sender has a notice beside a fixed reply; a notice keeps its
+        // decision, and a fixed reply none.
+        conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','UOTHER','unavailable','2026-11-18T10:03:00Z','owed')", []).unwrap();
+        assert!(
+            conn.execute(
+                "UPDATE conversation_refusals SET state='posting' WHERE reason='unavailable'",
+                []
+            )
+            .is_err()
+        );
+        assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1','USTEVEN','unavailable','2026-11-18T10:03:00Z')", []).is_err());
+        assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','USTEVEN','not_own','2026-11-18T10:03:00Z','owed')", []).is_err());
+    }
+
+    #[test]
     fn version_21_keeps_stored_messages_with_nothing_open() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(20) {

@@ -43,6 +43,11 @@ pub trait Connector: Send + Sync {
     fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
+    /// The one notice that the assistant is temporarily unavailable, worded
+    /// by the connector and beginning with `member`'s mention; it is posted
+    /// through [`Connector::answer`] and recognised among
+    /// [`Connector::own_posts`] by its beginning.
+    fn unavailable_notice(&self, member: &str) -> String;
     /// Where the status for `message` of `conversation` sits.
     fn place(&self, conversation: &str, message: &str) -> Place;
     /// Show `state` at `place`, or clear what is shown there with `None`;

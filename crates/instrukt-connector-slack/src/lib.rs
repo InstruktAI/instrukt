@@ -28,6 +28,9 @@ pub const SLACK: &str = "slack";
 /// receives, in a channel and in a direct message alike.
 pub const TURN_AWAY: &str = "I only answer members of this workspace.";
 
+/// The one notice's sentence, after the waiting person's mention.
+pub const NOTICE: &str = "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.";
+
 /// The text of Slack's status line from a message's admission until the
 /// agent has written in its running turn; Slack puts the app's name in front
 /// of it.
@@ -902,6 +905,10 @@ impl Connector for Slack {
 
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError> {
         self.api.post(conversation, TURN_AWAY).map_err(failed)
+    }
+
+    fn unavailable_notice(&self, member: &str) -> String {
+        format!("<@{member}> {NOTICE}")
     }
 
     /// A channel conversation's thread; a direct message's addressed message.
