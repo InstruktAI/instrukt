@@ -1140,19 +1140,27 @@ fi
     env.remove_env("INSTRUKT_HOME");
     // Environment systemd's quoting never prints: a stray quote ending it,
     // or a quote never closed that swallows the home. Whose the registration
-    // is cannot be established, so it is left in place and reported once.
+    // is cannot be established, so it is left in place and reported once:
+    // by the default home's install, and by the install of a home other
+    // than the default one, which meets it as an earlier registration.
     let elsewhere = std::path::PathBuf::from(format!("{}\"", env.instrukt_home().display()));
     std::fs::create_dir_all(&elsewhere).unwrap();
     let base = env.path("");
     let canonical = base.canonicalize().unwrap();
     let mut reported = Vec::new();
-    for printed in [
-        format!("INSTRUKT_HOME={}", elsewhere.display()),
-        format!("HOME=\"/home/fixture INSTRUKT_HOME={}", another.display()),
+    let swallowed = format!("HOME=\"/home/fixture INSTRUKT_HOME={}", another.display());
+    for (printed, installing) in [
+        (format!("INSTRUKT_HOME={}", elsewhere.display()), None),
+        (swallowed.clone(), None),
+        (swallowed, Some(&another)),
     ] {
         env.set_env("SYSTEMD_ENVIRONMENT", &printed);
+        if let Some(home) = installing {
+            env.set_env("INSTRUKT_HOME", home.to_str().unwrap());
+        }
         std::fs::write(&registration, "").unwrap();
         let installed = env.run(env.home(), ["install", "--json"]).success();
+        env.remove_env("INSTRUKT_HOME");
         assert!(registration.exists());
         let report: serde_json::Value =
             serde_json::from_slice(&installed.get_output().stdout).unwrap();
@@ -1168,15 +1176,19 @@ fi
                     .replace(base.to_str().unwrap(), "[base]")
             })
             .collect::<Vec<_>>();
+        assert_eq!(notices.len(), 1);
         reported.push(notices);
     }
     insta::assert_json_snapshot!(reported, @r#"
     [
       [
-        "instrukt-runner.service (systemd): left in place; systemd's environment of instrukt-runner.service cannot be decoded: a quote inside an assignment, so whose it is cannot be established"
+        "instrukt-runner.service (systemd): instrukt cannot tell which instrukt home this registration belongs to, so it was left running. Run `instrukt install` from the home it belongs to, or remove it yourself with `systemctl --user disable --now instrukt-runner.service`"
       ],
       [
-        "instrukt-runner.service (systemd): left in place; systemd's environment of instrukt-runner.service cannot be decoded: a quote inside an assignment, so whose it is cannot be established"
+        "instrukt-runner.service (systemd): instrukt cannot tell which instrukt home this registration belongs to, so it was left running. Run `instrukt install` from the home it belongs to, or remove it yourself with `systemctl --user disable --now instrukt-runner.service`"
+      ],
+      [
+        "instrukt-runner.service (systemd): instrukt cannot tell which instrukt home this registration belongs to, so it was left running. Run `instrukt install` from the home it belongs to, or remove it yourself with `systemctl --user disable --now instrukt-runner.service`"
       ]
     ]
     "#);

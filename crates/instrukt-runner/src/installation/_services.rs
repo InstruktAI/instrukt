@@ -376,6 +376,32 @@ fn systemd_assignments(line: &str) -> Result<Vec<String>, String> {
     Ok(words)
 }
 
+/// The notice for a registration whose home cannot be established: what
+/// was left running, and the two ways to settle it.
+fn unknown_notice(definition: &Definition) -> anyhow::Result<String> {
+    let removal = match definition.scheduler {
+        Scheduler::Launchd => {
+            let uid = Invocation::program("id", &["-u"]).run(Duration::from_secs(10))?;
+            anyhow::ensure!(uid.success, "cannot identify the launchd user domain");
+            format!(
+                "launchctl bootout gui/{}/{}",
+                uid.stdout.trim(),
+                definition.unit
+            )
+        }
+        Scheduler::SystemdUser => format!("systemctl --user disable --now {}", definition.unit),
+        Scheduler::Crontab => format!(
+            "crontab -e, deleting the line ending `{}`",
+            marker(&definition.unit)
+        ),
+    };
+    Ok(format!(
+        "{} ({}): instrukt cannot tell which instrukt home this registration belongs to, so it was left running. Run `instrukt install` from the home it belongs to, or remove it yourself with `{removal}`",
+        definition.unit,
+        definition.scheduler.name()
+    ))
+}
+
 /// Each registration under this home's names whose home cannot be
 /// established from its manager's report, reported once as left in place.
 pub(super) fn report_unknown(request: &Request<'_>, report: &mut Report) -> anyhow::Result<()> {
@@ -392,11 +418,8 @@ pub(super) fn report_unknown(request: &Request<'_>, report: &mut Report) -> anyh
             .filter(|scheduler| *scheduler != Scheduler::Crontab)
             .collect::<Vec<_>>();
         for definition in discover_under(request, kind, &native)? {
-            if let Owner::Unknown(why) = definition.owner(request.home)? {
-                report.notices.push(format!(
-                    "{}: left in place; {why}, so whose it is cannot be established",
-                    definition.label()
-                ));
+            if let Owner::Unknown(_) = definition.owner(request.home)? {
+                report.notices.push(unknown_notice(&definition)?);
             }
         }
     }
@@ -910,9 +933,16 @@ pub(super) fn withdraw_legacy(
             // Only one that names this home; one naming no home, or the
             // default home, is the default home's, and one whose home cannot
             // be read is left in place.
-            if !matches!(definition.named_home()?, Belongs::Home(named) if same_home(&named, request.home))
-            {
-                continue;
+            match definition.named_home()? {
+                Belongs::Home(named) if same_home(&named, request.home) => {}
+                // One whose home its manager's report does not establish is
+                // left running and reported once; this home's own pass never
+                // meets a name without the suffix.
+                Belongs::Unknown(_) => {
+                    report.notices.push(unknown_notice(&definition)?);
+                    continue;
+                }
+                _ => continue,
             }
             if request.check || !complete {
                 report.finding(
