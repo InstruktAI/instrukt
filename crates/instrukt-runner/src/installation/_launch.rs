@@ -1,4 +1,5 @@
-//! An owned effective receiver invocation, separate from native socket custody.
+//! The receiver's invocation, written by every install and validated by the
+//! receiver where it reads it, separate from native socket custody.
 use crate::{install::Scheduler, process::Invocation};
 use instrukt_core::home::Home;
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,7 @@ impl ReceiverLaunch {
 }
 pub(crate) fn owned(home: &Home, port: u16) -> anyhow::Result<Option<(ReceiverLaunch, String)>> {
     let file = ReceiverLaunch::file(home, port);
-    let Some(contents) = super::_services::owned_receiver_file(home, &file)? else {
+    let Some(contents) = super::_services::receiver_file(&file)? else {
         return Ok(None);
     };
     let digest = hex::encode(Sha256::digest(contents.as_bytes()));
@@ -110,11 +111,16 @@ pub(crate) fn running(port: u16) -> anyhow::Result<String> {
 }
 
 /// A dedicated machine-local probe never evaluates project webhook declarations.
-pub(crate) fn verify(home: &Home, port: u16) -> anyhow::Result<()> {
+pub(crate) fn verify(
+    home: &Home,
+    scheduler: Scheduler,
+    unit: &str,
+    port: u16,
+) -> anyhow::Result<()> {
     let (_, desired) = owned(home, port)?.ok_or_else(|| {
-        anyhow::anyhow!("receiver execution has no owned invocation; run instrukt install")
+        anyhow::anyhow!("receiver execution has no invocation; run instrukt install")
     })?;
-    let pid = live_process(home, port)?;
+    let pid = live_process(scheduler, unit)?;
     let timeout = Duration::from_secs(3);
     let mut stream = std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
@@ -150,7 +156,7 @@ pub(crate) fn verify(home: &Home, port: u16) -> anyhow::Result<()> {
 /// launchctl's documented override affects one invocation; the receiver arms the next
 /// start before serving so a cached pre-invocation launcher cannot return on restart.
 pub(crate) fn arm(home: &Home, port: u16) -> anyhow::Result<()> {
-    let Some((Scheduler::Launchd, unit)) = super::_services::receiver_job(home, port)? else {
+    let Some(unit) = super::_services::launchd_receiver(home, port) else {
         return Ok(());
     };
     let (desired, _) =
@@ -189,9 +195,7 @@ pub(crate) fn arm(home: &Home, port: u16) -> anyhow::Result<()> {
 }
 
 // Check manager process state before connecting: a read must not activate a cold service.
-fn live_process(home: &Home, port: u16) -> anyhow::Result<u32> {
-    let (scheduler, unit) = super::_services::receiver_job(home, port)?
-        .ok_or_else(|| anyhow::anyhow!("receiver has no owned service identity"))?;
+fn live_process(scheduler: Scheduler, unit: &str) -> anyhow::Result<u32> {
     let pid = match scheduler {
         Scheduler::Launchd => {
             let result =
