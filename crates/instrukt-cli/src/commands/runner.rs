@@ -342,6 +342,7 @@ where
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
     let executable = executable()?;
+    let company = crate::wiring::company();
     // An inspection reports what it can read: a machine layer that cannot
     // be read leaves it without the caller's identity, and the inspection
     // names what it could not read.
@@ -369,6 +370,7 @@ where
         conversations: false,
         github: ctx.github.as_ref(),
         now: ctx.clock.now(),
+        company: Some(company.as_ref()),
     })
     .map_err(Into::into)
 }
@@ -391,7 +393,8 @@ fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
     // admits it; no tick hosts a connector. The sessions conversations start
     // are resolved through `sessions`.
     if matches!(command, "run" | "sessions")
-        && !instrukt_runner::conversations::demand(&ctx.home)?.is_empty()
+        && crate::wiring::company()
+            .demand(&instrukt_core::config::Admitted::load(&ctx.home)?.generation)
     {
         return Ok(());
     }

@@ -3,7 +3,11 @@ use super::{
     DeliveryMode, LinkError, Opening, OpeningPlan, Origin, Pending, active, close_link, deliver,
     directions, failure, link_lock, open_plan, retain, status,
 };
-use crate::{assignments::WorkLookup, envelopes, runtime::RuntimeAdapter};
+use crate::{
+    assignments::{CompanyLookup, WorkLookup},
+    envelopes,
+    runtime::RuntimeAdapter,
+};
 use instrukt_core::{config::Env, home::Home, ids::SessionRef, state_db::StateRead};
 
 pub enum Operation<'a> {
@@ -25,6 +29,7 @@ pub struct Discussion<'a> {
 pub fn manage(
     home: &Home,
     work: WorkLookup,
+    company: CompanyLookup,
     request: &Discussion<'_>,
 ) -> Result<String, LinkError> {
     let caller = request
@@ -57,6 +62,7 @@ pub fn manage(
                 home,
                 source.as_ref(),
                 work,
+                company,
                 &OpeningPlan {
                     pair: &Opening {
                         a: &caller,

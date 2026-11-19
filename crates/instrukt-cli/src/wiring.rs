@@ -97,8 +97,16 @@ pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
         github_credentials: Some(ctx.github.clone()),
         work: _work::ports(ctx)?,
         workflow: _workflow::assignments(ctx, evidence)?,
-        connector_kinds: crate::connectors::builders(),
+        company: Some(company()),
     })
+}
+
+/// The company the runner hosts, built with the binary's connector
+/// registry.
+pub fn company() -> std::sync::Arc<dyn instrukt_runner::interfaces::CompanyPorts> {
+    std::sync::Arc::new(instrukt_runner::conversations::Ports::new(
+        crate::connectors::builders(),
+    ))
 }
 
 /// Work's command contract, for `instrukt todo prepare|work`'s deliberate
@@ -134,6 +142,7 @@ impl instrukt_core::interfaces::SessionRoleLookup for RecordedRole {
             &self.0,
             session,
             instrukt_todos::work::recorded_assignment,
+            instrukt_runner::conversations::conversation_assignment,
         )
         .map(|a| a.map(|a| a.role))
         .map_err(|e| instrukt_core::interfaces::InterfaceError {

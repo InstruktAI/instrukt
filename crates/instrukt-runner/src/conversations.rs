@@ -1660,6 +1660,230 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
     })
 }
 
+/// A conversation session's assignment: the `company-agent` role the runner
+/// gives it, in its company's home; the record names no procedure.
+pub fn conversation_assignment(
+    home: &Home,
+    caller: &SessionRef,
+) -> Result<Option<instrukt_core::capabilities::Assignment>, instrukt_core::state_db::StateDbError>
+{
+    let Some(db) = instrukt_core::state_db::StateRead::open(home)? else {
+        return Ok(None);
+    };
+    let row = db
+        .conn()
+        .query_row(
+            "SELECT company,semantic_key FROM connected_conversations WHERE session=?1",
+            [caller.to_string()],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
+    let Some((company, key)) = row else {
+        return Ok(None);
+    };
+    let company = ProjectSlug::parse(&company)
+        .map_err(|e| instrukt_core::state_db::StateDbError::invalid(db.path(), e.to_string()))?;
+    Ok(Some(instrukt_core::capabilities::Assignment {
+        worker: false,
+        role: instrukt_core::ids::RoleName::parse(instrukt_core::config::COMPANY_AGENT_ROLE)
+            .map_err(|e| {
+                instrukt_core::state_db::StateDbError::invalid(db.path(), e.to_string())
+            })?,
+        project: None,
+        procedure: None,
+        todo: None,
+        workspace: Some(home.company_dir(&company)),
+        key,
+        platform: false,
+        company: Some(company),
+        dispatcher: None,
+    }))
+}
+
+/// The speaker of `session`'s current turn: the sender recorded with the
+/// addressed message that opened the turn the runtime has in progress. The
+/// turn is correlated with its stored delivery by the delivery's boundary
+/// token, which the member envelope of the turn's opening input carries. A
+/// session bound to no conversation, and a turn whose opening input carries
+/// no member envelope, have no speaker. Any other uncertainty refuses.
+pub fn speaker(
+    home: &Home,
+    session: &SessionRef,
+    adapter: &dyn RuntimeAdapter,
+) -> Result<Option<crate::mcp::Speaker>, crate::mcp::McpError> {
+    let Some(db) = instrukt_core::state_db::StateRead::open(home)? else {
+        return Ok(None);
+    };
+    let conversation = db
+        .conn()
+        .query_row(
+            "SELECT company,connector,conversation FROM connected_conversations WHERE session=?1",
+            [session.to_string()],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
+    let Some((company, connector, conversation)) = conversation else {
+        return Ok(None);
+    };
+    let opening = adapter
+        .active_turn_input(session)
+        .map_err(|error| crate::mcp::McpError::Turn {
+            cause: error.to_string(),
+        })?
+        .ok_or_else(|| crate::mcp::McpError::Turn {
+            cause: "the runtime has no turn of this session in progress".into(),
+        })?;
+    let boundary = envelopes::segment(&opening)
+        .into_iter()
+        .find_map(|span| match span {
+            Span::Member { boundary, .. } => Some(boundary.to_owned()),
+            _ => None,
+        });
+    let Some(boundary) = boundary else {
+        return Ok(None);
+    };
+    let row = db
+        .conn()
+        .query_row(
+            "SELECT sender, sender_name, sender_email FROM conversation_messages
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND boundary=?4",
+            [&company, &connector, &conversation, &boundary],
+            |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
+    let (identity, name, email) = row.ok_or_else(|| crate::mcp::McpError::Turn {
+        cause: "the turn's addressed message is not one this conversation delivered".into(),
+    })?;
+    Ok(Some(crate::mcp::Speaker {
+        name: name
+            .or_else(|| identity.clone())
+            .unwrap_or_else(|| "an unnamed sender".to_owned()),
+        identity,
+        email: email.filter(|email| !email.trim().is_empty()),
+    }))
+}
+
+/// The company's ports as the runner hosts it: built by the CLI with its
+/// registry's connector builders, it builds the kinds when the runner starts
+/// hosting and keeps the directory they make, and the answer pieces accepted
+/// but not yet recorded, for its own relay.
+pub struct Ports {
+    builders: Vec<crate::interfaces::BuildKind>,
+    hosted: std::sync::Mutex<Option<std::sync::Arc<dyn Connectors>>>,
+    accepted: Accepted,
+}
+
+impl Ports {
+    pub fn new(builders: Vec<crate::interfaces::BuildKind>) -> Self {
+        Self {
+            builders,
+            hosted: std::sync::Mutex::default(),
+            accepted: Accepted::default(),
+        }
+    }
+
+    fn hosted(&self) -> Option<std::sync::Arc<dyn Connectors>> {
+        self.hosted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+fn company_error(error: impl std::fmt::Display) -> crate::interfaces::CompanyError {
+    crate::interfaces::CompanyError(error.to_string())
+}
+
+impl crate::interfaces::CompanyPorts for Ports {
+    fn demand(&self, admitted: &Admitted) -> bool {
+        !admitted_demand(admitted).is_empty()
+    }
+
+    fn start(
+        &self,
+        start: crate::interfaces::CompanyStart<'_>,
+    ) -> Result<Box<dyn crate::interfaces::CompanySupervision>, crate::interfaces::CompanyError>
+    {
+        let kinds = self
+            .builders
+            .iter()
+            .map(|build| build(start.env, std::sync::Arc::clone(&start.clock)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| crate::interfaces::CompanyError(error.cause))?;
+        let directory: std::sync::Arc<dyn Connectors> =
+            std::sync::Arc::new(crate::connector_host::Directory::new(kinds, start.clock));
+        *self
+            .hosted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(std::sync::Arc::clone(&directory));
+        crate::connector_host::Connections::start(
+            start.home,
+            start.current,
+            directory,
+            start.wake,
+            start.supervise,
+        )
+        .map(|connections| Box::new(connections) as Box<dyn crate::interfaces::CompanySupervision>)
+        .map_err(company_error)
+    }
+
+    fn relay(
+        &self,
+        home: &Home,
+        admitted: &Admitted,
+        source: &dyn ConversationSource,
+        adapter: &dyn RuntimeAdapter,
+    ) -> Result<(), crate::interfaces::CompanyError> {
+        let Some(connectors) = self.hosted() else {
+            return Ok(());
+        };
+        relay(
+            home,
+            admitted,
+            source,
+            adapter,
+            connectors.as_ref(),
+            &self.accepted,
+        )
+        .map_err(company_error)
+    }
+
+    fn outstanding(&self, home: &Home) -> Result<bool, crate::interfaces::CompanyError> {
+        outstanding(home).map_err(company_error)
+    }
+
+    fn relay_state(&self, home: &Home, failure: Option<&str>) {
+        relay_state(home, failure);
+    }
+
+    fn status(&self, home: &Home) -> Result<serde_json::Value, crate::interfaces::CompanyError> {
+        let status = status(home).map_err(company_error)?;
+        serde_json::to_value(status).map_err(company_error)
+    }
+}
+
+impl crate::interfaces::CompanySupervision for crate::connector_host::Connections {
+    fn check(&mut self) {
+        crate::connector_host::Connections::check(self);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

@@ -422,6 +422,11 @@ fn file_descriptor(pipes: &std::path::Path, descriptor: &std::path::Path, conten
 /// waiting succeeds only then, and closing that writer signals end of file to
 /// the reader once more.
 fn reader_holds(pipe: &std::path::Path) -> bool {
+    standing_writer(pipe).is_some()
+}
+/// A writer of `pipe` when a reader already stands at it, opened without
+/// waiting; `None` when no reader is there.
+fn standing_writer(pipe: &std::path::Path) -> Option<std::fs::File> {
     let opened = std::fs::OpenOptions::new()
         .write(true)
         .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
@@ -429,10 +434,9 @@ fn reader_holds(pipe: &std::path::Path) -> bool {
     if opened.as_ref().err().and_then(std::io::Error::raw_os_error)
         == Some(nix::errno::Errno::ENXIO as i32)
     {
-        return false;
+        return None;
     }
-    drop(opened.unwrap());
-    true
+    Some(opened.unwrap())
 }
 #[allow(dead_code, reason = "shared by the source-reading scenarios")]
 impl Gate {
@@ -453,18 +457,34 @@ impl Gate {
         let server = std::thread::spawn(move || {
             let (lock, changed) = &*serving;
             for n in 1.. {
-                {
+                // Held, the server waits for the next read at its pipe. Open,
+                // it still serves a read that reached the pipe before the
+                // gate opened: several reads can queue while it is held, and
+                // opening lets every one of them through.
+                let standing = {
                     let mut gating = lock.lock().unwrap();
-                    while !gating.held && !gating.stop {
-                        gating = changed.wait(gating).unwrap();
+                    loop {
+                        if gating.stop {
+                            return;
+                        }
+                        if gating.held {
+                            gating.opening = Some(pipe.clone());
+                            break None;
+                        }
+                        if let Some(writer) = standing_writer(&pipe) {
+                            break Some(writer);
+                        }
+                        gating = changed
+                            .wait_timeout(gating, Duration::from_millis(10))
+                            .unwrap()
+                            .0;
                     }
-                    if gating.stop {
-                        return;
-                    }
-                    gating.opening = Some(pipe.clone());
-                }
+                };
                 // Blocks until a reader opens this read's pipe.
-                let mut writer = std::fs::OpenOptions::new().write(true).open(&pipe).unwrap();
+                let mut writer = match standing {
+                    Some(writer) => writer,
+                    None => std::fs::OpenOptions::new().write(true).open(&pipe).unwrap(),
+                };
                 // Later readers wait at the next read's pipe.
                 let next = make_pipe(&path, n);
                 point(&path, &next);
