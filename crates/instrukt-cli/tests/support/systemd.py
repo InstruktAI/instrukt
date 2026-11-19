@@ -151,6 +151,8 @@ def handle(args: list[str], folder: str, units: dict[str, Unit], state: dict[str
         prop = next(a for a in rest if a.startswith("--property=")).split("=", 1)[1]
         if prop == "LoadState":
             result["stdout"] = "loaded" if unit is not None else "not-found"
+        elif prop == "Environment":
+            result["stdout"] = " ".join(f"{key}={value}" for key, value in (unit.environment if unit is not None else {}).items())
         elif prop == "MainPID":
             result["stdout"] = str(unit.pid if unit is not None and unit.pid else 0)
         elif prop == "Linger":

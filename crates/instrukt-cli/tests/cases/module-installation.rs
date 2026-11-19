@@ -32,7 +32,7 @@ if [ "$operation" = list ] && [ "$#" -eq 1 ]; then
 fi
 if [ "$operation" = show ] && [ "$3" = --property=MainPID ]; then echo "$SERVICE_PID"; exit 0; fi
 if [ "$operation" = show ]; then unit=$2; if [ -f '{dir}/unit-'"$unit" ]; then echo loaded; else echo not-found; fi; exit 0; fi
-case $operation in daemon-reload|debug) exit 0;; esac
+case $operation in daemon-reload|debug|print) exit 0;; esac
 for argument in "$@"; do unit=$argument; done
 unit=${{unit##*/}}; unit=${{unit%.plist}}
 state='{dir}/unit-'$unit
@@ -1075,6 +1075,33 @@ fi
     env.run(env.home(), ["install"]).success();
     assert!(!pending.exists());
     assert!(!current.exists());
+    // A receiver's service systemd still lists, with no socket and no unit
+    // file left, is found by its name and withdrawn.
+    let service = env.path("runtime-bin/unit-instrukt-webhooks-12345.service");
+    std::fs::write(&service, "").unwrap();
+    env.run(env.home(), ["install"]).success();
+    assert!(!service.exists());
+    // Its socket and service both listed while systemd reports their unit
+    // files not found: both are stopped.
+    let socket = env.path("runtime-bin/unit-instrukt-webhooks-12345.socket");
+    std::fs::write(&socket, "").unwrap();
+    std::fs::write(&service, "").unwrap();
+    let systemctl = env.path("runtime-bin/systemctl");
+    let wrapper = std::fs::read_to_string(&systemctl).unwrap();
+    std::fs::write(
+        &systemctl,
+        wrapper
+            .replacen(
+                "operation=$1",
+                "operation=$1\nif [ \"$operation\" = show ]; then echo not-found; exit 0; fi",
+                1,
+            )
+            .replace("loaded active running", "not-found active running"),
+    )
+    .unwrap();
+    env.run(env.home(), ["install"]).success();
+    assert!(!socket.exists());
+    assert!(!service.exists());
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
@@ -2380,6 +2407,39 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
         .unwrap();
     assert_eq!(value, "kept");
     assert_eq!(std::fs::read_to_string(&foreign).unwrap(), foreign_text);
+
+    // The other home's runner stays registered under the default name with
+    // its definition file gone: the environment the manager keeps for it
+    // names that home, and this default home's install leaves it running.
+    let job = if macos {
+        format!(
+            "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>ai.instrukt.runner</string><key>ProgramArguments</key><array><string>/bin/sleep</string><string>600</string></array><key>RunAtLoad</key><true/><key>EnvironmentVariables</key><dict><key>INSTRUKT_HOME</key><string>{elsewhere}</string></dict></dict></plist>\n"
+        )
+    } else {
+        format!(
+            "[Service]\nExecStart=/bin/sleep 600\nEnvironment=\"INSTRUKT_HOME={elsewhere}\"\n\n[Install]\nWantedBy=default.target\n"
+        )
+    };
+    std::fs::write(&foreign, &job).unwrap();
+    let unit = if macos {
+        redis_manager.request(&["load", "-w", foreign.to_str().unwrap()]);
+        "ai.instrukt.runner"
+    } else {
+        redis_manager.request(&["daemon-reload"]);
+        redis_manager.request(&["enable", "--now", "instrukt-runner.service"]);
+        "instrukt-runner.service"
+    };
+    let running = redis_manager.request(&["inspect", unit])["pid"].as_u64();
+    assert!(running.is_some());
+    std::fs::remove_file(&foreign).unwrap();
+    env.run(env.home(), ["install"]).success();
+    if macos {
+        assert_eq!(redis_manager.request(&["list", unit])["ok"], true);
+    }
+    assert_eq!(
+        redis_manager.request(&["inspect", unit])["pid"].as_u64(),
+        running
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE3

@@ -85,8 +85,21 @@ impl Definition {
         if self.scheduler == Scheduler::Crontab {
             return Ok(marked_line(&crontab()?, marker(&self.unit)).is_some());
         }
+        let listed = listed(self.scheduler)?;
         Ok(self.files.keys().any(|file| file.exists())
-            || listed(self.scheduler)?.contains(&self.unit))
+            || self
+                .registrations()
+                .iter()
+                .any(|unit| listed.contains(unit)))
+    }
+    /// The names its manager registers it under: the unit, and for a
+    /// systemd receiver the service its socket starts.
+    fn registrations(&self) -> Vec<String> {
+        let mut names = vec![self.unit.clone()];
+        if self.name == ResourceKind::Receiver && self.scheduler == Scheduler::SystemdUser {
+            names.push(format!("{}.service", self.unit.trim_end_matches(".socket")));
+        }
+        names
     }
     /// The instrukt home this definition's environment names, when it names
     /// one: `INSTRUKT_HOME` in its launchd plist, systemd unit or crontab line.
@@ -96,9 +109,24 @@ impl Definition {
                 marked_line(&crontab()?, marker(&self.unit)).and_then(|line| named_home(&line))
             );
         }
+        let mut files = false;
         for file in self.files.keys() {
-            if let Some(content) = read(file)?
-                && let Some(home) = named_home(&content)
+            if let Some(content) = read(file)? {
+                files = true;
+                if let Some(home) = named_home(&content) {
+                    return Ok(Some(home));
+                }
+            }
+        }
+        if files {
+            return Ok(None);
+        }
+        // Registered with its definition files gone: the environment its
+        // manager retains for it.
+        let listed = listed(self.scheduler)?;
+        for unit in self.registrations() {
+            if listed.contains(&unit)
+                && let Some(home) = registered_home(self.scheduler, &unit)?
             {
                 return Ok(Some(home));
             }
@@ -188,6 +216,38 @@ fn listed(scheduler: Scheduler) -> anyhow::Result<std::collections::BTreeSet<Str
         .collect())
 }
 
+/// The `INSTRUKT_HOME` a manager retains for the registration `unit`, read
+/// from the manager itself: what `launchctl print` shows of the job's
+/// environment, or systemd's `Environment` property of the unit.
+fn registered_home(scheduler: Scheduler, unit: &str) -> anyhow::Result<Option<String>> {
+    let output = match scheduler {
+        Scheduler::Launchd => {
+            let uid = Invocation::program("id", &["-u"]).run(Duration::from_secs(10))?;
+            anyhow::ensure!(uid.success, "cannot identify the launchd user domain");
+            let target = format!("gui/{}/{unit}", uid.stdout.trim());
+            Invocation::program("launchctl", &["print", &target]).run(Duration::from_secs(10))?
+        }
+        Scheduler::SystemdUser => Invocation::program(
+            "systemctl",
+            &["--user", "show", unit, "--property=Environment", "--value"],
+        )
+        .run(Duration::from_secs(10))?,
+        Scheduler::Crontab => return Ok(None),
+    };
+    if !output.success {
+        return Ok(None);
+    }
+    Ok(output.stdout.lines().find_map(|line| {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("INSTRUKT_HOME => ") {
+            return Some(value.to_owned());
+        }
+        line.split_whitespace()
+            .find_map(|word| word.strip_prefix("INSTRUKT_HOME="))
+            .map(str::to_owned)
+    }))
+}
+
 /// This home's definitions of `kind` present under every manager on the
 /// computer, a receiver's at every port: by file, crontab line or what the
 /// manager reports registered. A definition whose environment names another
@@ -267,19 +327,21 @@ fn receiver_ports(request: &Request<'_>) -> anyhow::Result<Vec<u16>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    // A registration the manager still reports, its file gone. A launchd
-    // label carries no file extension.
-    let registered_end = match request.scheduler {
-        Scheduler::Launchd => end.trim_end_matches(".plist").to_owned(),
-        _ => end.clone(),
+    // A registration the manager still reports, its file gone: a launchd
+    // label, which carries no file extension, or a systemd receiver's socket
+    // or the service it starts.
+    let registered_ends = match request.scheduler {
+        Scheduler::Launchd => vec![end.trim_end_matches(".plist").to_owned()],
+        _ => vec![end.clone(), end.replace(".socket", ".service")],
     };
     let registered = listed(request.scheduler)?;
     let mut ports = names
         .iter()
         .filter_map(|name| name.strip_prefix(prefix)?.strip_suffix(end.as_str()))
-        .chain(registered.iter().filter_map(|name| {
-            name.strip_prefix(prefix)?
-                .strip_suffix(registered_end.as_str())
+        .chain(registered.iter().flat_map(|name| {
+            registered_ends
+                .iter()
+                .filter_map(move |ending| name.strip_prefix(prefix)?.strip_suffix(ending.as_str()))
         }))
         .filter_map(|port| port.parse::<u16>().ok())
         .collect::<Vec<_>>();
@@ -924,15 +986,13 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
                 // Still running with its unit file gone: by its name.
                 required(&["systemctl", "--user", "stop", &d.unit])?;
             }
+            // The service a receiver's socket starts, loaded or still listed
+            // with its unit file gone.
+            let service = format!("{}.service", d.unit.trim_end_matches(".socket"));
             if d.name == ResourceKind::Receiver
-                && systemd_loaded(&format!("{}.service", d.unit.trim_end_matches(".socket")))?
+                && (systemd_loaded(&service)? || listed(Scheduler::SystemdUser)?.contains(&service))
             {
-                required(&[
-                    "systemctl",
-                    "--user",
-                    "stop",
-                    &format!("{}.service", d.unit.trim_end_matches(".socket")),
-                ])?;
+                required(&["systemctl", "--user", "stop", &service])?;
             }
         }
         Scheduler::Crontab => {
