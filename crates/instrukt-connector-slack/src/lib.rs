@@ -3,7 +3,9 @@
 //! sender decides who is answered; the accompanying messages are read from
 //! the conversation; answers are posted as the Markdown the agent wrote; and
 //! Slack's status line shows the agent working. Everything around these
-//! operations is the connector host's (`connector_host`).
+//! operations is the connector host's (`instrukt-company`'s
+//! `connector_host`); this crate knows only the connector interface
+//! (`instrukt-connector`).
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -707,15 +709,14 @@ impl SlackKind {
         }
     }
 
-    /// The Slack kind of a process with this environment and clock: its
-    /// endpoint refuses a Slack API address that is neither Slack's own nor
-    /// a loopback stand-in.
+    /// The Slack kind of a process whose environment `lookup` answers, with
+    /// this clock: its endpoint refuses a Slack API address that is neither
+    /// Slack's own nor a loopback stand-in.
     pub fn build(
-        env: &instrukt_core::config::Env,
+        lookup: &dyn Fn(&str) -> Option<String>,
         clock: Clock,
     ) -> Result<Box<dyn Kind>, ConnectorError> {
-        let lookup = |name: &str| env.get(name).map(str::to_owned);
-        SlackEndpoint::from_lookup(&lookup, clock)
+        SlackEndpoint::from_lookup(lookup, clock)
             .map(|endpoint| Box::new(Self::new(endpoint)) as Box<dyn Kind>)
             .map_err(|error| ConnectorError {
                 cause: error.to_string(),

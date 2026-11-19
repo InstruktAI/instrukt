@@ -323,7 +323,10 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         .app_prefix("instrukt_core")
         .app_prefix("instrukt_blueprint")
         .app_prefix("instrukt_runner")
-        .app_prefix("instrukt_todos");
+        .app_prefix("instrukt_todos")
+        .app_prefix("instrukt_company")
+        .app_prefix("instrukt_connector")
+        .app_prefix("instrukt_connector_slack");
     if matches!(command, Command::Mcp(_)) {
         // The HTTP client's records carry what an MCP server sent back, a
         // reflected login among it, before instrukt can remove it: for this

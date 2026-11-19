@@ -21,7 +21,9 @@ graphify-contract = []
 t3-contract = []
 
 [dependencies]
+instrukt-company.workspace = true
 instrukt-connector.workspace = true
+instrukt-connector-slack.workspace = true
 instrukt-core.workspace = true
 instrukt-blueprint.workspace = true
 instrukt-runner.workspace = true

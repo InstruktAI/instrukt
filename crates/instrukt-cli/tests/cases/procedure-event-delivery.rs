@@ -838,7 +838,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
             &instrukt_core::home::Home::at_user_home(r.computer.env.home().into()),
             &session,
             instrukt_todos::work::recorded_assignment,
-            instrukt_runner::conversations::conversation_assignment,
+            instrukt_company::conversations::conversation_assignment,
         )
         .unwrap()
         .unwrap();

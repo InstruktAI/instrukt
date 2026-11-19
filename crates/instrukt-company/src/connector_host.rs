@@ -193,7 +193,7 @@ impl Connections {
             .iter()
             .map(|(company, key)| (company.to_string(), key.clone()))
             .collect();
-        if let Err(error) = crate::runner::publish_hosted(home, &hosted) {
+        if let Err(error) = instrukt_runner::runner::publish_hosted(home, &hosted) {
             tracing::warn!(target: LOG_TARGET, event = "connector_hosting_unpublished", error = %error);
         }
         for (company, key) in demand {
