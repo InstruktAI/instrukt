@@ -166,6 +166,9 @@ elif command=='start':
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
     t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
+    # With `queued-start`, the runtime accepts the thread's opening input
+    # and keeps it queued: neither entered nor completed.
+    if (root/'queued-start').exists(): t['status']='queued'
     if '--worktree' in flags:
         folder=root/'worktrees'/id
         folder.parent.mkdir(exist_ok=True)

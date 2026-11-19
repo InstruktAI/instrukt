@@ -350,15 +350,14 @@ pub struct Unfinished {
 /// complete once its answer is posted, or its turn completed with nothing to
 /// post; one whose answer is not yet posted stays unfinished. It shows the
 /// unavailable text while its effective interval ([`effective_since`]) is
-/// open, the newest message the agent has written in its running turn once
-/// there is one, and the working text otherwise.
+/// open, the newest message the agent has written in its turn once there is
+/// one, until its answer is posted, and the working text otherwise.
 pub fn unfinished(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
 ) -> Result<Vec<Unfinished>, ConversationError> {
     type Row = (
-        String,
         String,
         String,
         Option<String>,
@@ -371,12 +370,12 @@ pub fn unfinished(
             .optional()
             .map_err(state::sql(path))?;
         let mut q = conn
-            .prepare("SELECT m.conversation,m.message,m.state,m.unavailable_since,m.admitted_at,m.turn_update FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5) OR (m.state=?6 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL))) ORDER BY m.written_us, m.message")
+            .prepare("SELECT m.conversation,m.message,m.unavailable_since,m.admitted_at,m.turn_update FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5) OR (m.state=?6 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL))) ORDER BY m.written_us, m.message")
             .map_err(state::sql(path))?;
         let rows: Vec<Row> = q
             .query_map(
                 params![company.as_str(), connector, Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str(), Stage::Answered.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
@@ -396,13 +395,11 @@ pub fn unfinished(
     };
     let relay = at(relay)?;
     rows.into_iter()
-        .map(|(conversation, message, stage, own, admitted, update)| {
+        .map(|(conversation, message, own, admitted, update)| {
             let open = effective_since(at(own)?, at(admitted)?, relay).is_some();
             let status = match update {
                 _ if open => instrukt_connector::Status::Unavailable,
-                Some(update) if stage == Stage::Sent.as_str() => {
-                    instrukt_connector::Status::Update(update)
-                }
+                Some(update) => instrukt_connector::Status::Update(update),
                 _ => instrukt_connector::Status::Working,
             };
             Ok(Unfinished {
@@ -1290,11 +1287,13 @@ fn harvest(
                 }
                 tx.execute(
                     // The finished turn proves the message was accepted: its
-                    // resolved delivery cause is retired with it. Its turn has
-                    // ended, so it shows no update any more; an answer to post
-                    // opens its no-work interval now, before any post is
-                    // tried, and one with nothing to post completes it.
-                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,turn_update=NULL,unavailable_since=CASE WHEN ?7 THEN coalesce(unavailable_since,?8) ELSE NULL END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                    // resolved delivery cause is retired with it. Its turn's
+                    // end is kept before any post is tried: a post that then
+                    // fails opens its interval from that end. A turn with an
+                    // answer to post opens nothing now, and its status keeps
+                    // its newest message while the answer is posted; one with
+                    // nothing to post completes the message.
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
                     params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
@@ -1734,15 +1733,24 @@ fn answers(
     Ok(true)
 }
 
-/// A message whose turn was read as ended keeps its no-work interval open,
-/// from `now` at the latest, while its answer is not posted, and has it
-/// closed once it is; either way its turn shows no update any more. The
-/// interval opened when its completion was recorded, before any post.
+/// After the posts of a pass: a message whose answer is posted is complete,
+/// its interval closed and its update gone. One whose answer is still not
+/// posted although a post of it was tried — it failed, or its outcome was
+/// lost, a restart included — has its interval opened from its turn's end
+/// (`now` for a turn ended before that end was kept). A post that was not
+/// tried yet opens nothing: the healthy path never shows the unavailable
+/// text.
 fn ended(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<(), StateError> {
+    const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL";
     state.write(|tx| {
         let path = state::db_path(tx);
         tx.execute(
-            "UPDATE conversation_messages SET unavailable_since=CASE WHEN EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL) THEN coalesce(unavailable_since,?5) ELSE NULL END,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND (unavailable_since IS NOT NULL OR turn_update IS NOT NULL OR EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL))",
+            &format!("UPDATE conversation_messages SET unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND (unavailable_since IS NOT NULL OR turn_update IS NOT NULL) AND NOT EXISTS({UNPOSTED})"),
+            params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()],
+        )
+        .map_err(state::sql(&path))?;
+        tx.execute(
+            &format!("UPDATE conversation_messages SET unavailable_since=coalesce(turn_ended_at,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND unavailable_since IS NULL AND EXISTS({UNPOSTED} AND (x.attempted_at IS NOT NULL OR x.failure IS NOT NULL))"),
             params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), now.to_string()],
         )
         .map_err(state::sql(&path))?;

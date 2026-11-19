@@ -595,17 +595,6 @@ fn set_clock(path: &std::path::Path, at: jiff::Timestamp) {
     std::fs::rename(&next, path).unwrap();
 }
 
-/// The texts a status showed up to its answer's post: between the turn's
-/// end and that post the message's interval is open, so the unavailable text
-/// may show for that moment before the status is cleared.
-fn answered(mut texts: Vec<String>) -> Vec<String> {
-    let n = texts.len();
-    if n >= 2 && texts[n - 1].is_empty() && texts[n - 2] == UNAVAILABLE {
-        texts.remove(n - 2);
-    }
-    texts
-}
-
 /// The session a message started, beside `before`, the sessions before it.
 fn started(c: &Company, before: &[String]) -> String {
     wait("the message's session", || {
@@ -681,19 +670,9 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     wait("the status cleared", || {
         shown(&c, channel, &asked).last().map(String::as_str) == Some("")
     });
-    // Between the turn's end and the answer's post the message's interval
-    // is open: the status follows the message until its answer is posted.
-    let texts = shown(&c, channel, &asked);
-    let newest = texts
-        .iter()
-        .position(|text| text == "Two items are still open — *both small*.")
-        .unwrap();
-    insta::assert_json_snapshot!("status-tells-the-state", &texts[..=newest]);
-    assert!(
-        texts[newest + 1..]
-            .iter()
-            .all(|text| text == UNAVAILABLE || text.is_empty())
-    );
+    // While the answer is posted the status keeps the agent's newest
+    // message; it is cleared once the answer is posted.
+    insta::assert_json_snapshot!("status-tells-the-state", shown(&c, channel, &asked));
 
     // A start that is slow but healthy shows the working text throughout.
     let before = c.sessions();
@@ -712,7 +691,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     wait("the status cleared", || {
         shown(&c, channel, &slow).last().map(String::as_str) == Some("")
     });
-    assert_eq!(answered(shown(&c, channel, &slow)), [WORKING, ""]);
+    assert_eq!(shown(&c, channel, &slow), [WORKING, ""]);
 
     // A message waits on the runtime's dispatch lock past the wait: the
     // working text, then the unavailable text; once the lock is had, the
@@ -746,7 +725,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         shown(&c, channel, &locked).last().map(String::as_str) == Some("")
     });
     assert_eq!(
-        answered(shown(&c, channel, &locked)),
+        shown(&c, channel, &locked),
         [WORKING, UNAVAILABLE, WORKING, ""]
     );
 
@@ -775,7 +754,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         shown(&c, channel, &outage).last().map(String::as_str) == Some("")
     });
     assert_eq!(
-        answered(shown(&c, channel, &outage)),
+        shown(&c, channel, &outage),
         [WORKING, UNAVAILABLE, WORKING, ""]
     );
 
@@ -859,7 +838,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     wait("the status cleared", || {
         shown(&c, channel, &first).last().map(String::as_str) == Some("")
     });
-    assert!(!answered(shown(&c, channel, &first)).contains(&UNAVAILABLE.to_owned()));
+    assert!(!shown(&c, channel, &first).contains(&UNAVAILABLE.to_owned()));
 }
 
 /// A company whose conversations run on a runner under the operator's clock
@@ -962,9 +941,10 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
         c.slack.posts().len() == posts + 1
     });
 
-    // A turn completes while its answer's post is slow and then fails: from
-    // the turn's end the status says the assistant is unavailable, and the
-    // interval counts from that end, not from when the post gave up.
+    // A turn completes while its answer's post is slow and then fails. While
+    // the post is under way nothing keeps the answer from the member: the
+    // working text shows and no interval is open. Once the post fails, the
+    // status says the assistant is unavailable, counted from the turn's end.
     let posts = c.slack.posts().len();
     let done_at = refused_at + jiff::SignedDuration::from_mins(10);
     set_clock(&clock, done_at);
@@ -983,12 +963,18 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
     wait("the answer's post under way", || {
         c.slack.held_failing_posts() > held_before
     });
-    wait("the unavailable text while the post is under way", || {
+    assert_eq!(c.slack.status(channel, &slowly).as_deref(), Some(WORKING));
+    assert_eq!(interval(&c, &slowly), None);
+    set_clock(&clock, done_at + jiff::SignedDuration::from_secs(90));
+    // Retries fail too until the failure is seen, so the answer stays kept
+    // from the person.
+    c.slack.fail_posts();
+    c.slack.fail_held_posts();
+    wait("the unavailable text once the post failed", || {
         c.slack.status(channel, &slowly).as_deref() == Some(UNAVAILABLE)
     });
-    set_clock(&clock, done_at + jiff::SignedDuration::from_secs(90));
-    c.slack.fail_held_posts();
     assert_eq!(interval(&c, &slowly), Some(done_at.to_string()));
+    c.slack.accept_posts();
     wait("the answer once posts are taken", || {
         c.slack.posts().len() == posts + 1
     });
@@ -996,6 +982,35 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
         shown(&c, channel, &slowly).last().map(String::as_str) == Some("")
     });
     assert_eq!(interval(&c, &slowly), None);
+    assert_eq!(shown(&c, channel, &slowly), [WORKING, UNAVAILABLE, ""]);
+
+    // A slow post that succeeds never shows the unavailable text.
+    let posts = c.slack.posts().len();
+    let before = c.sessions();
+    projected(&c);
+    let patient = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Where is the invoice?", None);
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(channel, &patient).as_deref() == Some(WORKING)
+    });
+    c.slack.hold_posts();
+    let held_before = c.slack.held_posts();
+    c.finish_turn(&session, 0, "In the finance folder.");
+    wait("the answer's post under way", || {
+        c.slack.held_posts() > held_before
+    });
+    set_clock(&clock, done_at + jiff::SignedDuration::from_mins(5));
+    c.slack.release_posts();
+    wait("the slow answer posted", || {
+        c.slack.posts().len() == posts + 1
+    });
+    wait("the status cleared", || {
+        shown(&c, channel, &patient).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(shown(&c, channel, &patient), [WORKING, ""]);
+    assert_eq!(interval(&c, &patient), None);
 
     // In a direct message each message has a status of its own. A message
     // queued behind the running turn and that turn's own message both have
@@ -1155,6 +1170,33 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
     assert_eq!(interval(&c, &unseen), None);
     c.finish_turn(&session, 0, "It is back up.");
     wait("the answer once observed", || {
+        c.slack.posts().len() == posts + 1
+    });
+
+    // The runtime accepts the message but has not started executing it: the
+    // acceptance alone ends the interval its refused listing opened, and the
+    // working text shows before execution starts.
+    let posts = c.slack.posts().len();
+    let before = c.sessions();
+    projected(&c);
+    c.runtime.flag("list-failure", true);
+    let queued = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Can I see the roadmap?", None);
+    wait("the unavailable text once the listing is refused", || {
+        c.slack.status(channel, &queued).as_deref() == Some(UNAVAILABLE)
+    });
+    c.runtime.flag("queued-start", true);
+    c.runtime.flag("list-failure", false);
+    let session = started(&c, &before);
+    wait(
+        "the working text once the runtime accepts the message",
+        || c.slack.status(channel, &queued).as_deref() == Some(WORKING),
+    );
+    assert_eq!(interval(&c, &queued), None);
+    c.runtime.flag("queued-start", false);
+    c.finish_turn(&session, 0, "It is in the wiki.");
+    wait("the queued message's answer", || {
         c.slack.posts().len() == posts + 1
     });
 }

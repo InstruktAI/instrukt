@@ -36,14 +36,15 @@ pub(super) const MIGRATIONS: &[Migration] = &[
 
 /// Version 21: what a person is shown while their message is unfinished.
 /// Each message keeps when its sender was admitted, when its no-work
-/// interval opened (unset while none is open) and the newest message the
-/// agent has written in its running turn. A schema that already has a column
-/// keeps it, and every stored row reads with the new columns unset.
+/// interval opened (unset while none is open), the newest message the agent
+/// has written in its turn and when its turn ended. A schema that already has
+/// a column keeps it, and every stored row reads with the new columns unset.
 fn v21(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     for (table, column) in [
         ("conversation_messages", "admitted_at"),
         ("conversation_messages", "unavailable_since"),
         ("conversation_messages", "turn_update"),
+        ("conversation_messages", "turn_ended_at"),
     ] {
         let present: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",

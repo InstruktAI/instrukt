@@ -180,7 +180,8 @@ connector gives.
   indication never says working while the notice's minute runs. A slow but healthy
   start shows the working text. While the message's turn runs, the indication
   carries the newest message the agent has written in the running turn,
-  relayed as the runtime records it; before the agent has written one it is the working text. The indication follows the message, not its turn: through a
+  relayed as the runtime records it, and keeps it until the turn's answer is
+  posted; before the agent has written one it is the working text. The indication follows the message, not its turn: through a
   failed turn awaiting redelivery and through an answer complete but not yet
   posted, it stays, with the text its interval gives; it is a courtesy, and each connector states
   how closely it follows the state.
@@ -224,8 +225,12 @@ open nothing. It starts, if not already open:
 - when it has been handed to a turn: at the first failed observation of that turn
   (session state unobservable, source unreadable) — loss of reachability for work
   already handed over;
-- when its own turn is observed ended — with output, or failed — while its answer
-  is not posted.
+- when its own turn is observed ended failed;
+- when its own turn ended with an answer that cannot be posted: a post of it
+  failed, or it is found unposted after a post of it was tried, a restart
+  included. The interval then starts at that turn's end. A turn that ended and
+  whose answer is being posted opens nothing: the unavailable indication shows
+  only while a failure keeps the agent's answer from the person.
 
 It ends, for that message only: when the runtime accepts its hand-over (a
 redelivery included); when its own turn is observed running again; when a turn it

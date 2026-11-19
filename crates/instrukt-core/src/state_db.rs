@@ -447,15 +447,22 @@ mod tests {
         conn.execute_batch("INSERT INTO conversation_messages(company,connector,conversation,message,sender,sender_name,written_us,written_at,arrived_at,state,text) VALUES('acme','slack','C1/1','1.1','USTEVEN','Steven',1,'2026-11-18T10:00:00Z','2026-11-18T10:00:01Z','sent','When do we ship?');").unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
         // A stored message keeps its stage, with no admission time, no open
-        // interval and no update.
-        let message: (String, Option<String>, Option<String>, Option<String>) = conn
+        // interval, no update and no turn end.
+        type Row = (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let message: Row = conn
             .query_row(
-                "SELECT state,admitted_at,unavailable_since,turn_update FROM conversation_messages",
+                "SELECT state,admitted_at,unavailable_since,turn_update,turn_ended_at FROM conversation_messages",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .unwrap();
-        assert_eq!(message, ("sent".to_owned(), None, None, None));
+        assert_eq!(message, ("sent".to_owned(), None, None, None, None));
     }
 
     #[test]

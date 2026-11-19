@@ -1,11 +1,12 @@
 ---
 source: crates/instrukt-cli/tests/cases/conversations.rs
-expression: "&texts[..=newest]"
+expression: "shown(&c, channel, &asked)"
 ---
 [
   "is working on your request",
   "is temporarily unavailable — your message is saved",
   "is working on your request",
   "Looking at the release plan.",
-  "Two items are still open — *both small*."
+  "Two items are still open — *both small*.",
+  ""
 ]
