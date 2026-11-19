@@ -14,11 +14,55 @@ use std::time::Duration;
 use crate::process::{Invocation, ProcessError};
 use crate::state::{self, StateError};
 
-/// The launchd label and systemd unit stem of the wake-up.
+/// The launchd label and systemd unit stem of the default home's wake-up.
 pub const LABEL: &str = "ai.instrukt.tick";
 const SYSTEMD_UNIT: &str = "instrukt-tick";
-/// Marks instrukt's line in a crontab.
-const CRON_MARKER: &str = "# instrukt-tick";
+/// Marks the default home's line in a crontab.
+pub(crate) const CRON_MARKER: &str = "# instrukt-tick";
+
+/// What a home other than `~/.instrukt` adds to instrukt's service names:
+/// the start of its canonical path's digest. `None` for the default home,
+/// which keeps the names without it. A service's name is its identity, so a
+/// second home never writes, reloads or withdraws the first one's units.
+pub(crate) fn home_suffix(home: &instrukt_core::home::Home) -> Option<String> {
+    use sha2::{Digest as _, Sha256};
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let root = canonical(home.root());
+    if root == canonical(&home.machine_user_home().join(".instrukt")) {
+        return None;
+    }
+    let digest = hex::encode(Sha256::digest(root.as_os_str().as_encoded_bytes()));
+    Some(digest[..8].to_owned())
+}
+
+/// A launchd label for `home`: `base`, with the home's suffix after a dot.
+pub(crate) fn launchd_label(base: &str, home: &instrukt_core::home::Home) -> String {
+    home_suffix(home).map_or_else(|| base.to_owned(), |suffix| format!("{base}.{suffix}"))
+}
+
+/// A systemd unit stem for `home`: `base`, with the home's suffix after a dash.
+pub(crate) fn systemd_stem(base: &str, home: &instrukt_core::home::Home) -> String {
+    home_suffix(home).map_or_else(|| base.to_owned(), |suffix| format!("{base}-{suffix}"))
+}
+
+/// The marker of `home`'s wake-up line in a crontab.
+pub(crate) fn cron_marker(home: &instrukt_core::home::Home) -> String {
+    home_suffix(home).map_or_else(
+        || CRON_MARKER.to_owned(),
+        |suffix| format!("{CRON_MARKER}-{suffix}"),
+    )
+}
+
+/// The wake-up's launchd label for `home`.
+pub(crate) fn label(home: &instrukt_core::home::Home) -> String {
+    launchd_label(LABEL, home)
+}
+
+/// The wake-up's systemd timer for `home`.
+pub(crate) fn timer(home: &instrukt_core::home::Home) -> String {
+    format!("{}.timer", systemd_stem(SYSTEMD_UNIT, home))
+}
 
 /// How long the scheduler's command may take.
 const REGISTRAR_TIMEOUT: Duration = Duration::from_secs(30);
@@ -96,14 +140,15 @@ pub struct Installed {
 pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<RegistrationFile> {
     match scheduler {
         Scheduler::Launchd => vec![RegistrationFile {
-            path: launch_agent(wake.home.user_home()),
+            path: launch_agent(wake.home),
             contents: plist(wake),
         }],
         Scheduler::SystemdUser => {
             let dir = systemd_dir(wake);
+            let stem = systemd_stem(SYSTEMD_UNIT, wake.home);
             vec![
                 RegistrationFile {
-                    path: dir.join(format!("{SYSTEMD_UNIT}.service")),
+                    path: dir.join(format!("{stem}.service")),
                     contents: format!(
                         "[Unit]\nDescription=instrukt runner wake-up\n\n[Service]\nType=oneshot\nEnvironment=PATH={}\nEnvironment={}\nEnvironment={}\nEnvironment={}\nExecStart={} tick\n",
                         wake.path_env,
@@ -114,7 +159,7 @@ pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<Regist
                     ),
                 },
                 RegistrationFile {
-                    path: dir.join(format!("{SYSTEMD_UNIT}.timer")),
+                    path: dir.join(format!("{stem}.timer")),
                     contents: "[Unit]\nDescription=instrukt runner wake-up every minute\n\n[Timer]\nOnCalendar=*-*-* *:*:00\nAccuracySec=1s\n\n[Install]\nWantedBy=timers.target\n".to_owned(),
                 },
             ]
@@ -123,15 +168,17 @@ pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<Regist
     }
 }
 
-/// The crontab with instrukt's line replaced by one for `wake`.
+/// The crontab with this home's line replaced by one for `wake`. Lines
+/// marked for another home, and every unmarked line, are kept.
 pub fn crontab_with_wakeup(current: &str, wake: &WakeUp<'_>) -> String {
+    let marker = cron_marker(wake.home);
     let mut lines: Vec<String> = current
         .lines()
-        .filter(|line| !line.trim_end().ends_with(CRON_MARKER))
+        .filter(|line| !line.trim_end().ends_with(&marker))
         .map(str::to_owned)
         .collect();
     lines.push(format!(
-        "* * * * * PATH={} HOME={} INSTRUKT_HOME={} INSTRUKT_DEVELOPMENT={} {} tick {CRON_MARKER}",
+        "* * * * * PATH={} HOME={} INSTRUKT_HOME={} INSTRUKT_DEVELOPMENT={} {} tick {marker}",
         crate::process::shell_quote(wake.path_env),
         crate::process::shell_quote(&wake.home.machine_user_home().display().to_string()),
         crate::process::shell_quote(&wake.home.root().display().to_string()),
@@ -157,7 +204,7 @@ pub(crate) fn register(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Instal
     let files = registration_files(scheduler, wake);
     match scheduler {
         Scheduler::Launchd => {
-            let plist = launch_agent(wake.home.user_home()).display().to_string();
+            let plist = launch_agent(wake.home).display().to_string();
             let unloaded =
                 Invocation::program("launchctl", &["unload", &plist]).run(REGISTRAR_TIMEOUT)?;
             if !unloaded.success {
@@ -168,13 +215,7 @@ pub(crate) fn register(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Instal
         Scheduler::SystemdUser => {
             registrar(&["systemctl", "--user", "daemon-reload"], None)?;
             registrar(
-                &[
-                    "systemctl",
-                    "--user",
-                    "enable",
-                    "--now",
-                    &format!("{SYSTEMD_UNIT}.timer"),
-                ],
+                &["systemctl", "--user", "enable", "--now", &timer(wake.home)],
                 None,
             )?;
         }
@@ -228,11 +269,11 @@ fn registrar(argv: &[&str], input: Option<&[u8]>) -> Result<(), InstallError> {
     }
 }
 
-fn launch_agent(user_home: &Path) -> PathBuf {
-    user_home
+fn launch_agent(home: &instrukt_core::home::Home) -> PathBuf {
+    home.user_home()
         .join("Library")
         .join("LaunchAgents")
-        .join(format!("{LABEL}.plist"))
+        .join(format!("{}.plist", label(home)))
 }
 
 fn systemd_dir(wake: &WakeUp<'_>) -> PathBuf {
@@ -249,7 +290,7 @@ fn plist(wake: &WakeUp<'_>) -> String {
 <plist version=\"1.0\">\n\
 <dict>\n\
     <key>Label</key>\n\
-    <string>{LABEL}</string>\n\
+    <string>{}</string>\n\
     <key>ProgramArguments</key>\n\
     <array>\n\
         <string>{}</string>\n\
@@ -270,6 +311,7 @@ fn plist(wake: &WakeUp<'_>) -> String {
     <true/>\n\
 </dict>\n\
 </plist>\n",
+        label(wake.home),
         xml_escape(&wake.executable.display().to_string()),
         xml_escape(wake.path_env),
         xml_escape(&wake.home.machine_user_home().display().to_string()),

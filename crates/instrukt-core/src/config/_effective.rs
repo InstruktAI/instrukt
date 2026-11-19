@@ -289,6 +289,16 @@ impl Configuration {
             .transpose()
     }
 
+    /// The local Redis endpoint's address, with no credential resolved.
+    pub fn local_redis_url(&self) -> Result<Option<String>, ConfigError> {
+        self.redis_raw()
+            .and_then(|r| r.get("local"))
+            .and_then(|r| r.get("url"))
+            .and_then(Value::as_str)
+            .map(|url| self.secret_template(url))
+            .transpose()
+    }
+
     /// Whether this project explicitly refers to a local Redis endpoint, independently
     /// of inherited defaults or module enablement. Installation retains such demand.
     pub fn project_local_redis(&self) -> Result<Option<String>, ConfigError> {

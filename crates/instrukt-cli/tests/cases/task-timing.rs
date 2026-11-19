@@ -84,6 +84,7 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
     insta::assert_snapshot!(
         calls.replace(plist_path.to_str().unwrap(), "<plist>"),
         @r"
+    crontab -l
     launchctl unload <plist>
     launchctl load -w <plist>
     "
@@ -115,6 +116,7 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
 #[cfg(not(target_os = "macos"))]
 fn registered(env: &TestEnv, calls: &str) -> Registered {
     insta::assert_snapshot!(calls, @r"
+    crontab -l
     systemctl --user daemon-reload
     systemctl --user enable --now instrukt-tick.timer
     ");

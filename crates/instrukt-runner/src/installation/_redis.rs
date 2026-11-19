@@ -10,12 +10,28 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 use std::time::Duration;
 
+/// How long installation waits for the private Redis it started to answer.
+const REDIS_START_WAIT: Duration = Duration::from_secs(10);
+
 pub(super) fn ensure(
     request: &Request<'_>,
-    owned: &mut _services::Owned,
     demand: &Demand,
     report: &mut Report,
 ) -> anyhow::Result<()> {
+    let config = Configuration::load_global(request.home)?;
+    // The private Redis's password missing from `secrets.env` is generated
+    // before the settings that reference it are resolved; the configuration
+    // and ACL below are written from it.
+    let socket = request.home.state_dir().join("redis/redis.sock");
+    if !request.check
+        && config::resolve_secret(request.home, "${INSTRUKT_REDIS_PASSWORD}").is_err()
+        && config
+            .local_redis_url()?
+            .is_some_and(|url| super::_demand::owned_server(&url, &socket).unwrap_or(false))
+    {
+        config::generate_secret(request.home, "INSTRUKT_REDIS_PASSWORD")?;
+    }
+    // Read again, with the secret it resolves.
     let config = Configuration::load_global(request.home)?;
     // A missing cluster prerequisite is independent of a local setup. Never pick a cluster host.
     let events_required =
@@ -58,13 +74,10 @@ pub(super) fn ensure(
                 "redis-server --version failed; repair the executable"
             );
             let password_ref = "${INSTRUKT_REDIS_PASSWORD}";
+            // An existing secret is reused; a missing one is generated, and the
+            // configuration and ACL below are written from it, so the data the
+            // private Redis keeps stays reachable with it.
             if !request.check && config::resolve_secret(request.home, password_ref).is_err() {
-                // Only generate for an unconfigured local endpoint; established credentials
-                // failing to resolve remain a finding rather than being rotated.
-                anyhow::ensure!(
-                    settings.local.is_none(),
-                    "owned local credential is missing/unreadable; restore its secrets.env value before repair"
-                );
                 config::generate_secret(request.home, "INSTRUKT_REDIS_PASSWORD")?;
             }
             let password = config::resolve_secret(request.home, password_ref)?;
@@ -97,10 +110,10 @@ pub(super) fn ensure(
                     std::fs::Permissions::from_mode(0o700),
                 )?;
             }
-            owned.retained_file(request, &conf, &expected_conf)?;
             let mut definition = _services::redis(request, &server, &conf);
-            owned.redis_acl(request, &mut definition, &acl, expected_acl)?;
-            owned.reconcile(
+            definition.kept.insert(conf, expected_conf);
+            definition.kept.insert(acl, expected_acl);
+            _services::reconcile(
                 request,
                 &definition,
                 true,
@@ -116,7 +129,18 @@ pub(super) fn ensure(
                 max_connections: 50,
                 socket_timeout: 15,
             };
-            let mut conn = connect(&endpoint)?;
+            // A Redis installation just started or restarted is given until
+            // REDIS_START_WAIT to answer; inspection asks once.
+            let started = std::time::Instant::now();
+            let mut conn = loop {
+                match connect(&endpoint) {
+                    Ok(conn) => break conn,
+                    Err(_) if !request.check && started.elapsed() < REDIS_START_WAIT => {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             private_socket(&endpoint)?;
             if !request.check {
                 diagnose(&mut conn)?;
