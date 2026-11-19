@@ -20,7 +20,7 @@ use serde_json::Value;
 use crate::envelopes::{self, Span};
 use crate::runtime::RuntimeAdapter;
 
-pub use _client::Tool;
+pub use _client::{CALL_TOOL, INITIALIZE, INITIALIZED, LIST_TOOLS, PROTOCOL_VERSIONS, Tool};
 pub use _logins::StoredLogins;
 
 #[derive(Debug, thiserror::Error)]

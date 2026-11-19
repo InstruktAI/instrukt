@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/mcp-access.rs
+expression: stderr(&refused)
+---
+instrukt: MCP server `future` reports a failure: it answers protocol version 2099-01-01, and instrukt speaks 2025-11-25, 2025-06-18, 2025-03-26
