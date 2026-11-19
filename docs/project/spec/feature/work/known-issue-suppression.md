@@ -19,8 +19,12 @@ stated scope, before filing, alongside deduplication against active work.
 Unrelated signals still pass through the ordinary eligibility and filing flow.
 
 `instrukt bugs suppress <signal> --reason <text>` retains a disposition for the
-project the caller stands in, `instrukt bugs suppressions [--json]` reads the
-complete retained set, and `instrukt bugs unsuppress <id>` removes one. The
+project the caller stands in, `instrukt bugs suppressions [--project <slug>]
+[--json]` reads the complete retained set of that project or of the named one,
+and `instrukt bugs unsuppress <id>` removes one. `--project` is a read: it
+resolves a project this computer records as the bug front door does
+(`project/instrukt/spec/feature/work/todos`, Bug reports), and suppressing and
+unsuppressing still act only where the caller stands. The
 retained set is the project's list of triaged known issues: the duplication
 question of the bug front door points every filer at it
 (`project/instrukt/spec/feature/work/todos`, Bug reports).

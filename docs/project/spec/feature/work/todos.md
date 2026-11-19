@@ -32,8 +32,9 @@ kind, dependency or grouping rejects creation before partial work is recorded.
 [--tier light|standard|strong|premium]` sets its optional agent preference, which
 dispatch uses before the role mapping in `~/.instrukt/agents.yaml`. Admission is the agent's judgment;
 there is no machine proof gate.
-A defect is reported through `instrukt bugs report`, which puts the
-bug-specific questions first (Bug reports, below).
+`instrukt todo create --kind bug` is refused before anything is recorded,
+with or without `--approved`; the refusal names the one door a bug is filed
+through, `instrukt bugs report '<description>'` (Bug reports, below).
 `instrukt todo create` accepts `--human-involved true|false` as an action-scoped,
 audit-only declaration under `general/policy/human-involvement-recording`.
 It records observed human involvement and supplies no authorization.
@@ -74,7 +75,11 @@ configured approval gate.
   filed slug and its reflection, as `instrukt todo create` does.
 - **The owning project** is `--project <slug>`: a project publication state
   records on this computer (`project/instrukt/spec/feature/publication/instrukt-status`,
-  `projects`), filed into its checkout. Without `--project` it is the project
+  `projects`), filed into its checkout. Every `--project` of the work reads
+  (`instrukt todo list`, `instrukt bugs list`, `instrukt bugs suppressions`)
+  resolves the same way and is refused the same way, so a filer outside the
+  owning project, such as a company's agent in its home, faces every question
+  from where it stands. Without `--project` it is the project
   the caller stands in. An unknown slug, or no `--project` outside an adopted
   project, is refused before anything is filed, naming `--project` and the
   projects this computer records.
@@ -85,7 +90,7 @@ The questions, each with the sources it names:
 | --- | --- |
 | Bug or change | Which current contract does the behaviour break? A failure shows that something happened, not that it is wrong. Where no current contract states otherwise it is not a bug: file a change with `instrukt todo create <slug> <content> --kind change --approved` only when the behaviour is wanted, and otherwise file nothing. A report whose premise is that nothing followed up first establishes whether the sanctioned recovery was attempted. |
 | Validity and evidence | An occurrence or a dangerous path in hand (`sdlc/concept/defect-evidence`). The report puts the observations and their addresses first, and keeps any causal account apart from them: each transition with its evidence, the alternatives checked and what remains unknown, or that the cause is not established. |
-| Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list`, `instrukt bugs list` and `instrukt bugs suppressions` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
+| Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt bugs suppressions --project <slug>` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
 | Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
 | Owning project | The project that owns the defect, named with `--project`. A symptom that stops once the observing project's own configuration matches an instrukt default is that project's to fix, there. |
 
@@ -114,7 +119,9 @@ that task preference before the role mapping in `~/.instrukt/agents.yaml`.
 
 ### Reads and changes
 
-`instrukt todo list` reads the caller's project's work. Active work is the
+`instrukt todo list [--project <slug>]` reads the work of the caller's
+project, or of the named project resolved as for a bug report (Bug reports,
+above). Active work is the
 default view; iceboxed, removed and delivered work are available through the
 corresponding listing selections. Ordering is derived from readiness and
 dependencies. `instrukt todo show <slug>` exposes the record, current evidence,
@@ -361,6 +368,15 @@ Given a project holds open bugs beside other work and bugs already delivered
 When an agent asks for that project's bugs
 Then it sees each open bug with its state
 And no other kind of work and no delivered or withdrawn bug is listed
+```
+
+### UC-TD12: An agent filing a bug as ordinary work is sent to the front door
+
+```gherkin
+Given an agent files a defect as ordinary work of the bug kind
+When the filing is made, confirmed or not
+Then nothing is filed
+And the agent is told that a bug is reported through the bug front door, and how to reach it
 ```
 
 ## Known caveats
