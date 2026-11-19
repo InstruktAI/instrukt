@@ -243,11 +243,19 @@ fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
     );
     // Whether it has one is what the runner's admission decides for the
     // same files. A machine layer admission refuses is the command's error,
-    // named, as the runner refuses to start on it: `instrukt sessions`, which
+    // named, as the runner refuses to start on it, even where a module is on
+    // that would otherwise let the command go on: `instrukt sessions`, which
     // asks admission only for this, says so.
     let machine = env.instrukt_home().join("instrukt.yaml");
     let valid_machine = std::fs::read_to_string(&machine).unwrap();
-    std::fs::write(&machine, format!("{valid_machine}bogus: 1\n")).unwrap();
+    std::fs::write(
+        &machine,
+        format!(
+            "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{todos: true}}\nbogus: 1\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
     let refused = env.run(env.home(), ["sessions", "list"]).failure().code(1);
     insta::assert_snapshot!(
         "unadmitted-run",
