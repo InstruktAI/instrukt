@@ -569,3 +569,103 @@ fn an_agent_that_checks_out_the_project_starts_with_what_it_selected() {
     assert_eq!(repo.read("AGENTS.md").trim_end(), on_branch);
     assert_eq!(repo.git(["status", "--porcelain"]), "");
 }
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE8
+#[test]
+fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
+    let env = hooked_machine();
+    env.run(&env.path(""), ["config", "init", "--company", "acme"])
+        .success();
+    // The company's home is the checkout of its repository; its settings
+    // document is there and ignored.
+    let dir = env.instrukt_home().join("companies/acme");
+    let relative = dir
+        .strip_prefix(env.path(""))
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let home = env.git_repo(&relative);
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/people.md\n",
+    )
+    .write(
+        "docs/people.md",
+        "# People\n\nWho works at Acme.\n\n## Required reads\n\n- roles.md\n",
+    )
+    .write("docs/roles.md", "# Roles\n\nWhat each role at Acme does.\n");
+    env.run(home.path(), ["hooks", "install"]).success();
+    commit_through_hook(&env, &home, "the company's knowledge");
+    let committed = home.git(["show", "HEAD:AGENTS.md"]);
+    insta::assert_snapshot!("company_rendering", committed);
+    assert_eq!(home.git(["status", "--porcelain"]), "");
+
+    // A clone of the company's repository holds no settings document: it
+    // renders the same bytes, and the check passes.
+    let remote = env.bare_remote("acme");
+    home.git(["push", "--quiet", remote.to_str().unwrap(), "main"]);
+    let clone = env.clone_repo(&remote, "acme-clone");
+    assert!(!clone.path().join("instrukt.yaml").exists());
+    env.run(clone.path(), ["docs", "render", "--check"])
+        .success();
+    std::fs::remove_file(clone.path().join("AGENTS.md")).unwrap();
+    env.run(clone.path(), ["docs", "render"]).success();
+    // The home's file is the committed one: its status is clean.
+    assert_eq!(clone.read("AGENTS.md"), home.read("AGENTS.md"));
+
+    // The master gains a required read of a snippet: the commit is made, its
+    // AGENTS.md is the one before, and both commands name the master and
+    // the read.
+    let head = home.git(["rev-parse", "HEAD"]);
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/people.md\n- general/policy/commits\n",
+    );
+    commit_through_hook(&env, &home, "doctrine in the master");
+    assert_ne!(home.git(["rev-parse", "HEAD"]), head);
+    assert_eq!(home.git(["show", "HEAD:AGENTS.md"]), committed);
+    let validated = env
+        .run(&env.path(""), ["config", "validate", "--company", "acme"])
+        .failure();
+    let checked = env
+        .run(home.path(), ["docs", "render", "--check"])
+        .failure();
+    insta::assert_snapshot!(
+        "company_rendering_names_the_read",
+        format!(
+            "config validate --company acme:\n{}docs render --check:\n{}{}",
+            stdout(&env, &validated),
+            stdout(&env, &checked),
+            shown(&env, &checked.get_output().stderr)
+        )
+    );
+
+    // A required read naming a symbolic link is never read: in the working
+    // tree and in the index the commit is made from, the finding names it as
+    // a link.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/team.md\n",
+    );
+    std::os::unix::fs::symlink("roles.md", home.path().join("docs/team.md")).unwrap();
+    let linked = env
+        .run(home.path(), ["docs", "render", "--check"])
+        .failure();
+    commit_through_hook(&env, &home, "a linked document");
+    let record = env.finished_hook_run(home.path(), instrukt_core::repository::Hook::PreCommit);
+    let instrukt_core::repository::StagingOutcome::Unchanged { findings } = record.staging.unwrap()
+    else {
+        panic!("the commit staged a rendering of a linked read");
+    };
+    insta::assert_snapshot!(
+        "company_rendering_names_a_link",
+        format!(
+            "working tree:\n{}{}index:\n{}\n",
+            stdout(&env, &linked),
+            shown(&env, &linked.get_output().stderr),
+            findings.join("\n")
+        )
+    );
+    assert_eq!(home.git(["show", "HEAD:AGENTS.md"]), committed);
+}

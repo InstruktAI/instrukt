@@ -75,6 +75,7 @@
 //! under the position's [`heading`] with every snippet's headings demoted
 //! ([`demote_headings`]).
 
+mod _company;
 mod _corpus;
 mod _directives;
 mod _finding;
@@ -96,6 +97,7 @@ mod _validate;
 
 use std::path::PathBuf;
 
+pub(crate) use _company::{CompanyDocument, company_document};
 pub use _corpus::{
     BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,
     Version, View,

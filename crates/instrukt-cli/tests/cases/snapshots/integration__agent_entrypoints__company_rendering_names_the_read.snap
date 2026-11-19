@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "format!(\"config validate --company acme:\\n{}docs render --check:\\n{}{}\",\nstdout(&env, &validated), stdout(&env, &checked),\nshown(&env, &checked.get_output().stderr))"
+---
+config validate --company acme:
+AGENTS.md: AGENTS.master.md requires `general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+docs render --check:
+AGENTS.md: AGENTS.master.md requires `general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed

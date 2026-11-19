@@ -19,6 +19,7 @@
 
 mod _adoption;
 mod _agents;
+mod _company;
 mod _editor;
 mod _fingerprint;
 mod _patch;
@@ -36,6 +37,7 @@ use serde::{Deserialize, Serialize};
 pub use _adoption::{
     ClaimStatus, ClaimsPreview, GlobalFiles, PublishedSchema, preview_claims, published_schema,
 };
+pub use _company::CompanyReadProblem;
 pub use _editor::{
     EditorChange, EditorChangeKind, SCHEMAS_DIR, committed_modeline, editor_schema_describes,
     refresh_editor_schemas,
@@ -97,6 +99,13 @@ pub fn render_repository(view: RepositoryView<'_>) -> Result<RenderPlan, Publica
         }
     };
     _render::render_tree(&tree, override_beside_root)
+}
+
+/// The findings of rendering the company home whose root is `home_dir`,
+/// from its working tree: what `instrukt config validate --company` reports
+/// beside configuration's own findings.
+pub fn company_findings(home_dir: &Path) -> Result<Vec<RenderFinding>, PublicationError> {
+    Ok(render_repository(RepositoryView::WorkingTree(home_dir))?.findings)
 }
 
 /// Applies `plan` to the working tree whose root is `root`: each rendering
@@ -176,9 +185,6 @@ pub enum PublicationError {
     /// format does not support.
     #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
     CommittedDirectives { findings: Vec<crate::docs::Finding> },
-    /// A company home's rendering, which this build does not carry yet.
-    #[error("company rendering is not available in this build")]
-    CompanyRenderingUnavailable,
     #[error("cannot access {}: {source}", path.display())]
     Io {
         path: PathBuf,
