@@ -1149,20 +1149,24 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
     wait("the working text", || {
         c.slack.status(channel, &unseen).as_deref() == Some(WORKING)
     });
+    // The fake runtime removes the inputs from its projection, and puts
+    // them back from the thread as it now stands once told to show them: no
+    // copy taken here can go stale.
     c.runtime.hide_inputs(&session);
-    c.store.hide_messages(&format!("fake:{session}:input:"));
+    c.runtime.project(&c.env, &session);
     wait(
         "the unavailable text while the turn cannot be observed",
         || c.slack.status(channel, &unseen).as_deref() == Some(UNAVAILABLE),
     );
     assert!(interval(&c, &unseen).is_some());
-    // The fake runtime may still be removing them as they come back: they
-    // are put back until the turn is seen running.
+    // A projection the fake runtime began while still told to hide them may
+    // remove them once more: they are projected again until the turn is
+    // seen running.
     c.runtime.show_inputs();
     let mut shown_at: Option<std::time::Instant> = None;
     wait("the working text once the turn is seen running", || {
         if shown_at.is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(300)) {
-            c.store.show_messages();
+            c.runtime.project(&c.env, &session);
             shown_at = Some(std::time::Instant::now());
         }
         c.slack.status(channel, &unseen).as_deref() == Some(WORKING)
