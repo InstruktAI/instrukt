@@ -270,7 +270,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         }
     }
     if request.module.is_none()
-        && let Err(error) = _services::withdraw_legacy(request, &mut report)
+        && let Err(error) = _services::withdraw_legacy(request, demand.complete, &mut report)
     {
         report.finding("earlier registrations", error);
     }
@@ -455,16 +455,21 @@ fn runner_service(request: &Request<'_>, demand: &Demand, report: &mut Report) {
         } else {
             None
         };
-        let (state, cause) =
-            match _services::runner_service(request, &desired, &demand.conversations, report) {
-                Ok(None) => (ServiceState::Running, None),
-                Ok(Some(cause)) => (ServiceState::Unmet, Some(cause)),
-                Err(error) => {
-                    let cause = error.to_string();
-                    report.finding(ResourceKind::Runner, &cause);
-                    (ServiceState::Unmet, Some(cause))
-                }
-            };
+        let (state, cause) = match _services::runner_service(
+            request,
+            &desired,
+            demand.complete,
+            &demand.conversations,
+            report,
+        ) {
+            Ok(None) => (ServiceState::Running, None),
+            Ok(Some(cause)) => (ServiceState::Unmet, Some(cause)),
+            Err(error) => {
+                let cause = error.to_string();
+                report.finding(ResourceKind::Runner, &cause);
+                (ServiceState::Unmet, Some(cause))
+            }
+        };
         let cause = match (cause, boot) {
             (Some(cause), Some(boot)) => Some(format!("{cause}; {boot}")),
             (cause, boot) => cause.or(boot),

@@ -13,7 +13,14 @@ fn manager(env: &mut TestEnv) {
 printf '%s\n' '{name}' "$@" >> '{dir}/calls'
 if [ "$1" = --user ]; then shift; fi
 operation=$1
-case $operation in load|unload|start|stop|enable|disable|restart|daemon-reload|debug) printf '%s\n' "$operation" >> '{dir}/mutations';; esac
+case $operation in load|unload|remove|start|stop|enable|disable|restart|daemon-reload|debug) printf '%s\n' "$operation" >> '{dir}/mutations';; esac
+if [ "$operation" = list-units ]; then
+    for path in '{dir}'/unit-*; do
+        [ -f "$path" ] || continue
+        printf '%s loaded active running\n' "${{path##*/unit-}}"
+    done
+    exit 0
+fi
 if [ "$operation" = list ] && [ "$#" -eq 1 ]; then
     printf 'PID\tStatus\tLabel\n'
     for path in '{dir}'/unit-*; do
@@ -31,7 +38,7 @@ unit=${{unit##*/}}; unit=${{unit%.plist}}
 state='{dir}/unit-'$unit
 case $operation in
     list|is-active) [ -f "$state" ];;
-    unload|disable|stop) rm -f "$state"; case $unit in ai.instrukt.tick|instrukt-tick.timer) rm -f '{dir}/active';; esac;;
+    unload|disable|stop|remove) rm -f "$state"; case $unit in ai.instrukt.tick|instrukt-tick.timer) rm -f '{dir}/active';; esac;;
     *) touch "$state"; case $unit in ai.instrukt.tick|instrukt-tick.timer) touch '{dir}/active';; esac;;
 esac
 "#,
@@ -956,6 +963,24 @@ fn receiver_restart_preserves_registration_and_port_change_starts_replacement_fi
         )),
     );
     env.run(env.home(), ["install"]).success();
+    // An install that changes nothing still writes the receiver's invocation
+    // and restarts the receiver, keeping its socket; inspection changes
+    // neither.
+    use std::os::unix::fs::MetadataExt as _;
+    let invocation = env
+        .instrukt_home()
+        .join(format!("state/receiver/{}.json", first.port));
+    let written = std::fs::metadata(&invocation).unwrap().ino();
+    let mutations = env.path("runtime-bin/mutations");
+    std::fs::remove_file(&mutations).unwrap();
+    env.run(env.home(), ["install"]).success();
+    let rewritten = std::fs::metadata(&invocation).unwrap().ino();
+    assert_ne!(rewritten, written);
+    assert!(!std::fs::read_to_string(&mutations).unwrap().is_empty());
+    std::fs::remove_file(&mutations).unwrap();
+    env.run(env.home(), ["install", "--check"]).success();
+    assert_eq!(std::fs::metadata(&invocation).unwrap().ino(), rewritten);
+    assert!(!mutations.exists());
     for name in ["launchctl", "systemctl"] {
         let file = env.path(&format!("runtime-bin/{name}"));
         let before = std::fs::read_to_string(&file).unwrap();
@@ -2195,6 +2220,14 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
         BOT_TOKEN,
         &slack_settings(MEMBERS, ""),
     );
+    // While a company home of the second home cannot be read, its demand is
+    // incomplete: the earlier unit naming it is not withdrawn.
+    let broken = second.join("companies/broken");
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("instrukt.yaml"), "invalid: [").unwrap();
+    c.env.run(c.env.home(), ["install"]).failure();
+    assert!(legacy.exists());
+    std::fs::remove_dir_all(&broken).unwrap();
     let installed = c.env.run(c.env.home(), ["install", "--json"]).success();
     let report: serde_json::Value = serde_json::from_slice(&installed.get_output().stdout).unwrap();
     // It installs under its own names: the first home's runner definition is
@@ -2210,7 +2243,23 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
         .into();
     assert_ne!(suffixed, definition);
     assert_eq!(suffixed.parent(), definition.parent());
-    assert!(std::fs::read_to_string(&suffixed).unwrap().contains(&root));
+    // The manager runs the second home's service with the second home.
+    let unit = if macos {
+        suffixed.file_stem()
+    } else {
+        suffixed.file_name()
+    }
+    .unwrap()
+    .to_str()
+    .unwrap();
+    let running = manager.request(&["inspect", unit]);
+    assert!(running["pid"].as_u64().is_some());
+    let environment = if macos {
+        &running["definition"]["EnvironmentVariables"]
+    } else {
+        &running["environment"]
+    };
+    assert_eq!(environment["INSTRUKT_HOME"].as_str(), Some(root.as_str()));
     assert_eq!(std::fs::read(&definition).unwrap(), first);
     assert!(!legacy.exists());
     c.env.remove_env("INSTRUKT_HOME");
@@ -2237,7 +2286,28 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     let global = env.instrukt_home().join("instrukt.yaml");
     let settings = std::fs::read_to_string(&global).unwrap();
     std::fs::write(&global, format!("{settings}ticks: off\n")).unwrap();
+    // Under the default runner name, a unit an earlier release wrote for
+    // another home: this default home demands no runner, and its install
+    // leaves that unit as it is.
+    let elsewhere = env.path("elsewhere/.instrukt").display().to_string();
+    let foreign = if macos {
+        env.home()
+            .join("Library/LaunchAgents/ai.instrukt.runner.plist")
+    } else {
+        env.home()
+            .join(".config/systemd/user/instrukt-runner.service")
+    };
+    std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
+    let foreign_text = if macos {
+        format!(
+            "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>ai.instrukt.runner</string><key>EnvironmentVariables</key><dict><key>INSTRUKT_HOME</key><string>{elsewhere}</string></dict></dict></plist>\n"
+        )
+    } else {
+        format!("[Service]\nEnvironment=\"INSTRUKT_HOME={elsewhere}\"\n")
+    };
+    std::fs::write(&foreign, &foreign_text).unwrap();
     env.run(env.home(), ["install"]).success();
+    assert_eq!(std::fs::read_to_string(&foreign).unwrap(), foreign_text);
     let home = instrukt_core::home::Home::at_user_home(env.home().into());
     let url = format!(
         "unix://{}",
@@ -2277,6 +2347,39 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
         .unwrap();
     assert_eq!(value, "kept");
     assert!(connect(&before).is_err());
+
+    // The private Redis named only as history's cluster endpoint, its
+    // password gone again: installing history generates one before the
+    // endpoint's references are resolved, and the data stays readable.
+    std::fs::write(
+        &global,
+        format!(
+            "schema_version: 6\nrunner: {{runtime: t3}}\nticks: off\nredis:\n  cluster: {{url: '{url}', username: '${{INSTRUKT_REDIS_USERNAME}}', password: '${{INSTRUKT_REDIS_PASSWORD}}'}}\n"
+        ),
+    )
+    .unwrap();
+    _repo.write(
+        "instrukt.yaml",
+        "schema_version: 6\nproject: events\nmodules: {events: false, history: true}\n",
+    );
+    let kept = std::fs::read_to_string(&secrets)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with("INSTRUKT_REDIS_PASSWORD="))
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    std::fs::write(&secrets, kept).unwrap();
+    env.run(env.home(), ["install", "--module", "history"])
+        .success();
+    let history =
+        instrukt_core::config::resolve_secret(&home, "${INSTRUKT_REDIS_PASSWORD}").unwrap();
+    assert_ne!(history, after);
+    let value: String = redis::cmd("GET")
+        .arg("instrukt:retained:test")
+        .query(&mut connect(&history).unwrap())
+        .unwrap();
+    assert_eq!(value, "kept");
+    assert_eq!(std::fs::read_to_string(&foreign).unwrap(), foreign_text);
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE3
@@ -2668,6 +2771,12 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     std::fs::write(&document, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
     assert_eq!(state(&c), ServiceState::Unmet);
     assert!(!instrukt(&c, &["install"]).status.success());
+    assert!(manager.registered());
+    // Its definition file is gone while the manager keeps it registered:
+    // it is still found, reported obsolete and withdrawn.
+    for path in status(&c).paths {
+        std::fs::remove_file(path).unwrap();
+    }
     assert!(manager.registered());
     // Once it can be read, the demand is resolved: the next install
     // withdraws the service.

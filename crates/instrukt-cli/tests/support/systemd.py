@@ -173,6 +173,13 @@ def handle(args: list[str], folder: str, units: dict[str, Unit], state: dict[str
         result["pid"] = unit.pid if unit is not None else None
         result["enabled"] = unit is not None and unit.enabled
         result["starts"] = unit.starts if unit is not None else 0
+        result["environment"] = unit.environment if unit is not None else {}
+    elif operation == "list-units":
+        result["stdout"] = "".join(
+            f"{name} loaded {'active' if each.pid else 'inactive'} running\n"
+            for name, each in units.items()
+            if each.pid is not None or each.enabled
+        )
     else:
         result["ok"] = False
         result["stdout"] = f"unsupported: {operation}"

@@ -59,8 +59,16 @@ impl Definition {
         }
         Ok(false)
     }
-    /// Writes every file of the definition, owner-only.
-    fn write(&self) -> anyhow::Result<()> {
+    /// Writes every file of the definition, owner-only. A definition file
+    /// whose environment names another instrukt home is that home's: it is
+    /// left as it is, and its own home's install moves it to its own name.
+    fn write(&self, home: &Home) -> anyhow::Result<()> {
+        if let Some(other) = self.named_elsewhere(home)? {
+            anyhow::bail!(
+                "{} runs the instrukt home {other}; nothing was changed. Install from that home moves it to that home's own name",
+                self.label()
+            );
+        }
         for (file, content) in self.files.iter().chain(&self.kept) {
             read(file)?;
             atomic_write_with_permissions(
@@ -71,12 +79,40 @@ impl Definition {
         }
         Ok(())
     }
-    /// Whether any file or the crontab line of this definition exists.
+    /// Whether any file or the crontab line of this definition exists, or
+    /// its manager reports it registered.
     fn present(&self) -> anyhow::Result<bool> {
         if self.scheduler == Scheduler::Crontab {
             return Ok(marked_line(&crontab()?, marker(&self.unit)).is_some());
         }
-        Ok(self.files.keys().any(|file| file.exists()))
+        Ok(self.files.keys().any(|file| file.exists())
+            || listed(self.scheduler)?.contains(&self.unit))
+    }
+    /// The instrukt home this definition's environment names, when it names
+    /// one: `INSTRUKT_HOME` in its launchd plist, systemd unit or crontab line.
+    fn named_home(&self) -> anyhow::Result<Option<String>> {
+        if self.scheduler == Scheduler::Crontab {
+            return Ok(
+                marked_line(&crontab()?, marker(&self.unit)).and_then(|line| named_home(&line))
+            );
+        }
+        for file in self.files.keys() {
+            if let Some(content) = read(file)?
+                && let Some(home) = named_home(&content)
+            {
+                return Ok(Some(home));
+            }
+        }
+        Ok(None)
+    }
+    /// The other instrukt home this definition names, if it names one other
+    /// than `home`.
+    fn named_elsewhere(&self, home: &Home) -> anyhow::Result<Option<String>> {
+        let canonical =
+            |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        Ok(self
+            .named_home()?
+            .filter(|named| canonical(Path::new(named)) != canonical(home.root())))
     }
     /// Stops and unregisters the service and removes its definition files;
     /// what `kept` names stays.
@@ -119,9 +155,56 @@ fn on_path(program: &str, path_env: &str) -> bool {
     std::env::split_paths(path_env).any(|dir| dir.join(program).is_file())
 }
 
+/// What `scheduler` reports registered now under any name: launchd's job
+/// labels, systemd's units. Cron is read for its marked line instead.
+fn listed(scheduler: Scheduler) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    let (program, args, column): (&str, &[&str], usize) = match scheduler {
+        Scheduler::Launchd => ("launchctl", &["list"], 2),
+        Scheduler::SystemdUser => (
+            "systemctl",
+            &[
+                "--user",
+                "list-units",
+                "--all",
+                "--plain",
+                "--no-legend",
+                "--full",
+            ],
+            0,
+        ),
+        Scheduler::Crontab => return Ok(Default::default()),
+    };
+    let result = Invocation::program(program, args).run(Duration::from_secs(10))?;
+    anyhow::ensure!(
+        result.success,
+        "cannot list {} registrations; restore access to it",
+        scheduler.name()
+    );
+    Ok(result
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(column))
+        .map(str::to_owned)
+        .collect())
+}
+
 /// This home's definitions of `kind` present under every manager on the
-/// computer, a receiver's at every port.
+/// computer, a receiver's at every port: by file, crontab line or what the
+/// manager reports registered. A definition whose environment names another
+/// instrukt home is that home's, and is not this home's to touch.
 fn discover(request: &Request<'_>, kind: ResourceKind) -> anyhow::Result<Vec<Definition>> {
+    let mut found = Vec::new();
+    for definition in discover_named(request, kind)? {
+        if definition.named_elsewhere(request.home)?.is_none() {
+            found.push(definition);
+        }
+    }
+    Ok(found)
+}
+
+/// Every definition of `kind` present under the names `request.home` gives
+/// them, whichever home its environment names.
+fn discover_named(request: &Request<'_>, kind: ResourceKind) -> anyhow::Result<Vec<Definition>> {
     let mut found = Vec::new();
     for scheduler in managers(request) {
         // Cron keeps only the wake-up.
@@ -172,25 +255,36 @@ fn receiver_ports(request: &Request<'_>) -> anyhow::Result<Vec<u16>> {
         ),
         Scheduler::Crontab => return Ok(vec![]),
     };
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+    let mut names = Vec::new();
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => {
+            for entry in entries {
+                if let Some(name) = entry?.file_name().to_str() {
+                    names.push(name.to_owned());
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
-    };
-    let mut ports = Vec::new();
-    for entry in entries {
-        let name = entry?.file_name();
-        let Some(port) = name
-            .to_str()
-            .and_then(|name| name.strip_prefix(prefix))
-            .and_then(|rest| rest.strip_suffix(end.as_str()))
-            .and_then(|port| port.parse::<u16>().ok())
-        else {
-            continue;
-        };
-        ports.push(port);
     }
+    // A registration the manager still reports, its file gone. A launchd
+    // label carries no file extension.
+    let registered_end = match request.scheduler {
+        Scheduler::Launchd => end.trim_end_matches(".plist").to_owned(),
+        _ => end.clone(),
+    };
+    let registered = listed(request.scheduler)?;
+    let mut ports = names
+        .iter()
+        .filter_map(|name| name.strip_prefix(prefix)?.strip_suffix(end.as_str()))
+        .chain(registered.iter().filter_map(|name| {
+            name.strip_prefix(prefix)?
+                .strip_suffix(registered_end.as_str())
+        }))
+        .filter_map(|port| port.parse::<u16>().ok())
+        .collect::<Vec<_>>();
     ports.sort_unstable();
+    ports.dedup();
     Ok(ports)
 }
 
@@ -199,14 +293,38 @@ pub(super) fn registered(request: &Request<'_>, kind: ResourceKind) -> bool {
     discover(request, kind).is_ok_and(|found| !found.is_empty())
 }
 
-/// Removes the definitions of `desired`'s kind under this home's name that
-/// another manager holds, or, for a receiver, at another port.
+/// The definitions of `desired`'s kind under this home's name that another
+/// manager holds, or, for a receiver, at another port.
 fn withdraw_others(request: &Request<'_>, desired: &Definition) -> anyhow::Result<Vec<Definition>> {
     let others = discover(request, desired.name)?
         .into_iter()
         .filter(|found| found.scheduler != desired.scheduler || found.unit != desired.unit)
         .collect::<Vec<_>>();
     Ok(others)
+}
+
+/// Withdraws the definitions `desired` replaces: those another manager
+/// holds or, for a receiver, at another port. An incomplete demand
+/// withdraws nothing; they stay, and that is reported.
+fn replace_others(
+    others: &[Definition],
+    complete: bool,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    for other in others {
+        if complete {
+            other.withdraw()?;
+        } else {
+            report.finding(
+                other.name,
+                format!(
+                    "{} stays while project demand is incomplete; restore unreadable projects and rerun instrukt install",
+                    other.label()
+                ),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Reconciles one service: its definition files are written and the service
@@ -254,9 +372,7 @@ pub(super) fn reconcile(
         );
         return Ok(());
     }
-    for other in &others {
-        other.withdraw()?;
-    }
+    replace_others(&others, complete, report)?;
     if !changed && active {
         report.resource(
             desired.name,
@@ -268,7 +384,7 @@ pub(super) fn reconcile(
         return Ok(());
     }
     let existed = desired.present()?;
-    desired.write()?;
+    desired.write(request.home)?;
     if desired.name == ResourceKind::WakeUp {
         crate::install::register(request.scheduler, &request.wake)?;
     } else {
@@ -372,24 +488,17 @@ fn receiver_resource(
         );
         return Ok(());
     }
-    if !unmet {
-        report.resource(
-            ResourceKind::Receiver,
-            Disposition::Reused,
-            desired.files.keys().cloned().collect(),
-            projects,
-            format!("{}: listener retained", desired.label()),
-        );
-        return Ok(());
-    }
     if !others.is_empty() {
         anyhow::ensure!(
             complete,
             "complete project demand is required before changing receiver placement"
         );
     }
+    // Every installation writes the receiver's invocation and restarts it,
+    // keeping the listening socket, so the installed executable is the one
+    // serving.
     let existed = desired.present()?;
-    desired.write()?;
+    desired.write(request.home)?;
     if !active {
         start(desired)?;
     }
@@ -409,10 +518,12 @@ fn receiver_resource(
     }
     report.resource(
         ResourceKind::Receiver,
-        if existed || !others.is_empty() {
+        if !existed {
+            Disposition::Installed
+        } else if unmet {
             Disposition::Repaired
         } else {
-            Disposition::Installed
+            Disposition::Reused
         },
         desired.files.keys().cloned().collect(),
         projects,
@@ -430,6 +541,7 @@ fn receiver_resource(
 pub(super) fn runner_service(
     request: &Request<'_>,
     desired: &Definition,
+    complete: bool,
     projects: &[String],
     report: &mut Report,
 ) -> anyhow::Result<Option<String>> {
@@ -464,11 +576,9 @@ pub(super) fn runner_service(
         }
         return Ok(cause);
     }
-    for other in &others {
-        other.withdraw()?;
-    }
+    replace_others(&others, complete, report)?;
     let existed = desired.present()?;
-    desired.write()?;
+    desired.write(request.home)?;
     // An existing process is stopped whether or not the unit is enabled, so
     // the start runs the desired executable and configuration.
     if process.loaded || process.pid.is_some() {
@@ -544,8 +654,14 @@ pub(super) fn withdraw_named(
 
 /// For a home other than `~/.instrukt`: the services an earlier release
 /// registered under the default names while naming this home in their
-/// environment. The default home never matches a unit naming another home.
-pub(super) fn withdraw_legacy(request: &Request<'_>, report: &mut Report) -> anyhow::Result<()> {
+/// environment are withdrawn, so this home's own names replace them. The
+/// default home never matches a unit naming another home. An incomplete
+/// demand withdraws nothing.
+pub(super) fn withdraw_legacy(
+    request: &Request<'_>,
+    complete: bool,
+    report: &mut Report,
+) -> anyhow::Result<()> {
     if crate::install::home_suffix(request.home).is_none() {
         return Ok(());
     }
@@ -558,42 +674,31 @@ pub(super) fn withdraw_legacy(request: &Request<'_>, report: &mut Report) -> any
         },
         ..request.clone()
     };
-    let root = request.home.root().display().to_string();
-    let names = [
-        format!("<key>INSTRUKT_HOME</key><string>{}</string>", xml(&root)),
-        quote(&format!("INSTRUKT_HOME={root}")),
-        format!("INSTRUKT_HOME={}", crate::process::shell_quote(&root)),
-    ];
-    let names_this_home = |definition: &Definition| -> anyhow::Result<bool> {
-        if definition.scheduler == Scheduler::Crontab {
-            return Ok(marked_line(&crontab()?, marker(&definition.unit))
-                .is_some_and(|line| names.iter().any(|name| line.contains(name))));
-        }
-        for file in definition.files.keys() {
-            if let Some(content) = read(file)?
-                && names.iter().any(|name| content.contains(name))
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    };
     for kind in [
         ResourceKind::WakeUp,
         ResourceKind::Runner,
         ResourceKind::Redis,
         ResourceKind::Receiver,
     ] {
-        for definition in discover(&legacy, kind)? {
-            if !names_this_home(&definition)? {
+        for definition in discover_named(&legacy, kind)? {
+            // Only one that names this home; one naming no home, or the
+            // default home, is the default home's.
+            if definition.named_elsewhere(&default)?.is_none()
+                || definition.named_elsewhere(request.home)?.is_some()
+            {
                 continue;
             }
-            if request.check {
+            if request.check || !complete {
                 report.finding(
                     kind,
                     format!(
-                        "{} names this home under the default name; run instrukt install to withdraw it",
-                        definition.label()
+                        "{} names this home under the default name; {}",
+                        definition.label(),
+                        if complete {
+                            "run instrukt install to withdraw it"
+                        } else {
+                            "it stays while project demand is incomplete; restore unreadable projects and rerun instrukt install"
+                        }
                     ),
                 );
                 continue;
@@ -612,6 +717,49 @@ pub(super) fn withdraw_legacy(request: &Request<'_>, report: &mut Report) -> any
         }
     }
     Ok(())
+}
+
+/// The value of `INSTRUKT_HOME` that a launchd plist, a systemd unit or a
+/// crontab line written by instrukt sets, unescaped.
+fn named_home(text: &str) -> Option<String> {
+    if let Some((_, rest)) = text.split_once("<key>INSTRUKT_HOME</key><string>") {
+        let value = rest.split_once("</string>")?.0;
+        return Some(
+            value
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&"),
+        );
+    }
+    if let Some((_, rest)) = text.split_once("\"INSTRUKT_HOME=") {
+        let mut value = String::new();
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => value.push(chars.next()?),
+                '"' => return Some(value),
+                c => value.push(c),
+            }
+        }
+        return None;
+    }
+    if let Some((_, rest)) = text.split_once("INSTRUKT_HOME='") {
+        let mut value = String::new();
+        let mut rest = rest;
+        loop {
+            let (part, tail) = rest.split_once('\'')?;
+            value.push_str(part);
+            match tail.strip_prefix("\\''") {
+                Some(more) => {
+                    value.push('\'');
+                    rest = more;
+                }
+                None => return Some(value),
+            }
+        }
+    }
+    None
 }
 
 /// The marker a crontab definition's line ends with: this home's
@@ -761,12 +909,20 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
                 .find(|file| file.extension().is_some_and(|ext| ext == "plist"))
                 .ok_or_else(|| anyhow::anyhow!("missing plist"))?;
             if running(d)? {
-                required(&["launchctl", "unload", &file.display().to_string()])?;
+                if file.exists() {
+                    required(&["launchctl", "unload", &file.display().to_string()])?;
+                } else {
+                    // Registered with its definition file gone: by its label.
+                    required(&["launchctl", "remove", &d.unit])?;
+                }
             }
         }
         Scheduler::SystemdUser => {
             if systemd_loaded(&d.unit)? {
                 required(&["systemctl", "--user", "disable", "--now", &d.unit])?;
+            } else if listed(Scheduler::SystemdUser)?.contains(&d.unit) {
+                // Still running with its unit file gone: by its name.
+                required(&["systemctl", "--user", "stop", &d.unit])?;
             }
             if d.name == ResourceKind::Receiver
                 && systemd_loaded(&format!("{}.service", d.unit.trim_end_matches(".socket")))?

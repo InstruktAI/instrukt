@@ -20,14 +20,17 @@ pub(super) fn ensure(
 ) -> anyhow::Result<()> {
     let config = Configuration::load_global(request.home)?;
     // The private Redis's password missing from `secrets.env` is generated
-    // before the settings that reference it are resolved; the configuration
-    // and ACL below are written from it.
+    // before the settings that reference it are resolved, whichever scope
+    // names the private socket: the local endpoint or history's cluster one.
+    // The configuration and ACL below are written from it.
     let socket = request.home.state_dir().join("redis/redis.sock");
+    let private = [config.local_redis_url()?, config.cluster_redis_url()?]
+        .into_iter()
+        .flatten()
+        .any(|url| super::_demand::owned_server(&url, &socket).unwrap_or(false));
     if !request.check
+        && private
         && config::resolve_secret(request.home, "${INSTRUKT_REDIS_PASSWORD}").is_err()
-        && config
-            .local_redis_url()?
-            .is_some_and(|url| super::_demand::owned_server(&url, &socket).unwrap_or(false))
     {
         config::generate_secret(request.home, "INSTRUKT_REDIS_PASSWORD")?;
     }

@@ -51,6 +51,7 @@ class Operation(StrEnum):
     REBOOT = "reboot"
     KILL_PROCESS = "kill-process"
     HOLD = "hold"
+    REMOVE = "remove"
 
 
 @dataclass
@@ -221,6 +222,13 @@ def serve(address: str) -> None:
                             result["ok"] = args[-1] in jobs
                     elif operation == Operation.KICKSTART:
                         launch(jobs[args[-1].split("/")[-1]])
+                    elif operation == Operation.REMOVE:
+                        previous = jobs.pop(args[-1], None)
+                        if previous is not None:
+                            stop(previous)
+                            if previous.listener is not None:
+                                previous.listener.close()
+                        result["ok"] = previous is not None
                     elif operation == Operation.UNLOAD:
                         name = os.path.basename(args[-1]).removesuffix(".plist")
                         previous = jobs.pop(name, None)
