@@ -265,7 +265,7 @@ methods promise neither a write deadline nor idempotent posts.
 
 The intake interval, the settle bound, and read-back's answering bound and
 reporting period below are declared with the conversation core in
-`crates/instrukt-runner/src/conversations.rs`.
+`crates/instrukt-company/src/conversations.rs`.
 
 ### After the agent was offline
 

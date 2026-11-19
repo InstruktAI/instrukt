@@ -104,7 +104,7 @@ pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
 /// The company the runner hosts, built with the binary's connector
 /// registry.
 pub fn company() -> std::sync::Arc<dyn instrukt_runner::interfaces::CompanyPorts> {
-    std::sync::Arc::new(instrukt_runner::conversations::Ports::new(
+    std::sync::Arc::new(instrukt_company::conversations::Ports::new(
         crate::connectors::builders(),
     ))
 }
@@ -142,7 +142,7 @@ impl instrukt_core::interfaces::SessionRoleLookup for RecordedRole {
             &self.0,
             session,
             instrukt_todos::work::recorded_assignment,
-            instrukt_runner::conversations::conversation_assignment,
+            instrukt_company::conversations::conversation_assignment,
         )
         .map(|a| a.map(|a| a.role))
         .map_err(|e| instrukt_core::interfaces::InterfaceError {

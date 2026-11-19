@@ -210,7 +210,7 @@ fn a_tool_call_in_a_members_turn_carries_that_members_own_login() {
             &state,
             &caller,
             instrukt_todos::work::recorded_assignment,
-            instrukt_runner::conversations::conversation_assignment,
+            instrukt_company::conversations::conversation_assignment,
         )
         .unwrap()
         .is_some()
@@ -466,7 +466,7 @@ fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
             &state,
             &caller,
             instrukt_todos::work::recorded_assignment,
-            instrukt_runner::conversations::conversation_assignment,
+            instrukt_company::conversations::conversation_assignment,
         )
         .unwrap()
         .is_some()

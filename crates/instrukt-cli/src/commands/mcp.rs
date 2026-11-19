@@ -130,7 +130,7 @@ fn speak(ctx: &Ctx, caller: &Caller, view: &mut View) -> anyhow::Result<()> {
     };
     let runtime = Configuration::load_global(&ctx.home)?.runner_runtime()?;
     let adapter = instrukt_runner::runtime::adapter(runtime);
-    view.speaker = instrukt_runner::conversations::speaker(&ctx.home, session, adapter.as_ref())?;
+    view.speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())?;
     Ok(())
 }
 

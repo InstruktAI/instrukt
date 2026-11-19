@@ -5,8 +5,8 @@
 #![allow(dead_code, clippy::unwrap_used, reason = "shared test setup")]
 use std::time::Duration;
 
+use instrukt_company::conversations::Status;
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::conversations::Status;
 use instrukt_runner::envelopes::{self, Span};
 
 use crate::common::{self, TestEnv};

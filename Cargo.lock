@@ -885,7 +885,9 @@ dependencies = [
  "insta",
  "instrukt-ai-logging",
  "instrukt-blueprint",
+ "instrukt-company",
  "instrukt-connector",
+ "instrukt-connector-slack",
  "instrukt-core",
  "instrukt-runner",
  "instrukt-todos",
@@ -907,12 +909,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "instrukt-company"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "instrukt-connector",
+ "instrukt-core",
+ "instrukt-runner",
+ "jiff",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "instrukt-connector"
 version = "0.1.0"
 dependencies = [
  "jiff",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "instrukt-connector-slack"
+version = "0.1.0"
+dependencies = [
+ "instrukt-connector",
+ "jiff",
+ "serde_json",
+ "thiserror",
+ "tracing",
+ "tungstenite",
+ "ureq",
 ]
 
 [[package]]
@@ -954,7 +986,6 @@ dependencies = [
  "hmac",
  "insta",
  "instrukt-blueprint",
- "instrukt-connector",
  "instrukt-core",
  "jiff",
  "notify",

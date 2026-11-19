@@ -7,6 +7,8 @@ members = [
     "crates/instrukt-runner",
     "crates/instrukt-todos",
     "crates/instrukt-connector",
+    "crates/instrukt-company",
+    "crates/instrukt-connector-slack",
 ]
 
 [workspace.package]
@@ -24,6 +26,8 @@ instrukt-blueprint = { path = "crates/instrukt-blueprint", version = "0.1.0" }
 instrukt-runner = { path = "crates/instrukt-runner", version = "0.1.0" }
 instrukt-todos = { path = "crates/instrukt-todos", version = "0.1.0" }
 instrukt-connector = { path = "crates/instrukt-connector", version = "0.1.0" }
+instrukt-company = { path = "crates/instrukt-company", version = "0.1.0" }
+instrukt-connector-slack = { path = "crates/instrukt-connector-slack", version = "0.1.0" }
 instrukt-ai-logging = "=0.10.0"
 
 anyhow = "1"
