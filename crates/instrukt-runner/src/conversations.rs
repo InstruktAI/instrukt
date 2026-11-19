@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 
 use instrukt_connector::{Accompanying, Incoming, Sender};
-use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, CONNECTORS, ConfigError};
+use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, ConfigError, DeclaredConnector};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
 use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
@@ -482,12 +482,15 @@ pub fn refusal_posted(
 /// The company homes whose declared connector `instrukt run` hosts: every
 /// valid company home declaring one. Declaring a connector is what gives a
 /// company conversations.
-pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, String)>, ConversationError> {
+pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, DeclaredConnector)>, ConversationError> {
     let mut hosted = Vec::new();
     for (name, config) in instrukt_core::config::company_homes(home)? {
-        match config.and_then(|config| config.slack_connector()) {
-            Ok(Some(_)) => hosted.push((name, CONNECTORS[0].to_owned())),
-            Ok(None) => {}
+        match config.and_then(|config| config.connectors()) {
+            Ok(declared) => hosted.extend(
+                declared
+                    .into_iter()
+                    .map(|connector| (name.clone(), connector)),
+            ),
             Err(ConfigError::NoLayer { .. }) => {}
             Err(error) => {
                 tracing::warn!(event = "connector_declaration_unreadable", company = %name, error = %error);
@@ -1575,7 +1578,7 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
             })
         })
         .collect::<Result<Vec<_>, ConversationError>>()?;
-    for (company, key) in demand(home)? {
+    for (company, DeclaredConnector { key, .. }) in demand(home)? {
         let listed = connectors
             .iter()
             .any(|known| known.company == company.as_str() && known.connector == key);

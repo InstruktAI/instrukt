@@ -706,6 +706,21 @@ impl SlackKind {
             identities: Arc::default(),
         }
     }
+
+    /// The Slack kind of a process with this environment and clock: its
+    /// endpoint refuses a Slack API address that is neither Slack's own nor
+    /// a loopback stand-in.
+    pub fn build(
+        env: &instrukt_core::config::Env,
+        clock: Clock,
+    ) -> Result<Box<dyn Kind>, ConnectorError> {
+        let lookup = |name: &str| env.get(name).map(str::to_owned);
+        SlackEndpoint::from_lookup(&lookup, clock)
+            .map(|endpoint| Box::new(Self::new(endpoint)) as Box<dyn Kind>)
+            .map_err(|error| ConnectorError {
+                cause: error.to_string(),
+            })
+    }
 }
 
 impl Kind for SlackKind {

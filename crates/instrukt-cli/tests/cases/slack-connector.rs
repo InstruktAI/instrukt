@@ -9,6 +9,47 @@ use instrukt_core::ids::ProjectSlug;
 use instrukt_runner::conversations::{ConnectionState, Status};
 use instrukt_runner::slack::{API_URL_SETTING, WORKING};
 
+/// What `instrukt run` says on standard error as it refuses to start. It
+/// refuses before it serves anything: a runner that starts instead is
+/// stopped once the wait's bound has passed, and the test fails naming the
+/// refusal that did not come.
+fn refused_at_start(c: &Company) -> String {
+    use std::io::Read as _;
+    /// The runner this test started; still running when the test fails, it
+    /// is killed, and only it.
+    struct Started(std::process::Child);
+    impl Drop for Started {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
+    let mut run = Started(
+        c.env
+            .instrukt_process(c.env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    wait(
+        "`instrukt run` to refuse a remote Slack address at its start",
+        || run.0.try_wait().unwrap().is_some(),
+    );
+    assert!(!run.0.wait().unwrap().success());
+    let mut stderr = String::new();
+    run.0
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    stderr
+}
+
 // spec: project/instrukt/spec/feature/company/slack-connector UC-SL1
 #[test]
 fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_visible() {
@@ -24,11 +65,7 @@ fn addressed_messages_arrive_over_an_outward_connection_and_refused_tokens_stay_
     let stand_in = c.slack.api_url.clone();
     c.env
         .set_env(API_URL_SETTING, "http://slack.example.com/api");
-    let refused = c.env.run(c.env.home(), ["run"]).failure();
-    insta::assert_snapshot!(
-        "remote-slack-address-refused",
-        String::from_utf8_lossy(&refused.get_output().stderr)
-    );
+    insta::assert_snapshot!("remote-slack-address-refused", refused_at_start(&c));
     c.env.set_env(API_URL_SETTING, &stand_in);
     c.run();
     let bravo = ProjectSlug::parse("bravo").unwrap();

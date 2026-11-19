@@ -97,6 +97,7 @@ pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
         github_credentials: Some(ctx.github.clone()),
         work: _work::ports(ctx)?,
         workflow: _workflow::assignments(ctx, evidence)?,
+        connector_kinds: crate::connectors::builders(),
     })
 }
 

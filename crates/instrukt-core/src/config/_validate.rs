@@ -243,33 +243,39 @@ fn ingress_signing(
     found
 }
 
-/// The secrets a company's declared Slack connector references are present
-/// and nonblank in the company's own secrets file: a finding at each that is
+/// The secrets a company's declared connectors reference are present and
+/// nonblank in the company's own secrets file: a finding at each that is
 /// not, naming the door.
 fn connector_secrets(
     secrets: &super::_secrets::SecretSnapshot,
     name: &crate::ids::ProjectSlug,
     value: &Value,
 ) -> Vec<KeyFinding> {
-    let Some(slack) = value
-        .get("connectors")
-        .and_then(|c| c.get(super::CONNECTORS[0]))
-    else {
+    let Some(connectors) = value.get("connectors").and_then(Value::as_mapping) else {
         return Vec::new();
     };
-    ["app_token", "bot_token"]
-        .into_iter()
-        .filter_map(|field| {
-            let reference = slack.get(field).and_then(Value::as_str)?;
-            secrets.resolve(reference).err().map(|error| {
-                KeyFinding::new(
-                    &join("connectors", &join(super::CONNECTORS[0], field)),
+    let mut found = Vec::new();
+    for (key, entry) in connectors {
+        let Some(kind) = key.as_str().and_then(super::_connectors::declaration) else {
+            continue;
+        };
+        for field in kind.fields {
+            if !matches!(field.rule, instrukt_connector::Rule::SecretReference { .. }) {
+                continue;
+            }
+            let Some(reference) = entry.get(field.name).and_then(Value::as_str) else {
+                continue;
+            };
+            if let Err(error) = secrets.resolve(reference) {
+                found.push(KeyFinding::new(
+                    &join("connectors", &join(kind.key, field.name)),
                     FindingKind::Missing,
                     format!("{error}; set it with `instrukt secrets set <NAME> --company {name}`"),
-                )
-            })
-        })
-        .collect()
+                ));
+            }
+        }
+    }
+    found
 }
 
 /// A company home's document names the company its folder is named for.
@@ -797,6 +803,7 @@ mod tests {
     }
     #[test]
     fn a_declared_connector_needs_a_chosen_runtime_that_carries_conversations() {
+        crate::config::_connectors::install_fixture();
         let company = current_document(
             "company: acme\nconnectors: {slack: {app_token: '${A}', bot_token: '${B}'}}",
         );

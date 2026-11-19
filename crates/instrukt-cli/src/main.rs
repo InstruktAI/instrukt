@@ -14,6 +14,7 @@
 mod authorization;
 mod clock;
 mod commands;
+mod connectors;
 mod context;
 mod output;
 mod wiring;
@@ -92,6 +93,9 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // The connector kinds this binary supports reach configuration before
+    // anything reads it.
+    instrukt_core::config::install_connector_declarations(&connectors::DECLARATIONS);
     if let Err(error) = instrukt_core::fsx::fence(&instrukt_core::config::Env::from_process()) {
         eprintln!("instrukt: {error}");
         return ExitCode::from(instrukt_core::fsx::FENCE_EXIT);
