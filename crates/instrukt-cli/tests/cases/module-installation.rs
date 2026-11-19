@@ -2455,7 +2455,41 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
         .map(|line| format!("{line}\n"))
         .collect::<String>();
     std::fs::write(&secrets, kept).unwrap();
-    env.run(env.home(), ["install"]).success();
+    // The Redis it restarts is still loading its data when it first
+    // answers: installation waits until it has loaded, then succeeds. The
+    // Redis executable is now one that answers as a loading Redis does for as
+    // long as the test says.
+    let loading = env.path("rl");
+    std::fs::create_dir_all(&loading).unwrap();
+    let real = common::tool_executable("redis-server");
+    let server = env.path("runtime-bin/redis-server");
+    std::fs::write(
+        &server,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in *.conf) ;; *) exec '{real}' \"$@\" ;; esac\nrm -f '{rl}/i.sock'\n'{python}' '{stand_in}' \"$1\" '{rl}/i.sock' '{rl}' &\nexec '{real}' \"$1\" --unixsocket '{rl}/i.sock'\n",
+            real = real.display(),
+            rl = loading.display(),
+            python = common::tool_executable("python3").display(),
+            stand_in = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/support/loading-redis.py")
+                .display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(loading.join("loading"), "").unwrap();
+    let mut install = env
+        .instrukt_process(env.home())
+        .arg("install")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    wait("the restarted Redis answering as it loads", || {
+        loading.join("asked").exists()
+    });
+    std::fs::remove_file(loading.join("loading")).unwrap();
+    assert!(install.wait().unwrap().success());
     let after = instrukt_core::config::resolve_secret(&home, "${INSTRUKT_REDIS_PASSWORD}").unwrap();
     assert_ne!(after, before);
     let value: String = redis::cmd("GET")
