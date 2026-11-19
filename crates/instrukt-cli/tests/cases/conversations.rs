@@ -25,6 +25,15 @@ fn position(c: &Company, key: &str) -> Option<String> {
     .unwrap()
 }
 
+/// How many snapshot reads T3's readiness server has served. A runner
+/// refreshes readiness twice when it starts, once on its own and once for
+/// its first wake, and each refresh reads T3's descriptor before it reads
+/// the snapshot: two more reads mean both startup reads of the descriptor
+/// are done.
+fn snapshot_reads(c: &Company) -> usize {
+    common::t3_readiness::reads(&c.env).len()
+}
+
 /// The runner wakes, and refreshes readiness through T3's descriptor, each
 /// minute in real time even with the operator's clock standing still: a held
 /// gate stays clear of readiness only while the runner started under a
@@ -125,19 +134,19 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
         .thread(&session, None, None, "2026-11-08T10:00:00.000Z");
     elsewhere.settle();
     // While T3 cannot list its threads, the restarted runner cannot bind the
-    // session and reads nothing of the source. Its readiness refresh reads
-    // T3's descriptor when it starts; the issue of its token follows that
-    // read.
+    // session and reads nothing of the source. Its two startup readiness
+    // refreshes read T3's descriptor.
     c.runtime.flag("list-failure", true);
-    let issued = c.issue_launches();
+    let served = snapshot_reads(&c);
     let started = std::time::Instant::now();
     c.run();
-    wait("the restarted runner's readiness token", || {
-        c.issue_launches() > issued
+    wait("the restarted runner's two readiness refreshes", || {
+        snapshot_reads(&c) >= served + 2
     });
     // Every source read is held now, and the relay is the gate's only
-    // reader: readiness reads again only on a wake. Once T3 lists again the
-    // relay binds the session and reads its thread; reads are let through
+    // reader: readiness, past its two startup refreshes, reads again only on
+    // a later wake. Once T3 lists again the relay binds the session and
+    // reads its thread; reads are let through
     // until that read is retained as the conversation's position, and no
     // further, so the read that reaches the gate after the nudge is the
     // relay's next one.
@@ -165,11 +174,11 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     );
     let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
     c.finish_turn(&session, 0, &reply);
-    let issued = c.issue_launches();
+    let served = snapshot_reads(&c);
     let started = std::time::Instant::now();
     c.run();
-    wait("the runner's readiness token", || {
-        c.issue_launches() > issued
+    wait("the runner's two readiness refreshes", || {
+        snapshot_reads(&c) >= served + 2
     });
     // The session opens with its procedure's loader under the role, then the
     // question; its recorded assignment is the role in the company's home.
@@ -202,8 +211,8 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // While the other thread streams again, a later catch-up of this
     // conversation completes: the next source read stands at the gate
     // after it. Its outcome leaves no cause.
-    // The relay is the gate's only reader: this runner's readiness refresh
-    // read when it started. One catch-up's read is let through, and the next
+    // The relay is the gate's only reader: this runner's two readiness
+    // refreshes read when it started. One catch-up's read is let through, and the next
     // read to reach the gate is the relay's next one.
     elsewhere.stream();
     gate.hold();

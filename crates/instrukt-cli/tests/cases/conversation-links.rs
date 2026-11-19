@@ -43,25 +43,13 @@ impl Drop for Running {
         self.0.wait().unwrap();
     }
 }
-/// Whether the runner's readiness refresh has read T3's descriptor: it
-/// issues its token right after that read, or, when the descriptor names no
-/// server (this computer runs none), it fails on what it read and records
-/// that failure.
-fn readiness_read(env: &common::TestEnv, fake: &runtime::FakeT3) -> bool {
-    if fake
-        .calls()
-        .iter()
-        .any(|call| call.starts_with("auth session issue "))
-    {
-        return true;
-    }
-    let out = env
-        .run(env.home(), ["events", "status", "--json"])
-        .success();
-    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-    status["workers"]
-        .as_array()
-        .is_some_and(|workers| workers.iter().any(|row| row["worker"] == "readiness"))
+/// How many snapshot reads T3's readiness server has served. A runner
+/// refreshes readiness twice when it starts, once on its own and once for
+/// its first wake, and each refresh reads T3's descriptor before it reads
+/// the snapshot: two more reads mean both startup reads of the descriptor
+/// are done.
+fn snapshot_reads(env: &common::TestEnv) -> usize {
+    common::t3_readiness::reads(env).len()
 }
 /// The runner wakes, and refreshes readiness through T3's descriptor, each
 /// minute in real time even with the operator's clock standing still: a held
@@ -140,16 +128,18 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     native_db.execute("INSERT INTO orchestration_v2_projection_messages VALUES ('streaming','child','assistant',1,?1,?1,?2)",instrukt_core::state_db::rusqlite::params![at,partial.to_string()]).unwrap();
     // The runner's first start, while T3's database has a shape the relay
     // does not read: its reads end before they open T3's descriptor. Its
-    // readiness refresh reads that descriptor when the runner starts.
+    // two startup readiness refreshes read that descriptor.
     store.break_shape();
+    let served = snapshot_reads(&env);
     let started = std::time::Instant::now();
     let runner = run();
-    wait_for(|| readiness_read(&env, &fake));
+    wait_for(|| snapshot_reads(&env) >= served + 2);
     // Every source read is held now, and the shape restored, which wakes the
     // relay: no runner has read the link before.
-    // The relay is the gate's only reader: readiness reads again only on a
-    // wake. The other work streams, so the relay reads; its first read is
-    // the child direction's, as directions are read in source order, while
+    // The relay is the gate's only reader: readiness, past its two startup
+    // refreshes, reads again only on a later wake. The other work streams,
+    // so the relay reads; its first read is the child direction's, as
+    // directions are read in source order, while
     // the child's run is still unfinished. Reads are let through until that
     // read's finished turn reached the parent, and no further: the relay
     // keeps its position before it delivers, so the next read to reach the
