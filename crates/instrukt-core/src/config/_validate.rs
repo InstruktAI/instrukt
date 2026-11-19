@@ -368,6 +368,9 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
             message: stale.message,
         });
     }
+    if let Layer::Company(name) = layer {
+        findings.extend(local_material(home, name)?);
+    }
     if layer.kind() == LayerKind::Global
         && let Err(error) = super::Agents::load(home)
     {
@@ -379,6 +382,44 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         });
     }
     Ok(findings)
+}
+
+/// What the company home `name` keeps on the computer that its repository
+/// tracks or does not ignore, each a finding naming the path
+/// (`project/instrukt/spec/feature/configuration/company-homes`, "What
+/// stays out of the repository"). Nothing outside a git working tree.
+fn local_material(
+    home: &Home,
+    name: &crate::ids::ProjectSlug,
+) -> Result<Vec<Finding>, ConfigError> {
+    let dir = home.company_dir(name);
+    if crate::git::worktree_root(&dir)?.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut found = Vec::new();
+    for line in super::_layer::COMPANY_IGNORED {
+        let relative = line.trim_matches('/');
+        let path = dir.join(relative);
+        let tracked = !crate::git::run(&dir, ["ls-files", "--", relative])?
+            .trim()
+            .is_empty();
+        let message = if tracked {
+            "the home's repository tracks it; it stays on this computer, so untrack it with `git rm -r --cached` and commit".to_owned()
+        } else if path.exists() && !crate::git::succeeds(&dir, ["check-ignore", "-q", relative])? {
+            format!(
+                "the home's repository does not ignore it; `instrukt config init --company {name}` adds its ignore line"
+            )
+        } else {
+            continue;
+        };
+        found.push(Finding {
+            document: path,
+            key: "repository".into(),
+            kind: FindingKind::LeavesTheComputer,
+            message,
+        });
+    }
+    Ok(found)
 }
 
 /// Validate the addressed layer using machine records, without other checkout reads.

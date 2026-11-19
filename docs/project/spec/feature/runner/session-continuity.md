@@ -464,8 +464,11 @@ snapshot was observed and record that default. A snapshot's windows are applied
 once, when the snapshot is read; a start applies the restrictions in force and
 never applies the windows of a snapshot it reuses again, so a reused snapshot
 never renews a lapsed restriction. Overlapping exhausted windows use the latest
-active reset; a reset already past has lapsed. Observed quota marks and manual
-restrictions remain independent. Availability and skip diagnostics retain cause
+active reset; a reset already past has lapsed. Applying a snapshot makes the
+observed quota marks of every profile it covers match that snapshot: models it
+reports at a full window are marked, and the profile's other observed marks are
+removed in the same transaction. A failed refresh changes no mark. Observed quota marks and manual
+restrictions remain independent: applying a snapshot never changes a manual one. Availability and skip diagnostics retain cause
 and expiry. Launch-error text supplies no quota evidence or no-start proof.
 
 The selected adapter supplies the selection-realization report: generic starts,

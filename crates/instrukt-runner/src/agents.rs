@@ -222,31 +222,72 @@ fn selections_with(
     Ok(result)
 }
 
-pub(crate) struct QuotaMark {
-    pub profile: ProfileName,
-    pub models: std::collections::BTreeSet<String>,
-    pub until: jiff::Timestamp,
-    pub cause: String,
+/// One profile's automatic quota marks as a snapshot supports them: each
+/// exhausted model with its expiry and cause.
+struct ProfileQuota {
+    profile: ProfileName,
+    exhausted: std::collections::BTreeMap<String, (jiff::Timestamp, String)>,
 }
 
-pub(crate) fn mark_quota(
+/// Makes `agent_quota` match a snapshot for every profile it covers, in one
+/// transaction: each exhausted model gets its mark, and the profile's other
+/// automatic marks are removed. Manual restrictions (`agent_availability`)
+/// are never touched.
+fn match_quota(
     home: &instrukt_core::home::Home,
-    mark: &QuotaMark,
+    profiles: &[ProfileQuota],
 ) -> Result<(), crate::sessions::SessionsError> {
     use crate::state::{self, RunnerState, StateError};
     use instrukt_core::state_db::rusqlite::params;
-    RunnerState::new(home).write::<_,StateError>(|tx| {
-        for model in &mark.models {
-            tx.execute("INSERT INTO agent_quota(agent,model,status,status_until,reason) VALUES(?1,?2,'unavailable',?3,?4) ON CONFLICT(agent,model) DO UPDATE SET status_until=excluded.status_until,reason=excluded.reason",params![mark.profile.as_str(),model,mark.until.to_string(),mark.cause]).map_err(state::sql(&state::db_path(tx)))?;
+    let mut cleared = Vec::new();
+    RunnerState::new(home).write::<_, StateError>(|tx| {
+        cleared.clear();
+        for quota in profiles {
+            let marked = {
+                let mut query = tx
+                    .prepare("SELECT model FROM agent_quota WHERE agent=?1")
+                    .map_err(state::sql(&state::db_path(tx)))?;
+                query
+                    .query_map(params![quota.profile.as_str()], |row| row.get::<_, String>(0))
+                    .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+                    .map_err(state::sql(&state::db_path(tx)))?
+            };
+            for model in marked
+                .into_iter()
+                .filter(|model| !quota.exhausted.contains_key(model))
+            {
+                tx.execute(
+                    "DELETE FROM agent_quota WHERE agent=?1 AND model=?2",
+                    params![quota.profile.as_str(), model],
+                )
+                .map_err(state::sql(&state::db_path(tx)))?;
+                cleared.push((quota.profile.clone(), model));
+            }
+            for (model, (until, cause)) in &quota.exhausted {
+                tx.execute("INSERT INTO agent_quota(agent,model,status,status_until,reason) VALUES(?1,?2,'unavailable',?3,?4) ON CONFLICT(agent,model) DO UPDATE SET status_until=excluded.status_until,reason=excluded.reason",params![quota.profile.as_str(),model,until.to_string(),cause]).map_err(state::sql(&state::db_path(tx)))?;
+            }
         }
         Ok(())
     })?;
-    tracing::warn!(event="agent_quota_marked",profile=%mark.profile,models=mark.models.len(),until=%mark.until,reason=%mark.cause);
+    for quota in profiles {
+        let mut marks: std::collections::BTreeMap<&(jiff::Timestamp, String), usize> =
+            std::collections::BTreeMap::new();
+        for key in quota.exhausted.values() {
+            *marks.entry(key).or_default() += 1;
+        }
+        for ((until, cause), models) in marks {
+            tracing::warn!(event="agent_quota_marked",profile=%quota.profile,models,until=%until,reason=%cause);
+        }
+    }
+    for (profile, model) in cleared {
+        tracing::info!(event = "agent_quota_cleared", profile = %profile, model = %model);
+    }
     Ok(())
 }
 
 /// Marks the models of each profile whose provider a snapshot reports at a
-/// full usage window, until the window resets: once, by the refresh that
+/// full usage window, until the window resets, and removes that profile's
+/// automatic marks the snapshot no longer supports: once, by the refresh that
 /// read the snapshot. A missing reset defaults to one hour after the
 /// snapshot was observed, so a snapshot read again never moves the expiry.
 pub(crate) fn apply_usage(
@@ -265,7 +306,8 @@ fn model_family(model: &str) -> String {
     segments.next().unwrap_or(first).to_lowercase()
 }
 
-/// Marks the full usage windows of `snapshot`, observed at `observed_at`.
+/// Matches the automatic quota marks to the full usage windows of
+/// `snapshot`, observed at `observed_at`.
 fn apply_windows(
     home: &instrukt_core::home::Home,
     snapshot: &crate::runtime::ProviderSnapshot,
@@ -273,6 +315,7 @@ fn apply_windows(
 ) -> Result<(), crate::sessions::SessionsError> {
     const QUOTA_DEFAULT_SECONDS: i64 = 3600;
     let agents = instrukt_core::config::Agents::load(home)?;
+    let mut covered = Vec::new();
     for (name, profile) in &agents.profiles {
         let Some(provider) = snapshot
             .providers
@@ -336,26 +379,12 @@ fn apply_windows(
                 }
             }
         }
-        let mut marks: std::collections::BTreeMap<
-            (jiff::Timestamp, String),
-            std::collections::BTreeSet<String>,
-        > = std::collections::BTreeMap::new();
-        for (model, key) in exhausted {
-            marks.entry(key).or_default().insert(model);
-        }
-        for ((until, cause), models) in marks {
-            mark_quota(
-                home,
-                &QuotaMark {
-                    profile: name.clone(),
-                    models,
-                    until,
-                    cause,
-                },
-            )?;
-        }
+        covered.push(ProfileQuota {
+            profile: name.clone(),
+            exhausted,
+        });
     }
-    Ok(())
+    match_quota(home, &covered)
 }
 
 /// Apply capacity and ordered selection policy to the last readiness facts

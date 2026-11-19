@@ -34,9 +34,15 @@ enum ConfigCommand {
     /// global layer with --global, if it is still at --revision.
     Patch(PatchArgs),
     /// Create the layer with the current schema version and defaults, or
-    /// migrate an existing older one.
+    /// migrate an existing older one. With --company, also append each
+    /// ignore line the home's .gitignore lacks — /instrukt.yaml,
+    /// /secrets.env, /projects/ and /.instrukt/ — keeping every other line,
+    /// in a new home or an existing one.
     Init(LayerArgs),
-    /// Report the layer's findings; exits non-zero when there are any.
+    /// Report the layer's findings; exits non-zero when there are any. With
+    /// --company, two kinds: the configuration's, among them each
+    /// local-only path the home's repository tracks or does not ignore, and
+    /// the findings of rendering the home's AGENTS.md from its working tree.
     Validate(LayerArgs),
 }
 
@@ -208,6 +214,15 @@ fn validate(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     for finding in &findings {
         ctx.out.line(&finding.to_string())?;
     }
+    // A company home's rendering is publication's to judge; this command
+    // reports its findings beside configuration's.
+    let mut rendering = Vec::new();
+    if let Some(name) = &args.company {
+        rendering = instrukt_core::publication::company_findings(&ctx.home.company_dir(name))?;
+        for finding in &rendering {
+            ctx.out.line(&finding.to_string())?;
+        }
+    }
     if args.global
         && let Ok(agents) = config::Agents::load(&ctx.home)
     {
@@ -227,7 +242,7 @@ fn validate(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             ))?;
         }
     }
-    Ok(if findings.is_empty() {
+    Ok(if findings.is_empty() && rendering.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
