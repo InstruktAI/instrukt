@@ -2105,6 +2105,10 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     let mut c = Company::new("");
     let manager = ServiceManager::new(&mut c.env);
     let macos = cfg!(target_os = "macos");
+    if !macos {
+        // The user's systemd manager starts at boot without a login.
+        manager.linger(true);
+    }
     let units = |env: &TestEnv| {
         if macos {
             env.home().join("Library/LaunchAgents")
@@ -2223,7 +2227,10 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     let alias = short.path().join("h");
     std::os::unix::fs::symlink(env.home(), &alias).unwrap();
     env.set_env("HOME", alias.to_str().unwrap());
-    let _manager = ServiceManager::new(&mut env);
+    let redis_manager = ServiceManager::new(&mut env);
+    if !macos {
+        redis_manager.linger(true);
+    }
     let _repo = project(&env, "events", "{events: true}");
     let cluster = common::redis::RedisServer::new(&env);
     event_config(&env, None, &cluster.url, None);

@@ -119,6 +119,7 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
     crontab -l
     systemctl --user daemon-reload
     systemctl --user enable --now instrukt-tick.timer
+    crontab -l
     ");
     let units = env.home().join(".config/systemd/user");
     let timer = std::fs::read_to_string(units.join("instrukt-tick.timer")).unwrap();
