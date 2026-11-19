@@ -63,11 +63,16 @@ impl Definition {
     /// whose environment names another instrukt home is that home's: it is
     /// left as it is, and its own home's install moves it to its own name.
     fn write(&self, home: &Home) -> anyhow::Result<()> {
-        if let Some(other) = self.named_elsewhere(home)? {
-            anyhow::bail!(
+        match self.owner(home)? {
+            Owner::This => {}
+            Owner::Other(other) => anyhow::bail!(
                 "{} runs the instrukt home {other}; nothing was changed. Install from that home moves it to that home's own name",
                 self.label()
-            );
+            ),
+            Owner::Unknown(why) => anyhow::bail!(
+                "{} is left in place: {why}, so whose it is cannot be established; nothing was changed",
+                self.label()
+            ),
         }
         for (file, content) in self.files.iter().chain(&self.kept) {
             read(file)?;
@@ -101,46 +106,48 @@ impl Definition {
         }
         names
     }
-    /// The instrukt home this definition's environment names, when it names
-    /// one: `INSTRUKT_HOME` in its launchd plist, systemd unit or crontab line.
-    fn named_home(&self) -> anyhow::Result<Option<String>> {
+    /// The instrukt home this definition's environment names: `INSTRUKT_HOME`
+    /// in its launchd plist, systemd unit or crontab line, or, its files gone,
+    /// in the environment its manager retains for its registration.
+    fn named_home(&self) -> anyhow::Result<Belongs> {
         if self.scheduler == Scheduler::Crontab {
-            return Ok(
-                marked_line(&crontab()?, marker(&self.unit)).and_then(|line| named_home(&line))
-            );
+            return Ok(marked_line(&crontab()?, marker(&self.unit))
+                .and_then(|line| named_home(&line))
+                .map_or(Belongs::Unnamed, Belongs::Home));
         }
         let mut files = false;
         for file in self.files.keys() {
             if let Some(content) = read(file)? {
                 files = true;
                 if let Some(home) = named_home(&content) {
-                    return Ok(Some(home));
+                    return Ok(Belongs::Home(home));
                 }
             }
         }
         if files {
-            return Ok(None);
+            return Ok(Belongs::Unnamed);
         }
-        // Registered with its definition files gone: the environment its
-        // manager retains for it.
         let listed = listed(self.scheduler)?;
         for unit in self.registrations() {
-            if listed.contains(&unit)
-                && let Some(home) = registered_home(self.scheduler, &unit)?
-            {
-                return Ok(Some(home));
+            if !listed.contains(&unit) {
+                continue;
+            }
+            match registered_home(self.scheduler, &unit)? {
+                Belongs::Unnamed => {}
+                named => return Ok(named),
             }
         }
-        Ok(None)
+        Ok(Belongs::Unnamed)
     }
-    /// The other instrukt home this definition names, if it names one other
-    /// than `home`.
-    fn named_elsewhere(&self, home: &Home) -> anyhow::Result<Option<String>> {
-        let canonical =
-            |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        Ok(self
-            .named_home()?
-            .filter(|named| canonical(Path::new(named)) != canonical(home.root())))
+    /// Whether this definition is `home`'s: it names `home`, or no home; or
+    /// another home's; or unknown, its environment unreadable.
+    fn owner(&self, home: &Home) -> anyhow::Result<Owner> {
+        Ok(match self.named_home()? {
+            Belongs::Unnamed => Owner::This,
+            Belongs::Home(named) if same_home(&named, home) => Owner::This,
+            Belongs::Home(named) => Owner::Other(named),
+            Belongs::Unknown(why) => Owner::Unknown(why),
+        })
     }
     /// Stops and unregisters the service and removes its definition files;
     /// what `kept` names stays.
@@ -156,6 +163,30 @@ impl Definition {
         }
         Ok(())
     }
+}
+
+/// What a definition's environment says of the instrukt home it runs.
+enum Belongs {
+    /// It names this `INSTRUKT_HOME`.
+    Home(String),
+    /// It names none: a valid environment without `INSTRUKT_HOME`.
+    Unnamed,
+    /// Its manager's report could not be read or decoded, for this reason.
+    Unknown(String),
+}
+
+/// Whose a definition is, relative to one home.
+enum Owner {
+    This,
+    Other(String),
+    Unknown(String),
+}
+
+/// Whether `named` is `home`'s root, compared by canonical path.
+fn same_home(named: &str, home: &Home) -> bool {
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    canonical(Path::new(named)) == canonical(home.root())
 }
 
 /// Every service manager present on the computer, the installing one first:
@@ -219,7 +250,7 @@ fn listed(scheduler: Scheduler) -> anyhow::Result<std::collections::BTreeSet<Str
 /// The `INSTRUKT_HOME` a manager retains for the registration `unit`, read
 /// from the manager itself: what `launchctl print` shows of the job's
 /// environment, or systemd's `Environment` property of the unit.
-fn registered_home(scheduler: Scheduler, unit: &str) -> anyhow::Result<Option<String>> {
+fn registered_home(scheduler: Scheduler, unit: &str) -> anyhow::Result<Belongs> {
     let output = match scheduler {
         Scheduler::Launchd => {
             let uid = Invocation::program("id", &["-u"]).run(Duration::from_secs(10))?;
@@ -232,27 +263,48 @@ fn registered_home(scheduler: Scheduler, unit: &str) -> anyhow::Result<Option<St
             &["--user", "show", unit, "--property=Environment", "--value"],
         )
         .run(Duration::from_secs(10))?,
-        Scheduler::Crontab => return Ok(None),
+        Scheduler::Crontab => return Ok(Belongs::Unnamed),
     };
     if !output.success {
-        return Ok(None);
+        return Ok(Belongs::Unknown(format!(
+            "{} does not report the environment of {unit}",
+            scheduler.name()
+        )));
     }
-    Ok(output.stdout.lines().find_map(|line| {
-        let line = line.trim();
-        if let Some(value) = line.strip_prefix("INSTRUKT_HOME => ") {
-            return Some(value.to_owned());
+    if scheduler == Scheduler::Launchd {
+        return Ok(output
+            .stdout
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("INSTRUKT_HOME => "))
+            .map_or(Belongs::Unnamed, |home| Belongs::Home(home.to_owned())));
+    }
+    for line in output.stdout.lines() {
+        match systemd_assignments(line.trim()) {
+            Err(why) => {
+                return Ok(Belongs::Unknown(format!(
+                    "systemd's environment of {unit} cannot be decoded: {why}"
+                )));
+            }
+            Ok(words) => {
+                if let Some(home) = words
+                    .iter()
+                    .find_map(|word| word.strip_prefix("INSTRUKT_HOME="))
+                {
+                    return Ok(Belongs::Home(home.to_owned()));
+                }
+            }
         }
-        systemd_assignments(line)
-            .into_iter()
-            .find_map(|word| word.strip_prefix("INSTRUKT_HOME=").map(str::to_owned))
-    }))
+    }
+    Ok(Belongs::Unnamed)
 }
 
 /// The assignments of systemd's `Environment` property as `systemctl show`
 /// prints them: separated by spaces, each one that needs it in double quotes
-/// with `"`, `\`, `` ` `` and `$` escaped by a backslash and control
-/// characters as C escapes (systemd's `shell_maybe_quote`).
-fn systemd_assignments(line: &str) -> Vec<String> {
+/// with `"`, `\\`, `` ` `` and `$` escaped by a backslash and control
+/// characters as C escapes (systemd's `shell_maybe_quote`). Output that form
+/// never takes is refused: a quote that is not closed or not at a word's
+/// edge, a backslash ending the text, or an escape it does not write.
+fn systemd_assignments(line: &str) -> Result<Vec<String>, String> {
     let mut words = Vec::new();
     let mut word: Vec<u8> = Vec::new();
     let mut started = false;
@@ -260,12 +312,24 @@ fn systemd_assignments(line: &str) -> Vec<String> {
     let mut bytes = line.bytes().peekable();
     while let Some(byte) = bytes.next() {
         match byte {
+            b'"' if quoted => {
+                quoted = false;
+                if bytes
+                    .peek()
+                    .is_some_and(|next| !matches!(next, b' ' | b'\t'))
+                {
+                    return Err("text follows a closing quote".into());
+                }
+            }
             b'"' => {
-                quoted = !quoted;
+                if started {
+                    return Err("a quote inside an assignment".into());
+                }
+                quoted = true;
                 started = true;
             }
             b'\\' if quoted => {
-                let Some(next) = bytes.next() else { break };
+                let next = bytes.next().ok_or("a backslash ends the text")?;
                 match next {
                     b'a' => word.push(0x07),
                     b'b' => word.push(0x08),
@@ -274,20 +338,20 @@ fn systemd_assignments(line: &str) -> Vec<String> {
                     b'r' => word.push(b'\r'),
                     b't' => word.push(b'\t'),
                     b'v' => word.push(0x0b),
-                    b'0'..=b'7' => {
-                        let mut value = u32::from(next - b'0');
+                    b'"' | b'\\' | b'`' | b'$' => word.push(next),
+                    b'0'..=b'3' => {
+                        let mut value = next - b'0';
                         for _ in 0..2 {
-                            match bytes.peek() {
-                                Some(digit @ b'0'..=b'7') => {
-                                    value = value * 8 + u32::from(digit - b'0');
-                                    bytes.next();
-                                }
-                                _ => break,
+                            match bytes.next() {
+                                Some(digit @ b'0'..=b'7') => value = value * 8 + (digit - b'0'),
+                                _ => return Err("an octal escape without three digits".into()),
                             }
                         }
-                        word.push(u8::try_from(value & 0xff).unwrap_or_default());
+                        word.push(value);
                     }
-                    other => word.push(other),
+                    other => {
+                        return Err(format!("the escape \\{}", char::from(other)));
+                    }
                 }
             }
             b' ' | b'\t' if !quoted => {
@@ -303,10 +367,40 @@ fn systemd_assignments(line: &str) -> Vec<String> {
             }
         }
     }
+    if quoted {
+        return Err("a quote is not closed".into());
+    }
     if started {
         words.push(String::from_utf8_lossy(&word).into_owned());
     }
-    words
+    Ok(words)
+}
+
+/// Each registration under this home's names whose home cannot be
+/// established from its manager's report, reported once as left in place.
+pub(super) fn report_unknown(request: &Request<'_>, report: &mut Report) -> anyhow::Result<()> {
+    for kind in [
+        ResourceKind::WakeUp,
+        ResourceKind::Runner,
+        ResourceKind::Redis,
+        ResourceKind::Receiver,
+    ] {
+        // A crontab line names its home itself; only a manager's report of a
+        // registration can be unreadable.
+        let native = managers(request)
+            .into_iter()
+            .filter(|scheduler| *scheduler != Scheduler::Crontab)
+            .collect::<Vec<_>>();
+        for definition in discover_under(request, kind, &native)? {
+            if let Owner::Unknown(why) = definition.owner(request.home)? {
+                report.notices.push(format!(
+                    "{}: left in place; {why}, so whose it is cannot be established",
+                    definition.label()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// This home's definitions of `kind` present under every manager on the
@@ -316,7 +410,7 @@ fn systemd_assignments(line: &str) -> Vec<String> {
 fn discover(request: &Request<'_>, kind: ResourceKind) -> anyhow::Result<Vec<Definition>> {
     let mut found = Vec::new();
     for definition in discover_named(request, kind)? {
-        if definition.named_elsewhere(request.home)?.is_none() {
+        if matches!(definition.owner(request.home)?, Owner::This) {
             found.push(definition);
         }
     }
@@ -326,8 +420,17 @@ fn discover(request: &Request<'_>, kind: ResourceKind) -> anyhow::Result<Vec<Def
 /// Every definition of `kind` present under the names `request.home` gives
 /// them, whichever home its environment names.
 fn discover_named(request: &Request<'_>, kind: ResourceKind) -> anyhow::Result<Vec<Definition>> {
+    discover_under(request, kind, &managers(request))
+}
+
+/// [`discover_named`] under the managers `under` only.
+fn discover_under(
+    request: &Request<'_>,
+    kind: ResourceKind,
+    under: &[Scheduler],
+) -> anyhow::Result<Vec<Definition>> {
     let mut found = Vec::new();
-    for scheduler in managers(request) {
+    for &scheduler in under {
         // Cron keeps only the wake-up.
         if scheduler == Scheduler::Crontab && kind != ResourceKind::WakeUp {
             continue;
@@ -805,9 +908,9 @@ pub(super) fn withdraw_legacy(
     ] {
         for definition in discover_named(&legacy, kind)? {
             // Only one that names this home; one naming no home, or the
-            // default home, is the default home's.
-            if definition.named_elsewhere(&default)?.is_none()
-                || definition.named_elsewhere(request.home)?.is_some()
+            // default home, is the default home's, and one whose home cannot
+            // be read is left in place.
+            if !matches!(definition.named_home()?, Belongs::Home(named) if same_home(&named, request.home))
             {
                 continue;
             }
@@ -1320,7 +1423,7 @@ mod tests {
         let printed =
             r#"HOME=/home/dev "INSTRUKT_HOME=/tmp/another home" "X=a\"b\$c\\d\te\001" PATH=/a:/b"#;
         assert_eq!(
-            systemd_assignments(printed),
+            systemd_assignments(printed).unwrap(),
             vec![
                 "HOME=/home/dev".to_owned(),
                 "INSTRUKT_HOME=/tmp/another home".to_owned(),
@@ -1328,5 +1431,21 @@ mod tests {
                 "PATH=/a:/b".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn malformed_systemd_environment_is_refused() {
+        for printed in [
+            // An unmatched quote ending the text.
+            r#"INSTRUKT_HOME=/home/dev/.instrukt""#,
+            // A quote never closed, swallowing the assignments after it.
+            r#"HOME="/home/fixture INSTRUKT_HOME=/tmp/another home"#,
+            // A backslash ending the text.
+            r#""INSTRUKT_HOME=/tmp/x\"#,
+            // An escape systemd does not write.
+            r#""INSTRUKT_HOME=/tmp/\q""#,
+        ] {
+            assert!(systemd_assignments(printed).is_err(), "{printed}");
+        }
     }
 }

@@ -340,6 +340,11 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             report.finding("receiver", error);
         }
     }
+    if request.module.is_none()
+        && let Err(error) = _services::report_unknown(request, &mut report)
+    {
+        report.finding("registrations", error);
+    }
     boot_prerequisite(request, &demand, &mut report);
     Ok(report)
 }

@@ -1138,6 +1138,48 @@ fi
     env.run(env.home(), ["install"]).success();
     assert!(!registration.exists());
     env.remove_env("INSTRUKT_HOME");
+    // Environment systemd's quoting never prints: a stray quote ending it,
+    // or a quote never closed that swallows the home. Whose the registration
+    // is cannot be established, so it is left in place and reported once.
+    let elsewhere = std::path::PathBuf::from(format!("{}\"", env.instrukt_home().display()));
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let base = env.path("");
+    let canonical = base.canonicalize().unwrap();
+    let mut reported = Vec::new();
+    for printed in [
+        format!("INSTRUKT_HOME={}", elsewhere.display()),
+        format!("HOME=\"/home/fixture INSTRUKT_HOME={}", another.display()),
+    ] {
+        env.set_env("SYSTEMD_ENVIRONMENT", &printed);
+        std::fs::write(&registration, "").unwrap();
+        let installed = env.run(env.home(), ["install", "--json"]).success();
+        assert!(registration.exists());
+        let report: serde_json::Value =
+            serde_json::from_slice(&installed.get_output().stdout).unwrap();
+        let notices = report["notices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|notice| {
+                notice
+                    .as_str()
+                    .unwrap()
+                    .replace(canonical.to_str().unwrap(), "[base]")
+                    .replace(base.to_str().unwrap(), "[base]")
+            })
+            .collect::<Vec<_>>();
+        reported.push(notices);
+    }
+    insta::assert_json_snapshot!(reported, @r#"
+    [
+      [
+        "instrukt-runner.service (systemd): left in place; systemd's environment of instrukt-runner.service cannot be decoded: a quote inside an assignment, so whose it is cannot be established"
+      ],
+      [
+        "instrukt-runner.service (systemd): left in place; systemd's environment of instrukt-runner.service cannot be decoded: a quote inside an assignment, so whose it is cannot be established"
+      ]
+    ]
+    "#);
 }
 
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI11
