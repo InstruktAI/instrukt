@@ -1701,6 +1701,10 @@ fn answers(
     accepted: &Accepted,
     c: &Conversation,
 ) -> Result<bool, ConversationError> {
+    // An answer tried earlier and not confirmed is kept from the person
+    // whatever this pass manages: its interval opens before anything here
+    // can fail.
+    unconfirmed(state, c, connectors.now())?;
     // Answers are split to the connector's own limit, so reading them waits
     // until the connector can be opened.
     let read = connectors
@@ -1733,27 +1737,36 @@ fn answers(
     Ok(true)
 }
 
+const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL";
+
 /// After the posts of a pass: a message whose answer is posted is complete,
 /// its interval closed and its update gone. One whose answer is still not
-/// posted although a post of it was tried — it failed, or its outcome was
-/// lost, a restart included — has its interval opened from its turn's end
-/// (`now` for a turn ended before that end was kept). A post that was not
-/// tried yet opens nothing: the healthy path never shows the unavailable
-/// text.
+/// posted although a post of it was tried has its interval opened, as
+/// [`unconfirmed`] does.
 fn ended(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<(), StateError> {
-    const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL";
-    state.write(|tx| {
-        let path = state::db_path(tx);
+    state.write::<_, StateError>(|tx| {
         tx.execute(
             &format!("UPDATE conversation_messages SET unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND (unavailable_since IS NOT NULL OR turn_update IS NOT NULL) AND NOT EXISTS({UNPOSTED})"),
             params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()],
         )
-        .map_err(state::sql(&path))?;
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
+    unconfirmed(state, c, now)
+}
+
+/// A message whose answer is not posted although a post of it was tried —
+/// it failed, or its outcome was lost, a restart included — has its interval
+/// opened from its turn's end (`now` for a turn ended before that end was
+/// kept). A post that was not tried yet opens nothing: the healthy path never
+/// shows the unavailable text.
+fn unconfirmed(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<(), StateError> {
+    state.write(|tx| {
         tx.execute(
             &format!("UPDATE conversation_messages SET unavailable_since=coalesce(turn_ended_at,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND unavailable_since IS NULL AND EXISTS({UNPOSTED} AND (x.attempted_at IS NOT NULL OR x.failure IS NOT NULL))"),
             params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), now.to_string()],
         )
-        .map_err(state::sql(&path))?;
+        .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     })
 }

@@ -1937,3 +1937,96 @@ fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
     wait("the answer", || c.slack.posts().len() == 1);
     assert_eq!(destinations(&c), [("C1".to_owned(), Some(question))]);
 }
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() {
+    let done_at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
+    let (mut c, clock) = status_company(done_at);
+    let channel = "C1";
+
+    // The runner dies while a post of the answer is under way and not
+    // accepted. The runner started next finds the answer tried and not
+    // posted: the member sees the unavailable text, counted from the turn's
+    // end, while its retry is under way, and nothing once it is posted.
+    projected(&c);
+    let lost = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Where is the invoice?", None);
+    let session = started(&c, &[]);
+    c.slack.hold_posts_to_fail();
+    c.finish_turn(&session, 0, "In the finance folder.");
+    wait("the answer's post under way", || {
+        c.slack.held_failing_posts() == 1
+    });
+    c.runner_dies();
+    c.slack.fail_held_posts();
+    c.slack.hold_posts();
+    set_clock(&clock, done_at + jiff::SignedDuration::from_mins(2));
+    c.run();
+    wait("the retry under way", || c.slack.held_posts() == 1);
+    wait("the unavailable text while the retry is under way", || {
+        c.slack.status(channel, &lost).as_deref() == Some(UNAVAILABLE)
+    });
+    assert_eq!(interval(&c, &lost), Some(done_at.to_string()));
+    // Shown while that first retry is still under way: no post of this
+    // runner has failed, its own timeout included.
+    assert_eq!(c.slack.held_posts(), 1);
+    assert!(
+        c.conversations()
+            .conversations
+            .iter()
+            .all(|x| x.failures.is_empty())
+    );
+    c.slack.release_posts();
+    wait("the status cleared", || {
+        shown(&c, channel, &lost).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(interval(&c, &lost), None);
+    assert_eq!(shown(&c, channel, &lost), [WORKING, UNAVAILABLE, ""]);
+
+    // The runner dies during a post of the answer, and the turn's content
+    // cannot be read once it is back: the answer stays unposted, and the
+    // member sees the unavailable text from the turn's end until the content
+    // reads again and the answer is posted.
+    let posts = c.slack.posts().len();
+    let ended_at = done_at + jiff::SignedDuration::from_mins(10);
+    set_clock(&clock, ended_at);
+    let before = c.sessions();
+    projected(&c);
+    let unread = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> Who signed it?", None);
+    let session = started(&c, &before);
+    let held = c.slack.held_failing_posts();
+    c.slack.hold_posts_to_fail();
+    c.finish_turn(&session, 0, "Ada signed it.");
+    wait("the answer's post under way", || {
+        c.slack.held_failing_posts() > held
+    });
+    c.runner_dies();
+    c.slack.fail_held_posts();
+    c.store.hide_messages("turn-2-user");
+    set_clock(&clock, ended_at + jiff::SignedDuration::from_mins(2));
+    c.run();
+    wait("the turn's content unread", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|x| !x.failures.is_empty() && x.pending_answers == 1)
+    });
+    assert_eq!(c.conversations().relay_failure, None);
+    wait("the unavailable text while the content is unread", || {
+        c.slack.status(channel, &unread).as_deref() == Some(UNAVAILABLE)
+    });
+    assert_eq!(interval(&c, &unread), Some(ended_at.to_string()));
+    c.store.show_messages();
+    wait("the answer once the content reads", || {
+        c.slack.posts().len() == posts + 1
+    });
+    wait("the status cleared", || {
+        shown(&c, channel, &unread).last().map(String::as_str) == Some("")
+    });
+    assert_eq!(interval(&c, &unread), None);
+    assert_eq!(shown(&c, channel, &unread), [WORKING, UNAVAILABLE, ""]);
+}

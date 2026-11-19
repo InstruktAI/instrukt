@@ -102,8 +102,11 @@ pub struct Company {
     turns: u64,
 }
 
+/// Waits for `condition`, longer than the connector's own bound on a Web API
+/// call (30 seconds), so a post slow under load is never taken for one that
+/// did not come.
 pub fn wait(what: &str, condition: impl FnMut() -> bool) {
-    common::wait_until(what, Duration::from_secs(20), condition);
+    common::wait_until(what, Duration::from_secs(45), condition);
 }
 
 /// The paths of the files process `pid` holds open, as the operating system
