@@ -236,6 +236,7 @@ fn an_interrupted_send_recovers_native_acceptance_without_duplicate_input() {
         &home,
         source.as_ref(),
         instrukt_todos::work::recorded_assignment,
+        instrukt_runner::conversations::conversation_assignment,
         &links::Opening { a: &a, b: &b },
     )
     .unwrap();
