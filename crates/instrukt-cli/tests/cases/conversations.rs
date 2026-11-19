@@ -1209,13 +1209,13 @@ fn an_answer_accepted_as_the_runner_stopped_is_posted_once() {
 // spec: project/instrukt/spec/feature/company/conversations UC-CV1
 #[test]
 fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
-    // History is off, so the conversation relay is the stand-in's only
-    // source reader while the runner runs.
+    // History is off, so only the relay and readiness read T3's source
+    // while the runner runs.
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     let gate = c.store.gate();
-    // Every source read is held while the runner starts: its connections
-    // start before the relay, which reads nothing yet. The connector takes
-    // the member's question meanwhile.
+    // Every source read is held while the runner starts, readiness's and the
+    // relay's alike: its connections start before the relay, which reads
+    // nothing yet. The connector takes the member's question meanwhile.
     gate.hold();
     c.run();
     let question = c
@@ -1228,8 +1228,8 @@ fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
             .any(|conversation| conversation.pending_messages > 0)
     });
     assert!(c.sessions().is_empty());
-    // Once the relay reads, the question reaches the agent and its answer is
-    // posted where it was asked.
+    // Once every held read passes, whichever reached the gate first, the
+    // question reaches the agent and its answer is posted where it was asked.
     gate.open();
     let session = c.session();
     c.finish_turn(&session, 0, "On Friday.");
