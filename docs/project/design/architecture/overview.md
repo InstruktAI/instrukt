@@ -165,6 +165,30 @@ contract without executing its operation: what the command, each flag and
 each setting it touches is for, and when to choose it. `instrukt -h` lists the
 commands. Docs name `-h`.
 
+A command that fails ends with one readable line on stderr, `instrukt: `
+and then what failed, where, and what to run when there is a door; it is
+printed once and the exit status is non-zero. An error's causes follow it
+on that line, each once; findings that read as a list are joined with `; `.
+A command that meant to act and could not — a writing `docs render` left
+with findings, a converging `install` left incomplete, `docs get` with a
+configured value it could not resolve, `docs schema` with findings, a
+`history search` that could not reach every computer — ends the same way,
+after its output, exit status 1; its line points at what that output holds
+in the mode it was asked for, text or JSON.
+
+A command whose job is to report findings keeps its report as its output
+and adds no line: its exit status says there are findings. `config
+validate`, `docs validate`, `docs render --check`, `install --check` and
+`specs coverage --check` exit 1 with findings; `status` exits 0 whatever its
+report says once every part was read, and 1 when a part could not be read
+(`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
+exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo prepare`
+and `todo work` exit 1 when the next obligation cannot be rendered, and
+their output says why.
+Nothing on the terminal is a program's debug rendering of a value: durations
+are whole seconds, kinds and verdicts their plain names. Usage errors keep
+the command-line parser's own text and exit status 2.
+
 ### External surfaces
 
 | Surface | Used by | How |
@@ -398,6 +422,11 @@ Runtime delivery retains procedure-first briefing, untrusted event provenance an
 session-fixed timing through A3's bounded batch log.
 
 ## Failure modes
+
+- **The program panics:** the terminal shows only `instrukt stopped
+  unexpectedly; the details are in <log path>`; the panic's message and
+  location go to that log, and the exit status is 101. A panic before the
+  command's log is open names the log folder and records nothing.
 
 - **A hook did not fire** (a reset): the next `sync` from any trigger catches
   up, because every sync converges on main; `docs get` warns when

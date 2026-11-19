@@ -356,6 +356,11 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
           "user service manager: the user's systemd manager does not start at boot without a login, so instrukt's owned units wait for one; enable it with `loginctl enable-linger`; it is needed by the receiver's socket and service, the private local Redis service, the minute timer"
         ]
         "#);
+        // Its one line points at the findings the JSON holds.
+        insta::assert_snapshot!(
+            String::from_utf8_lossy(&install.get_output().stderr),
+            @"instrukt: the installation is incomplete; resolve each entry of the output's `findings` and run `instrukt install` again"
+        );
         env.run(env.home(), ["install", "--check"]).failure();
         std::fs::remove_file(off).unwrap();
     }

@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "format!(\"working tree:\\n{}{}index:\\n{}\\n\", stdout(&env, &linked),\nshown(&env, &linked.get_output().stderr), findings.join(\"\\n\"))"
+---
+working tree:
+AGENTS.md: AGENTS.master.md requires `docs/team.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+index:
+AGENTS.md: AGENTS.master.md requires `docs/team.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed

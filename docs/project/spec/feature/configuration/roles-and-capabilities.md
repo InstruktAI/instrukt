@@ -60,7 +60,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Family | Actions | Objects and current instrukt surface |
 | --- | --- | --- |
 | Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
-| Work records | `todo-read`, `todo-write` | Todos and bugs: `todo list|show|refresh`; create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes. Creation addresses the containing project. |
+| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`, Bug reports); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo prepare|work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
 | Session observation and recovery | `session-observe`, `history-read`, `session-recover`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `sessions resolve-start`, and `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
@@ -125,12 +125,21 @@ composition is:
 | `read` | `docs-read`, `todo-read`, `artifact-read`, `config-read`, `agents-read`, `events-read`, `code-check`, `eval-read`, `repository-read`, `installation-read`, each at `any`. |
 | `worker` | `artifact-write`, `stamp`, `code-commit`, `docs-write`, each at `own`. |
 | `review` | `artifact-write`, `stamp`, each at `own`. |
-| `record` | `todo-write`, `artifact-write`, `stamp`, each at `own`. |
+| `record` | `todo-write`, `artifact-write`, `stamp`, `bug-report`, each at `own`. |
+| `report` | `bug-report` at `any`. |
 | `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `session-recover`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
 | `tools` | `mcp-access` at `own`. |
 | `all` | Every catalog action at `any`. |
+
+A company's agent reports defects of the system it works through
+(`general/procedure/bug-reporting`) into the project that owns the defect on its
+computer, which its own assignment never binds; `report` therefore reaches any
+project at `any`. It is the company agent's only work-record write: it holds no
+`todo-write`, so it creates, changes and withdraws no other todo. What a
+report files is the work context's
+(`project/instrukt/spec/feature/work/todos`, Bug reports).
 
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
@@ -149,7 +158,7 @@ column names the identity reference, not another model/provider choice.
 | `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
-| `company-agent` | `standing` | `read`, `tools` | project |
+| `company-agent` | `standing` | `read`, `tools`, `report` | project |
 | `default` | `agent` | `all` | project |
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
@@ -210,6 +219,15 @@ When the developer declares and configures a focused handler role
 Then new assignments enforce that role's grants
 ```
 
+### UC-RCAP3: A company's agent may report defects and change no other work
+
+```gherkin
+Given a company's agent in a conversation
+When it reads what it may do
+Then reporting a defect into any project on its computer and reading which defects are already reported are among its actions
+And creating, changing or withdrawing any other work is not
+```
+
 ## Known caveats
 
 - Capabilities cover instrukt commands only. File edits, raw git, `gh` and
@@ -217,6 +235,12 @@ Then new assignments enforce that role's grants
   Per-role runtime permission mode is unspecified.
 - This contract adds no agent-to-agent discussion design or session-authority
   hierarchy. Native conversation operations retain their existing contracts.
+- `company-agent` is a `standing` role, so its grants shape its help and
+  briefing and refuse nothing: an instrukt command outside `read`, `tools` and
+  `report` is held back by its procedure
+  (`general/procedure/company-assistance`), not refused by this layer. A
+  `focused` company agent would also be refused the instrukt hook run its own
+  commits trigger in the company home.
 
 ## See Also
 

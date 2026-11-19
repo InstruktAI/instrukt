@@ -1,7 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/agent-selection.rs
-assertion_line: 99
 expression: "String::from_utf8_lossy(&refused.get_output().stderr).replace(env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\")"
 ---
-instrukt: refused; nothing was written:
-[TMP]/home/.instrukt/companies/acme/instrukt.yaml: profiles[0]: company acme names profile `undeclared-profile`, which the machine's agents.yaml does not declare
+instrukt: refused; nothing was written: [TMP]/home/.instrukt/companies/acme/instrukt.yaml: profiles[0]: company acme names profile `undeclared-profile`, which the machine's agents.yaml does not declare

@@ -523,7 +523,7 @@ fn graphify(request: &Request<'_>, projects: &[String], report: &mut Report) {
             report.finding(
                 "Graphify",
                 format!(
-                    "expected graphify {}: {other:?}; run `instrukt install`",
+                    "expected graphify {}: {other}; run `instrukt install`",
                     graphify_version()
                 ),
             );

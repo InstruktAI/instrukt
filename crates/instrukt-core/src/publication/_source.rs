@@ -20,6 +20,9 @@ use crate::ids::{CommitSha, ProjectSlug};
 /// The file name of a project master.
 pub(super) const MASTER_FILE_NAME: &str = "AGENTS.master.md";
 
+/// The mode git records a symbolic link with.
+const LINK_MODE: &str = "120000";
+
 /// The file a master renders into, and the file Codex reads in its place.
 const ENTRYPOINT_FILE_NAMES: [&str; 2] = ["AGENTS.md", "AGENTS.override.md"];
 
@@ -103,10 +106,13 @@ pub(super) fn canonical_main(primary: &Path) -> Result<(String, CommitSha), Publ
 /// The files of one view of a repository that publication reads: the
 /// documentation, the root `instrukt.yaml`, every master and every
 /// `AGENTS.md` and `AGENTS.override.md`. Regular files only; symbolic links
-/// and submodules are never followed.
+/// and submodules are never followed. A symbolic link is recorded by its
+/// path and nothing is read through it, itself or a folder above a file,
+/// so what names a file through one can say so.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Committed {
     files: BTreeMap<String, Vec<u8>>,
+    links: BTreeSet<String>,
 }
 
 impl Committed {
@@ -117,6 +123,7 @@ impl Committed {
             ["ls-tree", "-r", "-z", "--full-tree", commit.as_str()],
         )?;
         let mut wanted: Vec<(String, String)> = Vec::new();
+        let mut links = BTreeSet::new();
         for record in listing.split(|b| *b == 0).filter(|r| !r.is_empty()) {
             let record = String::from_utf8_lossy(record);
             let Some((meta, path)) = record.split_once('\t') else {
@@ -127,12 +134,18 @@ impl Committed {
             else {
                 continue;
             };
+            if kind == "blob" && mode == LINK_MODE {
+                links.insert(path.to_owned());
+            }
             if kind != "blob" || !matches!(mode, "100644" | "100755") || !is_read(path) {
                 continue;
             }
             wanted.push((object.to_owned(), path.to_owned()));
         }
-        Self::of_objects(repo, wanted)
+        Ok(Self {
+            links,
+            ..Self::of_objects(repo, wanted)?
+        })
     }
 
     /// Reads the files of the index a commit is being made from in the
@@ -142,6 +155,7 @@ impl Committed {
     pub(super) fn read_index(repo: &Path, index: Option<&Path>) -> Result<Self, PublicationError> {
         let listing = git::run_on_index(repo, index, ["ls-files", "--stage", "-z"], b"")?;
         let mut wanted: Vec<(String, String)> = Vec::new();
+        let mut links = BTreeSet::new();
         for record in listing.split(|b| *b == 0).filter(|r| !r.is_empty()) {
             let record = String::from_utf8_lossy(record);
             // `<mode> <object> <stage>\t<path>`.
@@ -153,12 +167,18 @@ impl Committed {
             else {
                 continue;
             };
+            if stage == "0" && mode == LINK_MODE {
+                links.insert(path.to_owned());
+            }
             if stage != "0" || !matches!(mode, "100644" | "100755") || !is_read(path) {
                 continue;
             }
             wanted.push((object.to_owned(), path.to_owned()));
         }
-        Self::of_objects(repo, wanted)
+        Ok(Self {
+            links,
+            ..Self::of_objects(repo, wanted)?
+        })
     }
 
     /// The blobs `wanted` names, `(object, path)`, read through one
@@ -184,7 +204,10 @@ impl Committed {
             files.insert(path, contents.to_vec());
             rest = after;
         }
-        Ok(Self { files })
+        Ok(Self {
+            files,
+            links: BTreeSet::new(),
+        })
     }
 
     /// The files of the working tree whose root is `root`: in a git
@@ -232,10 +255,33 @@ impl Committed {
             }
         }
         let mut files = BTreeMap::new();
-        for path in paths.into_iter().filter(|path| is_read(path)) {
+        let mut links = BTreeSet::new();
+        for path in paths {
+            // A link is recorded wherever it stands, a linked `docs` folder
+            // included, so a read through it can say so.
+            if !is_read(&path) {
+                // The walk outside git lists the root itself, as an empty path.
+                let linked = safe_relative(&path).is_ok_and(|relative| {
+                    !path.is_empty()
+                        && std::fs::symlink_metadata(root.join(relative))
+                            .is_ok_and(|meta| meta.file_type().is_symlink())
+                });
+                if linked {
+                    links.insert(path);
+                }
+                continue;
+            }
+            if let Some(link) = linked_folder(root, &path)? {
+                links.insert(link);
+                continue;
+            }
             let full = root.join(safe_relative(&path)?);
             match std::fs::symlink_metadata(&full) {
                 Ok(meta) if meta.is_file() => {}
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    links.insert(path);
+                    continue;
+                }
                 Ok(_) => continue,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(source) => return Err(PublicationError::Io { path: full, source }),
@@ -244,7 +290,7 @@ impl Committed {
                 .map_err(|source| PublicationError::Io { path: full, source })?;
             files.insert(path, bytes);
         }
-        Ok(Self { files })
+        Ok(Self { files, links })
     }
 
     /// A view holding exactly `files`, by repository-relative path.
@@ -255,11 +301,27 @@ impl Committed {
                 .iter()
                 .map(|(path, text)| ((*path).to_owned(), text.as_bytes().to_vec()))
                 .collect(),
+            links: BTreeSet::new(),
         }
     }
 
     pub(super) fn file(&self, path: &str) -> Option<&[u8]> {
         self.files.get(path).map(Vec::as_slice)
+    }
+
+    /// Whether `path`, or a folder above it, is a symbolic link, through
+    /// which the view reads nothing.
+    pub(super) fn is_link(&self, path: &str) -> bool {
+        let mut prefix = path;
+        loop {
+            if self.links.contains(prefix) {
+                return true;
+            }
+            match prefix.rsplit_once('/') {
+                Some((parent, _)) => prefix = parent,
+                None => return false,
+            }
+        }
     }
 
     /// The files below `prefix` (which ends with `/`), with their paths
@@ -316,6 +378,30 @@ impl Committed {
 
 /// `path` as a relative path of normal components; anything else is
 /// refused rather than written outside its root.
+/// The first folder above `path` below `root` that is a symbolic link, by
+/// its repository-relative path.
+fn linked_folder(root: &Path, path: &str) -> Result<Option<String>, PublicationError> {
+    let mut folder = String::new();
+    let mut parts = path.split('/').peekable();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            break;
+        }
+        if !folder.is_empty() {
+            folder.push('/');
+        }
+        folder.push_str(part);
+        let full = root.join(safe_relative(&folder)?);
+        match std::fs::symlink_metadata(&full) {
+            Ok(meta) if meta.file_type().is_symlink() => return Ok(Some(folder)),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(PublicationError::Io { path: full, source }),
+        }
+    }
+    Ok(None)
+}
+
 pub(super) fn safe_relative(path: &str) -> Result<PathBuf, PublicationError> {
     let rel = PathBuf::from(path);
     if path.is_empty()

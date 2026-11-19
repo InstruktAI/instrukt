@@ -796,7 +796,7 @@ fn check_third_party(version: &Version, sources: Vec<String>, out: &mut Vec<Find
             if key.as_str() != Some("description") {
                 let name = key
                     .as_str()
-                    .map_or_else(|| format!("{key:?}"), str::to_owned);
+                    .map_or_else(|| super::_index_check::shown_value(key), str::to_owned);
                 push(
                     out,
                     path,

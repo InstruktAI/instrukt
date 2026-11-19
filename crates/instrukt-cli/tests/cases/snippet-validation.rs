@@ -356,7 +356,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         // Third-party
         .write(
             "docs/third-party/tool/broken.md",
-            "---\nvisibility: public\ntype: spec\n---\n\n# Broken\n\n## Sources\n\n- somewhere on the web\n",
+            "---\nvisibility: public\ntype: spec\ntrue: unexpected\n---\n\n# Broken\n\n## Sources\n\n- somewhere on the web\n",
         )
         // Directives
         .write(

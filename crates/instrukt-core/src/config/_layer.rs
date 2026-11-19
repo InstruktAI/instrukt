@@ -263,6 +263,28 @@ pub(super) fn current_view(
     require_usable(layer, path, &value)?;
     Ok(value)
 }
+/// Why the machine layer cannot be loaded at all: it is unreadable, not
+/// YAML, not a mapping, or its `schema_version` is missing or newer than this
+/// instrukt knows. `None` when it is absent or loads; what validation finds
+/// in a layer that loads stays with `instrukt config validate`.
+pub fn unloadable_machine_layer(home: &Home) -> Option<ConfigError> {
+    let path = Layer::Global.path(home);
+    let document = match read(&path) {
+        Ok(Some(document)) => document,
+        Ok(None) => return None,
+        Err(error) => return Some(error),
+    };
+    match version(&document.value) {
+        Version::Newer(found) => Some(ConfigError::NewerSchema {
+            path,
+            found,
+            current: CURRENT_SCHEMA_VERSION,
+        }),
+        Version::Unknown => Some(ConfigError::UnknownSchema { path }),
+        Version::Current | Version::Older(_) => None,
+    }
+}
+
 /// A current in-memory view, retaining the on-disk version and migration notice.
 pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, ConfigError> {
     let path = layer.path(home);
@@ -587,6 +609,14 @@ pub fn init(
 ) -> Result<InitOutcome, ConfigError> {
     let started = Instant::now();
     let path = layer.path(home);
+    if let Layer::Company(name) = layer {
+        let dir = home.company_dir(name);
+        crate::fsx::create_dir_all(&dir).map_err(|source| ConfigError::CreateHome {
+            path: dir.clone(),
+            source,
+        })?;
+        ignore_local_material(&dir)?;
+    }
     if path.exists() {
         return match migrate(home, layer)? {
             MigrationOutcome::Migrated { from } => Ok(InitOutcome::Migrated { from }),
@@ -615,9 +645,6 @@ pub fn init(
             Value::String("company".to_owned()),
             Value::String(name.to_string()),
         );
-        let dir = home.company_dir(name);
-        crate::fsx::create_dir_all(&dir)
-            .map_err(|source| ConfigError::CreateHome { path: dir, source })?;
     }
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     if path.exists() {
@@ -632,6 +659,46 @@ pub fn init(
         duration_ms = elapsed_ms(started),
     );
     Ok(InitOutcome::Created)
+}
+
+/// What a company home keeps on the computer and its repository ignores:
+/// the settings document, the secrets file, the other checkouts and
+/// instrukt's local state, as the home's `.gitignore` lines
+/// (`project/instrukt/spec/feature/configuration/company-homes`).
+pub(crate) const COMPANY_IGNORED: [&str; 4] = [
+    "/instrukt.yaml",
+    "/secrets.env",
+    "/projects/",
+    "/.instrukt/",
+];
+
+/// Appends each line of [`COMPANY_IGNORED`] the `.gitignore` of the company
+/// home at `dir` lacks, keeping every other line as it is.
+fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
+    let path = dir.join(".gitignore");
+    let current = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => return Err(ConfigError::Read { path, source }),
+    };
+    let present: std::collections::BTreeSet<&str> = current.lines().map(str::trim).collect();
+    let missing: Vec<&str> = COMPANY_IGNORED
+        .into_iter()
+        .filter(|line| !present.contains(line))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut text = current.clone();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    for line in missing {
+        text.push_str(line);
+        text.push('\n');
+    }
+    atomic_write(&path, text.as_bytes())?;
+    Ok(())
 }
 
 /// The primary worktree's folder name, normalized to a slug.

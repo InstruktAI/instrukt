@@ -47,7 +47,7 @@ use crate::index::{GlobalIndex, IndexEntry, IndexScope};
 const PROJECT: &str = "project";
 
 /// The file a master renders into, beside it.
-const AGENTS_FILE: &str = "AGENTS.md";
+pub(super) const AGENTS_FILE: &str = "AGENTS.md";
 
 /// The file Codex reads in place of the `AGENTS.md` beside it.
 pub(super) const OVERRIDE_FILE: &str = "AGENTS.override.md";
@@ -718,6 +718,25 @@ pub enum RenderFindingKind {
     /// The root `instrukt.yaml` cannot be read, so the rendering mode is
     /// unknown and nothing is rendered.
     UnreadableRoot { reason: String },
+    /// A company document's required read names no document of the home.
+    CompanyRead {
+        document: String,
+        read: String,
+        problem: super::CompanyReadProblem,
+    },
+    /// A reference in a company document's text names no document of the
+    /// home.
+    CompanyReference {
+        document: String,
+        reference: String,
+        problem: super::CompanyReadProblem,
+    },
+    /// A company document reads a configured value.
+    CompanyConfig { document: String },
+    /// Company documents require each other in a cycle, so no order puts
+    /// each after what it requires: each document of the cycle, in order,
+    /// the first again last.
+    CompanyCycle { documents: Vec<String> },
 }
 
 impl std::fmt::Display for RenderFinding {
@@ -745,6 +764,33 @@ impl std::fmt::Display for RenderFinding {
                 f,
                 "{path}: cannot be read ({reason}); nothing is rendered until it can"
             ),
+            RenderFindingKind::CompanyRead {
+                document,
+                read,
+                problem,
+            } => write!(
+                f,
+                "{path}: {document} requires `{read}`, {}; nothing is rendered until it is fixed",
+                problem.sentence()
+            ),
+            RenderFindingKind::CompanyReference {
+                document,
+                reference,
+                problem,
+            } => write!(
+                f,
+                "{path}: {document} references `{reference}`, {}; nothing is rendered until it is fixed",
+                problem.sentence()
+            ),
+            RenderFindingKind::CompanyConfig { document } => write!(
+                f,
+                "{path}: {document} reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead"
+            ),
+            RenderFindingKind::CompanyCycle { documents } => write!(
+                f,
+                "{path}: {} require each other in a cycle, so no order puts each document after what it requires; nothing is rendered until one of these required reads is removed",
+                documents.join(" → ")
+            ),
         }
     }
 }
@@ -764,10 +810,10 @@ pub(super) fn project_without_index() -> Notice {
 /// Renders every entrypoint of the repository whose view is `tree`, from
 /// the tree alone. What the root `instrukt.yaml` is decides the mode: a
 /// project layer renders the project's masters; a company's settings
-/// document, or no document beside a root master, is a company home, which
-/// this build does not render; no document and no root master renders
-/// nothing. An `AGENTS.md` whose master is gone is removed while it is a
-/// rendering, in every mode but an unreadable root.
+/// document, or no document beside a root master, is a company home, whose
+/// root master renders its company rendering; no document and no root
+/// master renders nothing. An `AGENTS.md` whose master is gone is removed
+/// while it is a rendering, in every mode but an unreadable root.
 pub(super) fn render_tree(
     tree: &Committed,
     override_beside_root: bool,
@@ -783,10 +829,12 @@ pub(super) fn render_tree(
             return Ok(plan);
         }
         RootDocument::CompanySettings(_) => {
-            return Err(PublicationError::CompanyRenderingUnavailable);
+            super::_company::render(tree, override_beside_root, &mut plan);
+            None
         }
         RootDocument::Absent if masters.contains(&MASTER_FILE_NAME) => {
-            return Err(PublicationError::CompanyRenderingUnavailable);
+            super::_company::render(tree, override_beside_root, &mut plan);
+            None
         }
         RootDocument::Absent => None,
         RootDocument::ProjectLayer(project) => Some(project),
@@ -975,7 +1023,7 @@ fn render_error(file: &str, reason: &str) -> PublicationError {
 
 /// The final text: authoring lock sentinels removed, runs of blank lines
 /// collapsed, one trailing newline.
-fn finish(text: &str) -> String {
+pub(super) fn finish(text: &str) -> String {
     let kept: Vec<&str> = text
         .split('\n')
         .filter(|line| {

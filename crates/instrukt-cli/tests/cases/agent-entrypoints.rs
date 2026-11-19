@@ -174,6 +174,15 @@ fn ci_catches_instructions_a_commit_left_stale() {
             format!("unsupported_directive_{name}"),
             stdout(&env, &refused)
         );
+        insta::allow_duplicates! {
+            // The render meant to write and ends with one line saying so; the
+            // check is a report, and its findings are its output.
+            insta::assert_snapshot!(
+                shown(&env, &refused.get_output().stderr),
+                @"instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again"
+            );
+            insta::assert_snapshot!(shown(&env, &checked.get_output().stderr), @"");
+        }
         assert_eq!(repo.read("AGENTS.md"), committed);
     }
     assert!(!instrukt_home.exists());
@@ -568,4 +577,203 @@ fn an_agent_that_checks_out_the_project_starts_with_what_it_selected() {
     env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCheckout);
     assert_eq!(repo.read("AGENTS.md").trim_end(), on_branch);
     assert_eq!(repo.git(["status", "--porcelain"]), "");
+}
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE8
+#[test]
+fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
+    let env = hooked_machine();
+    env.run(&env.path(""), ["config", "init", "--company", "acme"])
+        .success();
+    // The company's home is the checkout of its repository; its settings
+    // document is there and ignored.
+    let dir = env.instrukt_home().join("companies/acme");
+    let relative = dir
+        .strip_prefix(env.path(""))
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let home = env.git_repo(&relative);
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/people.md\n",
+    )
+    .write(
+        "docs/people.md",
+        "# People\n\nWho works at Acme.\n\n## Required reads\n\n- roles.md\n",
+    )
+    .write("docs/roles.md", "# Roles\n\nWhat each role at Acme does.\n");
+    env.run(home.path(), ["hooks", "install"]).success();
+    commit_through_hook(&env, &home, "the company's knowledge");
+    let committed = home.git(["show", "HEAD:AGENTS.md"]);
+    insta::assert_snapshot!("company_rendering", committed);
+    assert_eq!(home.git(["status", "--porcelain"]), "");
+
+    // A clone of the company's repository holds no settings document: it
+    // renders the same bytes, and the check passes.
+    let remote = env.bare_remote("acme");
+    home.git(["push", "--quiet", remote.to_str().unwrap(), "main"]);
+    let clone = env.clone_repo(&remote, "acme-clone");
+    assert!(!clone.path().join("instrukt.yaml").exists());
+    env.run(clone.path(), ["docs", "render", "--check"])
+        .success();
+    std::fs::remove_file(clone.path().join("AGENTS.md")).unwrap();
+    env.run(clone.path(), ["docs", "render"]).success();
+    // The home's file is the committed one: its status is clean.
+    assert_eq!(clone.read("AGENTS.md"), home.read("AGENTS.md"));
+
+    // The master gains a required read of a snippet: the commit is made, its
+    // AGENTS.md is the one before, and both commands name the master and
+    // the read.
+    let head = home.git(["rev-parse", "HEAD"]);
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/people.md\n- general/policy/commits\n",
+    );
+    commit_through_hook(&env, &home, "doctrine in the master");
+    assert_ne!(home.git(["rev-parse", "HEAD"]), head);
+    assert_eq!(home.git(["show", "HEAD:AGENTS.md"]), committed);
+    let validated = env
+        .run(&env.path(""), ["config", "validate", "--company", "acme"])
+        .failure();
+    let checked = env
+        .run(home.path(), ["docs", "render", "--check"])
+        .failure();
+    insta::assert_snapshot!(
+        "company_rendering_names_the_read",
+        format!(
+            "config validate --company acme:\n{}docs render --check:\n{}{}",
+            stdout(&env, &validated),
+            stdout(&env, &checked),
+            shown(&env, &checked.get_output().stderr)
+        )
+    );
+
+    // A required read naming a symbolic link is never read: in the working
+    // tree and in the index the commit is made from, the finding names it as
+    // a link.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/team.md\n",
+    );
+    std::os::unix::fs::symlink("roles.md", home.path().join("docs/team.md")).unwrap();
+    let linked = env
+        .run(home.path(), ["docs", "render", "--check"])
+        .failure();
+    commit_through_hook(&env, &home, "a linked document");
+    let record = env.finished_hook_run(home.path(), instrukt_core::repository::Hook::PreCommit);
+    let instrukt_core::repository::StagingOutcome::Unchanged { findings } = record.staging.unwrap()
+    else {
+        panic!("the commit staged a rendering of a linked read");
+    };
+    insta::assert_snapshot!(
+        "company_rendering_names_a_link",
+        format!(
+            "working tree:\n{}{}index:\n{}\n",
+            stdout(&env, &linked),
+            shown(&env, &linked.get_output().stderr),
+            findings.join("\n")
+        )
+    );
+    assert_eq!(home.git(["show", "HEAD:AGENTS.md"]), committed);
+
+    // Each of these leaves the home's rendering as it is, and the render
+    // names why.
+    let refused = |step: &str| {
+        let before = home.read("AGENTS.md");
+        let output = env.run(home.path(), ["docs", "render"]).failure();
+        assert_eq!(home.read("AGENTS.md"), before);
+        format!(
+            "{step}:\n{}{}",
+            stdout(&env, &output),
+            shown(&env, &output.get_output().stderr)
+        )
+    };
+    let mut refusals = Vec::new();
+
+    // A read through a linked folder is never read, though the index holds
+    // the file below it.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n- docs/team/people.md\n",
+    )
+    .write("docs/team/people.md", "# Team\n");
+    home.git(["add", "AGENTS.master.md", "docs/team/people.md"]);
+    std::fs::remove_dir_all(home.path().join("docs/team")).unwrap();
+    home.write("outside/people.md", "# Outside\n\nNot the company's.\n");
+    std::os::unix::fs::symlink("../outside", home.path().join("docs/team")).unwrap();
+    refusals.push(refused("a linked folder"));
+    std::fs::remove_file(home.path().join("docs/team")).unwrap();
+    home.git(["reset", "--quiet"]);
+
+    // Nor through a linked `docs/`.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n- docs/people.md\n",
+    );
+    std::fs::rename(home.path().join("docs"), home.path().join("shelf")).unwrap();
+    std::os::unix::fs::symlink("shelf", home.path().join("docs")).unwrap();
+    refusals.push(refused("a linked docs folder"));
+    std::fs::remove_file(home.path().join("docs")).unwrap();
+    std::fs::rename(home.path().join("shelf"), home.path().join("docs")).unwrap();
+
+    // Nor when the index holds `docs` itself as the link.
+    std::fs::rename(home.path().join("docs"), home.path().join("shelf")).unwrap();
+    std::os::unix::fs::symlink("outside", home.path().join("docs")).unwrap();
+    home.git(["rm", "--cached", "-r", "--quiet", "docs"]);
+    home.git(["add", "docs"]);
+    refusals.push(refused("a staged docs link"));
+    std::fs::remove_file(home.path().join("docs")).unwrap();
+    std::fs::rename(home.path().join("shelf"), home.path().join("docs")).unwrap();
+    home.git(["reset", "--quiet"]);
+
+    // A configured value among the required reads is a directive all the
+    // same; configuration's validation names it too.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n<!-- @config: company -->\n- docs/people.md\n",
+    );
+    refusals.push(refused("a configured value among the required reads"));
+    let validated = env
+        .run(&env.path(""), ["config", "validate", "--company", "acme"])
+        .failure();
+    refusals.push(format!(
+        "config validate --company acme:\n{}",
+        stdout(&env, &validated)
+    ));
+
+    // Documents requiring each other have no order.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\n## Required reads\n\n- docs/a.md\n",
+    )
+    .write("docs/a.md", "# A\n\n## Required reads\n\n- b.md\n")
+    .write("docs/b.md", "# B\n\n## Required reads\n\n- a.md\n");
+    refusals.push(refused("a cycle"));
+
+    // Every reference form in the text is held to the company's own
+    // documents; a reference to one of them stays.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nSee @general/policy/commits for details.\nSee @general for details.\nRead [Outside](../secret.md).\nSee @docs/people.md for details.\n\n## See Also\n\n- general/policy/commits\n",
+    );
+    refusals.push(refused("references in the text"));
+    insta::assert_snapshot!("company_rendering_refusals", refusals.join("\n"));
+
+    // A bare `@word` mentions someone: it is prose, and the home renders.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAsk @maurice about frames.\n\n## Required reads\n\n- docs/people.md\n",
+    );
+    let mentioned = env.run(home.path(), ["docs", "render"]).success();
+    insta::assert_snapshot!(
+        "company_rendering_keeps_a_mention",
+        format!(
+            "{}{}{}",
+            stdout(&env, &mentioned),
+            shown(&env, &mentioned.get_output().stderr),
+            home.read("AGENTS.md")
+        )
+    );
 }

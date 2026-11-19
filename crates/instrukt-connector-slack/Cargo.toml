@@ -1,0 +1,20 @@
+[package]
+name = "instrukt-connector-slack"
+description = "instrukt's Slack connector: one Socket Mode connection per company behind the connector interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+instrukt-connector.workspace = true
+jiff.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tungstenite.workspace = true
+ureq.workspace = true
+
+[lints]
+workspace = true
