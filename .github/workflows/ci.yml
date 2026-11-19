@@ -73,6 +73,8 @@ jobs:
         run: scripts/check-coverage.sh
       - name: committed configuration
         run: scripts/check-committed-config.sh
+      - name: committed instruction files
+        run: scripts/check-entrypoints.sh
 
   dependencies:
     name: dependency audit
