@@ -43,6 +43,6 @@ Role: builder · class: agent. Scope comes from assignment
 instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork. Object claims, phase and writer
 constraints apply.
 Usual capabilities: role: builder; class: agent; grants: docs-read:any, docs-write:own,
-todo-read:any, todo-write:own, artifact-read:any, artifact-write:own, stamp:own, agents-read:any,
-config-read:any, repository-read:any, code-commit:own, code-check:any, eval-read:any,
-events-read:any, installation-read:any
+todo-read:any, todo-write:own, bug-report:own, artifact-read:any, artifact-write:own, stamp:own,
+agents-read:any, config-read:any, repository-read:any, code-commit:own, code-check:any,
+eval-read:any, events-read:any, installation-read:any
