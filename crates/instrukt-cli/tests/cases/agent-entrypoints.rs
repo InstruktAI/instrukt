@@ -741,4 +741,20 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     );
     refusals.push(refused("references in the text"));
     insta::assert_snapshot!("company_rendering_refusals", refusals.join("\n"));
+
+    // A bare `@word` mentions someone: it is prose, and the home renders.
+    home.write(
+        "AGENTS.master.md",
+        "# Acme\n\nAsk @maurice about frames.\n\n## Required reads\n\n- docs/people.md\n",
+    );
+    let mentioned = env.run(home.path(), ["docs", "render"]).success();
+    insta::assert_snapshot!(
+        "company_rendering_keeps_a_mention",
+        format!(
+            "{}{}{}",
+            stdout(&env, &mentioned),
+            shown(&env, &mentioned.get_output().stderr),
+            home.read("AGENTS.md")
+        )
+    );
 }

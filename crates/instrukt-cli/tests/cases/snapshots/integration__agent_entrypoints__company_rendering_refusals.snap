@@ -19,6 +19,5 @@ AGENTS.md: docs/a.md → docs/b.md → docs/a.md require each other in a cycle, 
 
 references in the text:
 AGENTS.md: AGENTS.master.md references `@general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
-AGENTS.md: AGENTS.master.md references `@general`, a domain; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
 AGENTS.md: AGENTS.master.md references `../secret.md`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
 AGENTS.md: AGENTS.master.md references `general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed

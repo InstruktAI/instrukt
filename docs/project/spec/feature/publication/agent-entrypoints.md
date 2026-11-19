@@ -224,8 +224,10 @@ the home and leaves any other there as it is.
   does not exist, or that reaches its file through a symbolic link, the
   file's own or a folder's above it, `docs/` included; so are required reads
   that form a cycle, named by the documents in it. A reference in the text
-  is an `@` reference, with or without `.md`, a Markdown link to a file, or
-  a See Also entry; one naming a company document stays in the text. So are
+  is an `@` reference in a reference's shape — holding a `/` or ending in
+  `.md` — a Markdown link to a file, or a See Also entry; one naming a
+  company document stays in the text. A bare `@word` mentions someone and
+  is prose. So are
   `@config`, `@exec` and `@include`, wherever they stand, the required reads
   included.
   `instrukt config validate --company <name>` and `instrukt docs render` in

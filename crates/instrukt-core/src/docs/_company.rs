@@ -10,6 +10,7 @@ use std::ops::Range;
 use super::_corpus::required_reads_section;
 use super::_refs;
 use super::_text::{self, Directive};
+use crate::ids::SnippetId;
 
 /// One company document, read.
 pub(crate) struct CompanyDocument {
@@ -29,12 +30,13 @@ pub(crate) struct CompanyDocument {
 /// A reference in a company document's text, as written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CompanyReference {
-    /// A name that is no file: an `@` reference without `.md`, or a See
-    /// Also entry's opening word without `.md`. It references something
-    /// only when it names a snippet or a domain.
+    /// A name that is no file: an `@` reference in the shape of a snippet
+    /// id, or a See Also entry's opening word without `.md`. It references
+    /// something only when it names a snippet or a domain.
     Name(String),
-    /// A file: an `@` reference ending in `.md`, a Markdown link's target,
-    /// or a See Also entry's opening path ending in `.md`.
+    /// A file: an `@` reference ending in `.md` or holding a `/` in no
+    /// snippet id's shape, a Markdown link's target, or a See Also entry's
+    /// opening path ending in `.md`.
     Path(String),
 }
 
@@ -127,8 +129,10 @@ fn is_path_char(ch: char) -> bool {
 }
 
 /// The `@` references of a line: an `@` not preceded by a word character,
-/// `@` or a backtick, followed by path characters; a trailing full stop
-/// ends the sentence, not the reference.
+/// `@` or a backtick, followed by path characters in a reference's shape —
+/// holding a `/` or ending in `.md`; a trailing full stop ends the
+/// sentence, not the reference. A bare `@word` mentions someone: it is
+/// prose.
 fn at_references(line: &str) -> Vec<CompanyReference> {
     let mut out = Vec::new();
     let mut previous: Option<char> = None;
@@ -144,14 +148,14 @@ fn at_references(line: &str) -> Vec<CompanyReference> {
             .find(|(_, c)| !is_path_char(*c))
             .map_or(rest, |(end, _)| &rest[..end])
             .trim_end_matches('.');
-        if run.is_empty() {
+        if !run.ends_with(".md") && !run.contains('/') {
             continue;
         }
         let written = format!("@{run}");
-        out.push(if run.ends_with(".md") {
-            CompanyReference::Path(written)
-        } else {
+        out.push(if !run.ends_with(".md") && SnippetId::parse(run).is_ok() {
             CompanyReference::Name(written)
+        } else {
+            CompanyReference::Path(written)
         });
     }
     out
@@ -254,13 +258,12 @@ mod tests {
     #[test]
     fn every_reference_form_in_a_company_documents_text_is_read() {
         let document = company_document(
-            "# Company\n\nSee @general/policy/commits and @general.\nRead [Outside](../secret.md#top) or <https://example.com>, [site](https://example.com).\nAsk @docs/people.md, not `@hidden` or a@b.\n\n[def]: docs/roles.md\n\n## See Also\n\n- general/policy/commits\n- `docs/teams.md` — the teams\n",
+            "# Company\n\nSee @general/policy/commits, not @maurice or @general.\nRead [Outside](../secret.md#top) or <https://example.com>, [site](https://example.com).\nAsk @docs/people.md, not `@hidden` or a@b.\n\n[def]: docs/roles.md\n\n## See Also\n\n- general/policy/commits\n- `docs/teams.md` — the teams\n",
         );
         assert_eq!(
             document.references,
             vec![
                 CompanyReference::Name("@general/policy/commits".to_owned()),
-                CompanyReference::Name("@general".to_owned()),
                 CompanyReference::Path("../secret.md".to_owned()),
                 CompanyReference::Path("@docs/people.md".to_owned()),
                 CompanyReference::Path("docs/roles.md".to_owned()),
