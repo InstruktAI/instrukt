@@ -30,7 +30,8 @@ visibility: 'public'
   a triaged known issue, add your occurrence to that work or file nothing.
   Where work in flight owns it, route it there. Where the repair is settled
   work you already hold authority for, make it in context and file nothing;
-  this question grants no authority you do not already hold.
+  this question grants no authority you do not already hold. A company's
+  agent never holds repair authority: for it the answer is always to report.
 - **A worker reports to the session that governs it.** When your procedure
   routes what you notice outside your job to a governing session, report the
   observation there; that session decides it and files
