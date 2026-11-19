@@ -118,6 +118,10 @@ recorded with as its `sender_name` and has no `sender` and no `sender_email`:
 it is delivered as it was admitted, and a tool call during its turn finds no
 login of the speaker's own. No identity or address is derived for it.
 
+Version 20 records when the post of each answer piece was begun
+(`conversation_answers.attempted_at`). Pieces stored before it have none: an
+outstanding one is posted as before, and a posted one keeps its `posted_at`.
+
 Persisted runtime requests and manual standing reservations enter domain code
 with a required captured title. Migration fills a missing or null title with
 the request's original key and preserves supplied titles. It covers unresolved
@@ -659,9 +663,14 @@ and `message`, the connector's identity of that message.
 | `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
-address, `turn` and `piece`. Columns: `text`, the piece's text; `posted_at`,
-when the connector accepted its post, `NULL` while outstanding; `failure`, the
-cause of its last failed post, `NULL` once posted.
+address, `turn` and `piece`. Columns: `text`, the piece's text;
+`attempted_at`, when its post was last begun, recorded before the connector can
+accept it, `NULL` before a first attempt; `posted_at`, when the connector
+accepted its post, `NULL` while outstanding; `failure`, the cause of its last
+failed post, `NULL` once posted. A piece with `attempted_at` and no `posted_at`
+may have been accepted; the conversation core looks for it at the connector
+before it is posted again
+(`project/instrukt/spec/feature/company/conversations`).
 
 **`conversation_refusals`** — the platform's own replies owed to a sender in a
 conversation (`project/instrukt/spec/feature/company/conversations`). Key: the

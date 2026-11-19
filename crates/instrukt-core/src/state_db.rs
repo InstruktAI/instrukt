@@ -395,6 +395,43 @@ mod tests {
     }
 
     #[test]
+    fn version_20_records_when_an_answer_piece_was_posted_and_keeps_stored_pieces() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(19) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 19).unwrap();
+        conn.execute_batch("INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at) VALUES('acme','slack','C1/1','turn-1',0,'On Friday.','2026-11-18T10:00:00Z');INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text) VALUES('acme','slack','C1/2','turn-2',0,'Ada reviews it.');").unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        // Stored pieces keep their state and record no attempt.
+        let kept: Vec<(String, Option<String>, Option<String>)> = conn
+            .prepare("SELECT conversation,posted_at,attempted_at FROM conversation_answers ORDER BY conversation")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            kept,
+            [
+                (
+                    "C1/1".to_owned(),
+                    Some("2026-11-18T10:00:00Z".to_owned()),
+                    None
+                ),
+                ("C1/2".to_owned(), None, None),
+            ]
+        );
+        conn.execute("UPDATE conversation_answers SET attempted_at='2026-11-18T10:01:00Z' WHERE conversation='C1/2'", []).unwrap();
+    }
+
+    #[test]
     fn version_19_adds_the_runners_own_state_and_keeps_the_relays() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(18) {

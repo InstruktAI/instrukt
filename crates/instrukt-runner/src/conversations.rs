@@ -1157,21 +1157,79 @@ fn harvest(
     Ok(())
 }
 
-/// Post the conversation's retained answer pieces in order. A failed piece
-/// keeps its cause, and the pieces after it wait.
+/// The answer pieces this process saw the connector accept whose acceptance
+/// it has not yet recorded. Such a piece is never posted again: only its
+/// record is retried, on every pass, until it is written.
+#[derive(Debug, Default)]
+pub struct Accepted(std::sync::Mutex<std::collections::BTreeSet<AcceptedPiece>>);
+
+/// One accepted piece: its conversation's address, its turn and its index.
+type AcceptedPiece = (String, String, String, String, i64);
+
+impl Accepted {
+    fn key(c: &Conversation, turn: &str, piece: i64) -> AcceptedPiece {
+        (
+            c.company.to_string(),
+            c.connector.clone(),
+            c.conversation.clone(),
+            turn.to_owned(),
+            piece,
+        )
+    }
+    fn holds(&self, c: &Conversation, turn: &str, piece: i64) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&Self::key(c, turn, piece))
+    }
+    fn keep(&self, c: &Conversation, turn: &str, piece: i64) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(Self::key(c, turn, piece));
+    }
+    fn release(&self, c: &Conversation, turn: &str, piece: i64) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&Self::key(c, turn, piece));
+    }
+}
+
+/// One outstanding answer piece: its turn, its index, its text and when its
+/// post was last begun.
+struct Pending {
+    turn: String,
+    piece: i64,
+    text: String,
+    attempted: bool,
+}
+
+/// Post the conversation's retained answer pieces in order, each once. A
+/// piece is recorded as being posted before its post is sent. One whose
+/// acceptance this process saw is never posted again; only its record is
+/// retried. One left being posted with no acceptance recorded is first
+/// looked for among the connector's own posts. A failed piece keeps its
+/// cause, and the pieces after it wait.
 fn post(
     admitted: &Admitted,
     state: &RunnerState,
     connectors: &dyn Connectors,
+    accepted: &Accepted,
     c: &Conversation,
 ) -> Result<(), ConversationError> {
     let pending = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT turn,piece,text FROM conversation_answers WHERE company=?1 AND connector=?2 AND conversation=?3 AND posted_at IS NULL ORDER BY rowid")
+                .prepare("SELECT turn,piece,text,attempted_at IS NOT NULL FROM conversation_answers WHERE company=?1 AND connector=?2 AND conversation=?3 AND posted_at IS NULL ORDER BY rowid")
                 .map_err(state::sql(path))?;
             q.query_map(params![c.company.as_str(), c.connector, c.conversation], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+                Ok(Pending {
+                    turn: r.get(0)?,
+                    piece: r.get(1)?,
+                    text: r.get(2)?,
+                    attempted: r.get(3)?,
+                })
             })
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
@@ -1186,35 +1244,114 @@ fn post(
     let connector = match connectors.open(admitted, &c.company, &c.connector) {
         Ok(connector) => connector,
         Err(error) => {
-            let (turn, piece, _) = &pending[0];
-            let cause = error.cause.clone();
-            state.write::<_, StateError>(|tx| {
-                tx.execute(
-                    "UPDATE conversation_answers SET failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
-                    params![c.company.as_str(), c.connector, c.conversation, turn, piece, cause],
-                )
-                .map_err(state::sql(&state::db_path(tx)))?;
-                Ok(())
-            })?;
+            piece_failed(state, c, &pending[0], &error.cause)?;
             return Err(error.into());
         }
     };
-    for (turn, piece, text) in pending {
-        let result = connector
-            .answer(&c.conversation, &text)
-            .map_err(|error| error.cause);
+    for piece in &pending {
+        if accepted.holds(c, &piece.turn, piece.piece) {
+            posted(state, c, piece)?;
+            accepted.release(c, &piece.turn, piece.piece);
+            continue;
+        }
+        if piece.attempted && landed(state, connector.as_ref(), c, piece)? {
+            posted(state, c, piece)?;
+            continue;
+        }
         state.write::<_, StateError>(|tx| {
             tx.execute(
-                "UPDATE conversation_answers SET posted_at=CASE WHEN ?6 IS NULL THEN ?7 END,failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
-                params![c.company.as_str(), c.connector, c.conversation, turn, piece, result.as_ref().err(), Timestamp::now().to_string()],
+                "UPDATE conversation_answers SET attempted_at=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+                params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, Timestamp::now().to_string()],
             )
             .map_err(state::sql(&state::db_path(tx)))?;
             Ok(())
         })?;
-        result.map_err(|error| {
-            ConversationError::Refused(format!("post failed and stays pending: {error}"))
-        })?;
+        if let Err(error) = connector.answer(&c.conversation, &piece.text) {
+            piece_failed(state, c, piece, &error.cause)?;
+            return Err(ConversationError::Refused(format!(
+                "post failed and stays pending: {}",
+                error.cause
+            )));
+        }
+        if let Err(error) = posted(state, c, piece) {
+            accepted.keep(c, &piece.turn, piece.piece);
+            return Err(error);
+        }
     }
+    Ok(())
+}
+
+/// Whether the post of `piece`, begun earlier with no acceptance recorded,
+/// landed: more of the connector's own posts in the conversation since its
+/// first addressed message carry its text than pieces with that text are
+/// recorded posted.
+fn landed(
+    state: &RunnerState,
+    connector: &dyn instrukt_connector::Connector,
+    c: &Conversation,
+    piece: &Pending,
+) -> Result<bool, ConversationError> {
+    let counted = state
+        .read(|conn, path| {
+            let first: Option<String> = conn
+                .query_row(
+                    "SELECT message FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 ORDER BY written_us, message LIMIT 1",
+                    params![c.company.as_str(), c.connector, c.conversation],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(state::sql(path))?;
+            let recorded: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM conversation_answers WHERE company=?1 AND connector=?2 AND conversation=?3 AND posted_at IS NOT NULL AND text=?4",
+                    params![c.company.as_str(), c.connector, c.conversation, piece.text],
+                    |r| r.get(0),
+                )
+                .map_err(state::sql(path))?;
+            Ok((first, recorded))
+        })?;
+    let Some((Some(first), recorded)) = counted else {
+        return Ok(false);
+    };
+    let own = match connector.own_posts(&c.conversation, &first) {
+        Ok(own) => own,
+        Err(error) => {
+            piece_failed(state, c, piece, &error.cause)?;
+            return Err(error.into());
+        }
+    };
+    let carried = own.iter().filter(|text| **text == piece.text).count();
+    Ok(i64::try_from(carried).unwrap_or(i64::MAX) > recorded)
+}
+
+/// Record that the connector accepted `piece`.
+fn posted(state: &RunnerState, c: &Conversation, piece: &Pending) -> Result<(), ConversationError> {
+    state.write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_answers SET posted_at=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+            params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, Timestamp::now().to_string()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// Keep `cause` as the last failure of `piece`.
+fn piece_failed(
+    state: &RunnerState,
+    c: &Conversation,
+    piece: &Pending,
+    cause: &str,
+) -> Result<(), ConversationError> {
+    state.write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_answers SET failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+            params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, cause],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -1227,6 +1364,7 @@ pub fn relay(
     source: &dyn ConversationSource,
     adapter: &dyn RuntimeAdapter,
     connectors: &dyn Connectors,
+    accepted: &Accepted,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
     let mut invocation = None;
@@ -1255,7 +1393,7 @@ pub fn relay(
                 }
             }
         }
-        if !answers(admitted, &state, source, connectors, &c)? {
+        if !answers(admitted, &state, source, connectors, accepted, &c)? {
             continue;
         }
         let Some(c) = reread(&state, &c)? else {
@@ -1288,7 +1426,7 @@ pub fn relay(
             && let Some(bound) = reread(&state, &c)?
             && bound.session.is_some()
         {
-            answers(admitted, &state, source, connectors, &bound)?;
+            answers(admitted, &state, source, connectors, accepted, &bound)?;
         }
     }
     Ok(())
@@ -1302,6 +1440,7 @@ fn answers(
     state: &RunnerState,
     source: &dyn ConversationSource,
     connectors: &dyn Connectors,
+    accepted: &Accepted,
     c: &Conversation,
 ) -> Result<bool, ConversationError> {
     // Answers are split to the connector's own limit, so reading them waits
@@ -1319,7 +1458,7 @@ fn answers(
         tracing::warn!(event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
         return Ok(false);
     }
-    if let Err(error) = post(admitted, state, connectors, c) {
+    if let Err(error) = post(admitted, state, connectors, accepted, c) {
         tracing::warn!(event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
     Ok(true)
