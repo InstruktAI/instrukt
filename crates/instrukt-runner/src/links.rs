@@ -114,12 +114,14 @@ pub fn open(
     home: &Home,
     source: &dyn ConversationSource,
     work: crate::assignments::WorkLookup,
+    company: crate::assignments::CompanyLookup,
     request: &Opening<'_>,
 ) -> Result<String, LinkError> {
     open_plan(
         home,
         source,
         work,
+        company,
         &OpeningPlan {
             pair: request,
             contribution: None,
@@ -134,6 +136,7 @@ fn open_plan(
     home: &Home,
     source: &dyn ConversationSource,
     work: crate::assignments::WorkLookup,
+    company: crate::assignments::CompanyLookup,
     plan: &OpeningPlan<'_>,
 ) -> Result<String, LinkError> {
     let request = plan.pair;
@@ -149,8 +152,8 @@ fn open_plan(
         ));
     }
     let agents = Agents::load(home)?;
-    let a_assignment = crate::assignments::resolve(home, request.a, work)?;
-    let b_assignment = crate::assignments::resolve(home, request.b, work)?;
+    let a_assignment = crate::assignments::resolve(home, request.a, work, company)?;
+    let b_assignment = crate::assignments::resolve(home, request.b, work, company)?;
     for (member, assignment) in [
         (request.a, a_assignment.as_ref()),
         (request.b, b_assignment.as_ref()),
