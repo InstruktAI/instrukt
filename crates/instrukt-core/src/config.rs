@@ -39,8 +39,8 @@ pub use _agents::{
 };
 
 pub use _admitted::{
-    AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSlack, Candidate, Current,
-    Offer, serve,
+    AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,
+    Current, DeclaredConnector, Offer, serve,
 };
 pub use _company::{CONNECTORS, DEFAULT_CONTEXT_MESSAGES, Member, Members, SlackConnector};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};

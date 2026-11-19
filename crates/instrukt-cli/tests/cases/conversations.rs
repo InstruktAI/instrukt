@@ -6,8 +6,8 @@
 use crate::common;
 use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
 use crate::fixtures::documented;
-use instrukt_runner::connectors::{SLACK, TURN_AWAY, WORKING};
-use instrukt_runner::conversations::{self, SLACK_MESSAGE_LIMIT};
+use instrukt_runner::conversations;
+use instrukt_runner::slack::{SLACK, SLACK_MESSAGE_LIMIT, TURN_AWAY, WORKING};
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// Where each post went: its channel and thread.

@@ -22,7 +22,7 @@ use super::_layer::{Layer, inspected, read};
 use super::_module::Module;
 use super::_secrets::SecretSnapshot;
 use super::_validate::{Given, findings_given};
-use super::{Agents, Configuration, SecretSource, SlackConnector};
+use super::{Agents, Configuration, SecretSource};
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 use crate::publication::PublishedRecord;
@@ -61,24 +61,38 @@ pub struct AdmittedCompany {
     pub home_config: Configuration,
     /// The company's home directory.
     pub dir: PathBuf,
-    /// Its declared Slack connector with the secrets it references resolved.
-    pub slack: Option<AdmittedSlack>,
+    /// The connectors it declared, as its document declares them.
+    pub connectors: Vec<DeclaredConnector>,
+    /// Each `${NAME}` reference its connectors make, resolved from its own
+    /// secrets file by the read admission validated.
+    pub secrets: AdmittedSecrets,
 }
 
-/// A declared Slack connector whose referenced secrets were present and
-/// nonblank when its generation was admitted.
-#[derive(Clone)]
-pub struct AdmittedSlack {
-    pub connector: SlackConnector,
-    pub app_token: String,
-    pub bot_token: String,
+/// One connector a company declared: the kind's key under `connectors` and
+/// the entry's fields as its document holds them, references unresolved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclaredConnector {
+    pub key: String,
+    pub entry: Value,
 }
 
-impl std::fmt::Debug for AdmittedSlack {
+/// The secrets a company's declared connectors reference, by `${NAME}`
+/// reference: present and nonblank when its generation was admitted.
+#[derive(Clone, Default)]
+pub struct AdmittedSecrets(std::collections::BTreeMap<String, String>);
+
+impl AdmittedSecrets {
+    /// The value admitted for `reference`, if the company's connectors make
+    /// that reference.
+    pub fn resolve(&self, reference: &str) -> Option<&str> {
+        self.0.get(reference).map(String::as_str)
+    }
+}
+
+impl std::fmt::Debug for AdmittedSecrets {
+    /// The references, never their values.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AdmittedSlack")
-            .field("connector", &self.connector)
-            .finish_non_exhaustive()
+        f.debug_set().entries(self.0.keys()).finish()
     }
 }
 
@@ -359,31 +373,36 @@ fn admit_company(
     )
     .map_err(|error| vec![unreadable(document.clone(), &error)])?
     .pinned(agents);
-    let slack = match config.slack_connector() {
-        Ok(Some(connector)) => {
-            match (
-                secrets.resolve(&connector.app_token),
-                secrets.resolve(&connector.bot_token),
-            ) {
-                (Ok(app_token), Ok(bot_token)) => Some(AdmittedSlack {
-                    connector,
-                    app_token,
-                    bot_token,
-                }),
-                (Err(error), _) | (_, Err(error)) => {
-                    return Err(vec![unreadable(document, &error)]);
+    // Each connector as declared, and each secret reference its entry
+    // makes, resolved from the same read of the secrets file validation used.
+    let mut connectors = Vec::new();
+    let mut resolved = std::collections::BTreeMap::new();
+    if let Some(declared) = value.get("connectors").and_then(Value::as_mapping) {
+        for (key, entry) in declared {
+            let Some(key) = key.as_str() else {
+                continue;
+            };
+            for field in entry.as_mapping().into_iter().flat_map(|e| e.values()) {
+                if let Some(reference) = field.as_str().filter(|t| super::is_secret_reference(t)) {
+                    let secret = secrets
+                        .resolve(reference)
+                        .map_err(|error| vec![unreadable(document.clone(), &error)])?;
+                    resolved.insert(reference.to_owned(), secret);
                 }
             }
+            connectors.push(DeclaredConnector {
+                key: key.to_owned(),
+                entry: entry.clone(),
+            });
         }
-        Ok(None) => None,
-        Err(error) => return Err(vec![unreadable(document, &error)]),
-    };
+    }
     Ok(Some(AdmittedCompany {
         name: name.clone(),
         config,
         home_config,
         dir,
-        slack,
+        connectors,
+        secrets: AdmittedSecrets(resolved),
     }))
 }
 

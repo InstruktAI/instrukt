@@ -322,15 +322,25 @@ pub fn run(
     // the intake. Both report their unexpected end to this loop at once.
     let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
     let demand = !crate::conversations::admitted_demand(&current.get()).is_empty();
-    let slack = demand
-        .then(|| crate::connectors::SlackEndpoint::from_env(cx.env, Arc::clone(&clock)))
+    let connectors = demand
+        .then(|| {
+            let lookup = |name: &str| cx.env.get(name).map(str::to_owned);
+            crate::slack::SlackEndpoint::from_lookup(&lookup, Arc::clone(&clock)).map(|endpoint| {
+                Arc::new(crate::connector_host::Directory::new(
+                    vec![Box::new(crate::slack::SlackKind::new(endpoint))],
+                    Arc::clone(&clock),
+                )) as Arc<dyn crate::connector_host::Connectors>
+            })
+        })
         .transpose()
         .map_err(|e| RunnerError::Conversations(e.to_string()))?;
     let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
-    let destinations = slack.as_ref().map(|slack| crate::links::Destinations {
-        slack: slack.clone(),
-        arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
-    });
+    let destinations = connectors
+        .as_ref()
+        .map(|connectors| crate::links::Destinations {
+            connectors: Arc::clone(connectors),
+            arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
+        });
     // The relay retries T3 inside its own thread; it is started again here
     // only when its thread ended.
     let supervise_relay = |relay: &mut Option<crate::links::Worker>| {
@@ -356,12 +366,12 @@ pub fn run(
     };
     let mut relay = None;
     supervise_relay(&mut relay);
-    let mut connections = match &slack {
-        Some(slack) => Some(
-            crate::connectors::Connections::start(
+    let mut connections = match &connectors {
+        Some(connectors) => Some(
+            crate::connector_host::Connections::start(
                 cx.home,
                 &current,
-                slack,
+                Arc::clone(connectors),
                 arrive,
                 supervise.clone(),
             )

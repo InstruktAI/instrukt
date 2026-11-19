@@ -30,7 +30,7 @@
 pub mod agents;
 pub mod anomaly;
 pub mod ci;
-pub mod connectors;
+pub mod connector_host;
 pub mod consumers;
 pub mod conversations;
 pub mod dispatch;
@@ -46,6 +46,7 @@ pub mod process;
 pub mod runner;
 pub mod runtime;
 pub mod sessions;
+pub mod slack;
 pub mod sources;
 pub mod standing;
 pub mod state;

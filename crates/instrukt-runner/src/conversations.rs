@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 
 use instrukt_connector::{Accompanying, Incoming, Sender};
-use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, ConfigError, SlackConnector};
+use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, CONNECTORS, ConfigError};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
 use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
@@ -22,17 +22,13 @@ use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::connectors::{SlackApi, SlackEndpoint};
+use crate::connector_host::Connectors;
 use crate::envelopes::{self, ContextEntry, Control, Span};
 use crate::keyed::{self, RuntimeInvocation};
 use crate::runtime::conversations::{AuthorKind, ConversationSource, Scope, SourcePosition};
 use crate::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeStart};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::{self, RunnerState, StateError};
-
-/// Slack's limit for an answer posted as Markdown (`markdown_text`), in
-/// characters; longer answers are split.
-pub const SLACK_MESSAGE_LIMIT: usize = 12_000;
 
 /// A connector's connection state, as `instrukt events status` shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,8 +111,8 @@ pub enum ConversationError {
     Lock(#[from] instrukt_core::fsx::FsError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-    #[error(transparent)]
-    Slack(#[from] crate::connectors::SlackError),
+    #[error("{}", .0.cause)]
+    Connector(#[from] instrukt_connector::ConnectorError),
     #[error(transparent)]
     Index(#[from] instrukt_core::index::IndexError),
     #[error(
@@ -434,21 +430,26 @@ pub struct Refusal {
     pub sender: String,
 }
 
-pub fn unsent_refusals(
+/// The refusals of one company's connector, oldest first, each with whether
+/// its reply was posted.
+pub fn refusals(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
-) -> Result<Vec<Refusal>, ConversationError> {
+) -> Result<Vec<(Refusal, bool)>, ConversationError> {
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT conversation,sender FROM conversation_refusals WHERE company=?1 AND connector=?2 AND replied_at IS NULL ORDER BY rowid")
+                .prepare("SELECT conversation,sender,replied_at IS NOT NULL FROM conversation_refusals WHERE company=?1 AND connector=?2 ORDER BY rowid")
                 .map_err(state::sql(path))?;
             q.query_map(params![company.as_str(), connector], |r| {
-                Ok(Refusal {
-                    conversation: r.get(0)?,
-                    sender: r.get(1)?,
-                })
+                Ok((
+                    Refusal {
+                        conversation: r.get(0)?,
+                        sender: r.get(1)?,
+                    },
+                    r.get(2)?,
+                ))
             })
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
@@ -481,11 +482,11 @@ pub fn refusal_posted(
 /// The company homes whose declared connector `instrukt run` hosts: every
 /// valid company home declaring one. Declaring a connector is what gives a
 /// company conversations.
-pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, SlackConnector)>, ConversationError> {
+pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, String)>, ConversationError> {
     let mut hosted = Vec::new();
     for (name, config) in instrukt_core::config::company_homes(home)? {
         match config.and_then(|config| config.slack_connector()) {
-            Ok(Some(slack)) => hosted.push((name, slack)),
+            Ok(Some(_)) => hosted.push((name, CONNECTORS[0].to_owned())),
             Ok(None) => {}
             Err(ConfigError::NoLayer { .. }) => {}
             Err(error) => {
@@ -496,16 +497,17 @@ pub fn demand(home: &Home) -> Result<Vec<(ProjectSlug, SlackConnector)>, Convers
     Ok(hosted)
 }
 
-/// The admitted company homes whose declared connector the runner hosts.
-pub fn admitted_demand(admitted: &Admitted) -> Vec<(ProjectSlug, SlackConnector)> {
+/// The connectors the runner hosts: each admitted company's declared
+/// connectors, by key.
+pub fn admitted_demand(admitted: &Admitted) -> Vec<(ProjectSlug, String)> {
     admitted
         .companies()
         .iter()
-        .filter_map(|company| {
+        .flat_map(|company| {
             company
-                .slack
-                .as_ref()
-                .map(|slack| (company.name.clone(), slack.connector.clone()))
+                .connectors
+                .iter()
+                .map(|declared| (company.name.clone(), declared.key.clone()))
         })
         .collect()
 }
@@ -1039,6 +1041,7 @@ fn harvest(
     state: &RunnerState,
     source: &dyn ConversationSource,
     c: &Conversation,
+    message_chars: usize,
 ) -> Result<(), ConversationError> {
     let (Some(session), Some(mut position)) = (c.session.clone(), c.position.clone()) else {
         return Ok(());
@@ -1125,7 +1128,7 @@ fn harvest(
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
-                for (piece, text) in split(output, SLACK_MESSAGE_LIMIT).iter().enumerate() {
+                for (piece, text) in split(output, message_chars).iter().enumerate() {
                     tx.execute(
                         "INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",
                         params![c.company.as_str(), c.connector, c.conversation, turn, i64::try_from(piece).unwrap_or(i64::MAX), text],
@@ -1159,7 +1162,7 @@ fn harvest(
 fn post(
     admitted: &Admitted,
     state: &RunnerState,
-    endpoint: &SlackEndpoint,
+    connectors: &dyn Connectors,
     c: &Conversation,
 ) -> Result<(), ConversationError> {
     let pending = state
@@ -1180,11 +1183,11 @@ fn post(
     }
     // A failure before any request is the cause of the first outstanding
     // piece, kept until that same post succeeds.
-    let api = match SlackApi::admitted(admitted, &c.company, endpoint) {
-        Ok(api) => api,
+    let connector = match connectors.open(admitted, &c.company, &c.connector) {
+        Ok(connector) => connector,
         Err(error) => {
             let (turn, piece, _) = &pending[0];
-            let cause = error.to_string();
+            let cause = error.cause.clone();
             state.write::<_, StateError>(|tx| {
                 tx.execute(
                     "UPDATE conversation_answers SET failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
@@ -1197,9 +1200,9 @@ fn post(
         }
     };
     for (turn, piece, text) in pending {
-        let result = api
+        let result = connector
             .answer(&c.conversation, &text)
-            .map_err(|e| e.to_string());
+            .map_err(|error| error.cause);
         state.write::<_, StateError>(|tx| {
             tx.execute(
                 "UPDATE conversation_answers SET posted_at=CASE WHEN ?6 IS NULL THEN ?7 END,failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
@@ -1223,7 +1226,7 @@ pub fn relay(
     admitted: &Admitted,
     source: &dyn ConversationSource,
     adapter: &dyn RuntimeAdapter,
-    endpoint: &SlackEndpoint,
+    connectors: &dyn Connectors,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
     let mut invocation = None;
@@ -1240,7 +1243,7 @@ pub fn relay(
                 .filter(|m| m.stage == Stage::Pending && m.attempted)
             {
                 if let Err(error) =
-                    reconcile(adapter, &state, &c, session, &message, endpoint.now())
+                    reconcile(adapter, &state, &c, session, &message, connectors.now())
                 {
                     let cause = match &error {
                         ConversationError::Sessions(native) => adapter
@@ -1252,7 +1255,7 @@ pub fn relay(
                 }
             }
         }
-        if !answers(admitted, &state, source, endpoint, &c)? {
+        if !answers(admitted, &state, source, connectors, &c)? {
             continue;
         }
         let Some(c) = reread(&state, &c)? else {
@@ -1275,7 +1278,7 @@ pub fn relay(
                 &c,
                 // Restrictions are judged on the runner's clock, as dispatch
                 // and `agents availability` judge them.
-                endpoint.now(),
+                connectors.now(),
             );
         }
         // A session bound just now may be one a recovery found with its
@@ -1285,7 +1288,7 @@ pub fn relay(
             && let Some(bound) = reread(&state, &c)?
             && bound.session.is_some()
         {
-            answers(admitted, &state, source, endpoint, &bound)?;
+            answers(admitted, &state, source, connectors, &bound)?;
         }
     }
     Ok(())
@@ -1298,10 +1301,15 @@ fn answers(
     admitted: &Admitted,
     state: &RunnerState,
     source: &dyn ConversationSource,
-    endpoint: &SlackEndpoint,
+    connectors: &dyn Connectors,
     c: &Conversation,
 ) -> Result<bool, ConversationError> {
-    let read = harvest(state, source, c);
+    // Answers are split to the connector's own limit, so reading them waits
+    // until the connector can be opened.
+    let read = connectors
+        .open(admitted, &c.company, &c.connector)
+        .map_err(ConversationError::from)
+        .and_then(|connector| harvest(state, source, c, connector.limits().message_chars));
     set_failure(
         state,
         c,
@@ -1311,7 +1319,7 @@ fn answers(
         tracing::warn!(event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
         return Ok(false);
     }
-    if let Err(error) = post(admitted, state, endpoint, c) {
+    if let Err(error) = post(admitted, state, connectors, c) {
         tracing::warn!(event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
     Ok(true)
@@ -1428,14 +1436,14 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
             })
         })
         .collect::<Result<Vec<_>, ConversationError>>()?;
-    for (company, _) in demand(home)? {
-        let listed = connectors.iter().any(|known| {
-            known.company == company.as_str() && known.connector == crate::connectors::SLACK
-        });
+    for (company, key) in demand(home)? {
+        let listed = connectors
+            .iter()
+            .any(|known| known.company == company.as_str() && known.connector == key);
         if !listed {
             connectors.push(ConnectorStatus {
                 company: company.to_string(),
-                connector: crate::connectors::SLACK.to_owned(),
+                connector: key,
                 state: ConnectionState::Stopped,
                 failure: None,
             });

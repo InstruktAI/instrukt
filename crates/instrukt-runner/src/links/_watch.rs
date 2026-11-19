@@ -11,11 +11,11 @@ pub(crate) struct Worker {
     failure: Option<LinkError>,
     home: Home,
 }
-/// The connector destination the relay serves beside links: its endpoint,
-/// the intake's wake-ups, and the run loop's supervision notice.
+/// The connector destination the relay serves beside links: the connectors
+/// it posts through and the intake's wake-ups.
 #[derive(Clone)]
 pub(crate) struct Destinations {
-    pub(crate) slack: crate::connectors::SlackEndpoint,
+    pub(crate) connectors: std::sync::Arc<dyn crate::connector_host::Connectors>,
     pub(crate) arrivals: std::sync::Arc<std::sync::Mutex<mpsc::Receiver<()>>>,
 }
 /// Wakes the run loop's supervision when the relay ends, whether it
@@ -143,7 +143,7 @@ fn serve(
                 &current.get(),
                 source.as_ref(),
                 adapter.as_ref(),
-                &destinations.slack,
+                destinations.connectors.as_ref(),
             )
         {
             tracing::warn!(event = "conversation_relay_failed", error = %error);
