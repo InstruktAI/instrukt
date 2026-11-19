@@ -137,7 +137,9 @@ A company's agent reports defects of the system it works through
 (`general/policy/system-defects`) into the project that owns the defect on its
 computer, which its own assignment never binds; `report` therefore reaches any
 project at `any`. It is the company agent's only work-record write: it holds no
-`todo-write`, so it creates, changes and withdraws no other todo.
+`todo-write`, so it creates, changes and withdraws no other todo. What a
+report files is the work context's
+(`project/instrukt/spec/feature/work/todos`, Bug reports).
 
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
@@ -217,15 +219,13 @@ When the developer declares and configures a focused handler role
 Then new assignments enforce that role's grants
 ```
 
-### UC-RCAP3: A company's agent reports a defect and changes no other work
+### UC-RCAP3: A company's agent may report defects and change no other work
 
 ```gherkin
-Given a company's agent in a conversation has met a defect of instrukt owned by a project on its computer
+Given a company's agent in a conversation
 When it reads what it may do
-Then reporting a defect and reading which defects are already reported are among its actions
+Then reporting a defect into any project on its computer and reading which defects are already reported are among its actions
 And creating, changing or withdrawing any other work is not
-When it reports the defect, confirming the pre-filing questions were faced
-Then the owning project holds the new bug
 ```
 
 ## Known caveats

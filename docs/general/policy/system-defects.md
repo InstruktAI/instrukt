@@ -16,10 +16,10 @@ visibility: 'public'
   person it belongs to.
 - **A broken contract with an occurrence in hand goes through the front
   door.** Run `instrukt bugs report '<description>'`. It files nothing and
-  prints the questions to face first: bug or change, evidence, duplication,
-  ordering, owning project. Answer each against the sources it names; file
-  with `--approved` only once all are faced, into the project that owns the
-  defect on this computer. An occurrence is an address a reader can open that
+  prints the questions to face first: bug or change, validity, fix in context
+  or file, evidence, duplication, ordering, owning project. Answer each
+  against the sources it names; file with `--approved` only once all are
+  faced, into the project that owns the defect on this computer. An occurrence is an address a reader can open that
   shows the behaviour in real use: a log record, a command's output, a
   delivered message, a session transcript (`sdlc/concept/defect-evidence`).
   Without one, the behaviour stays an observation in your session and nothing
@@ -28,7 +28,9 @@ visibility: 'public'
   otherwise, it is not a bug: file a change only when the behaviour is wanted,
   and otherwise nothing. Where the defect is already reported, being fixed or
   a triaged known issue, add your occurrence to that work or file nothing.
-  Where work in flight owns it, route it there.
+  Where work in flight owns it, route it there. Where the repair is settled
+  work you already hold authority for, make it in context and file nothing;
+  this question grants no authority you do not already hold.
 - **A worker reports to the session that governs it.** When your procedure
   routes what you notice outside your job to a governing session, report the
   observation there; that session decides it and files
