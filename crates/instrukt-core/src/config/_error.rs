@@ -61,6 +61,9 @@ pub enum FindingKind {
     /// `modules.events` is on while the event transport has no
     /// `redis.cluster.url`.
     EventsNeedTransport,
+    /// A company home's local-only material that its repository tracks or
+    /// does not ignore.
+    LeavesTheComputer,
 }
 
 /// The findings that refused a write, one per line.

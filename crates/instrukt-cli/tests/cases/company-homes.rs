@@ -244,3 +244,46 @@ fn members_are_listed_with_their_addresses_and_logins_as_references_and_a_shared
         String::from_utf8_lossy(&refused.get_output().stderr).replace(&home, "[INSTRUKT_HOME]")
     );
 }
+
+// spec: project/instrukt/spec/feature/configuration/company-homes UC-CH4
+#[test]
+fn a_companys_secrets_stay_out_of_its_repository() {
+    let env = TestEnv::new();
+    company(&env, "acme", None);
+    secret(&env, "acme", "ERP_TOKEN", "erp-token-value");
+    let dir = env.instrukt_home().join("companies/acme");
+    // A home set up before its ignore lines were written: an existing
+    // settings document in a git repository whose .gitignore holds only the
+    // operator's own line.
+    std::fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+    std::fs::create_dir_all(dir.join("projects/erp")).unwrap();
+    std::fs::write(dir.join("projects/erp/README.md"), "a checkout\n").unwrap();
+    std::fs::create_dir_all(dir.join(".instrukt")).unwrap();
+    std::fs::write(dir.join(".instrukt/state"), "local\n").unwrap();
+    std::fs::write(dir.join("AGENTS.master.md"), "# Acme\n").unwrap();
+    env.git(&dir, ["init", "--quiet", "--initial-branch=main"]);
+    env.run(&env.path(""), ["config", "init", "--company", "acme"])
+        .success();
+    insta::assert_snapshot!(std::fs::read_to_string(dir.join(".gitignore")).unwrap(), @r"
+    *.log
+    /instrukt.yaml
+    /secrets.env
+    /projects/
+    /.instrukt/
+    ");
+    env.git(&dir, ["add", "-A"]);
+    insta::assert_snapshot!(env.git(&dir, ["diff", "--cached", "--name-only"]), @r"
+    .gitignore
+    AGENTS.master.md
+    ");
+    // The secrets file tracked anyway: validating the company names it.
+    env.git(&dir, ["add", "-f", "secrets.env"]);
+    let validated = env
+        .run(&env.path(""), ["config", "validate", "--company", "acme"])
+        .failure();
+    let base = env.path("").display().to_string();
+    insta::assert_snapshot!(
+        stdout(&validated).replace(base.trim_end_matches('/'), "[TMP]"),
+        @"[TMP]/home/.instrukt/companies/acme/secrets.env: repository: the home's repository tracks it; it stays on this computer, so untrack it with `git rm -r --cached` and commit"
+    );
+}

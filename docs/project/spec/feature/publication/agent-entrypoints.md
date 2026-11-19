@@ -221,7 +221,14 @@ the home and leaves any other there as it is.
   a reference in their text, to a snippet or a domain — `general`, `sdlc` or
   any other — or to a file outside the home's `docs/` folder is a finding
   naming the document and the reference; so is a required read whose file
-  does not exist. So are `@config`, `@exec` and `@include`.
+  does not exist, or that reaches its file through a symbolic link, the
+  file's own or a folder's above it, `docs/` included; so are required reads
+  that form a cycle, named by the documents in it. A reference in the text
+  is an `@` reference in a reference's shape — holding a `/` or ending in
+  `.md` — a Markdown link to a file, or a See Also entry; one naming a
+  company document stays in the text, and a bare `@word` mentions someone
+  and is prose. `@config`, `@exec` and `@include` are findings too, wherever
+  they stand, the required reads included.
   `instrukt config validate --company <name>` and `instrukt docs render` in
   the home report them, and a home with a finding is not rendered.
 - **Who renders it.** The `pre-commit` section where it is installed in the
