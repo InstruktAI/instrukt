@@ -318,7 +318,17 @@ fn a_policy_mapped_to_one_runtime_reaches_only_that_runtime() {
 fn a_global_file_keeping_a_reference_is_written_and_named() {
     let env = TestEnv::new();
     let home = env.home();
-    claude_configured(&env);
+    // Two Claude instances, each in a home of its own.
+    let second = env.path("claude-second");
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        vec![
+            common::t3_readiness::provider("claudeAgent", "claudeAgent", true),
+            common::t3_readiness::provider("claude-second", "claudeAgent", true),
+        ],
+        serde_json::json!({"claude-second": {"driver":"claudeAgent","config":{"homePath":second}}}),
+    );
     // Another project publishes `ops`; its published snippet then reads as
     // an earlier release left it, with a visible reference validation
     // refuses today.
@@ -559,17 +569,45 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
     );
     insta::assert_snapshot!("configured_settings_left", settings);
 
-    // 6. A disabled instance keeps its file and its link.
+    // 6. An instance disabled in its settings keeps its file and its link,
+    // through every later sync.
     let shared = a.join("AGENTS.md");
     let before = std::fs::read(&shared).unwrap();
     providers
         .iter_mut()
         .filter(|p| p["instanceId"] == "codex-overlay")
         .for_each(|p| p["enabled"] = json!(false));
+    instances["codex-overlay"]["enabled"] = json!(false);
     configure(&env, providers.clone(), instances.clone());
     sync("disabled");
     assert_eq!(std::fs::read(&shared).unwrap(), before);
     assert_eq!(std::fs::read_link(b.join("AGENTS.md")).unwrap(), shared);
+
+    // Instances naming a home relative to T3's own working directory, which
+    // T3 does not report: nothing is written for them, and nothing under the
+    // repository the sync runs in.
+    providers.extend([
+        provider("codex-relative", "codex", true),
+        provider("codex-dot", "codex", true),
+    ]);
+    instances["codex-relative"] =
+        json!({"driver":"codex","config":{"homePath":"contract-codex-shared"}});
+    instances["codex-dot"] = json!({"driver":"codex","config":{"homePath":"."}});
+    configure(&env, providers.clone(), instances.clone());
+    let relative = sync("relative homes");
+    // Only the editor schemas every sync writes stand in the repository.
+    assert_eq!(
+        platform.git([
+            "status",
+            "--porcelain",
+            "--ignored",
+            "--",
+            ".",
+            ":!.instrukt"
+        ]),
+        ""
+    );
+    insta::assert_snapshot!("configured_relative_homes", relative);
 
     // 7. The doctrine changes while T3 cannot be asked: the rest is
     // published, every global file stays as it was, and the sync says why.
@@ -614,6 +652,10 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
         "configured_caught_up",
         files_at(&env, &[&codex, &pi, &claude])
     );
+    // The disabled instance's file still holds the doctrine before the
+    // change, and its link still points at it.
+    assert_eq!(std::fs::read(&shared).unwrap(), before);
+    assert_eq!(std::fs::read_link(b.join("AGENTS.md")).unwrap(), shared);
 }
 
 /// A test machine whose `PATH` holds the built `instrukt`, as an installed

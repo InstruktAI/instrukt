@@ -4,8 +4,10 @@ expression: "stdout(&env, &synced).replace(&platform.head(), \"[SHA]\")"
 ---
 published platform at [SHA]
 [TMP]/home/.claude/CLAUDE.md (claude: claudeAgent): written
+[TMP]/claude-second/CLAUDE.md (claude: claude-second): written
 notice: instance `claudeAgent` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
 [TMP]/home/.claude/CLAUDE.md: keeps @notes/house.md for an agent program to resolve
+[TMP]/claude-second/CLAUDE.md: keeps @notes/house.md for an agent program to resolve
 .instrukt/schemas/general-index.schema.json: schema written
 .instrukt/schemas/domain-index.schema.json: schema written
 .instrukt/schemas/project-index.schema.json: schema written

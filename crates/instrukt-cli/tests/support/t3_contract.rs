@@ -658,8 +658,31 @@ pub fn overlay_links(root: &Path) -> Result<Value> {
             "T3 still refused the overlay instance after the sync linked it"
         );
     }
+    // A home named relative to T3's own working directory, which T3 does
+    // not report: the real sync names the instance and writes nothing for
+    // it, least of all under the repository it runs in.
+    {
+        let _server = Server::start(root)?;
+        let mut token = Token::scoped(&["providers:manage"])?;
+        rpc(
+            &token.secret,
+            "server.updateSettings",
+            json!({"patch":{},"providerInstanceMutation":{"operation":"create","instanceId":"contract-relative","instance":{"driver":"codex","enabled":true,"config":{"homePath":"contract-codex-relative"}}}}),
+        )?;
+        token.revoke()?;
+        let mut synced = String::new();
+        common::wait_until("the relative home named by the sync", BOUND, || {
+            synced = sync_docs_owner(root).unwrap_or_default();
+            synced.contains("`contract-relative`")
+        });
+        let owner = root.join("docs-owner");
+        ensure!(
+            !owner.join("AGENTS.md").exists() && !owner.join("contract-codex-relative").exists(),
+            "the sync wrote a relative home under the repository it runs in"
+        );
+    }
     Ok(
-        json!({"link_made":true,"created_over_link":true,"control_refused":true,"repaired_by_sync":true}),
+        json!({"link_made":true,"created_over_link":true,"control_refused":true,"repaired_by_sync":true,"relative_home_written_nowhere":true}),
     )
 }
 

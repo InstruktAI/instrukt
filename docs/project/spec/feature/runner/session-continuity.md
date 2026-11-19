@@ -428,7 +428,12 @@ each enabled provider instance in the response's server settings, its driver,
 for an ACP-registry instance the registry agent it names, and the home it
 reports: the home its settings name, otherwise the runtime's home variable in
 its instance environment. An instance naming neither reports no home; a home
-T3 takes from its own process environment is not in the response. An
+T3 takes from its own process environment is not in the response. A home or
+overlay folder its settings name by a relative path is not known either: T3
+resolves it against its own process working directory, which the response
+does not report (its `cwd` is the workspace it serves), so such an instance
+is reported with that path as unknown, with no home and no folder, and
+nothing is guessed. An
 instance T3 failed to create is reported disabled in the provider snapshot;
 its settings still decide whether it is configured, so publication can repair
 what stopped its creation. A default instance T3 runs without a settings

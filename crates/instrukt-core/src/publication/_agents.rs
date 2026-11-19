@@ -140,6 +140,10 @@ pub(super) struct Targets {
     /// `(instance, runtime, default home)` of each instance that reported
     /// no home.
     pub defaulted: Vec<(String, &'static str, PathBuf)>,
+    /// `(instance, runtime, path)` of each instance whose home cannot be
+    /// known: one named relative to the runtime's own working directory.
+    /// Nothing is written for it, never relative to publication's own.
+    pub unknown: Vec<(String, &'static str, PathBuf)>,
 }
 
 /// Where `instances`, as the selected runtime reported them, read, for a
@@ -152,6 +156,21 @@ pub(super) fn targets(user_home: &Path, instances: &[ConfiguredInstance]) -> Tar
         let Some(destination) = destination_of(&instance.runtime) else {
             continue;
         };
+        // Only an absolute home or link folder is ever written to.
+        let relative = instance.unknown_home.clone().or_else(|| {
+            instance
+                .home
+                .iter()
+                .chain(&instance.link_folders)
+                .find(|path| path.is_relative())
+                .cloned()
+        });
+        if let Some(path) = relative {
+            targets
+                .unknown
+                .push((instance.instance.to_string(), destination.cli.name(), path));
+            continue;
+        }
         let home = match &instance.home {
             Some(home) => home.clone(),
             None => {

@@ -180,6 +180,14 @@ pub enum SyncFinding {
         runtime: &'static str,
         home: PathBuf,
     },
+    /// An enabled instance whose home cannot be known: its settings name it
+    /// relative to the runtime's own working directory, which the runtime
+    /// does not report. Nothing is written for it.
+    HomeUnknown {
+        instance: String,
+        runtime: &'static str,
+        path: PathBuf,
+    },
     /// The selected runtime could not be asked which agent runtimes are
     /// configured: no global agent file was written in this sync.
     RuntimeUnreachable { runtime: String, cause: String },
@@ -664,24 +672,39 @@ fn global_files(
                 home: home.clone(),
             }
         }));
+    plan.findings
+        .extend(
+            targets
+                .unknown
+                .iter()
+                .map(|(instance, runtime, path)| SyncFinding::HomeUnknown {
+                    instance: instance.clone(),
+                    runtime,
+                    path: path.clone(),
+                }),
+        );
+    // One rendering per runtime, with the references it keeps: every file
+    // written from it is named with them.
     let mut rendered = BTreeMap::new();
     for file in &targets.files {
         let runtime = file.destination;
-        let text =
-            match rendered.get(&runtime.cli) {
-                Some(text) => text,
-                None => {
-                    let global = renderer.global_file(runtime.cli)?;
-                    plan.findings
-                        .extend(global.references.iter().map(|reference| {
-                            SyncFinding::ReferenceKept {
-                                path: file.path(),
-                                reference: reference.clone(),
-                            }
-                        }));
-                    rendered.entry(runtime.cli).or_insert(global.text)
-                }
-            };
+        let global = match rendered.entry(runtime.cli) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(renderer.global_file(runtime.cli)?)
+            }
+        };
+        plan.findings
+            .extend(
+                global
+                    .references
+                    .iter()
+                    .map(|reference| SyncFinding::ReferenceKept {
+                        path: file.path(),
+                        reference: reference.clone(),
+                    }),
+            );
+        let text = &global.text;
         plan.global.push(GlobalWrite {
             at: destination(&file.home, Path::new(runtime.file))?,
             path: file.path(),

@@ -284,7 +284,10 @@ publishes. They are the computer's own, never committed anywhere.
   file in the runtime vendor's default home, and the sync's output names
   that instance and says its home was not reported. Instances that share a
   home share one file; an instance with a home of its own receives its file
-  there.
+  there. An instance whose home the runtime names relative to its own working
+  directory, which it does not report, has no known home: the sync names it
+  and writes no file and no link for it, never resolving such a path against
+  its own working directory.
 - **What the sync reports.** Every sync that writes global files names in
   its output each destination it wrote or found current, with the runtime
   and the instances it serves, and each link it ensured, beside the notices

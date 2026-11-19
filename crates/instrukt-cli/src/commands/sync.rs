@@ -157,6 +157,14 @@ fn global_lines(
                 "notice: instance `{instance}` ({runtime}) reported no home; its file is written in the default home {}",
                 home.display()
             ),
+            SyncFinding::HomeUnknown {
+                instance,
+                runtime,
+                path,
+            } => format!(
+                "notice: instance `{instance}` ({runtime}) names `{}` relative to its runtime's own working directory, which the runtime does not report; no file is written for it until its home is absolute",
+                path.display()
+            ),
             SyncFinding::RuntimeUnreachable { runtime, cause } => format!(
                 "notice: runtime `{runtime}` could not be asked which agent runtimes are configured ({cause}); no global agent file was written, and the next sync writes them"
             ),

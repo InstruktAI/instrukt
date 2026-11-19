@@ -731,12 +731,25 @@ fn configured_instances(source: Snapshot, user_home: &Path) -> Vec<ConfiguredIns
                 "acpRegistry" => registry_agent = read.text("agentId").map(str::to_owned),
                 _ => {}
             }
+            // T3 resolves a relative home against its own process working
+            // directory, which it does not report (`ServerConfig.cwd` is its
+            // workspace): such a home cannot be known, and nothing is guessed.
+            let unknown_home = home
+                .iter()
+                .chain(&link_folders)
+                .find(|path| path.is_relative())
+                .cloned();
+            if unknown_home.is_some() {
+                home = None;
+                link_folders.clear();
+            }
             Some(ConfiguredInstance {
                 instance: provider.instance_id,
                 runtime,
                 registry_agent,
                 home,
                 link_folders,
+                unknown_home,
             })
         })
         .collect()
@@ -895,6 +908,7 @@ mod tests {
             registry_agent: registry_agent.map(str::to_owned),
             home: home.map(PathBuf::from),
             link_folders: link_folders.iter().map(PathBuf::from).collect(),
+            unknown_home: None,
         };
         assert_eq!(
             instances,
@@ -926,6 +940,43 @@ mod tests {
                     Some("/srv/t3/codex"),
                     &["/srv/t3/codex-auth"],
                 ),
+            ]
+        );
+    }
+
+    /// T3 resolves a relative home against its own process working
+    /// directory, which it does not report: such an instance's home is not
+    /// known, and none of its paths is reported for publication to write.
+    #[test]
+    fn a_home_named_relative_to_t3s_own_working_directory_is_not_known() {
+        let value = json!({
+            "providers": [
+                provider("codex-relative", "codex", true),
+                provider("codex-dot", "codex", true),
+                provider("codex-shadow", "codex", true),
+            ],
+            "settings": {"providerInstances": {
+                "codex-relative": {"driver":"codex","config":{"homePath":"contract-codex-shared"}},
+                "codex-dot": {"driver":"codex","config":{"homePath":"."}},
+                "codex-shadow": {"driver":"codex","config":{
+                    "homePath":"/srv/codex","shadowHomePath":"overlay"}},
+            }},
+        });
+        let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
+        let unknown = |id: &str, path: &str| ConfiguredInstance {
+            instance: ProviderInstanceId::parse(id).expect("instance id"),
+            runtime: "codex".into(),
+            registry_agent: None,
+            home: None,
+            link_folders: Vec::new(),
+            unknown_home: Some(PathBuf::from(path)),
+        };
+        assert_eq!(
+            configured_instances(snapshot, Path::new("/home/user")),
+            vec![
+                unknown("codex-relative", "contract-codex-shared"),
+                unknown("codex-dot", "."),
+                unknown("codex-shadow", "overlay"),
             ]
         );
     }
@@ -962,6 +1013,7 @@ mod tests {
                 registry_agent: None,
                 home: Some(PathBuf::from("/srv/codex")),
                 link_folders: vec![PathBuf::from("/srv/codex-personal")],
+                unknown_home: None,
             }]
         );
     }
