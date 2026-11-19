@@ -8,6 +8,9 @@ AGENTS.md: AGENTS.master.md requires `docs/team/people.md`, a symbolic link or a
 a linked docs folder:
 AGENTS.md: AGENTS.master.md requires `docs/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
 
+a staged docs link:
+AGENTS.md: AGENTS.master.md requires `docs/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+
 a configured value among the required reads:
 AGENTS.md: AGENTS.master.md reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead
 

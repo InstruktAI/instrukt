@@ -709,6 +709,16 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     std::fs::remove_file(home.path().join("docs")).unwrap();
     std::fs::rename(home.path().join("shelf"), home.path().join("docs")).unwrap();
 
+    // Nor when the index holds `docs` itself as the link.
+    std::fs::rename(home.path().join("docs"), home.path().join("shelf")).unwrap();
+    std::os::unix::fs::symlink("outside", home.path().join("docs")).unwrap();
+    home.git(["rm", "--cached", "-r", "--quiet", "docs"]);
+    home.git(["add", "docs"]);
+    refusals.push(refused("a staged docs link"));
+    std::fs::remove_file(home.path().join("docs")).unwrap();
+    std::fs::rename(home.path().join("shelf"), home.path().join("docs")).unwrap();
+    home.git(["reset", "--quiet"]);
+
     // A configured value among the required reads is a directive all the
     // same; configuration's validation names it too.
     home.write(

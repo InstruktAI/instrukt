@@ -256,7 +256,21 @@ impl Committed {
         }
         let mut files = BTreeMap::new();
         let mut links = BTreeSet::new();
-        for path in paths.into_iter().filter(|path| is_read(path)) {
+        for path in paths {
+            // A link is recorded wherever it stands, a linked `docs` folder
+            // included, so a read through it can say so.
+            if !is_read(&path) {
+                // The walk outside git lists the root itself, as an empty path.
+                let linked = safe_relative(&path).is_ok_and(|relative| {
+                    !path.is_empty()
+                        && std::fs::symlink_metadata(root.join(relative))
+                            .is_ok_and(|meta| meta.file_type().is_symlink())
+                });
+                if linked {
+                    links.insert(path);
+                }
+                continue;
+            }
             if let Some(link) = linked_folder(root, &path)? {
                 links.insert(link);
                 continue;
