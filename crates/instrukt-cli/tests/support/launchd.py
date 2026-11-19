@@ -51,6 +51,8 @@ class Operation(StrEnum):
     REBOOT = "reboot"
     KILL_PROCESS = "kill-process"
     HOLD = "hold"
+    REMOVE = "remove"
+    PRINT = "print"
 
 
 @dataclass
@@ -221,6 +223,24 @@ def serve(address: str) -> None:
                             result["ok"] = args[-1] in jobs
                     elif operation == Operation.KICKSTART:
                         launch(jobs[args[-1].split("/")[-1]])
+                    elif operation == Operation.PRINT:
+                        # What launchctl print shows of a job's environment.
+                        job = jobs.get(args[-1].split("/")[-1])
+                        result["ok"] = job is not None
+                        if job is not None:
+                            variables = (job.override or job.definition).get("EnvironmentVariables", {})
+                            result["text"] = "".join(
+                                [f"{args[-1]} = {{\n", "\tenvironment = {\n"]
+                                + [f"\t\t{key} => {value}\n" for key, value in variables.items()]
+                                + ["\t}\n", "}\n"]
+                            )
+                    elif operation == Operation.REMOVE:
+                        previous = jobs.pop(args[-1], None)
+                        if previous is not None:
+                            stop(previous)
+                            if previous.listener is not None:
+                                previous.listener.close()
+                        result["ok"] = previous is not None
                     elif operation == Operation.UNLOAD:
                         name = os.path.basename(args[-1]).removesuffix(".plist")
                         previous = jobs.pop(name, None)
@@ -244,7 +264,9 @@ if sys.argv[1] == "serve":
     serve(sys.argv[2])
 else:
     result = rpc(sys.argv[2], sys.argv[3:])
-    if sys.argv[3:] == [Operation.LIST]:
+    if sys.argv[3:4] == [Operation.PRINT]:
+        print(result.get("text", ""), end="")
+    elif sys.argv[3:] == [Operation.LIST]:
         print("PID\tStatus\tLabel")
         for row in result["jobs"]:
             print(f"{row['pid'] or '-'}\t0\t{row['unit']}")
