@@ -481,3 +481,17 @@ Then:
   their current schemas. Run a writing command of this release once on every
   computer, and commit each adopted project once through its hooks, so every file
   is stored at the current schema before that release.
+
+Defects of the system an agent works through are reported through one front
+door, `instrukt bugs report '<description>'`: without `--approved` it files
+nothing and prints the questions to face; with `--approved` it files a bug in
+the owning project, named with `--project <slug>`. `instrukt todo create
+--kind bug` is refused and names that door. The capability catalog gains the
+action `bug-report`: the `record` bundle carries it at `own`, the new `report`
+bundle at `any`, and `company-agent` holds `read`, `tools` and `report`. An
+`~/.instrukt/agents.yaml` you never edited takes these defaults at the next
+deployment. One you edited keeps working as it is, without them: a
+`company-agent` there cannot report a defect until you add `report` to its
+`can`, and roles using your own `record` bundle report into their own project
+once you add `{action: bug-report, scope: own}` to it. A role naming `report`
+in a file that defines no such bundle receives the shipped one.

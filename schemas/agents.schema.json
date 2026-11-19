@@ -850,6 +850,7 @@
             "docs-write",
             "todo-read",
             "todo-write",
+            "bug-report",
             "artifact-read",
             "artifact-write",
             "stamp",

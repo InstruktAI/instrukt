@@ -189,6 +189,10 @@ struct CreateArgs {
 #[derive(Debug, clap::Args)]
 #[group(multiple = false)]
 struct ListArgs {
+    /// The owning project, by its slug on this computer; without it, the
+    /// project the caller stands in.
+    #[arg(long, value_name = "SLUG")]
+    project: Option<instrukt_core::ids::ProjectSlug>,
     /// The icebox instead of active work.
     #[arg(long)]
     iceboxed: bool,
@@ -416,7 +420,16 @@ enum OutcomeArg {
 }
 
 pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
-    let root = git::worktree_root(&ctx.cwd)?;
+    // A list naming its project reads that project's record, wherever the
+    // caller stands; it resolves and is refused as every `--project` of the
+    // work reads is.
+    let root = match &args.command {
+        TodoCommand::List(ListArgs {
+            project: Some(project),
+            ..
+        }) => Some(crate::commands::bugs::owning_project(ctx, Some(project))?.1),
+        _ => git::worktree_root(&ctx.cwd)?,
+    };
     let enabled = config::module_enabled(&ctx.home, root.as_deref(), Module::Todos)
         .context("cannot read the todos module switch")?;
     if !enabled {
@@ -655,6 +668,11 @@ impl Session<'_> {
             }),
             human_involved: args.human_involved,
         };
+        if request.kind == TodoKind::Bug {
+            bail!(
+                "a bug is not created as ordinary work: report it through the bug front door, `instrukt bugs report '<description>'`, which puts the questions to face before anything is filed"
+            );
+        }
         if !args.approved {
             ctx.out.text(&admission(&args.slug))?;
             return Ok(ExitCode::SUCCESS);
@@ -977,7 +995,7 @@ fn admission(slug: &TodoSlug) -> String {
 }
 
 /// The reflection line every change prints.
-fn reflection<T>(ctx: &mut Ctx, outcome: &Outcome<T>) -> anyhow::Result<ExitCode> {
+pub(crate) fn reflection<T>(ctx: &mut Ctx, outcome: &Outcome<T>) -> anyhow::Result<ExitCode> {
     for path in &outcome.docs_changed {
         ctx.out
             .line(&format!("documentation to commit: {}", path.display()))?;

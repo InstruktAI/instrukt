@@ -14,7 +14,7 @@ macro_rules! actions {
 }
 actions! {
     DocsRead => "docs-read", DocsWrite => "docs-write",
-    TodoRead => "todo-read", TodoWrite => "todo-write",
+    TodoRead => "todo-read", TodoWrite => "todo-write", BugReport => "bug-report",
     ArtifactRead => "artifact-read", ArtifactWrite => "artifact-write", Stamp => "stamp",
     TodoOrchestration => "todo-orchestration", AssignmentWrite => "assignment-write", Integration => "integration",
     SessionObserve => "session-observe", HistoryRead => "history-read", SessionRecover => "session-recover", StandingBind => "standing-bind", ConversationLink => "conversation-link",

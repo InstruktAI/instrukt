@@ -43,7 +43,7 @@ Role: event-handler · class: standing. Scope comes from assignment
 instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork. Object claims, phase and writer
 constraints apply.
 Usual capabilities: role: event-handler; class: standing; grants: docs-read:any, docs-write:any,
-todo-read:any, todo-write:any, artifact-read:any, artifact-write:any, stamp:any,
+todo-read:any, todo-write:any, bug-report:any, artifact-read:any, artifact-write:any, stamp:any,
 todo-orchestration:any, assignment-write:any, integration:any, session-observe:any,
 history-read:any, session-recover:any, standing-bind:any, conversation-link:any, agents-read:any,
 agents-write:any, config-read:any, config-write:any, secrets-write:any, repository-read:any,

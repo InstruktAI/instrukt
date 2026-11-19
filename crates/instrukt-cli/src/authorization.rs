@@ -39,7 +39,8 @@ pub fn action(path: &[&str]) -> Option<Action> {
     use Action::*;
     Some(match path {
         ["status"] => ConfigRead,
-        ["bugs", "suppressions"] => TodoRead,
+        ["bugs", "suppressions" | "list"] => TodoRead,
+        ["bugs", "report"] => BugReport,
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
         ["docs", "fold" | "render"] => DocsWrite,
         ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
@@ -276,6 +277,14 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
             } else {
                 own_todo
             }
+        }
+        // A report addresses the project it names, or the one the caller
+        // stands in; at `own` that is the assignment's project.
+        BugReport => {
+            let named = raw("project")
+                .map(instrukt_core::ids::ProjectSlug::parse)
+                .transpose()?;
+            assignment.project.is_some() && assignment.project == named.or_else(|| project.clone())
         }
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
