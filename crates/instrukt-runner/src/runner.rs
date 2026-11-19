@@ -272,7 +272,17 @@ pub fn run(
     let state = RunnerState::new(cx.home);
     if service {
         // An earlier release's service identity record: nothing reads it.
-        let _ = instrukt_core::fsx::remove_file(cx.home.runner_service_file());
+        let record = cx.home.runner_service_file();
+        match instrukt_core::fsx::remove_file(&record) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                event = "runner_service_record_kept",
+                path = %record.display(),
+                %error,
+                "the earlier release's runner service record could not be removed; startup continues, since nothing reads it"
+            ),
+        }
     }
     let _runner = _holder::run(cx.home, service)?;
     // Initialize the shared schema before independent workers open connections.
