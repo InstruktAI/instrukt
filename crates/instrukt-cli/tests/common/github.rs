@@ -2810,6 +2810,9 @@ pub fn sync_auth_clock(home: &std::path::Path, now: Option<&str>) {
     if let Ok(file) = std::fs::read_to_string(home.join(".fake-github-clock"))
         && std::path::Path::new(&file).exists()
     {
-        std::fs::write(file, now.unwrap_or("system")).unwrap();
+        // Replaced whole, so the fake's reader never finds it half written.
+        let next = format!("{file}.next");
+        std::fs::write(&next, now.unwrap_or("system")).unwrap();
+        std::fs::rename(&next, &file).unwrap();
     }
 }
