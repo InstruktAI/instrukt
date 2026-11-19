@@ -164,12 +164,13 @@ message alike.
 
 From the admission of an addressed message until it is complete — its answer
 posted, or its turn completed with a bare `NOOP` — the connector shows Slack's
-status line for it with one of two fixed texts, chosen from the
-message's state (`project/instrukt/spec/feature/company/conversations`):
+status line for it, with the text the message's state gives
+(`project/instrukt/spec/feature/company/conversations`):
 
 | The message's state | Text |
 | --- | --- |
 | its no-work interval is open, the relay-wide failure included (the interval the notice reads) | `is temporarily unavailable — your message is saved` |
+| its turn runs and the runtime has reported a status for it | the runtime's latest status update, as the runtime reports it |
 | otherwise, from its admission | `is working on your request` |
 
 Slack puts the app's name in front of it. Each status pass sets the text that
