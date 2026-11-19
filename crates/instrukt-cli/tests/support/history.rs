@@ -5,6 +5,15 @@ use serde_json::{Value, json};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::{path::PathBuf, process::Child, time::Duration};
 
+/// How a write to T3's database waits while the other work streams: the
+/// stream takes the database for a moment every millisecond, so the write is
+/// tried again every millisecond, for up to 20 seconds, rather than on a
+/// backoff the stream could outpace.
+pub fn retry_soon(attempt: i32) -> bool {
+    std::thread::sleep(Duration::from_millis(1));
+    attempt < 20_000
+}
+
 pub struct T3Store {
     pub file: PathBuf,
     db: Connection,
@@ -26,7 +35,8 @@ impl T3Store {
     pub fn create(env: &TestEnv) -> Self {
         let file = env.home().join(".t3/userdata/statev2.sqlite");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let db = Connection::open(&file).unwrap();
+        let mut db = Connection::open(&file).unwrap();
+        db.busy_handler(Some(retry_soon)).unwrap();
         db.execute_batch("PRAGMA journal_mode=WAL;
 CREATE TABLE effect_sql_migrations(migration_id INTEGER PRIMARY KEY,name TEXT);
 INSERT INTO effect_sql_migrations VALUES(79,'fixture');

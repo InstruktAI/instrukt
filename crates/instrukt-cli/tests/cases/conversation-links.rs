@@ -92,7 +92,9 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
         )
     };
     store.native_records();
-    let native_db = instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap();
+    let mut native_db = instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap();
+    // The other work writes to T3's database meanwhile.
+    native_db.busy_handler(Some(history::retry_soon)).unwrap();
     native_db
         .execute(
             "DELETE FROM orchestration_v2_projection_turn_items WHERE type='user_message'",
@@ -152,7 +154,9 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     // The other work runs again.
     elsewhere.stream();
     // A native change with unchanged occurrence time still reaches the independent reader.
-    let db = instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap();
+    let mut db = instrukt_core::state_db::rusqlite::Connection::open(&store.file).unwrap();
+    // The other work streams again.
+    db.busy_handler(Some(history::retry_soon)).unwrap();
     db.execute("UPDATE orchestration_v2_projection_runs SET payload_json=json_set(payload_json,'$.id','second-run','$.ordinal',2),run_id='second-run' WHERE run_id='native-run'",[]).unwrap();
     db.execute("UPDATE orchestration_v2_projection_messages SET payload_json=json_set(payload_json,'$.runId','second-run') WHERE json_extract(payload_json,'$.runId')='native-run'",[]).unwrap();
     db.execute("UPDATE orchestration_v2_projection_turn_items SET payload_json=json_set(payload_json,'$.runId','second-run') WHERE json_extract(payload_json,'$.runId')='native-run'",[]).unwrap();
