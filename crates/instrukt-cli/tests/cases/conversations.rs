@@ -25,13 +25,20 @@ fn position(c: &Company, key: &str) -> Option<String> {
     .unwrap()
 }
 
-/// How many snapshot reads T3's readiness server has served. A runner
-/// refreshes readiness twice when it starts, once on its own and once for
-/// its first wake, and each refresh reads T3's descriptor before it reads
-/// the snapshot: two more reads mean both startup reads of the descriptor
-/// are done.
-fn snapshot_reads(c: &Company) -> usize {
-    common::t3_readiness::reads(&c.env).len()
+/// How many snapshot reads T3's readiness server served on sessions T3
+/// issued after its first `issued`: the reads of a runner started once that
+/// many were issued, since a runner issues its own session at its first
+/// refresh. A runner refreshes readiness twice when it starts, once on its
+/// own and once for its first wake, and each refresh reads T3's descriptor
+/// before its snapshot read: two such reads mean both its startup reads of
+/// the descriptor are done. A late read of a runner killed earlier used an
+/// earlier session and is not counted, nor is a refused one.
+fn reads_since(c: &Company, issued: usize) -> usize {
+    common::t3_readiness::reads(&c.env)
+        .iter()
+        .filter_map(|session| session.rsplit('-').next()?.parse::<usize>().ok())
+        .filter(|n| *n > issued)
+        .count()
 }
 
 /// The runner wakes, and refreshes readiness through T3's descriptor, each
@@ -137,11 +144,11 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // session and reads nothing of the source. Its two startup readiness
     // refreshes read T3's descriptor.
     c.runtime.flag("list-failure", true);
-    let served = snapshot_reads(&c);
+    let issued = c.runtime.issued();
     let started = std::time::Instant::now();
     c.run();
     wait("the restarted runner's two readiness refreshes", || {
-        snapshot_reads(&c) >= served + 2
+        reads_since(&c, issued) >= 2
     });
     // Every source read is held now, and the relay is the gate's only
     // reader: readiness, past its two startup refreshes, reads again only on
@@ -174,11 +181,11 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     );
     let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
     c.finish_turn(&session, 0, &reply);
-    let served = snapshot_reads(&c);
+    let issued = c.runtime.issued();
     let started = std::time::Instant::now();
     c.run();
     wait("the runner's two readiness refreshes", || {
-        snapshot_reads(&c) >= served + 2
+        reads_since(&c, issued) >= 2
     });
     // The session opens with its procedure's loader under the role, then the
     // question; its recorded assignment is the role in the company's home.
