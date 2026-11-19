@@ -269,25 +269,43 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     unchanged(&repo, &bytes);
 }
 
-// The contract is the spec's "A machine layer that cannot be loaded"; a
-// broken machine layer is a failure of every goal, not a goal of its own.
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
 #[test]
-fn a_machine_layer_that_cannot_be_loaded_stops_a_repository_command_with_one_line() {
+fn a_machine_layer_written_by_a_newer_instrukt_stops_a_repository_command_with_one_line() {
     let env = TestEnv::new();
     let repo = project(&env, "own", "schema_version: 1\nproject: own\n");
-    write_global(&env, "schema_version: [oops\n");
+    let machine = format!(
+        "schema_version: {}\nrunner: {{runtime: t3}}\n",
+        CURRENT_SCHEMA_VERSION + 1
+    );
+    write_global(&env, &machine);
+    let path = env.instrukt_home().join("instrukt.yaml");
+    let bytes = std::fs::read(&path).unwrap();
+    // A repository command stops on it with one line naming the door.
     let refused = env.run(repo.path(), ["docs", "render"]).failure().code(1);
+    // The door says to upgrade.
+    let validated = env
+        .run(repo.path(), ["config", "validate", "--global"])
+        .failure()
+        .code(1);
     insta::assert_snapshot!(
-        format!("stdout:\n{}stderr:\n{}", stdout(&env, &refused), stderr(&env, &refused)),
+        format!(
+            "docs render:\nstdout:\n{}stderr:\n{}config validate --global:\nstdout:\n{}stderr:\n{}",
+            stdout(&env, &refused),
+            stderr(&env, &refused),
+            stdout(&env, &validated),
+            stderr(&env, &validated)
+        ),
         @r"
+    docs render:
     stdout:
     stderr:
-    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: it is not valid YAML: did not find expected ',' or ']' at line 2 column 1, while parsing a flow sequence at line 1 column 17; run `instrukt config validate --global` to see what to fix
+    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 7 is newer than this instrukt supports (6); run `instrukt config validate --global` to see what to fix
+    config validate --global:
+    stdout:
+    stderr:
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 7, newer than this instrukt supports (6); upgrade instrukt
     "
     );
-
-    // A layer that loads is judged by validation alone: an unknown key stops
-    // no other command.
-    write_global(&env, &format!("{MACHINE}bogus: 1\n"));
-    env.run(repo.path(), ["docs", "render"]).success();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
 }

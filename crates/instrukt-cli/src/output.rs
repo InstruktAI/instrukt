@@ -83,6 +83,15 @@ pub fn error_line(error: &anyhow::Error) -> String {
     line
 }
 
+/// Ends a command that meant to act and could not, after its output: its
+/// one stderr line, recorded in the log, and the failure status. A command
+/// whose output is a report of findings ends without it.
+pub fn could_not(line: &str) -> std::process::ExitCode {
+    tracing::error!(event = "command_failed", error = %line);
+    eprintln!("instrukt: {line}");
+    std::process::ExitCode::FAILURE
+}
+
 #[cfg(test)]
 mod tests {
     use super::error_line;

@@ -119,7 +119,13 @@ fn execute(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 }
             }
             if !result.failures.is_empty() {
-                return Ok(ExitCode::FAILURE);
+                return Ok(crate::output::could_not(&format!(
+                    "the search is incomplete: {} could not be searched; each is named on an `incomplete:` line",
+                    match result.failures.len() {
+                        1 => "1 computer".to_owned(),
+                        n => format!("{n} computers"),
+                    }
+                )));
             }
         }
         Command::Show {

@@ -401,7 +401,7 @@ pub(super) fn pending_in(
 }
 
 /// A YAML value that is no string, as the operator wrote it.
-fn shown_value(value: &serde_yaml_ng::Value) -> String {
+pub(super) fn shown_value(value: &serde_yaml_ng::Value) -> String {
     serde_yaml_ng::to_string(value)
         .map(|text| text.trim().to_owned())
         .unwrap_or_default()
