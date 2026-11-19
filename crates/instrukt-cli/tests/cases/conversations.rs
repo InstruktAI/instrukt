@@ -10,6 +10,32 @@ use instrukt_runner::conversations;
 use instrukt_runner::slack::{SLACK, SLACK_MESSAGE_LIMIT, TURN_AWAY, WORKING};
 use instrukt_runner::transport::EVENT_STREAM;
 
+/// The source position the state database keeps for the conversation of
+/// `key`.
+fn position(c: &Company, key: &str) -> Option<String> {
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.query_row(
+        "SELECT position_json FROM connected_conversations WHERE semantic_key=?1",
+        [key],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+/// The runner wakes, and refreshes readiness through T3's descriptor, each
+/// minute in real time even with the operator's clock standing still: a held
+/// gate stays clear of readiness only while the runner started under a
+/// minute ago.
+fn before_a_wake(started: std::time::Instant) {
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(50),
+        "the gate was armed past the runner's first real-time wake, so a readiness refresh may have read through it"
+    );
+}
+
 /// Where each post went: its channel and thread.
 fn destinations(c: &Company) -> Vec<(String, Option<String>)> {
     c.slack
@@ -25,6 +51,9 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // History is off, so the conversation relay is the stand-in's only
     // source reader while the runner runs.
     let mut c = Company::without_procedure(common::TestEnv::new(), ", history: false", "", "");
+    // The operator's clock stands still, so the runner wakes only on its
+    // real-time interval.
+    c.env.set_env("INSTRUKT_NOW", "2026-11-19T00:00:00Z");
     // The company starts its sessions on its own order of profiles.
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     patch_company(&c.env, COMPANY, &format!("profiles: [{profile}]"));
@@ -95,11 +124,32 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     c.store
         .thread(&session, None, None, "2026-11-08T10:00:00.000Z");
     elsewhere.settle();
-    gate.hold();
+    // While T3 cannot list its threads, the restarted runner cannot bind the
+    // session and reads nothing of the source. Its readiness refresh reads
+    // T3's descriptor when it starts; the issue of its token follows that
+    // read.
+    c.runtime.flag("list-failure", true);
+    let issued = c.issue_launches();
+    let started = std::time::Instant::now();
     c.run();
-    gate.admit();
+    wait("the restarted runner's readiness token", || {
+        c.issue_launches() > issued
+    });
+    // Every source read is held now, and the relay is the gate's only
+    // reader: readiness reads again only on a wake. Once T3 lists again the
+    // relay binds the session and reads its thread; reads are let through
+    // until that read is retained as the conversation's position, and no
+    // further, so the read that reaches the gate after the nudge is the
+    // relay's next one.
+    let recorded = position(&c, &key);
+    gate.hold();
+    c.runtime.flag("list-failure", false);
+    wait("the recovery read retained", || {
+        gate.admit_unless(|_| position(&c, &key) != recorded)
+    });
     elsewhere.nudge();
     gate.held();
+    before_a_wake(started);
     c.runner_dies();
     gate.open();
     // Someone types in the session's thread directly, and both turns finish
@@ -115,7 +165,12 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     );
     let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
     c.finish_turn(&session, 0, &reply);
+    let issued = c.issue_launches();
+    let started = std::time::Instant::now();
     c.run();
+    wait("the runner's readiness token", || {
+        c.issue_launches() > issued
+    });
     // The session opens with its procedure's loader under the role, then the
     // question; its recorded assignment is the role in the company's home.
     insta::assert_snapshot!("opening-from-procedure", c.opening(&session));
@@ -147,10 +202,16 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // While the other thread streams again, a later catch-up of this
     // conversation completes: the next source read stands at the gate
     // after it. Its outcome leaves no cause.
+    // The relay is the gate's only reader: this runner's readiness refresh
+    // read when it started. One catch-up's read is let through, and the next
+    // read to reach the gate is the relay's next one.
     elsewhere.stream();
     gate.hold();
-    gate.admit();
+    wait("a catch-up through the gate", || {
+        gate.admit_unless(|served| served >= 1)
+    });
     gate.held();
+    before_a_wake(started);
     let status = c.conversations();
     assert!(
         status.conversations.is_empty(),

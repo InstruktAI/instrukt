@@ -360,6 +360,8 @@ struct Gating {
     held: bool,
     /// Reads admitted while the gate is held.
     admitted: usize,
+    /// `served` when the gate was last held.
+    armed_at: usize,
     /// The pipe the server is opening for the next held read, while it waits
     /// for a reader of it.
     opening: Option<PathBuf>,
@@ -532,7 +534,10 @@ impl Gate {
     /// Later source reads wait at the gate.
     pub fn hold(&self) {
         let (lock, changed) = &*self.shared;
-        lock.lock().unwrap().held = true;
+        let mut gating = lock.lock().unwrap();
+        gating.held = true;
+        gating.armed_at = gating.served;
+        drop(gating);
         changed.notify_all();
         link_descriptor(&self.pipes, &self.descriptor);
     }
@@ -555,15 +560,19 @@ impl Gate {
         };
         self.until("the admitted source read", |gating| gating.served > served);
     }
-    /// Lets through the read standing at the held gate, if one is, and waits
-    /// until it has ended; whether one was let through. Any process that
-    /// opens T3's descriptor reads through the gate, the runner's readiness
-    /// refresh among them, so a scenario that needs a particular reader's
-    /// read lets reads through until that reader's effect shows.
-    pub fn pass_waiting(&self) -> bool {
+    /// One step of admission, decided under the gate's own lock: whether
+    /// `stop` holds, given how many reads were served since the gate was last
+    /// held. When it does not and a read stands at the gate, that read is let
+    /// through and the step waits until it has ended. A read that arrives once
+    /// `stop` holds is never let through: it stays held. Returns whether
+    /// `stop` held.
+    pub fn admit_unless(&self, stop: impl Fn(usize) -> bool) -> bool {
         let served = {
             let (lock, changed) = &*self.shared;
             let mut gating = lock.lock().unwrap();
+            if stop(gating.served - gating.armed_at) {
+                return true;
+            }
             if !(gating.held && gating.waiting) {
                 return false;
             }
@@ -572,7 +581,7 @@ impl Gate {
             gating.served
         };
         self.until("the admitted source read", |gating| gating.served > served);
-        true
+        false
     }
     /// Every source read passes at once again: later reads find the
     /// descriptor a regular file.

@@ -43,6 +43,36 @@ impl Drop for Running {
         self.0.wait().unwrap();
     }
 }
+/// Whether the runner's readiness refresh has read T3's descriptor: it
+/// issues its token right after that read, or, when the descriptor names no
+/// server (this computer runs none), it fails on what it read and records
+/// that failure.
+fn readiness_read(env: &common::TestEnv, fake: &runtime::FakeT3) -> bool {
+    if fake
+        .calls()
+        .iter()
+        .any(|call| call.starts_with("auth session issue "))
+    {
+        return true;
+    }
+    let out = env
+        .run(env.home(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    status["workers"]
+        .as_array()
+        .is_some_and(|workers| workers.iter().any(|row| row["worker"] == "readiness"))
+}
+/// The runner wakes, and refreshes readiness through T3's descriptor, each
+/// minute in real time even with the operator's clock standing still: a held
+/// gate stays clear of readiness only while the runner started under a
+/// minute ago.
+fn before_a_wake(started: std::time::Instant) {
+    assert!(
+        started.elapsed() < Duration::from_secs(50),
+        "the gate was armed past the runner's first real-time wake, so a readiness refresh may have read through it"
+    );
+}
 fn wait_for(condition: impl FnMut() -> bool) {
     common::wait_until("native relay progress", Duration::from_secs(15), condition);
 }
@@ -52,7 +82,10 @@ fn wait_for(condition: impl FnMut() -> bool) {
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
 #[test]
 fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
-    let env = common::TestEnv::new();
+    let mut env = common::TestEnv::new();
+    // The operator's clock stands still, so the runner wakes only on its
+    // real-time interval.
+    env.set_env("INSTRUKT_NOW", "2026-11-19T00:00:00Z");
     let store = history::T3Store::new(&env);
     // History is off, so the link relay is the stand-in's only source
     // reader while the runner runs.
@@ -64,7 +97,6 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     // Other work on the computer: many other threads, one of them streaming
     // and rewritten while the link's threads are read.
     let mut elsewhere = store.elsewhere(200, "Elsewhere chatter.");
-    elsewhere.stream();
     let fake = runtime::FakeT3::create(&env);
     let gate = store.gate();
     fake.seed("parent", env.home(), "peer-a", "opening a");
@@ -106,25 +138,28 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     native_db.execute("INSERT INTO orchestration_v2_projection_runs VALUES ('ongoing','child','running',?1,NULL,?2)",instrukt_core::state_db::rusqlite::params![at,ongoing.to_string()]).unwrap();
     let partial = serde_json::json!({"id":"streaming","threadId":"child","runId":"ongoing","role":"assistant","text":"Unfinished output stays here.","streaming":true,"createdAt":at,"updatedAt":at});
     native_db.execute("INSERT INTO orchestration_v2_projection_messages VALUES ('streaming','child','assistant',1,?1,?1,?2)",instrukt_core::state_db::rusqlite::params![at,partial.to_string()]).unwrap();
-    // The runner's first start, with every source read held: no runner has
-    // read before. Its first read is the child direction's, as directions
-    // are read in source order, while the child's run is still unfinished.
-    // That read is let through and its finished turn reaches the parent; the
-    // runner dies as its next source read begins, so the position that read
-    // left is the one kept. A turn finishes while it is down, with the other
-    // work settled and nothing else changing.
-    gate.hold();
+    // The runner's first start, while T3's database has a shape the relay
+    // does not read: its reads end before they open T3's descriptor. Its
+    // readiness refresh reads that descriptor when the runner starts.
+    store.break_shape();
+    let started = std::time::Instant::now();
     let runner = run();
-    // The runner's readiness refresh reads T3's descriptor through the gate
-    // too, so reads are let through, one at a time, until the child's
-    // finished turn reached the parent and no further: the relay keeps its
-    // position before it delivers, and its next read stays held.
-    wait_for(|| {
-        fake.message_count("parent") == 2 || {
-            gate.pass_waiting();
-            false
-        }
-    });
+    wait_for(|| readiness_read(&env, &fake));
+    // Every source read is held now, and the shape restored, which wakes the
+    // relay: no runner has read the link before.
+    // The relay is the gate's only reader: readiness reads again only on a
+    // wake. The other work streams, so the relay reads; its first read is
+    // the child direction's, as directions are read in source order, while
+    // the child's run is still unfinished. Reads are let through until that
+    // read's finished turn reached the parent, and no further: the relay
+    // keeps its position before it delivers, so the next read to reach the
+    // gate is the relay's next one, and the runner dies as it begins. A turn
+    // finishes while it is down, with the other work settled and nothing
+    // else changing.
+    gate.hold();
+    store.restore_shape();
+    elsewhere.stream();
+    wait_for(|| gate.admit_unless(|_| fake.message_count("parent") == 2));
     let delivered = boundaries(
         &fake
             .message("parent", 1)
@@ -133,6 +168,7 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     insta::assert_snapshot!("finished-turn-relay", delivered);
     assert_eq!(fake.message_count("child"), 1);
     gate.held();
+    before_a_wake(started);
     drop(runner);
     elsewhere.settle();
     store.turn(
