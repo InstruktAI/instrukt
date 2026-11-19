@@ -113,8 +113,16 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     // work settled and nothing else changing.
     gate.hold();
     let runner = run();
-    gate.admit();
-    wait_for(|| fake.message_count("parent") == 2);
+    // The runner's readiness refresh reads T3's descriptor through the gate
+    // too, so reads are let through, one at a time, until the child's
+    // finished turn reached the parent and no further: the relay keeps its
+    // position before it delivers, and its next read stays held.
+    wait_for(|| {
+        fake.message_count("parent") == 2 || {
+            gate.pass_waiting();
+            false
+        }
+    });
     let delivered = boundaries(
         &fake
             .message("parent", 1)

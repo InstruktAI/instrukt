@@ -545,6 +545,25 @@ impl Gate {
         };
         self.until("the admitted source read", |gating| gating.served > served);
     }
+    /// Lets through the read standing at the held gate, if one is, and waits
+    /// until it has ended; whether one was let through. Any process that
+    /// opens T3's descriptor reads through the gate, the runner's readiness
+    /// refresh among them, so a scenario that needs a particular reader's
+    /// read lets reads through until that reader's effect shows.
+    pub fn pass_waiting(&self) -> bool {
+        let served = {
+            let (lock, changed) = &*self.shared;
+            let mut gating = lock.lock().unwrap();
+            if !(gating.held && gating.waiting) {
+                return false;
+            }
+            gating.admitted += 1;
+            changed.notify_all();
+            gating.served
+        };
+        self.until("the admitted source read", |gating| gating.served > served);
+        true
+    }
     /// Every source read passes at once again: later reads find the
     /// descriptor a regular file.
     pub fn open(&self) {
