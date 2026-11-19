@@ -131,8 +131,8 @@ pub struct Resource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceState {
-    /// A live owned service process runs the desired installed executable
-    /// and configuration; it may be waiting for the runner lock.
+    /// The service is loaded and its process is alive; it may be waiting
+    /// for the runner lock.
     Running,
     /// There is demand, and its service is missing, stale, stopped, in
     /// conflict with a definition instrukt does not own, or cannot be
