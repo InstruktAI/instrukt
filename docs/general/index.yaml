@@ -35,6 +35,7 @@ listed:
   - general/procedure/adr-authoring
   - general/procedure/ai-to-ai-operations
   - general/procedure/brainstorming
+  - general/procedure/bug-reporting
   - general/procedure/event-handling/interruptible
   - general/procedure/git-repo-ingestion
   - general/procedure/knowledge-authoring

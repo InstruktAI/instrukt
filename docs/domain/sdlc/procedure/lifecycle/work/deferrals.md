@@ -54,7 +54,7 @@ parameters:
    - **An observation** — the builder's notice is a lead, not evidence. File
      it only when you can cite the occurrence or dangerous path the policy
      requires: a defect as a new todo through
-     `instrukt todo create <new_slug> '<content>' --kind bug --approved`, carrying the occurrence or
+     `general/procedure/bug-reporting` under the slug `<new_slug>`, carrying the occurrence or
      dangerous path in its `input`, and a defense as the work it is, carrying
      the same evidence. Otherwise close the entry.
 3. Record each entry's disposition — the created or filed slug, or why it was
