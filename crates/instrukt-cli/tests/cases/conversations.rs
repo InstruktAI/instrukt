@@ -1825,14 +1825,26 @@ fn a_conversations_quota_restriction_expires_on_the_operator_clock() {
     patch_company(&c.env, COMPANY, "profiles: [claude, codex]");
     window_full(&c, "claude");
     let mut clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
+    std::fs::write(c.env.path("t3-readiness/hold-read"), "").unwrap();
     c.run();
-    wait("the first profile's restriction", || {
-        !restricted_until(&c, "claude").is_empty()
+    wait("the held startup snapshot", || {
+        common::t3_readiness::held_read_open(&c.env, 1)
     });
-    // Every later refresh fails, so the restriction of t=0 stands: it ends at
-    // t=60 min on the runner's clock.
+    common::t3_readiness::release_read(&c.env, 1);
+    wait("the startup window ends at 01:00", || {
+        let until = restricted_until(&c, "claude");
+        !until.is_empty() && until.iter().all(|at| at == "2030-01-01T01:00:00Z")
+    });
+    wait(
+        "the first wake's in-flight snapshot on the existing token",
+        || common::t3_readiness::held_read_open(&c.env, 2),
+    );
+    // The queued startup wake already authenticated its read. Fail that
+    // response as well as future token issues so neither can renew the mark.
+    std::fs::write(c.env.path("t3-readiness/malformed"), "").unwrap();
     c.runtime.flag("issue-failure", true);
     clock.advance(61);
+    common::t3_readiness::release_read(&c.env, 2);
     wait("the failed refresh in status", || c.readiness_failing());
     let started = c.asked_and_answered("When do we ship?", "On Friday.");
     assert_eq!(c.runtime.provider(&started), instance("claude"));
