@@ -566,9 +566,15 @@ fallback. Capacity evidence never proves that startup created no thread.
 
 ### Owned child-command cleanup
 
-Every child command instrukt launches has a process group whose descendants
-are cleaned up on every outcome: success, failure, timeout and interruption.
-Completion is not reported while instrukt-owned descendants remain orphaned.
+Every child command instrukt launches has a process group. Instrukt attempts
+to stop that group on every outcome: success, failure, timeout and interruption.
+It stops the descendants it can signal before reporting completion.
+An absent process group is already stopped. On macOS, if the child has been
+reaped when instrukt attempts cleanup, a group instrukt can no longer signal
+counts as cleaned up. Instrukt logs the group ID, and the command keeps the
+child's result. If instrukt records the reap during a refused signal attempt,
+it tries once more with that evidence. A refused signal is an error while
+instrukt has no reap recorded.
 This concerns instrukt's own commands, not a machine-wide process janitor or
 the runtime's standing agent lifecycle, which T3 owns.
 

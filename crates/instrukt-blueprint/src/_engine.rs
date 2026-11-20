@@ -324,13 +324,13 @@ impl Runner<'_> {
             // without running the engine.
             Start::Withhold(reason) => {
                 drop(stdin);
-                if let Err(err) = child.wait() {
+                if let Err(err) = owned_group.wait(&mut child) {
                     tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
                 }
                 Err(EngineError::Untracked(reason))
             }
             Start::Go => match stdin.map(|mut stdin| stdin.write_all(b"go\n")).transpose() {
-                Ok(_) => wait(&mut child, self.timeout),
+                Ok(_) => wait(&owned_group, &mut child, self.timeout),
                 Err(source) => Err(EngineError::Io {
                     what: "cannot start the engine in",
                     path: self.scratch.to_path_buf(),
@@ -342,7 +342,7 @@ impl Runner<'_> {
         if group_alive(group).unwrap_or(true) {
             kill_group(group);
         }
-        if let Err(err) = child.try_wait() {
+        if let Err(err) = owned_group.try_wait(&mut child) {
             tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
         }
         owned_group.stop().map_err(|source| EngineError::Io {
@@ -389,10 +389,14 @@ const GO_AHEAD: &str = "IFS= read -r _ || exit 125; exec \"$0\" \"$@\" </dev/nul
 /// Waits for the engine within `timeout`, measured as every limit on a
 /// started program is ([`Limit`]); past it, or when its clock has no time,
 /// the engine's group is ended.
-fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError> {
+fn wait(
+    group: &instrukt_core::process::OwnedProcessGroup,
+    child: &mut Child,
+    timeout: Duration,
+) -> Result<ExitStatus, EngineError> {
     let limit = Limit::start(timeout).map_err(EngineError::Clock)?;
     loop {
-        let ended = child.try_wait().map_err(|source| EngineError::Io {
+        let ended = group.try_wait(child).map_err(|source| EngineError::Io {
             what: "cannot wait for the engine started in",
             path: PathBuf::new(),
             source,
@@ -407,7 +411,7 @@ fn wait(child: &mut Child, timeout: Duration) -> Result<ExitStatus, EngineError>
             Err(reason) => EngineError::Clock(reason),
         };
         kill_group(child.id());
-        if let Err(err) = child.wait() {
+        if let Err(err) = group.wait(child) {
             tracing::warn!(event = "blueprint_engine_reap_failed", error = %err);
         }
         return Err(stopped);
