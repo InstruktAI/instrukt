@@ -713,36 +713,96 @@ fn started(c: &Company, before: &[String]) -> String {
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV7
 #[test]
+fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() {
+    std::thread::scope(|scope| {
+        scope.spawn(notice_epochs_and_reconciliation);
+        scope.spawn(a_notice_in_flight_reconciles_after_a_noop);
+        scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
+        scope.spawn(a_mixed_notice_epoch_waits_for_the_final_answer_piece);
+        scope.spawn(successful_empty_turns_rearm_notices);
+        scope.spawn(the_notice_minute_starts_when_a_slow_start_fails);
+        scope.spawn(working_status_stays_visible_during_a_slow_start);
+        scope.spawn(an_answer_to_one_member_does_not_restart_anothers_minute);
+        scope.spawn(a_dispatch_failure_notifies_the_member_once_before_the_answer);
+    });
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV15
+#[test]
+fn a_member_can_follow_the_status_of_an_unanswered_message() {
+    std::thread::scope(|scope| {
+        scope.spawn(a_members_status_tracks_start_and_turn_updates);
+        scope.spawn(working_status_clears_for_a_noop_and_carries_queued_turns);
+        scope.spawn(unavailable_status_clears_when_the_source_or_post_recovers);
+        scope.spawn(a_relay_restart_keeps_the_unavailable_interval);
+        scope.spawn(observing_a_running_turn_again_clears_its_and_the_queued_status);
+        scope.spawn(a_running_turn_closes_an_observation_failure);
+        scope.spawn(a_queued_turn_acceptance_closes_the_unavailable_interval);
+        #[cfg(debug_assertions)]
+        scope.spawn(a_completed_turn_is_read_again_after_a_locked_read);
+    });
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV16
+#[test]
+fn an_interrupted_answer_is_reconciled_and_the_member_can_keep_asking() {
+    std::thread::scope(|scope| {
+        scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
+        scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
+        scope.spawn(a_successful_answer_without_timestamp_needs_no_read_back);
+        scope.spawn(failed_metadata_reads_expire_without_sending_again);
+        scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
+        scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
+        scope.spawn(the_status_tracks_a_slow_answer_and_its_receipt);
+        scope.spawn(an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text);
+    });
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV17
+#[test]
+fn an_operator_can_resume_conversations_with_uncertain_answers_after_upgrade() {
+    std::thread::scope(|scope| {
+        scope.spawn(found_legacy_answer_is_confirmed);
+        scope.spawn(missing_legacy_answer_expires);
+        scope.spawn(late_legacy_answer_upgrades_unknown_delivery);
+        scope.spawn(late_legacy_answer_leaves_a_newer_notice_intact);
+        scope.spawn(late_legacy_answer_leaves_an_unconfirmed_newer_notice_intact);
+        scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
+    });
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV18
+#[test]
+fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
+    std::thread::scope(|scope| {
+        scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
+        scope.spawn(a_blank_reply_supersedes_a_failed_question);
+        scope.spawn(pruning_keeps_younger_and_unsuperseded_failures);
+        scope.spawn(pruning_keeps_the_context_boundary_after_out_of_order_delivery);
+        scope.spawn(one_members_answer_proceeds_after_another_conversations_lock_times_out);
+    });
+}
+
 fn found_legacy_answer_is_confirmed() {
     legacy_answer_attempt_releases_conversation(LegacyReceipt::Found);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn missing_legacy_answer_expires() {
     legacy_answer_attempt_releases_conversation(LegacyReceipt::Missing);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn late_legacy_answer_upgrades_unknown_delivery() {
     legacy_answer_attempt_releases_conversation(LegacyReceipt::Late);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn late_legacy_answer_leaves_a_newer_notice_intact() {
     legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithNewNotice);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn late_legacy_answer_leaves_an_unconfirmed_newer_notice_intact() {
     legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn successful_empty_turns_rearm_notices() {
     std::thread::scope(|scope| {
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
@@ -759,8 +819,6 @@ fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {
     .unwrap()
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_members_status_tracks_start_and_turn_updates() {
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     // The operator's clock, moved by the test alone.
@@ -820,8 +878,6 @@ fn a_members_status_tracks_start_and_turn_updates() {
     insta::assert_json_snapshot!("status-tells-the-state", shown(&c, channel, &asked));
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn working_status_stays_visible_during_a_slow_start() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -849,11 +905,10 @@ fn working_status_stays_visible_during_a_slow_start() {
         shown(&c, channel, &slow).last().map(String::as_str) == Some("")
     });
     assert_eq!(shown(&c, channel, &slow), [WORKING, ""]);
+    assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
-fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() {
+fn a_dispatch_failure_notifies_the_member_once_before_the_answer() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
     // A message waits on the runtime's dispatch lock past the wait: the
@@ -896,8 +951,6 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     );
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn unavailable_status_clears_when_the_source_or_post_recovers() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -962,8 +1015,6 @@ fn unavailable_status_clears_when_the_source_or_post_recovers() {
     assert_eq!(shown(&c, channel, &unposted), [WORKING, UNAVAILABLE, ""]);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn working_status_clears_for_a_noop_and_carries_queued_turns() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -1040,8 +1091,6 @@ fn interval_clock(clock: &std::path::Path) -> jiff::Timestamp {
     std::fs::read_to_string(clock).unwrap().parse().unwrap()
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn notice_epochs_and_reconciliation() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -1172,8 +1221,6 @@ fn notice_epochs_and_reconciliation() {
     }
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_notice_in_flight_reconciles_after_a_noop() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -1233,8 +1280,6 @@ fn a_notice_in_flight_reconciles_after_a_noop() {
     }
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_normalized_notice_is_reconciled_after_a_restart() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D18";
@@ -1328,8 +1373,6 @@ fn observe_notice_pass(c: &Company, clock: &std::path::Path, now: jiff::Timestam
     });
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_lost_answer_response_defers_notices_until_read_back() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1358,8 +1401,6 @@ fn a_lost_answer_response_defers_notices_until_read_back() {
     assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn an_unconfirmed_answer_is_reconciled_before_retry() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1737,8 +1778,6 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
     assert_eq!(notices(&c, member), expected_notices);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_successful_answer_without_timestamp_needs_no_read_back() {
     let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1755,8 +1794,6 @@ fn a_successful_answer_without_timestamp_needs_no_read_back() {
     assert_eq!(interval(&c, &event), None);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn failed_metadata_reads_expire_without_sending_again() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -1808,8 +1845,6 @@ fn failed_metadata_reads_expire_without_sending_again() {
     assert_eq!(c.slack.posts().len(), 2);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
     let at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
     let (mut c, clock) = status_company(at);
@@ -1886,8 +1921,6 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
     assert_eq!(notices(&c, member), 1);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn an_unconfirmed_post_waits_after_a_metadata_miss() {
     let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1950,8 +1983,6 @@ fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
     assert_eq!(c.slack.posts().len(), 2);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D21";
@@ -2104,8 +2135,6 @@ fn superseded_at(c: &Company, message: &str) -> Option<Option<String>> {
     .unwrap()
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_blank_reply_supersedes_a_failed_question() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D21";
@@ -2139,8 +2168,6 @@ fn a_blank_reply_supersedes_a_failed_question() {
     assert_eq!(notices(&c, sender), 1);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn pruning_keeps_younger_and_unsuperseded_failures() {
     use instrukt_core::state_db::rusqlite::{Connection, params};
     let now: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
@@ -2173,8 +2200,6 @@ fn pruning_keeps_younger_and_unsuperseded_failures() {
     assert_eq!(superseded_at(&c, "answered"), Some(None));
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -2306,8 +2331,6 @@ fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
     assert!(!input.contains(failed_text), "{input}");
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn legacy_messages_keep_status_and_the_notice_anchor() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -2379,8 +2402,6 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
     });
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D11";
@@ -2448,8 +2469,6 @@ fn status_company(at: jiff::Timestamp) -> (Company, std::path::PathBuf) {
     (c, clock)
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let now: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
@@ -2504,8 +2523,6 @@ fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
     drop(other_lock);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn the_notice_minute_starts_when_a_slow_start_fails() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -2545,8 +2562,6 @@ fn the_notice_minute_starts_when_a_slow_start_fails() {
     wait("the late start's answer", || answers(&c) == posts + 1);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
@@ -2568,6 +2583,8 @@ fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
     wait("the queued message's working text", || {
         c.slack.status(direct, &queued).as_deref() == Some(WORKING)
     });
+    // Acquire the lock before the restarted relay can take it.
+    c.runner_dies();
     let key = conversations::key(&c.company(), SLACK, direct);
     let held = instrukt_core::fsx::LockGuard::acquire(
         &home.locks_dir().join(format!(
@@ -2577,6 +2594,7 @@ fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
         std::time::Duration::from_secs(5),
     )
     .unwrap();
+    c.run();
     let running = RunningClock::start(clock.clone(), interval_clock(&clock), 30);
     halt_at_intervals(&c, running, &clock, &[&own, &queued]);
     wait("both statuses unavailable", || {
@@ -2600,8 +2618,6 @@ fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
     wait("both direct answers", || c.slack.posts().len() == posts + 2);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn the_status_tracks_a_slow_answer_and_its_receipt() {
     let done_at = "2026-11-19T10:00:00Z".parse().unwrap();
     let (mut c, clock) = status_company(done_at);
@@ -2731,8 +2747,6 @@ fn the_status_tracks_a_slow_answer_and_its_receipt() {
     assert_eq!(interval(&c, &patient), None);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn an_answer_to_one_member_does_not_restart_anothers_minute() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -2793,8 +2807,6 @@ fn an_answer_to_one_member_does_not_restart_anothers_minute() {
     });
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_relay_restart_keeps_the_unavailable_interval() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -2865,8 +2877,6 @@ fn a_relay_restart_keeps_the_unavailable_interval() {
     wait("the answer after the restart", || answers(&c) == posts + 1);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_running_turn_closes_an_observation_failure() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -2914,8 +2924,6 @@ fn a_running_turn_closes_an_observation_failure() {
     assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn a_queued_turn_acceptance_closes_the_unavailable_interval() {
     let (mut c, _) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -2948,9 +2956,7 @@ fn a_queued_turn_acceptance_closes_the_unavailable_interval() {
     assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
 #[cfg(debug_assertions)]
-#[test]
 fn a_completed_turn_is_read_again_after_a_locked_read() {
     use sha2::Digest as _;
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
@@ -3806,8 +3812,6 @@ fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
     assert_eq!(destinations(&c), [("C1".to_owned(), Some(question))]);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV7
-#[test]
 fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() {
     let done_at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
     let (mut c, clock) = status_company(done_at);

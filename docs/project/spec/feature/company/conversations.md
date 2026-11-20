@@ -366,8 +366,7 @@ Then the member gets one message, beginning with their mention, that the assista
 And writing again before they are answered brings no second one
 And another member waiting in the same conversation gets their own
 And the member's answer follows once the agent has done the work
-But when the agent works on the message, however long, its start is slow but healthy, or it completes the message without output
-Then nothing but the answer is posted
+And a healthy wait or a turn completed without output does not earn an unavailable notice
 ```
 
 ### UC-CV8: Get the answer after the assistant's work failed
@@ -430,6 +429,46 @@ Scenario Outline: An answer is posted once
     | interruption |
     | recording that the connector accepted the post fails |
     | the runner stops before it records that the connector accepted the post |
+```
+
+### UC-CV15: Follow the status of a question while waiting
+
+```gherkin
+Given a member asks the assistant in a conversation that shows work status
+When the question waits, work begins, service becomes unavailable, or work resumes
+Then the member sees whether the assistant is working or temporarily unavailable
+And the member sees the assistant's newest update while the turn is working
+And the status clears once the answer arrives or the turn completes without a reply
+```
+
+### UC-CV16: Get a saved answer after its delivery is interrupted
+
+```gherkin
+Given the assistant has an answer for a member and its delivery is uncertain
+When the assistant recovers from the interruption
+Then an answer that reached the member is neither repeated nor followed by an unavailable notice for that answer
+And an answer confirmed absent can be sent again
+And if delivery cannot be established, the operator sees that outcome and the member can still ask another question
+```
+
+### UC-CV17: Keep serving conversations after an upgrade
+
+```gherkin
+Given an operator upgrades a runner that stopped while an answer was being delivered
+When the operator resumes serving the conversation
+Then a delivered answer is recognized when the provider can confirm it
+And if delivery cannot be determined, the operator sees that outcome without an extra reply or notice for that question
+And members can continue asking questions and receiving answers
+```
+
+### UC-CV18: Keep asking questions after unsuccessful work
+
+```gherkin
+Given a member is still waiting after the assistant failed to answer an earlier question
+When they ask another question and the assistant completes it
+Then the later question is served even while the earlier one remains unserved
+And its completion clears the earlier failure from the member's status
+And a subsequent outage can earn its own notice
 ```
 
 ## Known caveats
