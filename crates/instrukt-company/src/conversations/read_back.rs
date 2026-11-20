@@ -36,9 +36,6 @@ CREATE TABLE IF NOT EXISTS channel_gaps(
     through INTEGER NOT NULL, gap_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
     PRIMARY KEY(company,connector,channel)
 );
-";
-
-const RETIRED_GAPS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS retired_channel_gaps(
     gap_id TEXT NOT NULL PRIMARY KEY,
     company TEXT NOT NULL, connector TEXT NOT NULL, channel TEXT NOT NULL,
@@ -112,40 +109,6 @@ fn open(home: &Home, write: bool) -> Result<Option<Connection>, StateError> {
 fn initialize(conn: &Connection) -> instrukt_core::state_db::rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute_batch(SCHEMA)?;
-    let legacy_reports: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('retired_channel_gaps') WHERE name='company')
-         AND NOT EXISTS(SELECT 1 FROM pragma_table_info('retired_channel_gaps') WHERE name='gap_id')",
-        [], |row| row.get(0),
-    )?;
-    if legacy_reports {
-        tx.execute_batch("ALTER TABLE retired_channel_gaps RENAME TO legacy_gap_reports;")?;
-    }
-    tx.execute_batch(RETIRED_GAPS_SCHEMA)?;
-    if legacy_reports {
-        tx.execute_batch(
-            "INSERT INTO retired_channel_gaps(gap_id,company,connector,channel,lower_bound,through,retired_at)
-             SELECT lower(hex(randomblob(16))),company,connector,channel,lower_bound,through,retired_at
-             FROM legacy_gap_reports;
-             DROP TABLE legacy_gap_reports;"
-        )?;
-    }
-    let active_has_id: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('channel_gaps') WHERE name='gap_id')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !active_has_id {
-        tx.execute_batch(
-            "ALTER TABLE channel_gaps ADD COLUMN gap_id TEXT;
-             UPDATE channel_gaps SET gap_id=coalesce(
-                (SELECT report.gap_id FROM retired_channel_gaps report
-                 WHERE report.company=channel_gaps.company AND report.connector=channel_gaps.connector
-                 AND report.channel=channel_gaps.channel AND report.through=channel_gaps.lower_bound
-                 ORDER BY report.retired_at DESC LIMIT 1),
-                lower(hex(randomblob(16)))
-             );"
-        )?;
-    }
     tx.commit()
 }
 
