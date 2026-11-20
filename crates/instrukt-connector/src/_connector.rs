@@ -3,7 +3,7 @@
 use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
     Accompanying, Admission, AnswerError, Captured, ConnectorError, ContextSnapshot, Incoming,
-    Limits, Place, ReadBackError, ReadBackPage, Status,
+    Limits, Place, ReadBackError, ReadBackGap, ReadBackPage, Status,
 };
 use jiff::Timestamp;
 
@@ -32,6 +32,7 @@ pub trait Connector: Send + Sync {
         &self,
         _from: Timestamp,
         _position: Option<String>,
+        _gaps: &[ReadBackGap],
     ) -> Result<ReadBackPage, ReadBackError> {
         Ok(ReadBackPage::default())
     }

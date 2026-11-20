@@ -81,6 +81,26 @@ pub struct Incoming {
 pub struct ReadBackPage {
     pub items: Vec<(Incoming, String)>,
     pub next: Option<String>,
+    #[serde(default)]
+    pub coverage: Option<ReadBackCoverage>,
+    #[serde(default)]
+    pub window_started: Option<Timestamp>,
+}
+
+/// An unavailable channel and the original window still owed to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadBackGap {
+    pub channel: String,
+    pub direct: bool,
+    pub from: Timestamp,
+    pub window_started: Timestamp,
+}
+
+/// A change in coverage for one channel.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ReadBackCoverage {
+    ChannelUnavailable { channel: String, direct: bool },
+    ChannelCovered(String),
 }
 
 #[derive(Debug, thiserror::Error)]

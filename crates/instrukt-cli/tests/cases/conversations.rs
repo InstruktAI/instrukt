@@ -4967,8 +4967,17 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         Some(&old_parent),
     );
     c.slack.delete_thread_on_scan("C4", &old_parent);
+    c.slack.say_at(
+        &recent,
+        "C5",
+        "USTEVEN",
+        "<@UAGENT> Can you see this private channel?",
+        None,
+    );
+    c.slack.unavailable_for_read_back("C5", true);
+    c.slack.unavailable_for_read_back("C6", true);
     c.slack
-        .read_back_channels(&["D30", "C2", "D31", "C4", "C1", "C3"]);
+        .read_back_channels(&["D30", "C2", "D31", "C4", "C5", "C6", "C1", "C3"]);
     c.store.thread("s1", None, None, "2026-11-08T10:00:00Z");
     c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
     c.slack.throttle_later_history_page("C1", 120);
@@ -4983,9 +4992,13 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
             .ok()
     };
     wait("the throttled page and retry time are retained", || {
+        assert!(
+            c.slack.deleted_thread_scan_calls() <= 1,
+            "a deleted thread was requested again"
+        );
         checkpoint().is_some()
     });
-    assert!(c.slack.scan_deleted_thread());
+    assert_eq!(c.slack.deleted_thread_scan_calls(), 1);
     let saved = checkpoint().unwrap();
     assert_eq!(
         saved.1,
@@ -5019,6 +5032,17 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         .clone();
     assert_eq!(waiting.len(), 1);
     assert!(waiting[0]["retry_at"].is_string());
+    let gaps = c.status()["conversations"]["read_back_channel_gaps"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        gaps.iter()
+            .map(|gap| gap["channel"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["C5", "C6"]
+    );
+    assert!(gaps.iter().all(|gap| gap["retired_at"].is_null()));
     assert!(c.slack.posts().is_empty());
 
     c.runner_dies();
@@ -5150,11 +5174,16 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         "<@UAGENT> Which stairwell is clear?",
         Some(&old_parent),
     );
+    // The channel becomes readable again without returning to enumeration.
+    c.slack.unavailable_for_read_back("C5", false);
+    c.slack
+        .read_back_channels(&["D30", "C2", "D31", "C1", "C3"]);
+    projected(&c);
     set_clock(&clock, now + jiff::SignedDuration::from_secs(123));
     c.run();
     wait(
         "the repeated scan completes and dispatches the offline reply",
-        || cursor() > completed && c.runtime.message_count(thread) == 2,
+        || cursor() > completed && c.runtime.message_count(thread) == 2 && c.sessions().len() == 3,
     );
     let input = c.runtime.message(thread, 1);
     assert!(input.contains("The west stairwell is clear."), "{input}");
@@ -5176,17 +5205,57 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
                 0
             ))
             .unwrap(),
-        3
+        4
     );
+    let recovered = c
+        .sessions()
+        .into_iter()
+        .find(|session| {
+            c.runtime
+                .message(session, 0)
+                .contains("Can you see this private channel?")
+        })
+        .unwrap();
     c.finish_turn(thread, 1, "The west stairwell.");
-    wait("the offline reply gets its answer", || {
-        c.slack.posts_beginning("The west stairwell.") == 1 && answers_recorded(&c)
-    });
-    assert_eq!(c.slack.posts().len(), 3);
-    assert_eq!(
-        destinations(&c).last(),
-        Some(&("C1".to_owned(), Some(old_parent)))
+    c.finish_turn(&recovered, 0, "Yes, I can see it.");
+    wait(
+        "the offline reply and the recovered channel get their answers",
+        || {
+            c.slack.posts_beginning("The west stairwell.") == 1
+                && c.slack.posts_beginning("Yes, I can see it.") == 1
+                && answers_recorded(&c)
+        },
     );
+    assert_eq!(c.slack.posts().len(), 4);
+    assert!(destinations(&c).contains(&("C1".to_owned(), Some(old_parent))));
+    assert_eq!(c.slack.deleted_thread_scan_calls(), 1);
+    let gaps = c.status()["conversations"]["read_back_channel_gaps"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(gaps[0]["channel"], "C6");
+
+    let latest = cursor();
+    c.runner_dies();
+    c.slack.read_back_channels(&[]);
+    set_clock(&clock, now + jiff::SignedDuration::from_hours(31 * 24));
+    c.run();
+    wait("the expired gap is retired after the next scan", || {
+        cursor() > latest
+    });
+    let retired = c.status()["conversations"]["read_back_channel_gaps"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(retired.len(), 1);
+    assert_eq!(retired[0]["channel"], "C6");
+    assert!(retired[0]["retired_at"].is_string());
+    assert_eq!(
+        retired[0]["cause"],
+        "Messages may have been missed in this span."
+    );
+    assert_eq!(c.slack.posts().len(), 4);
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12

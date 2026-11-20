@@ -307,8 +307,13 @@ while it was not connected:
   If Slack reports replies without a latest reply time, the connector reads
   those replies within the window. A connection still delivers live messages
   while read-back pages through Slack.
-- A conversation or thread Slack reports missing ends its listing, and the
-  scan continues. Other errors leave the current position available for retry.
+- A thread Slack reports missing ends its listing. An unavailable channel
+  leaves a saved coverage gap and the scan continues with other channels.
+  Later scans retry that channel, even if Slack omits it from the listing.
+  The gap clears after a complete scan of the channel. Operator status
+  names unresolved gaps and reports spans that age out of the 30-day
+  read-back horizon as possibly missed. Other errors retain the current
+  position for retry.
 - A broadcast reply uses its own timestamp and its parent thread, wherever
   Slack lists it. A limited request waits for Slack's retry time and resumes
   at the same page after a restart. Operator status shows the wait.

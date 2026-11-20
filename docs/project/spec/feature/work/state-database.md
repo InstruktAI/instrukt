@@ -821,6 +821,15 @@ first committed decision wins. Already seen page identities skip intake.
 Provider reads run outside intake transactions. Unseen missed identity markers
 older than the reporting period retire on a later intake batch.
 
+A completed scan advances overall coverage while keeping each unavailable
+channel's uncovered span separately. These spans are authoritative, owned by
+the conversation core, and persisted as soon as a channel reports unavailable.
+Losing one can skip unread questions even when the overall cursor survives.
+Each later scan retries the span, including channels absent from enumeration.
+Complete traversal of the channel clears it. A later scan retires spans
+outside the 30-day read-back horizon and keeps one operator report per span
+for 30 days. Any newer uncovered portion remains pending.
+
 Seen identities retire after 30 days. Missed records within that period keep
 the written time and provider link. They carry no message text. The active
 page holds text only until intake and the scan checkpoint commit.

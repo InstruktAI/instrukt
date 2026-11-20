@@ -170,6 +170,8 @@ struct Workspace {
     refused_app_connections: usize,
     read_back_limit: Option<(String, u64)>,
     delete_thread_on_scan: Option<(String, String)>,
+    deleted_thread_scan_calls: usize,
+    unavailable_read_back_channels: std::collections::BTreeSet<String>,
     history_pages: Vec<(String, Option<String>)>,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
@@ -517,12 +519,23 @@ impl FakeSlack {
                             arg("channel") == Some(channel) && arg("ts") == Some(parent)
                         })
                 {
-                    let (channel, parent) = w.delete_thread_on_scan.take().unwrap();
-                    w.messages.retain(|message| {
-                        message["channel"] != channel
-                            || (message["ts"] != parent && message["thread_ts"] != parent)
-                    });
+                    w.deleted_thread_scan_calls += 1;
+                    if w.deleted_thread_scan_calls == 1 {
+                        let (channel, parent) = w.delete_thread_on_scan.clone().unwrap();
+                        w.messages.retain(|message| {
+                            message["channel"] != channel
+                                || (message["ts"] != parent && message["thread_ts"] != parent)
+                        });
+                    }
                     return json!({"ok": false, "error": "thread_not_found"});
+                }
+
+                if method == "conversations.history"
+                    && arg("limit") == Some("200")
+                    && arg("channel")
+                        .is_some_and(|channel| w.unavailable_read_back_channels.contains(channel))
+                {
+                    return json!({"ok": false, "error": "channel_not_found"});
                 }
 
                 if method == "conversations.replies"
@@ -710,12 +723,19 @@ impl FakeSlack {
             Some((channel.to_owned(), parent.to_owned()));
     }
 
-    pub fn scan_deleted_thread(&self) -> bool {
-        self.workspace
-            .lock()
-            .unwrap()
-            .delete_thread_on_scan
-            .is_none()
+    pub fn deleted_thread_scan_calls(&self) -> usize {
+        self.workspace.lock().unwrap().deleted_thread_scan_calls
+    }
+
+    pub fn unavailable_for_read_back(&self, channel: &str, unavailable: bool) {
+        let mut workspace = self.workspace.lock().unwrap();
+        if unavailable {
+            workspace
+                .unavailable_read_back_channels
+                .insert(channel.to_owned());
+        } else {
+            workspace.unavailable_read_back_channels.remove(channel);
+        }
     }
 
     pub fn throttle_later_history_page(&self, channel: &str, seconds: u64) {

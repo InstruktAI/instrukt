@@ -894,8 +894,9 @@ impl Connector for Slack {
         &self,
         from: Timestamp,
         position: Option<String>,
+        gaps: &[instrukt_connector::ReadBackGap],
     ) -> Result<instrukt_connector::ReadBackPage, instrukt_connector::ReadBackError> {
-        self.history_page(from, position)
+        self.history_page(from, position, gaps)
     }
 
     fn limits(&self) -> instrukt_connector::Limits {

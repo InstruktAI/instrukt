@@ -2,7 +2,7 @@
 use super::{
     Incoming, Me, SLACK, Slack, SlackError, newly_written, own_message, ts_micros, ts_time,
 };
-use instrukt_connector::{ReadBackError, ReadBackPage};
+use instrukt_connector::{ReadBackCoverage, ReadBackError, ReadBackGap, ReadBackPage};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,12 +19,57 @@ enum Listing {
         direct: bool,
         parent: String,
     },
+    Complete(String),
+}
+
+impl Listing {
+    fn channel(&self) -> Option<(&str, bool)> {
+        match self {
+            Self::Channels => None,
+            Self::History { channel, direct }
+            | Self::Replies {
+                channel, direct, ..
+            } => Some((channel, *direct)),
+            Self::Complete(channel) => Some((channel, false)),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 struct Request {
     listing: Listing,
     cursor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<ReadBackGap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    skip_channels: Vec<String>,
+}
+
+impl Request {
+    fn new(listing: Listing) -> Self {
+        Self {
+            listing,
+            cursor: String::new(),
+            recovery: None,
+            skip_channels: Vec::new(),
+        }
+    }
+}
+
+fn starting_requests(gaps: &[ReadBackGap]) -> Vec<Request> {
+    let mut channels = Request::new(Listing::Channels);
+    channels.skip_channels = gaps.iter().map(|gap| gap.channel.clone()).collect();
+    let mut pending = vec![channels];
+    for gap in gaps.iter().rev() {
+        pending.push(Request::new(Listing::Complete(gap.channel.clone())));
+        let mut request = Request::new(Listing::History {
+            channel: gap.channel.clone(),
+            direct: gap.direct,
+        });
+        request.recovery = Some(gap.clone());
+        pending.push(request);
+    }
+    pending
 }
 
 impl Slack {
@@ -32,17 +77,24 @@ impl Slack {
         &self,
         from: Timestamp,
         position: Option<String>,
+        gaps: &[ReadBackGap],
     ) -> Result<ReadBackPage, ReadBackError> {
         let mut pending: Vec<Request> = match position {
             Some(position) => serde_json::from_str(&position).map_err(failed)?,
-            None => vec![Request {
-                listing: Listing::Channels,
-                cursor: String::new(),
-            }],
+            None => starting_requests(gaps),
         };
         let request = pending
             .pop()
             .ok_or_else(|| failed("empty Slack read-back position"))?;
+        if let Listing::Complete(channel) = &request.listing {
+            return Ok(ReadBackPage {
+                next: continuation(&pending)?,
+                coverage: Some(ReadBackCoverage::ChannelCovered(channel.clone())),
+                ..ReadBackPage::default()
+            });
+        }
+        let from = request.recovery.as_ref().map_or(from, |gap| gap.from);
+        let window_started = request.recovery.as_ref().map(|gap| gap.window_started);
         let oldest = format!(
             "{}.{:06}",
             from.as_second(),
@@ -71,6 +123,7 @@ impl Slack {
                     ("inclusive", "true"),
                 ],
             ),
+            Listing::Complete(_) => return Err(failed("invalid completion request")),
         };
         form.push(("limit", "200"));
         if !request.cursor.is_empty() {
@@ -90,13 +143,28 @@ impl Slack {
         };
         let body = match body {
             Err(SlackError::Api { cause, .. })
-                if (method == "conversations.history" && cause == "channel_not_found")
-                    || (method == "conversations.replies"
-                        && matches!(cause.as_str(), "channel_not_found" | "thread_not_found")) =>
+                if cause == "channel_not_found" && request.listing.channel().is_some() =>
+            {
+                let (channel, direct) = request
+                    .listing
+                    .channel()
+                    .ok_or_else(|| failed("missing channel in read-back request"))?;
+                pending.retain(|next| next.listing.channel().is_none_or(|(id, _)| id != channel));
+                return Ok(ReadBackPage {
+                    coverage: Some(ReadBackCoverage::ChannelUnavailable {
+                        channel: channel.to_owned(),
+                        direct,
+                    }),
+                    next: continuation(&pending)?,
+                    ..ReadBackPage::default()
+                });
+            }
+            Err(SlackError::Api { cause, .. })
+                if method == "conversations.replies" && cause == "thread_not_found" =>
             {
                 return Ok(ReadBackPage {
-                    items: Vec::new(),
                     next: continuation(&pending)?,
+                    ..ReadBackPage::default()
                 });
             }
             result => result.map_err(web_error)?,
@@ -120,10 +188,15 @@ impl Slack {
         let mut children = Vec::new();
         for item in page {
             match &request.listing {
-                Listing::Channels => children.push(Listing::History {
-                    channel: field(item, "id")?.to_owned(),
-                    direct: item["is_im"].as_bool().unwrap_or(false),
-                }),
+                Listing::Channels => {
+                    let id = field(item, "id")?;
+                    if !request.skip_channels.iter().any(|channel| channel == id) {
+                        children.push(Listing::History {
+                            channel: id.to_owned(),
+                            direct: item["is_im"].as_bool().unwrap_or(false),
+                        });
+                    }
+                }
                 Listing::History { channel, direct } => {
                     if let Some(message) = recover(&me, channel, None, *direct, item, from)? {
                         items.push(message);
@@ -162,21 +235,25 @@ impl Slack {
                         items.push(message);
                     }
                 }
+                Listing::Complete(_) => return Err(failed("invalid completion page")),
             }
         }
+        let recovery = request.recovery.clone();
         if !next.is_empty() {
             pending.push(Request {
-                listing: request.listing,
                 cursor: next.to_owned(),
+                ..request
             });
         }
         pending.extend(children.into_iter().rev().map(|listing| Request {
-            listing,
-            cursor: String::new(),
+            recovery: recovery.clone(),
+            ..Request::new(listing)
         }));
         Ok(ReadBackPage {
             items,
             next: continuation(&pending)?,
+            window_started,
+            coverage: None,
         })
     }
 }

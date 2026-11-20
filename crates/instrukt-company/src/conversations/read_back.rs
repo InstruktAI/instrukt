@@ -1,6 +1,8 @@
 //! Read-back coverage and findings live outside the live intake writer.
 use super::{ConversationError, micros, retain_in};
-use instrukt_connector::{Connector, ConnectorError, Incoming, ReadBackPage};
+use instrukt_connector::{
+    Connector, ConnectorError, Incoming, ReadBackCoverage, ReadBackGap, ReadBackPage,
+};
 use instrukt_core::{
     fsx::{self, FsError},
     home::Home,
@@ -17,6 +19,7 @@ const REPORTING_PERIOD: SignedDuration = SignedDuration::from_hours(30 * 24);
 const SCAN_OVERLAP: SignedDuration = SignedDuration::from_secs(60);
 
 const SCHEMA: &str = "
+BEGIN;
 CREATE TABLE IF NOT EXISTS scans(
     company TEXT, connector TEXT, first_seen INTEGER NOT NULL, retained_until INTEGER,
     started INTEGER, lower_bound INTEGER, position TEXT, page TEXT, retry_at INTEGER, failure TEXT,
@@ -28,6 +31,18 @@ CREATE TABLE IF NOT EXISTS seen(
     PRIMARY KEY(company, connector, channel, message)
 );
 CREATE INDEX IF NOT EXISTS seen_by_time ON seen(written_us);
+CREATE TABLE IF NOT EXISTS channel_gaps(
+    company TEXT NOT NULL, connector TEXT NOT NULL, channel TEXT NOT NULL,
+    direct INTEGER NOT NULL, lower_bound INTEGER NOT NULL, first_scan INTEGER NOT NULL,
+    through INTEGER NOT NULL,
+    PRIMARY KEY(company,connector,channel)
+);
+CREATE TABLE IF NOT EXISTS retired_channel_gaps(
+    company TEXT NOT NULL, connector TEXT NOT NULL, channel TEXT NOT NULL,
+    lower_bound INTEGER NOT NULL, through INTEGER NOT NULL, retired_at INTEGER NOT NULL,
+    PRIMARY KEY(company,connector,channel,lower_bound,through)
+);
+COMMIT;
 ";
 
 fn store_path(home: &Home) -> PathBuf {
@@ -149,6 +164,69 @@ struct Progress {
     failure: Option<String>,
 }
 
+struct ScanWindow {
+    from: Timestamp,
+    started: Timestamp,
+}
+
+fn retry_channels(
+    conn: &Connection,
+    owner: &str,
+    key: &str,
+) -> Result<Vec<ReadBackGap>, ConnectorError> {
+    let mut query = conn
+        .prepare(
+            "SELECT channel,direct,lower_bound,first_scan FROM channel_gaps
+         WHERE company=?1 AND connector=?2 ORDER BY channel",
+        )
+        .map_err(failed)?;
+    let rows = query
+        .query_map([owner, key], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .map_err(failed)?;
+    rows.map(|row| {
+        let (channel, direct, from, started) = row.map_err(failed)?;
+        Ok(ReadBackGap {
+            channel,
+            direct,
+            from: Timestamp::from_microsecond(from).map_err(failed)?,
+            window_started: Timestamp::from_microsecond(started).map_err(failed)?,
+        })
+    })
+    .collect()
+}
+
+fn retire_gaps(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    owner: &str,
+    key: &str,
+    now: Timestamp,
+) -> instrukt_core::state_db::rusqlite::Result<()> {
+    let cutoff = micros(now - REPORTING_PERIOD);
+    tx.execute(
+        "INSERT INTO retired_channel_gaps(company,connector,channel,lower_bound,through,retired_at)
+         SELECT company,connector,channel,lower_bound,min(through,?3),?4 FROM channel_gaps
+         WHERE company=?1 AND connector=?2 AND first_scan<?3 AND lower_bound<min(through,?3)
+         ON CONFLICT DO NOTHING",
+        params![owner, key, cutoff, micros(now)],
+    )?;
+    tx.execute(
+        "DELETE FROM channel_gaps WHERE company=?1 AND connector=?2 AND through<?3",
+        params![owner, key, cutoff],
+    )?;
+    tx.execute(
+        "UPDATE channel_gaps SET lower_bound=max(lower_bound,?3),first_scan=through
+         WHERE company=?1 AND connector=?2 AND first_scan<?3",
+        params![owner, key, cutoff],
+    )?;
+    tx.execute(
+        "DELETE FROM retired_channel_gaps WHERE company=?1 AND connector=?2 AND retired_at<?3",
+        params![owner, key, cutoff],
+    )?;
+    Ok(())
+}
+
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
     ConnectorError {
         cause: error.to_string(),
@@ -172,17 +250,24 @@ pub(crate) fn scan(
     let path = state::db_path(&conn);
     let sql = |error| failed(state::sql(&path)(error));
     let owner = company.as_str();
-    conn.execute(
-        "UPDATE scans SET started=?3,lower_bound=coalesce(retained_until,min(first_seen,?4))
+    let tx = conn.transaction().map_err(sql)?;
+    let opened = tx
+        .execute(
+            "UPDATE scans SET started=?3,lower_bound=coalesce(retained_until,min(first_seen,?4))
          WHERE company=?1 AND connector=?2 AND started IS NULL",
-        params![
-            owner,
-            key,
-            micros(requested),
-            micros(requested - ANSWERING_BOUND)
-        ],
-    )
-    .map_err(sql)?;
+            params![
+                owner,
+                key,
+                micros(requested),
+                micros(requested - ANSWERING_BOUND)
+            ],
+        )
+        .map_err(sql)?;
+
+    if opened != 0 {
+        retire_gaps(&tx, owner, key, requested).map_err(sql)?;
+    }
+    tx.commit().map_err(sql)?;
 
     while !quit() {
         let progress = conn.query_row(
@@ -199,12 +284,19 @@ pub(crate) fn scan(
                     .unwrap_or("waiting to retry read-back"),
             ));
         }
-        let started = Timestamp::from_microsecond(progress.started).map_err(failed)?;
+        let window = ScanWindow {
+            from: Timestamp::from_microsecond(progress.lower).map_err(failed)?,
+            started: Timestamp::from_microsecond(progress.started).map_err(failed)?,
+        };
         let page: ReadBackPage = match progress.page {
             Some(page) => serde_json::from_str(&page).map_err(failed)?,
             None => {
-                let lower = Timestamp::from_microsecond(progress.lower).map_err(failed)?;
-                match connector.read_back_page(lower, progress.position) {
+                let gaps = if progress.position.is_none() {
+                    retry_channels(&conn, owner, key)?
+                } else {
+                    Vec::new()
+                };
+                match connector.read_back_page(window.from, progress.position, &gaps) {
                     Ok(page) => {
                         let encoded = serde_json::to_string(&page).map_err(failed)?;
                         conn.execute(
@@ -233,7 +325,7 @@ pub(crate) fn scan(
         if quit() {
             break;
         }
-        match retain_page(&mut conn, home, company, key, &page, started, clock) {
+        match retain_page(&mut conn, home, company, key, &page, &window, clock) {
             Ok(true) => nudge(),
             Ok(false) => {}
             Err(error) => {
@@ -248,7 +340,7 @@ pub(crate) fn scan(
         if page.next.is_none() {
             // A resumed window can end before the most recent connection.
             // Take a fresh window once its earlier coverage is durable.
-            return Ok(started < requested);
+            return Ok(window.started < requested);
         }
     }
     Ok(false)
@@ -268,9 +360,11 @@ fn retain_page(
     company: &ProjectSlug,
     key: &str,
     page: &ReadBackPage,
-    window_started: Timestamp,
+    window: &ScanWindow,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<bool, ConnectorError> {
+    let window_started = window.started;
+    let answer_from = page.window_started.unwrap_or(window_started) - ANSWERING_BOUND;
     let owner = company.as_str();
     let path = state::db_path(conn);
     let sql = |error| failed(state::sql(&path)(error));
@@ -306,7 +400,7 @@ fn retain_page(
                 let mut inserted = false;
                 let mut missed = Vec::with_capacity(novel.len());
                 for (item, link) in &novel {
-                    if item.written_at >= window_started - ANSWERING_BOUND {
+                    if item.written_at >= answer_from {
                         inserted |= retain_in(tx, company, item, arrived_at)? != 0;
                         missed.push(None);
                     } else {
@@ -333,6 +427,24 @@ fn retain_page(
              VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO NOTHING",
             params![owner, key, channel(item), item.message, item.conversation, micros(item.written_at), missed],
         ).map_err(sql)?;
+    }
+    match &page.coverage {
+        Some(ReadBackCoverage::ChannelUnavailable { channel, direct }) => {
+            tx.execute(
+                "INSERT INTO channel_gaps(company,connector,channel,direct,lower_bound,first_scan,through)
+                 VALUES(?1,?2,?3,?4,?5,?6,?6)
+                 ON CONFLICT(company,connector,channel) DO UPDATE SET through=max(through,excluded.through)",
+                params![owner, key, channel, direct, micros(window.from), micros(window.started)],
+            ).map_err(sql)?;
+        }
+        Some(ReadBackCoverage::ChannelCovered(channel)) => {
+            tx.execute(
+                "DELETE FROM channel_gaps WHERE company=?1 AND connector=?2 AND channel=?3",
+                params![owner, key, channel],
+            )
+            .map_err(sql)?;
+        }
+        None => {}
     }
     if let Some(next) = &page.next {
         tx.execute("UPDATE scans SET position=?3,page=NULL,retry_at=NULL,failure=NULL WHERE company=?1 AND connector=?2",
@@ -475,6 +587,77 @@ pub(super) fn failures(home: &Home) -> Result<Vec<Failure>, StateError> {
             connector,
             cause,
             retry_at,
+        })
+    })
+    .collect()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChannelGap {
+    pub company: String,
+    pub connector: String,
+    pub channel: String,
+    pub from: Timestamp,
+    pub through: Timestamp,
+    pub cause: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired_at: Option<Timestamp>,
+}
+
+pub(super) fn channel_gaps(home: &Home, now: Timestamp) -> Result<Vec<ChannelGap>, StateError> {
+    let Some(conn) = open(home, false)? else {
+        return Ok(Vec::new());
+    };
+    let path = state::db_path(&conn);
+    // A read-only inspection can precede opening an earlier scan database
+    // for writes, when its new tables have not been created.
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='channel_gaps')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(state::sql(&path))?;
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let mut query = conn
+        .prepare(
+            "SELECT company,connector,channel,lower_bound,through,NULL FROM channel_gaps
+         UNION ALL SELECT company,connector,channel,lower_bound,through,retired_at
+         FROM retired_channel_gaps WHERE retired_at>=?1
+         ORDER BY company,connector,channel,lower_bound",
+        )
+        .map_err(state::sql(&path))?;
+    let rows = query
+        .query_map([micros(now - REPORTING_PERIOD)], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get::<_, Option<i64>>(5)?,
+            ))
+        })
+        .map_err(state::sql(&path))?;
+    let time = |us| Timestamp::from_microsecond(us).map_err(|err| state::invalid(&path, err));
+    rows.map(|row| {
+        let (company, connector, channel, from, through, retired_at) =
+            row.map_err(state::sql(&path))?;
+        let cause = if retired_at.is_some() {
+            "Messages may have been missed in this span."
+        } else {
+            "Channel unavailable for read-back."
+        };
+        Ok(ChannelGap {
+            company,
+            connector,
+            channel,
+            from: time(from)?,
+            through: time(through)?,
+            cause: cause.into(),
+            retired_at: retired_at.map(time).transpose()?,
         })
     })
     .collect()

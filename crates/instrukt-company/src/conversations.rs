@@ -4077,6 +4077,8 @@ pub struct Status {
     pub missed_messages: Vec<read_back::Missed>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub read_back_failures: Vec<read_back::Failure>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_back_channel_gaps: Vec<read_back::ChannelGap>,
 }
 
 /// Connection states, conversations with pending messages, answers or
@@ -4198,6 +4200,7 @@ fn status_at(home: &Home, now: Timestamp) -> Result<Status, ConversationError> {
         conversations,
         missed_messages: read_back::missed(home, now)?,
         read_back_failures: read_back::failures(home)?,
+        read_back_channel_gaps: read_back::channel_gaps(home, now)?,
     })
 }
 
