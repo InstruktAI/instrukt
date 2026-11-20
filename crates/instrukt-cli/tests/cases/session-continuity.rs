@@ -98,6 +98,56 @@ fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
     p.tick();
     assert_eq!(fake.threads().len(), 1);
 }
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS24
+#[test]
+fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
+    let mut p = Tracked::new(true);
+    p.authorized_task("weekly-status", "2030-01-06T09:00:00Z", &[]);
+    p.tick_at("2030-01-06T09:00:20Z");
+    let fake = FakeT3::create(&p.env);
+    let key = fake.key("s1");
+    fake.delete("s1");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute_batch("CREATE TRIGGER fail_work_replacement BEFORE UPDATE OF claim_session ON todos
+        WHEN NEW.claim_session='t3:s2' BEGIN SELECT RAISE(ABORT, 'work binding write failed'); END;").unwrap();
+    let command = || {
+        p.env.run(
+            p.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        )
+    };
+    let failed = command().failure();
+    let error = String::from_utf8_lossy(&failed.get_output().stderr);
+    assert!(
+        error.contains("was not confirmed in the todo record"),
+        "{error}"
+    );
+    let sessions = || {
+        db.query_row(
+        "SELECT b.session,t.claim_session,(SELECT session FROM runtime_bindings WHERE semantic_key=?1)
+         FROM session_bindings b JOIN todos t ON b.todo_id=t.id WHERE b.semantic_key=?1",
+        [&key], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<String>>(2)?)),
+    ).unwrap()
+    };
+    assert_eq!(sessions(), ("t3:s1".into(), "t3:s1".into(), None));
+    assert_eq!(fake.threads(), ["s2"]);
+    db.execute_batch("DROP TRIGGER fail_work_replacement;")
+        .unwrap();
+    command().success();
+    assert_eq!(
+        sessions(),
+        ("t3:s2".into(), "t3:s2".into(), Some("t3:s2".into()))
+    );
+    assert_eq!(
+        fake.threads(),
+        ["s2"],
+        "reconciliation must reuse the accepted native replacement"
+    );
+}
+
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
 #[test]
 fn conflicting_keyed_threads_never_admit_a_replacement() {

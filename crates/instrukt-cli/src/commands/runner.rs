@@ -241,12 +241,14 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
             let adapter = sessions.adapter()?;
             let invocation =
                 keyed::RuntimeInvocation::acquire(&ctx.home, Duration::from_secs(120))?;
+            let work = crate::wiring::work_ports(ctx)?;
             let thread = keyed::replace_deleted(
                 &invocation,
                 adapter.as_ref(),
                 &key,
                 &stopped,
                 ctx.clock.now(),
+                work.as_ref().map(|ports| ports.bindings.as_ref()),
             )?;
             ctx.out.line(&format!(
                 "replaced {stopped} with {} under {key}",

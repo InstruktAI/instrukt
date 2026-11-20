@@ -126,6 +126,10 @@ pub enum SessionsError {
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
     #[error(
+        "native project for {session} under `{key}` is unverified; restore the retained key in its original native project and see `instrukt events status`"
+    )]
+    ProjectUnverified { key: String, session: SessionRef },
+    #[error(
         "thread {session} for `{key}` is deleted. Deletion does not prove the old session stopped. Once it has stopped, use `instrukt sessions replace-deleted {key} --stopped {session}`"
     )]
     DeletedBound { key: String, session: SessionRef },

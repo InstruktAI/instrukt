@@ -443,6 +443,16 @@ fn deliver_group(
                 found.iter().map(|thread| &thread.session).chain([target]),
             ));
         }
+        if keyed::retained_project(state, &original.key, target)?.is_none()
+            && let Some(listed) = found.first()
+            && thread.project_id.is_some()
+            && thread.project_id == listed.project_id
+        {
+            adapter.verify_start(&original, &thread)?;
+            state.write::<_, StateError>(|tx| {
+                keyed::remember_manual(tx, selected_runtime, &original, &thread, project.as_deref())
+            })?;
+        }
         keyed::verify_recorded_project(state, &original.key, &thread)?;
         if found.first().is_some_and(|found| {
             crate::runtime::project_conflict(&thread.project_id, &found.project_id)
@@ -874,6 +884,44 @@ pub fn bind_manual(
     let runtime = config.runner_runtime()?;
     let caller = config.caller(env)?.ok_or(SessionsError::NoActiveRuntime)?;
     let state = RunnerState::new(invocation.home());
+    let adapter = crate::runtime::adapter(runtime);
+    let observed = if let Some(evidence) = evidence {
+        let request =
+            state
+                .read(|conn, path| {
+                    conn.query_row(
+                "SELECT request FROM manual_standing_reservations WHERE token=?1 AND caller=?2",
+                params![token, caller.to_string()], |row| row.get::<_, String>(0),
+            ).map_err(state::sql(path))
+                })?
+                .ok_or_else(|| {
+                    SessionsError::Refused("manual standing reservation is missing".into())
+                })?;
+        let request: ManualReservation = serde_json::from_str(&request)
+            .map_err(|error| SessionsError::Refused(error.to_string()))?;
+        let listed = adapter.list(&request.checkout)?;
+        let mut matches = listed.iter().filter(|thread| {
+            thread.presence == Presence::Present
+                && thread.semantic_key.as_deref() == Some(&request.key)
+        });
+        let thread = adapter.read_state(&evidence.session)?;
+        let matches_project = matches.next().is_some_and(|entry| {
+            entry.session == thread.session && entry.project_id == thread.project_id
+        }) && matches.next().is_none();
+        if !matches_project
+            || thread.project_id.is_none()
+            || thread.presence != Presence::Present
+            || thread.semantic_key.as_deref() != Some(&request.key)
+        {
+            return Err(keyed::unverified_project(&request.key, &evidence.session));
+        }
+        if keyed::retained_project(&state, &request.key, &thread.session)?.is_some() {
+            keyed::verify_recorded_project(&state, &request.key, &thread)?;
+        }
+        Some(thread)
+    } else {
+        None
+    };
     state.write::<_,StateError>(|tx|{
         let db=state::db_path(tx);
         let (responsibility,owner,home,declaration,request,bound):(String,String,String,String,String,Option<String>)=tx.query_row("SELECT responsibility,caller,home,declaration,request,session FROM manual_standing_reservations WHERE token=?1",[token],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(state::sql(&db))?;
@@ -884,6 +932,8 @@ pub fn bind_manual(
             if e.session.runtime.as_str()!=runtime.name() || e.title!=request.title || e.assignment!=request.brief || bound.as_deref().is_some_and(|s|s!=e.session.to_string()) { return Err(state::invalid(&db,"native identity or initialized assignment differs from reserved facts")); }
             let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some(crate::runtime::adapter(runtime).selection_realization(crate::runtime::SelectionOperation::NativeDelegation)),checkout:request.checkout.clone(),title:request.title.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None,
             profiles: crate::runtime::Profiles::default()};
+            let thread = observed.as_ref().ok_or_else(|| state::invalid(&db, "manual binding has no native project observation"))?;
+            keyed::remember_manual(tx, runtime, &native, thread, None)?;
             tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,1,?1,?4,?5,?6,?7) ON CONFLICT(responsibility) DO NOTHING",params![responsibility,procedure,home,request.checkout.to_string_lossy(),declaration,serde_json::to_string(&native).map_err(|e|state::invalid(&db,e))?,e.session.to_string()]).map_err(state::sql(&db))?;
             tx.execute("UPDATE manual_standing_reservations SET session=?2 WHERE token=?1",params![token,e.session.to_string()]).map_err(state::sql(&db))?;
             inputs::retain(tx,&e.session,&Entry{id:&format!("assignment:{}",request.key),kind:InputKind::Recovery,assignment:None,source_at:None,arrived_at:now,intent:Intent::Asap,content:&request.brief})?;
@@ -905,15 +955,31 @@ pub(crate) fn replace_deleted(
     now: Timestamp,
 ) -> Result<Thread, SessionsError> {
     let state = RunnerState::new(invocation.home());
-    let found = state.read(|conn, path| {
-        conn.query_row(
-            "SELECT responsibility,procedure,exact_home,subject,request FROM procedure_responsibilities WHERE semantic_key=?1 AND session=?2",
-            params![key, stopped.to_string()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, String>(4)?)),
-        ).optional().map_err(state::sql(path))
-    })?.flatten();
-    let (responsibility, procedure, home, subject, request) = found
-        .ok_or_else(|| SessionsError::Refused(format!("`{key}` is not bound to {stopped}")))?;
+    let found = state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT p.responsibility,p.procedure,p.exact_home,p.subject,p.request
+             FROM procedure_responsibilities p
+             LEFT JOIN runtime_bindings b ON p.session IS NULL AND b.semantic_key=p.semantic_key
+                 AND b.runtime=?3 AND b.accepted=1 AND b.kind='standing'
+             WHERE p.semantic_key=?1 AND coalesce(p.session,b.session)=?2",
+                params![key, stopped.to_string(), adapter.runtime().name()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(state::sql(path))
+        })?
+        .flatten();
+    let (responsibility, procedure, home, subject, request) =
+        found.ok_or_else(|| keyed::stopped_mismatch(key, stopped))?;
     keyed::confirm_deleted(adapter, stopped)?;
     let old_request: RuntimeStart =
         serde_json::from_str(&request).map_err(|err| SessionsError::Refused(err.to_string()))?;
@@ -1012,7 +1078,7 @@ fn prepare_successor(
         let next=generation.checked_add(1).ok_or_else(||SessionsError::Refused("standing generation counter exhausted".into()))?;
         let next_key=old_key.clone();
         tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()]).map_err(state::sql(&path))?;
-        tx.execute("INSERT INTO procedure_generations(responsibility,generation,semantic_key,session,declaration,request,terminal) SELECT responsibility,generation,semantic_key,session,declaration,request,?2 FROM procedure_responsibilities WHERE responsibility=?1",params![cx.responsibility,cx.now.to_string()]).map_err(state::sql(&path))?;
+        tx.execute("INSERT INTO procedure_generations(responsibility,generation,semantic_key,session,declaration,request,terminal) SELECT responsibility,generation,semantic_key,coalesce(session,?3),declaration,request,?2 FROM procedure_responsibilities WHERE responsibility=?1",params![cx.responsibility,cx.now.to_string(),cx.old_session.to_string()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE procedure_activations SET state='pending',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND d.responsibility=?1 AND d.target=?2 AND i.state IN ('pending','selected','accepted'))",params![cx.responsibility,cx.old_session.to_string()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure='target closed before observed consumption; standing events retained for successor, other input retains terminal failure' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![cx.old_session.runtime.as_str(),cx.old_session.id.as_str()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE standing_deliveries SET state='pending',target=NULL,input_id=NULL WHERE responsibility=?1 AND EXISTS (SELECT 1 FROM procedure_activations a WHERE a.event_id=standing_deliveries.event_id AND a.procedure=standing_deliveries.procedure AND a.exact_home=standing_deliveries.exact_home AND a.state='pending')",[cx.responsibility]).map_err(state::sql(&path))?;

@@ -624,6 +624,73 @@ impl SessionBindings for Work {
             .map(|b| b.binding))
     }
 
+    fn replace_dispatch(
+        &self,
+        project: &ProjectRef,
+        binding: &SessionBinding,
+        stopped: &SessionRef,
+        accept_runtime: &mut dyn FnMut(
+            &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        ) -> Result<(), instrukt_runner::state::StateError>,
+    ) -> Result<(), WorkInterfaceError> {
+        let mut s = Session::open(self, project)?;
+        let machine = s.machine()?;
+        let mut owners = s.items.iter().filter(|item| {
+            item.record
+                .bindings
+                .iter()
+                .any(|recorded| recorded.attempt.semantic_key == binding.key)
+        });
+        let todo = owners
+            .next()
+            .map(|item| item.record.slug.clone())
+            .ok_or_else(|| {
+                WorkError::refused("the replacement key has no local todo assignment")
+            })?;
+        if owners.next().is_some() {
+            return Err(WorkError::refused(
+                "the replacement key identifies multiple todo assignments",
+            )
+            .into());
+        }
+        let index = s.enter(&todo)?;
+        s.commit_with(
+            "dispatch replaced",
+            |s| {
+                let record = &mut s.items[index].record;
+                let old = record
+                    .bindings
+                    .iter_mut()
+                    .find(|old| old.attempt.semantic_key == binding.key)
+                    .ok_or_else(|| {
+                        WorkError::refused(
+                            "the replacement key no longer identifies this assignment",
+                        )
+                    })?;
+                let claim = record.claim.as_mut().ok_or_else(|| {
+                    WorkError::refused("the replacement has no current execution claim")
+                })?;
+                if old.session.as_ref() != Some(stopped)
+                    || old.attempt.released_at.is_some()
+                    || stopped.runtime != binding.session.runtime
+                    || claim.machine != machine
+                    || claim.session.as_ref() != Some(stopped)
+                {
+                    return Err(WorkError::refused(
+                        "the replacement does not match the current todo binding and claim",
+                    ));
+                }
+                old.session = Some(binding.session.clone());
+                old.worktree.clone_from(&binding.worktree);
+                claim.session = Some(binding.session.clone());
+                Ok(())
+            },
+            |tx| accept_runtime(tx).map_err(|error| WorkError::refused(error.to_string())),
+        )?;
+        s.flush()?;
+        Ok(())
+    }
+
     fn record_dispatch(
         &self,
         project: &ProjectRef,

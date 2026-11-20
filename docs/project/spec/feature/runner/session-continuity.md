@@ -219,8 +219,9 @@ For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>` or `platform`; a person token retains its kind but cannot execute.
 A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
-subject identity requires it. The first generation omits the generation suffix;
-a confirmed successor appends its positive generation number starting at 2.
+subject identity requires it. New standing keys omit the generation suffix. A confirmed successor keeps
+the exact retained key, including a suffix on keys recorded by earlier builds.
+The generation number is kept separately.
 T3 standing threads remain unsettled under automation. A human may settle
 one; it remains findable, wakes on a message and can be unsettled, for either
 home or subject identity and either attendance. Settling never permits succession.
@@ -385,7 +386,9 @@ confirmation that the named provider session has stopped. It requires the retain
 binding to match the given key and session and the adapter to report the thread
 absent. It retires the binding and uses the ordinary recorded start path under
 the same key. A standing replacement increments the retained generation number.
-A lost start reply follows the same reconciliation as any other start.
+A lost start reply is reconciled under that key without another start. For a
+todo or task, success requires the runtime binding, current work binding and
+claim to name the replacement in the same local transaction.
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains
@@ -812,6 +815,16 @@ Given a developer renames the bound thread of a standing agent
 When a later event needs that agent and no other live thread claims its key
 Then the event reaches the same thread by its retained ID within the retained native project
 But if the native project changed, the event stays pending and status reports the conflict
+```
+
+### UC-SS24: A developer replaces a deleted task session consistently
+
+```gherkin
+Given a task's bound thread is deleted and the operator confirms the old provider stopped
+When the operator replaces it
+Then the runtime binding, work binding and claim move to the same successor
+But if the work record cannot accept the binding
+Then the command reports failure and reconciliation can recover the same successor
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

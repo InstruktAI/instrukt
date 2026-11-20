@@ -300,6 +300,18 @@ pub trait SessionBindings: Send + Sync {
         role: &RoleName,
     ) -> Result<Option<SessionBinding>, WorkInterfaceError>;
 
+    /// Commit an operator-confirmed replacement and its runtime acceptance
+    /// together with the current work binding and claim.
+    fn replace_dispatch(
+        &self,
+        project: &ProjectRef,
+        binding: &SessionBinding,
+        stopped: &SessionRef,
+        accept_runtime: &mut dyn FnMut(
+            &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        ) -> Result<(), crate::state::StateError>,
+    ) -> Result<(), WorkInterfaceError>;
+
     /// Commit the accepted assignment and optional occurrence stamp together.
     fn record_dispatch(
         &self,

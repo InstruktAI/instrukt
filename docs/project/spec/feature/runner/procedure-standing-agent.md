@@ -98,6 +98,11 @@ through the replacement command in
 `project/instrukt/spec/feature/runner/session-continuity`. An archived thread
 stays bound and cannot be replaced by that command.
 
+Manual binding records the native project from the reserved checkout's exact
+key and session. A retained binding without project evidence can establish it
+through that same discovery. A renamed thread with no retained project evidence
+keeps its input pending and reports how to restore a verifiable binding.
+
 Each responsibility retains its session generations and one current generation.
 Successors keep the current standing key and increment the recorded generation. Retiring an old generation and admitting
 the next are one serialized durable decision, possible only after its terminal

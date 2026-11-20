@@ -362,6 +362,16 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
     deleted.append("initial");
     deleted.tick();
     let key = deleted.runtime.key("s1");
+    // Simulate interruption after keyed acceptance and before standing
+    // accepted the same assignment. Status and the door must use the same ID.
+    deleted
+        .computer
+        .db()
+        .execute(
+            "UPDATE procedure_responsibilities SET session=NULL WHERE semantic_key=?1",
+            [&key],
+        )
+        .unwrap();
     deleted.runtime.delete("s1");
     deleted.append("after-delete");
     deleted.tick();
@@ -381,6 +391,16 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
         )),
         "{cause}"
     );
+    let wrong = deleted
+        .computer
+        .env
+        .run(
+            deleted.computer.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:typo"],
+        )
+        .failure();
+    let error = String::from_utf8_lossy(&wrong.get_output().stderr);
+    assert!(error.contains("instrukt events status"), "{error}");
     deleted.replace_deleted(&key);
     assert_eq!(deleted.runtime.key("s2"), key);
     assert_eq!(deleted.delivered_to("after-delete").to_string(), "t3:s2");
@@ -763,7 +783,16 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     };
     bind().success();
     bind().success();
-    assert_eq!(r.runtime.calls().len(), before);
+    let retained_project: String = r
+        .computer
+        .db()
+        .query_row(
+            "SELECT project_id FROM runtime_bindings WHERE semantic_key=?1",
+            [request["key"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained_project, root.to_string_lossy());
     let refused = reserve().failure();
     insta::assert_snapshot!(
         "manual-standing-already-bound",
@@ -774,6 +803,39 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), 2);
     insta::assert_snapshot!("manual-standing-attended", r.conversation());
+
+    r.runtime.consume("s1");
+    r.runtime
+        .change("s1", "title", "Renamed by the developer".into());
+    r.runtime
+        .change("s1", "projectId", "another-native-project".into());
+    r.append("after-project-move");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert!(
+        start_anomalies(&r)[0]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("changed native project")
+    );
+
+    // Historical manual bindings may have no retained native project.
+    r.computer
+        .db()
+        .execute("UPDATE runtime_bindings SET project_id=NULL", [])
+        .unwrap();
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert!(
+        start_anomalies(&r)[0]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("unverified")
+    );
+    r.runtime.change("s1", "projectId", retained_project.into());
+    r.runtime.change("s1", "title", request["title"].clone());
+    r.tick();
+    assert_eq!(r.delivered_to("after-project-move").to_string(), "t3:s1");
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA11
 #[test]

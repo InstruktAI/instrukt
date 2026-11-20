@@ -151,10 +151,11 @@ struct Recorded {
     accepted: bool,
     project: Option<String>,
     project_id: Option<String>,
+    replacement_from: Option<SessionRef>,
 }
 fn record(state: &RunnerState, runtime: &str, key: &str) -> Result<Recorded, StateError> {
     Ok(state.read(|conn,path| {
-        let start=conn.query_row("SELECT request,state,project FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",params![runtime,key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional().map_err(state::sql(path))?;
+        let start=conn.query_row("SELECT request,state,project,resolution FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",params![runtime,key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?))).optional().map_err(state::sql(path))?;
         let bound=conn.query_row("SELECT session,accepted,request,project,project_id FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",params![runtime,key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?))).optional().map_err(state::sql(path))?;
         let encoded=start.as_ref().map(|r|&r.0).or_else(||bound.as_ref().and_then(|r|r.2.as_ref()));
         Ok(Recorded {
@@ -163,11 +164,16 @@ fn record(state: &RunnerState, runtime: &str, key: &str) -> Result<Recorded, Sta
             retry_allowed:start.as_ref().is_some_and(|r|r.1=="retry_allowed"),
             bound:bound.as_ref().map(|r|SessionRef::parse(&r.0).map_err(|e|state::invalid(path,e))).transpose()?,
             accepted:bound.as_ref().is_some_and(|r|r.1),
+            replacement_from:start.as_ref().and_then(|r|r.3.as_deref())
+                .and_then(|reason|reason.strip_prefix(TODO_REPLACEMENT))
+                .map(|id|SessionRef::parse(id).map_err(|e|state::invalid(path,e))).transpose()?,
             project:start.and_then(|r|r.2).or_else(||bound.as_ref().and_then(|r|r.3.clone())),
             project_id:bound.and_then(|r|r.4),
         })
     })?.unwrap_or_default())
 }
+const TODO_REPLACEMENT: &str = "operator_confirmed_todo_replacement:";
+
 fn kind(key: &str) -> &str {
     key.strip_prefix("instrukt:")
         .and_then(|s| s.split(':').next())
@@ -189,12 +195,106 @@ fn remember(
     evidence: RequestEvidence,
 ) -> Result<(), StateError> {
     state.write(|tx| {
-        let path = state::db_path(tx);
-        let request=match evidence {RequestEvidence::Retained=>Some(serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?),RequestEvidence::Unknown=>None};
-        tx.execute("INSERT INTO runtime_bindings (runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET session=excluded.session,project_id=COALESCE(excluded.project_id,runtime_bindings.project_id),worktree=excluded.worktree,accepted=excluded.accepted,display_title=excluded.display_title",params![adapter.runtime().name(),input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),accepted,request,thread.title]).map_err(state::sql(&path))?;
-        if accepted { tx.execute("DELETE FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",params![adapter.runtime().name(),input.key]).map_err(state::sql(&path))?; }
-        Ok(())
+        remember_in(
+            tx,
+            adapter.runtime(),
+            input,
+            thread,
+            project,
+            accepted,
+            evidence,
+        )
     })
+}
+
+fn remember_in(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    runtime: instrukt_core::config::Runtime,
+    input: &RuntimeStart,
+    thread: &Thread,
+    project: Option<&str>,
+    accepted: bool,
+    evidence: RequestEvidence,
+) -> Result<(), StateError> {
+    let path = state::db_path(tx);
+    let request = match evidence {
+        RequestEvidence::Retained => {
+            Some(serde_json::to_string(input).map_err(|e| state::invalid(&path, e))?)
+        }
+        RequestEvidence::Unknown => None,
+    };
+    tx.execute("INSERT INTO runtime_bindings (runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET session=excluded.session,project_id=COALESCE(excluded.project_id,runtime_bindings.project_id),worktree=excluded.worktree,accepted=excluded.accepted,display_title=excluded.display_title",params![runtime.name(),input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),accepted,request,thread.title]).map_err(state::sql(&path))?;
+    if accepted {
+        tx.execute(
+            "DELETE FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",
+            params![runtime.name(), input.key],
+        )
+        .map_err(state::sql(&path))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn remember_manual(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    runtime: instrukt_core::config::Runtime,
+    input: &RuntimeStart,
+    thread: &Thread,
+    project: Option<&str>,
+) -> Result<(), StateError> {
+    remember_in(
+        tx,
+        runtime,
+        input,
+        thread,
+        project,
+        true,
+        RequestEvidence::Retained,
+    )
+}
+
+struct TodoReplacement<'a> {
+    work: &'a dyn crate::interfaces::SessionBindings,
+    stopped: &'a SessionRef,
+}
+
+fn accept_started(
+    guard: &KeyGuard,
+    adapter: &dyn RuntimeAdapter,
+    assignment: &RuntimeAssignment<'_>,
+    thread: &Thread,
+    replacement: Option<&TodoReplacement<'_>>,
+) -> Result<(), SessionsError> {
+    let Some(replacement) = replacement else {
+        return Ok(remember(
+            &guard.state,
+            adapter,
+            assignment.request,
+            thread,
+            assignment.project,
+            true,
+            RequestEvidence::Retained,
+        )?);
+    };
+    let project = assignment
+        .project
+        .ok_or_else(|| SessionsError::Refused("todo replacement has no retained project".into()))?;
+    let project = crate::interfaces::ProjectRef {
+        slug: instrukt_core::ids::ProjectSlug::parse(project)
+            .map_err(|error| SessionsError::Refused(error.to_string()))?,
+        root: assignment.request.checkout.clone(),
+    };
+    let binding = crate::interfaces::SessionBinding {
+        title: thread.title.clone(),
+        key: assignment.request.key.clone(),
+        session: thread.session.clone(),
+        worktree: thread.worktree.clone(),
+    };
+    replacement.work.replace_dispatch(&project, &binding, replacement.stopped, &mut |tx| {
+        remember_in(tx, adapter.runtime(), assignment.request, thread, assignment.project, true, RequestEvidence::Retained)
+    }).map_err(|error| SessionsError::Refused(format!(
+        "replacement for `{}` was not confirmed in the todo record: {error}; retry `instrukt sessions replace-deleted {} --stopped {}`",
+        binding.key, binding.key, replacement.stopped,
+    )))
 }
 
 /// Discover before every start. Empty discovery cannot clear an ambiguous marker.
@@ -210,7 +310,7 @@ pub(crate) fn start(
         ..
     } = *assignment;
     let guard = KeyGuard::claim(invocation, adapter, &request.key, project, now)?;
-    let result = start_claimed(adapter, assignment, &guard);
+    let result = start_claimed(adapter, assignment, &guard, None);
     if kind(&request.key) != "standing" {
         note(
             &guard.state,
@@ -227,6 +327,7 @@ fn start_claimed(
     adapter: &dyn RuntimeAdapter,
     assignment: &RuntimeAssignment<'_>,
     guard: &KeyGuard,
+    replacement: Option<&TodoReplacement<'_>>,
 ) -> Result<Thread, SessionsError> {
     let RuntimeAssignment {
         invocation,
@@ -236,6 +337,11 @@ fn start_claimed(
         creation,
     } = *assignment;
     let mut recorded = record(&guard.state, &guard.runtime, &input.key)?;
+    if let Some(stopped) = &recorded.replacement_from
+        && replacement.is_none_or(|replacement| replacement.stopped != stopped)
+    {
+        return Err(deleted(&input.key, stopped));
+    }
     let mut resolved = input.clone();
     if let Some(retained) = &recorded.request {
         // The retained model choice stays authoritative through ambiguous or
@@ -341,15 +447,17 @@ fn start_claimed(
                 } else {
                     adapter.verify_start(input, &thread)?;
                 }
-                remember(
-                    &guard.state,
-                    adapter,
-                    input,
-                    &thread,
-                    project,
-                    recorded.accepted,
-                    RequestEvidence::Retained,
-                )?;
+                if replacement.is_none() {
+                    remember(
+                        &guard.state,
+                        adapter,
+                        input,
+                        &thread,
+                        project,
+                        recorded.accepted,
+                        RequestEvidence::Retained,
+                    )?;
+                }
                 if !recorded.accepted {
                     let supplied = adapter
                         .observe_input(&thread.session, &input.brief, now)?
@@ -358,14 +466,15 @@ fn start_claimed(
                     if !supplied {
                         adapter.send(&thread.session, &input.brief)?;
                     }
-                    remember(
-                        &guard.state,
+                    accept_started(
+                        guard,
                         adapter,
-                        input,
+                        &RuntimeAssignment {
+                            request: input,
+                            ..*assignment
+                        },
                         &thread,
-                        project,
-                        true,
-                        RequestEvidence::Retained,
+                        replacement,
                     )?;
                     crate::inputs::record_initial(
                         &guard.state,
@@ -387,7 +496,7 @@ fn start_claimed(
     let prepared = match crate::agents::prepare_start(invocation.home(), adapter, input, now) {
         Ok(prepared) => prepared,
         Err(error) => {
-            guard.state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='instrukt',resolution='readiness_refused_before_creation' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,input.key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
+            guard.state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='instrukt',resolution=CASE WHEN resolution GLOB 'operator_confirmed_todo_replacement:*' THEN resolution ELSE 'readiness_refused_before_creation' END WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,input.key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
             return Err(error);
         }
     };
@@ -395,7 +504,7 @@ fn start_claimed(
     guard.state.write::<_,StateError>(|tx| {
         let path=state::db_path(tx);
         let request=serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?;
-        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,begun_at=excluded.begun_at,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=NULL",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
+        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,begun_at=excluded.begun_at,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=CASE WHEN runtime_starts.resolution GLOB 'operator_confirmed_todo_replacement:*' THEN runtime_starts.resolution END",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
         Ok(())
     })?;
     let thread = adapter
@@ -404,14 +513,15 @@ fn start_claimed(
             key: input.key.clone(),
             detail: e.to_string(),
         })?;
-    remember(
-        &guard.state,
+    accept_started(
+        guard,
         adapter,
-        input,
+        &RuntimeAssignment {
+            request: input,
+            ..*assignment
+        },
         &thread,
-        project,
-        true,
-        RequestEvidence::Retained,
+        replacement,
     )?;
     crate::inputs::record_initial(
         &guard.state,
@@ -455,16 +565,11 @@ pub(crate) fn verify_recorded_project(
     key: &str,
     thread: &Thread,
 ) -> Result<(), SessionsError> {
-    let project: Option<String> = state.read(|conn, path| {
-        conn.query_row(
-            "SELECT project_id FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",
-            params![thread.session.runtime.as_str(), key, thread.session.to_string()],
-            |row| row.get(0),
-        ).optional().map_err(state::sql(path))
-    })?.flatten().flatten();
-    if let (Some(retained), Some(observed)) = (project, thread.project_id.as_ref())
-        && &retained != observed
-    {
+    let project = retained_project(state, key, &thread.session)?;
+    let (Some(retained), Some(observed)) = (project, thread.project_id.as_ref()) else {
+        return Err(unverified_project(key, &thread.session));
+    };
+    if &retained != observed {
         return Err(SessionsError::ProjectChanged {
             key: key.into(),
             session: thread.session.clone(),
@@ -473,6 +578,27 @@ pub(crate) fn verify_recorded_project(
         });
     }
     Ok(())
+}
+
+pub(crate) fn unverified_project(key: &str, session: &SessionRef) -> SessionsError {
+    SessionsError::ProjectUnverified {
+        key: key.into(),
+        session: session.clone(),
+    }
+}
+
+pub(crate) fn retained_project(
+    state: &RunnerState,
+    key: &str,
+    session: &SessionRef,
+) -> Result<Option<String>, StateError> {
+    Ok(state.read(|conn, path| {
+        conn.query_row(
+            "SELECT project_id FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",
+            params![session.runtime.as_str(), key, session.to_string()],
+            |row| row.get(0),
+        ).optional().map_err(state::sql(path))
+    })?.flatten().flatten())
 }
 
 /// A bound ID survives a rename. Validate other assignment facts using the
@@ -506,9 +632,14 @@ fn retire_gone(
     input: &RuntimeStart,
     project: Option<&str>,
     now: Timestamp,
+    replacement: Option<&TodoReplacement<'_>>,
 ) -> Result<(), SessionsError> {
     let request =
         serde_json::to_string(input).map_err(|error| SessionsError::Refused(error.to_string()))?;
+    let resolution = replacement.map_or_else(
+        || "operator_confirmed_provider_stopped".into(),
+        |replacement| format!("{TODO_REPLACEMENT}{}", replacement.stopped),
+    );
     guard.state.write::<_, StateError>(|tx| {
         let path = state::db_path(tx);
         tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",
@@ -516,9 +647,9 @@ fn retire_gone(
         // Store permission before releasing the old binding. An interrupted
         // replacement can then continue without treating absence as a lost reply.
         tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at)
-            VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'retry_allowed','operator_confirmed_provider_stopped','operator',?8)
+            VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'retry_allowed',?9,'operator',?8)
             ON CONFLICT(runtime,semantic_key) DO UPDATE SET request=excluded.request,state='retry_allowed',resolution=excluded.resolution,resolved_by=excluded.resolved_by,resolved_at=excluded.resolved_at",
-            params![guard.runtime, guard.key, project, kind(&guard.key), input.checkout.to_string_lossy(), input.brief, request, now.to_string()]).map_err(state::sql(&path))?;
+            params![guard.runtime, guard.key, project, kind(&guard.key), input.checkout.to_string_lossy(), input.brief, request, now.to_string(), resolution]).map_err(state::sql(&path))?;
         tx.execute("UPDATE runtime_inputs SET state='failed', waiting=0, failure='target absent before observed consumption' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",
             params![session.runtime.as_str(), session.id.as_str()]).map_err(state::sql(&path))?;
         Ok(())
@@ -571,6 +702,11 @@ pub fn resolve(
             "`{key}` has no unresolved start"
         )));
     }
+    if let Some(stopped) = &recorded.replacement_from
+        && session.is_some()
+    {
+        return Err(deleted(key, stopped));
+    }
     if let Some(session) = session {
         if recorded
             .bound
@@ -608,7 +744,7 @@ pub fn resolve(
                 "a delivery target is already bound; retry its pending input".into(),
             ));
         }
-        guard.state.write::<_,StateError>(|tx| { tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution='none' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?; Ok(()) })?;
+        guard.state.write::<_,StateError>(|tx| { tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution=CASE WHEN resolution GLOB 'operator_confirmed_todo_replacement:*' THEN resolution ELSE 'none' END WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?; Ok(()) })?;
     }
     note(&guard.state, adapter.runtime(), key, now, Ok(()));
     Ok(())
@@ -622,18 +758,28 @@ pub fn replace_deleted(
     key: &str,
     stopped: &SessionRef,
     now: Timestamp,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
 ) -> Result<Thread, SessionsError> {
     if kind(key) == "standing" {
         return crate::standing::replace_deleted(invocation, adapter, key, stopped, now);
     }
     let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
     let recorded = record(&guard.state, &guard.runtime, key)?;
-    if recorded.bound.as_ref() != Some(stopped) {
-        return Err(SessionsError::Refused(format!(
-            "`{key}` is not bound to {stopped}"
-        )));
+    let replacement = if matches!(kind(key), "todo" | "task") {
+        let work = work.ok_or_else(|| {
+            SessionsError::Refused(
+                "todo replacement needs its work record; no replacement started".into(),
+            )
+        })?;
+        Some(TodoReplacement { work, stopped })
+    } else {
+        None
+    };
+    let resuming = recorded.replacement_from.as_ref() == Some(stopped);
+    if !resuming && recorded.bound.as_ref() != Some(stopped) {
+        return Err(stopped_mismatch(key, stopped));
     }
-    if recorded.unresolved || recorded.retry_allowed {
+    if !resuming && (recorded.unresolved || recorded.retry_allowed) {
         return Err(SessionsError::Unresolved { key: key.into() });
     }
     confirm_deleted(adapter, stopped)?;
@@ -641,25 +787,34 @@ pub fn replace_deleted(
         .request
         .as_ref()
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
-    check_replacement_key(adapter, request, stopped, None)?;
-    if let Some(worktree) = &request.worktree
-        && instrukt_core::git::succeeds(
-            &request.checkout,
-            [
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{}", worktree.branch),
-            ],
-        )
-        .map_err(|error| SessionsError::Refused(error.to_string()))?
-    {
-        return Err(SessionsError::Refused(format!(
-            "phase branch `{}` still exists; T3 cannot start a replacement in its existing worktree",
-            worktree.branch
-        )));
+    if !resuming {
+        check_replacement_key(adapter, request, stopped, None)?;
+        if let Some(worktree) = &request.worktree
+            && instrukt_core::git::succeeds(
+                &request.checkout,
+                [
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{}", worktree.branch),
+                ],
+            )
+            .map_err(|error| SessionsError::Refused(error.to_string()))?
+        {
+            return Err(SessionsError::Refused(format!(
+                "phase branch `{}` still exists; T3 cannot start a replacement in its existing worktree",
+                worktree.branch
+            )));
+        }
+        retire_gone(
+            &guard,
+            stopped,
+            request,
+            recorded.project.as_deref(),
+            now,
+            replacement.as_ref(),
+        )?;
     }
-    retire_gone(&guard, stopped, request, recorded.project.as_deref(), now)?;
     let result = start_claimed(
         adapter,
         &RuntimeAssignment {
@@ -670,6 +825,7 @@ pub fn replace_deleted(
             creation: CreationPermit::Reconcile,
         },
         &guard,
+        replacement.as_ref(),
     );
     note(
         &guard.state,
@@ -679,6 +835,12 @@ pub fn replace_deleted(
         result.as_ref().map(|_| ()),
     );
     result
+}
+
+pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {
+    SessionsError::Refused(format!(
+        "`{key}` is not bound to {stopped}; run `instrukt events status` for the current key and stopped-session ID"
+    ))
 }
 
 pub(crate) fn confirm_deleted(
@@ -806,6 +968,7 @@ fn followup_inner(
                 creation: CreationPermit::Reconcile,
             },
             &guard,
+            None,
         );
     }
     let found: Vec<_> = adapter
@@ -848,6 +1011,7 @@ fn followup_inner(
                     creation: CreationPermit::Reconcile,
                 },
                 &guard,
+                None,
             );
         }
         Presence::Present => {}
