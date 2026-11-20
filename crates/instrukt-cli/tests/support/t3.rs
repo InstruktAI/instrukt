@@ -168,6 +168,10 @@ if command=='list':
         copy=dict(threads[0]); copy['threadId']='duplicate'; threads.append(copy)
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
+    watch=root/'watch-read-at-start'
+    if watch.exists():
+        read=readiness/'held-reads'/watch.read_text()
+        (root/'read-at-start').write_text(read.read_text() if read.exists() else 'missing')
     while (root/'hold-start').exists():
         (root/'start-held').touch(); time.sleep(0.02)
     if (root/'start-failure').exists(): print('start failed',file=sys.stderr); sys.exit(1)
