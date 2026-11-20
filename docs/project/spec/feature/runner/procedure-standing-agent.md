@@ -62,6 +62,9 @@ Database transactions are short and never span runtime I/O.
 canonical assignment facts. The adapter discovers the title key in the runtime
 before considering a start. Accepted native bindings can be rediscovered.
 A pending returned ID is authoritative until accepted or explicitly retired.
+Recovery of that native start verifies its observed key and project before
+delivering events. Status gives the exact resolution command when the thread
+needs its key or placement restored.
 Only a successful complete listing with no matching thread and no unresolved
 start or fixed delivery target
 permits a start. Multiple matches, failed discovery, an ambiguous start or failed

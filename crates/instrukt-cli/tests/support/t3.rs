@@ -148,7 +148,9 @@ def find(id):
     return json.loads(file.read_text())
 if command=='list':
     threads=all_threads()
-    if '--project' in flags: threads=[t for t in threads if t['checkout']==flags['--project']]
+    if '--project' in flags:
+        project=str(pathlib.Path(flags['--project']).resolve())
+        threads=[t for t in threads if (t.get('projectId') or t['checkout'])==project]
     if (root/'hide-project-id').exists():
         for t in threads: t.pop('projectId',None)
     if (root/'duplicate').exists() and threads:

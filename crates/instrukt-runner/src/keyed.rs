@@ -408,10 +408,14 @@ fn start_claimed(
             Presence::Absent => return Err(deleted(&input.key, session)),
             Presence::Present => {}
         }
-        if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id) {
-            return Err(conflict(&input.key, [session]));
+        if recorded.opening_acknowledged && !recorded.accepted {
+            verify_pending_start(adapter, &resolved, &thread, recorded.project_id.as_deref())?;
+        } else {
+            if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id) {
+                return Err(conflict(&input.key, [session]));
+            }
+            adapter.verify_placement(&resolved, &thread)?;
         }
-        verify_placement(adapter, &resolved, &thread)?;
         if recorded.accepted {
             return Ok(thread);
         }
@@ -607,7 +611,7 @@ fn start_claimed(
         Presence::Absent => return Err(deleted(&input.key, &session)),
         Presence::Present => {}
     }
-    adapter.verify_start(input, &thread)?;
+    verify_pending_start(adapter, input, &thread, None)?;
     remember(
         &guard.state,
         adapter,
@@ -717,18 +721,57 @@ pub(crate) fn verify_bound(
     if thread.semantic_key.is_some() {
         return adapter.verify_start(request, thread);
     }
-    verify_placement(adapter, request, thread)
+    adapter.verify_placement(request, thread)
 }
 
-fn verify_placement(
+fn verify_pending_start(
     adapter: &dyn RuntimeAdapter,
     request: &RuntimeStart,
     thread: &Thread,
+    retained_project: Option<&str>,
 ) -> Result<(), SessionsError> {
-    let mut retained = thread.clone();
-    retained.semantic_key = Some(request.key.clone());
-    retained.title = Some(request.title.clone());
-    adapter.verify_start(request, &retained)
+    let refusal = |detail: String| SessionsError::PendingPlacement {
+        key: request.key.clone(),
+        session: thread.session.clone(),
+        detail,
+    };
+    if thread.semantic_key.as_deref() != Some(&request.key) {
+        return Err(refusal(format!(
+            "native semantic key is {}",
+            thread.semantic_key.as_deref().unwrap_or("missing")
+        )));
+    }
+    let Some(project) = thread
+        .project_id
+        .as_deref()
+        .filter(|project| !project.is_empty())
+    else {
+        return Err(refusal("native project ID is missing".into()));
+    };
+    if let Some(retained) = retained_project {
+        if project != retained {
+            return Err(refusal(format!(
+                "native project changed from {retained} to {project}"
+            )));
+        }
+    } else {
+        let listed = adapter
+            .list(&request.checkout)
+            .map_err(|error| refusal(error.to_string()))?;
+        if !listed.iter().any(|entry| {
+            entry.session == thread.session
+                && entry.presence == Presence::Present
+                && entry.project_id.as_deref() == Some(project)
+        }) {
+            return Err(refusal(format!(
+                "native project placement cannot be verified in {}",
+                request.checkout.display()
+            )));
+        }
+    }
+    adapter
+        .verify_placement(request, thread)
+        .map_err(|error| refusal(error.to_string()))
 }
 
 fn retire_gone(
@@ -847,7 +890,11 @@ pub fn resolve(
         if owned_elsewhere {
             return Err(SessionsError::KeyConflict(key.into()));
         }
-        verify_placement(adapter, &input, &thread)?;
+        if recorded.opening_acknowledged {
+            verify_pending_start(adapter, &input, &thread, recorded.project_id.as_deref())?;
+        } else {
+            adapter.verify_placement(&input, &thread)?;
+        }
         remember(
             &guard.state,
             adapter,

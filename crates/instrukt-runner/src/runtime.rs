@@ -313,6 +313,11 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     ) -> instrukt_core::config::AgentSelection;
     fn create_thread(&self, request: &RuntimeStart) -> Result<SessionRef, SessionsError>;
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError>;
+    fn verify_placement(
+        &self,
+        request: &RuntimeStart,
+        thread: &Thread,
+    ) -> Result<(), SessionsError>;
     fn delivery_realization(&self) -> DeliveryRealization;
     fn supports(&self, capability: Capability) -> bool;
     fn observe_input(

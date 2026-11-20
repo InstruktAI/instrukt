@@ -209,6 +209,25 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     // An unrelated exact-title match must not displace the returned ID.
     fake.seed("lookalike", p.repo.path(), &key, "Unrelated opening.");
     fake.change("s2", "title", "Renamed replacement".into());
+    let refused = command().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions resolve-start {key} --session t3:s2"
+        )),
+        "{guidance}"
+    );
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+    fake.change("s2", "title", format!("Renamed replacement · {key}").into());
+    p.env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", &key, "--session", "t3:s2"],
+        )
+        .success();
     db.execute_batch(
         "CREATE TRIGGER fail_opening_receipt BEFORE INSERT ON runtime_inputs
         WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'opening receipt write failed'); END;",

@@ -237,6 +237,13 @@ impl RuntimeAdapter for T3 {
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
         verify_request(request, thread)
     }
+    fn verify_placement(
+        &self,
+        request: &RuntimeStart,
+        thread: &Thread,
+    ) -> Result<(), SessionsError> {
+        verify_placement(request, thread)
+    }
     fn start_or_wake(
         &self,
         assignment: &super::RuntimeAssignment<'_>,
@@ -425,6 +432,10 @@ pub(crate) fn verify_request(request: &RuntimeStart, thread: &Thread) -> Result<
             "thread title differs from the recorded key",
         ));
     }
+    verify_placement(request, thread)
+}
+
+fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
     if let Some(worktree) = &request.worktree {
         if thread.branch.as_deref() != Some(&worktree.branch)
             || thread.worktree.as_ref().is_none_or(|p| !p.is_absolute())

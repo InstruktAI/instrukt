@@ -351,18 +351,27 @@ A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
 One match recovers a start whose native ID was never returned. A returned ID
 is retained as a pending intent before reading the thread or verifying placement.
-Verification and subsequent attempts use that exact ID. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
-otherwise unconfirmed input may be resent there.
+Verification and subsequent attempts use that exact ID. A native creation that
+remains pending requires a fresh inspection of its actual semantic key and a
+positive native project match. If the native project ID was not yet captured,
+the exact ID must appear in the retained checkout's scoped listing with the
+same project ID as the inspection. The requested worktree is verified against
+the observed placement. A mismatch keeps the input pending and status directs
+the operator to restore the expected key and placement, then run the exact
+`instrukt sessions resolve-start <key> --session <id>` command. Native
+acceptance evidence reconciles transport acceptance without another send.
+Without that evidence, instrukt may resend the unconfirmed input there.
 An empty listing alone never clears a marker. Keep the assignment pending and
 show its key and the `instrukt sessions resolve-start <key>` door in status.
 `--session` uses the operator's explicit ID. It requires a present thread
 in the retained native project and any requested worktree, and refuses a
-thread already bound to another assignment. If a native project is retained,
-the listing or thread state must identify that project. The refusal directs the
-operator to restore project evidence and retry the same explicit ID. `--none`
-records the operator's confirmation that no thread
-was created and no start remains in flight, permitting retry under the same
-key. The resolved request retains its input and retry permission until retried.
+thread already bound to another assignment. An ID already returned by native
+creation must pass the inspection described above. For an ID supplied by the
+operator after a lost start result, the listing or thread state must identify
+the native project if it was retained. The refusal directs the operator to
+restore project evidence and retry the same explicit ID. `--none` records the
+operator's confirmation that no thread was created and no start remains in
+flight, permitting retry under the same key. The resolved request retains its input and retry permission until retried.
 A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
@@ -640,6 +649,7 @@ Then the next wake-up may start that standing agent
 But when the developer identifies the keyed thread that was created
 Then instrukt verifies and binds that thread without starting another
 And when the returned ID was recorded before a failed first inspection, the retry uses that same ID
+And a different key or project keeps the work pending until the developer restores placement and resolves the exact ID
 And when explicit resolution lacks evidence of a retained native project, it refuses until the evidence is restored
 ```
 

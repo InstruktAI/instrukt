@@ -123,6 +123,14 @@ pub enum SessionsError {
         retained: String,
         observed: String,
     },
+    #[error(
+        "pending thread {session} for `{key}`: {detail}. Restore its recorded key and placement, then run `instrukt sessions resolve-start {key} --session {session}`"
+    )]
+    PendingPlacement {
+        key: String,
+        session: SessionRef,
+        detail: String,
+    },
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
     #[error(

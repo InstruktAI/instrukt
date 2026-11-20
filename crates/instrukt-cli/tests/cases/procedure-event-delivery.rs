@@ -431,7 +431,7 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
     );
     deleted
         .runtime
-        .change("s2", "title", "Renamed replacement".into());
+        .change("s2", "title", format!("Renamed replacement · {key}").into());
     db.execute_batch("DROP TRIGGER fail_standing_receipt;")
         .unwrap();
     db.execute_batch("CREATE TRIGGER fail_standing_binding BEFORE UPDATE OF session ON procedure_responsibilities
@@ -452,6 +452,9 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
         .unwrap();
     deleted.replace_deleted(&key);
     deleted.replace_deleted(&key);
+    deleted
+        .runtime
+        .change("s2", "title", "Renamed replacement".into());
     assert_eq!(deleted.runtime.message_count("s2"), 1);
     assert_eq!(deleted.runtime.message_count("lookalike"), 1);
     deleted.runtime.delete("lookalike");
@@ -805,34 +808,92 @@ fn an_operator_can_resolve_an_uncertain_standing_start_to_its_exact_created_thre
     assert_eq!(r.runtime.message_count("s1"), 1);
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 1);
-    let interrupted = Responsibility::new("");
-    interrupted.runtime.flag("show-failure", true);
-    interrupted.append("initial");
-    interrupted.tick();
-    let pending: (String, bool) = interrupted
-        .computer
-        .db()
-        .query_row(
-            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
-            [key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(pending, ("t3:s1".into(), false));
-    interrupted
-        .runtime
-        .change("s1", "title", "Renamed after the failed show".into());
-    interrupted.runtime.seed(
-        "lookalike",
-        interrupted.computer.project.path(),
-        key,
-        "Unrelated opening.",
-    );
-    interrupted.runtime.flag("show-failure", false);
-    interrupted.tick();
-    assert_eq!(interrupted.delivered_to("initial").to_string(), "t3:s1");
-    assert_eq!(interrupted.runtime.message_count("s1"), 1);
-    assert_eq!(interrupted.runtime.message_count("lookalike"), 1);
+    for (field, changed, expected_finding) in [
+        (
+            "title",
+            "instrukt:standing:other",
+            "native semantic key is instrukt:standing:other",
+        ),
+        (
+            "projectId",
+            "another-native-project",
+            "native project placement cannot be verified",
+        ),
+    ] {
+        let interrupted = Responsibility::new("");
+        interrupted.runtime.flag("show-failure", true);
+        interrupted.append("initial");
+        interrupted.tick();
+        let original = if field == "title" {
+            interrupted.runtime.title("s1")
+        } else {
+            interrupted
+                .computer
+                .project
+                .path()
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        let db = interrupted.computer.db();
+        let binding = || {
+            db.query_row(
+                "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
+                [key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(binding(), ("t3:s1".into(), false));
+        interrupted.runtime.change("s1", field, changed.into());
+        interrupted.runtime.flag("show-failure", false);
+        interrupted.tick();
+        interrupted.append("later-event");
+        interrupted.tick();
+        assert_eq!(binding(), ("t3:s1".into(), false), "{field}");
+        let delivered: u32 = db
+            .query_row(
+                "SELECT count(*) FROM procedure_activations WHERE state='delivered'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(delivered, 0, "{field}");
+        assert_eq!(interrupted.runtime.message_count("s1"), 1, "{field}");
+        let findings = start_anomalies(&interrupted);
+        let guidance = findings[0]["failure"].as_str().unwrap();
+        assert!(guidance.contains(expected_finding), "{guidance}");
+        assert!(
+            guidance.contains(&format!(
+                "instrukt sessions resolve-start {key} --session t3:s1"
+            )),
+            "{guidance}"
+        );
+        let resolve = || {
+            interrupted.computer.env.run(
+                interrupted.computer.project.path(),
+                ["sessions", "resolve-start", key, "--session", "t3:s1"],
+            )
+        };
+        resolve().failure();
+        interrupted.runtime.change("s1", field, original.into());
+        interrupted.runtime.seed(
+            "lookalike",
+            interrupted.computer.project.path(),
+            key,
+            "Unrelated opening.",
+        );
+        resolve().success();
+        interrupted.tick();
+        assert_eq!(interrupted.delivered_to("initial").to_string(), "t3:s1");
+        assert_eq!(interrupted.runtime.message_count("s1"), 1);
+        assert_eq!(interrupted.runtime.message_count("lookalike"), 1);
+        interrupted.runtime.delete("lookalike");
+        interrupted.tick();
+        assert_eq!(interrupted.delivered_to("later-event").to_string(), "t3:s1");
+        assert!(start_anomalies(&interrupted).is_empty());
+    }
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
 #[test]
