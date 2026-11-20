@@ -1578,14 +1578,6 @@ fn instance(profile: &str) -> instrukt_core::ids::ProviderInstanceId {
         .clone()
 }
 
-/// Waits until the runner has read the provider snapshot again: one read
-/// more than `before`.
-fn read_again(c: &Company, before: usize) {
-    wait("the next readiness read", || {
-        common::t3_readiness::reads(&c.env).len() > before
-    });
-}
-
 /// T3 reports `profile` as not installed, in every snapshot read from now.
 fn uninstalled(c: &Company, profile: &str) {
     let instance = instance(profile);
@@ -1750,17 +1742,20 @@ fn a_renewed_token_keeps_the_snapshot_fresh() {
         common::t3_readiness::reads(&c.env).last() == Some(&session(3))
     });
     wait("the refresh to succeed", || !c.readiness_failing());
-    // What T3 reports after the renewal is what the next start sees.
-    common::t3_readiness::update(&c.env, |snapshot| {
-        for provider in snapshot["providers"].as_array_mut().unwrap() {
-            if provider["instanceId"] == instance("claude").as_str() {
-                provider["installed"] = false.into();
-            }
-        }
-    });
-    let reads = common::t3_readiness::reads(&c.env).len();
+    std::fs::write(c.env.path("t3-readiness/hold-read"), "").unwrap();
     clock.advance(1);
-    read_again(&c, reads);
+    wait("the held refresh after renewal", || {
+        common::t3_readiness::held_read_open(&c.env, 1)
+    });
+    uninstalled(&c, "claude");
+    window_full(&c, "antigravity");
+    common::t3_readiness::release_read(&c.env, 1);
+    // The worker writes quota marks after publishing the snapshot. This
+    // profile is outside the conversation's order, so its mark only signals
+    // publication and cannot affect which profile the conversation selects.
+    wait("the renewed snapshot's quota mark", || {
+        !restricted_until(&c, "antigravity").is_empty()
+    });
     let started = c.asked_and_answered("When do we ship?", "On Friday.");
     assert_eq!(c.runtime.provider(&started), instance("codex"));
 }
@@ -1865,7 +1860,7 @@ fn a_snapshot_is_observed_when_its_read_returns() {
         common::t3_readiness::held_read_open(&c.env, 1)
     });
     clock.advance(30);
-    std::fs::write(c.env.path("t3-readiness/release-read"), "").unwrap();
+    common::t3_readiness::release_read(&c.env, 1);
     wait("the first profile's restriction", || {
         !restricted_until(&c, "claude").is_empty()
     });
