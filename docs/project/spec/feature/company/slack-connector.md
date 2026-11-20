@@ -238,10 +238,15 @@ that one was answered, and does not depend on whether the agent posted an
 answer. Messages the agent was sent before stay in its session and are not
 sent again.
 
-When the accompanying messages cannot be read within the context bound the
-conversation core declares, counted from the message's arrival, the message
-is delivered without them and the conversation context says they could not be
-read.
+The context bound is declared by `CONTEXT_BOUND` in
+`crates/instrukt-company/src/conversations.rs`. It starts when the addressed
+message is retained and uses the runner's clock. The sender must still be
+admitted. If the accompanying messages are unavailable when the bound passes,
+the admitted question is delivered on the next intake pass without them,
+including when a read is still in flight. Later results cannot change that
+delivery. The delivered question uses names already available to the
+connector for mentions and Slack IDs for any others. The conversation context
+tells the agent that earlier messages could not be read. That line and the provider's error stay out of Slack.
 
 ### Posting
 
@@ -379,9 +384,10 @@ And an answer longer than Slack takes in one message arrives in parts, in order,
 
 ```gherkin
 Given a member addresses the agent in a thread whose earlier messages Slack cannot hand over
+Then the message stays saved while context is still being read within the context bound
 When the context bound passes
-Then the agent receives the member's message, saying the earlier messages could not be read
-And the member is answered
+Then the agent receives the member's question and identity with a note that earlier messages could not be read
+And the member receives the answer without a technical message about the read
 ```
 
 ## Known caveats

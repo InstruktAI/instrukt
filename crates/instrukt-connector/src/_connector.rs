@@ -2,7 +2,7 @@
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
-    Admission, AnswerError, Captured, ConnectorError, Incoming, Limits, Place, Status,
+    Accompanying, Admission, AnswerError, Captured, ConnectorError, Incoming, Limits, Place, Status,
 };
 use jiff::Timestamp;
 
@@ -38,6 +38,16 @@ pub trait Connector: Send + Sync {
         previous: Option<&str>,
         text: &str,
     ) -> Result<Captured, ConnectorError>;
+    /// Frame the addressed text after the context bound, without provider I/O.
+    fn without_context(&self, text: &str) -> Captured {
+        Captured {
+            text: text.to_owned(),
+            accompanying: Accompanying {
+                unread: true,
+                ..Default::default()
+            },
+        }
+    }
     /// Post an answer piece or notice with its durable identity, returning
     /// the provider's posting time when its receipt has one.
     fn answer(

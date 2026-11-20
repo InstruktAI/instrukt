@@ -210,6 +210,9 @@ pub fn retain(
     Ok(Intake::Retained)
 }
 
+/// How long an addressed message waits for its accompanying messages.
+pub const CONTEXT_BOUND: jiff::SignedDuration = jiff::SignedDuration::from_mins(2);
+
 /// A received message: its sender still to be admitted, or what
 /// accompanies it still to be read.
 #[derive(Debug, Clone)]
@@ -227,6 +230,7 @@ pub struct Unread {
     pub admitted: bool,
     /// The message's text as written.
     pub text: String,
+    pub arrived_at: Timestamp,
 }
 
 /// The received messages of one company's connector, oldest written first.
@@ -238,7 +242,7 @@ pub fn unread(
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1),m.sender,m.sender_name IS NOT NULL,m.text FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
+                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1),m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
                 .map_err(state::sql(path))?;
             q.query_map(params![company.as_str(), connector, Stage::Received.as_str()], |r| {
                 Ok(Unread {
@@ -248,6 +252,11 @@ pub fn unread(
                     sender: r.get(3)?,
                     admitted: r.get(4)?,
                     text: r.get(5)?,
+                    arrived_at: r.get::<_, String>(6)?.parse().map_err(|error: jiff::Error| {
+                        instrukt_core::state_db::rusqlite::Error::FromSqlConversionFailure(
+                            6, instrukt_core::state_db::rusqlite::types::Type::Text, Box::new(error),
+                        )
+                    })?,
                 })
             })
             .map_err(state::sql(path))?
@@ -1177,7 +1186,7 @@ fn framed(
         .collect();
     let input = format!(
         "{}\n{}",
-        envelopes::context(&token, &entries, accompanying.left_out),
+        envelopes::context(&token, &entries, accompanying.left_out, accompanying.unread),
         envelopes::member(
             connector,
             conversation,

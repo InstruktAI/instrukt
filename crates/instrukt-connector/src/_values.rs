@@ -21,6 +21,9 @@ pub struct Earlier {
 pub struct Accompanying {
     pub messages: Vec<Earlier>,
     pub left_out: bool,
+    /// The context bound expired without a usable read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unread: bool,
 }
 
 /// What a connector supplies for one message addressed to the agent, as it

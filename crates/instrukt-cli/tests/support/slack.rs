@@ -161,6 +161,7 @@ struct Workspace {
     next: u64,
     refuse: bool,
     hold_reads: bool,
+    refuse_replies: bool,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
     refuse_metadata_reads: bool,
@@ -449,6 +450,9 @@ impl FakeSlack {
                 json!({"ok": true})
             }
             "conversations.history" | "conversations.replies" => {
+                if method == "conversations.replies" && w.refuse_replies {
+                    return json!({"ok": false, "error": "thread_not_found"});
+                }
                 if arg("include_all_metadata") == Some("true") {
                     w.metadata_reads += 1;
                     if w.refuse_metadata_reads {
@@ -918,6 +922,10 @@ impl FakeSlack {
     /// How many accepted posts had their answer held.
     pub fn held_posts(&self) -> usize {
         self.workspace.lock().unwrap().held_posts
+    }
+
+    pub fn refuse_replies(&self, refused: bool) {
+        self.workspace.lock().unwrap().refuse_replies = refused;
     }
 
     pub fn hold_reads(&self) {

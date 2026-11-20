@@ -416,3 +416,85 @@ fn the_agents_answer_is_posted_as_markdown_it_wrote_and_a_long_one_in_parts() {
         [answer(formatted), answer(&opening), answer(&remainder)]
     );
 }
+
+// spec: project/instrukt/spec/feature/company/slack-connector UC-SL6
+#[test]
+fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
+    let mut c = Company::new("");
+    let clock = c.env.path("context-clock");
+    let at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
+    let set_clock = |at: jiff::Timestamp| {
+        let next = clock.with_extension("next");
+        std::fs::write(&next, at.to_string()).unwrap();
+        std::fs::rename(next, &clock).unwrap();
+    };
+    set_clock(at);
+    c.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    c.slack.refuse_replies(true);
+    c.run();
+
+    let thread = c
+        .slack
+        .say("C1", "UANNA", "The private earlier context.", None);
+    let question = c.slack.mention(
+        "C1",
+        "USTEVEN",
+        "<@UAGENT> Where are the notes?",
+        Some(&thread),
+    );
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let recorded_failure = || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages
+             WHERE message=?1 AND state='received' AND sender_name IS NOT NULL
+             AND failure LIKE '%thread_not_found%')",
+            [&question],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    };
+    wait(
+        "the Slack failure is retained or the question is prematurely delivered",
+        || recorded_failure() || !c.sessions().is_empty(),
+    );
+    assert!(
+        recorded_failure(),
+        "the question must wait for context before the bound"
+    );
+    assert!(c.sessions().is_empty());
+    assert!(c.slack.posts().is_empty());
+
+    c.slack.hold_reads();
+    c.slack.refuse_replies(false);
+    let deadline = at + instrukt_company::conversations::CONTEXT_BOUND;
+    set_clock(deadline - jiff::SignedDuration::from_secs(1));
+    wait(
+        "a context retry is still in flight just before its deadline",
+        || c.slack.held() > 0,
+    );
+    assert!(c.sessions().is_empty());
+
+    set_clock(deadline);
+    crate::common::wait_until(
+        "the saved question reaches the agent at expiry while the read is held",
+        std::time::Duration::from_secs(20),
+        || !c.sessions().is_empty(),
+    );
+    let session = c.session();
+    let delivered = c.delivered(&session, 0);
+    assert_eq!(delivered.members, 1);
+    assert_eq!(delivered.accompanying, 0);
+    assert!(!delivered.left_out);
+    insta::assert_snapshot!("unread-thread-context", c.input(&session, 0));
+    c.finish_turn(&session, 0, "The notes are in the wiki.");
+    wait(
+        "the member gets the answer while the read is still held",
+        || c.slack.posts().len() == 1,
+    );
+    assert_eq!(c.slack.posts_beginning("The notes are in the wiki."), 1);
+    c.slack.release_reads();
+}

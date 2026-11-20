@@ -715,28 +715,32 @@ impl Names<'_> {
     /// `text` with every mention written as `@` and that person's name;
     /// nothing else changes.
     fn written(&mut self, text: &str) -> String {
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(start) = rest.find("<@") {
-            out.push_str(&rest[..start]);
-            let after = &rest[start + 2..];
-            match after.find('>') {
-                Some(end) => {
-                    let inner = &after[..end];
-                    let user = inner.split('|').next().unwrap_or(inner);
-                    out.push('@');
-                    out.push_str(&self.of(user));
-                    rest = &after[end + 1..];
-                }
-                None => {
-                    out.push_str(&rest[start..]);
-                    rest = "";
-                }
+        written_mentions(text, |user| self.of(user))
+    }
+}
+
+fn written_mentions(text: &str, mut name: impl FnMut(&str) -> String) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<@") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find('>') {
+            Some(end) => {
+                let inner = &after[..end];
+                let user = inner.split('|').next().unwrap_or(inner);
+                out.push('@');
+                out.push_str(&name(user));
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
             }
         }
-        out.push_str(rest);
-        out
     }
+    out.push_str(rest);
+    out
 }
 
 /// `<channel>/<thread ts>` for a channel thread, `<channel>` for a direct
@@ -914,19 +918,28 @@ impl Connector for Slack {
         text: &str,
     ) -> Result<Captured, ConnectorError> {
         let me = self.me().map_err(failed)?;
-        let mut names = self.names();
-        let text = names.written(text);
-        let accompanying = accompanying(
-            &self.api,
-            self.context_messages,
-            &me,
-            &mut names,
-            conversation,
-            message,
-            previous,
-        )
-        .map_err(failed)?;
+        let text = self.names().written(text);
+        let accompanying =
+            accompanying(self, &me, conversation, message, previous).map_err(failed)?;
         Ok(Captured { text, accompanying })
+    }
+
+    fn without_context(&self, text: &str) -> Captured {
+        let known = self.names.try_lock().ok();
+        let text = written_mentions(text, |user| {
+            known
+                .as_ref()
+                .and_then(|names| names.get(user))
+                .cloned()
+                .unwrap_or_else(|| user.to_owned())
+        });
+        Captured {
+            text,
+            accompanying: Accompanying {
+                unread: true,
+                ..Default::default()
+            },
+        }
     }
 
     fn answer(
@@ -1162,17 +1175,16 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
 /// of the most recent, and whether earlier ones were left out. Speakers are
 /// named and mentions written as names, as for the addressed message.
 fn accompanying(
-    api: &SlackApi,
-    context_messages: u64,
+    slack: &Slack,
     me: &Me,
-    names: &mut Names<'_>,
     conversation: &str,
     message: &str,
     previous: Option<&str>,
 ) -> Result<Accompanying, SlackError> {
     let (channel, thread) = split_conversation(conversation);
     let ts = message;
-    let cap = usize::try_from(context_messages).unwrap_or(usize::MAX);
+    let cap = usize::try_from(slack.context_messages).unwrap_or(usize::MAX);
+    let api = &slack.api;
     let (earlier, left_out) = match previous {
         Some(previous) => api.read(channel, thread, Some(previous), ts, cap, false)?,
         None => {
@@ -1180,6 +1192,7 @@ fn accompanying(
             api.read(channel, within, None, ts, cap, false)?
         }
     };
+    let mut names = slack.names();
     let messages = earlier
         .iter()
         .map(|m| {
@@ -1206,7 +1219,11 @@ fn accompanying(
             }
         })
         .collect();
-    Ok(Accompanying { messages, left_out })
+    Ok(Accompanying {
+        messages,
+        left_out,
+        unread: false,
+    })
 }
 
 #[cfg(test)]
