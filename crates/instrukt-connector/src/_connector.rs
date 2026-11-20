@@ -20,6 +20,10 @@ pub trait Inbox: Sync {
 
 /// One company's channel.
 pub trait Connector: Send + Sync {
+    /// Provider evidence required before the connection is allowed to serve.
+    fn check_permissions(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
     /// What this channel allows.
     fn limits(&self) -> Limits;
     /// Hold the connection until it drops or `quit` says so, handing each

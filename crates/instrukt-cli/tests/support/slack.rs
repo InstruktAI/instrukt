@@ -158,6 +158,7 @@ struct Workspace {
     outgoing: VecDeque<String>,
     acknowledged: Vec<String>,
     connections: usize,
+    disconnections: usize,
     next: u64,
     refuse: bool,
     hold_reads: bool,
@@ -167,6 +168,8 @@ struct Workspace {
     read_back_channels: Vec<String>,
     hold_read_back_channel: Option<String>,
     refuse_app_connection: bool,
+    scope_header: Option<String>,
+    app_token: Option<String>,
     refused_app_connections: usize,
     read_back_limit: Option<(String, u64)>,
     delete_thread_on_scan: Option<(String, String)>,
@@ -385,9 +388,15 @@ impl FakeSlack {
                                 .respond(tiny_http::Response::from_string(response.to_string()));
                             return;
                         }
-                        request
-                            .respond(tiny_http::Response::from_string(answer.to_string()))
-                            .unwrap();
+                        let mut response = tiny_http::Response::from_string(answer.to_string());
+                        if method == "auth.test" {
+                            let workspace = workspace.lock().unwrap();
+                            let scopes = workspace.scope_header.as_deref().unwrap_or(
+                                "app_mentions:read,chat:write,channels:history,channels:read,groups:history,groups:read,im:history,im:read,users:read,users:read.email"
+                            );
+                            response = response.with_header(tiny_http::Header::from_bytes("x-oauth-scopes", scopes).unwrap());
+                        }
+                        request.respond(response).unwrap();
                     });
                 }
             }));
@@ -442,6 +451,7 @@ impl FakeSlack {
                             Err(_) => break,
                         }
                     }
+                    workspace.lock().unwrap().disconnections += 1;
                 }
             }));
         }
@@ -462,7 +472,11 @@ impl FakeSlack {
     ) -> Value {
         let mut w = workspace.lock().unwrap();
         let app = method == "apps.connections.open";
-        let accepted = if app { APP_TOKEN } else { BOT_TOKEN };
+        let accepted = if app {
+            w.app_token.as_deref().unwrap_or(APP_TOKEN)
+        } else {
+            BOT_TOKEN
+        };
         if app && w.refuse_app_connection {
             w.refused_app_connections += 1;
             return json!({"ok": false, "error": "invalid_auth"});
@@ -708,6 +722,18 @@ impl FakeSlack {
             .unwrap_or(0);
         let at = micros(&stamp).max(latest + 100);
         format!("{}.{:06}", at / 1_000_000, at % 1_000_000)
+    }
+
+    pub fn disconnections(&self) -> usize {
+        self.workspace.lock().unwrap().disconnections
+    }
+
+    pub fn scopes(&self, scopes: Option<&str>) {
+        self.workspace.lock().unwrap().scope_header = scopes.map(str::to_owned);
+    }
+
+    pub fn app_token(&self, token: &str) {
+        self.workspace.lock().unwrap().app_token = Some(token.to_owned());
     }
 
     pub fn refuse_app_connection(&self, refuse: bool) {

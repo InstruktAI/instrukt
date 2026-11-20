@@ -316,6 +316,17 @@ impl SlackApi {
         form: &[(&str, &str)],
         timeout: Option<Duration>,
     ) -> Result<Value, SlackError> {
+        self.call_with_headers(method, app, form, timeout)
+            .map(|(body, _)| body)
+    }
+
+    fn call_with_headers(
+        &self,
+        method: &str,
+        app: bool,
+        form: &[(&str, &str)],
+        timeout: Option<Duration>,
+    ) -> Result<(Value, Option<String>), SlackError> {
         let company = self.company.clone();
         if let Some(seconds) = self.endpoint.limits.remaining(&company, method) {
             return Err(SlackError::Limited {
@@ -364,7 +375,12 @@ impl SlackApi {
         let body: Value = serde_json::from_str(&text)
             .map_err(|_| fail(format!("HTTP {status} without a JSON answer")))?;
         if body.get("ok").and_then(Value::as_bool) == Some(true) {
-            Ok(body)
+            let scopes = response
+                .headers()
+                .get("x-oauth-scopes")
+                .and_then(|header| header.to_str().ok())
+                .map(str::to_owned);
+            Ok((body, scopes))
         } else {
             let cause = body
                 .get("error")
@@ -890,6 +906,39 @@ fn own_message(message: &Value, me: &Me) -> bool {
 mod read_back;
 
 impl Connector for Slack {
+    fn check_permissions(&self) -> Result<(), ConnectorError> {
+        const REQUIRED: &[&str] = &[
+            "app_mentions:read",
+            "chat:write",
+            "channels:history",
+            "channels:read",
+            "groups:history",
+            "groups:read",
+            "im:history",
+            "im:read",
+            "users:read",
+            "users:read.email",
+        ];
+        let (_, scopes) = self
+            .api
+            .call_with_headers("auth.test", false, &[], None)
+            .map_err(failed)?;
+        let scopes = scopes.ok_or_else(|| failed("Slack did not report the bot token's scopes"))?;
+        let granted: std::collections::HashSet<_> = scopes.split(',').map(str::trim).collect();
+        let missing: Vec<_> = REQUIRED
+            .iter()
+            .filter(|scope| !granted.contains(**scope))
+            .copied()
+            .collect();
+        if !missing.is_empty() {
+            return Err(failed(format!(
+                "Slack bot token missing scopes: {}",
+                missing.join(", ")
+            )));
+        }
+        Ok(())
+    }
+
     fn read_back_page(
         &self,
         from: Timestamp,

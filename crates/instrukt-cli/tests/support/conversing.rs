@@ -234,7 +234,7 @@ impl Company {
                 (
                     "instrukt.yaml",
                     format!(
-                        "schema_version: {}\nproject: assistance-docs\nmodules: {{history: false}}\n",
+                        "schema_version: {}\nproject: assistance-docs\nmodules: {{history: false, todos: false}}\n",
                         instrukt_core::config::CURRENT_SCHEMA_VERSION
                     ),
                 ),

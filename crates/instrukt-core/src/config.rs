@@ -61,7 +61,7 @@ pub use _root::{RootDocument, classify_root};
 pub use _runtime::WorkflowCapability;
 pub use _runtime::{Env, NativeCapabilities, Runtime};
 pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema};
-pub use _validate::{validate, validate_local};
+pub use _validate::{connector_procedure_finding, validate, validate_local};
 pub use _webhooks::{
     Ingress, SigningSecrets, WebhookProtocol, WebhookSource, WebhookSources, webhook_domain,
     webhook_name,
