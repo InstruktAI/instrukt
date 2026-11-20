@@ -857,6 +857,13 @@ fn failed(error: impl std::fmt::Display) -> ConnectorError {
     }
 }
 
+fn own_message(message: &Value, me: &Me) -> bool {
+    message["bot_id"]
+        .as_str()
+        .is_some_and(|bot| Some(bot) == me.bot.as_deref())
+        || message["user"].as_str() == Some(me.user.as_str())
+}
+
 impl Connector for Slack {
     fn limits(&self) -> instrukt_connector::Limits {
         instrukt_connector::Limits {
@@ -954,16 +961,42 @@ impl Connector for Slack {
             .read(channel, thread, Some(since), UNTIL_NOW, usize::MAX, true)
             .map_err(failed)?;
         Ok(messages.iter().find_map(|message| {
-            let own = message["bot_id"]
-                .as_str()
-                .is_some_and(|bot| Some(bot) == me.bot.as_deref())
-                || message["user"].as_str() == Some(me.user.as_str());
             let metadata = &message["metadata"];
-            if own
+            if own_message(message, &me)
                 && metadata["event_type"].as_str() == Some(POST_EVENT_TYPE)
                 && metadata["event_payload"]["id"].as_str() == Some(post_id)
             {
                 return message["ts"].as_str().and_then(ts_time);
+            }
+            None
+        }))
+    }
+
+    fn legacy_answer_receipt(
+        &self,
+        conversation: &str,
+        attempted_at: Timestamp,
+        part: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError> {
+        let me = self.me().map_err(failed)?;
+        let (channel, thread) = split_conversation(conversation);
+        let micros = attempted_at.as_microsecond();
+        let since = format!(
+            "{}.{:06}",
+            micros.div_euclid(1_000_000),
+            micros.rem_euclid(1_000_000)
+        );
+        let (messages, _) = self
+            .api
+            .read(channel, thread, Some(&since), UNTIL_NOW, usize::MAX, true)
+            .map_err(failed)?;
+        Ok(messages.iter().find_map(|message| {
+            if own_message(message, &me)
+                && message["metadata"].is_null()
+                && message["text"].as_str() == Some(part)
+            {
+                let at = message["ts"].as_str().and_then(ts_time)?;
+                return (at > attempted_at).then_some(at);
             }
             None
         }))

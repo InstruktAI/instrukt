@@ -718,10 +718,15 @@ address, `turn` and `piece`. Columns: `text`, the piece's text;
 `latest_attempted_at`, the latest unconfirmed attempt. Both are recorded
 before the provider can accept a post. A single attempt kept by an earlier
 version supplies both bounds. `post_id` is the piece's opaque identity,
-allocated before its first post and kept across retries. `posted_at`, when the connector
+allocated before its first post and kept across retries. An attempted piece
+from before migration 23 has no id. `legacy_read_at` records when its one
+read-back began and `delivery_unknown_at` records terminal resolution after
+the settle window without confirmation. `posted_at`, when the connector
 accepted its post, `NULL` while outstanding; `failure`, the cause of its last
 failed post, `NULL` once posted. A piece with `attempted_at` and no `posted_at`
-may have been accepted; the conversation core looks for it at the connector
+may have been accepted. A piece resolved with unknown delivery keeps its
+cause and no longer counts as pending. The conversation core looks for
+unresolved attempts at the connector
 before it is posted again. A rejected retry preserves earlier attempts unless
 a read started after their latest request's timeout and found no post
 (`project/instrukt/spec/feature/company/conversations`).

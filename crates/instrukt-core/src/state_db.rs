@@ -556,14 +556,23 @@ mod tests {
         ).unwrap();
         conn.execute_batch("INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,replied_at) VALUES('acme','slack','C1/1','UOTHER','2026-11-18T10:00:00Z','2026-11-18T10:00:02Z');INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,failure) VALUES('acme','slack','D1/2','UGUEST','2026-11-18T10:01:00Z','Slack chat.postMessage: timeout');").unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
-        let attempts: (String, Option<String>) = conn
+        let attempt = conn
             .query_row(
-                "SELECT attempted_at,latest_attempted_at FROM conversation_answers WHERE turn='turn-1'",
+                "SELECT attempted_at,latest_attempted_at,post_id,legacy_read_at,delivery_unknown_at FROM conversation_answers WHERE turn='turn-1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                )),
             )
             .unwrap();
-        assert_eq!(attempts, ("2026-11-18T10:00:00Z".to_owned(), None));
+        assert_eq!(
+            attempt,
+            ("2026-11-18T10:00:00Z".to_owned(), None, None, None, None)
+        );
         let intervals: Vec<(Option<String>, Option<String>)> = conn
             .prepare("SELECT unavailable_since,turn_update FROM conversation_messages ORDER BY written_us")
             .unwrap()

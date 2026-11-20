@@ -955,6 +955,14 @@ mod test_connector {
         ) -> Result<Option<Timestamp>, ConnectorError> {
             Ok(None)
         }
+        fn legacy_answer_receipt(
+            &self,
+            _: &str,
+            _: Timestamp,
+            _: &str,
+        ) -> Result<Option<Timestamp>, ConnectorError> {
+            Ok(None)
+        }
         fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
             Ok(())
         }
@@ -1000,6 +1008,7 @@ mod tests {
                     message: (*message).to_owned(),
                     sender: Some("USTEVEN".to_owned()),
                     since: None,
+                    notice_eligible: true,
                     status: status.clone(),
                 },
             )

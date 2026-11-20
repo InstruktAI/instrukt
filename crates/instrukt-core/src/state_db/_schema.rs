@@ -84,14 +84,21 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     if !latest_present {
         tx.execute_batch("ALTER TABLE conversation_answers ADD COLUMN latest_attempted_at TEXT")?;
     }
-    for table in ["conversation_answers", "conversation_refusals"] {
+    // Pre-metadata attempts retain their timestamp and acquire a resolution
+    // only when the relay reads the provider or the attempt window ends.
+    for (table, column) in [
+        ("conversation_answers", "post_id"),
+        ("conversation_answers", "legacy_read_at"),
+        ("conversation_answers", "delivery_unknown_at"),
+        ("conversation_refusals", "post_id"),
+    ] {
         let present: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name='post_id')",
-            [table],
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
+            [table, column],
             |row| row.get(0),
         )?;
         if !present {
-            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN post_id TEXT"))?;
+            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT"))?;
         }
     }
     // Before the final receipt and interval closure were atomic, a runner
@@ -101,7 +108,7 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
          WHERE m.state='answered' AND (m.unavailable_since IS NOT NULL OR m.turn_update IS NOT NULL)
            AND NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company
              AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn
-             AND a.posted_at IS NULL)",
+             AND a.posted_at IS NULL AND a.delivery_unknown_at IS NULL)",
     )?;
     Ok(())
 }

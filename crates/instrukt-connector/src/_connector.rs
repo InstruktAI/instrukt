@@ -54,6 +54,15 @@ pub trait Connector: Send + Sync {
         since: &str,
         post_id: &str,
     ) -> Result<Option<Timestamp>, ConnectorError>;
+    /// Best-effort recovery for a post made before durable identities
+    /// existed. Only this connector's own untagged posts after the attempt
+    /// are candidates.
+    fn legacy_answer_receipt(
+        &self,
+        conversation: &str,
+        attempted_at: Timestamp,
+        part: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
     /// The one notice that the assistant is temporarily unavailable, worded

@@ -720,6 +720,8 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
         scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
         scope.spawn(a_rejected_retry_keeps_reconciling_the_earlier_answer);
+        scope.spawn(|| legacy_answer_attempt_releases_conversation(true));
+        scope.spawn(|| legacy_answer_attempt_releases_conversation(false));
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
@@ -1340,6 +1342,122 @@ fn a_rejected_retry_keeps_reconciling_the_earlier_answer() {
         || notices(&c, "USTEVEN") == 1,
     );
     assert_eq!(c.slack.posts_beginning("Ben."), 0);
+}
+
+fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
+    let at = jiff::Timestamp::from_second(1_700_000_010).unwrap();
+    let (mut c, clock) = status_company(at);
+    c.runtime.flag("separate-completion", true);
+    let channel = "C1";
+    let member = "USTEVEN";
+    projected(&c);
+    let asked = c
+        .slack
+        .mention(channel, member, "<@UAGENT> Where are the notes?", None);
+    let conversation = format!("{channel}/{asked}");
+    let session = started(&c, &[]);
+    let legacy = "The legacy answer.";
+    c.slack.hold_posts_to_fail();
+    c.finish_turn(&session, 0, legacy);
+    wait("the original answer attempt is retained", || {
+        c.slack.held_failing_posts() == 1
+    });
+    c.runner_dies();
+    c.slack.fail_held_posts();
+    let state = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    // The migration test covers the schema transition; start the real CLI
+    // with the same id-less attempt it leaves for the relay.
+    assert_eq!(state.execute(
+        "UPDATE conversation_answers SET post_id=NULL,latest_attempted_at=NULL WHERE conversation=?1 AND attempted_at IS NOT NULL",
+        [&conversation],
+    ).unwrap(), 1);
+    if posted_before_upgrade {
+        c.slack.say_at(
+            "1700000011.000100",
+            channel,
+            crate::fixtures::slack::BOT_USER,
+            legacy,
+            Some(&asked),
+        );
+    } else {
+        // A same-text post by the bot before the attempt and another person's
+        // message after it cannot establish that this piece was delivered.
+        c.slack.say_at(
+            "1700000009.000100",
+            channel,
+            crate::fixtures::slack::BOT_USER,
+            legacy,
+            Some(&asked),
+        );
+        c.slack
+            .say_at("1700000011.000100", channel, member, legacy, Some(&asked));
+    }
+    let legacy_state = || -> (Option<String>, Option<String>, Option<String>) {
+        state.query_row(
+            "SELECT posted_at,legacy_read_at,delivery_unknown_at FROM conversation_answers WHERE conversation=?1 AND turn='turn-1' AND piece=0",
+            [&conversation],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap()
+    };
+    c.run();
+    wait("the id-less attempt read back once", || {
+        legacy_state().1.is_some()
+    });
+    if posted_before_upgrade {
+        wait("the legacy answer receipt recovered", || {
+            legacy_state().0.is_some()
+        });
+        assert!(legacy_state().2.is_none());
+    } else {
+        assert!(legacy_state().0.is_none());
+        assert!(legacy_state().2.is_none());
+        c.runner_dies();
+        set_clock(&clock, at + jiff::SignedDuration::from_mins(3));
+        c.run();
+        wait("the legacy answer resolved with delivery unknown", || {
+            legacy_state().2.is_some()
+        });
+        assert!(legacy_state().0.is_none());
+        assert_eq!(legacy_state().1, Some(at.to_string()));
+        let status = c.conversations();
+        assert!(status.conversations.iter().any(|row| {
+            row.pending_answers == 0
+                && row.failures.iter().any(|cause| {
+                    cause.contains("delivery unknown")
+                        && cause.contains(&conversation)
+                        && cause.contains("turn-1, piece 0")
+                })
+        }));
+    }
+    assert_eq!(interval(&c, &asked), None);
+    assert!(c.slack.posts().is_empty());
+
+    c.slack
+        .mention(channel, member, "<@UAGENT> And the contract?", Some(&asked));
+    wait("the next message goes to the same conversation", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "In the shared drive.");
+    wait("the next answer posted and recorded", || {
+        c.slack.posts_beginning("In the shared drive.") == 1 && answers_recorded(&c)
+    });
+    assert_eq!(c.slack.posts().len(), 1);
+    assert_eq!(notices(&c, member), 0);
+    if !posted_before_upgrade {
+        c.runtime.flag("send-failure", true);
+        let later = c
+            .slack
+            .mention(channel, member, "<@UAGENT> Who reviews it?", Some(&asked));
+        let since = interval_at(&c, &later);
+        set_clock(&clock, since + minute());
+        wait("a later failure can still produce a notice", || {
+            notices(&c, member) == 1
+        });
+        assert_eq!(c.slack.posts().len(), 2);
+    }
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {

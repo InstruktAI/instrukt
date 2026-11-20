@@ -156,8 +156,12 @@ connector gives.
   post's response was lost or the runner stopped in between, is first looked
   for among the connector's own posts in the conversation since its first
   addressed message. The connector matches a durable id reserved for the
-  piece before the post. An unresolved attempt predating these ids stays
-  pending with an operator-visible cause.
+  piece before the post. For a retained attempt that predates those ids, the
+  relay makes one best-effort read within the existing settle window. A
+  matching bot post after the attempt supplies the receipt. If the window
+  ends without a match, the piece settles with delivery unknown. The piece
+  produces neither a retry nor a notice, and later work proceeds. Status
+  keeps the cause with the conversation, turn and piece.
 - Completion comes only from the conversation source. A turn running however
   long is left to run. A turn that ended failed has its message delivered again
   to the session after a growing delay, at the end of the conversation's queue,

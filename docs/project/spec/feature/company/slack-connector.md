@@ -272,6 +272,9 @@ opaque id in `event_payload.id`. The connector uses
 `conversations.history` for a direct message. It matches the id on a post
 by its own bot and returns the posting timestamp. It reads notices from the
 current epoch's anchor and answers from the first addressed message.
+For an answer attempted before ids were recorded, the single best-effort
+read matches an untagged post from the same bot and conversation by text
+and requires a provider timestamp after the recorded attempt.
 
 These Web API calls use the existing bot scopes `chat:write` and the
 conversation's history scope. The metadata Events API scope is needed for
