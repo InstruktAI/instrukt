@@ -575,7 +575,7 @@ fn deliver_notice(
             return;
         };
         match connector.post_receipt(&notice.conversation, &notice.since_message, post_id) {
-            Ok(receipt) => Some((read_at, receipt.is_some())),
+            Ok(receipt) => Some((read_at, receipt)),
             // Not knowing whether it landed, nothing is posted now.
             Err(error) => {
                 tracing::warn!(target: LOG_TARGET, event = "conversation_notice_unread", company = %company, connector = key, error = %error.cause);
@@ -602,7 +602,6 @@ fn deliver_notice(
         Ok(conversations::NoticeStep::Post(post_id)) => {
             let outcome = connector
                 .answer(&notice.conversation, &text, &post_id)
-                .map(drop)
                 .map_err(|error| error.cause);
             tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
             conversations::notice_posted(

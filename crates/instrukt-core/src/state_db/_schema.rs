@@ -86,11 +86,13 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     }
     // Pre-metadata attempts retain their timestamp and acquire a resolution
     // only when the relay reads the provider or the attempt window ends.
-    for (table, column) in [
-        ("conversation_answers", "post_id"),
-        ("conversation_answers", "legacy_read_at"),
-        ("conversation_answers", "delivery_unknown_at"),
-        ("conversation_refusals", "post_id"),
+    for (table, column, kind) in [
+        ("conversation_answers", "post_id", "TEXT"),
+        ("conversation_answers", "legacy_read_at", "TEXT"),
+        ("conversation_answers", "delivery_unknown_at", "TEXT"),
+        ("conversation_refusals", "post_id", "TEXT"),
+        ("conversation_refusals", "notice_message", "TEXT"),
+        ("conversation_refusals", "posted_us", "INTEGER"),
     ] {
         let present: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
@@ -98,7 +100,7 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
             |row| row.get(0),
         )?;
         if !present {
-            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT"))?;
+            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
         }
     }
     // Before the final receipt and interval closure were atomic, a runner

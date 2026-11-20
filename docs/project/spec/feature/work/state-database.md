@@ -740,10 +740,12 @@ does not answer, or `unavailable`, the one notice of the sender's current epoch.
 Columns: `received_at`; `state` for `unavailable`: `owed`, `posting` (a post was
 sent, its effect possibly in flight) with `attempted_at`, or `posted`; `post_id`,
 the notice's opaque identity, allocated before its first post and reused
-until the epoch ends; `replied_at`,
+until the epoch ends; `notice_message`, the addressed message that first
+made the notice due; `posted_us`, when the provider posted the notice, in
+Unix microseconds when known; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
-records the decision, never proof of delivery. An `unavailable` row is deleted
-when an answer to that sender is posted in the conversation; `not_own` rows stay.
+records the decision, never proof of delivery. A confirmed answer retires an
+earlier `unavailable` row for that sender and conversation. `not_own` rows stay.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,

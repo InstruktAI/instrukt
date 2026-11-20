@@ -591,18 +591,18 @@ pub enum NoticeStep {
 
 /// The decision step of `notice`, taken under the conversation's post lock
 /// ([`post_lock`]) from the state as it stands now. Reconciliation carries
-/// when the provider read began and whether it found the person's notice.
+/// when the provider read began and the receipt's timestamp when found.
 pub fn notice_step(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
     notice: &Notice,
-    reconciliation: Option<(Timestamp, bool)>,
+    reconciliation: Option<(Timestamp, Option<Timestamp>)>,
     accepted: &Accepted,
     now: Timestamp,
 ) -> Result<NoticeStep, ConversationError> {
     let accepted_turns = accepted.turns(company, connector, &notice.conversation);
-    let overdue = unfinished(home, company, connector)?.iter().any(|m| {
+    let overdue = unfinished(home, company, connector)?.into_iter().find(|m| {
         m.notice_eligible
             && m.conversation == notice.conversation
             && m.sender.as_deref() == Some(notice.sender.as_str())
@@ -643,17 +643,14 @@ pub fn notice_step(
             )
             .optional()
             .map_err(state::sql(&path))?;
-        let set = |sql: &str| {
-            tx.execute(
-                sql,
-                params![company.as_str(), connector, notice.conversation, notice.sender, now.to_string()],
-            )
-            .map_err(state::sql(&path))
-        };
         let (state, attempted, post_id) = match row {
             Some(row) => row,
-            None if overdue && !notice.posting => {
-                set("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES (?1,?2,?3,?4,'unavailable',?5,'owed')")?;
+            None if !notice.posting => {
+                let Some(message) = &overdue else { return Ok(NoticeStep::Cancelled); };
+                tx.execute(
+                    "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,notice_message) VALUES (?1,?2,?3,?4,'unavailable',?5,'owed',?6)",
+                    params![company.as_str(), connector, notice.conversation, notice.sender, now.to_string(), message.message],
+                ).map_err(state::sql(&path))?;
                 ("owed".to_owned(), None, None)
             }
             None => return Ok(NoticeStep::Cancelled),
@@ -664,11 +661,11 @@ pub fn notice_step(
         if notice.post_id != post_id {
             return Ok(NoticeStep::Cancelled);
         }
-        if reconciliation.is_some_and(|(_, found)| found) {
-            set("UPDATE conversation_refusals SET state='posted',replied_at=?5,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'")?;
+        if let Some((_, Some(posted_at))) = reconciliation {
+            mark_notice_posted(tx, company, connector, notice, Some(posted_at), now)?;
             return Ok(NoticeStep::Posted);
         }
-        if !overdue {
+        if overdue.is_none() {
             return Ok(NoticeStep::Cancelled);
         }
         let attempted = attempted
@@ -697,21 +694,36 @@ pub fn notice_posted(
     company: &ProjectSlug,
     connector: &str,
     notice: &Notice,
-    outcome: Result<(), String>,
+    outcome: Result<Option<Timestamp>, String>,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
     RunnerState::new(home).write::<_, StateError>(|tx| {
-        let sql = match outcome {
-            Ok(()) => "UPDATE conversation_refusals SET state='posted',replied_at=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable' AND ?5 IS NULL",
-            Err(_) => "UPDATE conversation_refusals SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable' AND ?6 IS NOT NULL",
-        };
-        tx.execute(
-            sql,
-            params![company.as_str(), connector, notice.conversation, notice.sender, outcome.as_ref().err(), now.to_string()],
-        )
-        .map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
+        match outcome {
+            Ok(posted_at) => mark_notice_posted(tx, company, connector, notice, posted_at, now),
+            Err(cause) => {
+                tx.execute(
+                    "UPDATE conversation_refusals SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
+                    params![company.as_str(), connector, notice.conversation, notice.sender, cause],
+                ).map_err(state::sql(&state::db_path(tx)))?;
+                Ok(())
+            }
+        }
     })?;
+    Ok(())
+}
+
+fn mark_notice_posted(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    company: &ProjectSlug,
+    connector: &str,
+    notice: &Notice,
+    posted_at: Option<Timestamp>,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    tx.execute(
+        "UPDATE conversation_refusals SET state='posted',replied_at=?5,posted_us=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
+        params![company.as_str(), connector, notice.conversation, notice.sender, now.to_string(), posted_at.map(|at| at.as_microsecond())],
+    ).map_err(state::sql(&state::db_path(tx)))?;
     Ok(())
 }
 
@@ -2088,9 +2100,20 @@ fn record_receipt(
             return Ok(());
         }
         close_completed_interval(tx, company, connector, conversation, turn)?;
+        // Compare provider timestamps when both messages have a receipt.
+        // Before a notice has one, its question gives the epoch's order.
         tx.execute(
-            "DELETE FROM conversation_refusals WHERE company=?1 AND connector=?2 AND conversation=?3 AND reason='unavailable' AND sender IN (SELECT sender FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4)",
-            params![company, connector, conversation, turn],
+            "DELETE FROM conversation_refusals AS r
+             WHERE r.company=?1 AND r.connector=?2 AND r.conversation=?3 AND r.reason='unavailable'
+               AND EXISTS(SELECT 1 FROM conversation_messages m
+                 WHERE m.company=r.company AND m.connector=r.connector
+                   AND m.conversation=r.conversation AND m.turn=?4 AND m.sender=r.sender
+                   AND CASE WHEN r.posted_us IS NOT NULL THEN r.posted_us < ?5
+                     ELSE NOT EXISTS(SELECT 1 FROM conversation_messages n
+                       WHERE n.company=r.company AND n.connector=r.connector
+                         AND n.conversation=r.conversation AND n.message=r.notice_message
+                         AND (n.written_us,n.message) > (m.written_us,m.message)) END)",
+            params![company, connector, conversation, turn, now.as_microsecond()],
         )
         .map_err(state::sql(&path))?;
         Ok(())

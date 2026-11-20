@@ -274,8 +274,11 @@ the next answer to them is posted.
   timeout window.
 - The notice and the conversation's answers are posted under one short
   per-conversation post lock, held for the decision and one post, never for a
-  read at the provider or a runtime call. An answer post cancels the person's
-  notice in the same critical section once the provider accepted it.
+  read at the provider or a runtime call. A confirmed answer closes an earlier
+  notice in the same critical section. A receipt recovered later preserves a
+  notice whose provider posting time follows the answer's. Before a notice has
+  a provider timestamp, the order of its addressed message determines whether
+  it belongs to later work.
 - A notice whose post timed out or lost its response is not posted again before
   the settle bound after the attempt has passed. After it, the connector reads the
   conversation from the epoch's start for a post of its own with the notice's
