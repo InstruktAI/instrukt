@@ -1612,17 +1612,25 @@ fn harvest(
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            answers.push((
-                message.message.clone(),
-                turn.native_turn.to_string(),
-                output,
-            ));
+            answers.push((&message.message, turn, output));
         }
         position = batch.position;
         let ended = clock();
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
+                if output.is_empty() && !turn.succeeded {
+                    // The terminal run proves delivery to the runtime, but
+                    // there is no answer. Keep the sent message outstanding
+                    // and preserve its notice epoch until it is served.
+                    tx.execute(
+                        "UPDATE conversation_messages SET state=?5,failure=?6,turn_update=NULL,unavailable_since=coalesce(unavailable_since,?7) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                        params![c.company.as_str(), c.connector, c.conversation, message, Stage::Sent.as_str(), "the turn ended without a reply", ended.to_string()],
+                    )
+                    .map_err(state::sql(&path))?;
+                    continue;
+                }
+                let turn = turn.native_turn.to_string();
                 for (piece, text) in split(output, message_chars).iter().enumerate() {
                     tx.execute(
                         "INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,admission_position)
@@ -2134,8 +2142,8 @@ fn record_receipt(
     Ok(())
 }
 
-/// Retire an epoch when every covered message has a confirmed answer or a
-/// completed turn with no output. An in-flight notice must reconcile first.
+/// Retire an epoch when every covered message has settled answer pieces or a
+/// successful turn with no output. An in-flight notice must reconcile first.
 fn retire_settled_notices(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
     company: &str,

@@ -186,8 +186,9 @@ connector gives.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until it is complete — its
-  answer posted, or its turn completed with a bare `NOOP` — the connector shows in that conversation the message's state, where its provider
-  has a way to: that the assistant is working on the request from its
+  answer posted, or its turn completed successfully with a bare `NOOP` or blank
+  output — the connector shows the message's state where the provider supports
+  it. The state shows that the assistant is working on the request from its
   admission, and that the assistant is temporarily unavailable and the message
   is saved while its no-work interval is open, which happens only once a failure
   shows the agent cannot work on it ("The minute", below). The indication and
@@ -250,12 +251,13 @@ open nothing. It starts, if not already open:
 It ends, for that message only: when the runtime accepts its hand-over (a
 redelivery included); when its own turn is observed running again; when a turn it
 waits behind is observed running; when its answer is posted; or when its turn
-completes with a bare `NOOP`. An answer to another person, a read showing an idle,
-archived or absent session, an empty read and a refused attempt end nothing. A
-person's interval is the earliest among their unanswered messages. While the relay
-cannot acquire the conversation source, every unanswered message counts from the
-later of its admission and the start of that failure, unless its own interval
-started earlier. Each connector evaluates notice eligibility from the state
+completes successfully with a bare `NOOP` or blank output. An answer to another
+person, a read showing an idle, archived or absent session, an empty read and a
+refused attempt end nothing. A person's interval is the earliest among their
+unanswered messages. While the relay cannot acquire the conversation source,
+every unanswered message counts from the later of its admission and the start
+of that failure, unless its own interval started earlier. Each connector
+evaluates notice eligibility from the state
 database and the clock alone at least once per intake interval while an admitted
 message of its company has no posted answer. A provider read for one member
 leaves the eligibility evaluation and other members' reads free to proceed.
@@ -268,8 +270,11 @@ admission positions of the person's messages that made the notice due.
 - The decision is recorded before the post (owed, posting with the attempt's time,
   posted); the record is never taken as proof of delivery.
 - Each answer piece carries the admission position of the message it answers.
-  An epoch closes when every covered position is settled. A bare `NOOP` settles
-  its position. A multipart answer settles its position once each piece is
+  An epoch closes when every covered position is settled. A turn that
+  completes successfully with a bare `NOOP` or blank output settles its
+  position. A failed turn with no reply leaves its message unsettled and its
+  interval open. Its notice epoch stays open across later overdue messages.
+  A multipart answer settles its position once each piece is
   confirmed or resolved as delivery unknown. Provider timestamps and the runner
   clock do not order answer receipts against notices.
 - When the delivery of an attempted answer is uncertain, the relay reconciles

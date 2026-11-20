@@ -733,7 +733,9 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(failed_metadata_reads_expire_without_sending_again);
         scope.spawn(a_mixed_notice_epoch_waits_for_the_final_answer_piece);
         scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
-        scope.spawn(a_noop_lets_the_next_question_receive_its_own_notice);
+        scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
+        scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice(" \n "));
+        scope.spawn(a_failed_turn_keeps_the_member_notice_open);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
@@ -1840,7 +1842,7 @@ fn an_unconfirmed_post_waits_after_a_metadata_miss() {
     assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
-fn a_noop_lets_the_next_question_receive_its_own_notice() {
+fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D21";
     let sender = "USTEVEN";
@@ -1854,10 +1856,11 @@ fn a_noop_lets_the_next_question_receive_its_own_notice() {
     });
     c.runtime.flag("list-failure", false);
     let session = started(&c, &[]);
-    c.finish_turn(&session, 0, "NOOP");
-    wait("the first notice epoch settled by NOOP", || {
-        notice_state(&c, channel, sender).is_none()
-    });
+    c.finish_turn(&session, 0, reply);
+    wait(
+        "the first notice epoch settled by the successful empty turn",
+        || notice_state(&c, channel, sender).is_none(),
+    );
     assert_eq!(interval(&c, &first), None);
     c.runtime.flag("send-failure", true);
     let second = c.slack.direct(channel, sender, "Who reviews the release?");
@@ -1866,6 +1869,68 @@ fn a_noop_lets_the_next_question_receive_its_own_notice() {
         notices(&c, sender) == 2
     });
     assert_eq!(c.slack.posts().len(), 2);
+}
+
+fn a_failed_turn_keeps_the_member_notice_open() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "D21";
+    let sender = "USTEVEN";
+    c.runtime.flag("separate-completion", true);
+    c.runtime.flag("list-failure", true);
+    projected(&c);
+    let first = c.slack.direct(channel, sender, "Any changes?");
+    set_clock(&clock, interval_at(&c, &first) + minute());
+    wait("the notice before the failed turn", || {
+        notice_state(&c, channel, sender).as_deref() == Some("posted")
+    });
+    c.runtime.flag("list-failure", false);
+    let session = started(&c, &[]);
+    wait("the first turn accepted", || {
+        c.slack.status(channel, &first).as_deref() == Some(WORKING)
+    });
+    let input = c.runtime.message(&session, 0);
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    c.store.failed_turn(&session, "failed-turn", 1, &input);
+
+    // Either terminal outcome changes the indication. A failed turn opens
+    // its own interval, so the status must stay unavailable through an outage.
+    wait("the failed turn's status", || {
+        c.slack.status(channel, &first).as_deref() != Some(WORKING)
+    });
+    let failed_at = interval(&c, &first);
+    c.runner_dies();
+    let database = c.store.file.clone();
+    let away = database.with_extension("away");
+    std::fs::rename(&database, &away).unwrap();
+    std::fs::create_dir(&database).unwrap();
+    c.run();
+
+    let second = c.slack.direct(channel, sender, "Who reviews the release?");
+    let other = c.slack.direct("D22", "UANNA", "Can I get a review?");
+    wait(
+        "both new questions are waiting through the source outage",
+        || {
+            c.slack.status(channel, &second).as_deref() == Some(UNAVAILABLE)
+                && c.slack.status("D22", &other).as_deref() == Some(UNAVAILABLE)
+        },
+    );
+    set_clock(&clock, interval_clock(&clock) + minute());
+    wait("the other member gets a notice for the same outage", || {
+        notices(&c, "UANNA") == 1
+    });
+    assert_eq!(
+        notices(&c, sender),
+        1,
+        "the failed turn's notice still covers the member"
+    );
+    assert_eq!(notice_state(&c, channel, sender).as_deref(), Some("posted"));
+    assert!(
+        failed_at.is_some(),
+        "the failed turn opens its own interval"
+    );
+    assert_eq!(interval(&c, &first), failed_at);
+    assert_eq!(answers(&c), 0);
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {
