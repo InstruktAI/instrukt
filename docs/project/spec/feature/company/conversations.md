@@ -130,7 +130,7 @@ a message delivered as its own turn or as context for another message.
 For each delivery, including a retry, select only earlier messages in the
 provider's thread or channel range that lack a receipt. Exclude messages
 waiting for their own turns. Apply the context limit to that selection and
-include the omission note when the limit trims it. Record the selected
+include the omission note when the limit trims it. If the connector cannot read the required context, the question stays saved and its unavailable interval opens until delivery resumes. Record the selected
 messages and addressed message in the same transaction that records the
 delivery. A send or start whose acceptance is uncertain retains the exact
 input for reconciliation and keeps later work queued until it is resolved.
