@@ -107,10 +107,48 @@ pub enum SessionsError {
     Uncertain { key: String, detail: String },
     #[error("runtime key conflict for `{0}`; no thread was selected or started")]
     KeyConflict(String),
+    #[error("runtime key conflict for `{key}` among {}; archive or delete the extra thread", threads.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))]
+    ConflictingThreads {
+        key: String,
+        threads: Vec<SessionRef>,
+    },
+    #[error("bound thread {session} for `{key}` is archived; unarchive it or delete it")]
+    ArchivedBound { key: String, session: SessionRef },
+    #[error(
+        "thread {session} for `{key}` changed native project from `{retained}` to `{observed}`; restore its original project before delivering pending work"
+    )]
+    ProjectChanged {
+        key: String,
+        session: SessionRef,
+        retained: String,
+        observed: String,
+    },
+    #[error(
+        "pending thread {session} for `{key}`: {detail}. Restore its recorded key and placement, then run `instrukt sessions resolve-start {key} --session {session}`"
+    )]
+    PendingPlacement {
+        key: String,
+        session: SessionRef,
+        detail: String,
+    },
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
-    #[error("bound thread {session} is absent or renamed for `{key}`; no replacement was started")]
-    MissingBound { key: String, session: SessionRef },
+    #[error(
+        "native project for {session} under `{key}` is unverified. Restore the retained key in its original native project if it can be verified. Otherwise stop the session, delete the thread, then run `instrukt sessions replace-deleted {key} --stopped {session}`"
+    )]
+    ProjectUnverified { key: String, session: SessionRef },
+    #[error(
+        "thread {session} for `{key}` is deleted. Deletion does not prove the old session stopped. Once it has stopped, use `instrukt sessions replace-deleted {key} --stopped {session}`"
+    )]
+    DeletedBound { key: String, session: SessionRef },
+    #[error(
+        "first thread {session} for `{key}` is absent before acceptance. Run `instrukt sessions resolve-start {key} --none` to allow a fresh start"
+    )]
+    FirstStartAbsent { key: String, session: SessionRef },
+    #[error(
+        "delivery target {session} for `{key}` is already retained. Run `instrukt sessions resolve-start {key} --session {session}`"
+    )]
+    PendingStartPresent { key: String, session: SessionRef },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]
@@ -320,6 +358,7 @@ impl<'c> Sessions<'c> {
     }
     pub fn followup(
         &self,
+        order: &[AgentChoice],
         session: &SessionRef,
         path: Option<&Path>,
         title: Option<&str>,
@@ -331,6 +370,7 @@ impl<'c> Sessions<'c> {
             ));
         }
         let (mut input, project) = self.input(request)?;
+        input.preferences = order.to_vec();
         if let Some(title) = title {
             input.title = title.to_owned();
         }

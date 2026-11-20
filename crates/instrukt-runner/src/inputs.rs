@@ -262,14 +262,19 @@ fn pump_inner(
                 return Ok(());
             }
             let entry_only=state.read(|conn,path|conn.query_row("SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE runtime=?1 AND session=?2 AND group_id=?3 AND intent='entry')",params![target.runtime.as_str(),target.id.as_str(),id],|r|r.get::<_,bool>(0)).map_err(state::sql(path)))?.unwrap_or(false);
+            let thread = adapter.read_state(target)?;
+            if thread.state == SessionState::Gone {
+                return Err(SessionsError::Gone(target.clone()));
+            }
             if entry_only
                 && !matches!(
-                    adapter.read_state(target)?.state,
+                    thread.state,
                     SessionState::InputReady | SessionState::EndedFailed
                 )
             {
                 return Ok(());
             }
+            crate::standing::verify_delivery_project(state, adapter, &thread, now)?;
             // A selected or uncertain send retries its immutable content and target.
             adapter.send(target, &content)?;
             accept(state, target, &id, now)?;
@@ -296,6 +301,7 @@ fn pump_inner(
             "runtime input readiness is unknown; pending delivery retained".into(),
         ));
     }
+    crate::standing::verify_delivery_project(state, adapter, &thread, now)?;
     let idle = matches!(
         thread.state,
         SessionState::InputReady | SessionState::EndedFailed
@@ -395,11 +401,31 @@ pub(crate) fn record_initial(
     content: &str,
     now: Timestamp,
 ) -> Result<(), StateError> {
-    state.write(|tx| {
-        retain(tx,target,&Entry{id,kind:InputKind::Recovery, assignment:None,source_at:Some(&now.to_string()),arrived_at:now,intent:Intent::Asap,content})?;
-        tx.execute("UPDATE runtime_inputs SET state='accepted',waiting=1,group_id=input_id,selected_content=content,accepted_at=?4,evidence_source=?5,evidence_at=?4 WHERE runtime=?1 AND session=?2 AND input_id=?3 AND state='pending'",params![target.runtime.as_str(),target.id.as_str(),id,now.to_string(),format!("{} adapter acceptance",target.runtime)]).map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
-    })
+    state.write(|tx| record_initial_in(tx, target, id, content, now))
+}
+
+pub(crate) fn record_initial_in(
+    tx: &Transaction<'_>,
+    target: &SessionRef,
+    id: &str,
+    content: &str,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    retain(
+        tx,
+        target,
+        &Entry {
+            id,
+            kind: InputKind::Recovery,
+            assignment: None,
+            source_at: Some(&now.to_string()),
+            arrived_at: now,
+            intent: Intent::Asap,
+            content,
+        },
+    )?;
+    tx.execute("UPDATE runtime_inputs SET state='accepted',waiting=1,group_id=input_id,selected_content=content,accepted_at=?4,evidence_source=?5,evidence_at=?4 WHERE runtime=?1 AND session=?2 AND input_id=?3 AND state='pending'",params![target.runtime.as_str(),target.id.as_str(),id,now.to_string(),format!("{} adapter acceptance",target.runtime)]).map_err(state::sql(&state::db_path(tx)))?;
+    Ok(())
 }
 
 #[cfg(test)]

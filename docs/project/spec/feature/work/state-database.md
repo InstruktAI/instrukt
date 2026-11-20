@@ -374,8 +374,10 @@ The receipt expires seven days after the append or the most recent retry that
 finds it. A destination that is no longer configured retires the intent as
 abandoned and keeps that fact on the outcome for status.
 
-**`runner_workers`** — current worker failures and deferred consumer source
-transitions. Each deferred transition retains its first reported time across
+**`runner_workers`** — current worker failures, deferred consumer source
+transitions and keyed-start findings. A keyed-start finding keeps its first
+observation on the operator clock and is cleared when reconciliation ends it.
+The process remembers which runtime keys it has notified during its lifetime. Each deferred transition retains its first reported time across
 retries. Completing the transition removes the row.
 
 Redis itself owns stream payloads, group pending entries, transport progress,
@@ -592,7 +594,9 @@ and initialized-assignment evidence are explicit adapter capabilities, with
 unknown/unsupported outcomes instead of synthesized conversations or run ids.
 The adapter is always selected by `runner.runtime`.
 
-**`runtime_bindings`** — cached sessions for instrukt-owned start kinds. Key:
+**`runtime_bindings`** — runner-owned native identities scoped to this computer
+and runtime. The pending row is the authoritative record of the native ID
+returned by a keyed start. Key:
 `(runtime, semantic_key)`. Columns are `runtime`, `semantic_key`, `kind`, `project`,
 `subject` (the assignment's durable semantic address), `session`, optional `native_project_id`, `display_title`,
 `checkout`, `worktree`, `branch`, `base_head`, `accepted`, original structured
@@ -602,7 +606,25 @@ and `procedure_generations`, joined by `semantic_key`. The native project id is 
 identity and runtime endpoint/placement scope remain separate. Display-title
 changes do not change the semantic key or authorize a new start. Work's `session_bindings`
 retains todo/role/attempt facts, and task occurrence stamps own completion.
-Discovery repairs the cache before a start. Removing it proves no absence.
+One pending row per key keeps the exact returned ID and opening acceptance
+from the native start result, before thread inspection or placement verification,
+until the start commits. Retry reads that ID directly. The pending row becomes
+accepted when the owning records commit, or is retired by explicit recovery.
+During a todo or task replacement, the start marker retains the original claim's
+session and the latest confirmed stopped session. Retiring a pending successor
+updates that marker and retires its binding in one write. The work claim moves
+only when a verified replacement commits.
+An accepted replacement retains its most recent stopped ID so the same
+operator command can finish pending reflection and return its result.
+Discovery can recover a missing accepted binding. Removing a row proves no
+absence.
+
+**`manual_standing_reservations`** — runner-owned reservation keyed by standing
+responsibility. The request can retain one native ID observed for the reserved
+key, even before binding succeeds. Confirmation of no start clears that
+observation after native verification. Binding clears it when the session is
+recorded. Explicit replacement retires the reservation in the same transaction
+that stages the successor.
 
 **`runtime_key_locks`** — one starter/deliverer per runtime and exact key.
 Key: `(runtime, semantic_key)`.
@@ -628,7 +650,7 @@ completely bound. Key: `(runtime, semantic_key)`.
 | `runtime`, `semantic_key`, `project`, `kind`, `subject`, execution checkout | Same assignment address as the binding. Owning work/standing records retain the orchestrator attempt, occurrence or generation before instrukt starts it. Native worker reservations use `session_bindings`, not this table. |
 | `brief`, `request` | Opening input and structured start request, including requested branch, captured base SHA and worktree requirement. Persisted before the external start. |
 | `begun_at`, `reported` | Start time and whether the unresolved-start finding was reported. |
-| `resolved_at`, `resolved_by`, `resolution` | Resolution time, actor and no-thread confirmation or proof of rejection; `NULL` until resolved. |
+| `resolved_at`, `resolved_by`, `resolution` | Resolution time, actor and evidence. A todo replacement retains the operator-confirmed stopped ID until the replacement commits. |
 | `state` | `unresolved` while creation may be in flight; `retry_allowed` after `resolve-start --none` or proof of rejection before creation. The request and key are retained for retry. |
 
 One design covers every instrukt-owned start kind under

@@ -35,6 +35,18 @@ fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
     let fake = FakeT3::create(&p.env);
     insta::assert_snapshot!(p.env.git(&fake.worktree("s1"),["branch","--show-current"]),@"parser/prepare");
     assert!(fake.worktree("s1").is_dir());
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let branch: String = db
+        .query_row(
+            "SELECT branch FROM runtime_bindings WHERE session='t3:s1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(branch, "parser/prepare");
     for command in ["run", "send", "alive", "conversation", "link"] {
         p.env.run(p.repo.path(), ["sessions", command]).failure();
     }
@@ -56,11 +68,11 @@ fn lost_start_result_recovers_the_same_orchestrator_and_its_phase_worktree() {
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
 #[test]
 fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
-    let p = Tracked::new(true);
+    let mut p = Tracked::new(true);
     change(&p, "parser");
     let fake = FakeT3::create(&p.env);
     fake.flag("empty-start", true);
-    p.tick();
+    p.tick_at("2030-01-01T00:00:00Z");
     let record = p.todo(["show", "parser"]);
     let key = record
         .lines()
@@ -68,8 +80,27 @@ fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
         .unwrap()
         .to_owned();
     fake.flag("empty-start", false);
-    p.tick();
+    p.tick_at("2030-01-01T00:01:00Z");
     assert_eq!(fake.threads().len(), 0);
+    let status = || {
+        let out = p
+            .env
+            .run(p.env.home(), ["events", "status", "--json"])
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+            ["start_anomalies"].clone()
+    };
+    let finding = status()[0].clone();
+    assert_eq!(finding["key"], key);
+    assert!(
+        finding["failure"]
+            .as_str()
+            .unwrap()
+            .contains("instrukt sessions resolve-start")
+    );
+    assert!(p.rt.notifications().is_empty());
+    p.tick_at("2030-01-01T00:06:00Z");
+    assert_eq!(p.rt.notifications(), std::slice::from_ref(&key));
     p.env
         .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
         .success();
@@ -79,6 +110,575 @@ fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
     p.tick();
     assert_eq!(fake.threads().len(), 1);
 }
+const RECOVERY_FOLLOWUP: &str = "Later work for the committed successor.";
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS25
+#[test]
+fn keyed_recovery_doors_follow_binding_state() {
+    if let Ok(key) = std::env::var("INSTRUKT_TEST_KEYED_RECOVERY") {
+        let home = instrukt_core::home::Home::from_env().unwrap();
+        let invocation = instrukt_runner::keyed::RuntimeInvocation::acquire(
+            &home,
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+        let adapter = instrukt_runner::runtime::T3::default();
+        let now = "2030-01-06T09:00:21Z".parse().unwrap();
+        if let Ok(target) = std::env::var("INSTRUKT_TEST_RECOVERY_TARGET") {
+            let session = instrukt_core::ids::SessionRef::parse(&target).unwrap();
+            let mut request = instrukt_runner::keyed::request(&home, &adapter, &key).unwrap();
+            request.brief = RECOVERY_FOLLOWUP.into();
+            let thread = instrukt_runner::keyed::followup(
+                &adapter,
+                &instrukt_runner::runtime::FollowupAssignment {
+                    invocation: &invocation,
+                    request: &request,
+                    session: &session,
+                    worktree_path: None,
+                    project: Some("demo"),
+                    now,
+                },
+            )
+            .unwrap();
+            assert_eq!(thread.session, session);
+        } else {
+            instrukt_runner::keyed::retry(&invocation, &adapter, &key, now).unwrap();
+        }
+        return;
+    }
+    for phase in ["prepare", "work", "task"] {
+        let mut p = Tracked::new(true);
+        let fake = FakeT3::create(&p.env);
+        let worktree = phase != "task";
+        if worktree {
+            change(&p, "recovery");
+            if phase == "work" {
+                p.todo([
+                    "artifacts",
+                    "write",
+                    "recovery",
+                    "implementation-plan",
+                    "Plan.",
+                ]);
+                p.todo([
+                    "artifacts",
+                    "write",
+                    "recovery",
+                    "plan-review-findings",
+                    "Approved.",
+                ]);
+                p.todo([
+                    "stamp",
+                    "recovery",
+                    "--verdict",
+                    "approve",
+                    "--phase",
+                    "plan_review",
+                ]);
+            }
+        } else {
+            p.authorized_task("recovery", "2030-01-06T09:00:00Z", &[]);
+            p.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:20Z");
+        }
+        let db = recovery_db(&p.env);
+        fail_recovery_receipt(&db, "s1");
+        p.tick();
+        check_recovery_doors(
+            &p.env,
+            p.repo.path(),
+            &fake,
+            &db,
+            worktree.then_some(phase),
+            || {
+                p.tick();
+            },
+            |key, native| {
+                let (bound, claimed): (String, String) = db.query_row(
+                    "SELECT b.session, t.claim_session FROM session_bindings b
+                     JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?1 AND b.released_at IS NULL",
+                    [key], |row| Ok((row.get(0)?,row.get(1)?)),
+                ).unwrap();
+                assert_eq!(bound, format!("t3:{native}"), "{phase}");
+                assert_eq!(claimed, bound, "{phase}");
+                fake.set_status(native, "idle");
+                run_recovery_worker(&p.env, p.repo.path(), key, Some(&claimed));
+                assert!(
+                    fake.input_log(native).contains(RECOVERY_FOLLOWUP),
+                    "{phase}"
+                );
+            },
+        );
+    }
+
+    let p = Tracked::new(false);
+    let fake = FakeT3::create(&p.env);
+    let db = recovery_db(&p.env);
+    let key = "instrukt:run:demo:recovery";
+    fake.seed("s1", p.repo.path(), key, "Opening");
+    let input = serde_json::json!({
+        "checkout":p.repo.path(),"key":key,"title":key,"brief":"Opening","worktree":null,
+        "selection":{"profile":"codex","kind":"codex","instance":"codex","model":"gpt-test","effort":null,"options":{}}
+    });
+    let path = p.repo.path().to_string_lossy();
+    db.execute(
+        "INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state)
+         VALUES('t3',?1,'demo','run',?1,?2,'Opening',?3,'2030-01-06T09:00:20Z',0,'unresolved')",
+        instrukt_core::state_db::rusqlite::params![key,path,input.to_string()],
+    ).unwrap();
+    let mut intent = input;
+    intent["opening_acknowledged"] = true.into();
+    db.execute(
+        "INSERT INTO runtime_bindings(runtime,semantic_key,kind,project,subject,session,checkout,accepted,request)
+         VALUES('t3',?1,'run','demo',?1,'t3:s1',?2,0,?3)",
+        instrukt_core::state_db::rusqlite::params![key,path,intent.to_string()],
+    ).unwrap();
+    check_recovery_doors(
+        &p.env,
+        p.repo.path(),
+        &fake,
+        &db,
+        None,
+        || run_recovery_worker(&p.env, p.repo.path(), key, None),
+        |key, native| {
+            let target: String = db
+                .query_row(
+                    "SELECT session FROM runtime_bindings WHERE semantic_key=?1 AND accepted=1",
+                    [key],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(target, format!("t3:{native}"));
+            fake.set_status(native, "idle");
+            run_recovery_worker(&p.env, p.repo.path(), key, Some(&target));
+            assert!(fake.input_log(native).contains(RECOVERY_FOLLOWUP));
+        },
+    );
+    crate::procedure_event_delivery::check_standing_recovery_doors();
+}
+
+fn run_recovery_worker(
+    env: &common::TestEnv,
+    root: &std::path::Path,
+    key: &str,
+    target: Option<&str>,
+) {
+    let mut worker = env.command(&std::env::current_exe().unwrap(), root);
+    worker
+        .args([
+            "--exact",
+            "session_continuity::keyed_recovery_doors_follow_binding_state",
+        ])
+        .env("INSTRUKT_TEST_KEYED_RECOVERY", key);
+    if let Some(target) = target {
+        worker.env("INSTRUKT_TEST_RECOVERY_TARGET", target);
+    }
+    let output = worker.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn recovery_db(env: &common::TestEnv) -> instrukt_core::state_db::rusqlite::Connection {
+    let home = instrukt_core::home::Home::at_user_home(env.home().into());
+    drop(instrukt_core::state_db::StateDb::open(&home).unwrap());
+    instrukt_core::state_db::rusqlite::Connection::open(
+        env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap()
+}
+
+pub(super) fn fail_recovery_receipt(
+    db: &instrukt_core::state_db::rusqlite::Connection,
+    native: &str,
+) {
+    db.execute_batch(&format!(
+        "CREATE TRIGGER fail_recovery_receipt BEFORE INSERT ON runtime_inputs
+         WHEN NEW.session='{native}' BEGIN SELECT RAISE(ABORT, 'recovery receipt failed'); END;"
+    ))
+    .unwrap();
+}
+
+pub(super) fn check_recovery_doors(
+    env: &common::TestEnv,
+    root: &std::path::Path,
+    fake: &FakeT3,
+    db: &instrukt_core::state_db::rusqlite::Connection,
+    phase: Option<&str>,
+    wake: impl FnOnce(),
+    later: impl FnOnce(&str, &str),
+) {
+    let key = fake.key("s1");
+    let none = ["sessions", "resolve-start", &key, "--none"];
+    let exact = ["sessions", "resolve-start", &key, "--session", "t3:s1"];
+    let first_replace = ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"];
+    let expect_door = |args: &[&str], door: &[&str]| {
+        let refused = env.run(root, args.iter().copied()).failure();
+        let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+        let expected = format!("instrukt {}", door.join(" "));
+        assert!(guidance.contains(&expected), "{key}: {guidance}");
+    };
+    let binding = || {
+        db.query_row(
+            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
+            [&key],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+        )
+    };
+    let delete = |native: &str| {
+        let folder = phase.map(|_| fake.worktree(native));
+        fake.set_status(native, "stopped");
+        fake.delete(native);
+        folder
+    };
+    let clear_phase = |folder: Option<std::path::PathBuf>| {
+        if let (Some(folder), Some(phase)) = (folder, phase) {
+            env.git(root, ["worktree", "remove", folder.to_str().unwrap()]);
+            env.git(root, ["branch", "-d", &format!("recovery/{phase}")]);
+        }
+    };
+
+    assert_eq!(binding().unwrap(), ("t3:s1".into(), false), "{key}");
+    expect_door(&none, &exact);
+    expect_door(&first_replace, &exact);
+    env.run(root, exact).success();
+    assert_eq!(binding().unwrap(), ("t3:s1".into(), false), "{key}");
+
+    let first_phase = delete("s1");
+    expect_door(&exact, &none);
+    expect_door(&first_replace, &none);
+    fake.flag("show-failure", true);
+    env.run(root, none).failure();
+    assert_eq!(binding().unwrap(), ("t3:s1".into(), false), "{key}");
+    fake.flag("show-failure", false);
+    env.run(root, none).success();
+    assert!(
+        matches!(
+            binding(),
+            Err(instrukt_core::state_db::rusqlite::Error::QueryReturnedNoRows)
+        ),
+        "{key}"
+    );
+    let (state, reason): (String, String) = db
+        .query_row(
+            "SELECT state,resolution FROM runtime_starts WHERE semantic_key=?1",
+            [&key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (state.as_str(), reason.as_str()),
+        ("retry_allowed", "none"),
+        "{key}"
+    );
+    assert!(fake.threads().is_empty(), "{key}");
+    clear_phase(first_phase);
+    wake();
+    assert_eq!(binding().unwrap(), ("t3:s2".into(), true), "{key}");
+
+    let committed_phase = delete("s2");
+    let replace = ["sessions", "replace-deleted", &key, "--stopped", "t3:s2"];
+    expect_door(&none, &replace);
+    let s2_exact = ["sessions", "resolve-start", &key, "--session", "t3:s2"];
+    expect_door(&s2_exact, &replace);
+    db.execute_batch("DROP TRIGGER IF EXISTS fail_recovery_receipt;")
+        .unwrap();
+    clear_phase(committed_phase);
+    env.run(root, replace).success();
+    assert_eq!(binding().unwrap(), ("t3:s3".into(), true), "{key}");
+    let receipt: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s3' AND input_id=?1 AND state='accepted')",
+        [format!("assignment:{key}")], |row| row.get(0),
+    ).unwrap();
+    assert!(receipt, "{key}");
+    assert_eq!(fake.threads(), ["s3"], "{key}");
+    later(&key, "s3");
+    assert_eq!(fake.message_count("s3"), 2, "{key}");
+
+    let next_phase = delete("s3");
+    let next_replace = ["sessions", "replace-deleted", &key, "--stopped", "t3:s3"];
+    expect_door(&none, &next_replace);
+    fail_recovery_receipt(db, "s4");
+    clear_phase(next_phase);
+    let interrupted = env.run(root, next_replace).failure();
+    let failure = String::from_utf8_lossy(&interrupted.get_output().stderr);
+    assert!(
+        failure.contains("recovery receipt failed"),
+        "{key}: {failure}"
+    );
+    assert_eq!(binding().unwrap(), ("t3:s4".into(), false), "{key}");
+
+    let pending_phase = delete("s4");
+    let replace_pending = ["sessions", "replace-deleted", &key, "--stopped", "t3:s4"];
+    expect_door(&none, &replace_pending);
+    let s4_exact = ["sessions", "resolve-start", &key, "--session", "t3:s4"];
+    expect_door(&s4_exact, &replace_pending);
+    clear_phase(pending_phase);
+    env.run(root, replace_pending).success();
+    assert_eq!(binding().unwrap(), ("t3:s5".into(), true), "{key}");
+    assert_eq!(fake.threads(), ["s5"], "{key}");
+    assert_eq!(fake.message_count("s5"), 1, "{key}");
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS24
+#[test]
+fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
+    let mut p = Tracked::new(true);
+    p.authorized_task("weekly-status", "2030-01-06T09:00:00Z", &[]);
+    p.tick_at("2030-01-06T09:00:20Z");
+    let fake = FakeT3::create(&p.env);
+    let key = fake.key("s1");
+    fake.delete("s1");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let command = || {
+        p.env.run(
+            p.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        )
+    };
+    let (machine, claimed_at): (String, String) = db
+        .query_row(
+            "SELECT claim_machine,claim_at FROM todos WHERE slug='weekly-status'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE todos SET claim_machine=NULL,claim_session=NULL,claim_at=NULL WHERE slug='weekly-status'",
+        [],
+    ).unwrap();
+    let ineligible = command().failure();
+    assert!(
+        fake.threads().is_empty(),
+        "an ineligible replacement must start nothing"
+    );
+    let error = String::from_utf8_lossy(&ineligible.get_output().stderr);
+    assert!(error.contains("todo replacement is ineligible"), "{error}");
+    db.execute(
+        "UPDATE todos SET claim_machine=?1,claim_session='t3:s1',claim_at=?2 WHERE slug='weekly-status'",
+        (&machine, &claimed_at),
+    ).unwrap();
+
+    db.execute(
+        "INSERT OR REPLACE INTO executions(project,todo_id,role,session,workflow_state,recovery_sent,anomaly_raised)
+         SELECT t.project,t.id,b.role,'t3:s1','task-executing',1,1
+         FROM todos t JOIN session_bindings b ON t.id=b.todo_id WHERE b.semantic_key=?1",
+        [&key],
+    ).unwrap();
+    let execution = || {
+        db.query_row(
+            "SELECT session,recovery_sent,anomaly_raised FROM executions",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            },
+        )
+        .unwrap()
+    };
+    db.execute_batch("CREATE TRIGGER fail_work_replacement BEFORE UPDATE OF claim_session ON todos
+        WHEN NEW.claim_session='t3:s2' BEGIN SELECT RAISE(ABORT, 'work binding write failed'); END;").unwrap();
+    let failed = command().failure();
+    let error = String::from_utf8_lossy(&failed.get_output().stderr);
+    assert!(
+        error.contains("was not confirmed in the todo record"),
+        "{error}"
+    );
+    let sessions = || {
+        db.query_row(
+            "SELECT b.session,t.claim_session,r.session,r.accepted FROM session_bindings b
+             JOIN todos t ON b.todo_id=t.id JOIN runtime_bindings r ON r.semantic_key=b.semantic_key
+             WHERE b.semantic_key=?1",
+            [&key],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+    assert_eq!(execution(), ("t3:s1".into(), true, true));
+    assert_eq!(fake.threads(), ["s2"]);
+    db.execute_batch("DROP TRIGGER fail_work_replacement;")
+        .unwrap();
+
+    // An unrelated exact-title match must not displace the returned ID.
+    fake.seed("lookalike", p.repo.path(), &key, "Unrelated opening.");
+    fake.change("s2", "title", "Renamed replacement".into());
+    let refused = command().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions resolve-start {key} --session t3:s2"
+        )),
+        "{guidance}"
+    );
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+    fake.change("s2", "title", format!("Renamed replacement · {key}").into());
+    p.env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", &key, "--session", "t3:s2"],
+        )
+        .success();
+    db.execute_batch(
+        "CREATE TRIGGER fail_opening_receipt BEFORE INSERT ON runtime_inputs
+        WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'opening receipt write failed'); END;",
+    )
+    .unwrap();
+    let failed = command().failure();
+    let error = String::from_utf8_lossy(&failed.get_output().stderr);
+    assert!(error.contains("opening receipt write failed"), "{error}");
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+    assert_eq!(execution(), ("t3:s1".into(), true, true));
+    db.execute_batch("DROP TRIGGER fail_opening_receipt;")
+        .unwrap();
+
+    assert_eq!(fake.message_count("lookalike"), 1);
+    fake.delete("lookalike");
+    fake.change("s2", "projectId", "another-native-project".into());
+
+    let moved = command().failure();
+    let guidance = String::from_utf8_lossy(&moved.get_output().stderr);
+    assert!(guidance.contains("native project changed"), "{guidance}");
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions resolve-start {key} --session t3:s2"
+        )),
+        "{guidance}"
+    );
+    let resolve_pending = || {
+        p.env.run(
+            p.repo.path(),
+            ["sessions", "resolve-start", &key, "--session", "t3:s2"],
+        )
+    };
+    let refused = resolve_pending().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains("native project changed"), "{guidance}");
+    let replace_pending = || {
+        p.env.run(
+            p.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s2"],
+        )
+    };
+    let still_live = replace_pending().failure();
+    let refusal = String::from_utf8_lossy(&still_live.get_output().stderr);
+    assert!(
+        refusal.contains("thread t3:s2 must be deleted"),
+        "{refusal}"
+    );
+    assert_eq!(fake.threads(), ["s2"]);
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+
+    fake.set_status("s2", "stopped");
+    fake.delete("s2");
+    let door = format!("instrukt sessions replace-deleted {key} --stopped t3:s2");
+    for refused in [
+        resolve_pending().failure(),
+        p.env
+            .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
+            .failure(),
+        command().failure(),
+    ] {
+        let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+        assert!(guidance.contains(&door), "{guidance}");
+    }
+    let status = p
+        .env
+        .run(p.repo.path(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    assert!(
+        status["start_anomalies"][0]["failure"]
+            .as_str()
+            .unwrap()
+            .contains(&door)
+    );
+    assert!(fake.threads().is_empty());
+
+    db.execute_batch(
+        "CREATE TRIGGER fail_next_receipt BEFORE INSERT ON runtime_inputs
+         WHEN NEW.session='s3' BEGIN SELECT RAISE(ABORT, 'next opening receipt write failed'); END;",
+    ).unwrap();
+    let failed = replace_pending().failure();
+    let guidance = String::from_utf8_lossy(&failed.get_output().stderr);
+    assert!(
+        guidance.contains("next opening receipt write failed"),
+        "{guidance}"
+    );
+    assert!(guidance.contains(&door), "{guidance}");
+    assert_eq!(fake.threads(), ["s3"]);
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s3".into(), false)
+    );
+    assert_eq!(execution(), ("t3:s1".into(), true, true));
+    db.execute_batch("DROP TRIGGER fail_next_receipt;").unwrap();
+
+    db.execute_batch(
+        "CREATE TRIGGER fail_replacement_reflection BEFORE INSERT ON reflections
+        WHEN NEW.pending=0 AND (SELECT claim_session FROM todos WHERE id=NEW.todo_id)='t3:s3'
+        BEGIN SELECT RAISE(ABORT, 'reflection save failed'); END;",
+    )
+    .unwrap();
+    let replaced = replace_pending().success();
+    let text = String::from_utf8_lossy(&replaced.get_output().stdout);
+    assert!(
+        text.contains("warning:") && text.contains("reflection save failed"),
+        "{text}"
+    );
+    let repeated = replace_pending().success();
+    assert!(
+        String::from_utf8_lossy(&repeated.get_output().stdout)
+            .contains("replaced t3:s2 with t3:s3")
+    );
+    db.execute_batch("DROP TRIGGER fail_replacement_reflection;")
+        .unwrap();
+    replace_pending().success();
+    let pending: bool = db
+        .query_row("SELECT pending FROM reflections", [], |row| row.get(0))
+        .unwrap();
+    assert!(!pending);
+    assert_eq!(
+        sessions(),
+        ("t3:s3".into(), "t3:s3".into(), "t3:s3".into(), true)
+    );
+    assert_eq!(execution(), ("t3:s3".into(), false, false));
+    let opening_accepted: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s3' AND input_id=?1 AND state='accepted')",
+        [format!("assignment:{key}")], |row| row.get(0),
+    ).unwrap();
+    assert!(opening_accepted);
+    assert_eq!(fake.threads(), ["s3"]);
+    assert_eq!(fake.message_count("s3"), 1);
+}
+
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
 #[test]
 fn conflicting_keyed_threads_never_admit_a_replacement() {
@@ -91,6 +691,16 @@ fn conflicting_keyed_threads_never_admit_a_replacement() {
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     let key = fake.title("s1").rsplit(" · ").next().unwrap().to_owned();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted)
+         VALUES ('t3','other-key','run','other-key','t3:s1',?1,1)",
+        [p.repo.path().to_string_lossy().as_ref()],
+    )
+    .unwrap();
     let out = p
         .env
         .run(
@@ -973,6 +1583,16 @@ fn mixed_legacy_and_readable_titles_for_one_key_conflict() {
     let title = fake.title("s1");
     let key = title.rsplit(" · ").next().unwrap();
     fake.seed("legacy", p.repo.path(), key, &fake.message("s1", 0));
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted)
+         VALUES ('t3','other-key','run','other-key','t3:s1',?1,1)",
+        [p.repo.path().to_string_lossy().as_ref()],
+    )
+    .unwrap();
     let out = p
         .env
         .run(
@@ -1120,6 +1740,13 @@ fn deliberately_bound_driver_refuses_an_actual_native_relabel() {
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     assert_eq!(fake.message_count(&id), 1);
+
+    // Deleting the thread leaves its phase worktree in place. A replacement
+    // must not hand the assignment to a thread in the project root.
+    fake.delete(&id);
+    p.tick();
+    assert!(fake.threads().is_empty());
+    assert!(tree.is_dir());
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3

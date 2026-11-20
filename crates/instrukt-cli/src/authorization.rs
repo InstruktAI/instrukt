@@ -58,7 +58,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ] => TodoWrite,
         ["discuss", "open" | "close"] => ConversationLink,
         ["sessions", "list"] => SessionObserve,
-        ["sessions", "resolve-start"] => SessionRecover,
+        ["sessions", "resolve-start" | "replace-deleted"] => SessionRecover,
         ["history", "search" | "show"] => HistoryRead,
         ["history", "import-teleclaude" | "extract"] => HistoryRead,
         ["events", "bind"] => StandingBind,

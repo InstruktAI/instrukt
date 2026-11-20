@@ -135,9 +135,16 @@ pub struct SessionsArgs {
 enum SessionsCommand {
     /// List this project's active and settled runtime threads, newest activity first.
     List(ListArgs),
-    /// Resolve a standing agent's start whose result never arrived: bind
-    /// the session the runtime did create, or declare that none was.
+    /// Resolve a pending start by verifying a thread or allowing a fresh start.
     ResolveStart(ResolveStartArgs),
+    /// Confirm a deleted thread's provider stopped and start its replacement.
+    ReplaceDeleted {
+        /// The retained runtime key shown in events status.
+        key: String,
+        /// The stopped session whose thread was deleted.
+        #[arg(long)]
+        stopped: SessionRef,
+    },
 }
 
 #[derive(Debug, clap::Args)]
@@ -148,9 +155,11 @@ struct ResolveStartArgs {
     /// The session the runtime created, `<runtime>:<id>`.
     #[arg(long)]
     session: Option<SessionRef>,
-    /// Confirm no thread was created and no creation remains in flight; retry the same key.
+    /// Allow a fresh start after confirming no thread or creation remains.
+    /// A retained first thread must be proven absent.
     #[arg(long)]
     none: bool,
+    /// Print the resolution as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -226,6 +235,28 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
                             .unwrap_or_else(|| "unknown".into())
                     ))?;
                 }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        SessionsCommand::ReplaceDeleted { key, stopped } => {
+            let adapter = sessions.adapter()?;
+            let invocation =
+                keyed::RuntimeInvocation::acquire(&ctx.home, Duration::from_secs(120))?;
+            let work = crate::wiring::work_ports(ctx)?;
+            let thread = keyed::replace_deleted(
+                &invocation,
+                adapter.as_ref(),
+                &key,
+                &stopped,
+                ctx.clock.now(),
+                work.as_ref().map(|ports| ports.bindings.as_ref()),
+            )?;
+            ctx.out.line(&format!(
+                "replaced {stopped} with {} under {key}",
+                thread.session
+            ))?;
+            if let Some(warning) = thread.warning {
+                ctx.out.line(&format!("warning: {warning}"))?;
             }
             Ok(ExitCode::SUCCESS)
         }

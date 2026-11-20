@@ -25,7 +25,7 @@ enum EventsCommand {
         json: bool,
     },
     /// Reserve or bind a deliberate native standing assignment without runtime I/O.
-    Bind(BindArgs),
+    Bind(Box<BindArgs>),
     /// List declared event types and how to inspect their schema. No event
     /// infrastructure or enabled module is required.
     List {
@@ -57,6 +57,9 @@ struct BindArgs {
     evidence: Option<String>,
     #[arg(long)]
     not_started: bool,
+    /// Confirm a previously observed same-key thread has stopped and been deleted.
+    #[arg(long, requires = "not_started")]
+    stopped: Option<instrukt_core::ids::SessionRef>,
     #[arg(long)]
     reason: Option<String>,
     #[arg(long)]
@@ -158,7 +161,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     .transpose()?;
                 if args.not_started {
                     if args.session.is_some() || evidence.is_some() {
-                        anyhow::bail!("--not-started takes only --reason");
+                        anyhow::bail!("--not-started takes --reason and optional --stopped");
                     }
                 } else if evidence
                     .as_ref()
@@ -175,6 +178,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                         token,
                         evidence: evidence.as_ref(),
                         reason: args.reason.as_deref(),
+                        stopped: args.stopped.as_ref(),
                         now: ctx.clock.now(),
                     },
                 )?;

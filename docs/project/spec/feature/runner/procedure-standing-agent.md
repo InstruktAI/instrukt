@@ -60,8 +60,13 @@ Database transactions are short and never span runtime I/O.
 
 `start_or_wake` receives the exact responsibility, execution checkout and
 canonical assignment facts. The adapter discovers the title key in the runtime
-before considering a start. Its binding is a cache. Only a successful complete
-listing with no matching thread and no unresolved start or fixed delivery target
+before considering a start. Accepted native bindings can be rediscovered.
+A pending returned ID is authoritative until accepted or explicitly retired.
+Recovery of that native start verifies its observed key and project before
+delivering events. Status gives the exact resolution command when the thread
+needs its key or placement restored.
+Only a successful complete listing with no matching thread and no unresolved
+start or fixed delivery target
 permits a start. Multiple matches, failed discovery, an ambiguous start or failed
 send keep work pending under the same key and report their cause. A selected
 target commits before sending; a failed send never starts or selects another
@@ -91,16 +96,24 @@ A runtime record that is actually purged is distinct from a settled thread.
 Failed observation, a failed send and ambiguous startup retain their fixed
 target and pending work. Reconciliation must account for that assignment and
 unresolved input before any confirmed terminal removal admits a successor;
-settled or idle status never supplies that terminal evidence. A bound session the
-runtime reports absent is that evidence for a subject-bound responsibility as for one
-without a subject: a later event's activation admits its successor generation. An
-archived session is not absent and admits none
-(`project/instrukt/spec/feature/runner/session-continuity`: only absence proves an
-actor gone).
+settled or idle status never supplies that terminal evidence. For both
+home and subject identity, thread deletion leaves the binding and pending
+events in place until the operator confirms the old provider session stopped
+through the replacement command in
+`project/instrukt/spec/feature/runner/session-continuity`. An archived thread
+stays bound and cannot be replaced by that command.
+
+Manual binding records the native project from the reserved checkout's exact
+key and session. An unbound reservation that cannot verify a thread's native
+project stays open. Once the operator has stopped and deleted that unbound
+thread, the reservation's no-start confirmation permits another attempt. A retained binding without project evidence can establish it
+through that same discovery. A renamed thread with no retained project evidence
+keeps its input pending. When the original native project cannot be verified,
+the operator stops the session, deletes the thread, and uses the replacement
+command.
 
 Each responsibility retains its session generations and one current generation.
-The first uses its base standing key; a successor uses a recorded increasing
-generation under session-continuity. Retiring an old generation and admitting
+Successors keep the current standing key and increment the recorded generation. Retiring an old generation and admitting
 the next are one serialized durable decision, possible only after its terminal
 state is established and unresolved input is accounted for. No concurrent live
 generation is admitted. Discovery considers the responsibility's generation
@@ -137,13 +150,27 @@ The agent uses `@config: runtime.start_thread`, then records `instrukt events bi
 --session <runtime:id> --evidence <file|->`. The agent supplies the native
 identity and observed title/initialized-assignment evidence. Binding checks those
 facts against the reserved home, role, attendance and delivery settings, records
-the generation under that same guard. Binding performs no runtime I/O. An exact replay succeeds; changed identity refuses. Neither
-record command starts a thread. An interrupted native result retains the
-reservation for native inspection and binding. Rejection-before-creation proof
-or explicit confirmation that no thread exists and no start remains in flight
-uses `events bind <procedure> --reservation <token> --not-started --reason <text>`
-before retry of those same assignment facts. Automatic activation waits for this
-reservation's resolution rather than starting another generation.
+the generation under that same guard. An exact replay succeeds. A replay for a
+different native ID refuses before inspecting that thread and names the recorded
+ID and the status command. Reserving and binding start no thread. An interrupted
+native result retains the reservation for native inspection and binding.
+
+`events bind <procedure> --reservation <token> --not-started --reason <text>`
+permits retry of the same assignment when the native listing finds no thread
+for the key. A previously observed thread also needs confirmation of absence
+by its exact ID. With `--stopped <id>`, confirmed absence of the previously
+observed ID can settle the reservation when the listing is unavailable.
+Any remaining same-key thread found by either check blocks retry. Instrukt retains its identity and prints the
+`sessions replace-deleted <key> --stopped <id>` command for use after the
+operator stops and deletes it. Automatic activation waits for the reservation's
+resolution before it can start a generation.
+
+For a runner-started standing agent, the
+`project/instrukt/spec/feature/runner/session-continuity` recovery table applies.
+A deleted first pending start uses `sessions resolve-start <key> --none`.
+A deleted committed binding or pending successor uses
+`sessions replace-deleted <key> --stopped <id>` after the operator knows the
+provider stopped.
 Subject-bound manual entry remains unavailable; module and runtime gates apply
 before reservation. Both automatic activation and manual entry reservation use
 the declared role or, for an otherwise valid subscription that omits it,
@@ -248,6 +275,8 @@ When their agent reserves manual entry before starting it natively and binding i
 Then the same standing identity is recorded for later event activation
 But when a generation or unresolved reservation already stands
 Then entry is refused before native start and identifies that assignment
+And a replay for a different native ID refuses naming the recorded ID
+And a no-start confirmation with a remaining same-key thread gives the replacement command for that thread
 ```
 
 ### UC-PSA12: Keep a human conversation separate from standing work

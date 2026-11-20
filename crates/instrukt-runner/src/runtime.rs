@@ -74,6 +74,16 @@ pub fn legacy_driver_title(role: &str, branch: &str, key: &str) -> Option<String
     Some(format!("{role} · {slug} · {key}"))
 }
 
+/// What the runtime actually established about this thread's identity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Presence {
+    #[default]
+    Present,
+    Archived,
+    Absent,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thread {
     pub session: SessionRef,
@@ -81,6 +91,8 @@ pub struct Thread {
     pub title: Option<String>,
     pub semantic_key: Option<String>,
     pub state: SessionState,
+    #[serde(default)]
+    pub presence: Presence,
     pub branch: Option<String>,
     pub worktree: Option<PathBuf>,
     pub provider: Option<String>,
@@ -299,8 +311,13 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
         &self,
         selection: &instrukt_core::config::AgentSelection,
     ) -> instrukt_core::config::AgentSelection;
-    fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError>;
+    fn create_thread(&self, request: &RuntimeStart) -> Result<SessionRef, SessionsError>;
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError>;
+    fn verify_placement(
+        &self,
+        request: &RuntimeStart,
+        thread: &Thread,
+    ) -> Result<(), SessionsError>;
     fn delivery_realization(&self) -> DeliveryRealization;
     fn supports(&self, capability: Capability) -> bool;
     fn observe_input(

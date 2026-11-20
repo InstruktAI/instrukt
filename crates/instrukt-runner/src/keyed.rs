@@ -7,9 +7,14 @@ use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
 use std::time::Duration;
 
-use crate::runtime::{RuntimeAdapter, RuntimeStart, Thread};
+use crate::runtime::{
+    CreationPermit, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread,
+};
+
+mod _findings;
 use crate::sessions::SessionsError;
 use crate::state::{self, RunnerState, StateError};
+pub(crate) use _findings::{note, notify_due, status};
 
 pub fn encode(value: &str) -> String {
     let mut out = String::new();
@@ -146,11 +151,62 @@ struct Recorded {
     accepted: bool,
     project: Option<String>,
     project_id: Option<String>,
+    replacement: Option<ReplacementIntent>,
+    replaced_session: Option<SessionRef>,
+    opening_acknowledged: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Recovery {
+    ResolveNone,
+    ResolveSession,
+    ReplaceDeleted,
+}
+
+impl Recovery {
+    fn refusal(self, key: &str, session: &SessionRef) -> SessionsError {
+        match self {
+            Self::ResolveNone => SessionsError::FirstStartAbsent {
+                key: key.into(),
+                session: session.clone(),
+            },
+            Self::ResolveSession => SessionsError::PendingStartPresent {
+                key: key.into(),
+                session: session.clone(),
+            },
+            Self::ReplaceDeleted => deleted(key, session),
+        }
+    }
+}
+
+impl Recorded {
+    fn absent_recovery(&self) -> Recovery {
+        if self.accepted || self.replacement.is_some() {
+            Recovery::ReplaceDeleted
+        } else {
+            Recovery::ResolveNone
+        }
+    }
+
+    fn recovery(&self, presence: Presence) -> Option<Recovery> {
+        match presence {
+            Presence::Absent => Some(self.absent_recovery()),
+            Presence::Present if !self.accepted => Some(Recovery::ResolveSession),
+            Presence::Present | Presence::Archived => None,
+        }
+    }
+
+    fn absent(&self, key: &str, session: &SessionRef) -> SessionsError {
+        self.absent_recovery().refusal(key, session)
+    }
+}
+struct ReplacementIntent {
+    original: SessionRef,
+    stopped: SessionRef,
 }
 fn record(state: &RunnerState, runtime: &str, key: &str) -> Result<Recorded, StateError> {
     Ok(state.read(|conn,path| {
-        let start=conn.query_row("SELECT request,state,project FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",params![runtime,key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional().map_err(state::sql(path))?;
-        let bound=conn.query_row("SELECT session,accepted,request,project,project_id FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",params![runtime,key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?))).optional().map_err(state::sql(path))?;
+        let start=conn.query_row("SELECT request,state,project,resolution FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",params![runtime,key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?))).optional().map_err(state::sql(path))?;
+        let bound=conn.query_row("SELECT session,accepted,request,project,project_id,json_extract(request,'$.replaced_session'),coalesce(json_extract(request,'$.opening_acknowledged'),0) FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",params![runtime,key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,bool>(6)?))).optional().map_err(state::sql(path))?;
         let encoded=start.as_ref().map(|r|&r.0).or_else(||bound.as_ref().and_then(|r|r.2.as_ref()));
         Ok(Recorded {
             request:encoded.map(|s|serde_json::from_str(s).map_err(|e|state::invalid(path,e))).transpose()?,
@@ -158,11 +214,30 @@ fn record(state: &RunnerState, runtime: &str, key: &str) -> Result<Recorded, Sta
             retry_allowed:start.as_ref().is_some_and(|r|r.1=="retry_allowed"),
             bound:bound.as_ref().map(|r|SessionRef::parse(&r.0).map_err(|e|state::invalid(path,e))).transpose()?,
             accepted:bound.as_ref().is_some_and(|r|r.1),
+            replacement:start.as_ref().and_then(|r|r.3.as_deref())
+                .and_then(replacement_sessions)
+                .map(|(original, stopped)| {
+                    let parse = |id| SessionRef::parse(id).map_err(|e| state::invalid(path,e));
+                    Ok::<_, StateError>(ReplacementIntent { original: parse(original)?, stopped: parse(stopped)? })
+                }).transpose()?,
+            replaced_session:bound.as_ref().and_then(|r|r.5.as_deref())
+                .map(|id|SessionRef::parse(id).map_err(|e|state::invalid(path,e))).transpose()?,
+            opening_acknowledged:bound.as_ref().is_some_and(|r|r.6),
             project:start.and_then(|r|r.2).or_else(||bound.as_ref().and_then(|r|r.3.clone())),
             project_id:bound.and_then(|r|r.4),
         })
     })?.unwrap_or_default())
 }
+pub(crate) const REPLACEMENT: &str = "operator_confirmed_replacement:";
+
+fn replacement_sessions(reason: &str) -> Option<(&str, &str)> {
+    let sessions = reason
+        .strip_prefix(REPLACEMENT)
+        .or_else(|| reason.strip_prefix("operator_confirmed_todo_replacement:"))?;
+    // A session reference cannot contain whitespace. Older markers carry one ID.
+    Some(sessions.split_once(' ').unwrap_or((sessions, sessions)))
+}
+
 fn kind(key: &str) -> &str {
     key.strip_prefix("instrukt:")
         .and_then(|s| s.split(':').next())
@@ -184,26 +259,195 @@ fn remember(
     evidence: RequestEvidence,
 ) -> Result<(), StateError> {
     state.write(|tx| {
-        let path = state::db_path(tx);
-        let request=match evidence {RequestEvidence::Retained=>Some(serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?),RequestEvidence::Unknown=>None};
-        tx.execute("INSERT INTO runtime_bindings (runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET session=excluded.session,project_id=COALESCE(excluded.project_id,runtime_bindings.project_id),worktree=excluded.worktree,accepted=excluded.accepted,display_title=excluded.display_title",params![adapter.runtime().name(),input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),accepted,request,thread.title]).map_err(state::sql(&path))?;
-        if accepted { tx.execute("DELETE FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",params![adapter.runtime().name(),input.key]).map_err(state::sql(&path))?; }
-        Ok(())
+        remember_in(
+            tx,
+            adapter.runtime(),
+            input,
+            thread,
+            project,
+            accepted,
+            evidence,
+        )
     })
+}
+
+fn remember_in(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    runtime: instrukt_core::config::Runtime,
+    input: &RuntimeStart,
+    thread: &Thread,
+    project: Option<&str>,
+    accepted: bool,
+    evidence: RequestEvidence,
+) -> Result<(), StateError> {
+    let path = state::db_path(tx);
+    let request = match evidence {
+        RequestEvidence::Retained => {
+            Some(serde_json::to_string(input).map_err(|e| state::invalid(&path, e))?)
+        }
+        RequestEvidence::Unknown => None,
+    };
+    tx.execute("INSERT INTO runtime_bindings (runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET session=excluded.session,project_id=COALESCE(excluded.project_id,runtime_bindings.project_id),worktree=excluded.worktree,branch=COALESCE(runtime_bindings.branch,excluded.branch),accepted=excluded.accepted,display_title=excluded.display_title",params![runtime.name(),input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),accepted,request,thread.title]).map_err(state::sql(&path))?;
+    if accepted {
+        let resolution: Option<String> = tx
+            .query_row(
+                "SELECT resolution FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",
+                params![runtime.name(), input.key],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(state::sql(&path))?
+            .flatten();
+        if let Some((_, stopped)) = resolution.as_deref().and_then(replacement_sessions) {
+            tx.execute(
+                "UPDATE runtime_bindings SET request=json_set(request,'$.replaced_session',?3)
+                 WHERE runtime=?1 AND semantic_key=?2",
+                params![runtime.name(), input.key, stopped],
+            )
+            .map_err(state::sql(&path))?;
+        }
+
+        tx.execute(
+            "DELETE FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",
+            params![runtime.name(), input.key],
+        )
+        .map_err(state::sql(&path))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn remember_manual(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    runtime: instrukt_core::config::Runtime,
+    input: &RuntimeStart,
+    thread: &Thread,
+    project: Option<&str>,
+) -> Result<(), StateError> {
+    remember_in(
+        tx,
+        runtime,
+        input,
+        thread,
+        project,
+        true,
+        RequestEvidence::Retained,
+    )
+}
+
+struct TodoReplacement<'a> {
+    work: &'a dyn crate::interfaces::SessionBindings,
+    original: &'a SessionRef,
+    stopped: &'a SessionRef,
+}
+
+fn replacement_project(
+    project: Option<&str>,
+    request: &RuntimeStart,
+) -> Result<crate::interfaces::ProjectRef, SessionsError> {
+    let slug = project
+        .ok_or_else(|| SessionsError::Refused("todo replacement has no retained project".into()))?;
+    let slug = instrukt_core::ids::ProjectSlug::parse(slug)
+        .map_err(|error| SessionsError::Refused(error.to_string()))?;
+    Ok(crate::interfaces::ProjectRef {
+        slug,
+        root: request.checkout.clone(),
+    })
+}
+
+fn accept_started(
+    guard: &KeyGuard,
+    adapter: &dyn RuntimeAdapter,
+    assignment: &RuntimeAssignment<'_>,
+    thread: &Thread,
+    replacement: Option<&TodoReplacement<'_>>,
+) -> Result<(), SessionsError> {
+    let mut accept = |tx: &instrukt_core::state_db::rusqlite::Transaction<'_>| {
+        remember_in(
+            tx,
+            adapter.runtime(),
+            assignment.request,
+            thread,
+            assignment.project,
+            true,
+            RequestEvidence::Retained,
+        )?;
+        crate::inputs::record_initial_in(
+            tx,
+            &thread.session,
+            &format!("assignment:{}", assignment.request.key),
+            &assignment.request.brief,
+            assignment.now,
+        )
+    };
+    let Some(replacement) = replacement else {
+        return Ok(guard.state.write(accept)?);
+    };
+    let project = replacement_project(assignment.project, assignment.request)?;
+    let binding = crate::interfaces::SessionBinding {
+        title: thread.title.clone(),
+        key: assignment.request.key.clone(),
+        session: thread.session.clone(),
+        worktree: thread.worktree.clone(),
+    };
+    replacement.work.replace_dispatch(&project, &binding, replacement.original, &mut accept)
+        .map_err(|error| SessionsError::Refused(format!(
+            "replacement for `{}` was not confirmed in the todo record: {error}. Retry `instrukt sessions replace-deleted {} --stopped {}`",
+            binding.key, binding.key, replacement.stopped,
+        )))
 }
 
 /// Discover before every start. Empty discovery cannot clear an ambiguous marker.
 pub(crate) fn start(
-    invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
-    input: &RuntimeStart,
-    project: Option<&str>,
-    _wake: bool,
-    now: Timestamp,
-    creation: crate::runtime::CreationPermit,
+    assignment: &RuntimeAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
-    let guard = KeyGuard::claim(invocation, adapter, &input.key, project, now)?;
+    let RuntimeAssignment {
+        invocation,
+        project,
+        request,
+        now,
+        ..
+    } = *assignment;
+    let guard = KeyGuard::claim(invocation, adapter, &request.key, project, now)?;
+    let result = start_claimed(adapter, assignment, &guard, None);
+    if kind(&request.key) != "standing" {
+        note(
+            &guard.state,
+            adapter.runtime(),
+            &request.key,
+            now,
+            result.as_ref().map(|_| ()),
+        );
+    }
+    result
+}
+
+fn start_claimed(
+    adapter: &dyn RuntimeAdapter,
+    assignment: &RuntimeAssignment<'_>,
+    guard: &KeyGuard,
+    replacement: Option<&TodoReplacement<'_>>,
+) -> Result<Thread, SessionsError> {
+    let RuntimeAssignment {
+        invocation,
+        project,
+        request: input,
+        now,
+        creation,
+    } = *assignment;
     let mut recorded = record(&guard.state, &guard.runtime, &input.key)?;
+    if matches!(kind(&input.key), "todo" | "task")
+        && let Some(intent) = &recorded.replacement
+        && replacement.is_none_or(|replacement| replacement.original != &intent.original)
+    {
+        if let Some(pending) = &recorded.bound
+            && !recorded.accepted
+            && adapter.read_state(pending)?.presence == Presence::Absent
+        {
+            return Err(deleted(&input.key, pending));
+        }
+        return Err(deleted(&input.key, &intent.stopped));
+    }
     let mut resolved = input.clone();
     if let Some(retained) = &recorded.request {
         // The retained model choice stays authoritative through ambiguous or
@@ -214,6 +458,49 @@ pub(crate) fn start(
         if &resolved != retained {
             return Err(SessionsError::ChangedRequest(input.key.clone()));
         }
+    }
+    if (!recorded.accepted || recorded.opening_acknowledged)
+        && let Some(session) = &recorded.bound
+    {
+        let thread = adapter.read_state(session)?;
+        match thread.presence {
+            Presence::Archived => return Err(archived(&input.key, session)),
+            Presence::Absent => return Err(recorded.absent(&input.key, session)),
+            Presence::Present => {}
+        }
+        if recorded.opening_acknowledged && !recorded.accepted {
+            verify_pending_start(adapter, &resolved, &thread, recorded.project_id.as_deref())?;
+        } else {
+            if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id) {
+                return Err(conflict(&input.key, [session]));
+            }
+            adapter.verify_placement(&resolved, &thread)?;
+        }
+        if recorded.accepted {
+            return Ok(thread);
+        }
+        if !recorded.opening_acknowledged
+            && adapter.observe_input(session, &resolved.brief, now)?.state
+                == crate::runtime::InputState::Unknown
+        {
+            adapter.send(session, &resolved.brief)?;
+        }
+        accept_started(
+            guard,
+            adapter,
+            &RuntimeAssignment {
+                request: &resolved,
+                ..*assignment
+            },
+            &thread,
+            replacement,
+        )?;
+        return Ok(thread);
+    }
+    if recorded.replacement.is_some() && !recorded.retry_allowed && recorded.bound.is_none() {
+        return Err(SessionsError::Unresolved {
+            key: input.key.clone(),
+        });
     }
     if recorded.retry_allowed && recorded.bound.is_none() && !resolved.preferences.is_empty() {
         let config =
@@ -230,7 +517,7 @@ pub(crate) fn start(
     let input = &resolved;
     let fresh = recorded.request.is_none()
         && recorded.bound.is_none()
-        && creation == crate::runtime::CreationPermit::Initial;
+        && creation == CreationPermit::Initial;
     if recorded.request.is_none() && recorded.bound.is_none() {
         guard.state.write::<_,StateError>(|tx| {
             let path=state::db_path(tx); let request=serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?;
@@ -251,67 +538,95 @@ pub(crate) fn start(
         }
     };
 
-    let mut matches = listed
-        .into_iter()
-        .filter(|t| t.semantic_key.as_deref() == Some(input.key.as_str()));
-    let found = matches.next();
-    if matches.next().is_some() {
-        return Err(SessionsError::KeyConflict(input.key.clone()));
+    let matches: Vec<_> = listed
+        .iter()
+        .filter(|thread| thread.semantic_key.as_deref() == Some(input.key.as_str()))
+        .filter(|thread| {
+            thread.presence == Presence::Present || recorded.bound.as_ref() == Some(&thread.session)
+        })
+        .collect();
+    if matches.len() > 1 || (recorded.replacement.is_some() && !matches.is_empty()) {
+        return Err(conflict(
+            &input.key,
+            matches.iter().map(|thread| &thread.session),
+        ));
     }
-    if let Some(found) = found {
-        if recorded.bound.as_ref().is_some_and(|s| s != &found.session) {
-            return Err(SessionsError::KeyConflict(input.key.clone()));
-        }
-        let thread = adapter.read_state(&found.session)?;
-        if crate::runtime::project_conflict(&thread.project_id, &found.project_id)
-            || crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
-            || crate::runtime::project_conflict(&recorded.project_id, &found.project_id)
-            || thread.semantic_key.as_deref() != Some(input.key.as_str())
-        {
-            return Err(SessionsError::KeyConflict(input.key.clone()));
-        }
-        adapter.verify_start(input, &thread)?;
-        remember(
-            &guard.state,
-            adapter,
-            input,
-            &thread,
-            project,
-            recorded.accepted,
-            RequestEvidence::Retained,
-        )?;
-        if !recorded.accepted {
-            let supplied = adapter
-                .observe_input(&thread.session, &input.brief, now)?
-                .state
-                != crate::runtime::InputState::Unknown;
-            if !supplied {
-                adapter.send(&thread.session, &input.brief)?;
+    let found = matches.first().copied();
+    if let Some(bound) = &recorded.bound
+        && let Some(found) = found
+        && bound != &found.session
+    {
+        return Err(conflict(&input.key, [bound, &found.session]));
+    }
+    if found.is_none()
+        && recorded.bound.is_none()
+        && let Some(thread) = listed.iter().find(|thread| {
+            thread.presence == Presence::Archived
+                && thread.semantic_key.as_deref() == Some(input.key.as_str())
+        })
+    {
+        return Err(archived(&input.key, &thread.session));
+    }
+    let observed = recorded
+        .bound
+        .as_ref()
+        .or_else(|| found.map(|thread| &thread.session));
+    if let Some(session) = observed {
+        let thread = adapter.read_state(session)?;
+        match thread.presence {
+            Presence::Archived => return Err(archived(&input.key, session)),
+            Presence::Absent if recorded.bound.is_some() => {
+                return Err(recorded.absent(&input.key, session));
             }
-            remember(
-                &guard.state,
-                adapter,
-                input,
-                &thread,
-                project,
-                true,
-                RequestEvidence::Retained,
-            )?;
-            crate::inputs::record_initial(
-                &guard.state,
-                &thread.session,
-                &format!("assignment:{}", input.key),
-                &input.brief,
-                now,
-            )?;
+            Presence::Absent => return Err(SessionsError::Gone(session.clone())),
+            Presence::Present => {
+                if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
+                    || found.is_some_and(|found| {
+                        crate::runtime::project_conflict(&thread.project_id, &found.project_id)
+                            || crate::runtime::project_conflict(
+                                &recorded.project_id,
+                                &found.project_id,
+                            )
+                    })
+                {
+                    return Err(conflict(&input.key, [&thread.session]));
+                }
+                if recorded.bound.is_some() {
+                    verify_bound(adapter, input, session, &thread)?;
+                } else {
+                    adapter.verify_start(input, &thread)?;
+                }
+                remember(
+                    &guard.state,
+                    adapter,
+                    input,
+                    &thread,
+                    project,
+                    recorded.accepted,
+                    RequestEvidence::Retained,
+                )?;
+                if !recorded.accepted {
+                    let supplied = adapter
+                        .observe_input(&thread.session, &input.brief, now)?
+                        .state
+                        != crate::runtime::InputState::Unknown;
+                    if !supplied {
+                        adapter.send(&thread.session, &input.brief)?;
+                    }
+                    accept_started(
+                        guard,
+                        adapter,
+                        &RuntimeAssignment {
+                            request: input,
+                            ..*assignment
+                        },
+                        &thread,
+                        replacement,
+                    )?;
+                }
+                return Ok(thread);
+            }
         }
-        return Ok(thread);
-    }
-    if let Some(session) = recorded.bound {
-        return Err(SessionsError::MissingBound {
-            key: input.key.clone(),
-            session,
-        });
     }
     if recorded.unresolved && !fresh {
         return Err(SessionsError::Unresolved {
@@ -321,7 +636,7 @@ pub(crate) fn start(
     let prepared = match crate::agents::prepare_start(invocation.home(), adapter, input, now) {
         Ok(prepared) => prepared,
         Err(error) => {
-            guard.state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='instrukt',resolution='readiness_refused_before_creation' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,input.key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
+            guard.state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='instrukt',resolution=CASE WHEN resolution GLOB 'operator_confirmed_*replacement:*' THEN resolution ELSE 'readiness_refused_before_creation' END WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,input.key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
             return Err(error);
         }
     };
@@ -329,32 +644,231 @@ pub(crate) fn start(
     guard.state.write::<_,StateError>(|tx| {
         let path=state::db_path(tx);
         let request=serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?;
-        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=NULL",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
+        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,begun_at=excluded.begun_at,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=CASE WHEN runtime_starts.resolution GLOB 'operator_confirmed_*replacement:*' THEN runtime_starts.resolution END",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
         Ok(())
     })?;
-    let thread = adapter
+    let session = adapter
         .create_thread(input)
         .map_err(|e| SessionsError::Uncertain {
             key: input.key.clone(),
             detail: e.to_string(),
         })?;
+    guard.state.write::<_, StateError>(|tx| {
+        let path = state::db_path(tx);
+        let request = serde_json::to_string(input).map_err(|error| state::invalid(&path, error))?;
+        tx.execute(
+            "INSERT INTO runtime_bindings
+                (runtime,semantic_key,kind,project,subject,session,checkout,base_head,accepted,request)
+             VALUES (?1,?2,?3,?4,?2,?5,?6,?7,0,json_set(?8,'$.opening_acknowledged',1))",
+            params![guard.runtime,input.key,kind(&input.key),project,session.to_string(),
+                input.checkout.to_string_lossy(),input.worktree.as_ref().map(|w| &w.base),request],
+        ).map_err(state::sql(&path))?;
+        Ok(())
+    })?;
+    let thread = adapter.read_state(&session)?;
+    match thread.presence {
+        Presence::Archived => return Err(archived(&input.key, &session)),
+        Presence::Absent => {
+            return Err(
+                record(&guard.state, &guard.runtime, &input.key)?.absent(&input.key, &session)
+            );
+        }
+        Presence::Present => {}
+    }
+    verify_pending_start(adapter, input, &thread, None)?;
     remember(
         &guard.state,
         adapter,
         input,
         &thread,
         project,
-        true,
+        false,
         RequestEvidence::Retained,
     )?;
-    crate::inputs::record_initial(
-        &guard.state,
-        &thread.session,
-        &format!("assignment:{}", input.key),
-        &input.brief,
-        now,
+    accept_started(
+        guard,
+        adapter,
+        &RuntimeAssignment {
+            request: input,
+            ..*assignment
+        },
+        &thread,
+        replacement,
     )?;
     Ok(thread)
+}
+
+pub(crate) fn conflict<'a>(
+    key: &str,
+    threads: impl IntoIterator<Item = &'a SessionRef>,
+) -> SessionsError {
+    let mut threads: Vec<_> = threads.into_iter().cloned().collect();
+    threads.sort_by_key(ToString::to_string);
+    threads.dedup();
+    SessionsError::ConflictingThreads {
+        key: key.into(),
+        threads,
+    }
+}
+
+pub(crate) fn archived(key: &str, session: &SessionRef) -> SessionsError {
+    SessionsError::ArchivedBound {
+        key: key.into(),
+        session: session.clone(),
+    }
+}
+
+pub(crate) fn deleted(key: &str, session: &SessionRef) -> SessionsError {
+    SessionsError::DeletedBound {
+        key: key.into(),
+        session: session.clone(),
+    }
+}
+
+pub(crate) fn verify_recorded_project(
+    state: &RunnerState,
+    key: &str,
+    thread: &Thread,
+) -> Result<(), SessionsError> {
+    let project = retained_project(state, key, &thread.session)?;
+    let (Some(retained), Some(observed)) = (project, thread.project_id.as_ref()) else {
+        return Err(unverified_project(key, &thread.session));
+    };
+    if &retained != observed {
+        return Err(SessionsError::ProjectChanged {
+            key: key.into(),
+            session: thread.session.clone(),
+            retained,
+            observed: observed.clone(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn unverified_project(key: &str, session: &SessionRef) -> SessionsError {
+    SessionsError::ProjectUnverified {
+        key: key.into(),
+        session: session.clone(),
+    }
+}
+
+pub(crate) fn retained_project(
+    state: &RunnerState,
+    key: &str,
+    session: &SessionRef,
+) -> Result<Option<String>, StateError> {
+    Ok(state.read(|conn, path| {
+        conn.query_row(
+            "SELECT project_id FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",
+            params![session.runtime.as_str(), key, session.to_string()],
+            |row| row.get(0),
+        ).optional().map_err(state::sql(path))
+    })?.flatten().flatten())
+}
+
+/// A bound ID survives a rename. Validate other assignment facts using the
+/// retained title, after ruling out any different semantic key.
+pub(crate) fn verify_bound(
+    adapter: &dyn RuntimeAdapter,
+    request: &RuntimeStart,
+    session: &SessionRef,
+    thread: &Thread,
+) -> Result<(), SessionsError> {
+    if &thread.session != session
+        || thread
+            .semantic_key
+            .as_ref()
+            .is_some_and(|key| key != &request.key)
+    {
+        return Err(conflict(&request.key, [session, &thread.session]));
+    }
+    if thread.semantic_key.is_some() {
+        return adapter.verify_start(request, thread);
+    }
+    adapter.verify_placement(request, thread)
+}
+
+fn verify_pending_start(
+    adapter: &dyn RuntimeAdapter,
+    request: &RuntimeStart,
+    thread: &Thread,
+    retained_project: Option<&str>,
+) -> Result<(), SessionsError> {
+    let refusal = |detail: String| SessionsError::PendingPlacement {
+        key: request.key.clone(),
+        session: thread.session.clone(),
+        detail,
+    };
+    if thread.semantic_key.as_deref() != Some(&request.key) {
+        return Err(refusal(format!(
+            "native semantic key is {}",
+            thread.semantic_key.as_deref().unwrap_or("missing")
+        )));
+    }
+    let Some(project) = thread
+        .project_id
+        .as_deref()
+        .filter(|project| !project.is_empty())
+    else {
+        return Err(refusal("native project ID is missing".into()));
+    };
+    if let Some(retained) = retained_project {
+        if project != retained {
+            return Err(refusal(format!(
+                "native project changed from {retained} to {project}"
+            )));
+        }
+    } else {
+        // The scoped listing resolves the checkout. Its project IDs are opaque.
+        let listed = adapter
+            .list(&request.checkout)
+            .map_err(|error| refusal(error.to_string()))?;
+        if !listed.iter().any(|entry| {
+            entry.session == thread.session
+                && entry.presence == Presence::Present
+                && entry.project_id.as_deref() == Some(project)
+        }) {
+            return Err(refusal(format!(
+                "native project placement cannot be verified in {}",
+                request.checkout.display()
+            )));
+        }
+    }
+    adapter
+        .verify_placement(request, thread)
+        .map_err(|error| refusal(error.to_string()))
+}
+
+fn retire_gone(
+    guard: &KeyGuard,
+    session: &SessionRef,
+    original: &SessionRef,
+    input: &RuntimeStart,
+    project: Option<&str>,
+    now: Timestamp,
+) -> Result<(), SessionsError> {
+    let request =
+        serde_json::to_string(input).map_err(|error| SessionsError::Refused(error.to_string()))?;
+    let resolution = if session == original {
+        format!("{REPLACEMENT}{session}")
+    } else {
+        format!("{REPLACEMENT}{original} {session}")
+    };
+    guard.state.write::<_, StateError>(|tx| {
+        let path = state::db_path(tx);
+        tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",
+            params![guard.runtime, guard.key, session.to_string()]).map_err(state::sql(&path))?;
+        // Store permission before releasing the old binding. An interrupted
+        // replacement can then continue without treating absence as a lost reply.
+        tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at)
+            VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'retry_allowed',?9,'operator',?8)
+            ON CONFLICT(runtime,semantic_key) DO UPDATE SET request=excluded.request,state='retry_allowed',resolution=excluded.resolution,resolved_by=excluded.resolved_by,resolved_at=excluded.resolved_at",
+            params![guard.runtime, guard.key, project, kind(&guard.key), input.checkout.to_string_lossy(), input.brief, request, now.to_string(), resolution]).map_err(state::sql(&path))?;
+        tx.execute("UPDATE runtime_inputs SET state='failed', waiting=0, failure='target absent before observed consumption' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",
+            params![session.runtime.as_str(), session.id.as_str()]).map_err(state::sql(&path))?;
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// Repair a lost cache only after the caller recovered the assignment's original facts.
@@ -384,7 +898,7 @@ pub(crate) fn recover_binding(
 }
 
 /// Resolve only a recorded ambiguous request; a named session must appear in
-/// a successful keyed listing and satisfy the original worktree request.
+/// the retained checkout and satisfy the original worktree request.
 pub fn resolve(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
@@ -396,7 +910,33 @@ pub fn resolve(
     let recorded = record(&guard.state, &guard.runtime, key)?;
     let input = recorded
         .request
+        .as_ref()
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no recorded start")))?;
+    let observed = if let Some(bound) = &recorded.bound
+        && session.is_none_or(|requested| requested == bound)
+    {
+        let thread = adapter.read_state(bound)?;
+        if thread.presence == Presence::Archived {
+            return Err(archived(key, bound));
+        }
+        if let Some(recovery) = recorded.recovery(thread.presence) {
+            let requested = if session.is_none() {
+                Recovery::ResolveNone
+            } else {
+                Recovery::ResolveSession
+            };
+            if recovery != requested {
+                let error = recovery.refusal(key, bound);
+                if thread.presence == Presence::Absent {
+                    note(&guard.state, adapter.runtime(), key, now, Err(&error));
+                }
+                return Err(error);
+            }
+        }
+        Some(thread)
+    } else {
+        None
+    };
     if !recorded.unresolved {
         return Err(SessionsError::Refused(format!(
             "`{key}` has no unresolved start"
@@ -410,23 +950,55 @@ pub fn resolve(
         {
             return Err(SessionsError::KeyConflict(key.into()));
         }
-        let matches: Vec<_> = adapter
-            .list(&input.checkout)?
-            .into_iter()
-            .filter(|t| t.semantic_key.as_deref() == Some(key))
-            .collect();
-        if matches.len() != 1 || matches[0].session != *session {
+        let thread = match observed {
+            Some(thread) => thread,
+            None => adapter.read_state(session)?,
+        };
+        if recorded.opening_acknowledged {
+            verify_pending_start(adapter, input, &thread, recorded.project_id.as_deref())?;
+        }
+        let listed = adapter.list(&input.checkout)?;
+        let Some(listed) = listed
+            .iter()
+            .find(|thread| thread.session == *session && thread.presence == Presence::Present)
+        else {
+            return Err(SessionsError::KeyConflict(key.into()));
+        };
+        if thread.presence != Presence::Present
+            || crate::runtime::project_conflict(&thread.project_id, &listed.project_id)
+            || crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
+            || crate::runtime::project_conflict(&recorded.project_id, &listed.project_id)
+        {
             return Err(SessionsError::KeyConflict(key.into()));
         }
-        let thread = adapter.read_state(session)?;
-        if crate::runtime::project_conflict(&thread.project_id, &matches[0].project_id) {
+        if recorded.project_id.is_some()
+            && thread.project_id.is_none()
+            && listed.project_id.is_none()
+        {
+            return Err(SessionsError::Refused(format!(
+                "native project for {session} cannot be verified against the retained project. Restore native project visibility and retry `instrukt sessions resolve-start {key} --session {session}`"
+            )));
+        }
+        let owned_elsewhere = guard.state.read(|conn, path| conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM runtime_bindings WHERE session=?1 AND semantic_key!=?2
+                UNION ALL SELECT 1 FROM session_bindings WHERE session=?1 AND semantic_key!=?2 AND released_at IS NULL
+                UNION ALL SELECT 1 FROM procedure_responsibilities WHERE session=?1 AND semantic_key!=?2
+                UNION ALL SELECT 1 FROM connected_conversations WHERE session=?1 AND semantic_key!=?2
+             )",
+            params![session.to_string(), key],
+            |row| row.get::<_, bool>(0),
+        ).map_err(state::sql(path)))?.unwrap_or(false);
+        if owned_elsewhere {
             return Err(SessionsError::KeyConflict(key.into()));
         }
-        adapter.verify_start(&input, &thread)?;
+        if !recorded.opening_acknowledged {
+            adapter.verify_placement(input, &thread)?;
+        }
         remember(
             &guard.state,
             adapter,
-            &input,
+            input,
             &thread,
             recorded.project.as_deref(),
             false,
@@ -434,12 +1006,252 @@ pub fn resolve(
         )?;
         // Retain the marker until the original input is accepted.
     } else {
-        if recorded.bound.is_some() {
-            return Err(SessionsError::Refused(
-                "a delivery target is already bound; retry its pending input".into(),
-            ));
+        let absent = observed.filter(|thread| thread.presence == Presence::Absent);
+        if recorded.bound.is_some() && absent.is_none() {
+            return Err(SessionsError::KeyConflict(key.into()));
         }
-        guard.state.write::<_,StateError>(|tx| { tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution='none' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?; Ok(()) })?;
+        guard.state.write::<_,StateError>(|tx| {
+            let path = state::db_path(tx);
+            if let Some(absent) = &absent {
+                tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3 AND accepted=0",
+                    params![guard.runtime,key,absent.session.to_string()]).map_err(state::sql(&path))?;
+            }
+            tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution=CASE WHEN resolution GLOB 'operator_confirmed_*replacement:*' THEN resolution ELSE 'none' END WHERE runtime=?1 AND semantic_key=?2",
+                params![guard.runtime,key,now.to_string()]).map_err(state::sql(&path))?;
+            Ok(())
+        })?;
+    }
+    note(&guard.state, adapter.runtime(), key, now, Ok(()));
+    Ok(())
+}
+
+pub(crate) fn recorded_session(
+    state: &RunnerState,
+    runtime: &str,
+    key: &str,
+) -> Result<Option<SessionRef>, StateError> {
+    Ok(record(state, runtime, key)?.bound)
+}
+
+pub(crate) fn replacement_started(
+    state: &RunnerState,
+    runtime: &str,
+    key: &str,
+    stopped: &SessionRef,
+) -> Result<bool, StateError> {
+    let recorded = record(state, runtime, key)?;
+    Ok(recorded
+        .replacement
+        .as_ref()
+        .is_some_and(|intent| &intent.stopped == stopped)
+        || recorded.replaced_session.as_ref() == Some(stopped))
+}
+
+pub struct ReplacementResult {
+    pub session: SessionRef,
+    pub warning: Option<String>,
+}
+
+fn reflect_replacement(
+    work: Option<&dyn crate::interfaces::SessionBindings>,
+    recorded: &Recorded,
+) -> Option<String> {
+    let work = work?;
+    let request = recorded.request.as_ref()?;
+    replacement_project(recorded.project.as_deref(), request)
+        .and_then(|project| {
+            work.reflect_dispatch_replacement(&project, &request.key)
+                .map_err(|error| SessionsError::Refused(error.to_string()))
+        })
+        .err()
+        .map(|error| format!("todo reflection is pending: {error}"))
+}
+
+/// Replace a deleted binding on the operator's confirmation that
+/// the provider session named by the command has stopped.
+pub fn replace_deleted(
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    stopped: &SessionRef,
+    now: Timestamp,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
+) -> Result<ReplacementResult, SessionsError> {
+    let state = RunnerState::new(invocation.home());
+    let runtime = adapter.runtime().name();
+    let recorded = record(&state, runtime, key)?;
+    let standing = kind(key) == "standing";
+    let todo = matches!(kind(key), "todo" | "task");
+    let work = if todo { work } else { None };
+    if recorded.replaced_session.as_ref() == Some(stopped)
+        && let Some(session) = recorded.bound.as_ref().filter(|_| recorded.accepted)
+        && (!standing || crate::standing::replacement_is_bound(&state, key, session)?)
+    {
+        return Ok(ReplacementResult {
+            session: session.clone(),
+            warning: reflect_replacement(work, &recorded),
+        });
+    }
+    if recorded.bound.as_ref() == Some(stopped)
+        && recorded.absent_recovery() == Recovery::ResolveNone
+    {
+        let thread = adapter.read_state(stopped)?;
+        let error = recorded
+            .recovery(thread.presence)
+            .map_or_else(|| archived(key, stopped), |door| door.refusal(key, stopped));
+        note(&state, adapter.runtime(), key, now, Err(&error));
+        return Err(error);
+    }
+    if standing {
+        let thread = crate::standing::replace_deleted(invocation, adapter, key, stopped, now)?;
+        return Ok(ReplacementResult {
+            session: thread.session,
+            warning: None,
+        });
+    }
+    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
+    let resuming = recorded
+        .replacement
+        .as_ref()
+        .is_some_and(|intent| &intent.stopped == stopped);
+    let pending_successor = recorded.replacement.is_some() && !recorded.accepted;
+    if !resuming && recorded.bound.as_ref() != Some(stopped) {
+        return Err(stopped_mismatch(key, stopped));
+    }
+    if !resuming && !pending_successor && (recorded.unresolved || recorded.retry_allowed) {
+        return Err(SessionsError::Unresolved { key: key.into() });
+    }
+    confirm_deleted(adapter, stopped)?;
+    let request = recorded
+        .request
+        .as_ref()
+        .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
+    let original = recorded
+        .replacement
+        .as_ref()
+        .map_or(stopped, |intent| &intent.original);
+    let replacement = if todo {
+        let work = work.ok_or_else(|| {
+            SessionsError::Refused(
+                "todo replacement needs its work record; no replacement started".into(),
+            )
+        })?;
+        Some(TodoReplacement {
+            work,
+            original,
+            stopped,
+        })
+    } else {
+        None
+    };
+    if let Some(replacement) = &replacement {
+        let project = replacement_project(recorded.project.as_deref(), request)?;
+        replacement
+            .work
+            .check_dispatch_replacement(&project, key, replacement.original)
+            .map_err(|error| {
+                SessionsError::Refused(format!("todo replacement is ineligible: {error}"))
+            })?;
+    }
+    if !resuming {
+        check_replacement_key(adapter, request, stopped, None)?;
+        if let Some(worktree) = &request.worktree
+            && instrukt_core::git::succeeds(
+                &request.checkout,
+                [
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{}", worktree.branch),
+                ],
+            )
+            .map_err(|error| SessionsError::Refused(error.to_string()))?
+        {
+            return Err(SessionsError::Refused(format!(
+                "phase branch `{}` still exists; T3 cannot start a replacement in its existing worktree",
+                worktree.branch
+            )));
+        }
+        retire_gone(
+            &guard,
+            stopped,
+            original,
+            request,
+            recorded.project.as_deref(),
+            now,
+        )?;
+    }
+    let result = start_claimed(
+        adapter,
+        &RuntimeAssignment {
+            invocation,
+            project: recorded.project.as_deref(),
+            request,
+            now,
+            creation: CreationPermit::Reconcile,
+        },
+        &guard,
+        replacement.as_ref(),
+    );
+    note(
+        &guard.state,
+        adapter.runtime(),
+        key,
+        now,
+        result.as_ref().map(|_| ()),
+    );
+    let thread = result?;
+    Ok(ReplacementResult {
+        session: thread.session,
+        warning: reflect_replacement(work, &recorded),
+    })
+}
+
+pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {
+    SessionsError::Refused(format!(
+        "`{key}` is not bound to {stopped}; run `instrukt events status` for the current key and stopped-session ID"
+    ))
+}
+
+pub(crate) fn confirm_deleted(
+    adapter: &dyn RuntimeAdapter,
+    stopped: &SessionRef,
+) -> Result<(), SessionsError> {
+    if adapter.read_state(stopped)?.presence != Presence::Absent {
+        return Err(SessionsError::Refused(format!(
+            "thread {stopped} must be deleted before replacing it"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_replacement_key(
+    adapter: &dyn RuntimeAdapter,
+    request: &RuntimeStart,
+    stopped: &SessionRef,
+    standing: Option<&str>,
+) -> Result<(), SessionsError> {
+    let matches: Vec<_> = adapter
+        .list(&request.checkout)?
+        .into_iter()
+        .filter(|thread| {
+            &thread.session != stopped
+                && thread.semantic_key.as_deref().is_some_and(|key| {
+                    key == request.key
+                        || standing.is_some_and(|family| {
+                            key == family
+                                || key
+                                    .strip_prefix(family)
+                                    .is_some_and(|suffix| suffix.starts_with(":generation:"))
+                        })
+                })
+        })
+        .collect();
+    if !matches.is_empty() {
+        return Err(conflict(
+            &request.key,
+            matches.iter().map(|thread| &thread.session),
+        ));
     }
     Ok(())
 }
@@ -459,17 +1271,33 @@ pub fn retry(
         .request
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no recorded request")))?;
     start(
-        invocation,
         adapter,
-        &input,
-        recorded.project.as_deref(),
-        false,
-        now,
-        crate::runtime::CreationPermit::Reconcile,
+        &RuntimeAssignment {
+            invocation,
+            request: &input,
+            project: recorded.project.as_deref(),
+            now,
+            creation: CreationPermit::Reconcile,
+        },
     )
 }
 
 pub fn followup(
+    adapter: &dyn RuntimeAdapter,
+    assignment: &crate::runtime::FollowupAssignment<'_>,
+) -> Result<Thread, SessionsError> {
+    let result = followup_inner(adapter, assignment);
+    note(
+        &RunnerState::new(assignment.invocation.home()),
+        adapter.runtime(),
+        &assignment.request.key,
+        assignment.now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
+
+fn followup_inner(
     adapter: &dyn RuntimeAdapter,
     assignment: &crate::runtime::FollowupAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
@@ -482,31 +1310,86 @@ pub fn followup(
         assignment.now,
     )?;
     let recorded = record(&guard.state, &guard.runtime, &input.key)?;
-    if recorded
-        .bound
-        .as_ref()
-        .is_some_and(|bound| bound != assignment.session)
+    if let Some(bound) = &recorded.bound
+        && bound != assignment.session
     {
-        return Err(SessionsError::KeyConflict(input.key.clone()));
+        // The caller can still hold the former ID if it stopped before it
+        // recorded the replacement. Accept only the already journaled result.
+        if adapter.read_state(assignment.session)?.presence != Presence::Absent {
+            return Err(conflict(&input.key, [assignment.session, bound]));
+        }
+        let request = recorded
+            .request
+            .as_ref()
+            .ok_or_else(|| conflict(&input.key, [assignment.session, bound]))?;
+        if request.checkout != input.checkout
+            || request.brief != input.brief
+            || request.worktree != input.worktree
+        {
+            return Err(conflict(&input.key, [assignment.session, bound]));
+        }
+        return start_claimed(
+            adapter,
+            &RuntimeAssignment {
+                invocation: assignment.invocation,
+                project: assignment.project,
+                request,
+                now: assignment.now,
+                creation: CreationPermit::Reconcile,
+            },
+            &guard,
+            None,
+        );
     }
     let found: Vec<_> = adapter
         .list(&input.checkout)?
         .into_iter()
-        .filter(|t| t.semantic_key.as_deref() == Some(input.key.as_str()))
+        .filter(|t| {
+            t.semantic_key.as_deref() == Some(input.key.as_str())
+                && (t.presence == Presence::Present || &t.session == assignment.session)
+        })
         .collect();
-    if found.is_empty() {
-        return Err(SessionsError::MissingBound {
-            key: input.key.clone(),
-            session: assignment.session.clone(),
-        });
-    }
-    if found.len() != 1 || &found[0].session != assignment.session {
-        return Err(SessionsError::KeyConflict(input.key.clone()));
+    if found.len() > 1
+        || found
+            .first()
+            .is_some_and(|thread| &thread.session != assignment.session)
+    {
+        return Err(conflict(
+            &input.key,
+            found
+                .iter()
+                .map(|thread| &thread.session)
+                .chain([assignment.session]),
+        ));
     }
     let thread = adapter.read_state(assignment.session)?;
-    if crate::runtime::project_conflict(&thread.project_id, &found[0].project_id)
-        || crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
-        || crate::runtime::project_conflict(&recorded.project_id, &found[0].project_id)
+    match thread.presence {
+        Presence::Archived => return Err(archived(&input.key, assignment.session)),
+        Presence::Absent => {
+            let Some(request) = recorded.request.as_ref().filter(|_| {
+                recorded.bound.is_none() && (recorded.unresolved || recorded.retry_allowed)
+            }) else {
+                return Err(recorded.absent(&input.key, assignment.session));
+            };
+            return start_claimed(
+                adapter,
+                &RuntimeAssignment {
+                    invocation: assignment.invocation,
+                    project: assignment.project,
+                    request,
+                    now: assignment.now,
+                    creation: CreationPermit::Reconcile,
+                },
+                &guard,
+                None,
+            );
+        }
+        Presence::Present => {}
+    }
+    if found.first().is_some_and(|found| {
+        crate::runtime::project_conflict(&thread.project_id, &found.project_id)
+            || crate::runtime::project_conflict(&recorded.project_id, &found.project_id)
+    }) || crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
         || assignment
             .worktree_path
             .is_some_and(|path| thread.worktree.as_deref() != Some(path))
@@ -517,7 +1400,7 @@ pub fn followup(
     if let Some(original) = &recorded.request {
         verification.title = original.title.clone();
     }
-    adapter.verify_start(&verification, &thread)?;
+    verify_bound(adapter, &verification, assignment.session, &thread)?;
     if recorded.bound.is_none() {
         remember(
             &guard.state,

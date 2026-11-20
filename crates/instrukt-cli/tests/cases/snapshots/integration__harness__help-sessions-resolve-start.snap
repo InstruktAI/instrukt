@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/cases/harness.rs
+expression: help
+---
+Resolve a pending start by verifying a thread or allowing a fresh start
+
+Usage: instrukt sessions resolve-start [OPTIONS] <--session <SESSION>|--none> <KEY>
+
+Arguments:
+  <KEY>  Durable start key, or the home-standing shorthand `<procedure>@<project>`
+
+Options:
+      --session <SESSION>  The session the runtime created, `<runtime>:<id>`
+      --none               Allow a fresh start after confirming no thread or creation remains. A
+                           retained first thread must be proven absent
+      --json               Print the resolution as JSON
+  -h, --help               Print help
+  -V, --version            Print version
