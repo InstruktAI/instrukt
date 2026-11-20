@@ -1,18 +1,97 @@
-//! Durable coverage and operator findings for offline reads.
+//! Read-back coverage and findings live outside the live intake writer.
 use super::{ConversationError, micros, retain_in};
-use instrukt_connector::{Connector, ConnectorError, Incoming};
+use instrukt_connector::{Connector, ConnectorError, Incoming, ReadBackPage};
 use instrukt_core::{
+    fsx::{self, FsError},
     home::Home,
     ids::ProjectSlug,
-    state_db::rusqlite::{Transaction, params},
+    state_db::rusqlite::{Connection, OpenFlags, OptionalExtension, params},
 };
 use instrukt_runner::state::{self, RunnerState, StateError};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 
-const ANSWERING_BOUND: SignedDuration = SignedDuration::from_hours(24);
+pub(super) const ANSWERING_BOUND: SignedDuration = SignedDuration::from_hours(24);
 const REPORTING_PERIOD: SignedDuration = SignedDuration::from_hours(30 * 24);
 const SCAN_OVERLAP: SignedDuration = SignedDuration::from_secs(60);
+
+const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS scans(
+    company TEXT, connector TEXT, first_seen INTEGER NOT NULL, retained_until INTEGER,
+    started INTEGER, lower_bound INTEGER, position TEXT, page TEXT, retry_at INTEGER, failure TEXT,
+    PRIMARY KEY(company, connector)
+);
+CREATE TABLE IF NOT EXISTS seen(
+    company TEXT, connector TEXT, channel TEXT, message TEXT, conversation TEXT,
+    written_us INTEGER NOT NULL, missed_link TEXT,
+    PRIMARY KEY(company, connector, channel, message)
+);
+CREATE INDEX IF NOT EXISTS seen_by_time ON seen(written_us);
+";
+
+fn store_path(home: &Home) -> PathBuf {
+    home.state_dir().join("connector-read-back.sqlite")
+}
+
+fn open(home: &Home, write: bool) -> Result<Option<Connection>, StateError> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = store_path(home);
+    for file in [
+        home.root().to_path_buf(),
+        home.state_dir(),
+        path.clone(),
+        path.with_extension("sqlite-journal"),
+        path.with_extension("sqlite-wal"),
+        path.with_extension("sqlite-shm"),
+    ] {
+        if std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(StateError::Symlink { path: file });
+        }
+    }
+    let exists = path.exists();
+    if !write && !exists {
+        return Ok(None);
+    }
+    let flags = if write {
+        OpenFlags::default()
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+    };
+    let sql = state::sql(&path);
+    if write {
+        let dir = home.state_dir();
+        fsx::create_dir_all(&dir).map_err(|source| FsError::Write { path: dir, source })?;
+    }
+    let conn = fsx::open_database(&path, flags).map_err(sql)?;
+    conn.busy_timeout(Duration::from_secs(2))
+        .map_err(state::sql(&path))?;
+    if write {
+        fsx::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(|source| {
+            FsError::Write {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        if !exists {
+            conn.pragma_update(None, "journal_mode", "WAL")
+                .map_err(state::sql(&path))?;
+        }
+        conn.execute_batch(SCHEMA).map_err(state::sql(&path))?;
+    }
+    if !write
+        && !conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='scans')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(state::sql(&path))?
+    {
+        return Ok(None);
+    }
+    Ok(Some(conn))
+}
 
 pub(crate) fn observe(
     home: &Home,
@@ -20,14 +99,60 @@ pub(crate) fn observe(
     connector: &str,
     at: Timestamp,
 ) -> Result<(), StateError> {
-    RunnerState::new(home).write(|tx| {
-        tx.execute(
-            "INSERT INTO connector_read_back(company,connector,first_seen) VALUES(?1,?2,?3)
-             ON CONFLICT(company,connector) DO UPDATE SET first_seen=coalesce(first_seen,excluded.first_seen)",
-            params![company.as_str(), connector, micros(at)],
-        ).map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
-    })
+    let Some(conn) = open(home, true)? else {
+        return Ok(());
+    };
+    observed(&conn, home, company, connector, at)
+}
+
+fn observed(
+    conn: &Connection,
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    at: Timestamp,
+) -> Result<(), StateError> {
+    let path = state::db_path(conn);
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM scans WHERE company=?1 AND connector=?2)",
+            [company.as_str(), connector],
+            |row| row.get(0),
+        )
+        .map_err(state::sql(&path))?;
+    if !exists {
+        // Migration 26 supplies the earliest retained timestamp, never coverage.
+        let seed = RunnerState::new(home)
+            .read(|intake, path| {
+                intake.query_row(
+            "SELECT first_seen FROM connector_read_back_seed WHERE company=?1 AND connector=?2",
+            [company.as_str(), connector], |row| row.get::<_, Option<i64>>(0),
+        ).optional().map_err(state::sql(path))
+            })?
+            .flatten()
+            .flatten();
+        conn.execute(
+            "INSERT OR IGNORE INTO scans(company,connector,first_seen) VALUES(?1,?2,?3)",
+            params![company.as_str(), connector, seed.unwrap_or(micros(at))],
+        )
+        .map_err(state::sql(&path))?;
+    }
+    Ok(())
+}
+
+struct Progress {
+    started: i64,
+    lower: i64,
+    position: Option<String>,
+    page: Option<String>,
+    retry_at: Option<i64>,
+    failure: Option<String>,
+}
+
+fn failed(error: impl std::fmt::Display) -> ConnectorError {
+    ConnectorError {
+        cause: error.to_string(),
+    }
 }
 
 pub(crate) fn scan(
@@ -35,92 +160,222 @@ pub(crate) fn scan(
     company: &ProjectSlug,
     key: &str,
     connector: &dyn Connector,
-    started: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
     quit: &dyn Fn() -> bool,
     nudge: &dyn Fn(),
-) -> Result<(), ConnectorError> {
-    let state = RunnerState::new(home);
-    let failed = |error: StateError| ConnectorError {
-        cause: error.to_string(),
+) -> Result<bool, ConnectorError> {
+    let Some(mut conn) = open(home, true).map_err(failed)? else {
+        return Ok(false);
     };
-    observe(home, company, key, started).map_err(failed)?;
-    let oldest = micros(started - ANSWERING_BOUND);
-    let from = state.read(|conn, path| {
-        conn.query_row(
-            "SELECT coalesce(retained_until,min(first_seen,?3)) FROM connector_read_back WHERE company=?1 AND connector=?2",
-            params![company.as_str(), key, oldest],
-            |row| row.get::<_, i64>(0),
-        ).map_err(state::sql(path))
-    }).map_err(failed)?.unwrap_or(oldest);
-    let from = Timestamp::from_microsecond(from).map_err(|error| ConnectorError {
-        cause: error.to_string(),
-    })?;
+    let requested = clock();
+    observed(&conn, home, company, key, requested).map_err(failed)?;
+    let path = state::db_path(&conn);
+    let sql = |error| failed(state::sql(&path)(error));
+    let owner = company.as_str();
+    conn.execute(
+        "UPDATE scans SET started=?3,lower_bound=coalesce(retained_until,min(first_seen,?4))
+         WHERE company=?1 AND connector=?2 AND started IS NULL",
+        params![
+            owner,
+            key,
+            micros(requested),
+            micros(requested - ANSWERING_BOUND)
+        ],
+    )
+    .map_err(sql)?;
 
-    // Keep the final item for the cursor transaction. All earlier items
-    // survive a scan interrupted between native pages.
-    let mut last = None;
-    let result = connector.read_back(from, quit, &mut |incoming, link| {
-        if incoming.connector != key {
-            return Err(ConnectorError {
-                cause: "unexpected connector during read-back".into(),
-            });
+    while !quit() {
+        let progress = conn.query_row(
+            "SELECT started,lower_bound,position,page,retry_at,failure FROM scans WHERE company=?1 AND connector=?2",
+            [owner, key],
+            |row| Ok(Progress { started: row.get(0)?, lower: row.get(1)?, position: row.get(2)?,
+                page: row.get(3)?, retry_at: row.get(4)?, failure: row.get(5)? }),
+        ).map_err(sql)?;
+        if progress.retry_at.is_some_and(|at| micros(clock()) < at) {
+            return Err(failed(
+                progress
+                    .failure
+                    .as_deref()
+                    .unwrap_or("waiting to retry read-back"),
+            ));
         }
-        if let Some((previous, link)) = last.replace((incoming, link)) {
-            state
-                .write(|tx| classify(tx, company, &previous, &link, started))
-                .map_err(failed)?;
-            nudge();
+        let started = Timestamp::from_microsecond(progress.started).map_err(failed)?;
+        let page: ReadBackPage = match progress.page {
+            Some(page) => serde_json::from_str(&page).map_err(failed)?,
+            None => {
+                let lower = Timestamp::from_microsecond(progress.lower).map_err(failed)?;
+                match connector.read_back_page(lower, progress.position) {
+                    Ok(page) => {
+                        let encoded = serde_json::to_string(&page).map_err(failed)?;
+                        conn.execute(
+                            "UPDATE scans SET page=?3 WHERE company=?1 AND connector=?2",
+                            params![owner, key, encoded],
+                        )
+                        .map_err(sql)?;
+                        page
+                    }
+                    Err(error) => {
+                        let retry = error.retry_after.map(|seconds| {
+                            let delay = SignedDuration::from_secs(
+                                i64::try_from(seconds).unwrap_or(i64::MAX),
+                            );
+                            micros(clock().checked_add(delay).unwrap_or(Timestamp::MAX))
+                        });
+                        conn.execute(
+                            "UPDATE scans SET retry_at=?3,failure=?4 WHERE company=?1 AND connector=?2",
+                            params![owner, key, retry, error.cause],
+                        ).map_err(sql)?;
+                        return Err(failed(error));
+                    }
+                }
+            }
+        };
+        if quit() {
+            break;
         }
-        Ok(())
-    });
-    if result.is_ok() && quit() {
-        return Err(ConnectorError {
-            cause: "read-back stopped".into(),
-        });
+        match retain_page(&mut conn, home, company, key, &page, started) {
+            Ok(true) => nudge(),
+            Ok(false) => {}
+            Err(error) => {
+                conn.execute(
+                    "UPDATE scans SET failure=?3 WHERE company=?1 AND connector=?2",
+                    params![owner, key, error.to_string()],
+                )
+                .map_err(sql)?;
+                return Err(error);
+            }
+        }
+        if page.next.is_none() {
+            // A resumed window can end before the most recent connection.
+            // Take a fresh window once its earlier coverage is durable.
+            return Ok(started < requested);
+        }
     }
-    state.write(|tx| {
-        let path = state::db_path(tx);
-        if let Some((last, link)) = last {
-            classify(tx, company, &last, &link, started)?;
-        }
-        if result.is_ok() {
-            tx.execute(
-                "UPDATE connector_read_back SET retained_until=?3,failure=NULL WHERE company=?1 AND connector=?2",
-                params![company.as_str(), key, micros(started - SCAN_OVERLAP)],
-            ).map_err(state::sql(&path))?;
-        } else {
-            tx.execute(
-                "UPDATE connector_read_back SET failure=?3 WHERE company=?1 AND connector=?2",
-                params![company.as_str(), key, result.as_ref().err().map(|e| e.cause.as_str())],
-            ).map_err(state::sql(&path))?;
-        }
-        tx.execute("DELETE FROM connector_missed_messages WHERE written_us<?1",
-            [micros(started - REPORTING_PERIOD)]).map_err(state::sql(&path))?;
-        Ok(())
-    }).map_err(failed)?;
-    nudge();
-    result
+    Ok(false)
 }
 
-fn classify(
-    tx: &Transaction<'_>,
+fn channel(item: &Incoming) -> &str {
+    item.conversation
+        .split_once('/')
+        .map_or(&item.conversation, |(channel, _)| channel)
+}
+
+/// Page contents remain durable until intake commits and scan progress advances.
+/// If the process stops between the two, the intake lookup recognises the commit.
+fn retain_page(
+    conn: &mut Connection,
+    home: &Home,
+    company: &ProjectSlug,
+    key: &str,
+    page: &ReadBackPage,
+    started: Timestamp,
+) -> Result<bool, ConnectorError> {
+    let owner = company.as_str();
+    let path = state::db_path(conn);
+    let sql = |error| failed(state::sql(&path)(error));
+    let mut unique = HashSet::new();
+    let mut novel = Vec::new();
+    for (item, link) in &page.items {
+        if item.connector != key {
+            return Err(failed("unexpected connector during read-back"));
+        }
+        if item.written_at > started
+            || item.written_at < started - REPORTING_PERIOD
+            || !unique.insert((channel(item), item.message.as_str()))
+        {
+            continue;
+        }
+        let seen: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM seen WHERE company=?1 AND connector=?2 AND channel=?3 AND message=?4)",
+            params![owner, key, channel(item), item.message], |row| row.get(0),
+        ).map_err(sql)?;
+        if !seen {
+            novel.push((item, link));
+        }
+    }
+
+    let intake = RunnerState::new(home);
+    // Only IDs the scan has never seen need a read-only check against messages
+    // received live or committed before an interrupted scan checkpoint.
+    let existing = if novel.is_empty() {
+        HashSet::new()
+    } else {
+        intake.read(|db, path| {
+            let mut query = db.prepare(
+                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+                 UNION ALL SELECT 1 FROM conversation_context_receipts
+                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND delivery=message)",
+            ).map_err(state::sql(path))?;
+            let mut existing = HashSet::new();
+            for (item, _) in &novel {
+                if query.query_row(params![owner, key, item.conversation, item.message], |row| row.get::<_, bool>(0))
+                    .map_err(state::sql(path))?
+                {
+                    existing.insert((channel(item), item.message.as_str()));
+                }
+            }
+            Ok(existing)
+        }).map_err(failed)?.unwrap_or_default()
+    };
+    let retained = |item: &Incoming| existing.contains(&(channel(item), item.message.as_str()));
+    let recent = |item: &Incoming| item.written_at >= started - ANSWERING_BOUND;
+    let batch: Vec<_> = novel
+        .iter()
+        .filter(|(item, _)| recent(item) && !retained(item))
+        .map(|(item, _)| *item)
+        .collect();
+    let inserted = if batch.is_empty() {
+        false
+    } else {
+        intake
+            .write::<_, StateError>(|tx| {
+                let mut inserted = false;
+                for item in batch {
+                    inserted |= retain_in(tx, company, item, started)? != 0;
+                }
+                Ok(inserted)
+            })
+            .map_err(failed)?
+    };
+
+    let tx = conn.transaction().map_err(sql)?;
+    for (item, link) in novel {
+        let missed = (!recent(item) && !retained(item)).then_some(link);
+        tx.execute(
+            "INSERT INTO seen(company,connector,channel,message,conversation,written_us,missed_link)
+             VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO NOTHING",
+            params![owner, key, channel(item), item.message, item.conversation, micros(item.written_at), missed],
+        ).map_err(sql)?;
+    }
+    if let Some(next) = &page.next {
+        tx.execute("UPDATE scans SET position=?3,page=NULL,retry_at=NULL,failure=NULL WHERE company=?1 AND connector=?2",
+            params![owner, key, next]).map_err(sql)?;
+    } else {
+        tx.execute("UPDATE scans SET retained_until=?3,started=NULL,lower_bound=NULL,position=NULL,page=NULL,retry_at=NULL,failure=NULL
+                    WHERE company=?1 AND connector=?2",
+            params![owner, key, micros(started - SCAN_OVERLAP)]).map_err(sql)?;
+        tx.execute(
+            "DELETE FROM seen WHERE company=?1 AND connector=?2 AND written_us<?3",
+            params![owner, key, micros(started - REPORTING_PERIOD)],
+        )
+        .map_err(sql)?;
+    }
+    tx.commit().map_err(sql)?;
+    Ok(inserted)
+}
+
+pub(super) fn was_missed(
+    home: &Home,
     company: &ProjectSlug,
     item: &Incoming,
-    link: &str,
-    at: Timestamp,
-) -> Result<(), StateError> {
-    if item.written_at >= at - ANSWERING_BOUND {
-        retain_in(tx, company, item, at)?;
-    } else if item.written_at >= at - REPORTING_PERIOD {
-        tx.execute(
-            "INSERT INTO connector_missed_messages(company,connector,conversation,message,written_us,link)
-             SELECT ?1,?2,?3,?4,?5,?6 WHERE NOT EXISTS(
-                 SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
-             ) ON CONFLICT DO NOTHING",
-            params![company.as_str(), item.connector, item.conversation, item.message, micros(item.written_at), link],
-        ).map_err(state::sql(&state::db_path(tx)))?;
-    }
-    Ok(())
+) -> Result<bool, StateError> {
+    let Some(conn) = open(home, false)? else {
+        return Ok(false);
+    };
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM seen WHERE company=?1 AND connector=?2 AND channel=?3 AND message=?4 AND missed_link IS NOT NULL)",
+        params![company.as_str(), item.connector, channel(item), item.message], |row| row.get(0),
+    ).map_err(state::sql(&state::db_path(&conn)))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -133,34 +388,42 @@ pub struct Missed {
     pub link: String,
 }
 
-pub(super) fn missed(
-    state: &RunnerState,
-    now: Timestamp,
-) -> Result<Vec<Missed>, ConversationError> {
-    let rows = state.read(|conn, path| {
-        let mut query = conn.prepare(
-            "SELECT company,connector,conversation,message,written_us,link
-             FROM connector_missed_messages WHERE written_us>=?1 ORDER BY written_us,company,connector,conversation,message",
-        ).map_err(state::sql(path))?;
-        query.query_map([micros(now - REPORTING_PERIOD)], |row| {
-            Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))
-        }).map_err(state::sql(path))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(path))
-    })?.unwrap_or_default();
-    rows.into_iter()
-        .map(
-            |(company, connector, conversation, message, written_us, link)| {
-                Ok(Missed {
-                    company,
-                    connector,
-                    conversation,
-                    message,
-                    link,
-                    written_at: Timestamp::from_microsecond(written_us)
-                        .map_err(|error| ConversationError::Refused(error.to_string()))?,
-                })
-            },
-        )
-        .collect()
+pub(super) fn missed(home: &Home, now: Timestamp) -> Result<Vec<Missed>, ConversationError> {
+    let Some(conn) = open(home, false)? else {
+        return Ok(Vec::new());
+    };
+    let path = state::db_path(&conn);
+    let mut query = conn.prepare(
+        "SELECT company,connector,conversation,message,written_us,missed_link
+         FROM seen WHERE missed_link IS NOT NULL AND written_us>=?1 ORDER BY written_us,company,connector,conversation,message",
+    ).map_err(state::sql(&path))?;
+    let rows = query
+        .query_map([micros(now - REPORTING_PERIOD)], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })
+        .map_err(state::sql(&path))?;
+    rows.map(|row| {
+        let (company, connector, conversation, message, written_us, link) =
+            row.map_err(state::sql(&path))?;
+        let written_at = Timestamp::from_microsecond(written_us)
+            .map_err(|err| ConversationError::Refused(err.to_string()))?;
+        Ok(Missed {
+            company,
+            connector,
+            conversation,
+            message,
+            written_at,
+            link,
+        })
+    })
+    .collect()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -168,14 +431,40 @@ pub struct Failure {
     pub company: String,
     pub connector: String,
     pub cause: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<Timestamp>,
 }
 
-pub(super) fn failures(state: &RunnerState) -> Result<Vec<Failure>, StateError> {
-    Ok(state.read(|conn, path| {
-        let mut query = conn.prepare(
-            "SELECT company,connector,failure FROM connector_read_back WHERE failure IS NOT NULL ORDER BY company,connector",
-        ).map_err(state::sql(path))?;
-        query.query_map([], |row| Ok(Failure { company: row.get(0)?, connector: row.get(1)?, cause: row.get(2)? }))
-            .map_err(state::sql(path))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(path))
-    })?.unwrap_or_default())
+pub(super) fn failures(home: &Home) -> Result<Vec<Failure>, StateError> {
+    let Some(conn) = open(home, false)? else {
+        return Ok(Vec::new());
+    };
+    let path = state::db_path(&conn);
+    let mut query = conn.prepare(
+        "SELECT company,connector,failure,retry_at FROM scans WHERE failure IS NOT NULL ORDER BY company,connector",
+    ).map_err(state::sql(&path))?;
+    let rows = query
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get::<_, Option<i64>>(3)?,
+            ))
+        })
+        .map_err(state::sql(&path))?;
+    rows.map(|row| {
+        let (company, connector, cause, retry_at) = row.map_err(state::sql(&path))?;
+        let retry_at = retry_at
+            .map(Timestamp::from_microsecond)
+            .transpose()
+            .map_err(|err| state::invalid(&path, err))?;
+        Ok(Failure {
+            company,
+            connector,
+            cause,
+            retry_at,
+        })
+    })
+    .collect()
 }

@@ -173,6 +173,11 @@ pub fn retain(
     incoming: &Incoming,
     now: Timestamp,
 ) -> Result<Intake, ConversationError> {
+    if incoming.written_at < now - read_back::ANSWERING_BOUND
+        && read_back::was_missed(home, company, incoming)?
+    {
+        return Ok(Intake::Repeated);
+    }
     let state = RunnerState::new(home);
     let inserted = state.write(|tx| retain_in(tx, company, incoming, now))?;
     if inserted == 0 {
@@ -204,10 +209,7 @@ fn retain_in(
         .map_err(state::sql(&path))?;
     tx.execute(
             "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text)
-             SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10 WHERE NOT EXISTS (
-                 SELECT 1 FROM connector_missed_messages
-                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
-             ) ON CONFLICT DO NOTHING",
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
             params![
                 company.as_str(),
                 incoming.connector,
@@ -4186,8 +4188,8 @@ fn status_at(home: &Home, now: Timestamp) -> Result<Status, ConversationError> {
         relay_failure,
         connectors,
         conversations,
-        missed_messages: read_back::missed(&state, now)?,
-        read_back_failures: read_back::failures(&state)?,
+        missed_messages: read_back::missed(home, now)?,
+        read_back_failures: read_back::failures(home)?,
     })
 }
 

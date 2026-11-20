@@ -307,6 +307,11 @@ while it was not connected:
   If Slack reports replies without a latest reply time, the connector reads
   those replies within the window. A connection still delivers live messages
   while read-back pages through Slack.
+- A broadcast reply uses its own timestamp and its parent thread, wherever
+  Slack lists it. A limited request waits for Slack's retry time and resumes
+  at the same page after a restart. Operator status shows the wait.
+  If Slack has expired the cursor, only that listing starts over within the
+  saved scan window.
 - The window starts where the last completed read-back started, less a margin;
   with none completed, at the earlier of the time the runner first saw the
   connector declared and the answering bound back

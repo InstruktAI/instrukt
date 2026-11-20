@@ -39,30 +39,18 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V26),
 ];
 
-/// Version 26: retain coverage of completed connector scans separately
-/// from connection state and the live message queue.
+/// Version 26: seed the first observation of existing connectors for the
+/// independent scan store. Intake timestamps never establish scan coverage.
 const V26: &str = "
-CREATE TABLE IF NOT EXISTS connector_read_back (
+CREATE TABLE IF NOT EXISTS connector_read_back_seed (
     company TEXT NOT NULL,
     connector TEXT NOT NULL,
-    first_seen INTEGER,
-    retained_until INTEGER,
-    failure TEXT,
+    first_seen INTEGER NOT NULL,
     PRIMARY KEY(company, connector)
 );
-INSERT INTO connector_read_back(company, connector, first_seen)
+INSERT INTO connector_read_back_seed(company, connector, first_seen)
     SELECT company, connector, min(written_us) FROM conversation_messages GROUP BY company, connector
     ON CONFLICT(company,connector) DO NOTHING;
-CREATE TABLE IF NOT EXISTS connector_missed_messages (
-    company TEXT NOT NULL,
-    connector TEXT NOT NULL,
-    conversation TEXT NOT NULL,
-    message TEXT NOT NULL,
-    written_us INTEGER NOT NULL,
-    link TEXT NOT NULL,
-    PRIMARY KEY(company, connector, conversation, message)
-);
-CREATE INDEX IF NOT EXISTS connector_missed_by_time ON connector_missed_messages(written_us);
 ";
 
 /// Version 24: failed messages keep their retry schedule on the operator clock.

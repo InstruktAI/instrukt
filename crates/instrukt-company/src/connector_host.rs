@@ -434,17 +434,20 @@ fn connection(
                     continue;
                 }
                 let result = reach.connectors.open(&reach.current.get(), company, key).and_then(|connector| {
-                    conversations::read_back::scan(home, company, key, connector.as_ref(), reach.connectors.now(), &quit, &|| {
+                    conversations::read_back::scan(home, company, key, connector.as_ref(), &|| reach.connectors.now(), &quit, &|| {
                         let _ = scan_nudge.try_send(());
                     })
                 });
-                if let Err(error) = result {
-                    tracing::warn!(target: LOG_TARGET, event = "connector_read_back_failed", company = %company, connector = key, error = %error);
-                    retry_at = Some(Instant::now() + delay);
-                    delay = (delay * 2).min(Duration::from_secs(60));
-                } else {
-                    retry_at = None;
-                    delay = Duration::from_secs(1);
+                match result {
+                    Err(error) => {
+                        tracing::warn!(target: LOG_TARGET, event = "connector_read_back_failed", company = %company, connector = key, error = %error);
+                        retry_at = Some(Instant::now() + delay);
+                        delay = (delay * 2).min(Duration::from_secs(60));
+                    }
+                    Ok(catch_up) => {
+                        retry_at = catch_up.then(Instant::now);
+                        delay = Duration::from_secs(1);
+                    }
                 }
             }
         });

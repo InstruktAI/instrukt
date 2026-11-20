@@ -799,24 +799,28 @@ serves conversations is not running or cannot acquire its source, `NULL` while i
 reads; `updated_at`, the start of the current failure, kept while the failure
 persists across retries.
 
-**`connector_read_back`** — company-owned external bookkeeping for one
-connector on this computer. The key is the company and connector. It keeps
-`first_seen`, the first observation of its declaration, and `retained_until`,
-the start of the last completed scan less the overlap. An upgrade seeds
-`first_seen` from the connector's earliest retained message when available.
-The cursor stays unset until a full scan succeeds and advances in the
-transaction that retains its final item. It never advances from connection
-state or a retained message timestamp. Every scanned message is
-durably retained or classified before the cursor advances. A partial scan
-leaves the old cursor in place. `failure` records the current failed scan,
-cleared by the next completed scan. Retries deduplicate by provider message
-identity. The record lives with the connector declaration.
+**`connector_read_back_seed`** — migration 26 records the earliest
+retained message time for each existing connector. It supplies a first
+observation when the scan store has none and establishes no scan coverage.
 
-**`connector_missed_messages`** — addressed messages outside the answering
-bound, keyed by company, connector, conversation and message. The company
-relay stores the written time and provider link, with no body or credentials.
-Status reports them through the reporting period. Rows retire after that
-period and are never admitted for delivery.
+**`state/connector-read-back.sqlite`** — external bookkeeping owned by the
+company conversation core, scoped to one home's connectors. Losing it can
+force provider reads again and lose the window in which a missed question
+can still be recovered. It has its own SQLite writer outside live intake.
+
+Each connector keeps one active window with its start and lower bound, the
+provider position, the current fetched page until processed, and any
+provider retry time. Restarts resume those records. Only completion advances
+coverage to the window's start less the overlap. Page identities are kept by
+provider channel and message ID. A page with new addressed messages writes
+them in one live-intake transaction. A read-only intake check reconciles
+messages received live or committed before the scan checkpoint. Already
+seen page identities skip that check. Provider reads run outside intake
+transactions.
+
+Seen identities retire after 30 days. Missed records within that period keep
+the written time and provider link. They carry no message text. The active
+page holds text only until intake and the scan checkpoint commit.
 
 **`runner_workers`** — one row per background worker of the runner: the history
 workers (extraction, query responder) and the readiness refresh (`readiness`,

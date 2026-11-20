@@ -166,7 +166,10 @@ struct Workspace {
     refused_reply: Option<String>,
     read_back_channels: Vec<String>,
     hold_read_back_channel: Option<String>,
-    fail_read_back_reply: bool,
+    refuse_app_connection: bool,
+    refused_app_connections: usize,
+    read_back_limit: Option<(String, u64)>,
+    history_pages: Vec<(String, Option<String>)>,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
     refuse_metadata_reads: bool,
@@ -305,6 +308,20 @@ impl FakeSlack {
                             if method == "users.info" {
                                 w.lookups += 1;
                                 w.limit_lookup.take()
+                            } else if method == "conversations.history" {
+                                let args = form(&body);
+                                let channel = args.get("channel").unwrap();
+                                let cursor = args.get("cursor").cloned();
+                                w.history_pages.push((channel.clone(), cursor.clone()));
+                                if cursor.is_some()
+                                    && w.read_back_limit
+                                        .as_ref()
+                                        .is_some_and(|(target, _)| target == channel)
+                                {
+                                    w.read_back_limit.take().map(|(_, seconds)| seconds)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
@@ -443,6 +460,10 @@ impl FakeSlack {
         let mut w = workspace.lock().unwrap();
         let app = method == "apps.connections.open";
         let accepted = if app { APP_TOKEN } else { BOT_TOKEN };
+        if app && w.refuse_app_connection {
+            w.refused_app_connections += 1;
+            return json!({"ok": false, "error": "invalid_auth"});
+        }
         if w.refuse || token != accepted {
             return json!({"ok": false, "error": "invalid_auth"});
         }
@@ -486,10 +507,6 @@ impl FakeSlack {
                 w.statuses.push(call);
                 json!({"ok": true})
             }
-            "conversations.replies" if arg("latest").is_none() && w.fail_read_back_reply => {
-                w.fail_read_back_reply = false;
-                json!({"ok": false, "error": "fixture_read_back_interrupted"})
-            }
             "conversations.history" | "conversations.replies" => {
                 if method == "conversations.replies"
                     && (w.refuse_replies
@@ -513,7 +530,11 @@ impl FakeSlack {
                     .filter(|m| m["channel"] == channel)
                     .filter(|m| match thread {
                         Some(root) => m["ts"] == root || m["thread_ts"] == root,
-                        None => m["thread_ts"].is_null() || m["thread_ts"] == m["ts"],
+                        None => {
+                            m["thread_ts"].is_null()
+                                || m["thread_ts"] == m["ts"]
+                                || m["subtype"] == "thread_broadcast"
+                        }
                     })
                     .filter(|m| bound(m, "latest", true) && bound(m, "oldest", false))
                     .cloned()
@@ -659,12 +680,41 @@ impl FakeSlack {
         format!("{}.{:06}", at / 1_000_000, at % 1_000_000)
     }
 
-    pub fn hold_read_back_channel(&self, channel: Option<&str>) {
-        self.workspace.lock().unwrap().hold_read_back_channel = channel.map(str::to_owned);
+    pub fn refuse_app_connection(&self, refuse: bool) {
+        self.workspace.lock().unwrap().refuse_app_connection = refuse;
     }
 
-    pub fn fail_next_read_back_reply(&self) {
-        self.workspace.lock().unwrap().fail_read_back_reply = true;
+    pub fn refused_app_connections(&self) -> usize {
+        self.workspace.lock().unwrap().refused_app_connections
+    }
+
+    pub fn throttle_later_history_page(&self, channel: &str, seconds: u64) {
+        self.workspace.lock().unwrap().read_back_limit = Some((channel.to_owned(), seconds));
+    }
+
+    pub fn history_pages(&self, channel: &str) -> Vec<Option<String>> {
+        self.workspace
+            .lock()
+            .unwrap()
+            .history_pages
+            .iter()
+            .filter(|(seen, _)| seen == channel)
+            .map(|(_, cursor)| cursor.clone())
+            .collect()
+    }
+
+    pub fn broadcast(&self, channel: &str, ts: &str) {
+        let mut workspace = self.workspace.lock().unwrap();
+        let message = workspace
+            .messages
+            .iter_mut()
+            .find(|message| message["channel"] == channel && message["ts"] == ts)
+            .unwrap();
+        message["subtype"] = json!("thread_broadcast");
+    }
+
+    pub fn hold_read_back_channel(&self, channel: Option<&str>) {
+        self.workspace.lock().unwrap().hold_read_back_channel = channel.map(str::to_owned);
     }
 
     pub fn read_back_channels(&self, channels: &[&str]) {

@@ -890,13 +890,12 @@ fn own_message(message: &Value, me: &Me) -> bool {
 mod read_back;
 
 impl Connector for Slack {
-    fn read_back(
+    fn read_back_page(
         &self,
         from: Timestamp,
-        quit: &dyn Fn() -> bool,
-        retain: &mut dyn FnMut(Incoming, String) -> Result<(), ConnectorError>,
-    ) -> Result<(), ConnectorError> {
-        self.scan_history(from, quit, retain)
+        position: Option<String>,
+    ) -> Result<instrukt_connector::ReadBackPage, instrukt_connector::ReadBackError> {
+        self.history_page(from, position)
     }
 
     fn limits(&self) -> instrukt_connector::Limits {

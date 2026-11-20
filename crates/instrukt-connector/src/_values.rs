@@ -63,7 +63,7 @@ impl Accompanying {
 
 /// What a connector supplies for one message addressed to the agent, as it
 /// arrives. The company whose connector received it is the host's to add.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Incoming {
     pub connector: String,
     pub conversation: String,
@@ -74,6 +74,20 @@ pub struct Incoming {
     pub sender: String,
     pub written_at: Timestamp,
     pub text: String,
+}
+
+/// A provider page and the continuation for the next request.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ReadBackPage {
+    pub items: Vec<(Incoming, String)>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{cause}")]
+pub struct ReadBackError {
+    pub cause: String,
+    pub retry_after: Option<u64>,
 }
 
 /// The sender of an admitted message, as the provider gave them when it was

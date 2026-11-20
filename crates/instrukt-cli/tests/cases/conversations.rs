@@ -4752,7 +4752,22 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .is_ok_and(|version| version == schema_version())
     });
+    let scan_path = c
+        .env
+        .instrukt_home()
+        .join("state/connector-read-back.sqlite");
+    wait("the fixture scan store is ready", || {
+        scan_path.exists()
+            && Connection::open(&scan_path).is_ok_and(|db| {
+                db.query_row("SELECT retained_until FROM scans", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .is_ok()
+            })
+    });
     c.runner_dies();
+    let scans = Connection::open(scan_path).unwrap();
+    scans.execute("DELETE FROM scans", []).unwrap();
 
     let slack_time =
         |at: jiff::Timestamp| format!("{}.{:06}", at.as_second(), at.subsec_nanosecond() / 1000);
@@ -4761,7 +4776,7 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
     c.slack
         .say_at(&retained, "D30", "USTEVEN", "Already answered.", None);
     c.slack.say_at(
-        &slack_time(now - jiff::SignedDuration::from_mins(10)),
+        &slack_time(now - jiff::SignedDuration::from_hours(23)),
         "D30",
         "USTEVEN",
         "Did we miss this question?",
@@ -4773,7 +4788,7 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
         params![retained, newer.as_microsecond(), newer.to_string()],
     ).unwrap();
     state
-        .execute_batch("DROP TABLE connector_missed_messages; DROP TABLE connector_read_back;")
+        .execute_batch("DROP TABLE connector_read_back_seed;")
         .unwrap();
     state
         .pragma_update(None, "user_version", schema_version() - 1)
@@ -4781,6 +4796,42 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
 
     c.slack.read_back_channels(&["D30"]);
     projected(&c);
+    c.slack.refuse_app_connection(true);
+    c.start_runner();
+    wait(
+        "Slack refusals are retained after the missed question",
+        || {
+            c.slack.refused_app_connections() >= 2 && state.query_row(
+            "SELECT state='failed' FROM connector_states WHERE company='acme' AND connector='slack'",
+            [], |row| row.get::<_, bool>(0),
+        ).unwrap_or(false)
+        },
+    );
+    c.slack.hold_read_back_channel(Some("D30"));
+    c.slack.refuse_app_connection(false);
+    wait(
+        "the first scan stops with a recent question still unread",
+        || c.slack.held() > 0,
+    );
+    let frozen: (i64, i64, Option<i64>) = scans
+        .query_row(
+            "SELECT started,lower_bound,retained_until FROM scans",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        frozen,
+        (
+            now.as_microsecond(),
+            (now - jiff::SignedDuration::from_hours(24)).as_microsecond(),
+            None
+        )
+    );
+    assert!(c.sessions().is_empty());
+    c.runner_dies();
+    c.slack.hold_read_back_channel(None);
+    set_clock(&clock, now + jiff::SignedDuration::from_hours(2));
     c.run();
     let session = started(&c, &[]);
     assert!(
@@ -4794,11 +4845,16 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
     });
     assert_eq!(c.runtime.message_count(&session), 1);
     assert_eq!(destinations(&c), [("D30".to_owned(), None)]);
-    assert_eq!(state.query_row(
-        "SELECT first_seen FROM connector_read_back WHERE company='acme' AND connector='slack'",
-        [],
-        |row| row.get::<_, i64>(0)
-    ).unwrap(), newer.as_microsecond());
+    assert_eq!(
+        scans
+            .query_row(
+                "SELECT first_seen FROM scans WHERE company='acme' AND connector='slack'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        newer.as_microsecond()
+    );
 }
 
 fn a_failed_scan_resumes_without_repeating_saved_messages() {
@@ -4809,18 +4865,35 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     set_clock(&clock, now - jiff::SignedDuration::from_hours(40));
     c.env
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
-    c.run();
-    let state = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    c.slack.refuse_app_connection(true);
+    c.start_runner();
+    let store_path = c
+        .env
+        .instrukt_home()
+        .join("state/connector-read-back.sqlite");
+    wait("the connector is known before a scan starts", || {
+        store_path.exists()
+            && Connection::open(&store_path).is_ok_and(|db| {
+                db.query_row("SELECT first_seen FROM scans", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .is_ok()
+            })
+    });
+    let scans = Connection::open(&store_path).unwrap();
     let cursor = || {
-        state.query_row(
-        "SELECT retained_until FROM connector_read_back WHERE company='acme' AND connector='slack'",
-        [],
-        |row| row.get::<_, Option<i64>>(0),
-    ).ok().flatten()
+        scans
+            .query_row(
+                "SELECT retained_until FROM scans WHERE company='acme' AND connector='slack'",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
     };
-    wait("the initial scan completes", || cursor().is_some());
-    let first = cursor();
+    assert_eq!(cursor(), None);
     c.runner_dies();
+    c.slack.refuse_app_connection(false);
 
     let slack_time =
         |at: jiff::Timestamp| format!("{}.{:06}", at.as_second(), at.subsec_nanosecond() / 1000);
@@ -4835,6 +4908,14 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         "USTEVEN",
         "<@UAGENT> Has maintenance finished?",
         Some(&old_parent),
+    );
+    c.slack.broadcast("C1", &recent);
+    c.slack.say_at(
+        &slack_time(now - jiff::SignedDuration::from_mins(4)),
+        "C1",
+        "USTEVEN",
+        "A separate unaddressed message.",
+        None,
     );
     c.slack
         .say_at(&old_parent, "C2", "USTEVEN", "An old thread", None);
@@ -4852,50 +4933,98 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     c.slack
         .say_at(&recent, "C3", "USTEVEN", "The notes are ready.", None);
     c.slack
-        .read_back_channels(&["D30", "C1", "C2", "D31", "C3"]);
+        .read_back_channels(&["D30", "C2", "D31", "C1", "C3"]);
     c.store.thread("s1", None, None, "2026-11-08T10:00:00Z");
     c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
-    c.slack.fail_next_read_back_reply();
-    c.slack.hold_read_back_channel(Some("C3"));
+    c.slack.throttle_later_history_page("C1", 120);
     set_clock(&clock, now);
     c.run();
-    wait("the interrupted scan reports its cause", || {
-        state.query_row(
-            "SELECT coalesce(failure,'') FROM connector_read_back WHERE company='acme' AND connector='slack'",
-            [],
-            |row| row.get::<_, String>(0),
-        ).is_ok_and(|cause| cause.contains("fixture_read_back_interrupted"))
+    let state = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    let checkpoint = || {
+        scans
+            .query_row("SELECT position,retry_at FROM scans", [], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .ok()
+    };
+    wait("the throttled page and retry time are retained", || {
+        checkpoint().is_some()
     });
-    assert_eq!(cursor(), first);
-    wait(
-        "the next scan retains both messages before its held page",
-        || {
-            c.slack.held() > 0
-                && state
-                    .query_row(
-                        "SELECT count(*) FROM connected_conversations WHERE session IS NOT NULL",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .is_ok_and(|count| count == 2)
-        },
-    );
-    assert_eq!(cursor(), first);
+    let saved = checkpoint().unwrap();
     assert_eq!(
-        state
+        saved.1,
+        (now + jiff::SignedDuration::from_secs(120)).as_microsecond()
+    );
+    assert_eq!(cursor(), None);
+    assert_eq!(
+        scans
             .query_row(
-                "SELECT count(*) FROM connector_missed_messages WHERE connector='slack'",
+                "SELECT count(*) FROM seen WHERE missed_link IS NOT NULL",
                 [],
-                |row| row.get::<_, i64>(0),
+                |row| row.get::<_, i64>(0)
             )
             .unwrap(),
-        1
+        2
     );
+    assert_eq!(
+        state
+            .query_row("SELECT count(*) FROM conversation_messages", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        2
+    );
+    let attempts = [None, Some("2".to_owned())];
+    assert_eq!(c.slack.history_pages("C1"), attempts);
+    let waiting = c.status()["conversations"]["read_back_failures"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(waiting.len(), 1);
+    assert!(waiting[0]["retry_at"].is_string());
+    assert!(c.slack.posts().is_empty());
+
     c.runner_dies();
-    c.slack.hold_read_back_channel(None);
     c.run();
-    wait("the restarted scan completes from the old cursor", || {
-        cursor() > first
+    assert_eq!(checkpoint(), Some(saved));
+    assert_eq!(c.slack.history_pages("C1"), attempts);
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().to_path_buf());
+    let writer = instrukt_core::state_db::WriterLock::acquire(&home).unwrap();
+    // The remaining pages contain only one duplicate addressed broadcast.
+    // They can complete even when live intake is unavailable for writing.
+    set_clock(&clock, now + jiff::SignedDuration::from_secs(121));
+    wait(
+        "the original scan completes under the held intake writer",
+        || cursor().is_some(),
+    );
+    drop(writer);
+    assert!(c.slack.history_pages("C1").starts_with(&[
+        None,
+        Some("2".to_owned()),
+        Some("2".to_owned())
+    ]));
+    assert_eq!(
+        state
+            .query_row("SELECT count(*) FROM conversation_messages", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        scans
+            .query_row(
+                "SELECT count(*) FROM seen WHERE missed_link IS NOT NULL",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+    wait("the two recovered questions enter their sessions", || {
+        c.sessions().len() == 2
     });
     let sessions = c.sessions();
     let direct = sessions
@@ -4948,7 +5077,7 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     }));
     let completed = cursor();
     c.runner_dies();
-    let follow_up = slack_time(now + jiff::SignedDuration::from_secs(1));
+    let follow_up = slack_time(now + jiff::SignedDuration::from_secs(122));
     // Slack supplies an earlier note that arrived after the first delivery.
     // It still belongs in context even though it predates a received question.
     c.slack.say_at(
@@ -4965,7 +5094,7 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         "<@UAGENT> Which stairwell is clear?",
         Some(&old_parent),
     );
-    set_clock(&clock, now + jiff::SignedDuration::from_secs(2));
+    set_clock(&clock, now + jiff::SignedDuration::from_secs(123));
     c.run();
     wait(
         "the repeated scan completes and dispatches the offline reply",
