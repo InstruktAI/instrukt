@@ -156,13 +156,14 @@ struct Recorded {
     opening_acknowledged: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Recovery {
+enum Recovery<'a> {
     ResolveNone,
     ResolveSession,
     ReplaceDeleted,
+    ResumeReplacement(&'a SessionRef),
 }
 
-impl Recovery {
+impl Recovery<'_> {
     fn refusal(self, key: &str, session: &SessionRef) -> SessionsError {
         match self {
             Self::ResolveNone => SessionsError::FirstStartAbsent {
@@ -174,12 +175,17 @@ impl Recovery {
                 session: session.clone(),
             },
             Self::ReplaceDeleted => deleted(key, session),
+            Self::ResumeReplacement(stopped) => SessionsError::PendingReplacement {
+                key: key.into(),
+                session: session.clone(),
+                stopped: Box::new(stopped.clone()),
+            },
         }
     }
 }
 
 impl Recorded {
-    fn absent_recovery(&self) -> Recovery {
+    fn absent_recovery(&self) -> Recovery<'_> {
         if self.accepted || self.replacement.is_some() {
             Recovery::ReplaceDeleted
         } else {
@@ -187,10 +193,13 @@ impl Recorded {
         }
     }
 
-    fn recovery(&self, presence: Presence) -> Option<Recovery> {
+    fn recovery(&self, presence: Presence) -> Option<Recovery<'_>> {
         match presence {
             Presence::Absent => Some(self.absent_recovery()),
-            Presence::Present if !self.accepted => Some(Recovery::ResolveSession),
+            Presence::Present if !self.accepted => Some(match &self.replacement {
+                Some(intent) => Recovery::ResumeReplacement(&intent.stopped),
+                None => Recovery::ResolveSession,
+            }),
             Presence::Present | Presence::Archived => None,
         }
     }
@@ -442,9 +451,14 @@ fn start_claimed(
     {
         if let Some(pending) = &recorded.bound
             && !recorded.accepted
-            && adapter.read_state(pending)?.presence == Presence::Absent
         {
-            return Err(deleted(&input.key, pending));
+            let presence = adapter.read_state(pending)?.presence;
+            if presence == Presence::Archived {
+                return Err(archived(&input.key, pending));
+            }
+            if let Some(door) = recorded.recovery(presence) {
+                return Err(door.refusal(&input.key, pending));
+            }
         }
         return Err(deleted(&input.key, &intent.stopped));
     }
@@ -927,7 +941,9 @@ pub fn resolve(
             };
             if recovery != requested {
                 let error = recovery.refusal(key, bound);
-                if thread.presence == Presence::Absent {
+                if thread.presence == Presence::Absent
+                    || matches!(recovery, Recovery::ResumeReplacement(_))
+                {
                     note(&guard.state, adapter.runtime(), key, now, Err(&error));
                 }
                 return Err(error);
@@ -1254,18 +1270,6 @@ pub fn presence_finding(
     let recorded = record(&RunnerState::new(home), adapter.runtime().name(), key)?;
     if presence == Presence::Archived {
         return Ok(Some(archived(key, session)));
-    }
-    // The replacement command owns the acceptance transaction for a
-    // live pending successor. Resume the original operator authorization.
-    if presence == Presence::Present
-        && !recorded.accepted
-        && recorded.bound.as_ref() == Some(session)
-        && let Some(intent) = &recorded.replacement
-    {
-        return Ok(Some(SessionsError::Refused(format!(
-            "replacement thread {session} for `{key}` is pending acceptance; use `instrukt sessions replace-deleted {key} --stopped {}`",
-            intent.stopped
-        ))));
     }
     Ok(recorded
         .recovery(presence)

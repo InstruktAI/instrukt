@@ -1727,9 +1727,16 @@ pub struct Accepted {
 }
 
 #[derive(Debug)]
-struct MissingProbe {
-    reply: std::sync::mpsc::Receiver<Option<Presence>>,
-    result: Option<Option<Presence>>,
+enum MissingProbe {
+    Reading {
+        reply: std::sync::mpsc::Receiver<Option<Presence>>,
+        delay_secs: i64,
+    },
+    Backoff {
+        retry_at: Timestamp,
+        delay_secs: i64,
+    },
+    Confirmed(Presence),
 }
 
 impl Accepted {
@@ -1737,22 +1744,41 @@ impl Accepted {
         &self,
         adapter: &dyn RuntimeAdapter,
         session: &SessionRef,
+        now: Timestamp,
     ) -> Option<Presence> {
         let mut probes = self
             .probes
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = session.to_string();
-        if let Some(probe) = probes.get_mut(&id) {
-            if probe.result.is_none() {
-                probe.result = match probe.reply.try_recv() {
-                    Ok(presence) => Some(presence),
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
+        let delay_secs = match probes.get_mut(&id) {
+            Some(MissingProbe::Confirmed(presence)) => return Some(*presence),
+            Some(MissingProbe::Reading { reply, delay_secs }) => {
+                let observation = match reply.try_recv() {
+                    Ok(presence) => presence,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
                     Err(std::sync::mpsc::TryRecvError::Empty) => return None,
                 };
+                let state = if let Some(presence) = observation {
+                    MissingProbe::Confirmed(presence)
+                } else {
+                    let retry_at = now + jiff::SignedDuration::from_secs(*delay_secs);
+                    tracing::debug!(target: LOG_TARGET, event = "conversation_presence_probe_retry", %session, %retry_at);
+                    MissingProbe::Backoff {
+                        retry_at,
+                        delay_secs: (*delay_secs * 2).min(30),
+                    }
+                };
+                probes.insert(id, state);
+                return observation;
             }
-            return probe.result.flatten();
-        }
+            Some(MissingProbe::Backoff {
+                retry_at,
+                delay_secs,
+            }) if now >= *retry_at => *delay_secs,
+            Some(MissingProbe::Backoff { .. }) => return None,
+            None => 2,
+        };
         let (send, reply) = std::sync::mpsc::channel();
         let runtime = adapter.runtime();
         let session = session.clone();
@@ -1762,13 +1788,7 @@ impl Accepted {
             let result = instrukt_runner::runtime::adapter(runtime).read_state(&session);
             let _ = send.send(result.ok().map(|thread| thread.presence));
         });
-        probes.insert(
-            id,
-            MissingProbe {
-                reply,
-                result: None,
-            },
-        );
+        probes.insert(id, MissingProbe::Reading { reply, delay_secs });
         None
     }
 
@@ -2473,7 +2493,9 @@ pub fn relay(
                 .ok()
                 .and_then(|batch| batch.scoped_presence);
             let presence = match observed {
-                Some(Presence::Absent) => accepted.confirm_missing(adapter, &pending),
+                Some(Presence::Absent) => {
+                    accepted.confirm_missing(adapter, &pending, connectors.now())
+                }
                 Some(presence) => {
                     accepted.source_present(&pending);
                     Some(presence)
@@ -2507,7 +2529,7 @@ pub fn relay(
                 if open_messages(&state, &c)?.is_empty() {
                     continue;
                 }
-                let confirmed = accepted.confirm_missing(adapter, session);
+                let confirmed = accepted.confirm_missing(adapter, session, connectors.now());
                 if confirmed == Some(Presence::Present) {
                     set_failure(&state, &c, None)?;
                 }

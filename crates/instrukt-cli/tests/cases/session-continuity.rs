@@ -410,16 +410,42 @@ pub(super) fn check_recovery_doors(
     );
     assert_eq!(binding().unwrap(), ("t3:s4".into(), false), "{key}");
 
-    let pending_phase = delete("s4");
-    let replace_pending = ["sessions", "replace-deleted", &key, "--stopped", "t3:s4"];
-    expect_door(&none, &replace_pending);
     let s4_exact = ["sessions", "resolve-start", &key, "--session", "t3:s4"];
-    expect_door(&s4_exact, &replace_pending);
+    expect_door(&none, &next_replace);
+    expect_door(&s4_exact, &next_replace);
+    db.execute_batch("DROP TRIGGER fail_recovery_receipt")
+        .unwrap();
+    let guidance = env.run(root, none).failure();
+    let guidance = String::from_utf8_lossy(&guidance.get_output().stderr);
+    let command = guidance
+        .split_once("`instrukt sessions replace-deleted ")
+        .unwrap()
+        .1;
+    let command = command.split_once('`').unwrap().0;
+    let mut args = vec!["sessions", "replace-deleted"];
+    args.extend(command.split_whitespace());
+    env.run(root, args).success();
+    assert_eq!(binding().unwrap(), ("t3:s4".into(), true), "{key}");
+    assert_eq!(fake.threads(), ["s4"], "{key}");
+    assert_eq!(fake.message_count("s4"), 1, "{key}");
+
+    let retired_phase = delete("s4");
+    let replace_accepted = ["sessions", "replace-deleted", &key, "--stopped", "t3:s4"];
+    fail_recovery_receipt(db, "s5");
+    clear_phase(retired_phase);
+    env.run(root, replace_accepted).failure();
+    assert_eq!(binding().unwrap(), ("t3:s5".into(), false), "{key}");
+
+    let pending_phase = delete("s5");
+    let replace_pending = ["sessions", "replace-deleted", &key, "--stopped", "t3:s5"];
+    expect_door(&none, &replace_pending);
+    let s5_exact = ["sessions", "resolve-start", &key, "--session", "t3:s5"];
+    expect_door(&s5_exact, &replace_pending);
     clear_phase(pending_phase);
     env.run(root, replace_pending).success();
-    assert_eq!(binding().unwrap(), ("t3:s5".into(), true), "{key}");
-    assert_eq!(fake.threads(), ["s5"], "{key}");
-    assert_eq!(fake.message_count("s5"), 1, "{key}");
+    assert_eq!(binding().unwrap(), ("t3:s6".into(), true), "{key}");
+    assert_eq!(fake.threads(), ["s6"], "{key}");
+    assert_eq!(fake.message_count("s6"), 1, "{key}");
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS24

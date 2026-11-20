@@ -501,10 +501,10 @@ pub(super) fn check_standing_recovery_doors() {
             );
         },
     );
-    r.runtime.consume("s5");
+    r.runtime.consume("s6");
     r.append("after-recovery");
     r.tick();
-    assert_eq!(r.delivered_to("after-recovery").to_string(), "t3:s5");
+    assert_eq!(r.delivered_to("after-recovery").to_string(), "t3:s6");
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS23

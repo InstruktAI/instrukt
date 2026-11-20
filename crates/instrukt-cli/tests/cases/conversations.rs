@@ -898,7 +898,7 @@ fn a_held_absence_probe_leaves_another_conversation_free() {
 
 #[cfg(debug_assertions)]
 fn a_live_deletion_is_confirmed_once_across_relay_passes() {
-    let (mut c, _, session) = answered_conversation(true);
+    let (mut c, clock, session) = answered_conversation(true);
     let wakes = c.env.path("probe-wakes");
     let wake = |revision: u64| {
         let next = wakes.with_extension("next");
@@ -922,27 +922,50 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
             .count()
     };
     let before_deletion = absence_calls(&c);
-    let held = c.runtime.state_dir().join(format!("{session}.hold-show"));
-    std::fs::write(&held, "").unwrap();
+    c.runtime.flag("show-failure", true);
     c.runtime.delete(&session);
     c.store.unproject_thread(&session);
     c.slack.direct("D30", "USTEVEN", "What changed?");
-    let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
-    wait("the deleted session's probe is held", || marker.exists());
-
-    // Deliver the queued notification after intake observed the same
-    // deletion, while its first CLI confirmation is still running.
+    wait("the failed confirmation is scheduled for retry", || {
+        run_log(&c).contains("event=conversation_presence_probe_retry")
+    });
+    assert_eq!(absence_calls(&c) - before_deletion, 1);
+    c.runtime.flag("show-failure", false);
     deliver_probe_wake(&c, &wake, 1);
+    deliver_probe_wake(&c, &wake, 2);
+    assert_eq!(
+        absence_calls(&c) - before_deletion,
+        1,
+        "the failed probe backs off"
+    );
+
+    let held = c.runtime.state_dir().join(format!("{session}.hold-show"));
+    std::fs::write(&held, "").unwrap();
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_secs(2),
+    );
+    let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
+    wait("T3 recovers and the next confirmation is held", || {
+        marker.exists()
+    });
+
+    // Queue a notification while the successful confirmation is in flight.
+    deliver_probe_wake(&c, &wake, 3);
     std::fs::remove_file(held).unwrap();
     let stopped = format!("--stopped t3:{session}");
     wait(
         "the missing thread has its confirmed replacement finding",
         || conversation_finding(&c, &stopped).is_some(),
     );
-    for revision in 2..=4 {
+    for revision in 4..=6 {
         deliver_probe_wake(&c, &wake, revision);
     }
-    assert_eq!(absence_calls(&c) - before_deletion, 1);
+    assert_eq!(
+        absence_calls(&c) - before_deletion,
+        2,
+        "one failure and one completed confirmation"
+    );
 }
 
 #[cfg(debug_assertions)]

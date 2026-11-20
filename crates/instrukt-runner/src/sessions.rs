@@ -149,6 +149,14 @@ pub enum SessionsError {
         "delivery target {session} for `{key}` is already retained. Run `instrukt sessions resolve-start {key} --session {session}`"
     )]
     PendingStartPresent { key: String, session: SessionRef },
+    #[error(
+        "replacement thread {session} for `{key}` is pending acceptance; use `instrukt sessions replace-deleted {key} --stopped {stopped}`"
+    )]
+    PendingReplacement {
+        key: String,
+        session: SessionRef,
+        stopped: Box<SessionRef>,
+    },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]
