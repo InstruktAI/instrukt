@@ -749,7 +749,11 @@ pub trait CompanyPorts: Send + Sync {
     /// none.
     fn relay_state(&self, home: &instrukt_core::home::Home, failure: Option<&str>);
     /// The conversations section of the inspection report.
-    fn status(&self, home: &instrukt_core::home::Home) -> Result<serde_json::Value, CompanyError>;
+    fn status(
+        &self,
+        home: &instrukt_core::home::Home,
+        now: jiff::Timestamp,
+    ) -> Result<serde_json::Value, CompanyError>;
 }
 
 /// What [`CompanyPorts::start`] opens the connections with.

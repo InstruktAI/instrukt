@@ -164,6 +164,9 @@ struct Workspace {
     hold_later_history_pages: bool,
     refuse_replies: bool,
     refused_reply: Option<String>,
+    read_back_channels: Vec<String>,
+    hold_read_back_channel: Option<String>,
+    fail_read_back_reply: bool,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
     refuse_metadata_reads: bool,
@@ -256,6 +259,12 @@ impl FakeSlack {
                                         && body
                                             .split('&')
                                             .any(|field| field.starts_with("cursor=")))
+                                    || (method == "conversations.history"
+                                        && workspace.hold_read_back_channel.as_ref().is_some_and(
+                                            |channel| {
+                                                body == format!("channel={channel}&limit=200")
+                                            },
+                                        ))
                                     || workspace.hold_reads_from.iter().any(|oldest| {
                                         body.split('&').any(|field| {
                                             field.strip_prefix("oldest=") == Some(oldest)
@@ -441,7 +450,13 @@ impl FakeSlack {
         let bound = |m: &Value, name: &str, below: bool| {
             arg(name).is_none_or(|edge| {
                 let edge: f64 = edge.parse().unwrap();
-                if below { ts(m) < edge } else { ts(m) > edge }
+                if ts(m) == edge && arg("inclusive") == Some("true") {
+                    true
+                } else if below {
+                    ts(m) < edge
+                } else {
+                    ts(m) > edge
+                }
             })
         };
         match method {
@@ -449,6 +464,12 @@ impl FakeSlack {
             "auth.test" => {
                 json!({"ok": true, "user_id": BOT_USER, "bot_id": BOT_ID, "team_id": TEAM})
             }
+            "users.conversations" => json!({
+                "ok": true,
+                "channels": w.read_back_channels.iter()
+                    .map(|id| json!({"id": id, "is_im": id.starts_with('D')}))
+                    .collect::<Vec<_>>(),
+            }),
             "users.info" if w.refuse_lookups => json!({"ok": false, "error": "ratelimited"}),
             "users.info" => match w.people.get(arg("user").unwrap()) {
                 Some(person) => json!({"ok": true, "user": person.record()}),
@@ -464,6 +485,10 @@ impl FakeSlack {
                     .insert((call.0.clone(), call.1.clone()), call.2.clone());
                 w.statuses.push(call);
                 json!({"ok": true})
+            }
+            "conversations.replies" if arg("latest").is_none() && w.fail_read_back_reply => {
+                w.fail_read_back_reply = false;
+                json!({"ok": false, "error": "fixture_read_back_interrupted"})
             }
             "conversations.history" | "conversations.replies" => {
                 if method == "conversations.replies"
@@ -504,6 +529,22 @@ impl FakeSlack {
                     .min(PAGE);
                 let from: usize = arg("cursor").map_or(0, |c| c.parse().unwrap());
                 let mut page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
+                if thread.is_none() && w.read_back_channels.iter().any(|id| id == channel) {
+                    for parent in &mut page {
+                        let latest = w
+                            .messages
+                            .iter()
+                            .filter(|message| {
+                                message["channel"] == channel
+                                    && message["thread_ts"] == parent["ts"]
+                                    && message["ts"] != parent["ts"]
+                            })
+                            .max_by(|a, b| ts(a).total_cmp(&ts(b)));
+                        if let Some(latest) = latest {
+                            parent["latest_reply"] = latest["ts"].clone();
+                        }
+                    }
+                }
                 let include_metadata = arg("include_all_metadata") == Some("true");
                 let miss = include_metadata
                     && w.metadata_miss_before_hold
@@ -616,6 +657,21 @@ impl FakeSlack {
             .unwrap_or(0);
         let at = micros(&stamp).max(latest + 100);
         format!("{}.{:06}", at / 1_000_000, at % 1_000_000)
+    }
+
+    pub fn hold_read_back_channel(&self, channel: Option<&str>) {
+        self.workspace.lock().unwrap().hold_read_back_channel = channel.map(str::to_owned);
+    }
+
+    pub fn fail_next_read_back_reply(&self) {
+        self.workspace.lock().unwrap().fail_read_back_reply = true;
+    }
+
+    pub fn read_back_channels(&self, channels: &[&str]) {
+        self.workspace.lock().unwrap().read_back_channels = channels
+            .iter()
+            .map(|channel| (*channel).to_owned())
+            .collect();
     }
 
     /// A person writes a message nobody addresses to the agent: Slack sends

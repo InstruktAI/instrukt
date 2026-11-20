@@ -374,9 +374,9 @@ If a post is committed by the provider later than the settle bound after it was 
 the person can see the sentence twice, or once after their answer: the provider's
 methods promise neither a write deadline nor idempotent posts.
 
-The intake interval, the settle bound, and read-back's answering bound and
-reporting period below are declared with the conversation core in
-`crates/instrukt-company/src/conversations.rs`.
+The intake interval and settle bound are declared with the conversation
+core. The read-back answering bound, reporting period and scan overlap are
+declared in `crates/instrukt-company/src/conversations/read_back.rs`.
 
 ### After the agent was offline
 
@@ -387,6 +387,15 @@ answered like a live one. An older one is not answered and is named to the
 operator in `instrukt events status` for the reporting period, once per message
 (`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
 the operator).
+
+Read-back runs alongside the connection and intake. A repeated read skips
+messages by provider identity. An admitted offline message uses the same
+delivery receipt rule for context as a live message: earlier messages absent
+from the durable receipt record supply context. A send to a retained session
+uses the same durable command identity and replay path as a live message.
+A failed scan retries from the retained window. Scan failures and older
+missed messages are visible to the operator without posting a diagnostic in
+the conversation.
 
 ## Use cases
 

@@ -55,3 +55,8 @@ threads-required = 9
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_gets_the_answer_after_the_assistants_work_failed)'
 threads-required = 6
+
+# UC-CV13 runs two independent offline recovery fixtures.
+[[profile.default.overrides]]
+filter = 'test(=conversations::a_member_is_answered_for_a_message_written_while_the_assistant_was_offline)'
+threads-required = 2

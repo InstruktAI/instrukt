@@ -799,17 +799,24 @@ serves conversations is not running or cannot acquire its source, `NULL` while i
 reads; `updated_at`, the start of the current failure, kept while the failure
 persists across retries.
 
-**`connector_read_back`** — one row per declared connector, owned by the
-conversation core. Key: `(company, connector)`. Columns: `retained_until`, where the
-last completed read-back started less a margin, `NULL` until one completes, written
-only by a completed read-back in the transaction of its last retention and never
-from a connection state or a retained message's time; `first_seen`, when the runner
-first saw the connector declared; `missed`, the addressed messages older than the
-answering bound that a read-back found and did not admit (conversation, message,
-time, link), kept for the reporting period and one per message; both are declared
-with the conversation core (`project/instrukt/spec/feature/company/conversations`). The row lives as long as the declaration. On
-migration an existing connector's `first_seen` is its company's earliest retained
-message, or the migration time.
+**`connector_read_back`** — company-owned external bookkeeping for one
+connector on this computer. The key is the company and connector. It keeps
+`first_seen`, the first observation of its declaration, and `retained_until`,
+the start of the last completed scan less the overlap. An upgrade seeds
+`first_seen` from the connector's earliest retained message when available.
+The cursor stays unset until a full scan succeeds and advances in the
+transaction that retains its final item. It never advances from connection
+state or a retained message timestamp. Every scanned message is
+durably retained or classified before the cursor advances. A partial scan
+leaves the old cursor in place. `failure` records the current failed scan,
+cleared by the next completed scan. Retries deduplicate by provider message
+identity. The record lives with the connector declaration.
+
+**`connector_missed_messages`** — addressed messages outside the answering
+bound, keyed by company, connector, conversation and message. The company
+relay stores the written time and provider link, with no body or credentials.
+Status reports them through the reporting period. Rows retire after that
+period and are never admitted for delivery.
 
 **`runner_workers`** — one row per background worker of the runner: the history
 workers (extraction, query responder) and the readiness refresh (`readiness`,

@@ -304,6 +304,9 @@ while it was not connected:
   Slack serves (`conversations.history`, no time filter on parents), the replies
   after the read window's start of each parent whose `latest_reply` is after it
   (`conversations.replies`), and the top-level and direct messages after it.
+  If Slack reports replies without a latest reply time, the connector reads
+  those replies within the window. A connection still delivers live messages
+  while read-back pages through Slack.
 - The window starts where the last completed read-back started, less a margin;
   with none completed, at the earlier of the time the runner first saw the
   connector declared and the answering bound back

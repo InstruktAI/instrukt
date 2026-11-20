@@ -309,6 +309,7 @@ struct HostInbox<'a> {
     key: &'a str,
     nudge: &'a SyncSender<()>,
     clock: &'a dyn Connectors,
+    read_back: &'a SyncSender<()>,
 }
 
 impl Inbox for HostInbox<'_> {
@@ -323,6 +324,7 @@ impl Inbox for HostInbox<'_> {
     }
 
     fn connected(&self) {
+        let _ = self.read_back.try_send(());
         state(
             self.home,
             self.company,
@@ -362,6 +364,7 @@ fn connection(
     let (nudge, nudges) = std::sync::mpsc::sync_channel::<()>(1);
     let (admitted, admissions) = std::sync::mpsc::sync_channel::<()>(1);
     let (context_wake, context_wakes) = std::sync::mpsc::sync_channel::<()>(1);
+    let (read_back, scans) = std::sync::mpsc::sync_channel::<()>(1);
     let ended = &ended;
     let context_nudge = &context_wake;
     struct Ended<'a>(&'a AtomicBool);
@@ -414,6 +417,37 @@ fn connection(
         scope.spawn(move || {
             notice_worker(home, reach, company, key, &quit);
         });
+        let scan_nudge = &nudge;
+        scope.spawn(move || {
+            let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
+            if let Err(error) = conversations::read_back::observe(home, company, key, reach.connectors.now()) {
+                tracing::warn!(target: LOG_TARGET, event = "connector_read_back_unrecorded", company = %company, error = %error);
+            }
+            let mut retry_at: Option<Instant> = None;
+            let mut delay = Duration::from_secs(1);
+            while !quit() {
+                let event = scans.recv_timeout(Duration::from_millis(200));
+                if quit() {
+                    break;
+                }
+                if event.is_err() && retry_at.is_none_or(|at| Instant::now() < at) {
+                    continue;
+                }
+                let result = reach.connectors.open(&reach.current.get(), company, key).and_then(|connector| {
+                    conversations::read_back::scan(home, company, key, connector.as_ref(), reach.connectors.now(), &quit, &|| {
+                        let _ = scan_nudge.try_send(());
+                    })
+                });
+                if let Err(error) = result {
+                    tracing::warn!(target: LOG_TARGET, event = "connector_read_back_failed", company = %company, connector = key, error = %error);
+                    retry_at = Some(Instant::now() + delay);
+                    delay = (delay * 2).min(Duration::from_secs(60));
+                } else {
+                    retry_at = None;
+                    delay = Duration::from_secs(1);
+                }
+            }
+        });
         let mut backoff = Duration::from_secs(1);
         while !quit() {
             state(home, company, key, ConnectionState::Connecting, None);
@@ -423,6 +457,7 @@ fn connection(
                 key,
                 nudge: &nudge,
                 clock: reach.connectors.as_ref(),
+                read_back: &read_back,
             };
             let failure = reach
                 .connectors

@@ -724,7 +724,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         .map_err(|e| inspection_error("conversation links", e))?;
     let conversations = request
         .company
-        .map(|company| company.status(request.home))
+        .map(|company| company.status(request.home, request.now))
         .transpose()
         .map_err(|e| inspection_error("conversations", e))?
         .unwrap_or(serde_json::Value::Null);
