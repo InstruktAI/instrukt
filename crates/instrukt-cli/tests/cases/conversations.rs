@@ -1098,7 +1098,16 @@ fn notice_epochs_and_reconciliation() {
     let sender = "USTEVEN";
     let other = "UANNA";
     projected(&c);
-    c.runtime.flag("list-failure", true);
+    c.runner_dies();
+    let database = c.store.file.clone();
+    let away = database.with_extension("away");
+    std::fs::rename(&database, &away).unwrap();
+    std::fs::create_dir(&database).unwrap();
+    c.run();
+    let first_at = interval_clock(&clock);
+    wait("the relay cannot acquire the source", || {
+        relay_since(&c).as_deref() == Some(&first_at.to_string())
+    });
     let first = c
         .slack
         .mention(channel, sender, "<@UAGENT> When do we ship?", None);
@@ -1106,24 +1115,22 @@ fn notice_epochs_and_reconciliation() {
     let other_question =
         c.slack
             .mention(channel, other, "<@UAGENT> What do I review?", Some(&first));
-    let first_at = interval_at(&c, &first);
-    wait("both members' messages admitted", || {
-        retained_conversations(&c)
-            .conversations
-            .iter()
-            .any(|row| row.pending_messages == 2)
-    });
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    // Both members have questions waiting while the start is refused.
-    // Give the queued question the same interval, without a source restart.
-    db.execute(
-        "UPDATE conversation_messages SET unavailable_since=?2 WHERE message=?1",
-        instrukt_core::state_db::rusqlite::params![other_question, first_at.to_string()],
-    )
-    .unwrap();
+    let admitted = |message: &str| {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND admitted_at IS NOT NULL)",
+            [message],
+            |row| row.get::<_, bool>(0),
+        ).unwrap()
+    };
+    wait("both members admitted during the outage", || {
+        admitted(&first) && admitted(&other_question)
+    });
+    assert_eq!(interval(&c, &first), None);
+    assert_eq!(interval(&c, &other_question), None);
     // The queued follow-up is admitted later and does not enter the
     // first notice's set of already-due messages.
     set_clock(&clock, first_at + jiff::SignedDuration::from_secs(1));
@@ -1132,12 +1139,7 @@ fn notice_epochs_and_reconciliation() {
         .mention(channel, sender, "<@UAGENT> And what time?", Some(&first));
     wait(
         "the repeated message admitted while the relay is down",
-        || {
-            retained_conversations(&c)
-                .conversations
-                .iter()
-                .any(|row| row.pending_messages == 3)
-        },
+        || admitted(&again),
     );
     c.slack.fate(&notice_text(sender), Fate::Lost, 1);
     c.slack.fate(&notice_text(other), Fate::Refused, 1);
@@ -1173,7 +1175,10 @@ fn notice_epochs_and_reconciliation() {
     );
     assert_eq!(notices(&c, sender), 1);
 
-    c.runtime.flag("list-failure", false);
+    c.runner_dies();
+    std::fs::remove_dir(&database).unwrap();
+    std::fs::rename(&away, &database).unwrap();
+    c.run();
     let session = started(&c, &[]);
     wait("the first input accepted", || {
         c.runtime.message_count(&session) == 1
@@ -1372,6 +1377,31 @@ fn observe_notice_pass(c: &Company, clock: &std::path::Path, now: jiff::Timestam
     });
 }
 
+/// Wait for this member's notice task to finish its decision at the new
+/// time. Another member's post does not establish this ordering.
+fn wait_for_notice_decision(
+    c: &Company,
+    conversation: &str,
+    member: &str,
+    clock: &std::path::Path,
+    at: jiff::Timestamp,
+) {
+    let path = c.env.path("notice-decisions");
+    let decision = format!("{conversation}\t{member}");
+    let decisions = || {
+        std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == decision)
+            .count()
+    };
+    let before = decisions();
+    set_clock(clock, at);
+    wait("the held answer's member evaluated for a notice", || {
+        decisions() > before
+    });
+}
+
 fn a_lost_answer_response_defers_notices_until_read_back() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1390,13 +1420,12 @@ fn a_lost_answer_response_defers_notices_until_read_back() {
     });
     c.runner_dies();
     let opened = interval_at(&c, &asked);
-    set_clock(&clock, opened + minute());
     let held = c.slack.held();
     c.run();
     wait("the restarted relay reading back the answer", || {
         c.slack.held() > held
     });
-    observe_notice_pass(&c, &clock, opened + minute());
+    wait_for_notice_decision(&c, "D13", "USTEVEN", &clock, opened + minute());
     assert_eq!(notices(&c, "USTEVEN"), 0, "the answer is already visible");
     assert!(!answers_recorded(&c));
     c.slack.release_reads();
@@ -1435,8 +1464,7 @@ fn an_unconfirmed_answer_is_reconciled_before_retry() {
     c.slack.commit_late();
     wait("the later read-back is held", || c.slack.held() > held);
     assert_eq!(c.slack.posts_beginning(answer), 1);
-    set_clock(&clock, opened + minute());
-    observe_notice_pass(&c, &clock, opened + minute());
+    wait_for_notice_decision(&c, "D16", "USTEVEN", &clock, opened + minute());
     assert_eq!(
         notices(&c, "USTEVEN"),
         0,
@@ -1449,8 +1477,6 @@ fn an_unconfirmed_answer_is_reconciled_before_retry() {
     );
     assert_eq!(c.slack.posts_beginning(answer), 1);
     assert_eq!(notices(&c, "USTEVEN"), 0);
-
-    c.runtime.flag("list-failure", false);
 
     // An empty read after the timeout can settle a post that never appears.
     // A confirmed rejection then permits a notice.
@@ -1477,6 +1503,75 @@ enum LegacyReceipt {
     Late,
     LateWithNewNotice,
     LateWithUnconfirmedNotice,
+}
+
+/// Seed the interrupted answer and its conversation into the schema shipped
+/// before metadata receipts. The runner opening this file owns its upgrade.
+fn seed_v22_answer_attempt(
+    c: &Company,
+    conversation: &str,
+) -> instrukt_core::state_db::rusqlite::Connection {
+    use instrukt_core::state_db::rusqlite::Connection;
+    let state_dir = c.env.instrukt_home().join("state");
+    let state_path = state_dir.join("instrukt.db");
+    let seed_path = c.env.path("state-v22.sqlite");
+    let legacy = Connection::open(&seed_path).unwrap();
+    legacy
+        .execute_batch(include_str!("../fixtures/state-v22.sql"))
+        .unwrap();
+    legacy
+        .execute(
+            "ATTACH DATABASE ?1 AS interrupted",
+            [state_path.to_str().unwrap()],
+        )
+        .unwrap();
+    assert_eq!(legacy.execute(
+        "INSERT INTO connected_conversations
+         SELECT company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json,failure
+         FROM interrupted.connected_conversations WHERE conversation=?1",
+        [conversation],
+    ).unwrap(), 1);
+    assert_eq!(legacy.execute(
+        "INSERT INTO conversation_messages(company,connector,conversation,message,sender,sender_name,sender_email,
+             written_us,written_at,arrived_at,state,text,context_json,boundary,content,attempted_at,turn,failure,
+             admitted_at,unavailable_since,turn_update,turn_ended_at)
+         SELECT company,connector,conversation,message,sender,sender_name,sender_email,
+             written_us,written_at,arrived_at,state,text,context_json,boundary,content,attempted_at,turn,failure,
+             admitted_at,unavailable_since,turn_update,turn_ended_at
+         FROM interrupted.conversation_messages WHERE conversation=?1",
+        [conversation],
+    ).unwrap(), 1);
+    assert_eq!(legacy.execute(
+        "INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at,failure,attempted_at)
+         SELECT company,connector,conversation,turn,piece,text,posted_at,failure,attempted_at
+         FROM interrupted.conversation_answers WHERE conversation=?1 AND attempted_at IS NOT NULL AND posted_at IS NULL",
+        [conversation],
+    ).unwrap(), 1);
+    drop(legacy);
+    for suffix in ["", "-wal", "-shm"] {
+        let original = state_dir.join(format!("instrukt.db{suffix}"));
+        if original.exists() {
+            std::fs::rename(
+                original,
+                c.env.path(&format!("interrupted-v23.sqlite{suffix}")),
+            )
+            .unwrap();
+        }
+    }
+    std::fs::rename(seed_path, &state_path).unwrap();
+    let state = Connection::open(state_path).unwrap();
+    assert_eq!(
+        state
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .unwrap(),
+        22
+    );
+    assert!(!state.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_answers') WHERE name='post_id')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).unwrap());
+    state
 }
 
 fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
@@ -1517,16 +1612,7 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
     });
     c.runner_dies();
     c.slack.fail_held_posts();
-    let state = instrukt_core::state_db::rusqlite::Connection::open(
-        c.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    // The migration test covers the schema transition; start the real CLI
-    // with the same id-less attempt it leaves for the relay.
-    assert_eq!(state.execute(
-        "UPDATE conversation_answers SET post_id=NULL,latest_attempted_at=NULL WHERE conversation=?1 AND attempted_at IS NOT NULL",
-        [&conversation],
-    ).unwrap(), 1);
+    let state = seed_v22_answer_attempt(&c, &conversation);
     if receipt != LegacyReceipt::Missing {
         c.slack.say_at(
             "1700000011.000100",
@@ -1555,26 +1641,18 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).unwrap()
     };
-    if receipt == LegacyReceipt::Late {
-        // Keep an already delivered notice from this epoch in both systems.
-        state.execute(
-            "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,replied_at,covered_positions) VALUES (?1,'slack',?2,?3,'unavailable',?4,'posted',?4,json_array((SELECT admission_position FROM conversation_messages WHERE company=?1 AND connector='slack' AND conversation=?2 AND message=?5)))",
-            instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string(), asked],
-        ).unwrap();
-        c.slack.say_at(
-            "1700000010.500000",
-            channel,
-            crate::fixtures::slack::BOT_USER,
-            &notice_text(member),
-            Some(&thread),
-        );
-    }
     if late {
         set_clock(&clock, at + jiff::SignedDuration::from_secs(119));
         c.slack.hold_reads_from("1700000010.000000");
     }
     c.run();
-    wait("the id-less attempt read back once", || {
+    wait("the new runner migrates v22 to v23", || {
+        state
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .unwrap()
+            == 23
+    });
+    wait("the migrated id-less attempt is read back once", || {
         legacy_state().1.is_some()
     });
     if late {
@@ -1585,6 +1663,21 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             legacy_state().1,
             Some((at + jiff::SignedDuration::from_secs(119)).to_string())
         );
+        if receipt == LegacyReceipt::Late {
+            // The upgraded runner already read the legacy attempt. Retain a
+            // confirmed notice before the held receipt can settle its epoch.
+            state.execute(
+                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,replied_at,covered_positions) VALUES (?1,'slack',?2,?3,'unavailable',?4,'posted',?4,json_array((SELECT admission_position FROM conversation_messages WHERE company=?1 AND connector='slack' AND conversation=?2 AND message=?5)))",
+                instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string(), asked],
+            ).unwrap();
+            c.slack.say_at(
+                "1700000010.500000",
+                channel,
+                crate::fixtures::slack::BOT_USER,
+                &notice_text(member),
+                Some(&thread),
+            );
+        }
         set_clock(&clock, at + jiff::SignedDuration::from_secs(121));
         common::wait_until(
             "expiry while the matching read-back is held",
@@ -2234,10 +2327,12 @@ fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
 
     use instrukt_core::state_db::rusqlite::Connection;
     let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    c.runner_dies();
     set_clock(
         &clock,
         settled + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
     );
+    c.run();
     let retained = || {
         db.query_row(
             "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND superseded_at IS NOT NULL)",
@@ -2476,6 +2571,10 @@ fn prepared_status_company() -> Company {
     let wake = env.path("clock.notice-wake");
     std::fs::write(&wake, "").unwrap();
     env.set_env("INSTRUKT_TEST_NOTICE_WAKE_FILE", wake.to_str().unwrap());
+    env.set_env(
+        "INSTRUKT_TEST_NOTICE_DECISIONS",
+        env.path("notice-decisions").to_str().unwrap(),
+    );
     let company = Company::with_fakes(env);
     for file in files {
         let path = company.env.instrukt_home().join(file.path);

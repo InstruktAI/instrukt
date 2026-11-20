@@ -626,6 +626,18 @@ fn deliver_notice(
         Ok(_) => Ok(()),
         Err(error) => Err(error),
     };
+    // Append only after the decision and any resulting post have completed,
+    // so a fixture holding a receipt can wait for this member's own task.
+    if cfg!(debug_assertions)
+        && result.is_ok()
+        && let Some(path) = std::env::var_os("INSTRUKT_TEST_NOTICE_DECISIONS")
+        && let Ok(mut file) =
+            instrukt_core::fsx::open(std::fs::OpenOptions::new().create(true).append(true), path)
+    {
+        use std::io::Write as _;
+        let decision = format!("{}\t{}\n", notice.conversation, notice.sender);
+        let _ = file.write_all(decision.as_bytes());
+    }
     if let Err(error) = result {
         tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error);
     }
