@@ -287,6 +287,49 @@ impl RuntimeAdapter for T3 {
                 | Capability::ConfiguredRuntimes
         )
     }
+    fn observe_send(
+        &self,
+        session: &SessionRef,
+        text: &str,
+    ) -> Result<super::SendEvidence, SessionsError> {
+        use super::SendEvidence;
+        let shown = match self.show(session, 0) {
+            Ok(shown) => shown,
+            Err(SessionsError::Gone(_)) => {
+                return Ok(SendEvidence::Presence(super::Presence::Absent));
+            }
+            Err(error) => return Err(error),
+        };
+        let idle =
+            shown.thread.active_run_id.is_none() && shown.thread.pending_request_count == Some(0);
+        let thread = shown.thread.decode()?;
+        if thread.presence != super::Presence::Present {
+            return Ok(SendEvidence::Presence(thread.presence));
+        }
+        let user_home = self
+            .env
+            .get("HOME")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| failure("input observation", "machine home is unavailable"))?;
+        let home = instrukt_core::home::Home::at_user_home(user_home.into());
+        let (accepted, empty) =
+            super::_t3_conversations::send_evidence(&home, &self.env, session.id.as_str(), text)
+                .map_err(|error| failure("input observation", error.to_string()))?;
+        Ok(if accepted {
+            SendEvidence::Accepted
+        } else if idle
+            && empty
+            && matches!(
+                thread.state,
+                SessionState::InputReady | SessionState::EndedFailed
+            )
+        {
+            SendEvidence::IdleWithoutInput
+        } else {
+            SendEvidence::Unresolved
+        })
+    }
+
     fn observe_input(
         &self,
         session: &SessionRef,

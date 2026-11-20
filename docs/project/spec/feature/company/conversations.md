@@ -134,8 +134,16 @@ include the omission note when the limit trims it. Record the selected
 messages and addressed message in the same transaction that records the
 delivery. A send or start whose acceptance is uncertain retains the exact
 input for reconciliation and keeps later work queued until it is resolved.
-A lookup that misses the input does not establish non-acceptance. When the
-runtime confirms that a send was rejected, select context again before retrying. Receipts follow message retention as stated in
+A lookup miss alone supplies no proof. After the two-minute `SETTLE` window
+used for posts, a live idle thread with no active or queued turn and no record
+of that input establishes non-acceptance. Retry with context selected again
+and a fresh attempt boundary. An explicit refusal also establishes
+non-acceptance. Presence and its recovery doors still apply.
+If native reads fail or show work other than the attempted input through
+`SEND_RECONCILE_BOUND` (five minutes from the attempt on the operator clock),
+retain the original input and record delivery unknown for the operator.
+The relay does not resend that input and releases its place in the queue.
+A later match to that boundary confirms delivery and lets the answer proceed. Receipts follow message retention as stated in
 the state-database spec.
 
 
@@ -450,6 +458,8 @@ Scenario: The member receives the answer after a retry
   And progress from the unsuccessful work is never posted as the answer
   And another member can be answered while the failed question waits
   And if the wait earns an unavailable notice, only one is posted before the answer
+  And a send with a lost response and no runtime record is retried once the runtime is idle after the settle window
+  And later questions reach the assistant after the saved question without a duplicate delivery
 
 ```
 

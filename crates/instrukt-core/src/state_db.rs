@@ -556,7 +556,7 @@ mod tests {
         ).unwrap();
         migrate(&mut conn, path).unwrap();
         conn.execute(
-            r#"UPDATE conversation_messages SET context_delivery_ids='["1.000000"]' WHERE message='1.000001'"#,
+            r#"UPDATE conversation_messages SET context_delivery_ids='["1.000000"]', send_unknown_at='2026-11-18T10:05:00Z' WHERE message='1.000001'"#,
             [],
         ).unwrap();
         conn.execute(
@@ -588,14 +588,20 @@ mod tests {
                 ("1.000001".to_owned(), None),
             ]
         );
-        let delivery: String = conn
+        let delivery: (String, String) = conn
             .query_row(
-                "SELECT context_delivery_ids FROM conversation_messages WHERE message='1.000001'",
+                "SELECT context_delivery_ids,send_unknown_at FROM conversation_messages WHERE message='1.000001'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(delivery, r#"["1.000000"]"#);
+        assert_eq!(
+            delivery,
+            (
+                r#"["1.000000"]"#.to_owned(),
+                "2026-11-18T10:05:00Z".to_owned()
+            )
+        );
     }
 
     #[test]

@@ -952,8 +952,154 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     std::thread::scope(|scope| {
         #[cfg(debug_assertions)]
         scope.spawn(a_replacement_reports_the_old_acknowledgement);
+        scope.spawn(an_idle_conversation_retries_an_unrecorded_send);
+        scope.spawn(a_busy_conversation_releases_an_unresolved_send);
         failed_work_is_retried_after_a_restart();
     });
+}
+
+fn an_idle_conversation_retries_an_unrecorded_send() {
+    let (mut c, clock, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let sent = |command: &str| {
+        c.runtime
+            .calls()
+            .iter()
+            .filter(|line| line.as_str() == command)
+            .count()
+    };
+    let wire = format!("thread send -- {session} -");
+    let show = format!("thread show --json --messages 0 -- {session}");
+    let before = sent(&wire);
+    let at = interval_clock(&clock);
+    c.runtime.flag(&format!("{session}.lose-next-send"), true);
+    let first = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the revised report?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let attempt = || {
+        db.query_row(
+        "SELECT boundary FROM conversation_messages WHERE message=?1 AND attempted_at IS NOT NULL",
+        [&first], |row| row.get::<_, String>(0),
+    ).ok()
+    };
+    wait_for_answer_fixture("the first send failed and remains unconfirmed", || {
+        sent(&wire) == before + 1 && interval(&c, &first).is_some()
+    });
+    let original = attempt().unwrap();
+    c.slack
+        .direct("D30", "USTEVEN", "When does the review start?");
+    let checks = sent(&show);
+    set_clock(&clock, at + jiff::SignedDuration::from_secs(119));
+    answer_source_changed(&c, 2);
+    wait_for_answer_fixture(
+        "the idle thread is checked inside the settle window",
+        || sent(&show) > checks,
+    );
+    assert_eq!(sent(&wire), before + 1);
+    assert_eq!(attempt().as_deref(), Some(original.as_str()));
+    assert_eq!(c.runtime.message_count(&session), 1);
+
+    set_clock(&clock, at + jiff::SignedDuration::from_secs(120));
+    answer_source_changed(&c, 3);
+    wait_for_answer_fixture(
+        "the saved question is retried once the idle thread proves no acceptance",
+        || c.runtime.message_count(&session) == 2,
+    );
+    assert_ne!(attempt().as_deref(), Some(original.as_str()));
+    assert!(
+        c.input(&session, 1)
+            .contains("Where is the revised report?")
+    );
+    finish_answer_turn(&mut c, &session, 1, "The revised report is in the drive.");
+    wait_for_answer_fixture("the next question is attempted without a duplicate", || {
+        c.runtime.message_count(&session) == 3
+    });
+    assert_eq!(
+        c.runtime
+            .calls()
+            .iter()
+            .filter(|line| line.as_str() == wire)
+            .count(),
+        before + 3
+    );
+    assert!(c.input(&session, 2).contains("When does the review start?"));
+    assert!(
+        !c.input(&session, 2)
+            .contains("Where is the revised report?")
+    );
+    finish_answer_turn(&mut c, &session, 2, "The review starts at noon.");
+    wait_for_answer_fixture("both questions are answered once", || {
+        c.slack
+            .posts_beginning("The revised report is in the drive.")
+            == 1
+            && c.slack.posts_beginning("The review starts at noon.") == 1
+    });
+}
+
+fn a_busy_conversation_releases_an_unresolved_send() {
+    let (mut c, clock, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let at = interval_clock(&clock);
+    c.runtime.flag(&format!("{session}.lose-next-send"), true);
+    let first = c
+        .slack
+        .direct("D30", "USTEVEN", "Is the draft in the drive?");
+    wait_for_answer_fixture("the failed send has an open interval", || {
+        interval(&c, &first).is_some()
+    });
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let retained = || {
+        db.query_row(
+            "SELECT content,send_unknown_at FROM conversation_messages WHERE message=?1",
+            [&first],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .unwrap()
+    };
+    let original = retained().0;
+    c.runtime
+        .person_sends(&c.env, &session, "A turn the operator started in T3.");
+    c.slack
+        .direct("D30", "USTEVEN", "Do we have meeting notes?");
+    set_clock(&clock, at + jiff::SignedDuration::from_mins(5));
+    answer_source_changed(&c, 2);
+    wait_for_answer_fixture(
+        "a busy thread releases the unresolved send at the operator bound",
+        || retained().1.is_some(),
+    );
+    assert_eq!(retained().0, original);
+    assert!(conversation_finding(&c, &format!("delivery unknown for message {first}")).is_some());
+    assert!(interval(&c, &first).is_none());
+    assert_eq!(c.runtime.message_count(&session), 2);
+    finish_answer_turn(&mut c, &session, 1, "NOOP");
+    wait_for_answer_fixture(
+        "later work proceeds without retrying the unknown send",
+        || c.runtime.message_count(&session) == 3,
+    );
+    assert!(c.input(&session, 2).contains("Do we have meeting notes?"));
+    assert!(!c.input(&session, 2).contains("Is the draft in the drive?"));
+    finish_answer_turn(&mut c, &session, 2, "The notes are saved.");
+    wait_for_answer_fixture("the later question's answer is recorded", || {
+        c.slack.posts_beginning("The notes are saved.") == 1 && answers_recorded(&c)
+    });
+    // The native runtime finally exposes the original input and its answer.
+    c.runtime.person_sends(&c.env, &session, &original);
+    finish_answer_turn(&mut c, &session, 3, "Yes, the draft is in the drive.");
+    wait_for_answer_fixture(
+        "the late answer posts and clears the unknown delivery",
+        || {
+            c.slack.posts_beginning("Yes, the draft is in the drive.") == 1
+                && retained().1.is_none()
+        },
+    );
+    assert_eq!(c.runtime.message_count(&session), 4);
 }
 
 fn failed_work_is_retried_after_a_restart() {

@@ -195,6 +195,14 @@ pub enum InputState {
     Consumed,
 }
 
+/// The runtime's reconciliation of one exact send attempt.
+pub enum SendEvidence {
+    Accepted,
+    IdleWithoutInput,
+    Unresolved,
+    Presence(Presence),
+}
+
 /// Runtime-owned input evidence, independent of transcript/run-id representation.
 #[derive(Debug, Clone)]
 pub struct InputObservation {
@@ -327,6 +335,8 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     ) -> Result<(), SessionsError>;
     fn delivery_realization(&self) -> DeliveryRealization;
     fn supports(&self, capability: Capability) -> bool;
+    fn observe_send(&self, session: &SessionRef, text: &str)
+    -> Result<SendEvidence, SessionsError>;
     fn observe_input(
         &self,
         _session: &SessionRef,

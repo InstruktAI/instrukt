@@ -48,16 +48,17 @@ UPDATE conversation_messages SET attempted_at=NULL WHERE state='failed' AND supe
 
 /// The provider identities delivered in each conversation.
 fn v25(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
-    let has_delivery_ids: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages')
-         WHERE name='context_delivery_ids')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_delivery_ids {
-        tx.execute_batch(
-            "ALTER TABLE conversation_messages ADD COLUMN context_delivery_ids TEXT;",
+    for column in ["context_delivery_ids", "send_unknown_at"] {
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages') WHERE name=?1)",
+            [column],
+            |row| row.get(0),
         )?;
+        if !exists {
+            tx.execute_batch(&format!(
+                "ALTER TABLE conversation_messages ADD COLUMN {column} TEXT;"
+            ))?;
+        }
     }
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS conversation_context_receipts (

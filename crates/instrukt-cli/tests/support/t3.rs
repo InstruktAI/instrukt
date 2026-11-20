@@ -213,6 +213,10 @@ elif command=='send':
     if fail_once.exists():
         fail_once.unlink()
         print('No running T3 Code server uses the fixture store. Start T3 Code, then retry.',file=sys.stderr); sys.exit(1)
+    ambiguous=root/(operands[0]+'.lose-next-send')
+    if ambiguous.exists():
+        ambiguous.unlink()
+        print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
     if (root/'send-failure').exists(): print('No running T3 Code server uses the fixture store. Start T3 Code, then retry.',file=sys.stderr); sys.exit(1)
     if (root/'send-unreachable').exists():
         print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+sys.stdin.read(),file=sys.stderr); sys.exit(1)
@@ -267,7 +271,10 @@ elif command=='show':
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=3:
             t['status']='running'; save(t); (root/'busy-before-entry').unlink(); counter.unlink()
-    print(json.dumps({'thread':{k:v for k,v in t.items() if k not in ['messages','checkout'] and not (k=='projectId' and (root/'hide-project-id').exists())},'messages':[{k:v for k,v in m.items() if k!='queued'} for m in [m for m in t['messages'] if not m.get('queued',False)][-limit:]] if limit else []}))
+    summary={k:v for k,v in t.items() if k not in ['messages','checkout'] and not (k=='projectId' and (root/'hide-project-id').exists())}
+    if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
+        summary['activeRunId']=None
+    print(json.dumps({'thread':summary,'messages':[{k:v for k,v in m.items() if k!='queued'} for m in [m for m in t['messages'] if not m.get('queued',False)][-limit:]] if limit else []}))
     if limit==0 and (root/'busy-after-idle-read').exists():
         counter=root/'asap-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=2:
