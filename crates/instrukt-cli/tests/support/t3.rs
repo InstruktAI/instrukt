@@ -217,8 +217,9 @@ elif command=='send':
     t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued}); save(t)
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
-    if (root/'hold-show-after-send').exists():
-        (root/'hold-show-after-send').unlink()
+    lost_ack=root/(t['threadId']+'.hold-show-after-send')
+    if lost_ack.exists():
+        lost_ack.unlink()
         (root/(t['threadId']+'.show-held')).unlink(missing_ok=True)
         (root/(t['threadId']+'.hold-show')).touch()
         print('send acknowledgment lost', file=sys.stderr); sys.exit(1)
@@ -525,6 +526,10 @@ impl FakeT3 {
     }
     pub fn held_send_running(&self, session: &str) -> bool {
         self.running(&format!("{session}.send-held"))
+    }
+    /// Lose this target's next send acknowledgment and hold its read-back.
+    pub fn hold_show_after_send(&self, session: &str) {
+        self.flag(&format!("{session}.hold-show-after-send"), true);
     }
     /// The original held show is still running, even if another was launched.
     pub fn held_show_running(&self, session: &str) -> bool {

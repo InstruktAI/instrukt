@@ -1053,7 +1053,7 @@ fn held_runtime_checks_leave_another_conversation_free() {
     assert!(c.runtime.held_show_running(&session));
     assert_eq!(c.runtime.message_count(&session), 1);
 
-    c.runtime.flag("hold-show-after-send", true);
+    c.runtime.hold_show_after_send(&session);
     std::fs::remove_file(&marker).unwrap();
     std::fs::remove_file(&held).unwrap();
     wait("the lost acknowledgment's read-back check is held", || {

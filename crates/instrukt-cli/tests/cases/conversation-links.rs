@@ -1156,6 +1156,16 @@ fn a_peer_link_delivers_while_another_links_send_and_reconciliation_wait() {
     }
     let held_send = fake.state_dir().join("child.hold-send");
     std::fs::write(&held_send, "").unwrap();
+    fake.hold_show_after_send("child");
+    let delivered = |turn: &str| {
+        links::status(&home)
+            .unwrap()
+            .iter()
+            .flat_map(|link| &link.directions)
+            .any(|direction| {
+                direction.delivered_turn.as_deref() == Some(turn) && direction.pending == 0
+            })
+    };
     let _runner = Running(
         env.instrukt_process(env.home())
             .arg("run")
@@ -1171,7 +1181,11 @@ fn a_peer_link_delivers_while_another_links_send_and_reconciliation_wait() {
         "A question.",
         "A retained contribution.",
     );
-    wait_for(|| fake.held_send_running("child"));
+    common::wait_until(
+        "the first link enters its held send",
+        Duration::from_secs(15),
+        || fake.held_send_running("child"),
+    );
     store.turn(
         "other-parent",
         "first-peer",
@@ -1180,19 +1194,23 @@ fn a_peer_link_delivers_while_another_links_send_and_reconciliation_wait() {
         "The first peer reply.",
     );
     common::wait_until(
-        "the peer receives a reply during the held send",
+        "the peer records delivery during the held send",
         Duration::from_secs(15),
-        || {
-            fake.input_log("other-child")
-                .contains("The first peer reply.")
-        },
+        || delivered("first-peer"),
+    );
+    assert!(
+        fake.input_log("other-child")
+            .contains("The first peer reply.")
     );
     assert!(fake.held_send_running("child"));
     assert_eq!(fake.message_count("child"), 1);
 
-    fake.flag("hold-show-after-send", true);
     std::fs::remove_file(held_send).unwrap();
-    wait_for(|| fake.held_show_running("child"));
+    common::wait_until(
+        "the first link enters its held read-back",
+        Duration::from_secs(15),
+        || fake.held_show_running("child"),
+    );
     assert!(fake.input_log("child").contains("A retained contribution."));
     store.turn(
         "other-parent",
@@ -1202,24 +1220,21 @@ fn a_peer_link_delivers_while_another_links_send_and_reconciliation_wait() {
         "The second peer reply.",
     );
     common::wait_until(
-        "the peer receives another reply during the held read-back",
+        "the peer records another delivery during the held read-back",
         Duration::from_secs(15),
-        || {
-            fake.input_log("other-child")
-                .contains("The second peer reply.")
-        },
+        || delivered("second-peer"),
+    );
+    assert!(
+        fake.input_log("other-child")
+            .contains("The second peer reply.")
     );
     assert!(fake.held_show_running("child"));
     std::fs::remove_file(fake.state_dir().join("child.hold-show")).unwrap();
-    wait_for(|| {
-        links::status(&home)
-            .unwrap()
-            .iter()
-            .flat_map(|link| &link.directions)
-            .any(|direction| {
-                direction.delivered_turn.as_deref() == Some("held-turn") && direction.pending == 0
-            })
-    });
+    common::wait_until(
+        "the first link reconciles its accepted send",
+        Duration::from_secs(15),
+        || delivered("held-turn"),
+    );
     assert_eq!(fake.message_count("child"), 2);
     assert_eq!(fake.message_count("other-child"), 3);
 }
