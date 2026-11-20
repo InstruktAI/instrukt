@@ -242,23 +242,44 @@ pub fn unread(
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT m.conversation,m.message,CASE WHEN json_type(m.context_json,'$.previous') IS NOT NULL THEN json_extract(m.context_json,'$.previous') ELSE (SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1) END,m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
+                .prepare(
+                    "SELECT m.conversation,m.message,
+                     CASE WHEN json_type(m.context_json,'$.previous') IS NOT NULL
+                          THEN json_extract(m.context_json,'$.previous')
+                          ELSE (SELECT p.message FROM conversation_messages p
+                                WHERE p.company=m.company AND p.connector=m.connector
+                                  AND p.conversation=m.conversation AND p.written_us<m.written_us
+                                  AND (coalesce(json_extract(m.context_json,'$.retry'),0)=0
+                                       OR p.state IN ('sent','failed','answered'))
+                                ORDER BY p.written_us DESC, p.message DESC LIMIT 1) END,
+                     m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at
+                     FROM conversation_messages m
+                     WHERE m.company=?1 AND m.connector=?2 AND m.state=?3
+                     ORDER BY m.written_us, m.message",
+                )
                 .map_err(state::sql(path))?;
-            q.query_map(params![company.as_str(), connector, Stage::Received.as_str()], |r| {
-                Ok(Unread {
-                    conversation: r.get(0)?,
-                    message: r.get(1)?,
-                    previous: r.get(2)?,
-                    sender: r.get(3)?,
-                    admitted: r.get(4)?,
-                    text: r.get(5)?,
-                    arrived_at: r.get::<_, String>(6)?.parse().map_err(|error: jiff::Error| {
-                        instrukt_core::state_db::rusqlite::Error::FromSqlConversionFailure(
-                            6, instrukt_core::state_db::rusqlite::types::Type::Text, Box::new(error),
-                        )
-                    })?,
-                })
-            })
+            q.query_map(
+                params![company.as_str(), connector, Stage::Received.as_str()],
+                |r| {
+                    Ok(Unread {
+                        conversation: r.get(0)?,
+                        message: r.get(1)?,
+                        previous: r.get(2)?,
+                        sender: r.get(3)?,
+                        admitted: r.get(4)?,
+                        text: r.get(5)?,
+                        arrived_at: r.get::<_, String>(6)?.parse().map_err(
+                            |error: jiff::Error| {
+                                instrukt_core::state_db::rusqlite::Error::FromSqlConversionFailure(
+                                    6,
+                                    instrukt_core::state_db::rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                )
+                            },
+                        )?,
+                    })
+                },
+            )
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(state::sql(path))
@@ -810,7 +831,7 @@ pub fn captured(
         Err(failure) => {
             state.write::<_, StateError>(|tx| {
                 tx.execute(
-                    "UPDATE conversation_messages SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?6",
+                    "UPDATE conversation_messages SET failure=?5,context_json=json_object('retry',1) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?6",
                     params![company.as_str(), connector, unread.conversation, unread.message, failure, Stage::Received.as_str()],
                 )
                 .map_err(state::sql(&state::db_path(tx)))?;

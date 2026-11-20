@@ -362,6 +362,8 @@ Then the agent receives that message's text with the most recent messages writte
 Given people have been talking in a channel without the agent
 When someone tags the agent for the first time there
 Then the agent receives that message with the most recent messages before it
+When the first context read of a reply fails and its late root reaches the agent before the retry
+Then the retry includes intervening context and does not send the delivered root again
 ```
 
 ### UC-SL4: Talk to the agent directly without tagging it

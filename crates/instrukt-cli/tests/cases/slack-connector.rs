@@ -285,6 +285,74 @@ fn a_first_tag_brings_the_most_recent_messages_before_it() {
     assert_eq!(delivered.accompanying, 2);
     assert!(delivered.left_out);
     assert!(c.input(&third, 1).contains(history));
+
+    let channel = "C4";
+    let late_root = "<@UAGENT> What needs a decision?";
+    let root = c.slack.say(channel, "USTEVEN", late_root, None);
+    let intervening = "The team can meet on Friday.";
+    c.slack.say(channel, "UBRAM", intervening, Some(&root));
+    c.slack.refuse_replies(true);
+    let question = c.slack.mention(
+        channel,
+        "UANNA",
+        "<@UAGENT> What should we do?",
+        Some(&root),
+    );
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait(
+        "the reply's first context read fails before the root arrives",
+        || {
+            db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1
+                AND state='received' AND failure LIKE '%thread_not_found%')",
+                [&question],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap()
+        },
+    );
+    let previous_sessions = c.sessions();
+    c.slack
+        .notify_mention(&root, channel, "USTEVEN", late_root, None);
+    wait("the root is delivered before Slack recovers", || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='sent')",
+            [&root],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
+    let session = c
+        .sessions()
+        .into_iter()
+        .find(|session| !previous_sessions.contains(session))
+        .unwrap();
+    assert!(c.input(&session, 0).contains("What needs a decision?"));
+    // Drop replies requests begun before the root's acceptance. Recovery
+    // must choose its range from retained delivery state.
+    c.runner_dies();
+    c.slack.refuse_replies(false);
+    c.run();
+    wait(
+        "the reply captures its context while the root's turn is still running",
+        || {
+            db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='pending')",
+            [&question], |row| row.get::<_, bool>(0),
+        ).unwrap()
+        },
+    );
+    c.finish_turn(&session, 0, "NOOP");
+    wait("the retried reply reaches the agent", || {
+        c.runtime.message_count(&session) == 2
+    });
+    let input = c.input(&session, 1);
+    assert!(!input.contains("What needs a decision?"), "{input}");
+    assert!(input.contains(intervening), "{input}");
+    assert_eq!(c.delivered(&session, 1).accompanying, 1);
 }
 
 // spec: project/instrukt/spec/feature/company/slack-connector UC-SL4
