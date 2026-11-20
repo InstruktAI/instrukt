@@ -96,12 +96,6 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
         ("conversation_refusals", "anchor_message", "TEXT"),
         ("conversation_messages", "admission_position", "INTEGER"),
         ("conversation_messages", "superseded_at", "TEXT"),
-        ("connected_conversations", "delivered_through_us", "INTEGER"),
-        (
-            "connected_conversations",
-            "delivered_through_message",
-            "TEXT",
-        ),
         ("conversation_answers", "admission_position", "INTEGER"),
         (
             "conversation_refusals",
@@ -133,17 +127,6 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
            SELECT m.admission_position FROM conversation_messages m WHERE m.company=a.company
              AND m.connector=a.connector AND m.conversation=a.conversation AND m.turn=a.turn)
            WHERE a.admission_position IS NULL;",
-    )?;
-    // Recover the delivery boundary from the latest retained evidence.
-    // A boundary already recorded can survive the row that established it.
-    tx.execute_batch(
-        "UPDATE connected_conversations AS c
-         SET (delivered_through_us,delivered_through_message)=(
-           SELECT m.written_us,m.message FROM conversation_messages m
-           WHERE m.company=c.company AND m.connector=c.connector AND m.conversation=c.conversation
-             AND m.state IN ('sent','failed','answered')
-           ORDER BY m.written_us DESC,m.message DESC LIMIT 1)
-         WHERE c.delivered_through_us IS NULL;",
     )?;
     // Before the final receipt and interval closure were atomic, a runner
     // could have stopped between those two writes.

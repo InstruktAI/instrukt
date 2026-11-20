@@ -244,6 +244,47 @@ fn a_first_tag_brings_the_most_recent_messages_before_it() {
     assert!(delivered.left_out);
     assert_eq!(delivered.empty, 0);
     insta::assert_snapshot!("first-tag-in-a-thread-delivered", c.input(&second, 0));
+
+    // The reply event comes first. The root is already visible in Slack, but
+    // only its own event should bring the channel history before the root.
+    let history = "The channel chose a release date.";
+    let channel = "C3";
+    for user in ["USTEVEN", "UANNA", "UBRAM"] {
+        c.slack.say(channel, user, history, None);
+    }
+    let late_root = "<@UAGENT> What did the channel decide?";
+    let root = c.slack.say(channel, "USTEVEN", late_root, None);
+    c.slack
+        .mention(channel, "UANNA", "<@UAGENT> Any objections?", Some(&root));
+    wait("the late-root conversation starts from the reply", || {
+        c.sessions().len() == 3
+    });
+    let third = c
+        .sessions()
+        .into_iter()
+        .find(|session| *session != first && *session != second)
+        .unwrap();
+    assert!(!c.input(&third, 0).contains(history));
+    c.finish_turn(&third, 0, "NOOP");
+    let conversation = format!("{channel}/{root}");
+    wait(
+        "the reply has completed before the root event arrives",
+        || {
+            c.conversations()
+                .conversations
+                .iter()
+                .all(|row| row.conversation != conversation)
+        },
+    );
+    c.slack
+        .notify_mention(&root, channel, "USTEVEN", late_root, None);
+    wait("the late root starts its own turn", || {
+        c.runtime.message_count(&third) == 2
+    });
+    let delivered = c.delivered(&third, 1);
+    assert_eq!(delivered.accompanying, 2);
+    assert!(delivered.left_out);
+    assert!(c.input(&third, 1).contains(history));
 }
 
 // spec: project/instrukt/spec/feature/company/slack-connector UC-SL4

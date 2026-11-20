@@ -291,18 +291,6 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         .slack
         .mention("C1", "USTEVEN", "<@UAGENT> Is the build green?", None);
     let session = c.session();
-    let db = instrukt_core::state_db::rusqlite::Connection::open(
-        c.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    wait("the first question's handover is recorded", || {
-        db.query_row(
-            "SELECT state='sent' FROM conversation_messages WHERE message=?1",
-            [&root],
-            |row| row.get::<_, bool>(0),
-        )
-        .unwrap()
-    });
     // While the first turn runs, two more arrive out of the order they were
     // written in, within one second. The later-written one is taken in
     // before the earlier one arrives: its lookup waits until then.
@@ -2132,33 +2120,81 @@ fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
         settled + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
     );
     c.run();
-    wait("the later-written failed question is pruned", || {
-        !db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1)",
+    let retained = || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND superseded_at IS NOT NULL)",
             [&failed],
             |row| row.get::<_, bool>(0),
-        )
-        .unwrap()
+        ).unwrap()
+    };
+
+    // Force a relay pass beyond the bound. A delivered row in another
+    // conversation cannot replace the boundary of this thread.
+    projected(&c);
+    c.slack.mention_at(
+        "1700000900.000100",
+        "C2",
+        "UANNA",
+        "<@UAGENT> Is the office open?",
+        None,
+    );
+    wait(
+        "the relay serves another conversation after the bound",
+        || c.sessions().len() == 2,
+    );
+    assert!(retained(), "the superseded boundary must still be retained");
+    assert!(
+        c.conversations()
+            .conversations
+            .iter()
+            .all(|row| row.conversation != format!("{channel}/{thread}"))
+    );
+    assert_eq!(notices(&c, sender), 0);
+
+    // Advance the written boundary with a delivered message in this thread.
+    // Only then may the relay prune the superseded failure.
+    c.runtime.flag("send-failure", true);
+    let later = c.slack.mention_at(
+        "1700000006.000100",
+        channel,
+        sender,
+        "<@UAGENT> Is the checklist ready?",
+        Some(&thread),
+    );
+    interval_at(&c, &later);
+    assert!(
+        retained(),
+        "an undelivered question cannot replace the boundary"
+    );
+    c.runtime.flag("send-failure", false);
+    wait("a later-written question reaches the session", || {
+        c.runtime.message_count(&session) == 3
     });
+    assert!(!c.runtime.message(&session, 2).contains(failed_text));
+    wait(
+        "the superseded question is pruned behind the new boundary",
+        || !retained(),
+    );
+    c.finish_turn(&session, 2, "NOOP");
     let new_context = "The release checklist is ready.";
     c.slack.say_at(
-        "1700000006.000100",
+        "1700000007.000100",
         channel,
         sender,
         new_context,
         Some(&thread),
     );
     c.slack.mention_at(
-        "1700000007.000100",
+        "1700000008.000100",
         channel,
         sender,
         "<@UAGENT> When do we ship?",
         Some(&thread),
     );
     wait("the new question reaches the session", || {
-        c.runtime.message_count(&session) == 3
+        c.runtime.message_count(&session) == 4
     });
-    let input = c.runtime.message(&session, 2);
+    let input = c.runtime.message(&session, 3);
     assert!(input.contains(new_context), "{input}");
     assert!(!input.contains(failed_text), "{input}");
 }

@@ -689,7 +689,6 @@ is `(company, connector, conversation)`.
 | `semantic_key` | The key its one session is started and woken by. |
 | `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. |
-| `delivered_through_us`, `delivered_through_message` | The greatest written time already delivered as an addressed message, in the microsecond order used for context, and the provider identifier used as the exclusive context boundary. Both are `NULL` until a delivery is known. Migration 23 seeds them from the greatest retained delivered message. A later delivery can only advance the boundary. Pruning leaves it intact. |
 | `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
 | `failure` | Cause of the last failed read of that source; `NULL` once a read succeeds. |
 
@@ -715,10 +714,13 @@ and `message`, the connector's identity of that message.
 | `turn_update` | The newest message the agent has written in its turn, as the runtime records it, which its status shows; `NULL` until the agent has written one, and once its answer is posted or its turn completed with nothing to post. |
 | `turn_ended_at` | When its turn was read as ended, recorded before any post of its answer; a post of that answer that fails opens its interval from this time. `NULL` until then. |
 
-Superseded failed rows are retained for seven days from `superseded_at`, measured
-on the runner's operator clock. Each conversation relay pass prunes at most
-100 rows older than that bound, oldest first. Pruning applies only to rows in
-state `failed` with a recorded `superseded_at`.
+Superseded failed rows are retained for at least seven days from
+`superseded_at`, measured on the runner's operator clock. Each conversation
+relay pass prunes at most 100 eligible rows older than that bound, oldest first.
+Only rows in state `failed` with a recorded `superseded_at` are eligible, and
+only while the same conversation retains a delivered message with a greater
+`written_us`. Until then the failed row is kept as the context boundary while
+remaining absent from status and notice eligibility.
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
 address, `turn` and `piece`. Columns: `text`, the piece's text;

@@ -211,9 +211,10 @@ pub fn retain(
 pub struct Unread {
     pub conversation: String,
     pub message: String,
-    /// The greatest provider timestamp already delivered to this session,
-    /// if any: the exclusive lower bound of the accompanying context.
-    pub delivered_through: Option<String>,
+    /// The previous addressed message of the conversation in written order,
+    /// whether or not it was answered, if any: the lower bound of this one's
+    /// range.
+    pub previous: Option<String>,
     /// The sender's connector identity; `None` for a message stored before
     /// senders were kept, which was admitted when it was stored.
     pub sender: Option<String>,
@@ -232,15 +233,13 @@ pub fn unread(
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT m.conversation,m.message,c.delivered_through_message,m.sender,m.sender_name IS NOT NULL,m.text
-                          FROM conversation_messages m LEFT JOIN connected_conversations c USING (company,connector,conversation)
-                          WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
+                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1),m.sender,m.sender_name IS NOT NULL,m.text FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
                 .map_err(state::sql(path))?;
             q.query_map(params![company.as_str(), connector, Stage::Received.as_str()], |r| {
                 Ok(Unread {
                     conversation: r.get(0)?,
                     message: r.get(1)?,
-                    delivered_through: r.get(2)?,
+                    previous: r.get(2)?,
                     sender: r.get(3)?,
                     admitted: r.get(4)?,
                     text: r.get(5)?,
@@ -1297,25 +1296,6 @@ fn turn_update(
     })
 }
 
-/// Retain the greatest written timestamp the agent has received, even if the
-/// message that supplied it is later pruned.
-fn advance_context(
-    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
-    c: &Conversation,
-    message: &str,
-) -> Result<(), StateError> {
-    tx.execute(
-        "UPDATE connected_conversations AS c
-         SET delivered_through_us=m.written_us,delivered_through_message=m.message
-         FROM conversation_messages AS m
-         WHERE c.company=?1 AND c.connector=?2 AND c.conversation=?3
-           AND m.company=c.company AND m.connector=c.connector AND m.conversation=c.conversation
-           AND m.message=?4 AND (c.delivered_through_us IS NULL OR m.written_us>c.delivered_through_us)",
-        params![c.company.as_str(), c.connector, c.conversation, message],
-    ).map_err(state::sql(&state::db_path(tx)))?;
-    Ok(())
-}
-
 /// The runtime accepted `message` as its own turn, which ends its no-work
 /// interval; a first message's acceptance also binds the conversation's
 /// session.
@@ -1332,7 +1312,6 @@ fn accepted(
             params![c.company.as_str(), c.connector, c.conversation, message, Stage::Sent.as_str()],
         )
         .map_err(state::sql(&path))?;
-        advance_context(tx, c, message)?;
         if let Some(session) = session {
             tx.execute(
                 "UPDATE connected_conversations SET session=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
@@ -1683,9 +1662,6 @@ fn harvest(
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
-                // An observed terminal turn also proves delivery if the
-                // attempt's acceptance had not been recorded.
-                advance_context(tx, c, message)?;
                 if output.is_empty() && !turn.succeeded {
                     // The terminal run proves delivery to the runtime, but
                     // there is no answer. Keep the message outstanding for
@@ -2427,13 +2403,18 @@ pub fn relay(
     Ok(())
 }
 
-/// Remove only the oldest expired superseded failures in each relay pass.
+/// Remove the oldest expired superseded failures with a later delivered
+/// message in the same conversation's written order.
 fn prune_superseded_failures(state: &RunnerState, now: Timestamp) -> Result<(), StateError> {
     const RETENTION: jiff::SignedDuration = jiff::SignedDuration::from_hours(7 * 24);
     const BATCH: i64 = 100;
     let cutoff = format!("{:.9}", now - RETENTION);
-    let expired = "SELECT rowid FROM conversation_messages WHERE state='failed'
-        AND superseded_at IS NOT NULL AND superseded_at<?1";
+    let expired = "SELECT old.rowid FROM conversation_messages AS old
+        WHERE old.state='failed' AND old.superseded_at IS NOT NULL AND old.superseded_at<?1
+          AND EXISTS(SELECT 1 FROM conversation_messages AS later
+            WHERE later.company=old.company AND later.connector=old.connector
+              AND later.conversation=old.conversation AND later.written_us>old.written_us
+              AND later.state IN ('sent','failed','answered'))";
     let due = state.read(|conn, path| {
         conn.query_row(&format!("SELECT EXISTS({expired})"), [&cutoff], |row| {
             row.get::<_, bool>(0)

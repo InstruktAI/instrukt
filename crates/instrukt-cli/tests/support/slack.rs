@@ -625,12 +625,24 @@ impl FakeSlack {
         thread: Option<&str>,
     ) -> String {
         let ts = self.say_at(ts, channel, user, text, thread);
+        self.notify_mention(&ts, channel, user, text, thread);
+        ts
+    }
+
+    /// Deliver the tag event for a message already visible through Slack's API.
+    pub fn notify_mention(
+        &self,
+        ts: &str,
+        channel: &str,
+        user: &str,
+        text: &str,
+        thread: Option<&str>,
+    ) {
         let mut event = json!({"type": "app_mention", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
         if let Some(thread) = thread {
             event["thread_ts"] = json!(thread);
         }
         self.deliver(&format!("envelope-{ts}"), event);
-        ts
     }
 
     /// A person writes to the agent in a direct message.
