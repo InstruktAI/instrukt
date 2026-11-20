@@ -84,6 +84,15 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     if !latest_present {
         tx.execute_batch("ALTER TABLE conversation_answers ADD COLUMN latest_attempted_at TEXT")?;
     }
+    // Before the final receipt and interval closure were atomic, a runner
+    // could have stopped between those two writes.
+    tx.execute_batch(
+        "UPDATE conversation_messages AS m SET unavailable_since=NULL,turn_update=NULL
+         WHERE m.state='answered' AND (m.unavailable_since IS NOT NULL OR m.turn_update IS NOT NULL)
+           AND NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company
+             AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn
+             AND a.posted_at IS NULL)",
+    )?;
     Ok(())
 }
 

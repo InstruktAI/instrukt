@@ -1871,7 +1871,8 @@ fn landed(
 
 /// Record that the connector accepted `piece`. The answer reached the people
 /// whose messages its turn answers: their epoch ends, and with it the
-/// notice of it, in the same transaction.
+/// notice of it, in the same transaction. Recording the final piece also
+/// closes the interval before the status worker can see the answer complete.
 fn posted(
     state: &RunnerState,
     c: &Conversation,
@@ -1883,6 +1884,11 @@ fn posted(
         tx.execute(
             "UPDATE conversation_answers SET posted_at=?6,failure=NULL,attempted_at=NULL,latest_attempted_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
             params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, now.to_string()],
+        )
+        .map_err(state::sql(&path))?;
+        tx.execute(
+            &format!("UPDATE conversation_messages SET unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND state=?5 AND (unavailable_since IS NOT NULL OR turn_update IS NOT NULL) AND NOT EXISTS({UNPOSTED})"),
+            params![c.company.as_str(), c.connector, c.conversation, piece.turn, Stage::Answered.as_str()],
         )
         .map_err(state::sql(&path))?;
         tx.execute(
@@ -2175,27 +2181,11 @@ fn answers(
     if let Err(error) = post(admitted, state, connectors, accepted, c) {
         tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
-    ended(state, c, connectors.now())?;
+    unconfirmed(state, c, connectors.now())?;
     Ok(true)
 }
 
 const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL";
-
-/// After the posts of a pass: a message whose answer is posted is complete,
-/// its interval closed and its update gone. One whose answer is still not
-/// posted although a post of it was tried has its interval opened, as
-/// [`unconfirmed`] does.
-fn ended(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<(), StateError> {
-    state.write::<_, StateError>(|tx| {
-        tx.execute(
-            &format!("UPDATE conversation_messages SET unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND (unavailable_since IS NOT NULL OR turn_update IS NOT NULL) AND NOT EXISTS({UNPOSTED})"),
-            params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()],
-        )
-        .map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
-    })?;
-    unconfirmed(state, c, now)
-}
 
 /// A message whose answer is not posted although a post of it was tried —
 /// it failed, or its outcome was lost, a restart included — has its interval

@@ -547,16 +547,40 @@ mod tests {
         conn.pragma_update(None, "user_version", u32::try_from(before).unwrap())
             .unwrap();
         conn.execute("INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,attempted_at) VALUES('acme','slack','C1/1','turn-1',0,'Kept answer','2026-11-18T10:00:00Z')", []).unwrap();
+        conn.execute_batch(
+            "INSERT INTO conversation_messages(company,connector,conversation,message,written_us,written_at,arrived_at,state,text,turn,unavailable_since,turn_update)
+             VALUES ('acme','slack','C1/1','pending-piece',1,'2026-11-18T10:00:00Z','2026-11-18T10:00:00Z','answered','First','turn-1','2026-11-18T10:00:00Z','Working'),
+                    ('acme','slack','C1/1','posted-piece',2,'2026-11-18T10:00:01Z','2026-11-18T10:00:01Z','answered','Second','turn-2','2026-11-18T10:00:01Z','Working');
+             INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at)
+             VALUES ('acme','slack','C1/1','turn-2',0,'Posted answer','2026-11-18T10:00:02Z');",
+        ).unwrap();
         conn.execute_batch("INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,replied_at) VALUES('acme','slack','C1/1','UOTHER','2026-11-18T10:00:00Z','2026-11-18T10:00:02Z');INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,failure) VALUES('acme','slack','D1/2','UGUEST','2026-11-18T10:01:00Z','Slack chat.postMessage: timeout');").unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
         let attempts: (String, Option<String>) = conn
             .query_row(
-                "SELECT attempted_at,latest_attempted_at FROM conversation_answers",
+                "SELECT attempted_at,latest_attempted_at FROM conversation_answers WHERE turn='turn-1'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(attempts, ("2026-11-18T10:00:00Z".to_owned(), None));
+        let intervals: Vec<(Option<String>, Option<String>)> = conn
+            .prepare("SELECT unavailable_since,turn_update FROM conversation_messages ORDER BY written_us")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            intervals,
+            [
+                (
+                    Some("2026-11-18T10:00:00Z".to_owned()),
+                    Some("Working".to_owned())
+                ),
+                (None, None)
+            ]
+        );
         type Row = (
             String,
             String,

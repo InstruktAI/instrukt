@@ -773,7 +773,9 @@ are written in one transaction.
 Reading a finished turn and the connector accepting a post are separate
 boundaries: an answer's pieces are stored in the same transaction as the
 position that read them and the message's `answered` state, and `posted_at`
-is set only when the connector accepted that piece. These tables hold no
+is set only when the connector accepted that piece. Recording the final
+piece's receipt closes the message's no-work interval and clears its turn
+update in the same transaction. These tables hold no
 credential.
 
 **`connector_private_messages`** — the messages a connector posted for one

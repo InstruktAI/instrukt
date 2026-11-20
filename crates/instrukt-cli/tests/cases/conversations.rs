@@ -1532,14 +1532,48 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
         c.slack.status(channel, &slowly).as_deref() == Some(UNAVAILABLE)
     });
     assert_eq!(interval(&c, &slowly), Some(done_at.to_string()));
+    // Fault the interval write after Slack accepts the answer. The database
+    // must either keep both changes pending or commit both together.
+    let state = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    state
+        .execute_batch(&format!(
+            "CREATE TRIGGER hold_interval_close BEFORE UPDATE OF unavailable_since ON conversation_messages
+             WHEN OLD.message='{slowly}' AND OLD.unavailable_since IS NOT NULL AND NEW.unavailable_since IS NULL
+             BEGIN SELECT RAISE(ABORT, 'forced interval closure failure'); END"
+        ))
+        .unwrap();
     c.slack.accept_posts();
     wait("the answer once posts are taken", || {
         c.slack.posts().len() == posts + 1
     });
+    let log = c
+        .env
+        .home()
+        .join(".local/state/instrukt-ai/instrukt/run.log");
+    wait("the interval closure write attempted", || {
+        std::fs::read_to_string(&log)
+            .is_ok_and(|log| log.contains("forced interval closure failure"))
+    });
+    assert!(
+        !answers_recorded(&c),
+        "the final receipt must stay pending when its interval cannot close"
+    );
+    assert_eq!(interval(&c, &slowly), Some(done_at.to_string()));
+    assert_eq!(
+        shown(&c, channel, &slowly).last().map(String::as_str),
+        Some(UNAVAILABLE)
+    );
+    state
+        .execute_batch("DROP TRIGGER hold_interval_close")
+        .unwrap();
     wait("the status cleared", || {
         shown(&c, channel, &slowly).last().map(String::as_str) == Some("")
     });
     assert_eq!(interval(&c, &slowly), None);
+    assert_eq!(c.slack.posts().len(), posts + 1);
     assert_eq!(shown(&c, channel, &slowly), [WORKING, UNAVAILABLE, ""]);
 
     // A slow post that succeeds never shows the unavailable text.
