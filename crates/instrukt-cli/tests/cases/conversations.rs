@@ -738,6 +738,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
 fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     std::thread::scope(|scope| {
         scope.spawn(archived_conversation_waits_for_unarchive);
+        scope.spawn(a_held_absence_probe_leaves_another_conversation_free);
         deleted_conversation_waits_for_confirmed_replacement();
     });
 }
@@ -774,23 +775,52 @@ fn wait_for_presence_notice(c: &Company, message: &str, clock: &std::path::Path,
     wait("the member receives the fixed notice", || {
         notices(c, "USTEVEN") == 1
     });
-    assert_eq!(c.slack.posts().len(), 2);
 }
 
 fn archived_conversation_waits_for_unarchive() {
     let (mut c, clock, session) = answered_conversation();
+    let completed = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the completed report?");
+    wait("the turn to complete while the runner is stopped", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.runner_dies();
+    c.finish_turn(&session, 1, "The completed report is in the wiki.");
     c.runtime.archive(&session);
+    c.store.thread(
+        &session,
+        None,
+        Some("2026-11-08T10:01:00Z"),
+        "2026-11-08T10:01:00Z",
+    );
+    c.run();
+    wait(
+        "the completed reply is posted from the archived session",
+        || {
+            c.slack
+                .posts_beginning("The completed report is in the wiki.")
+                == 1
+                && answers_recorded(&c)
+        },
+    );
+    assert_eq!(interval(&c, &completed), None);
+    set_clock(&clock, interval_clock(&clock) + minute());
+    assert_eq!(notices(&c, "USTEVEN"), 0);
+
     let pending = c.slack.direct("D30", "USTEVEN", "What changed today?");
     wait_for_presence_notice(&c, &pending, &clock, "unarchive it or delete it");
+    assert_eq!(c.slack.posts().len(), 3);
     assert_eq!(c.sessions().as_slice(), std::slice::from_ref(&session));
-    assert_eq!(c.runtime.message_count(&session), 1);
+    assert_eq!(c.runtime.message_count(&session), 2);
 
     c.runtime.change(&session, "archived", false.into());
     c.runtime.change(&session, "title", "Renamed in T3".into());
+    c.store.thread(&session, None, None, "2026-11-08T10:02:00Z");
     wait("the renamed session receives the waiting question", || {
-        c.runtime.message_count(&session) == 2
+        c.runtime.message_count(&session) == 3
     });
-    c.finish_turn(&session, 1, "Today’s changes are in the report.");
+    c.finish_turn(&session, 2, "Today’s changes are in the report.");
     wait("the waiting question gets its answer", || {
         c.slack
             .posts_beginning("Today’s changes are in the report.")
@@ -800,7 +830,28 @@ fn archived_conversation_waits_for_unarchive() {
     });
     assert_eq!(c.sessions(), [session]);
     assert_eq!(notices(&c, "USTEVEN"), 1);
-    assert_eq!(c.slack.posts().len(), 3);
+    assert_eq!(c.slack.posts().len(), 4);
+}
+
+fn a_held_absence_probe_leaves_another_conversation_free() {
+    let (mut c, _, session) = answered_conversation();
+    let held = c.runtime.state_dir().join(format!("{session}.hold-show"));
+    std::fs::write(&held, "").unwrap();
+    c.runtime.delete(&session);
+    c.store.unproject_thread(&session);
+    c.slack.direct("D30", "USTEVEN", "What changed?");
+    let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
+    wait("the deleted session's probe is held", || marker.exists());
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
+    c.slack.direct("D31", "UANNA", "Where is the meeting?");
+    let other = started(&c, &[]);
+    c.finish_turn(&other, 0, "In the main office.");
+    wait(
+        "the second conversation is answered without releasing the probe",
+        || c.slack.posts_beginning("In the main office.") == 1,
+    );
+    std::fs::remove_file(held).unwrap();
 }
 
 fn deleted_conversation_waits_for_confirmed_replacement() {
@@ -821,6 +872,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         .unwrap()
     });
     c.runtime.delete(&session);
+    c.store.unproject_thread(&session);
     let second = c.slack.direct("D30", "USTEVEN", "When will it be ready?");
     let key = conversations::key(&c.company(), SLACK, "D30");
     let stopped = format!("t3:{session}");
@@ -833,12 +885,47 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     assert!(c.sessions().is_empty());
 
     c.store.thread("s2", None, None, "2026-11-08T10:00:00.000Z");
-    c.env
+    db.execute_batch(
+        "CREATE TRIGGER hold_replacement BEFORE UPDATE OF accepted ON runtime_bindings
+         WHEN NEW.session='t3:s2' AND NEW.accepted=1
+         BEGIN SELECT RAISE(ABORT, 'held replacement acceptance'); END",
+    )
+    .unwrap();
+    let interrupted = c
+        .env
         .run(
             c.env.home(),
             ["sessions", "replace-deleted", &key, "--stopped", &stopped],
         )
-        .success();
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&interrupted.get_output().stderr)
+            .contains("held replacement acceptance")
+    );
+    assert_eq!(c.sessions(), ["s2"]);
+    c.runtime.delete("s2");
+    c.store.unproject_thread("s2");
+    db.execute_batch("DROP TRIGGER hold_replacement").unwrap();
+
+    let pending_door = format!("instrukt sessions replace-deleted {key} --stopped t3:s2");
+    let failure = || {
+        retained_conversations(&c)
+            .conversations
+            .into_iter()
+            .filter(|row| row.conversation == "D30")
+            .flat_map(|row| row.failures)
+            .find(|failure| failure.contains(&pending_door))
+    };
+    wait(
+        "the operator finding names the deleted pending successor",
+        || failure().is_some(),
+    );
+    let finding = failure().unwrap();
+    let (_, command) = finding.split_once("use ").unwrap();
+    let mut words = command.trim_matches('`').split_whitespace();
+    assert_eq!(words.next(), Some("instrukt"));
+    c.store.thread("s3", None, None, "2026-11-08T10:00:00.000Z");
+    c.env.run(c.env.home(), words.collect::<Vec<_>>()).success();
     let successor = started(&c, &[]);
     assert_ne!(successor, session);
     assert!(

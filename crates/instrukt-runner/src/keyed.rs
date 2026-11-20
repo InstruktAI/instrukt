@@ -1226,17 +1226,38 @@ pub fn replace_deleted(
     })
 }
 
-/// The accepted successor authorized through the deleted-session door.
-pub fn confirmed_successor(
+/// A replacement binding, with its acceptance still gated by the keyed protocol.
+pub fn replacement_binding(
     home: &Home,
     adapter: &dyn RuntimeAdapter,
     key: &str,
     current: &SessionRef,
-) -> Result<Option<SessionRef>, SessionsError> {
+) -> Result<Option<(SessionRef, bool)>, SessionsError> {
     let recorded = record(&RunnerState::new(home), adapter.runtime().name(), key)?;
-    Ok(recorded.bound.filter(|session| {
-        recorded.accepted && recorded.replaced_session.is_some() && session != current
-    }))
+    Ok(recorded
+        .bound
+        .filter(|session| {
+            (recorded.replacement.is_some() || recorded.replaced_session.is_some())
+                && session != current
+        })
+        .map(|session| (session, recorded.accepted)))
+}
+
+/// Report the same recovery door as the keyed commands for the observed binding.
+pub fn presence_finding(
+    home: &Home,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    session: &SessionRef,
+    presence: Presence,
+) -> Result<Option<SessionsError>, SessionsError> {
+    let recorded = record(&RunnerState::new(home), adapter.runtime().name(), key)?;
+    if presence == Presence::Archived {
+        return Ok(Some(archived(key, session)));
+    }
+    Ok(recorded
+        .recovery(presence)
+        .map(|door| door.refusal(key, session)))
 }
 
 pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {

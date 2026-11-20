@@ -1499,6 +1499,9 @@ fn send(
         return Ok(());
     }
     let thread = adapter.read_state(session)?;
+    if thread.presence != Presence::Present {
+        return Ok(());
+    }
     if !matches!(
         thread.state,
         SessionState::InputReady | SessionState::EndedFailed
@@ -1581,9 +1584,9 @@ fn harvest(
     c: &Conversation,
     message_chars: usize,
     clock: &dyn Fn() -> Timestamp,
-) -> Result<(), ConversationError> {
+) -> Result<Presence, ConversationError> {
     let (Some(session), Some(mut position)) = (c.session.clone(), c.position.clone()) else {
-        return Ok(());
+        return Ok(Presence::Present);
     };
     if c.source_identity.as_deref() != Some(source.identity()) {
         return Err(ConversationError::Refused(
@@ -1595,10 +1598,9 @@ fn harvest(
     let own = std::slice::from_ref(&session.id);
     loop {
         let batch = source.changed_since(Some(&position), Scope::Only(own))?;
+        let presence = batch.scoped_presence.unwrap_or(Presence::Present);
         if batch.missing.iter().any(|id| id == &session.id) {
-            return Err(ConversationError::Refused(
-                "the session's native conversation content is missing; restore it".into(),
-            ));
+            return Ok(Presence::Absent);
         }
         // Its answers stay unread, with this cause, until a read is coherent.
         if batch.unsettled.iter().any(|id| id == &session.id) {
@@ -1710,26 +1712,86 @@ fn harvest(
             Ok(())
         })?;
         if !batch.has_more {
-            break;
+            return Ok(presence);
         }
     }
-    Ok(())
 }
 
 /// The answer pieces this process saw the connector accept whose acceptance
 /// it has not yet recorded. Such a piece is never posted again: only its
 /// record is retried, on every pass, until it is written.
 #[derive(Debug, Default)]
-pub struct Accepted(std::sync::Mutex<std::collections::BTreeMap<AcceptedPiece, Timestamp>>);
+pub struct Accepted {
+    receipts: std::sync::Mutex<std::collections::BTreeMap<AcceptedPiece, Timestamp>>,
+    probes: std::sync::Mutex<std::collections::BTreeMap<String, MissingProbe>>,
+}
 
-/// One accepted piece: its conversation's address, its turn and its index.
+#[derive(Debug)]
+struct MissingProbe {
+    revision: u64,
+    reply: std::sync::mpsc::Receiver<Option<Presence>>,
+    result: Option<Option<Presence>>,
+}
+
+impl Accepted {
+    fn confirm_missing(
+        &self,
+        adapter: &dyn RuntimeAdapter,
+        session: &SessionRef,
+        revision: u64,
+    ) -> Option<Presence> {
+        let mut probes = self
+            .probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = session.to_string();
+        if let Some(probe) = probes.get_mut(&id) {
+            if probe.result.is_none() {
+                probe.result = match probe.reply.try_recv() {
+                    Ok(presence) => Some(presence),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+                };
+            }
+            if probe.revision == revision {
+                return probe.result.flatten();
+            }
+        }
+        let (send, reply) = std::sync::mpsc::channel();
+        let runtime = adapter.runtime();
+        let session = session.clone();
+        // The CLI may be slow. Its worker reads native state only and
+        // never takes a conversation lock or holds up a relay pass.
+        let _ = std::thread::Builder::new().spawn(move || {
+            let result = instrukt_runner::runtime::adapter(runtime).read_state(&session);
+            let _ = send.send(result.ok().map(|thread| thread.presence));
+        });
+        probes.insert(
+            id,
+            MissingProbe {
+                revision,
+                reply,
+                result: None,
+            },
+        );
+        None
+    }
+
+    fn source_present(&self, session: &SessionRef) {
+        self.probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&session.to_string());
+    }
+}
+
 type AcceptedPiece = (String, String, String, String, i64);
 
 impl Accepted {
     /// Once the provider confirmed a post, its recipient cannot be owed a
     /// notice while the acceptance still waits to be recorded.
     fn turns(&self, company: &ProjectSlug, connector: &str, conversation: &str) -> Vec<String> {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .keys()
@@ -1754,14 +1816,14 @@ impl Accepted {
     }
 
     fn receipt(&self, key: &AcceptedPiece) -> Option<Timestamp> {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(key)
             .copied()
     }
     fn keep(&self, c: &Conversation, turn: &str, piece: i64, at: Timestamp) {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(Self::key(c, turn, piece), at);
@@ -1771,14 +1833,14 @@ impl Accepted {
     }
 
     fn release_receipt(&self, key: &AcceptedPiece) {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(key);
     }
 
     fn has_receipts(&self, company: &ProjectSlug, connector: &str) -> bool {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .keys()
@@ -2287,28 +2349,22 @@ enum Dispatch {
 /// dispatch lock before it leaves that work for its next pass.
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
 
-/// Check presence only while there is work for this binding. An uncertain
-/// observation leaves source reading and the ordinary delivery checks in place.
-fn bound_available(
+fn adopt_replacement(
     home: &Home,
     state: &RunnerState,
     adapter: &dyn RuntimeAdapter,
     source: &dyn ConversationSource,
     c: &mut Conversation,
-    now: Timestamp,
-) -> Result<bool, ConversationError> {
+) -> Result<Option<SessionRef>, ConversationError> {
     let Some(current) = &c.session else {
-        return Ok(true);
+        return Ok(None);
     };
-    let messages = open_messages(state, c)?
-        .into_iter()
-        .filter(|message| matches!(message.stage, Stage::Pending | Stage::Sent))
-        .map(|message| message.message)
-        .collect::<Vec<_>>();
-    if messages.is_empty() {
-        return Ok(true);
-    }
-    if let Some(successor) = keyed::confirmed_successor(home, adapter, &c.semantic_key, current)? {
+    if let Some((successor, ready)) =
+        keyed::replacement_binding(home, adapter, &c.semantic_key, current)?
+    {
+        if !ready {
+            return Ok(Some(successor));
+        }
         let position = opening_position(source)?;
         let serialized = serde_json::to_string(&position)?;
         state.write::<_, StateError>(|tx| {
@@ -2327,27 +2383,40 @@ fn bound_available(
         c.source_identity = Some(source.identity().to_owned());
         c.position = Some(position);
     }
-    let Some(session) = &c.session else {
-        return Ok(true);
+    Ok(None)
+}
+
+fn blocked(
+    home: &Home,
+    adapter: &dyn RuntimeAdapter,
+    state: &RunnerState,
+    c: &Conversation,
+    session: &SessionRef,
+    presence: Option<Presence>,
+    now: Timestamp,
+) -> Result<(), ConversationError> {
+    let finding = match presence {
+        Some(presence) => {
+            keyed::presence_finding(home, adapter, &c.semantic_key, session, presence)?
+        }
+        None => None,
     };
-    let Ok(thread) = adapter.read_state(session) else {
-        return Ok(true);
-    };
-    let key = c.semantic_key.clone();
-    let cause = match thread.presence {
-        Presence::Present => return Ok(true),
-        Presence::Archived => SessionsError::ArchivedBound {
-            key,
-            session: session.clone(),
+    let failure = finding.map_or_else(
+        || {
+            format!(
+                "the source cannot establish presence for thread {session} under `{}`",
+                c.semantic_key
+            )
         },
-        Presence::Absent => SessionsError::DeletedBound {
-            key,
-            session: session.clone(),
-        },
-    };
-    set_failure(state, c, Some(&cause.to_string()))?;
-    unavailable(state, c, &messages, now)?;
-    Ok(false)
+        |finding| finding.to_string(),
+    );
+    set_failure(state, c, Some(&failure))?;
+    let waiting = open_messages(state, c)?
+        .into_iter()
+        .map(|message| message.message)
+        .collect::<Vec<_>>();
+    unavailable(state, c, &waiting, now)?;
+    Ok(())
 }
 
 /// The connector destination of the finished-turn relay `instrukt run`
@@ -2369,13 +2438,14 @@ pub fn relay(
     let state = RunnerState::new(home);
     prune_superseded_failures(&state, connectors.now())?;
     let mut dispatch = Dispatch::Untried;
-    let work = match pass {
-        CompanyRelayPass::CatchUp => conversations(&state, "", [])?,
-        CompanyRelayPass::Retry => conversations(
+    let work = if pass.catch_up {
+        conversations(&state, "", [])?
+    } else {
+        conversations(
             &state,
             &format!("WHERE (company,connector,conversation) IN ({RELAY_WORK})"),
             relay_stages(),
-        )?,
+        )?
     };
     for initial in work {
         let _lock = match lock(home, &initial) {
@@ -2394,11 +2464,64 @@ pub fn relay(
         let Some(mut c) = reread(&state, &initial)? else {
             continue;
         };
-        if !bound_available(home, &state, adapter, source, &mut c, connectors.now())? {
+        if !open_messages(&state, &c)?.is_empty()
+            && let Some(pending) = adopt_replacement(home, &state, adapter, source, &mut c)?
+        {
+            let observed = source
+                .changed_since(None, Scope::Only(std::slice::from_ref(&pending.id)))
+                .ok()
+                .and_then(|batch| batch.scoped_presence);
+            let presence = match observed {
+                Some(Presence::Absent) => {
+                    accepted.confirm_missing(adapter, &pending, pass.source_revision)
+                }
+                presence => presence,
+            };
+            blocked(
+                home,
+                adapter,
+                &state,
+                &c,
+                &pending,
+                presence,
+                connectors.now(),
+            )?;
             continue;
         }
-        // Attempted sends whose acceptance went unrecorded are reconciled
-        // before any answer is read past them.
+        let Some(presence) = answers(admitted, &state, source, connectors, accepted, &c)? else {
+            continue;
+        };
+        if let Some(session) = &c.session {
+            let presence = if presence == Presence::Absent {
+                if open_messages(&state, &c)?.is_empty() {
+                    continue;
+                }
+                let confirmed = accepted.confirm_missing(adapter, session, pass.source_revision);
+                if confirmed == Some(Presence::Present) {
+                    set_failure(&state, &c, None)?;
+                }
+                confirmed
+            } else {
+                accepted.source_present(session);
+                Some(presence)
+            };
+            if presence != Some(Presence::Present) {
+                if !open_messages(&state, &c)?.is_empty() {
+                    blocked(
+                        home,
+                        adapter,
+                        &state,
+                        &c,
+                        session,
+                        presence,
+                        connectors.now(),
+                    )?;
+                }
+                continue;
+            }
+        }
+        // Completed-turn evidence can settle an attempted send. Reconcile
+        // the remaining attempts only where the bound thread can take work.
         if let Some(session) = &c.session {
             for message in open_messages(&state, &c)?
                 .into_iter()
@@ -2416,9 +2539,6 @@ pub fn relay(
                     set_message_failure(&state, &c, &message.message, Some(&cause))?;
                 }
             }
-        }
-        if !answers(admitted, &state, source, connectors, accepted, &c)? {
-            continue;
         }
         let Some(c) = reread(&state, &c)? else {
             continue;
@@ -2603,7 +2723,7 @@ fn answers(
     connectors: &dyn Connectors,
     accepted: &Accepted,
     c: &Conversation,
-) -> Result<bool, ConversationError> {
+) -> Result<Option<Presence>, ConversationError> {
     // An answer tried earlier and not confirmed is kept from the person
     // whatever this pass manages: its interval opens before anything here
     // can fail.
@@ -2618,26 +2738,31 @@ fn answers(
                 connectors.now()
             })
         });
-    set_failure(
-        state,
-        c,
-        read.as_ref().err().map(ToString::to_string).as_deref(),
-    )?;
-    if let Err(error) = read {
-        tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
-        let sent = open_messages(state, c)?
-            .into_iter()
-            .filter(|m| m.stage == Stage::Sent)
-            .map(|m| m.message)
-            .collect::<Vec<_>>();
-        unavailable(state, c, &sent, connectors.now())?;
-        return Ok(false);
+    if !matches!(read, Ok(Presence::Archived | Presence::Absent)) {
+        set_failure(
+            state,
+            c,
+            read.as_ref().err().map(ToString::to_string).as_deref(),
+        )?;
     }
+    let presence = match read {
+        Ok(presence) => presence,
+        Err(error) => {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+            let sent = open_messages(state, c)?
+                .into_iter()
+                .filter(|m| m.stage == Stage::Sent)
+                .map(|m| m.message)
+                .collect::<Vec<_>>();
+            unavailable(state, c, &sent, connectors.now())?;
+            return Ok(None);
+        }
+    };
     if let Err(error) = post(admitted, state, connectors, accepted, c) {
         tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
     unconfirmed(state, c, connectors.now())?;
-    Ok(true)
+    Ok(Some(presence))
 }
 
 const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL";

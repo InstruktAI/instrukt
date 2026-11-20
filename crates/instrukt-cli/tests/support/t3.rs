@@ -211,6 +211,10 @@ elif command=='send':
 elif command=='show':
     if (root/'show-failure').exists():
         print('native show unavailable', file=sys.stderr); sys.exit(1)
+    held=root/(operands[0]+'.hold-show')
+    if held.exists():
+        (root/(operands[0]+'.show-held')).touch()
+    while held.exists(): time.sleep(0.02)
     t=find(operands[0]); limit=int(flags.get('--messages',100))
     if limit or not os.environ.get('INSTRUKT_TEST_T3_WAKES'): sync_inputs()
     if limit==0 and (root/'busy-before-entry').exists():

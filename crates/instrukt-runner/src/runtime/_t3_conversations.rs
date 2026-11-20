@@ -559,7 +559,11 @@ impl T3Conversations {
 }
 /// Each aggregate visits only one bounded rowid scope; no read transaction
 /// spans scopes. A scope of named conversations visits only their rows.
-fn discover(path: &Path, scope: Scope<'_>) -> Result<BTreeMap<String, Fingerprint>, SourceError> {
+fn discover(
+    path: &Path,
+    scope: Scope<'_>,
+    presence: &mut Option<super::Presence>,
+) -> Result<BTreeMap<String, Fingerprint>, SourceError> {
     let threads: Vec<Option<&str>> = match scope {
         Scope::All => vec![None],
         Scope::Only(ids) => ids
@@ -575,6 +579,30 @@ fn discover(path: &Path, scope: Scope<'_>) -> Result<BTreeMap<String, Fingerprin
             let mut after = 0_i64;
             loop {
                 let db = open(path)?;
+                if matches!(projection, Projection::Threads)
+                    && after == 0
+                    && matches!(scope, Scope::Only([_]))
+                    && let Some(thread) = thread
+                {
+                    use super::Presence;
+                    db.execute_batch("BEGIN")?;
+                    *presence = Some(
+                        db.query_row(
+                            "SELECT archived_at IS NOT NULL, deleted_at IS NOT NULL
+                         FROM orchestration_v2_projection_threads WHERE thread_id=?1",
+                            [thread],
+                            |row| {
+                                Ok(match (row.get::<_, bool>(0)?, row.get::<_, bool>(1)?) {
+                                    (_, true) => Presence::Absent,
+                                    (true, false) => Presence::Archived,
+                                    (false, false) => Presence::Present,
+                                })
+                            },
+                        )
+                        .optional()?
+                        .unwrap_or(Presence::Absent),
+                    );
+                }
                 _t3_fingerprint::register(&db)?;
                 let sql = format!(
                     "SELECT thread_id,max(source_rowid),{}('{}',source_rowid,native_id,thread_id,native_clock,payload_json,streaming,extra) FROM (SELECT rowid source_rowid,{} native_id,thread_id,{} native_clock,payload_json,{} streaming,{} extra FROM {} WHERE rowid>?1{} ORDER BY rowid LIMIT {BATCH_SIZE}) GROUP BY thread_id",
@@ -761,7 +789,13 @@ impl T3Conversations {
             }
             if attempt < SCOPED_READS {
                 let id = conversation(thread)?;
-                match discover(&self.path, Scope::Only(std::slice::from_ref(&id)))?.remove(thread) {
+                match discover(
+                    &self.path,
+                    Scope::Only(std::slice::from_ref(&id)),
+                    &mut None,
+                )?
+                .remove(thread)
+                {
                     Some(again) => expected = again,
                     None => break,
                 }
@@ -827,6 +861,7 @@ fn empty_changes(position: SourcePosition, has_more: bool) -> ConversationChange
         position,
         has_more,
         completed_turns: Vec::new(),
+        scoped_presence: None,
         conversations: Vec::new(),
         turn_failures: Vec::new(),
         missing: Vec::new(),
@@ -852,7 +887,7 @@ impl T3Conversations {
                 .is_none_or(|pass| pass.expected.as_ref() != position)
             {
                 *cache = Some(Pass {
-                    fingerprints: discover(&self.path, Scope::All)?,
+                    fingerprints: discover(&self.path, Scope::All, &mut None)?,
                     expected: None,
                 });
                 state.after = None;
@@ -912,8 +947,8 @@ impl T3Conversations {
             .observed
             .retain(|thread| only.contains(thread.as_str()));
         state.after = None;
-        let fingerprints = discover(&self.path, Scope::Only(ids))?;
         let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), false);
+        let fingerprints = discover(&self.path, Scope::Only(ids), &mut changes.scoped_presence)?;
         changes.missing = state
             .observed
             .iter()

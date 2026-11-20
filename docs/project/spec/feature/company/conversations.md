@@ -60,13 +60,18 @@ path is the same for every connector, whichever channel it speaks to
   retried. A lost acknowledgement or a live key conflict goes to the operator.
 - When work is waiting, the relay checks the bound session. A rename preserves
   delivery to that session. An archived session is left in place and the operator
-  is told to unarchive or delete it. Deletion is not evidence that the old
+  is told to unarchive or delete it. Archiving blocks new turns while replies
+  already completed are still read and posted. Deletion is not evidence that the old
   provider stopped. Once the operator knows it has stopped, the finding directs
   them to `instrukt sessions replace-deleted <key> --stopped <runtime:id>`
   (`project/instrukt/spec/feature/runner/session-continuity`). Neither an archive
   nor a deletion starts a successor automatically. While work is blocked the member
   sees the fixed unavailable status and can receive the usual notice, with the
-  cause and recovery command visible only to the operator.
+  cause and recovery command visible only to the operator. An interrupted
+  replacement reports the recovery door for the current keyed state, including
+  any pending successor. The relay reads presence from the conversation source.
+  It confirms a missing thread with the runtime once per source change, without
+  blocking other conversations.
 - An operator-confirmed successor starts with the assignment alone. The relay
   binds it to the same conversation and hands over the questions still awaiting
   turns in written order, including work handed to the stopped session whose

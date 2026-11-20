@@ -133,7 +133,12 @@ fn serve(
     // notifications, and a missing source file that is now watched);
     // connector arrivals and the retry bound drive conversation work alone.
     let mut links_due = true;
-    let mut pass = CompanyRelayPass::CatchUp;
+    static REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let revision = || REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut pass = CompanyRelayPass {
+        catch_up: true,
+        source_revision: revision(),
+    };
     loop {
         let source_pass = std::mem::take(&mut links_due);
         if source_pass && let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
@@ -167,15 +172,24 @@ fn serve(
                     .lock()
                     .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
             }) {
-                break CompanyRelayPass::CatchUp;
+                break CompanyRelayPass {
+                    catch_up: true,
+                    ..pass
+                };
             }
             if retry && std::time::Instant::now() >= until {
-                break CompanyRelayPass::Retry;
+                break CompanyRelayPass {
+                    catch_up: false,
+                    ..pass
+                };
             }
             match notifications.wait(Duration::from_millis(100)) {
                 Ok(true) => {
                     links_due = true;
-                    break CompanyRelayPass::CatchUp;
+                    break CompanyRelayPass {
+                        catch_up: true,
+                        source_revision: revision(),
+                    };
                 }
                 Ok(false) => {}
                 Err(error) => return Err(LinkError::Source(error)),

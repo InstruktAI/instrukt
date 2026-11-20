@@ -68,6 +68,15 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         let payload = json!({"id":id,"projectId":"project","title":"Local jewels","lineage":{"parentThreadId":parent,"relationshipToParent":parent.map(|_|"subagent")},"createdAt":at,"updatedAt":at,"archivedAt":archive,"deletedAt":null});
         self.db.execute("INSERT OR REPLACE INTO orchestration_v2_projection_threads VALUES(?1,'project','Local jewels',?2,?2,?3,NULL,?4)",params![id,at,archive,payload.to_string()]).unwrap();
     }
+    #[allow(dead_code, reason = "used by the conversation presence scenarios")]
+    pub fn unproject_thread(&self, id: &str) {
+        self.db
+            .execute(
+                "DELETE FROM orchestration_v2_projection_threads WHERE thread_id=?1",
+                [id],
+            )
+            .unwrap();
+    }
     pub fn message(&self, thread: &str, id: &str, text: &str, at: &str, streaming: bool) {
         let payload = json!({"id":id,"threadId":thread,"role":"assistant","text":text,"createdAt":at,"updatedAt":at,"streaming":streaming,"runId":null,"nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"});
         self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',?3,?4,?4,?5) ON CONFLICT(message_id) DO UPDATE SET streaming=excluded.streaming,updated_at=excluded.updated_at,payload_json=excluded.payload_json",params![id,thread,streaming,at,payload.to_string()]).unwrap();
