@@ -1211,6 +1211,8 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
     use sha2::Digest as _;
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
+    c.env.set_env("INSTRUKT_NOW", "2026-11-19T10:00:00Z");
+    c.runtime.flag("projection-gate", true);
     c.run();
     let channel = "C1";
     let settled = c.asked_and_answered("Where are the notes?", "In the wiki.");
@@ -1226,34 +1228,69 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
     wait("the relay to observe the running turn's update", || {
         c.slack.status(channel, &asked).as_deref() == Some("Checking the release plan.")
     });
+    // The fixture owns the remaining projection writes. A later runtime
+    // request cannot project the same run again or produce another wake.
+    c.runtime.pause_projection();
     let log = c
         .env
         .home()
         .join(".local/state/instrukt-ai/instrukt/run.log");
-    let count = |event: &str| {
-        std::fs::read_to_string(&log)
-            .unwrap_or_default()
-            .lines()
-            .filter(|line| line.contains(event))
-            .count()
+    let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
+    let wake = |line: &str, event: &str| -> Option<u64> {
+        if !line.contains(event) {
+            return None;
+        }
+        line.split_whitespace()
+            .find_map(|field| field.strip_prefix("wake=")?.parse().ok())
     };
-    let idle = "event=conversation_relay_source_idle";
-    let changed = "event=conversation_relay_source_changed";
-    let before = count(idle);
+    let mark = "event=t3_wal_metadata_queued";
+    let consumed = "event=t3_source_wake_consumed";
+    let marks = read_log()
+        .lines()
+        .filter_map(|line| wake(line, mark))
+        .count();
     c.store.exclude_readers();
     c.store
         .agent_writes(&session, &run, 2, "Checking the remaining items.");
-    wait("the progress write's native notifications drained", || {
-        count(idle) > before
+    wait("the relay tried reading between the fixture writes", || {
+        read_log().lines().any(|line| {
+            line.contains("event=conversation_answer_unread") && line.contains("database is locked")
+        })
     });
-    let before = count(idle);
-    let reads = count("database is locked");
     c.finish_projected_turn(&session, 0, "On Friday.");
+    c.store.mark_wal();
+    let mut terminal_wake = None;
     wait(
-        "the final write's native notifications drained while reads fail",
-        || count(idle) > before && count("database is locked") > reads,
+        "the relay processed the final WAL marker while reads fail",
+        || {
+            let log = read_log();
+            terminal_wake = log.lines().filter_map(|line| wake(line, mark)).nth(marks);
+            let Some(marker) = terminal_wake else {
+                return false;
+            };
+            let mut pass = log
+                .lines()
+                .skip_while(|line| wake(line, consumed) != Some(marker));
+            pass.next();
+            let mut read_failed = false;
+            for line in pass {
+                if line.contains("event=conversation_relay_source_processed") {
+                    return read_failed;
+                }
+                read_failed |= line.contains("event=conversation_answer_unread")
+                    && line.contains("database is locked");
+            }
+            false
+        },
     );
-    let wakes = count(changed);
+    let terminal_wake = terminal_wake.unwrap();
+    let last_wake = || {
+        read_log()
+            .lines()
+            .filter_map(|line| wake(line, consumed))
+            .next_back()
+    };
+    assert_eq!(last_wake(), Some(terminal_wake));
     assert_eq!(c.slack.posts().len(), 1);
     // Any full retry would wait on this earlier conversation even though its
     // answer is already posted. Keep it locked across the scoped retry.
@@ -1268,15 +1305,20 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
     )
     .unwrap();
     c.store.let_readers_in();
-    wait("the answer without another projection write", || {
-        c.slack.posts().len() == 2
-    });
-    assert_eq!(
-        count(changed),
-        wakes,
-        "the answer required the timer, with no further native wake"
+    common::wait_until(
+        "the answer without another projection write",
+        std::time::Duration::from_secs(20),
+        || {
+            assert_eq!(last_wake(), Some(terminal_wake));
+            c.slack.posts().len() == 2
+        },
     );
     assert_eq!(c.slack.posts()[1].thread.as_deref(), Some(asked.as_str()));
+    common::wait_until(
+        "operator status to clear its stale answer-read error",
+        std::time::Duration::from_secs(20),
+        || c.conversations().conversations.is_empty(),
+    );
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12

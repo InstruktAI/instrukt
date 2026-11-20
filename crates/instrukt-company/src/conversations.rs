@@ -1656,7 +1656,35 @@ pub fn relay(
             answers(admitted, &state, source, connectors, accepted, &bound)?;
         }
     }
+    clear_idle_answer_failures(&state)?;
     Ok(())
+}
+
+/// A conversation without remaining answer work has no answer-read failure
+/// to report. Clear it without locking the conversation or reading T3, even
+/// when all other work is also finished.
+fn clear_idle_answer_failures(state: &RunnerState) -> Result<(), StateError> {
+    let idle_failure =
+        format!("failure IS NOT NULL AND (company,connector,conversation) NOT IN ({RELAY_WORK})");
+    let due = state.read(|conn, path| {
+        conn.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM connected_conversations WHERE {idle_failure})"),
+            relay_stages(),
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(state::sql(path))
+    })?;
+    if !due.unwrap_or(false) {
+        return Ok(());
+    }
+    state.write(|tx| {
+        tx.execute(
+            &format!("UPDATE connected_conversations SET failure=NULL WHERE {idle_failure}"),
+            relay_stages(),
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
 }
 
 /// What the session's running turn shows of the messages handed to it. A

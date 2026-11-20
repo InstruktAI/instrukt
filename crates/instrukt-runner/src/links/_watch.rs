@@ -134,13 +134,10 @@ fn serve(
     // connector arrivals and the retry bound drive conversation work alone.
     let mut links_due = true;
     let mut pass = CompanyRelayPass::CatchUp;
-    let mut source_changed = false;
     loop {
-        if links_due {
-            if let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
-                record(home, &error);
-            }
-            links_due = false;
+        let source_pass = std::mem::take(&mut links_due);
+        if source_pass && let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
+            record(home, &error);
         }
         if let Some(destinations) = destinations
             && let Err(error) = destinations.company.relay(
@@ -152,6 +149,9 @@ fn serve(
             )
         {
             tracing::warn!(event = "conversation_relay_failed", error = %error);
+        }
+        if source_pass {
+            tracing::debug!(event = "conversation_relay_source_processed");
         }
         // Retained connector work that is not yet done is retried within a
         // bound; otherwise only a native change or new intake wakes the relay.
@@ -175,15 +175,9 @@ fn serve(
             match notifications.wait(Duration::from_millis(100)) {
                 Ok(true) => {
                     links_due = true;
-                    source_changed = true;
-                    tracing::debug!(event = "conversation_relay_source_changed");
                     break CompanyRelayPass::CatchUp;
                 }
-                Ok(false) => {
-                    if std::mem::take(&mut source_changed) {
-                        tracing::debug!(event = "conversation_relay_source_idle");
-                    }
-                }
+                Ok(false) => {}
                 Err(error) => return Err(LinkError::Source(error)),
             }
         };
