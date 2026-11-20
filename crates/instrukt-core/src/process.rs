@@ -578,14 +578,23 @@ impl ProcessGroup {
 
     fn stop_with(
         &self,
-        signal: impl FnOnce(rustix::process::Pid) -> rustix::io::Result<()>,
+        mut signal: impl FnMut(rustix::process::Pid) -> rustix::io::Result<()>,
     ) -> std::io::Result<()> {
         use rustix::io::Errno;
 
         // Classify the signal using the reap evidence available when it starts.
         #[cfg(target_os = "macos")]
         let reaped = self.reaped.load(Ordering::Acquire);
-        match signal(self.pid) {
+        let result = signal(self.pid);
+        // The new snapshot is already true, so the retry cannot need another.
+        #[cfg(target_os = "macos")]
+        let (result, reaped) =
+            if result == Err(Errno::PERM) && !reaped && self.reaped.load(Ordering::Acquire) {
+                (signal(self.pid), true)
+            } else {
+                (result, reaped)
+            };
+        match result {
             Ok(()) | Err(Errno::SRCH) => Ok(()),
             // Darwin's POSIX group signal found no member we can signal.
             #[cfg(target_os = "macos")]
@@ -743,19 +752,64 @@ mod darwin_group_tests {
     }
 
     #[test]
-    fn a_reap_during_a_signal_does_not_clear_its_permission_error() {
-        let group = ProcessGroup {
-            pid: rustix::process::getpid(),
-            reaped: AtomicBool::new(false),
-        };
-        let result = group.stop_with(|_| {
-            group.reaped.store(true, Ordering::Release);
-            Err(Errno::PERM)
-        });
-        assert_eq!(
-            result.unwrap_err().raw_os_error(),
-            Some(Errno::PERM.raw_os_error())
-        );
+    fn a_reap_during_signalling_requires_one_new_attempt() {
+        use std::sync::Barrier;
+
+        for (reap_before_signal, retry_result) in [
+            (true, Err(Errno::PERM)),
+            (false, Err(Errno::IO)),
+            (false, Err(Errno::SRCH)),
+            (false, Ok(())),
+        ] {
+            let group = ProcessGroup {
+                pid: rustix::process::getpid(),
+                reaped: AtomicBool::new(false),
+            };
+            let start_reap = Barrier::new(2);
+            let reap_recorded = Barrier::new(2);
+            let reap = || {
+                start_reap.wait();
+                reap_recorded.wait();
+            };
+
+            let mut calls = 0;
+            let mut first_signal_saw_reap = false;
+            let result = std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    start_reap.wait();
+                    group.reaped.store(true, Ordering::Release);
+                    reap_recorded.wait();
+                });
+                group.stop_with(|_| {
+                    calls += 1;
+                    if calls > 1 {
+                        assert!(group.reaped.load(Ordering::Acquire));
+                        return retry_result;
+                    }
+                    if reap_before_signal {
+                        reap();
+                    }
+                    first_signal_saw_reap = group.reaped.load(Ordering::Acquire);
+                    let refusal = Err(Errno::PERM);
+                    if !reap_before_signal {
+                        // The signal was already refused when wait recorded the reap.
+                        reap();
+                    }
+                    refusal
+                })
+            });
+
+            assert_eq!(first_signal_saw_reap, reap_before_signal);
+            assert_eq!(calls, 2, "the first refusal needs exactly one retry");
+            if retry_result == Err(Errno::IO) {
+                assert_eq!(
+                    result.unwrap_err().raw_os_error(),
+                    Some(Errno::IO.raw_os_error())
+                );
+            } else {
+                result.unwrap();
+            }
+        }
     }
 
     #[test]

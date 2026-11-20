@@ -572,7 +572,9 @@ It stops the descendants it can signal before reporting completion.
 An absent process group is already stopped. On macOS, if the child has been
 reaped when instrukt attempts cleanup, a group instrukt can no longer signal
 counts as cleaned up. Instrukt logs the group ID, and the command keeps the
-child's result. A signal refused before the reap is an error.
+child's result. If instrukt records the reap during a refused signal attempt,
+it tries once more with that evidence. A refused signal is an error while
+instrukt has no reap recorded.
 This concerns instrukt's own commands, not a machine-wide process janitor or
 the runtime's standing agent lifecycle, which T3 owns.
 
