@@ -891,12 +891,10 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
         held_runtime_checks_leave_another_conversation_free,
         #[cfg(debug_assertions)]
         a_live_deletion_is_confirmed_once_across_relay_passes,
+        unstable_and_moved_answers_are_recovered_from_the_source,
+        a_failed_turn_retries_after_new_work_and_unarchive,
         a_live_pending_successor_leaves_retained_answers_free_to_post,
         deleted_conversation_waits_for_confirmed_replacement,
-        #[cfg(debug_assertions)]
-        a_send_refused_after_readiness_is_delivered_once_after_replacement,
-        a_failed_turn_retries_after_new_work_and_unarchive,
-        an_unstable_answer_is_found_once_after_the_store_moves,
     ];
     let remaining = std::sync::Mutex::new(scenarios.iter());
     std::thread::scope(|scope| {
@@ -910,6 +908,18 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
             });
         }
     });
+}
+
+fn wait_for_answer_fixture(what: &str, condition: impl FnMut() -> bool) {
+    use std::time::Duration;
+    // These scenarios check SQLite, logs and native processes in parallel.
+    // A modest polling interval leaves CPU time for the runners they observe.
+    common::wait_until_with_interval(
+        what,
+        Duration::from_secs(45),
+        Duration::from_millis(50),
+        condition,
+    );
 }
 
 fn answer_recovery_company(debug: bool) -> (Company, std::path::PathBuf) {
@@ -926,6 +936,12 @@ fn answer_recovery_company(debug: bool) -> (Company, std::path::PathBuf) {
     set_clock(&clock, "2026-11-19T10:00:00Z".parse().unwrap());
     c.env
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    for (setting, name) in [
+        ("INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD", "presence-hold"),
+        ("INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD", "dispatch-hold"),
+    ] {
+        c.env.set_env(setting, c.env.path(name).to_str().unwrap());
+    }
     c.runtime.flag("separate-completion", true);
     c.run();
     (c, clock)
@@ -938,49 +954,96 @@ fn answer_source_changed(c: &Company, revision: u64) {
     std::fs::rename(next, wakes).unwrap();
 }
 
+fn finish_answer_turn(c: &mut Company, session: &str, input: usize, answer: &str) {
+    c.finish_turn(session, input, answer);
+    let revision = std::fs::read_to_string(c.env.path("answer-recovery-wakes")).unwrap();
+    answer_source_changed(c, revision.trim().parse::<u64>().unwrap() + 1);
+}
+
 fn a_failed_turn_retries_after_new_work_and_unarchive() {
-    let (mut c, clock) = answer_recovery_company(false);
+    let (mut c, clock) = answer_recovery_company(true);
     let channel = "C1";
     let parent = c
         .slack
         .say_at("1700000000.000100", channel, "USTEVEN", "Release", None);
     projected(&c);
+    c.slack.mention(
+        channel,
+        "USTEVEN",
+        "<@UAGENT> Check readiness.",
+        Some(&parent),
+    );
+    let session = started(&c, &[]);
+    c.finish_turn(&session, 0, "NOOP");
+    answer_source_changed(&c, 1);
+    c.runtime.flag("hold-show-after-send", true);
     let first = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> Can we ship?", Some(&parent));
-    let session = started(&c, &[]);
+    wait_for_answer_fixture("the acknowledgement of the old attempt is held", || {
+        c.runtime.held_show_running(&session)
+    });
     let other = c.slack.mention(
         channel,
         "UANNA",
         "<@UAGENT> What is the version?",
         Some(&parent),
     );
-    wait("the second member's question is pending", || {
+    wait_for_answer_fixture("the second member's question is pending", || {
         retained_conversations(&c)
             .conversations
             .iter()
             .any(|row| row.pending_messages == 2)
     });
-    let original = c.runtime.message(&session, 0);
+    let original = c.runtime.message(&session, 1);
     c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store
-        .failed_turn(&session, "failed-release", 1, &original);
-    answer_source_changed(&c, 1);
+    c.store.failed_turn_with_progress(
+        &session,
+        "failed-release",
+        2,
+        &original,
+        "Still checking the release.",
+    );
+    answer_source_changed(&c, 2);
+    let state = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait_for_answer_fixture(
+        "the failed attempt is recorded while its acknowledgement is held",
+        || {
+            state
+                .query_row(
+                    "SELECT state='failed' FROM conversation_messages WHERE message=?1",
+                    [&first],
+                    |r| r.get::<_, bool>(0),
+                )
+                .unwrap()
+        },
+    );
+    assert!(c.slack.posts().is_empty());
     let failed_at = interval_at(&c, &first);
-    wait(
+    std::fs::remove_file(c.runtime.state_dir().join(format!("{session}.hold-show"))).unwrap();
+    wait_for_answer_fixture(
+        "the operator log records the discarded acknowledgement",
+        || run_log(&c).contains("event=conversation_stale_acknowledgement"),
+    );
+    assert!(state.query_row(
+        "SELECT state='failed' AND retry_at IS NOT NULL FROM conversation_messages WHERE message=?1",
+        [&first],
+        |r| r.get::<_, bool>(0),
+    ).unwrap());
+    wait_for_answer_fixture(
         "the newer question reaches the runtime ahead of the retry",
-        || c.runtime.message_count(&session) == 2,
+        || c.runtime.message_count(&session) == 3,
     );
     assert!(
         c.runtime
-            .message(&session, 1)
+            .message(&session, 2)
             .contains("What is the version?")
     );
-    c.runner_dies();
-    c.finish_turn(&session, 1, "Version two.");
-    // An archived session still supplies a completed reply. The failed
-    // question waits there even after it becomes eligible for redelivery.
+    // Archive before publishing the completed reply. The failed question
+    // still waits there when it becomes eligible for redelivery.
     c.runtime.archive(&session);
     c.store.thread(
         &session,
@@ -988,8 +1051,9 @@ fn a_failed_turn_retries_after_new_work_and_unarchive() {
         Some("2026-11-19T10:01:00Z"),
         "2026-11-19T10:01:00Z",
     );
-    c.run();
-    wait(
+    c.finish_projected_turn(&session, 2, "Version two.");
+    answer_source_changed(&c, 3);
+    wait_for_answer_fixture(
         "the other member's completed answer posts from the archived thread",
         || {
             c.slack.posts_beginning("Version two.") == 1
@@ -999,7 +1063,7 @@ fn a_failed_turn_retries_after_new_work_and_unarchive() {
     );
     assert_eq!(notices(&c, "USTEVEN"), 0);
     set_clock(&clock, failed_at + jiff::SignedDuration::from_mins(3));
-    wait(
+    wait_for_answer_fixture(
         "the failed question waits at the archive door and earns one notice",
         || {
             notices(&c, "USTEVEN") == 1
@@ -1010,15 +1074,15 @@ fn a_failed_turn_retries_after_new_work_and_unarchive() {
                 })
         },
     );
-    assert_eq!(c.runtime.message_count(&session), 2);
+    assert_eq!(c.runtime.message_count(&session), 3);
     assert_eq!(c.sessions().as_slice(), std::slice::from_ref(&session));
 
     c.runtime.change(&session, "archived", false.into());
     c.runtime.change(&session, "title", "Renamed in T3".into());
     c.runtime.flag("send-failure", true);
     c.store.thread(&session, None, None, "2026-11-19T10:03:00Z");
-    answer_source_changed(&c, 2);
-    wait("the first redelivery is refused by the runtime", || {
+    answer_source_changed(&c, 4);
+    wait_for_answer_fixture("the first redelivery is refused by the runtime", || {
         retained_conversations(&c).conversations.iter().any(|row| {
             row.failures
                 .iter()
@@ -1026,16 +1090,16 @@ fn a_failed_turn_retries_after_new_work_and_unarchive() {
         })
     });
     c.runtime.flag("send-failure", false);
-    wait(
+    wait_for_answer_fixture(
         "the retry reaches the same session after the refusal",
-        || c.runtime.message_count(&session) == 3,
+        || c.runtime.message_count(&session) == 4,
     );
-    let retried = c.runtime.message(&session, 2);
+    let retried = c.runtime.message(&session, 3);
     assert!(retried.contains("Can we ship?"));
     assert_ne!(retried, original, "redelivery has its own boundary");
-    c.finish_turn(&session, 2, "Ship on Friday.");
-    answer_source_changed(&c, 3);
-    wait(
+    c.finish_turn(&session, 3, "Ship on Friday.");
+    answer_source_changed(&c, 5);
+    wait_for_answer_fixture(
         "the recovered answer closes the first member's outage",
         || {
             c.slack.posts_beginning("Ship on Friday.") == 1
@@ -1043,15 +1107,40 @@ fn a_failed_turn_retries_after_new_work_and_unarchive() {
                 && notice_state(&c, &format!("{channel}/{parent}"), "USTEVEN").is_none()
         },
     );
-    observe_notice_pass(&c, &clock, failed_at + jiff::SignedDuration::from_mins(4));
-    assert_eq!(c.runtime.message_count(&session), 3);
+    assert_eq!(c.runtime.message_count(&session), 4);
     assert_eq!(notices(&c, "USTEVEN"), 1);
-    let mut expected = vec![(channel.to_owned(), Some(parent)); 3];
-    expected.push(("D99".to_owned(), None));
-    assert_eq!(destinations(&c), expected);
+    assert_eq!(
+        destinations(&c),
+        vec![(channel.to_owned(), Some(parent)); 3]
+    );
+    insta::assert_snapshot!(complete_post_bodies(&c), @r#"
+[
+  [
+    null,
+    "Version two."
+  ],
+  [
+    null,
+    "<@USTEVEN> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again."
+  ],
+  [
+    null,
+    "Ship on Friday."
+  ]
+]
+"#);
 }
 
-fn an_unstable_answer_is_found_once_after_the_store_moves() {
+fn complete_post_bodies(c: &Company) -> String {
+    let posts = c.slack.posts();
+    let bodies = posts
+        .iter()
+        .map(|post| (post.text.as_deref(), post.markdown.as_deref()))
+        .collect::<Vec<_>>();
+    serde_json::to_string_pretty(&bodies).unwrap()
+}
+
+fn unstable_and_moved_answers_are_recovered_from_the_source() {
     use instrukt_core::state_db::rusqlite::Connection;
 
     let (mut c, _clock) = answer_recovery_company(true);
@@ -1062,13 +1151,13 @@ fn an_unstable_answer_is_found_once_after_the_store_moves() {
     let session = started(&c, &[]);
     c.finish_turn(&session, 0, "The old report is ready.");
     answer_source_changed(&c, 1);
-    wait("the earlier answer is recorded", || {
+    wait_for_answer_fixture("the earlier answer is recorded", || {
         c.slack.posts_beginning("The old report is ready.") == 1 && answers_recorded(&c)
     });
     let noop = c
         .slack
         .direct(channel, "USTEVEN", "Just check the attachment.");
-    wait("the no-op question reaches the agent", || {
+    wait_for_answer_fixture("the no-op question reaches the agent", || {
         c.runtime.message_count(&session) == 2
     });
     c.finish_turn(&session, 1, "NOOP");
@@ -1077,7 +1166,7 @@ fn an_unstable_answer_is_found_once_after_the_store_moves() {
     let request = c
         .slack
         .direct(channel, "USTEVEN", "Which page has the summary?");
-    wait("the summary question follows the completed no-op", || {
+    wait_for_answer_fixture("the summary question follows the completed no-op", || {
         c.runtime.message_count(&session) == 3
     });
     assert_eq!(c.slack.posts().len(), 1, "NOOP posts nothing");
@@ -1090,7 +1179,7 @@ fn an_unstable_answer_is_found_once_after_the_store_moves() {
     c.store
         .streaming_turn(&session, "moved-answer", 3, &input, partial);
     answer_source_changed(&c, 3);
-    wait("the relay sees completed but unstable content", || {
+    wait_for_answer_fixture("the relay sees completed but unstable content", || {
         interval(&c, &request).is_some()
             && retained_conversations(&c).conversations.iter().any(|row| {
                 row.failures
@@ -1100,19 +1189,76 @@ fn an_unstable_answer_is_found_once_after_the_store_moves() {
     });
     assert_eq!(c.slack.posts().len(), 1);
 
-    c.runner_dies();
+    let original = Connection::open(&c.store.file).unwrap();
+    let finish = |db: &Connection, answer: &str| {
+        db.execute(
+            "UPDATE orchestration_v2_projection_messages SET streaming=0,
+                 payload_json=json_set(payload_json, '$.streaming', json('false'), '$.text', ?1)
+             WHERE message_id='moved-answer-reply'",
+            [answer],
+        )
+        .unwrap();
+    };
+    finish(&original, "The summary is on page two.");
+    answer_source_changed(&c, 4);
+    wait_for_answer_fixture("the turn finishes in the original store", || {
+        c.slack.posts_beginning("The summary is on page two.") == 1 && answers_recorded(&c)
+    });
+
+    projected(&c);
+    c.slack.direct("D31", "UANNA", "Check the document.");
+    let other = started(&c, std::slice::from_ref(&session));
+    c.finish_turn(&other, 0, "NOOP");
+    answer_source_changed(&c, 5);
+    let moved_request = c.slack.direct(channel, "USTEVEN", "Where is the appendix?");
+    let state = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    wait_for_answer_fixture("the appendix question is accepted", || {
+        state
+            .query_row(
+                "SELECT state='sent' FROM conversation_messages WHERE message=?1",
+                [&moved_request],
+                |r| r.get::<_, bool>(0),
+            )
+            .is_ok_and(|sent| sent)
+    });
+    c.runtime.flag("die-after-send", true);
+    let lost = c.slack.direct("D31", "UANNA", "What did you find?");
+    c.runner_ended();
+    assert_eq!(c.runtime.message_count(&other), 2);
+    let lost_state: String = state
+        .query_row(
+            "SELECT state FROM conversation_messages WHERE message=?1 AND attempted_at IS NOT NULL",
+            [&lost],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(lost_state, "pending");
+
+    let answer = "The appendix is at the end.";
+    c.runtime.set_status(&session, "idle");
+    c.runtime.set_status(&other, "idle");
+    let appendix_input = c.runtime.message(&session, 4);
+    c.store
+        .turn(&session, "after-move", 4, &appendix_input, answer);
     let moved = c.env.path("moved-t3");
     std::fs::create_dir_all(moved.join("userdata")).unwrap();
     let destination = moved.join("userdata/statev2.sqlite");
-    let original = Connection::open(&c.store.file).unwrap();
     original
         .execute("VACUUM INTO ?1", [destination.to_str().unwrap()])
         .unwrap();
     let mut source = Connection::open(destination).unwrap();
     source.pragma_update(None, "journal_mode", "WAL").unwrap();
     let tx = source.transaction().unwrap();
-    // Keep later native output visible while the opening and completion
-    // evidence remain outside the CLI's latest 100 messages.
+    tx.execute(
+        "DELETE FROM orchestration_v2_projection_messages WHERE message_id=?1",
+        [format!("fake:{other}:input:1")],
+    )
+    .unwrap();
+    tx.execute(
+        "DELETE FROM orchestration_v2_projection_runs WHERE thread_id IN (?1,?2) AND run_id LIKE 'run:%'",
+        [&session, &other],
+    ).unwrap();
+    // Keep the addressed boundary outside the CLI's latest messages.
     let mut recent: Vec<serde_json::Value> =
         serde_json::from_str(&c.runtime.messages(&session)).unwrap();
     let at = "2026-11-19T10:01:00.000Z";
@@ -1130,54 +1276,118 @@ fn an_unstable_answer_is_found_once_after_the_store_moves() {
         recent.push(serde_json::json!({"role": "assistant", "text": "Later commentary."}));
     }
     c.runtime.change(&session, "messages", recent.into());
-    tx.execute_batch(
-        "CREATE TEMP TABLE deferred_run AS SELECT * FROM orchestration_v2_projection_runs WHERE run_id='moved-answer';
-         DELETE FROM orchestration_v2_projection_runs WHERE run_id='moved-answer';",
-    ).unwrap();
     tx.commit().unwrap();
+    // Seed a retained position that would skip this exact thread fingerprint
+    // if interpreted against the new source. The identity still names the old
+    // source. Nothing changes in this thread until the answer is posted.
+    use instrukt_runner::runtime::conversations::Scope;
+    let operator = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let env = instrukt_core::config::Env::from_pairs([("T3CODE_HOME", moved.to_str().unwrap())]);
+    let runtime = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
+    let projection = runtime.conversation_source(&operator, &env).unwrap();
+    let id = instrukt_core::ids::SessionId::parse(&session).unwrap();
+    let scope = Scope::Only(std::slice::from_ref(&id));
+    let cursor = projection.changed_since(None, scope).unwrap().position;
+    assert!(
+        projection
+            .changed_since(Some(&cursor), scope)
+            .unwrap()
+            .completed_turns
+            .is_empty()
+    );
+    state
+        .execute(
+            "UPDATE connected_conversations SET position_json=?1 WHERE conversation='D30'",
+            [serde_json::to_string(&cursor).unwrap()],
+        )
+        .unwrap();
 
     c.env.set_env("T3CODE_HOME", moved.to_str().unwrap());
     c.run();
-    wait(
-        "the sent message stays uncertain while its turn is missing",
-        || {
-            retained_conversations(&c).conversations.iter().any(|row| {
-                row.failures
-                    .iter()
-                    .any(|failure| failure.contains("cannot find the sent message"))
-            })
-        },
-    );
-    assert_eq!(c.runtime.message_count(&session), 154);
-    assert_eq!(c.slack.posts().len(), 1);
-
-    let answer = "The summary is on page two.";
-    let tx = source.transaction().unwrap();
-    tx.execute(
-        "UPDATE orchestration_v2_projection_messages SET streaming=0,
-             payload_json=json_set(payload_json, '$.streaming', json('false'), '$.text', ?1)
-         WHERE message_id='moved-answer-reply'",
-        [answer],
-    )
-    .unwrap();
-    tx.execute_batch("INSERT INTO orchestration_v2_projection_runs SELECT * FROM deferred_run;")
-        .unwrap();
-    tx.commit().unwrap();
-    answer_source_changed(&c, 4);
-    wait(
-        "the moved source supplies the whole answer by its original boundary",
+    wait_for_answer_fixture(
+        "the moved source supplies the answer despite the matching old cursor",
         || c.slack.posts_beginning(answer) == 1 && answers_recorded(&c),
     );
+    wait_for_answer_fixture("the lost acceptance is still uncertain", || {
+        retained_conversations(&c).conversations.iter().any(|row| {
+            row.conversation == "D31"
+                && row
+                    .failures
+                    .iter()
+                    .any(|failure| failure.contains("cannot find the outstanding attempt"))
+        })
+    });
     #[cfg(debug_assertions)]
-    deliver_probe_wake(&c, &|revision| answer_source_changed(&c, revision), 5);
-    assert_eq!(c.slack.posts_beginning("The old report is ready."), 1);
-    assert_eq!(c.slack.posts_beginning(answer), 1);
-    assert_eq!(destinations(&c), vec![(channel.to_owned(), None); 2]);
-    assert_eq!(c.runtime.message_count(&session), 154);
+    deliver_probe_wake(&c, &|revision| answer_source_changed(&c, revision), 6);
+    assert_eq!(c.runtime.message_count(&other), 2);
+    assert_eq!(c.runtime.message_count(&session), 155);
+
+    // The original input and its completion become visible in the new store.
+    c.store.turn(
+        &other,
+        "lost-answer",
+        5,
+        &c.runtime.message(&other, 1),
+        "The document is complete.",
+    );
+    source
+        .execute(
+            "ATTACH DATABASE ?1 AS old",
+            [c.store.file.to_str().unwrap()],
+        )
+        .unwrap();
+    source.execute_batch(
+        "BEGIN;
+         INSERT INTO orchestration_v2_projection_runs SELECT * FROM old.orchestration_v2_projection_runs WHERE run_id='lost-answer';
+         INSERT INTO orchestration_v2_projection_messages SELECT * FROM old.orchestration_v2_projection_messages WHERE message_id LIKE 'lost-answer-%';
+         INSERT INTO orchestration_v2_projection_turn_items SELECT * FROM old.orchestration_v2_projection_turn_items WHERE turn_item_id LIKE 'lost-answer-%';
+         COMMIT;",
+    ).unwrap();
+    answer_source_changed(&c, 7);
+    wait_for_answer_fixture("the original send's reply arrives once", || {
+        c.slack.posts_beginning("The document is complete.") == 1 && answers_recorded(&c)
+    });
+    assert_eq!(c.runtime.message_count(&other), 2);
+    assert_eq!(
+        destinations(&c),
+        [
+            (channel.to_owned(), None),
+            (channel.to_owned(), None),
+            (channel.to_owned(), None),
+            ("D31".to_owned(), None),
+        ]
+    );
+    insta::assert_snapshot!(complete_post_bodies(&c), @r#"
+[
+  [
+    null,
+    "The old report is ready."
+  ],
+  [
+    null,
+    "The summary is on page two."
+  ],
+  [
+    null,
+    "The appendix is at the end."
+  ],
+  [
+    null,
+    "The document is complete."
+  ]
+]
+"#);
 }
 
 fn answered_conversation(settle_opening: bool) -> (Company, std::path::PathBuf, String) {
-    let (mut c, clock) = answer_recovery_company(false);
+    answered_conversation_with_logs(settle_opening, false)
+}
+
+fn answered_conversation_with_logs(
+    settle_opening: bool,
+    debug: bool,
+) -> (Company, std::path::PathBuf, String) {
+    let (mut c, clock) = answer_recovery_company(debug);
     projected(&c);
     c.slack.direct("D30", "USTEVEN", "Is the old report ready?");
     let session = started(&c, &[]);
@@ -1193,7 +1403,7 @@ fn answered_conversation(settle_opening: bool) -> (Company, std::path::PathBuf, 
         ).unwrap()
     };
     if settle_opening {
-        wait("the opening assignment has been recorded", || {
+        wait_for_answer_fixture("the opening assignment has been recorded", || {
             db.query_row(
                 "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session=?1)",
                 [&session],
@@ -1205,14 +1415,14 @@ fn answered_conversation(settle_opening: bool) -> (Company, std::path::PathBuf, 
             &clock,
             interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
         );
-        wait(
+        wait_for_answer_fixture(
             "the keyed worker records native entry of the opening assignment",
             || opening_settled(true),
         );
     }
     c.finish_turn(&session, 0, "The old report is ready.");
     answer_source_changed(&c, 1);
-    wait("the earlier answer recorded", || {
+    wait_for_answer_fixture("the earlier answer recorded", || {
         c.slack.posts_beginning("The old report is ready.") == 1 && answers_recorded(&c)
     });
     if settle_opening {
@@ -1220,7 +1430,7 @@ fn answered_conversation(settle_opening: bool) -> (Company, std::path::PathBuf, 
             &clock,
             interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
         );
-        wait(
+        wait_for_answer_fixture(
             "the keyed worker finishes watching the opening assignment",
             || opening_settled(false),
         );
@@ -1229,7 +1439,7 @@ fn answered_conversation(settle_opening: bool) -> (Company, std::path::PathBuf, 
 }
 
 fn wait_for_presence_notice(c: &Company, message: &str, clock: &std::path::Path, door: &str) {
-    wait("the operator sees the recovery door", || {
+    wait_for_answer_fixture("the operator sees the recovery door", || {
         retained_conversations(c).conversations.iter().any(|row| {
             row.conversation == "D30" && row.failures.iter().any(|cause| cause.contains(door))
         })
@@ -1237,14 +1447,14 @@ fn wait_for_presence_notice(c: &Company, message: &str, clock: &std::path::Path,
     assert!(c.conversations().conversations.iter().any(|row| {
         row.conversation == "D30" && row.failures.iter().any(|cause| cause.contains(door))
     }));
-    wait("the member sees only the unavailable text", || {
+    wait_for_answer_fixture("the member sees only the unavailable text", || {
         c.slack.status("D30", message).as_deref() == Some(UNAVAILABLE)
     });
     let opened = interval_at(c, message);
     set_clock(clock, opened + jiff::SignedDuration::from_secs(59));
     assert_eq!(notices(c, "USTEVEN"), 0);
     set_clock(clock, opened + minute());
-    wait("the member receives the fixed notice", || {
+    wait_for_answer_fixture("the member receives the fixed notice", || {
         notices(c, "USTEVEN") == 1
     });
 }
@@ -1255,20 +1465,20 @@ fn held_runtime_checks_leave_another_conversation_free() {
     let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
     std::fs::write(&held, "").unwrap();
     c.slack.direct("D30", "USTEVEN", "What changed?");
-    wait("the bound session's dispatch check is held", || {
+    wait_for_answer_fixture("the bound session's dispatch check is held", || {
         c.runtime.held_show_running(&session)
     });
 
     c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
     c.slack.direct("D31", "UANNA", "Where is the meeting?");
-    wait(
+    wait_for_answer_fixture(
         "the other conversation starts during the dispatch check",
         || c.sessions().iter().any(|id| id != &session),
     );
     let other = started(&c, std::slice::from_ref(&session));
     c.finish_turn(&other, 0, "In the main office.");
     answer_source_changed(&c, 2);
-    wait(
+    wait_for_answer_fixture(
         "the second conversation is answered during the dispatch check",
         || c.slack.posts_beginning("In the main office.") == 1,
     );
@@ -1278,11 +1488,11 @@ fn held_runtime_checks_leave_another_conversation_free() {
     c.runtime.hold_show_after_send(&session);
     std::fs::remove_file(&marker).unwrap();
     std::fs::remove_file(&held).unwrap();
-    wait("the lost acknowledgment's read-back check is held", || {
+    wait_for_answer_fixture("the lost acknowledgment's read-back check is held", || {
         c.runtime.held_show_running(&session)
     });
     c.slack.direct("D31", "UANNA", "When does it start?");
-    wait("the other conversation dispatches during read-back", || {
+    wait_for_answer_fixture("the other conversation dispatches during read-back", || {
         c.runtime.message_count(&other) == 2
     });
     assert!(c.runtime.held_show_running(&session));
@@ -1291,7 +1501,7 @@ fn held_runtime_checks_leave_another_conversation_free() {
 
     c.finish_turn(&session, 1, "The changes are in the appendix.");
     answer_source_changed(&c, 3);
-    wait(
+    wait_for_answer_fixture(
         "the lost acknowledgment reconciles without another send",
         || c.slack.posts_beginning("The changes are in the appendix.") == 1 && answers_recorded(&c),
     );
@@ -1311,14 +1521,14 @@ fn held_runtime_checks_leave_another_conversation_free() {
     c.store.unproject_thread(&session);
     c.runtime.flag("send-failure", true);
     let question = c.slack.direct("D30", "USTEVEN", "Who wrote it?");
-    wait(
+    wait_for_answer_fixture(
         "a send is attempted after T3 confirms the thread is present",
         || sends() > before,
     );
     c.runtime.delete(&session);
     let key = conversations::key(&c.company(), SLACK, "D30");
     let door = format!("instrukt sessions replace-deleted {key} --stopped t3:{session}");
-    wait("the later deletion replaces the live confirmation", || {
+    wait_for_answer_fixture("the later deletion replaces the live confirmation", || {
         conversation_finding(&c, &door).is_some()
             && c.slack.status("D30", &question).as_deref() == Some(UNAVAILABLE)
     });
@@ -1326,32 +1536,17 @@ fn held_runtime_checks_leave_another_conversation_free() {
 
 #[cfg(debug_assertions)]
 fn a_live_deletion_is_confirmed_once_across_relay_passes() {
-    let (mut c, clock, session) = answered_conversation(true);
-    let wakes = c.env.path("probe-wakes");
-    let wake = |revision: u64| {
-        let next = wakes.with_extension("next");
-        std::fs::write(&next, revision.to_string()).unwrap();
-        std::fs::rename(next, &wakes).unwrap();
-    };
+    let (c, clock, session) = answered_conversation_with_logs(true, true);
+    let wakes = c.env.path("answer-recovery-wakes");
+    let wake = |revision: u64| answer_source_changed(&c, revision);
     let presence_hold = c.env.path("presence-hold");
     std::fs::write(
         &presence_hold,
         conversations::key(&c.company(), SLACK, "D30"),
     )
     .unwrap();
-    if cfg!(debug_assertions) {
-        c.runner_dies();
-        wake(0);
-        c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
-        c.env
-            .set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
-        c.env.set_env(
-            "INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD",
-            presence_hold.to_str().unwrap(),
-        );
-        c.run();
-    }
-    wait("the relay has read the old presence", || {
+    wake(2);
+    wait_for_answer_fixture("the relay has read the old presence", || {
         presence_hold.with_extension("observed").exists()
     });
     let absence_calls = |c: &Company| {
@@ -1371,14 +1566,14 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    wait(
+    wait_for_answer_fixture(
         "intake captures the question after the thread disappears",
         || {
             db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='pending')", [&question], |row| row.get::<_, bool>(0)).unwrap()
         },
     );
     std::fs::remove_file(&presence_hold).unwrap();
-    wait("the failed confirmation is scheduled for retry", || {
+    wait_for_answer_fixture("the failed confirmation is scheduled for retry", || {
         run_log(&c).contains("event=conversation_presence_probe_retry")
     });
     assert_eq!(
@@ -1387,8 +1582,8 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         "only the absence worker may check the thread"
     );
     c.runtime.flag("show-failure", false);
-    deliver_probe_wake(&c, &wake, 1);
-    deliver_probe_wake(&c, &wake, 2);
+    deliver_probe_wake(&c, &wake, 3);
+    deliver_probe_wake(&c, &wake, 4);
     assert_eq!(
         absence_calls(&c) - before_deletion,
         1,
@@ -1402,12 +1597,12 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         interval_clock(&clock) + jiff::SignedDuration::from_secs(2),
     );
     let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
-    wait("T3 recovers and the next confirmation is held", || {
+    wait_for_answer_fixture("T3 recovers and the next confirmation is held", || {
         marker.exists()
     });
 
     let held_calls = absence_calls(&c);
-    for revision in 3..=6 {
+    for revision in 5..=8 {
         if revision % 2 == 1 {
             c.store.thread(&session, None, None, "2026-11-08T10:00:00Z");
         } else {
@@ -1422,11 +1617,11 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
     );
     std::fs::remove_file(held).unwrap();
     let stopped = format!("--stopped t3:{session}");
-    wait(
+    wait_for_answer_fixture(
         "the missing thread has its confirmed replacement finding",
         || conversation_finding(&c, &stopped).is_some(),
     );
-    for revision in 7..=9 {
+    for revision in 9..=11 {
         deliver_probe_wake(&c, &wake, revision);
     }
     assert_eq!(
@@ -1451,9 +1646,9 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         .assert()
         .success();
     c.store.unproject_thread(source);
-    deliver_probe_wake(&c, &wake, 10);
+    deliver_probe_wake(&c, &wake, 12);
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    wait("the link's source read failed", || {
+    wait_for_answer_fixture("the link's source read failed", || {
         instrukt_runner::links::status(&home)
             .unwrap()
             .iter()
@@ -1480,7 +1675,7 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         "Question.",
         "Relayed on the timer.",
     );
-    wait(
+    wait_for_answer_fixture(
         "the timer relays the turn and completes its company retry",
         || {
             c.runtime.message_count(target) == 2
@@ -1502,7 +1697,7 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         probes,
         "a timer retry must not schedule another show"
     );
-    assert_eq!(std::fs::read_to_string(&wakes).unwrap(), "10");
+    assert_eq!(std::fs::read_to_string(&wakes).unwrap(), "12");
     assert_eq!(
         absence_calls(&c),
         shows,
@@ -1518,77 +1713,10 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
 }
 
 #[cfg(debug_assertions)]
-fn a_send_refused_after_readiness_is_delivered_once_after_replacement() {
-    let (mut c, _, session) = answered_conversation(false);
-    let hold = c.env.path("dispatch-hold");
-    let key = conversations::key(&c.company(), SLACK, "D30");
-    c.runner_dies();
-    c.env.set_env(
-        "INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD",
-        hold.to_str().unwrap(),
-    );
-    std::fs::write(&hold, &key).unwrap();
-    c.run();
-    let question = c
-        .slack
-        .direct("D30", "USTEVEN", "Where is the revised report?");
-    wait(
-        "the follow-up has passed readiness but not revalidated dispatch",
-        || hold.with_extension("observed").exists(),
-    );
-    c.runtime.delete(&session);
-    std::fs::remove_file(&hold).unwrap();
-    let db = instrukt_core::state_db::rusqlite::Connection::open(
-        c.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    wait("T3 refuses the send and the question stays pending", || {
-        db.query_row(
-            "SELECT state='pending' AND attempted_at IS NOT NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
-            [&question],
-            |row| row.get::<_, bool>(0),
-        ).unwrap()
-    });
-    c.store.unproject_thread(&session);
-    let door = format!("instrukt sessions replace-deleted {key} --stopped t3:{session}");
-    wait(
-        "the refused question is unavailable and has a recovery command",
-        || {
-            conversation_finding(&c, &door).is_some()
-                && c.slack.status("D30", &question).as_deref() == Some(UNAVAILABLE)
-        },
-    );
-    assert_eq!(c.slack.posts().len(), 1);
-
-    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
-    run_printed_replacement(&c, &door);
-    let successor = started(&c, &[]);
-    c.finish_turn(&successor, 0, "The replacement session is initialized.");
-    wait("the saved question reaches the successor", || {
-        c.runtime.message_count(&successor) == 2
-    });
-    assert!(
-        c.runtime
-            .message(&successor, 1)
-            .contains("Where is the revised report?")
-    );
-    c.finish_turn(&successor, 1, "The revised report is in the wiki.");
-    wait("the answer is posted and the status clears", || {
-        c.slack
-            .posts_beginning("The revised report is in the wiki.")
-            == 1
-            && answers_recorded(&c)
-            && c.slack.status("D30", &question).is_none()
-    });
-    assert_eq!(c.runtime.message_count(&successor), 2);
-    assert_eq!(c.slack.posts().len(), 2);
-}
-
-#[cfg(debug_assertions)]
 fn deliver_probe_wake(c: &Company, wake: &impl Fn(u64), revision: u64) {
     wake(revision);
     let marker = format!("event=t3_fixture_wake revision={revision}");
-    wait("the relay processes the queued source wake", || {
+    wait_for_answer_fixture("the relay processes the queued source wake", || {
         run_log(c)
             .split_once(&marker)
             .is_some_and(|(_, after)| after.contains("event=conversation_relay_source_processed"))
@@ -1605,7 +1733,7 @@ fn conversation_finding(c: &Company, expected: &str) -> Option<String> {
 }
 
 fn run_printed_replacement(c: &Company, expected: &str) {
-    wait(
+    wait_for_answer_fixture(
         "the operator finding contains the replacement command",
         || conversation_finding(c, expected).is_some(),
     );
@@ -1630,30 +1758,59 @@ fn replay_replacement(c: &Company, finding: &str) {
 fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
     let (mut c, _, session) = answered_conversation(false);
     let waiting = c.slack.direct("D30", "USTEVEN", "Who kept the notes?");
-    wait("the old session receives the question", || {
+    wait_for_answer_fixture("the old session receives the question", || {
         c.runtime.message_count(&session) == 2
     });
     let answer = "Ada kept the notes.";
     c.slack.fate(answer, Fate::Refused, usize::MAX);
-    c.finish_turn(&session, 1, answer);
+    finish_answer_turn(&mut c, &session, 1, answer);
     interval_at(&c, &waiting);
     assert_eq!(c.slack.posts_beginning(answer), 0);
 
-    c.runtime.delete(&session);
-    c.store.unproject_thread(&session);
-    let next = c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
     let key = conversations::key(&c.company(), SLACK, "D30");
-    let stopped = format!("t3:{session}");
-    let command = format!("instrukt sessions replace-deleted {key} --stopped {stopped}");
-    wait("the first deletion is confirmed", || {
-        conversation_finding(&c, &command).is_some()
-    });
-
-    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
+    // Delete after readiness in debug builds. The refused send and the
+    // retained answer then recover through the same replacement.
+    #[cfg(debug_assertions)]
+    let hold = {
+        let path = c.env.path("dispatch-hold");
+        std::fs::write(&path, &key).unwrap();
+        path
+    };
+    #[cfg(not(debug_assertions))]
+    c.runtime.delete(&session);
+    let next = c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
+    #[cfg(debug_assertions)]
+    {
+        wait_for_answer_fixture(
+            "the follow-up has passed readiness but not revalidated dispatch",
+            || hold.with_extension("observed").exists(),
+        );
+        c.runtime.delete(&session);
+        std::fs::remove_file(hold).unwrap();
+        wait_for_answer_fixture("T3 refuses the send and the question stays pending", || {
+            db.query_row(
+                "SELECT state='pending' AND attempted_at IS NOT NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
+                [&next],
+                |row| row.get::<_, bool>(0),
+            ).unwrap()
+        });
+    }
+    c.store.unproject_thread(&session);
+    let stopped = format!("t3:{session}");
+    let command = format!("instrukt sessions replace-deleted {key} --stopped {stopped}");
+    wait_for_answer_fixture(
+        "the deletion is confirmed and the question unavailable",
+        || {
+            conversation_finding(&c, &command).is_some()
+                && c.slack.status("D30", &next).as_deref() == Some(UNAVAILABLE)
+        },
+    );
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
     db.execute_batch(
         "CREATE TRIGGER hold_live_replacement BEFORE UPDATE OF accepted ON runtime_bindings
          WHEN NEW.session='t3:s2' AND NEW.accepted=1
@@ -1671,13 +1828,13 @@ fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
         String::from_utf8_lossy(&refused.get_output().stderr)
             .contains("held live replacement acceptance")
     );
-    wait("the finding names the live pending replacement", || {
+    wait_for_answer_fixture("the finding names the live pending replacement", || {
         conversation_finding(&c, &command)
             .is_some_and(|failure| failure.contains("replacement thread t3:s2"))
     });
 
     c.slack.clear_fates();
-    wait(
+    wait_for_answer_fixture(
         "the retained reply posts before replacement acceptance",
         || c.slack.posts_beginning(answer) == 1 && answers_recorded(&c),
     );
@@ -1694,8 +1851,8 @@ fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
     db.execute_batch("DROP TRIGGER hold_live_replacement")
         .unwrap();
     run_printed_replacement(&c, &command);
-    c.finish_turn("s2", 0, "The replacement is ready.");
-    wait("the live successor receives the waiting question", || {
+    finish_answer_turn(&mut c, "s2", 0, "The replacement is ready.");
+    wait_for_answer_fixture("the live successor receives the waiting question", || {
         c.runtime.message_count("s2") == 2
     });
     assert!(
@@ -1703,8 +1860,8 @@ fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
             .message("s2", 1)
             .contains("Where is the attachment?")
     );
-    c.finish_turn("s2", 1, "It is in the report.");
-    wait("the member receives the successor's reply", || {
+    finish_answer_turn(&mut c, "s2", 1, "It is in the report.");
+    wait_for_answer_fixture("the member receives the successor's reply", || {
         c.slack.posts_beginning("It is in the report.") == 1
             && answers_recorded(&c)
             && c.slack.status("D30", &next).is_none()
@@ -1722,7 +1879,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    wait("the old session accepted the unfinished question", || {
+    wait_for_answer_fixture("the old session accepted the unfinished question", || {
         db.query_row(
             "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='sent')",
             [&first],
@@ -1736,7 +1893,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     let key = conversations::key(&c.company(), SLACK, "D30");
     let stopped = format!("t3:{session}");
     let door = format!("instrukt sessions replace-deleted {key} --stopped {stopped}");
-    wait(
+    wait_for_answer_fixture(
         "the unfinished first question also shows the fixed status",
         || c.slack.status("D30", &first).as_deref() == Some(UNAVAILABLE),
     );
@@ -1833,9 +1990,14 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
             .message(&successor, 0)
             .contains("Is the old report ready?")
     );
-    c.finish_turn(&successor, 0, "The replacement session is initialized.");
+    finish_answer_turn(
+        &mut c,
+        &successor,
+        0,
+        "The replacement session is initialized.",
+    );
 
-    wait(
+    wait_for_answer_fixture(
         "the successor receives the first unanswered question",
         || c.runtime.message_count(&successor) == 2,
     );
@@ -1844,8 +2006,8 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
             .message(&successor, 1)
             .contains("Who is reviewing the new report?")
     );
-    c.finish_turn(&successor, 1, "Ada is reviewing it.");
-    wait("the successor receives the later question in order", || {
+    finish_answer_turn(&mut c, &successor, 1, "Ada is reviewing it.");
+    wait_for_answer_fixture("the successor receives the later question in order", || {
         c.runtime.message_count(&successor) == 3
     });
     assert!(
@@ -1853,8 +2015,8 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
             .message(&successor, 2)
             .contains("When will it be ready?")
     );
-    c.finish_turn(&successor, 2, "It will be ready on Friday.");
-    wait("both answers appear and the final status clears", || {
+    finish_answer_turn(&mut c, &successor, 2, "It will be ready on Friday.");
+    wait_for_answer_fixture("both answers appear and the final status clears", || {
         c.slack.posts_beginning("Ada is reviewing it.") == 1
             && c.slack.posts_beginning("It will be ready on Friday.") == 1
             && answers_recorded(&c)
@@ -5189,9 +5351,8 @@ fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() 
     assert_eq!(shown(&c, channel, &lost), [WORKING, UNAVAILABLE, ""]);
 
     // The runner dies during a post of the answer, and the turn's content
-    // cannot be read once it is back: the answer stays unposted, and the
-    // member sees the unavailable text from the turn's end until the content
-    // reads again and the answer is posted.
+    // cannot be read once it is back. Slack refuses delivery until the
+    // test releases it. The retained answer can post independently.
     let posts = c.slack.posts().len();
     let ended_at = done_at + jiff::SignedDuration::from_mins(10);
     set_clock(&clock, ended_at);
@@ -5210,26 +5371,38 @@ fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() 
     c.runner_dies();
     c.slack.fail_held_posts();
     c.store.hide_messages("turn-2-user");
+    c.slack.fate("Ada signed it.", Fate::Refused, usize::MAX);
     set_clock(&clock, ended_at + jiff::SignedDuration::from_secs(30));
     c.run();
-    wait("the turn's content unread", || {
-        c.conversations()
-            .conversations
-            .iter()
-            .any(|x| !x.failures.is_empty() && x.pending_answers == 1)
-    });
-    assert_eq!(c.conversations().relay_failure, None);
-    wait("the unavailable text while the content is unread", || {
-        c.slack.status(channel, &unread).as_deref() == Some(UNAVAILABLE)
-    });
+    wait(
+        "the source remains unreadable and Slack still refuses the saved reply",
+        || {
+            retained_conversations(&c).conversations.iter().any(|x| {
+                x.pending_answers == 1
+                    && x.failures
+                        .iter()
+                        .any(|cause| cause.contains("completed-turn evidence unavailable"))
+                    && x.failures
+                        .iter()
+                        .any(|cause| cause.contains("not_in_channel"))
+            }) && c.slack.status(channel, &unread).as_deref() == Some(UNAVAILABLE)
+        },
+    );
     assert_eq!(interval(&c, &unread), Some(ended_at.to_string()));
-    c.store.show_messages();
-    wait("the answer once the content reads", || {
-        c.slack.posts().len() == posts + 1
-    });
+    assert_eq!(c.slack.posts().len(), posts);
+    c.slack.clear_fates();
+    wait(
+        "Slack accepts the retained answer while the content is still unreadable",
+        || c.slack.posts().len() == posts + 1 && answers_recorded(&c),
+    );
     wait("the status cleared", || {
         shown(&c, channel, &unread).last().map(String::as_str) == Some("")
     });
+    assert_eq!(c.slack.posts_beginning("Ada signed it."), 1);
+    assert_eq!(
+        destinations(&c).last(),
+        Some(&(channel.to_owned(), Some(unread.clone())))
+    );
     assert_eq!(interval(&c, &unread), None);
     assert_eq!(shown(&c, channel, &unread), [WORKING, UNAVAILABLE, ""]);
 }

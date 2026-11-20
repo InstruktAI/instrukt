@@ -41,6 +41,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
 const V24: &str = "
 ALTER TABLE conversation_messages ADD COLUMN retry_at TEXT;
 ALTER TABLE conversation_messages ADD COLUMN failed_turns INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE conversation_messages ADD COLUMN source_uncertain INTEGER NOT NULL DEFAULT 0;
 UPDATE conversation_messages SET attempted_at=NULL WHERE state='failed' AND superseded_at IS NULL;
 ";
 

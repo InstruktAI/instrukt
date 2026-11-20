@@ -988,6 +988,7 @@ struct Message {
     failure: Option<String>,
     retry_at: Option<Timestamp>,
     failed_turns: u32,
+    source_uncertain: bool,
 }
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
@@ -1083,7 +1084,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure,retry_at,failed_turns
+                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure,retry_at,failed_turns,source_uncertain
                  FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) AND superseded_at IS NULL
                  ORDER BY state='failed', retry_at, written_us, message")
                 .map_err(state::sql(path))?;
@@ -1097,6 +1098,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                     r.get::<_, Option<String>>(5)?,
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, u32>(7)?,
+                    r.get::<_, bool>(8)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -1106,7 +1108,17 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
         .unwrap_or_default();
     rows.into_iter()
         .map(
-            |(message, stage, boundary, content, attempted, failure, retry_at, failed_turns)| {
+            |(
+                message,
+                stage,
+                boundary,
+                content,
+                attempted,
+                failure,
+                retry_at,
+                failed_turns,
+                source_uncertain,
+            )| {
                 Ok(Message {
                     message,
                     stage: Stage::parse(&stage).ok_or_else(|| {
@@ -1120,6 +1132,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                         ConversationError::Refused("invalid failed-turn retry time".into())
                     })?,
                     failed_turns,
+                    source_uncertain,
                 })
             },
         )
@@ -1320,24 +1333,34 @@ fn accepted(
     state: &RunnerState,
     c: &Conversation,
     message: &str,
+    boundary: Option<&str>,
     session: Option<&SessionRef>,
-) -> Result<(), StateError> {
-    state.write(|tx| {
+) -> Result<bool, StateError> {
+    let applied = state.write(|tx| {
         let path = state::db_path(tx);
-        tx.execute(
-            "UPDATE conversation_messages SET state=?5,failure=NULL,unavailable_since=NULL,turn_update=NULL,retry_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
-            params![c.company.as_str(), c.connector, c.conversation, message, Stage::Sent.as_str()],
-        )
-        .map_err(state::sql(&path))?;
-        if let Some(session) = session {
+        let changed = tx.execute(
+            "UPDATE conversation_messages SET state='sent',failure=NULL,unavailable_since=NULL,turn_update=NULL,retry_at=NULL
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+               AND boundary=?5 AND attempted_at IS NOT NULL AND source_uncertain=0
+               AND state IN ('pending','failed') AND superseded_at IS NULL",
+            params![c.company.as_str(), c.connector, c.conversation, message, boundary],
+        ).map_err(state::sql(&path))?;
+        if changed != 0 && let Some(session) = session {
             tx.execute(
                 "UPDATE connected_conversations SET session=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
                 params![c.company.as_str(), c.connector, c.conversation, session.to_string()],
-            )
-            .map_err(state::sql(&path))?;
+            ).map_err(state::sql(&path))?;
         }
-        Ok(())
-    })
+        Ok::<_, StateError>(changed != 0)
+    })?;
+    if !applied {
+        stale_acknowledgement(c, message);
+    }
+    Ok(applied)
+}
+
+fn stale_acknowledgement(c: &Conversation, message: &str) {
+    tracing::warn!(target: LOG_TARGET, event = "conversation_stale_acknowledgement", key = %c.semantic_key, message);
 }
 
 const FAILED_RETRY_DELAY: SignedDuration = SignedDuration::from_mins(2);
@@ -1350,7 +1373,10 @@ fn retry_delay(previous_failures: u32) -> SignedDuration {
 
 /// A failed turn with a ready retry still yields to new messages.
 fn next_message<'a>(open: &'a [Message], c: &Conversation, now: Timestamp) -> Option<&'a Message> {
-    if open.iter().any(|m| m.stage == Stage::Sent) {
+    if open
+        .iter()
+        .any(|m| m.stage == Stage::Sent || m.source_uncertain)
+    {
         return None;
     }
     let next = match (&c.session, &c.opening) {
@@ -1533,6 +1559,21 @@ fn start(
             request
         }
     };
+    state.write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET attempted_at=coalesce(attempted_at,?5)
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            params![
+                c.company.as_str(),
+                c.connector,
+                c.conversation,
+                next.message,
+                now.to_string()
+            ],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
     let thread = adapter.start_or_wake(&RuntimeAssignment {
         creation: CreationPermit::Initial,
         invocation,
@@ -1540,7 +1581,13 @@ fn start(
         request: &request,
         now,
     })?;
-    accepted(state, c, &next.message, Some(&thread.session))?;
+    accepted(
+        state,
+        c,
+        &next.message,
+        next.boundary.as_deref(),
+        Some(&thread.session),
+    )?;
     tracing::info!(target: LOG_TARGET, event = "conversation_session_started", company = %c.company, connector = %c.connector, key = %c.semantic_key, session = %thread.session);
     Ok(())
 }
@@ -1557,34 +1604,36 @@ fn send(
         .content
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
-    let attempt = if next.stage == Stage::Failed && !next.attempted {
-        let old_boundary = next.boundary.as_deref().ok_or_else(|| {
-            ConversationError::Refused("the failed message has no delivery boundary".into())
-        })?;
-        let boundary = envelopes::delivery_boundary(&[content])?;
-        Some((content.replace(old_boundary, &boundary), boundary))
-    } else {
-        None
-    };
-    let (content, boundary) = attempt.as_ref().map_or(
-        (content, next.boundary.as_deref()),
-        |(content, boundary)| (content.as_str(), Some(boundary.as_str())),
-    );
-    // Persist the new attempt before it can take effect, and keep its exact
-    // input through a lost acceptance or a refusal.
+    let old_boundary = next
+        .boundary
+        .as_deref()
+        .ok_or_else(|| ConversationError::Refused("the message has no delivery boundary".into()))?;
+    let boundary = envelopes::delivery_boundary(&[content])?;
+    let content = content.replace(old_boundary, &boundary);
+    // A fresh wire send follows the readiness and earlier-attempt checks.
+    // Its boundary identifies it through any lost acknowledgement.
     let recorded = state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET attempted_at=coalesce(attempted_at,?5),content=?6,boundary=?7
-             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
-            params![c.company.as_str(), c.connector, c.conversation, next.message, now.to_string(), content, boundary],
+            "UPDATE conversation_messages SET attempted_at=?5,content=?6,boundary=?7
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+               AND boundary=?8 AND source_uncertain=0 AND superseded_at IS NULL",
+            params![
+                c.company.as_str(),
+                c.connector,
+                c.conversation,
+                next.message,
+                now.to_string(),
+                content,
+                boundary,
+                old_boundary
+            ],
         )
         .map_err(state::sql(&state::db_path(tx)))
     })?;
-    if recorded == 0 {
-        return Ok(());
+    if recorded != 0 {
+        adapter.send(session, &content)?;
+        accepted(state, c, &next.message, Some(&boundary), None)?;
     }
-    adapter.send(session, content)?;
-    accepted(state, c, &next.message, None)?;
     Ok(())
 }
 
@@ -1617,7 +1666,7 @@ pub fn split(text: &str, limit: usize) -> Vec<String> {
 }
 
 const MISSING_SOURCE_TURN: &str =
-    "the moved conversation source cannot find the sent message's turn";
+    "the moved conversation source cannot find the outstanding attempt";
 const FAILED_TURN: &str = "the turn ended without a reply";
 
 fn message_for_input<'a>(sent: &'a [Message], text: &str) -> Option<&'a Message> {
@@ -1765,10 +1814,10 @@ fn harvest(
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
-                if output.is_empty() && !turn.succeeded {
+                if !turn.succeeded {
                     tx.execute(
                         "UPDATE conversation_messages SET state='failed',failure=?5,turn_update=NULL,
-                         unavailable_since=coalesce(unavailable_since,?6),attempted_at=NULL,retry_at=?7,failed_turns=failed_turns+1
+                         unavailable_since=coalesce(unavailable_since,?6),attempted_at=NULL,source_uncertain=0,retry_at=?7,failed_turns=failed_turns+1
                          WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
                         params![c.company.as_str(), c.connector, c.conversation, message.message, FAILED_TURN, ended.to_string(), format!("{:.9}", ended + retry_delay(message.failed_turns))],
                     )
@@ -1794,32 +1843,33 @@ fn harvest(
                     // answer to post opens nothing now, and its status keeps
                     // its newest message while the answer is posted; one with
                     // nothing to post completes the message.
-                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,retry_at=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,retry_at=NULL,attempted_at=NULL,source_uncertain=0,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
                     params![c.company.as_str(), c.connector, c.conversation, message.message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
             }
-            if answers.iter().any(|(_, _, output)| output.is_empty()) {
+            if answers.iter().any(|(_, turn, output)| !turn.succeeded || output.is_empty()) {
                 settle_failed_messages(tx, c.company.as_str(), &c.connector, &c.conversation, ended)?;
             }
             if !batch.has_more {
-                for message in sent.iter().filter(|message| message.stage == Stage::Sent) {
-                    match (moved, found.contains(&message.message), message.failure.as_deref()) {
-                        (true, false, _) => {
-                            tx.execute(
-                                "UPDATE conversation_messages SET failure=?5,unavailable_since=coalesce(unavailable_since,?6)
-                                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state='sent'",
-                                params![c.company.as_str(), c.connector, c.conversation, message.message, MISSING_SOURCE_TURN, ended.to_string()],
-                            ).map_err(state::sql(&path))?;
-                        }
-                        (_, true, Some(MISSING_SOURCE_TURN)) => {
-                            tx.execute(
-                                "UPDATE conversation_messages SET failure=NULL
-                                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state='sent'",
-                                params![c.company.as_str(), c.connector, c.conversation, message.message],
-                            ).map_err(state::sql(&path))?;
-                        }
-                        _ => {}
+                for message in sent.iter().filter(|message| moved || message.source_uncertain) {
+                    if found.contains(&message.message) {
+                        tx.execute(
+                            "UPDATE conversation_messages SET state='sent',source_uncertain=0,failure=NULL,retry_at=NULL
+                             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+                               AND state IN ('pending','sent','failed')
+                               AND (state='sent' OR attempted_at IS NOT NULL) AND superseded_at IS NULL",
+                            params![c.company.as_str(), c.connector, c.conversation, message.message],
+                        ).map_err(state::sql(&path))?;
+                    } else if moved {
+                        tx.execute(
+                            "UPDATE conversation_messages SET source_uncertain=1,failure=?5,
+                               unavailable_since=coalesce(unavailable_since,?6)
+                             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+                               AND state IN ('pending','sent','failed')
+                               AND (state='sent' OR attempted_at IS NOT NULL) AND superseded_at IS NULL",
+                            params![c.company.as_str(), c.connector, c.conversation, message.message, MISSING_SOURCE_TURN, ended.to_string()],
+                        ).map_err(state::sql(&path))?;
                     }
                 }
             }
@@ -1863,6 +1913,8 @@ struct DeliveryCandidate {
     session: SessionRef,
     message: String,
     head: Option<String>,
+    boundary: Option<String>,
+    attempted: bool,
     source_presence: Presence,
     invalidated: bool,
 }
@@ -1908,11 +1960,11 @@ impl RelayWorkers {
                     SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3
                     AND superseded_at IS NULL AND (
                         (state='failed' AND failed_turns>=2)
-                        OR (state='sent' AND (?4 OR failure=?5)
-                            AND julianday(unavailable_since)<=julianday(?6))
+                        OR ((state='sent' AND ?4 OR source_uncertain=1)
+                            AND julianday(unavailable_since)<=julianday(?5))
                     )
                 )",
-                params![c.company.as_str(), c.connector, c.conversation, unread, MISSING_SOURCE_TURN, (now - ANSWER_OPERATOR_BOUND).to_string()],
+                params![c.company.as_str(), c.connector, c.conversation, unread, (now - ANSWER_OPERATOR_BOUND).to_string()],
                 |row| row.get::<_, bool>(0),
             ).map_err(state::sql(path))
         })?.unwrap_or(false);
@@ -2032,6 +2084,8 @@ impl RelayWorkers {
                         session: session.clone(),
                         message: next.message.clone(),
                         head: head.map(|head| head.message.clone()),
+                        boundary: next.boundary.clone(),
+                        attempted: next.attempted,
                         source_presence,
                         invalidated: false,
                     },
@@ -2872,12 +2926,12 @@ fn adopt_replacement(
                 params![c.company.as_str(), c.connector, c.conversation, successor.to_string(), source.identity(), serialized],
             ).map_err(state::sql(&path))?;
             tx.execute(
-                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5)",
+                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,source_uncertain=0,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5)",
                 params![c.company.as_str(), c.connector, c.conversation, Stage::Pending.as_str(), Stage::Sent.as_str()],
             ).map_err(state::sql(&path))?;
             tx.execute(
-                "UPDATE conversation_messages SET attempted_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL",
-                params![c.company.as_str(), c.connector, c.conversation],
+                "UPDATE conversation_messages SET attempted_at=NULL,source_uncertain=0,failure=CASE WHEN source_uncertain=1 THEN ?4 ELSE failure END WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL",
+                params![c.company.as_str(), c.connector, c.conversation, FAILED_TURN],
             ).map_err(state::sql(&path))?;
             Ok(())
         })?;
@@ -3009,15 +3063,18 @@ fn relay(
             schedule_earlier_failures(&state, &c, clock())?;
         }
         let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
-        let answer_may_need_attention = before_read.iter().any(|message| match message.stage {
-            Stage::Failed => message.failed_turns > 0,
-            Stage::Sent => {
-                message.failed_turns > 0
-                    || observed.is_none()
-                    || message.failure.as_deref() == Some(MISSING_SOURCE_TURN)
-                    || c.source_identity.as_deref() != Some(source.identity())
-            }
-            _ => false,
+        let answer_may_need_attention = before_read.iter().any(|message| {
+            message.source_uncertain
+                || (message.attempted && c.source_identity.as_deref() != Some(source.identity()))
+                || match message.stage {
+                    Stage::Failed => message.failed_turns > 0,
+                    Stage::Sent => {
+                        message.failed_turns > 0
+                            || observed.is_none()
+                            || c.source_identity.as_deref() != Some(source.identity())
+                    }
+                    _ => false,
+                }
         });
         if answer_may_need_attention {
             workers.report_answer_failure(admitted, &state, &c, observed.is_none(), clock())?;
@@ -3065,6 +3122,26 @@ fn relay(
             workers.absence_in_flight(&c, None, clock());
             continue;
         }
+        let check = match check {
+            CheckedDelivery::Checked {
+                candidate,
+                result: Ok(DeliveryCheck::Accepted),
+            } => {
+                if candidate.invalidated || c.session.as_ref() != Some(&candidate.session) {
+                    stale_acknowledgement(&c, &candidate.message);
+                } else if accepted(
+                    &state,
+                    &c,
+                    &candidate.message,
+                    candidate.boundary.as_deref(),
+                    None,
+                )? {
+                    continue;
+                }
+                CheckedDelivery::Idle
+            }
+            other => other,
+        };
         let Some(observed) = observed else {
             continue;
         };
@@ -3102,7 +3179,7 @@ fn relay(
                     if observed == Presence::Absent && checked_presence == Some(Presence::Present) {
                         workers.confirmed_presence(&candidate.session, Presence::Present, clock());
                     }
-                    Some((candidate.message, candidate.head, result))
+                    Some((candidate, result))
                 }
             }
             CheckedDelivery::Checking => {
@@ -3143,17 +3220,17 @@ fn relay(
         }
         let open = open_messages(&state, &c)?;
         let mut checked_head = None;
-        if let Some((message, head, result)) = check
-            && let Some(next) = open
-                .iter()
-                .find(|m| matches!(m.stage, Stage::Pending | Stage::Failed) && m.message == message)
+        if let Some((candidate, result)) = check
+            && let Some(next) = open.iter().find(|message| {
+                matches!(message.stage, Stage::Pending | Stage::Failed)
+                    && !message.source_uncertain
+                    && message.message == candidate.message
+                    && message.boundary == candidate.boundary
+                    && message.attempted == candidate.attempted
+            })
         {
             match result {
-                Ok(DeliveryCheck::Accepted) => {
-                    accepted(&state, &c, &message, None)?;
-                    continue;
-                }
-                Ok(DeliveryCheck::Ready) => checked_head = head,
+                Ok(DeliveryCheck::Ready) => checked_head = candidate.head,
                 Ok(_) => continue,
                 Err(error) => {
                     record_delivery_failure(
@@ -3181,7 +3258,10 @@ fn relay(
             // Accept any lost acknowledgment before trying to serve a
             // different queue head that arrived meanwhile.
             let unconfirmed = open.iter().find(|m| {
-                matches!(m.stage, Stage::Pending | Stage::Failed) && m.attempted && before_read(m)
+                matches!(m.stage, Stage::Pending | Stage::Failed)
+                    && m.attempted
+                    && !m.source_uncertain
+                    && before_read(m)
             });
             if next.map(|m| &m.message) != checked_head.as_ref() || checked_head.is_none() {
                 if let Some(candidate) = unconfirmed.or(next) {

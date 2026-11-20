@@ -171,7 +171,8 @@ connector gives.
   conversation source, completed-turn evidence and retained positions as
   conversation links. The relay advances its position in the transaction
   that retains the answers it reads. Posting settles each retained piece
-  separately through the protocol below.
+  separately through the protocol below. Retained answers can post while
+  the conversation source is unreadable.
 - A person receives each part of an answer once. Each part is recorded as
   being posted before its post is sent. A part the connector accepted is never
   posted again: when recording that acceptance fails, only the record is
@@ -202,11 +203,15 @@ connector gives.
   no-work interval and reads again. The cause shows in status and raises an
   anomaly past `ANSWER_OPERATOR_BOUND`. Nothing partial and nothing of another
   message is posted.
-- A turn that ends unsuccessfully without a reply leaves its message failed.
+- An unsuccessful terminal turn leaves its message failed. Text written
+  during that turn is progress and supplies no answer.
   The relay retries it after a growing delay, behind new messages, until it
   receives an answer or a later-admitted settled message from the same member
-  supersedes it. Each redelivery has a fresh boundary recorded before the
-  send. The relay reconciles that same boundary when acceptance is uncertain.
+  supersedes it. Each send has a fresh boundary recorded before dispatch.
+  The opening request keeps its recorded boundary through reconciliation.
+  The relay applies an acknowledgement only to the attempt it identifies
+  while that attempt is outstanding. It discards stale acknowledgements and
+  records them for the operator.
   It uses the bound session and the presence and operator recovery rules above.
   Repeated failed turns are visible to the operator. What the failed turn
   already did is the agent's to reconcile
@@ -216,9 +221,11 @@ connector gives.
 - When the source's identity changes, the relay reads the bound session's
   entire thread from the new source. It matches turns by the addressed message's
   boundary and retains existing answer and posting records. It commits the new
-  source position with any newly recovered turns. A message whose turn cannot
-  be found stays sent and uncertain, with its interval and a cause in status.
-  It is read again and never sent again merely because the turn is missing.
+  source position with any newly recovered turns. Any outstanding attempt,
+  including a send whose acknowledgement was lost, stays uncertain if the
+  moved source cannot identify its turn. The relay retains that attempt and
+  shows the cause in status. It reconciles by boundary. A miss in the moved
+  source supplies no proof of absence and permits no repeat send.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until it is complete — its
@@ -500,7 +507,8 @@ And the status clears once the answer arrives or the turn completes without a re
 Given the assistant has an answer for a member and its delivery is uncertain
 When the assistant recovers from the interruption
 Then an answer that reached the member is neither repeated nor followed by an unavailable notice for that answer
-And an answer confirmed absent can be sent again
+And an answer confirmed absent can be sent again even while its source remains unreadable
+And the member sees the unavailable status while delivery is blocked
 And if delivery cannot be established, the operator sees that outcome and the member can still ask another question
 ```
 

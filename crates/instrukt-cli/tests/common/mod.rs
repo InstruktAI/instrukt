@@ -34,7 +34,7 @@
 
 #[path = "../../../../tests/support/wait.rs"]
 mod polling;
-pub use polling::wait_until;
+pub use polling::{wait_until, wait_until_with_interval};
 
 pub mod github;
 pub mod redis;

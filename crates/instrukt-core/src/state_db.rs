@@ -689,6 +689,14 @@ mod tests {
                        'sent','Question','sent-boundary','Framed question','unconfirmed-send',3,NULL,NULL);",
         ).unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let uncertain: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM conversation_messages WHERE source_uncertain=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(uncertain, 0);
         let retained = conn
             .prepare(
                 "SELECT state,boundary,admission_position,unavailable_since,superseded_at,attempted_at,retry_at,failed_turns

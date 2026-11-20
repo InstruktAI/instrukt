@@ -143,7 +143,7 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         reason = "completed turns are used by the shared relay scenarios"
     )]
     pub fn turn(&self, thread: &str, id: &str, order: u64, human: &str, agent: &str) {
-        self.terminal_turn(thread, id, order, human, Some(agent), false);
+        self.terminal_turn(thread, id, order, human, Some(agent), "completed", false);
     }
 
     #[allow(
@@ -151,14 +151,30 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         reason = "failed turns are used by the conversation scenarios"
     )]
     pub fn failed_turn(&self, thread: &str, id: &str, order: u64, human: &str) {
-        self.terminal_turn(thread, id, order, human, None, false);
+        self.terminal_turn(thread, id, order, human, None, "failed", false);
     }
 
     #[allow(dead_code, reason = "used by the conversation answer scenarios")]
     pub fn streaming_turn(&self, thread: &str, id: &str, order: u64, human: &str, agent: &str) {
-        self.terminal_turn(thread, id, order, human, Some(agent), true);
+        self.terminal_turn(thread, id, order, human, Some(agent), "completed", true);
     }
 
+    #[allow(dead_code, reason = "used by the conversation answer scenarios")]
+    pub fn failed_turn_with_progress(
+        &self,
+        thread: &str,
+        id: &str,
+        order: u64,
+        human: &str,
+        progress: &str,
+    ) {
+        self.terminal_turn(thread, id, order, human, Some(progress), "failed", false);
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "native fixture dimensions are independent"
+    )]
     fn terminal_turn(
         &self,
         thread: &str,
@@ -166,6 +182,7 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
         order: u64,
         human: &str,
         agent: Option<&str>,
+        status: &str,
         streaming_reply: bool,
     ) {
         let at = "2026-11-08T10:00:00.000Z";
@@ -191,11 +208,6 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             let item = json!({"id":item_id,"threadId":thread,"runId":id,"type":kind,"messageId":message,"ordinal":ordinal,"status":"completed","streaming":false,"text":text,"createdAt":at,"updatedAt":at,"completedAt":at});
             tx.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,?2,?3,'completed',?4,?5)",params![item_id,thread,kind,at,item.to_string()]).unwrap();
         }
-        let status = if agent.is_some() {
-            "completed"
-        } else {
-            "failed"
-        };
         let run = json!({"id":id,"threadId":thread,"ordinal":order,"providerInstanceId":"fixture","modelSelection":{"instanceId":"fixture","model":"fixture"},"userMessageId":user,"status":status,"requestedAt":at,"completedAt":at});
         tx.execute(
             "INSERT INTO orchestration_v2_projection_runs VALUES(?1,?2,?3,?4,?4,?5)",
