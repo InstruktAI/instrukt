@@ -260,7 +260,9 @@ through the operation. Operator recovery waits within the dispatch lock's
 usual bound for the exact key, and replacement also waits for any input
 already being handled for the stopped thread. Other keys keep dispatching.
 If the wait expires, the command names the semantic key and the exact command
-to retry after dispatch releases it. An internal `input:<runtime:id>` lock
+to retry after dispatch releases it, with POSIX shell quoting and the requested
+output format. If the lock cannot be opened, the command reports the directory
+and the operating system's cause. An internal `input:<runtime:id>` lock
 key is refused before lock acquisition. The recovery commands take the
 assignment's `instrukt:…` semantic key.
 An owner taking that key's
@@ -902,6 +904,7 @@ And a successful replacement of a committed binding receives later work
 But if two keys concurrently resolve to the same available thread
 Then only one resolution binds it and the other start stays unresolved
 And a command given an internal input-lock key tells the operator to use the assignment's semantic key
+And an unreadable recovery lock reports the path problem and its operating system cause
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

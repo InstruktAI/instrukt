@@ -793,22 +793,12 @@ fn one_conversation_opens_while_another_start_is_being_verified() {
     {
         c.runtime.delete("s1");
         c.store.unproject_thread("s1");
-        let _input = hold_recovery_key(&c, "input:t3:s1");
-        std::fs::remove_file(c.env.path("recovery-lock-wait")).unwrap();
-        let mut replacement = recovery_waiting(
+        let result = timeout_recovery(
             &c,
-            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+            &_clock,
             "input:t3:s1",
-        )
-        .unwrap();
-        let clock = RunningClock::start(_clock.clone(), interval_clock(&_clock), 60);
-        wait(
-            "operator recovery gives up waiting for the held input",
-            || replacement.try_wait().unwrap().is_some(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
         );
-        clock.stop();
-        let result = replacement.wait_with_output().unwrap();
-        assert!(!result.status.success());
         let stderr = String::from_utf8_lossy(&result.stderr);
         let diagnostic = format!(
             "instrukt: dispatch is still busy after the recovery wait for semantic key `{key}`. Retry `instrukt sessions replace-deleted {key} --stopped t3:s1` once dispatch releases it"
@@ -818,7 +808,86 @@ fn one_conversation_opens_while_another_start_is_being_verified() {
             .filter(|line| !line.starts_with("instrukt: clock overridden"))
             .collect::<Vec<_>>();
         assert_eq!(errors, [diagnostic.as_str()]);
+        retry_as_printed_in_shell(&c, &_clock);
     }
+}
+
+#[cfg(debug_assertions)]
+fn timeout_recovery<const N: usize>(
+    c: &Company,
+    clock: &std::path::Path,
+    lock_key: &str,
+    args: [&str; N],
+) -> std::process::Output {
+    let _held = hold_recovery_key(c, lock_key);
+    let marker = c.env.path("recovery-lock-wait");
+    if marker.exists() {
+        std::fs::remove_file(marker).unwrap();
+    }
+    let mut command = recovery_waiting(c, args, lock_key).unwrap();
+    let clock = RunningClock::start(clock.to_owned(), interval_clock(clock), 60);
+    wait(
+        "operator recovery gives up waiting for the held lock",
+        || command.try_wait().unwrap().is_some(),
+    );
+    clock.stop();
+    let result = command.wait_with_output().unwrap();
+    assert!(!result.status.success());
+    result
+}
+
+#[cfg(debug_assertions)]
+fn retry_as_printed_in_shell(c: &Company, clock: &std::path::Path) {
+    let key = "instrukt:run:demo:retry[1]";
+    let target = "t3:s[1]";
+    c.runtime
+        .seed("s[1]", c.env.home(), "An unbound thread", "Opening");
+    let request = serde_json::json!({
+        "checkout": c.env.home(), "key": key, "title": key, "brief": "Retained opening"
+    });
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_starts(runtime,semantic_key,kind,subject,checkout,brief,request,begun_at,reported,state)
+         VALUES('t3',?1,'run',?1,?2,'Retained opening',?3,'2026-11-19T10:00:00Z',0,'unresolved')",
+        instrukt_core::state_db::rusqlite::params![key,c.env.home().to_string_lossy(),request.to_string()],
+    ).unwrap();
+    let failed = timeout_recovery(
+        c,
+        clock,
+        key,
+        [
+            "sessions",
+            "resolve-start",
+            key,
+            "--session",
+            target,
+            "--json",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    let (_, printed) = stderr.split_once("Retry `").unwrap();
+    let (printed, _) = printed.split_once("` once dispatch releases it").unwrap();
+    // Unquoted brackets would match these files even in a POSIX shell.
+    for name in ["instrukt:run:demo:retry1", "t3:s1"] {
+        std::fs::write(c.env.home().join(name), "").unwrap();
+    }
+    std::os::unix::fs::symlink(
+        env!("CARGO_BIN_EXE_instrukt"),
+        c.env.path("runtime-bin/instrukt"),
+    )
+    .unwrap();
+    let result = c
+        .env
+        .command(&common::tool_executable("sh"), c.env.home())
+        .args(["-c", printed])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    let response: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(response, serde_json::json!({"key": key, "session": target}));
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV8

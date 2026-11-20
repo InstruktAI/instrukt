@@ -267,6 +267,35 @@ fn check_run_recovery_doors() {
     );
 
     let home = instrukt_core::home::Home::at_user_home(p.env.home().into());
+    let broken_key = "instrukt:run:demo:broken-lock";
+    use sha2::{Digest, Sha256};
+    let name = Sha256::digest(format!("t3:{broken_key}").as_bytes());
+    let broken_lock = home.locks_dir().join(format!("runtime-key-{name:x}.lock"));
+    // An exact lock file path that is a directory fails even as root.
+    std::fs::create_dir_all(&broken_lock).unwrap();
+    let os_error = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&broken_lock)
+        .unwrap_err()
+        .to_string();
+    let broken = p
+        .env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", broken_key, "--none"],
+        )
+        .failure();
+    let stderr = String::from_utf8_lossy(&broken.get_output().stderr);
+    let diagnostic = format!(
+        "instrukt: cannot use the recovery lock in {} for semantic key `{broken_key}` ({os_error})",
+        home.locks_dir().display()
+    );
+    let errors = stderr
+        .lines()
+        .filter(|line| !line.starts_with("instrukt: clock overridden"))
+        .collect::<Vec<_>>();
+    assert_eq!(errors, [diagnostic.as_str()]);
+
     let _dispatch = instrukt_core::fsx::LockGuard::acquire(
         &home.state_dir().join("runtime-dispatch.lock"),
         std::time::Duration::from_secs(5),

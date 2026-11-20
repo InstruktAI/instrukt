@@ -399,6 +399,7 @@ When a member asks a question in another conversation
 Then the assistant starts there and answers while the first verification is still waiting
 And the first conversation gets its own answer once verification resumes
 And if replacement later times out waiting for the stopped thread's input, the operator sees the conversation key and the command to retry
+And a recovery command for a session with shell metacharacters can be retried in a shell with the original output format
 ```
 
 ### UC-CV8: Get the answer after the assistant's work failed

@@ -103,14 +103,25 @@ struct OperatorRecovery<'a> {
 
 impl OperatorRecovery<'_> {
     fn lock_error(&self, error: FsError) -> SessionsError {
-        let cause = match error {
-            FsError::LockTimeout { .. } => "dispatch is still busy after the recovery wait",
-            _ => "the recovery lock could not be acquired",
+        let message = match error {
+            FsError::LockTimeout { .. } => format!(
+                "dispatch is still busy after the recovery wait for semantic key `{}`. Retry `{}` once dispatch releases it",
+                self.key, self.command
+            ),
+            FsError::Lock { path, source } | FsError::Write { path, source } => {
+                let directory = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+                format!(
+                    "cannot use the recovery lock in {} for semantic key `{}` ({source})",
+                    directory.display(),
+                    self.key
+                )
+            }
+            FsError::NoParent { .. } => format!(
+                "the recovery lock has no parent directory for semantic key `{}`",
+                self.key
+            ),
         };
-        SessionsError::Refused(format!(
-            "{cause} for semantic key `{}`. Retry `{}` once dispatch releases it",
-            self.key, self.command
-        ))
+        SessionsError::Refused(message)
     }
 }
 
@@ -231,18 +242,63 @@ enum Recovery<'a> {
     ResumeReplacement(&'a SessionRef),
 }
 
+fn recovery_command<'a>(arguments: impl IntoIterator<Item = &'a str>) -> String {
+    arguments
+        .into_iter()
+        .map(|arg| {
+            if !arg.is_empty()
+                && arg
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte))
+            {
+                arg.to_owned()
+            } else {
+                instrukt_core::process::shell_quote(arg)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn resolve_command(key: &str, session: Option<&SessionRef>, json: bool) -> String {
+    let target = session.map(ToString::to_string);
+    recovery_command(
+        [
+            "instrukt",
+            "sessions",
+            "resolve-start",
+            key,
+            if session.is_some() {
+                "--session"
+            } else {
+                "--none"
+            },
+        ]
+        .into_iter()
+        .chain(target.as_deref())
+        .chain(json.then_some("--json")),
+    )
+}
+
 impl Recovery<'_> {
     fn command(self, key: &str, session: &SessionRef) -> String {
         match self {
-            Self::ResolveNone => format!("instrukt sessions resolve-start {key} --none"),
-            Self::ResolveSession => {
-                format!("instrukt sessions resolve-start {key} --session {session}")
-            }
-            Self::ReplaceDeleted => {
-                format!("instrukt sessions replace-deleted {key} --stopped {session}")
-            }
-            Self::ResumeReplacement(stopped) => {
-                format!("instrukt sessions replace-deleted {key} --stopped {stopped}")
+            Self::ResolveNone => resolve_command(key, None, false),
+            Self::ResolveSession => resolve_command(key, Some(session), false),
+            Self::ReplaceDeleted | Self::ResumeReplacement(_) => {
+                let stopped = match self {
+                    Self::ResumeReplacement(stopped) => stopped,
+                    _ => session,
+                }
+                .to_string();
+                recovery_command([
+                    "instrukt",
+                    "sessions",
+                    "replace-deleted",
+                    key,
+                    "--stopped",
+                    &stopped,
+                ])
             }
         }
     }
@@ -1008,15 +1064,13 @@ pub fn resolve(
     adapter: &dyn RuntimeAdapter,
     key: &str,
     session: Option<&SessionRef>,
+    json: bool,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     validate_recovery_key(key)?;
     let recovery = OperatorRecovery {
         key,
-        command: session.map_or_else(
-            || format!("instrukt sessions resolve-start {key} --none"),
-            |session| Recovery::ResolveSession.command(key, session),
-        ),
+        command: resolve_command(key, session, json),
     };
     let guard = KeyGuard::claim_for_recovery(invocation, adapter, key, now, &recovery)?;
     let recorded = record(&guard.state, &guard.runtime, key)?;

@@ -277,6 +277,7 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
                 sessions.adapter()?.as_ref(),
                 &key,
                 args.session.as_ref(),
+                args.json,
                 ctx.clock.now(),
             )?;
             if args.json {
