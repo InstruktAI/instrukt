@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::connector_host::Connectors;
 use instrukt_runner::envelopes::{self, ContextEntry, Control, Span};
+use instrukt_runner::interfaces::CompanyRelayPass;
 use instrukt_runner::keyed::{self, RuntimeInvocation};
 use instrukt_runner::runtime::conversations::{
     AuthorKind, ConversationSource, Scope, SourcePosition,
@@ -617,12 +618,29 @@ struct Message {
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
 
-fn conversations(state: &RunnerState) -> Result<Vec<Conversation>, ConversationError> {
-    let sql = format!("SELECT {CONVERSATION_COLUMNS} FROM connected_conversations ORDER BY rowid");
+const RELAY_WORK: &str = "SELECT company,connector,conversation FROM conversation_messages WHERE state IN (?1,?2,?3)
+    UNION ALL SELECT company,connector,conversation FROM conversation_answers WHERE posted_at IS NULL";
+
+fn relay_stages() -> [&'static str; 3] {
+    [
+        Stage::Received.as_str(),
+        Stage::Pending.as_str(),
+        Stage::Sent.as_str(),
+    ]
+}
+
+fn conversations(
+    state: &RunnerState,
+    restriction: &str,
+    values: impl instrukt_core::state_db::rusqlite::Params,
+) -> Result<Vec<Conversation>, ConversationError> {
+    let sql = format!(
+        "SELECT {CONVERSATION_COLUMNS} FROM connected_conversations {restriction} ORDER BY rowid"
+    );
     let rows = state
         .read(|conn, path| {
             let mut q = conn.prepare(&sql).map_err(state::sql(path))?;
-            q.query_map([], |r| {
+            q.query_map(values, |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -677,9 +695,12 @@ fn reread(
     state: &RunnerState,
     c: &Conversation,
 ) -> Result<Option<Conversation>, ConversationError> {
-    Ok(conversations(state)?
-        .into_iter()
-        .find(|o| o.semantic_key == c.semantic_key))
+    Ok(conversations(
+        state,
+        "WHERE company=?1 AND connector=?2 AND conversation=?3",
+        params![c.company.as_str(), c.connector, c.conversation],
+    )?
+    .pop())
 }
 
 /// The conversation's messages neither answered nor refused, oldest written
@@ -1536,10 +1557,19 @@ pub fn relay(
     adapter: &dyn RuntimeAdapter,
     connectors: &dyn Connectors,
     accepted: &Accepted,
+    pass: CompanyRelayPass,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
     let mut dispatch = Dispatch::Untried;
-    for initial in conversations(&state)? {
+    let work = match pass {
+        CompanyRelayPass::CatchUp => conversations(&state, "", [])?,
+        CompanyRelayPass::Retry => conversations(
+            &state,
+            &format!("WHERE (company,connector,conversation) IN ({RELAY_WORK})"),
+            relay_stages(),
+        )?,
+    };
+    for initial in work {
         let _lock = match lock(home, &initial) {
             Ok(lock) => lock,
             Err(error) => {
@@ -1779,8 +1809,8 @@ pub fn outstanding(home: &Home) -> Result<bool, ConversationError> {
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE state IN (?1,?2,?3)) OR EXISTS(SELECT 1 FROM conversation_answers WHERE posted_at IS NULL) OR EXISTS(SELECT 1 FROM conversation_refusals WHERE replied_at IS NULL)",
-                [Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str()],
+                &format!("SELECT EXISTS({RELAY_WORK}) OR EXISTS(SELECT 1 FROM conversation_refusals WHERE replied_at IS NULL)"),
+                relay_stages(),
                 |r| r.get::<_, bool>(0),
             )
             .map_err(state::sql(path))
@@ -2163,6 +2193,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
         admitted: &Admitted,
         source: &dyn ConversationSource,
         adapter: &dyn RuntimeAdapter,
+        pass: CompanyRelayPass,
     ) -> Result<(), instrukt_runner::interfaces::CompanyError> {
         let Some(connectors) = self.hosted() else {
             return Ok(());
@@ -2174,6 +2205,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
             adapter,
             connectors.as_ref(),
             &self.accepted,
+            pass,
         )
         .map_err(company_error)
     }

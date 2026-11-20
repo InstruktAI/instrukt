@@ -1208,48 +1208,75 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
 }
 
 fn a_completed_turn_is_read_again_after_a_locked_read() {
-    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    use sha2::Digest as _;
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
+    c.run();
     let channel = "C1";
+    let settled = c.asked_and_answered("Where are the notes?", "In the wiki.");
+    let old = c.slack.posts()[0].thread.clone().unwrap();
     projected(&c);
     let asked = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
-    let session = started(&c, &[]);
+    let session = started(&c, &[settled]);
     let run = c.runtime.active_run(&session);
     c.store
         .agent_writes(&session, &run, 1, "Checking the release plan.");
     wait("the relay to observe the running turn's update", || {
         c.slack.status(channel, &asked).as_deref() == Some("Checking the release plan.")
     });
-    c.store.exclude_readers();
-    c.store
-        .agent_writes(&session, &run, 2, "Checking the remaining items.");
     let log = c
         .env
         .home()
         .join(".local/state/instrukt-ai/instrukt/run.log");
-    let failed_reads = || {
+    let count = |event: &str| {
         std::fs::read_to_string(&log)
             .unwrap_or_default()
             .lines()
-            .filter(|line| {
-                line.contains("conversation_answer_unread") && line.contains("database is locked")
-            })
+            .filter(|line| line.contains(event))
             .count()
     };
-    wait("the relay's first locked read", || failed_reads() > 0);
-
-    c.finish_turn(&session, 0, "On Friday.");
-    let before = failed_reads();
-    wait("the completion's wake spent on a locked read", || {
-        failed_reads() > before
+    let idle = "event=conversation_relay_source_idle";
+    let changed = "event=conversation_relay_source_changed";
+    let before = count(idle);
+    c.store.exclude_readers();
+    c.store
+        .agent_writes(&session, &run, 2, "Checking the remaining items.");
+    wait("the progress write's native notifications drained", || {
+        count(idle) > before
     });
-    assert!(c.slack.posts().is_empty());
+    let before = count(idle);
+    let reads = count("database is locked");
+    c.finish_projected_turn(&session, 0, "On Friday.");
+    wait(
+        "the final write's native notifications drained while reads fail",
+        || count(idle) > before && count("database is locked") > reads,
+    );
+    let wakes = count(changed);
+    assert_eq!(c.slack.posts().len(), 1);
+    // Any full retry would wait on this earlier conversation even though its
+    // answer is already posted. Keep it locked across the scoped retry.
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{old}"));
+    let _settled = instrukt_core::fsx::LockGuard::acquire(
+        &home.locks_dir().join(format!(
+            "conversation-{}.lock",
+            hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
+        )),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
     c.store.let_readers_in();
     wait("the answer without another projection write", || {
-        c.slack.posts().len() == 1
+        c.slack.posts().len() == 2
     });
-    assert_eq!(c.slack.posts()[0].thread.as_deref(), Some(asked.as_str()));
+    assert_eq!(
+        count(changed),
+        wakes,
+        "the answer required the timer, with no further native wake"
+    );
+    assert_eq!(c.slack.posts()[1].thread.as_deref(), Some(asked.as_str()));
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12

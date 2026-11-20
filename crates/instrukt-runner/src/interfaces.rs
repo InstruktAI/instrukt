@@ -684,6 +684,15 @@ pub struct RunnerWiring {
 #[error("{0}")]
 pub struct CompanyError(pub String);
 
+/// What caused a pass of the company conversation relay.
+#[derive(Clone, Copy)]
+pub enum CompanyRelayPass {
+    /// Startup, intake or a native source change.
+    CatchUp,
+    /// The retry timer, which serves only conversations with work remaining.
+    Retry,
+}
+
 /// The company as the runner hosts it: its connections, the conversation
 /// work the relay serves beside links, and its section of the inspection
 /// report. The runner names no company type; the CLI wires the
@@ -705,6 +714,7 @@ pub trait CompanyPorts: Send + Sync {
         admitted: &instrukt_core::config::Admitted,
         source: &dyn crate::runtime::conversations::ConversationSource,
         adapter: &dyn crate::runtime::RuntimeAdapter,
+        pass: CompanyRelayPass,
     ) -> Result<(), CompanyError>;
     /// Whether conversation work is outstanding.
     fn outstanding(&self, home: &instrukt_core::home::Home) -> Result<bool, CompanyError>;

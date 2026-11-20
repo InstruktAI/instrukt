@@ -1,5 +1,6 @@
 //! Native database notifications drive the runner's independent relay reader.
 use super::{LinkError, failure, relay, status};
+use crate::interfaces::CompanyRelayPass;
 use instrukt_core::{
     config::{Current, Env},
     home::Home,
@@ -132,6 +133,8 @@ fn serve(
     // notifications, and a missing source file that is now watched);
     // connector arrivals and the retry bound drive conversation work alone.
     let mut links_due = true;
+    let mut pass = CompanyRelayPass::CatchUp;
+    let mut source_changed = false;
     loop {
         if links_due {
             if let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
@@ -140,10 +143,13 @@ fn serve(
             links_due = false;
         }
         if let Some(destinations) = destinations
-            && let Err(error) =
-                destinations
-                    .company
-                    .relay(home, &current.get(), source.as_ref(), adapter.as_ref())
+            && let Err(error) = destinations.company.relay(
+                home,
+                &current.get(),
+                source.as_ref(),
+                adapter.as_ref(),
+                pass,
+            )
         {
             tracing::warn!(event = "conversation_relay_failed", error = %error);
         }
@@ -152,7 +158,7 @@ fn serve(
         let retry = destinations
             .is_some_and(|destinations| destinations.company.outstanding(home).unwrap_or(true));
         let until = std::time::Instant::now() + Duration::from_secs(2);
-        loop {
+        pass = loop {
             if stopping.try_recv().is_ok() {
                 return Ok(());
             }
@@ -160,19 +166,27 @@ fn serve(
                 d.arrivals
                     .lock()
                     .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
-            }) || (retry && std::time::Instant::now() >= until)
-            {
-                break;
+            }) {
+                break CompanyRelayPass::CatchUp;
+            }
+            if retry && std::time::Instant::now() >= until {
+                break CompanyRelayPass::Retry;
             }
             match notifications.wait(Duration::from_millis(100)) {
                 Ok(true) => {
                     links_due = true;
-                    break;
+                    source_changed = true;
+                    tracing::debug!(event = "conversation_relay_source_changed");
+                    break CompanyRelayPass::CatchUp;
                 }
-                Ok(false) => {}
+                Ok(false) => {
+                    if std::mem::take(&mut source_changed) {
+                        tracing::debug!(event = "conversation_relay_source_idle");
+                    }
+                }
                 Err(error) => return Err(LinkError::Source(error)),
             }
-        }
+        };
     }
 }
 fn observe_stopped(failure: &mut Option<LinkError>) -> Result<(), LinkError> {
