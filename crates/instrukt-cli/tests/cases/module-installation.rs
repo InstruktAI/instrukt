@@ -2467,11 +2467,14 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     let loading = env.path("rl");
     std::fs::create_dir_all(&loading).unwrap();
     let real = common::tool_executable("redis-server");
+    // An outgoing proxy may still be alive when the next Redis binds. Give
+    // each generation its own backend socket so the outgoing proxy cannot
+    // accept a new Redis connection and then drop it when its parent dies.
     let server = env.path("runtime-bin/redis-server");
     std::fs::write(
         &server,
         format!(
-            "#!/bin/sh\ncase \"$1\" in *.conf) ;; *) exec '{real}' \"$@\" ;; esac\nrm -f '{rl}/i.sock'\n'{python}' '{stand_in}' \"$1\" '{rl}/i.sock' '{rl}' &\nexec '{real}' \"$1\" --unixsocket '{rl}/i.sock'\n",
+            "#!/bin/sh\ncase \"$1\" in *.conf) ;; *) exec '{real}' \"$@\" ;; esac\ninner='{rl}/i-'$$.sock\n'{python}' '{stand_in}' \"$1\" \"$inner\" '{rl}' &\nexec '{real}' \"$1\" --unixsocket \"$inner\"\n",
             real = real.display(),
             rl = loading.display(),
             python = common::tool_executable("python3").display(),

@@ -9,7 +9,7 @@ use instrukt_core::state_db::rusqlite::Connection;
 pub struct Computer {
     pub env: TestEnv,
     pub project: Repo,
-    pub upstream: Repo,
+    upstream: Option<Repo>,
 }
 
 impl Computer {
@@ -36,7 +36,20 @@ impl Computer {
         Self {
             env,
             project,
-            upstream,
+            upstream: Some(upstream),
+        }
+    }
+
+    /// A published project that only consumes events. There is no upstream
+    /// checkout or watcher to initialize or scan on each tick.
+    pub fn without_upstream(files: &[(&str, String)]) -> Self {
+        let env = TestEnv::new();
+        let project = project(&env, "fork", files);
+        sync(&env, &project);
+        Self {
+            env,
+            project,
+            upstream: None,
         }
     }
 
@@ -54,9 +67,10 @@ impl Computer {
     }
 
     pub fn change(&self) {
-        self.upstream.write("new.md", "changed\n");
-        self.upstream.commit("feat: next release");
-        self.upstream.git(["push", "--quiet", "origin", "main"]);
+        let upstream = self.upstream.as_ref().unwrap();
+        upstream.write("new.md", "changed\n");
+        upstream.commit("feat: next release");
+        upstream.git(["push", "--quiet", "origin", "main"]);
     }
 
     pub fn subscribe(&self, pattern: &str) {

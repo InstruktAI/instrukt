@@ -423,21 +423,31 @@ impl Company {
     /// A member asks in a conversation of their own: the agent's session for
     /// it starts and its answer is posted. The session's id.
     pub fn asked_and_answered(&mut self, question: &str, answer: &str) -> String {
-        let before = self.sessions();
         let posts = self.slack.posts().len();
-        self.slack
-            .mention("C1", "USTEVEN", &format!("<@UAGENT> {question}"), None);
-        wait("the question's session", || {
-            self.sessions().len() == before.len() + 1
-        });
-        let session = self
-            .sessions()
-            .into_iter()
-            .find(|session| !before.contains(session))
-            .unwrap();
+        let session = self.ask_and_wait_for_session(question);
         self.finish_turn(&session, 0, answer);
         wait("the answer", || self.slack.posts().len() == posts + 1);
         session
+    }
+
+    /// Sends a new question and waits for its native start.
+    pub fn ask_and_wait_for_session(&self, question: &str) -> String {
+        let before = self.sessions();
+        self.slack
+            .mention("C1", "USTEVEN", &format!("<@UAGENT> {question}"), None);
+        self.wait_for_new_session(&before)
+    }
+
+    pub fn wait_for_new_session(&self, before: &[String]) -> String {
+        let mut started = None;
+        wait("the question's session", || {
+            let after = self.sessions();
+            if after.len() == before.len() + 1 {
+                started = after.into_iter().find(|session| !before.contains(session));
+            }
+            started.is_some()
+        });
+        started.unwrap()
     }
 
     /// Whether `instrukt events status` names a failing readiness refresh.
