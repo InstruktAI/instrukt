@@ -124,12 +124,13 @@ pub enum SessionsError {
         observed: String,
     },
     #[error(
-        "pending thread {session} for `{key}`: {detail}. Restore its recorded key and placement, then run `instrukt sessions resolve-start {key} --session {session}`"
+        "pending thread {session} for `{key}`: {detail}. Restore its recorded key and placement, then run `{retry}`"
     )]
     PendingPlacement {
         key: String,
         session: SessionRef,
         detail: String,
+        retry: Box<str>,
     },
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),

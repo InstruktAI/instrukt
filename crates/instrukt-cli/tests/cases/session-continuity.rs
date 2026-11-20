@@ -549,29 +549,27 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     fake.change("s2", "title", "Renamed replacement".into());
     let refused = command().failure();
     let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    assert!(
-        guidance.contains(&format!(
-            "instrukt sessions resolve-start {key} --session t3:s2"
-        )),
-        "{guidance}"
-    );
+    let live_door = format!("instrukt sessions replace-deleted {key} --stopped t3:s1");
+    assert!(guidance.contains(&live_door), "{guidance}");
+    let printed = guidance
+        .split_once("then run `")
+        .unwrap()
+        .1
+        .split_once('`')
+        .unwrap()
+        .0;
+    let live_retry = || p.env.run(p.repo.path(), printed.split_whitespace().skip(1));
     assert_eq!(
         sessions(),
         ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
     );
     fake.change("s2", "title", format!("Renamed replacement · {key}").into());
-    p.env
-        .run(
-            p.repo.path(),
-            ["sessions", "resolve-start", &key, "--session", "t3:s2"],
-        )
-        .success();
     db.execute_batch(
         "CREATE TRIGGER fail_opening_receipt BEFORE INSERT ON runtime_inputs
         WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'opening receipt write failed'); END;",
     )
     .unwrap();
-    let failed = command().failure();
+    let failed = live_retry().failure();
     let error = String::from_utf8_lossy(&failed.get_output().stderr);
     assert!(error.contains("opening receipt write failed"), "{error}");
     assert_eq!(
@@ -589,12 +587,7 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     let moved = command().failure();
     let guidance = String::from_utf8_lossy(&moved.get_output().stderr);
     assert!(guidance.contains("native project changed"), "{guidance}");
-    assert!(
-        guidance.contains(&format!(
-            "instrukt sessions resolve-start {key} --session t3:s2"
-        )),
-        "{guidance}"
-    );
+    assert!(guidance.contains(&live_door), "{guidance}");
     let resolve_pending = || {
         p.env.run(
             p.repo.path(),
@@ -603,7 +596,7 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     };
     let refused = resolve_pending().failure();
     let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    assert!(guidance.contains("native project changed"), "{guidance}");
+    assert!(guidance.contains(&live_door), "{guidance}");
     let replace_pending = || {
         p.env.run(
             p.env.home(),

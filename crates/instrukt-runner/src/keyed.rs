@@ -164,6 +164,21 @@ enum Recovery<'a> {
 }
 
 impl Recovery<'_> {
+    fn command(self, key: &str, session: &SessionRef) -> String {
+        match self {
+            Self::ResolveNone => format!("instrukt sessions resolve-start {key} --none"),
+            Self::ResolveSession => {
+                format!("instrukt sessions resolve-start {key} --session {session}")
+            }
+            Self::ReplaceDeleted => {
+                format!("instrukt sessions replace-deleted {key} --stopped {session}")
+            }
+            Self::ResumeReplacement(stopped) => {
+                format!("instrukt sessions replace-deleted {key} --stopped {stopped}")
+            }
+        }
+    }
+
     fn refusal(self, key: &str, session: &SessionRef) -> SessionsError {
         match self {
             Self::ResolveNone => SessionsError::FirstStartAbsent {
@@ -483,7 +498,7 @@ fn start_claimed(
             Presence::Present => {}
         }
         if recorded.opening_acknowledged && !recorded.accepted {
-            verify_pending_start(adapter, &resolved, &thread, recorded.project_id.as_deref())?;
+            verify_pending_start(adapter, &resolved, &thread, &recorded)?;
         } else {
             if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id) {
                 return Err(conflict(&input.key, [session]));
@@ -689,7 +704,7 @@ fn start_claimed(
         }
         Presence::Present => {}
     }
-    verify_pending_start(adapter, input, &thread, None)?;
+    verify_pending_start(adapter, input, &thread, &recorded)?;
     remember(
         &guard.state,
         adapter,
@@ -806,12 +821,17 @@ fn verify_pending_start(
     adapter: &dyn RuntimeAdapter,
     request: &RuntimeStart,
     thread: &Thread,
-    retained_project: Option<&str>,
+    recorded: &Recorded,
 ) -> Result<(), SessionsError> {
     let refusal = |detail: String| SessionsError::PendingPlacement {
         key: request.key.clone(),
         session: thread.session.clone(),
         detail,
+        retry: recorded
+            .recovery(Presence::Present)
+            .unwrap_or(Recovery::ResolveSession)
+            .command(&request.key, &thread.session)
+            .into_boxed_str(),
     };
     if thread.semantic_key.as_deref() != Some(&request.key) {
         return Err(refusal(format!(
@@ -826,7 +846,7 @@ fn verify_pending_start(
     else {
         return Err(refusal("native project ID is missing".into()));
     };
-    if let Some(retained) = retained_project {
+    if let Some(retained) = recorded.project_id.as_deref() {
         if project != retained {
             return Err(refusal(format!(
                 "native project changed from {retained} to {project}"
@@ -971,7 +991,7 @@ pub fn resolve(
             None => adapter.read_state(session)?,
         };
         if recorded.opening_acknowledged {
-            verify_pending_start(adapter, input, &thread, recorded.project_id.as_deref())?;
+            verify_pending_start(adapter, input, &thread, &recorded)?;
         }
         let listed = adapter.list(&input.checkout)?;
         let Some(listed) = listed
