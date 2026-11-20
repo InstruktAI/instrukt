@@ -256,7 +256,10 @@ operational start resolution and runner dispatch, not native child delegation. L
 transactions under the writer lock; no transaction spans a runtime command.
 The machine runtime-dispatch lock gates entry to dispatch and is released
 before any runtime command. Each owner holds an OS lock for its exact key
-through the operation, including `resolve-start`. An owner taking that key's
+through the operation. Operator recovery waits within the dispatch lock's
+usual bound for the exact key, and replacement also waits for any input
+already being handled for the stopped thread. Other keys keep dispatching.
+An owner taking that key's
 lock can recover the prior owner's row while retaining unresolved markers.
 Elapsed time alone permits no new start.
 Exact-session resolution checks native thread ownership and writes the binding

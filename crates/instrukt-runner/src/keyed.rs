@@ -104,6 +104,26 @@ impl KeyGuard {
         project: Option<&str>,
         now: Timestamp,
     ) -> Result<Self, SessionsError> {
+        Self::claim_inner(invocation, adapter, key, project, now, false)
+    }
+
+    fn claim_for_recovery(
+        invocation: &RuntimeInvocation,
+        adapter: &dyn RuntimeAdapter,
+        key: &str,
+        now: Timestamp,
+    ) -> Result<Self, SessionsError> {
+        Self::claim_inner(invocation, adapter, key, None, now, true)
+    }
+
+    fn claim_inner(
+        invocation: &RuntimeInvocation,
+        adapter: &dyn RuntimeAdapter,
+        key: &str,
+        project: Option<&str>,
+        now: Timestamp,
+        recovery: bool,
+    ) -> Result<Self, SessionsError> {
         let state = RunnerState::new(invocation.home());
         let owner = invocation.owner.clone();
         let runtime = adapter.runtime().name().to_owned();
@@ -113,13 +133,26 @@ impl KeyGuard {
             .home()
             .locks_dir()
             .join(format!("runtime-key-{name:x}.lock"));
-        let lock = LockGuard::try_acquire(&path)
-            .map_err(StateError::from)?
-            .ok_or_else(|| {
-                SessionsError::Refused(format!(
+        let lock = match LockGuard::try_acquire(&path).map_err(StateError::from)? {
+            Some(lock) => lock,
+            None if recovery => {
+                #[cfg(debug_assertions)]
+                if instrukt_core::fsx::fence_active()
+                    && let Some(marker) = std::env::var_os("INSTRUKT_TEST_RECOVERY_WAIT")
+                {
+                    let _ = instrukt_core::fsx::atomic_write(
+                        std::path::Path::new(&marker),
+                        key.as_bytes(),
+                    );
+                }
+                LockGuard::acquire(&path, Duration::from_secs(120)).map_err(StateError::from)?
+            }
+            None => {
+                return Err(SessionsError::Refused(format!(
                     "runtime key `{key}` is already owned by an active dispatch"
-                ))
-            })?;
+                )));
+            }
+        };
         state.write::<_,StateError>(|tx| {
             tx.execute("INSERT INTO runtime_key_locks (runtime,semantic_key,project,owner,acquired_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(runtime,semantic_key) DO UPDATE SET owner=excluded.owner,acquired_at=excluded.acquired_at",params![runtime,key,project,owner,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;
             Ok(())
@@ -944,7 +977,7 @@ pub fn resolve(
     session: Option<&SessionRef>,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
-    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
+    let guard = KeyGuard::claim_for_recovery(invocation, adapter, key, now)?;
     let recorded = record(&guard.state, &guard.runtime, key)?;
     let input = recorded
         .request
@@ -1143,7 +1176,7 @@ pub fn replace_deleted(
 ) -> Result<ReplacementResult, SessionsError> {
     let state = RunnerState::new(invocation.home());
     let runtime = adapter.runtime().name();
-    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
+    let guard = KeyGuard::claim_for_recovery(invocation, adapter, key, now)?;
     let recorded = record(&state, runtime, key)?;
     let standing = kind(key) == "standing";
     let todo = matches!(kind(key), "todo" | "task");
@@ -1167,7 +1200,8 @@ pub fn replace_deleted(
         note(&state, adapter.runtime(), key, now, Err(&error));
         return Err(error);
     }
-    let _inputs = KeyGuard::claim(invocation, adapter, &format!("input:{stopped}"), None, now)?;
+    let _inputs =
+        KeyGuard::claim_for_recovery(invocation, adapter, &format!("input:{stopped}"), now)?;
     if standing {
         let thread =
             crate::standing::replace_deleted(&guard, invocation, adapter, key, stopped, now)?;

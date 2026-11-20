@@ -129,9 +129,17 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // Nothing was created: the start is resolved as such, and the retry dies
     // after the runtime accepted the opening and before the runner bound it.
     c.runtime.flag("die-after-start", true);
-    c.env
-        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
-        .success();
+    let resolve = ["sessions", "resolve-start", &key, "--none"];
+    #[cfg(debug_assertions)]
+    {
+        let held = hold_recovery_key(&c, &key);
+        let command = recovery_waiting(&c, resolve, &key).unwrap();
+        drop(held);
+        let result = command.wait_with_output().unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+    #[cfg(not(debug_assertions))]
+    c.env.run(c.env.home(), resolve).success();
     c.runner_ended();
     let session = c.session();
     assert_eq!(c.runtime.message_count(&session), 1);
@@ -757,16 +765,21 @@ fn one_conversation_opens_while_another_start_is_being_verified() {
         || c.slack.posts_beginning("Ada is on call.") == 1,
     );
     assert!(c.runtime.held_show_running("s1"));
+    #[cfg(debug_assertions)]
     let key = conversations::key(&c.company(), SLACK, "D30");
-    let same_key = c
-        .env
-        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
-        .failure();
-    assert!(
-        String::from_utf8_lossy(&same_key.get_output().stderr)
-            .contains("already owned by an active dispatch")
-    );
+    #[cfg(debug_assertions)]
+    let same_key =
+        recovery_waiting(&c, ["sessions", "resolve-start", &key, "--none"], &key).unwrap();
     std::fs::remove_file(held).unwrap();
+    #[cfg(debug_assertions)]
+    {
+        let result = same_key.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            !result.status.success() && stderr.contains("has no unresolved start"),
+            "{stderr}"
+        );
+    }
 
     c.finish_turn("s1", 0, "The release is in the wiki.");
     wait("the first conversation gets its own answer", || {
@@ -1409,16 +1422,26 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
          BEGIN SELECT RAISE(ABORT, 'held replacement acceptance'); END",
     )
     .unwrap();
+    let replace = ["sessions", "replace-deleted", &key, "--stopped", &stopped];
+    #[cfg(debug_assertions)]
+    let interrupted = {
+        let input = format!("input:{stopped}");
+        let held = hold_recovery_key(&c, &input);
+        let command = recovery_waiting(&c, replace, &input).unwrap();
+        drop(held);
+        command.wait_with_output().unwrap()
+    };
+    #[cfg(not(debug_assertions))]
     let interrupted = c
         .env
-        .run(
-            c.env.home(),
-            ["sessions", "replace-deleted", &key, "--stopped", &stopped],
-        )
-        .failure();
+        .run(c.env.home(), replace)
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&interrupted.stderr);
     assert!(
-        String::from_utf8_lossy(&interrupted.get_output().stderr)
-            .contains("held replacement acceptance")
+        !interrupted.status.success() && stderr.contains("held replacement acceptance"),
+        "{stderr}"
     );
     assert_eq!(c.sessions(), ["s2"]);
     c.runtime.delete("s2");
@@ -1556,6 +1579,48 @@ fn successful_empty_turns_rearm_notices() {
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
         an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
     });
+}
+
+#[cfg(debug_assertions)]
+fn hold_recovery_key(c: &Company, key: &str) -> instrukt_core::fsx::LockGuard {
+    use sha2::{Digest, Sha256};
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let name = Sha256::digest(format!("t3:{key}").as_bytes());
+    instrukt_core::fsx::LockGuard::acquire(
+        &home.locks_dir().join(format!("runtime-key-{name:x}.lock")),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap()
+}
+
+#[cfg(debug_assertions)]
+fn recovery_waiting<const N: usize>(
+    c: &Company,
+    args: [&str; N],
+    key: &str,
+) -> Result<std::process::Child, String> {
+    let marker = c.env.path("recovery-lock-wait");
+    let mut command = c
+        .env
+        .instrukt_process(c.env.home())
+        .env("INSTRUKT_TEST_RECOVERY_WAIT", &marker)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait("operator recovery encounters the held lock", || {
+        marker.exists() || command.try_wait().unwrap().is_some()
+    });
+    if command.try_wait().unwrap().is_some() {
+        let result = command.wait_with_output().unwrap();
+        return Err(format!(
+            "operator recovery exited before acquiring {key}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), key);
+    Ok(command)
 }
 
 fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {
