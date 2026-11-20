@@ -357,9 +357,9 @@ positive native project match. If the native project ID was not yet captured,
 the exact ID must appear in the retained checkout's scoped listing with the
 same opaque project ID as the inspection. The requested worktree is verified against
 the observed placement. A mismatch keeps the input pending and status directs
-the operator to restore the expected key and placement, then run the exact
-`instrukt sessions resolve-start <key> --session <id>` command. Native
-acceptance evidence reconciles transport acceptance without another send.
+the operator to restore the expected key and placement, then run the command
+for the binding state in the **Recovery by case** table below. Native acceptance
+evidence reconciles transport acceptance without another send.
 Without that evidence, instrukt may resend the unconfirmed input there.
 An empty listing alone never clears a marker. Keep the assignment pending and
 show its key and the `instrukt sessions resolve-start <key>` door in status.
