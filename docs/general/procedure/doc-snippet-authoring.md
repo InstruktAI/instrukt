@@ -1,6 +1,5 @@
 ---
-activation_trigger: Use when creating, changing, proposing, or drafting a documentation
-  snippet first enters consideration — before its shape is decided.
+activation_trigger: Use when proposing, drafting, creating, changing or retiring a snippet under docs/general/, docs/domain/<name>/ or docs/project/ — before its shape is decided. READMEs, website copy and other prose outside those trees never activate it.
 description: Establish whether documentation work is ready and authorized, then author
   snippets according to the taxonomy, schema, and policies.
 visibility: public
