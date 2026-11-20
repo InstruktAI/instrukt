@@ -12,18 +12,18 @@
 //! turn), failed (its turn failed without a reply), and answered (its turn
 //! finished with an answer or successfully produced nothing). Each answer piece stays pending
 //! until the connector accepted its post.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use instrukt_connector::{Accompanying, Incoming, Sender};
-use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, ConfigError, DeclaredConnector};
+use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, ConfigError, DeclaredConnector, Env};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
 use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
-use jiff::Timestamp;
+use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::connector_host::Connectors;
@@ -31,7 +31,7 @@ use instrukt_runner::envelopes::{self, ContextEntry, Control, Span};
 use instrukt_runner::interfaces::CompanyRelayPass;
 use instrukt_runner::keyed::{self, RuntimeInvocation};
 use instrukt_runner::runtime::conversations::{
-    AuthorKind, ConversationSource, Scope, SourcePosition,
+    AuthorKind, ConversationSource, RecordKind, Role, Scope, SourcePosition,
 };
 use instrukt_runner::runtime::{
     CreationPermit, InputState, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart,
@@ -986,11 +986,13 @@ struct Message {
     attempted: bool,
     /// The cause retained from its last failed delivery.
     failure: Option<String>,
+    retry_at: Option<Timestamp>,
+    failed_turns: u32,
 }
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
 
-const RELAY_WORK: &str = "SELECT company,connector,conversation FROM conversation_messages WHERE state IN (?1,?2,?3)
+const RELAY_WORK: &str = "SELECT company,connector,conversation FROM conversation_messages WHERE state IN (?1,?2,?3) OR (state='failed' AND superseded_at IS NULL AND boundary IS NOT NULL)
     UNION ALL SELECT company,connector,conversation FROM conversation_answers WHERE posted_at IS NULL AND delivery_unknown_at IS NULL";
 
 fn relay_stages() -> [&'static str; 3] {
@@ -1076,14 +1078,16 @@ fn reread(
 }
 
 /// The conversation's messages still requiring relay work, oldest written
-/// first. Failed turns stay outstanding for status and notices.
+/// first, followed by failed turns in retry order.
 fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, ConversationError> {
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5,?6) ORDER BY written_us, message")
+                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure,retry_at,failed_turns
+                 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) AND superseded_at IS NULL
+                 ORDER BY state='failed', retry_at, written_us, message")
                 .map_err(state::sql(path))?;
-            q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), Stage::Refused.as_str(), Stage::Failed.as_str()], |r| {
+            q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), Stage::Refused.as_str()], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -1091,6 +1095,8 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, bool>(4)?,
                     r.get::<_, Option<String>>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, u32>(7)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -1099,18 +1105,24 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
         })?
         .unwrap_or_default();
     rows.into_iter()
-        .map(|(message, stage, boundary, content, attempted, failure)| {
-            Ok(Message {
-                message,
-                stage: Stage::parse(&stage).ok_or_else(|| {
-                    ConversationError::Refused(format!("unknown message stage `{stage}`"))
-                })?,
-                boundary,
-                content,
-                attempted,
-                failure,
-            })
-        })
+        .map(
+            |(message, stage, boundary, content, attempted, failure, retry_at, failed_turns)| {
+                Ok(Message {
+                    message,
+                    stage: Stage::parse(&stage).ok_or_else(|| {
+                        ConversationError::Refused(format!("unknown message stage `{stage}`"))
+                    })?,
+                    boundary,
+                    content,
+                    attempted,
+                    failure,
+                    retry_at: retry_at.map(|at| at.parse()).transpose().map_err(|_| {
+                        ConversationError::Refused("invalid failed-turn retry time".into())
+                    })?,
+                    failed_turns,
+                })
+            },
+        )
         .collect()
 }
 
@@ -1234,7 +1246,7 @@ fn set_message_failure(
 ) -> Result<(), StateError> {
     state.write(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            "UPDATE conversation_messages SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, message, failure],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
@@ -1256,7 +1268,7 @@ fn unavailable(
     state.write(|tx| {
         for message in messages {
             tx.execute(
-                "UPDATE conversation_messages SET unavailable_since=coalesce(unavailable_since,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                "UPDATE conversation_messages SET unavailable_since=coalesce(unavailable_since,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
                 params![c.company.as_str(), c.connector, c.conversation, message, at.to_string()],
             )
             .map_err(state::sql(&state::db_path(tx)))?;
@@ -1313,7 +1325,7 @@ fn accepted(
     state.write(|tx| {
         let path = state::db_path(tx);
         tx.execute(
-            "UPDATE conversation_messages SET state=?5,failure=NULL,unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            "UPDATE conversation_messages SET state=?5,failure=NULL,unavailable_since=NULL,turn_update=NULL,retry_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, message, Stage::Sent.as_str()],
         )
         .map_err(state::sql(&path))?;
@@ -1328,18 +1340,49 @@ fn accepted(
     })
 }
 
-/// The message the conversation delivers next, if one is ready: none while a
-/// turn it handed over has not finished. Until its session is bound, a
-/// captured opening request belongs to its own message alone.
-fn next_message<'a>(open: &'a [Message], c: &Conversation) -> Option<&'a Message> {
+const FAILED_RETRY_DELAY: SignedDuration = SignedDuration::from_mins(2);
+const FAILED_RETRY_LIMIT: SignedDuration = SignedDuration::from_mins(15);
+const ANSWER_OPERATOR_BOUND: SignedDuration = SignedDuration::from_mins(5);
+
+fn retry_delay(previous_failures: u32) -> SignedDuration {
+    (FAILED_RETRY_DELAY * (1_i32 << previous_failures.min(3))).min(FAILED_RETRY_LIMIT)
+}
+
+/// A failed turn with a ready retry still yields to new messages.
+fn next_message<'a>(open: &'a [Message], c: &Conversation, now: Timestamp) -> Option<&'a Message> {
     if open.iter().any(|m| m.stage == Stage::Sent) {
         return None;
     }
     let next = match (&c.session, &c.opening) {
         (None, Some(opening)) => open.iter().find(|m| &m.message == opening),
-        _ => open.first(),
+        _ => open
+            .iter()
+            .find(|m| m.stage != Stage::Failed)
+            .or_else(|| open.iter().find(|m| m.retry_at.is_some_and(|at| now >= at))),
     }?;
-    (next.stage == Stage::Pending).then_some(next)
+    matches!(next.stage, Stage::Pending | Stage::Failed).then_some(next)
+}
+
+fn schedule_earlier_failures(
+    state: &RunnerState,
+    c: &Conversation,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET retry_at=?4,failed_turns=1
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed'
+               AND superseded_at IS NULL AND retry_at IS NULL AND boundary IS NOT NULL",
+            params![
+                c.company.as_str(),
+                c.connector,
+                c.conversation,
+                format!("{:.9}", now + FAILED_RETRY_DELAY)
+            ],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
 }
 
 /// Deliver the conversation's next addressed message. The first starts its
@@ -1514,16 +1557,32 @@ fn send(
         .content
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
-    // The attempt is recorded before the runtime can accept it, so a lost
-    // acceptance is reconciled before any answer is read past it.
-    state.write::<_, StateError>(|tx| {
+    let attempt = if next.stage == Stage::Failed && !next.attempted {
+        let old_boundary = next.boundary.as_deref().ok_or_else(|| {
+            ConversationError::Refused("the failed message has no delivery boundary".into())
+        })?;
+        let boundary = envelopes::delivery_boundary(&[content])?;
+        Some((content.replace(old_boundary, &boundary), boundary))
+    } else {
+        None
+    };
+    let (content, boundary) = attempt.as_ref().map_or(
+        (content, next.boundary.as_deref()),
+        |(content, boundary)| (content.as_str(), Some(boundary.as_str())),
+    );
+    // Persist the new attempt before it can take effect, and keep its exact
+    // input through a lost acceptance or a refusal.
+    let recorded = state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET attempted_at=coalesce(attempted_at,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-            params![c.company.as_str(), c.connector, c.conversation, next.message, now.to_string()],
+            "UPDATE conversation_messages SET attempted_at=coalesce(attempted_at,?5),content=?6,boundary=?7
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
+            params![c.company.as_str(), c.connector, c.conversation, next.message, now.to_string(), content, boundary],
         )
-        .map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
+        .map_err(state::sql(&state::db_path(tx)))
     })?;
+    if recorded == 0 {
+        return Ok(());
+    }
     adapter.send(session, content)?;
     accepted(state, c, &next.message, None)?;
     Ok(())
@@ -1557,6 +1616,21 @@ pub fn split(text: &str, limit: usize) -> Vec<String> {
     parts
 }
 
+const MISSING_SOURCE_TURN: &str =
+    "the moved conversation source cannot find the sent message's turn";
+const FAILED_TURN: &str = "the turn ended without a reply";
+
+fn message_for_input<'a>(sent: &'a [Message], text: &str) -> Option<&'a Message> {
+    envelopes::segment(text)
+        .into_iter()
+        .find_map(|span| match span {
+            Span::Member { boundary, .. } => sent
+                .iter()
+                .find(|message| message.boundary.as_deref() == Some(boundary)),
+            _ => None,
+        })
+}
+
 /// Read finished turns of a conversation session from its own retained
 /// source position: the conversational output of a turn its addressed
 /// message started becomes that message's answer. A turn started any other
@@ -1569,19 +1643,17 @@ fn harvest(
     message_chars: usize,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<Presence, ConversationError> {
-    let (Some(session), Some(mut position)) = (c.session.clone(), c.position.clone()) else {
+    let Some(session) = &c.session else {
         return Ok(Presence::Present);
     };
-    if c.source_identity.as_deref() != Some(source.identity()) {
-        return Err(ConversationError::Refused(
-            "the selected conversation source changed; restore the recorded source".into(),
-        ));
-    }
+    let moved = c.source_identity.as_deref() != Some(source.identity());
+    let mut read_from = if moved { None } else { c.position.clone() };
+    let mut found = BTreeSet::new();
     // Only the session's own thread is read: other threads, changing or
     // not, neither delay nor fail its answers.
     let own = std::slice::from_ref(&session.id);
     loop {
-        let batch = source.changed_since(Some(&position), Scope::Only(own))?;
+        let batch = source.changed_since(read_from.as_ref(), Scope::Only(own))?;
         let presence = batch.scoped_presence.unwrap_or(Presence::Present);
         if batch.missing.iter().any(|id| id == &session.id) {
             return Ok(Presence::Absent);
@@ -1602,6 +1674,14 @@ fn harvest(
                 failure.cause
             )));
         }
+        if !moved
+            && !batch.has_more
+            && batch.records.is_empty()
+            && batch.completed_turns.is_empty()
+            && read_from.as_ref() == Some(&batch.position)
+        {
+            return Ok(presence);
+        }
         let mut turns = batch
             .completed_turns
             .iter()
@@ -1612,51 +1692,85 @@ fn harvest(
         // or one whose send was begun with its acceptance still unrecorded.
         let sent = open_messages(state, c)?
             .into_iter()
-            .filter(|m| m.stage == Stage::Sent || (m.stage == Stage::Pending && m.attempted))
+            .filter(|m| m.stage == Stage::Sent || m.attempted)
             .collect::<Vec<_>>();
+        // A sent message whose opening survives the move may still be running.
+        // A completed run that has no whole turn yet is retried from this same
+        // position, even when the source could read its opening input.
+        let complete = turns
+            .iter()
+            .map(|turn| turn.native_turn.as_str())
+            .collect::<BTreeSet<_>>();
+        let runs = batch
+            .records
+            .iter()
+            .filter(|record| matches!(record.kind, RecordKind::Run))
+            .map(|record| (record.id.as_str(), record.completed))
+            .collect::<BTreeMap<_, _>>();
+        for input in batch.records.iter().filter(|record| {
+            matches!(record.kind, RecordKind::Message) && matches!(record.role, Some(Role::User))
+        }) {
+            let Some(message) = input
+                .text
+                .as_deref()
+                .and_then(|text| message_for_input(&sent, text))
+            else {
+                continue;
+            };
+            let Some((run_id, completed)) = input
+                .run_id
+                .as_deref()
+                .and_then(|run_id| runs.get_key_value(run_id))
+            else {
+                continue;
+            };
+            if *completed && !complete.contains(run_id) {
+                return Err(ConversationError::Refused(
+                    "completed-turn evidence unavailable: the turn's content is unstable".into(),
+                ));
+            }
+            found.insert(message.message.clone());
+        }
         let mut answers = Vec::new();
         for turn in turns {
             let started = turn
                 .contributions
                 .iter()
                 .filter(|contribution| contribution.author.kind == AuthorKind::Human)
-                .flat_map(|contribution| envelopes::segment(&contribution.text))
-                .find_map(|span| match span {
-                    Span::Member { boundary, .. } => sent
-                        .iter()
-                        .find(|m| m.boundary.as_deref() == Some(boundary)),
-                    _ => None,
-                });
+                .find_map(|contribution| message_for_input(&sent, &contribution.text));
             let Some(message) = started else {
                 continue;
             };
+            found.insert(message.message.clone());
+            if answers
+                .iter()
+                .any(|(prior, _, _): &(&Message, _, _)| prior.message == message.message)
+            {
+                continue;
+            }
             let output = turn
                 .contributions
                 .iter()
                 .filter(|contribution| contribution.author.kind == AuthorKind::Agent)
                 .map(|contribution| contribution.text.as_str())
-                // Only whether it says anything is judged on its trimmed
-                // form; what is posted is the text as the agent wrote it.
                 .filter(|text| {
                     let said = text.trim();
                     !said.is_empty() && said != "NOOP"
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            answers.push((&message.message, turn, output));
+            answers.push((message, turn, output));
         }
-        position = batch.position;
         let ended = clock();
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
                 if output.is_empty() && !turn.succeeded {
-                    // The terminal run proves delivery to the runtime, but
-                    // there is no answer. Keep the message outstanding for
-                    // status and notices while later messages dispatch.
                     tx.execute(
-                        "UPDATE conversation_messages SET state=?5,failure=?6,turn_update=NULL,unavailable_since=coalesce(unavailable_since,?7) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                        params![c.company.as_str(), c.connector, c.conversation, message, Stage::Failed.as_str(), "the turn ended without a reply", ended.to_string()],
+                        "UPDATE conversation_messages SET state='failed',failure=?5,turn_update=NULL,
+                         unavailable_since=coalesce(unavailable_since,?6),attempted_at=NULL,retry_at=?7,failed_turns=failed_turns+1
+                         WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
+                        params![c.company.as_str(), c.connector, c.conversation, message.message, FAILED_TURN, ended.to_string(), format!("{:.9}", ended + retry_delay(message.failed_turns))],
                     )
                     .map_err(state::sql(&path))?;
                     continue;
@@ -1666,9 +1780,9 @@ fn harvest(
                     tx.execute(
                         "INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,admission_position)
                          SELECT ?1,?2,?3,?4,?5,?6,admission_position FROM conversation_messages
-                         WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?7
+                         WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?7 AND superseded_at IS NULL
                          ON CONFLICT DO NOTHING",
-                        params![c.company.as_str(), c.connector, c.conversation, turn, i64::try_from(piece).unwrap_or(i64::MAX), text, message],
+                        params![c.company.as_str(), c.connector, c.conversation, turn, i64::try_from(piece).unwrap_or(i64::MAX), text, message.message],
                     )
                     .map_err(state::sql(&path))?;
                 }
@@ -1680,17 +1794,38 @@ fn harvest(
                     // answer to post opens nothing now, and its status keeps
                     // its newest message while the answer is posted; one with
                     // nothing to post completes the message.
-                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                    params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,retry_at=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
+                    params![c.company.as_str(), c.connector, c.conversation, message.message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
             }
             if answers.iter().any(|(_, _, output)| output.is_empty()) {
                 settle_failed_messages(tx, c.company.as_str(), &c.connector, &c.conversation, ended)?;
             }
+            if !batch.has_more {
+                for message in sent.iter().filter(|message| message.stage == Stage::Sent) {
+                    match (moved, found.contains(&message.message), message.failure.as_deref()) {
+                        (true, false, _) => {
+                            tx.execute(
+                                "UPDATE conversation_messages SET failure=?5,unavailable_since=coalesce(unavailable_since,?6)
+                                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state='sent'",
+                                params![c.company.as_str(), c.connector, c.conversation, message.message, MISSING_SOURCE_TURN, ended.to_string()],
+                            ).map_err(state::sql(&path))?;
+                        }
+                        (_, true, Some(MISSING_SOURCE_TURN)) => {
+                            tx.execute(
+                                "UPDATE conversation_messages SET failure=NULL
+                                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state='sent'",
+                                params![c.company.as_str(), c.connector, c.conversation, message.message],
+                            ).map_err(state::sql(&path))?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             tx.execute(
-                "UPDATE connected_conversations SET position_json=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
-                params![c.company.as_str(), c.connector, c.conversation, serde_json::to_string(&position).map_err(|e| state::invalid(&path, e))?],
+                "UPDATE connected_conversations SET position_json=?4,source_identity=?5 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                params![c.company.as_str(), c.connector, c.conversation, serde_json::to_string(&batch.position).map_err(|e| state::invalid(&path, e))?, source.identity()],
             )
             .map_err(state::sql(&path))?;
             Ok(())
@@ -1698,6 +1833,7 @@ fn harvest(
         if !batch.has_more {
             return Ok(presence);
         }
+        read_from = Some(batch.position);
     }
 }
 
@@ -1718,6 +1854,8 @@ struct RelayWorkers {
     probes: Mutex<BTreeMap<String, MissingProbe>>,
     absence_reads: Mutex<BTreeMap<String, AbsenceRead>>,
     work: Mutex<BTreeMap<String, DeliveryWork>>,
+    answer_anomalies: Mutex<BTreeSet<String>>,
+    env: Env,
 }
 
 #[derive(Clone)]
@@ -1756,6 +1894,50 @@ enum CheckedDelivery {
 }
 
 impl RelayWorkers {
+    fn report_answer_failure(
+        &self,
+        admitted: &Admitted,
+        state: &RunnerState,
+        c: &Conversation,
+        unread: bool,
+        now: Timestamp,
+    ) -> Result<(), StateError> {
+        let due = state.read(|conn, path| {
+            conn.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3
+                    AND superseded_at IS NULL AND (
+                        (state='failed' AND failed_turns>=2)
+                        OR (state='sent' AND (?4 OR failure=?5)
+                            AND julianday(unavailable_since)<=julianday(?6))
+                    )
+                )",
+                params![c.company.as_str(), c.connector, c.conversation, unread, MISSING_SOURCE_TURN, (now - ANSWER_OPERATOR_BOUND).to_string()],
+                |row| row.get::<_, bool>(0),
+            ).map_err(state::sql(path))
+        })?.unwrap_or(false);
+        if due
+            && self
+                .answer_anomalies
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(c.semantic_key.clone())
+        {
+            let reference = c
+                .session
+                .as_ref()
+                .map_or_else(|| c.semantic_key.clone(), ToString::to_string);
+            let config = admitted.global().clone();
+            let env = self.env.clone();
+            drop(
+                self.spawn(move || {
+                    instrukt_runner::anomaly::notify(&config, &env, &reference, None)
+                }),
+            );
+        }
+        Ok(())
+    }
+
     fn poll(&self, c: &Conversation) -> CheckedDelivery {
         let mut work = self.work.lock().unwrap_or_else(PoisonError::into_inner);
         let key = &c.semantic_key;
@@ -1939,7 +2121,7 @@ impl RelayWorkers {
             }
             // Intake can change the head while delivery waits for the lock.
             let open = open_messages(&state, &current)?;
-            let Some(next) = next_message(&open, &current).filter(|next| next.message == message)
+            let Some(next) = next_message(&open, &current, connectors.now()).filter(|next| next.message == message)
             else {
                 return Ok(());
             };
@@ -2591,7 +2773,7 @@ fn settle_failed_messages(
     tx.execute(
         &format!(
             "UPDATE conversation_messages AS failed
-             SET superseded_at=?4,unavailable_since=NULL,turn_update=NULL
+             SET superseded_at=?4,unavailable_since=NULL,turn_update=NULL,retry_at=NULL
              WHERE failed.company=?1 AND failed.connector=?2 AND failed.conversation=?3
                AND failed.state='failed' AND failed.superseded_at IS NULL
                AND EXISTS(SELECT 1 FROM conversation_messages
@@ -2692,6 +2874,10 @@ fn adopt_replacement(
             tx.execute(
                 "UPDATE conversation_messages SET state=?4,attempted_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5)",
                 params![c.company.as_str(), c.connector, c.conversation, Stage::Pending.as_str(), Stage::Sent.as_str()],
+            ).map_err(state::sql(&path))?;
+            tx.execute(
+                "UPDATE conversation_messages SET attempted_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL",
+                params![c.company.as_str(), c.connector, c.conversation],
             ).map_err(state::sql(&path))?;
             Ok(())
         })?;
@@ -2815,7 +3001,27 @@ fn relay(
         // Intake runs alongside source reads. Only work already captured
         // when the read began may use the presence it observed.
         let before_read = open_messages(&state, &c)?;
+        if before_read.iter().any(|message| {
+            message.stage == Stage::Failed
+                && message.retry_at.is_none()
+                && message.boundary.is_some()
+        }) {
+            schedule_earlier_failures(&state, &c, clock())?;
+        }
         let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
+        let answer_may_need_attention = before_read.iter().any(|message| match message.stage {
+            Stage::Failed => message.failed_turns > 0,
+            Stage::Sent => {
+                message.failed_turns > 0
+                    || observed.is_none()
+                    || message.failure.as_deref() == Some(MISSING_SOURCE_TURN)
+                    || c.source_identity.as_deref() != Some(source.identity())
+            }
+            _ => false,
+        });
+        if answer_may_need_attention {
+            workers.report_answer_failure(admitted, &state, &c, observed.is_none(), clock())?;
+        }
         #[cfg(debug_assertions)]
         if observed == Some(Presence::Present) {
             hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD");
@@ -2940,7 +3146,7 @@ fn relay(
         if let Some((message, head, result)) = check
             && let Some(next) = open
                 .iter()
-                .find(|m| m.stage == Stage::Pending && m.message == message)
+                .find(|m| matches!(m.stage, Stage::Pending | Stage::Failed) && m.message == message)
         {
             match result {
                 Ok(DeliveryCheck::Accepted) => {
@@ -2966,16 +3172,17 @@ fn relay(
         let open = open_messages(&state, &c)?;
         let before_read = |candidate: &Message| {
             before_read.iter().any(|message| {
-                message.stage == Stage::Pending && message.message == candidate.message
+                matches!(message.stage, Stage::Pending | Stage::Failed)
+                    && message.message == candidate.message
             })
         };
-        let next = next_message(&open, &c).filter(|candidate| before_read(candidate));
+        let next = next_message(&open, &c, clock()).filter(|candidate| before_read(candidate));
         if let Some(session) = &c.session {
             // Accept any lost acknowledgment before trying to serve a
             // different queue head that arrived meanwhile.
-            let unconfirmed = open
-                .iter()
-                .find(|m| m.stage == Stage::Pending && m.attempted && before_read(m));
+            let unconfirmed = open.iter().find(|m| {
+                matches!(m.stage, Stage::Pending | Stage::Failed) && m.attempted && before_read(m)
+            });
             if next.map(|m| &m.message) != checked_head.as_ref() || checked_head.is_none() {
                 if let Some(candidate) = unconfirmed.or(next) {
                     workers.check(adapter, &c, session, candidate, next, observed);
@@ -3146,7 +3353,7 @@ fn answers(
         )?;
     }
     let presence = match read {
-        Ok(presence) => presence,
+        Ok(presence) => Some(presence),
         Err(error) => {
             tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
             let sent = open_messages(state, c)?
@@ -3155,7 +3362,7 @@ fn answers(
                 .map(|m| m.message)
                 .collect::<Vec<_>>();
             unavailable(state, c, &sent, connectors.now())?;
-            return Ok(None);
+            None
         }
     };
     // Existing answers can post even when reading the next turn failed
@@ -3164,7 +3371,7 @@ fn answers(
         tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
     unconfirmed(state, c, connectors.now())?;
-    Ok(Some(presence))
+    Ok(presence)
 }
 
 const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL";
@@ -3562,6 +3769,8 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
             probes: Mutex::default(),
             absence_reads: Mutex::default(),
             work: Mutex::default(),
+            answer_anomalies: Mutex::default(),
+            env: start.env.clone(),
         }));
         crate::connector_host::Connections::start(
             start.home,

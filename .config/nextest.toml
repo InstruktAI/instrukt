@@ -30,7 +30,7 @@ threads-required = 5
 
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_gets_the_answer_after_the_assistants_work_failed)'
-threads-required = 6
+threads-required = 4
 
 [[profile.default.overrides]]
 filter = 'test(=session_continuity::keyed_recovery_doors_follow_binding_state)'

@@ -532,8 +532,8 @@ mod tests {
 
     #[test]
     fn version_23_keeps_every_stored_reply_as_a_not_own_one() {
-        // The shape before version 23, the last migration.
-        let before = _schema::MIGRATIONS.len() - 1;
+        // The shape before version 23.
+        let before = 22;
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(before) {
             let tx = conn.transaction().unwrap();
@@ -663,6 +663,88 @@ mod tests {
         );
         assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1','USTEVEN','unavailable','2026-11-18T10:03:00Z')", []).is_err());
         assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','USTEVEN','not_own','2026-11-18T10:03:00Z','owed')", []).is_err());
+    }
+
+    #[test]
+    fn version_24_keeps_failed_messages_and_their_notice_order() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(23) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 23).unwrap();
+        conn.execute_batch(
+            "INSERT INTO conversation_messages(company,connector,conversation,message,written_us,written_at,arrived_at,
+              state,text,boundary,content,attempted_at,admission_position,unavailable_since,superseded_at)
+             VALUES ('acme','slack','C1/1','failed',1,'2026-11-18T10:00:00Z','2026-11-18T10:00:00Z',
+                       'failed','Question','boundary','Framed question','old-accepted-send',1,'still-unavailable',NULL),
+                    ('acme','slack','C1/1','superseded',2,'2026-11-18T10:00:00Z','2026-11-18T10:00:00Z',
+                       'failed','Question','superseded-boundary','Framed question','historical-send',2,NULL,'retained-supersession'),
+                    ('acme','slack','C1/1','sent',3,'2026-11-18T10:00:00Z','2026-11-18T10:00:00Z',
+                       'sent','Question','sent-boundary','Framed question','unconfirmed-send',3,NULL,NULL);",
+        ).unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let retained = conn
+            .prepare(
+                "SELECT state,boundary,admission_position,unavailable_since,superseded_at,attempted_at,retry_at,failed_turns
+                 FROM conversation_messages ORDER BY admission_position",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            retained,
+            [
+                (
+                    "failed".into(),
+                    "boundary".into(),
+                    1,
+                    Some("still-unavailable".into()),
+                    None,
+                    None,
+                    None,
+                    0
+                ),
+                (
+                    "failed".into(),
+                    "superseded-boundary".into(),
+                    2,
+                    None,
+                    Some("retained-supersession".into()),
+                    Some("historical-send".into()),
+                    None,
+                    0
+                ),
+                (
+                    "sent".into(),
+                    "sent-boundary".into(),
+                    3,
+                    None,
+                    None,
+                    Some("unconfirmed-send".into()),
+                    None,
+                    0
+                ),
+            ]
+        );
     }
 
     #[test]

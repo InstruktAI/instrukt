@@ -698,7 +698,7 @@ is `(company, connector, conversation)`.
 | `semantic_key` | The key its one session is started and woken by. |
 | `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. An operator-confirmed replacement can rebind the conversation and reset its source position. |
-| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
+| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. A change of identity restarts the read of the bound session at the beginning, preserving existing answers. |
 | `failure` | Cause of a source read failure or a blocked bound session, with its recovery door where applicable. Cleared when work can resume. |
 
 **`conversation_messages`** — one row per addressed message. Key: the address
@@ -713,7 +713,8 @@ and `message`, the connector's identity of that message.
 | `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully without a reply, keeping its status and notice coverage without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
-| `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
+| `attempted_at` | When the current send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt or after a failed turn is recorded. |
+| `retry_at`, `failed_turns` | The next eligible redelivery time on the operator clock and the failed-turn count used for its bounded delay. The company relay records them with the failure, updates the attempt boundary before sending, and clears retry eligibility when the message is served or superseded. Migration 24 leaves earlier rows intact. An earlier failed row without a schedule first receives one when the relay reads it. |
 | `turn` | The native turn that answered it; `NULL` until then. |
 | `failure` | Cause of its last failed capture, delivery, or turn. `NULL` once the message is served. A superseded message keeps its cause. |
 | `admitted_at` | When its sender was admitted; `NULL` until then, and for a message admitted before it was recorded. |

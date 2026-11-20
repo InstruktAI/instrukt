@@ -169,8 +169,9 @@ connector gives.
   thinking and control input are not posted. A bare `NOOP` posts nothing.
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
-  conversation links. A position advances only after the connector accepted
-  the post; a failed post stays pending and is retried.
+  conversation links. The relay advances its position in the transaction
+  that retains the answers it reads. Posting settles each retained piece
+  separately through the protocol below.
 - A person receives each part of an answer once. Each part is recorded as
   being posted before its post is sent. A part the connector accepted is never
   posted again: when recording that acceptance fails, only the record is
@@ -194,17 +195,30 @@ connector gives.
   timeout window that finds no post. When receipt reads keep failing through
   that window, the piece settles as delivery unknown and later work proceeds.
   Status retains the cause, and the piece produces neither a retry nor a notice.
-- Completion comes only from the conversation source. A turn running however
-  long is left to run. A turn that ended failed has its message delivered again
-  to the session after a growing delay, at the end of the conversation's queue,
-  so later messages are not held behind it; what the failed turn already did is
-  the agent's to reconcile (`general/procedure/company-assistance`). A completed
-  turn whose content the source cannot yet read whole is read again every pass;
-  nothing partial and nothing of another message is posted meanwhile. When the
-  source's identity changes, the conversation's thread is read whole from the new
-  source and matched by each message's boundary; turns already posted are
-  recognised by their turn identity and not posted again; a message whose turn
-  cannot be found stays sent and goes to the operator, never delivered again.
+- Completion comes only from the conversation source's whole-turn evidence.
+  A turn running however long is left to run. A recent-message listing supplies
+  neither completion nor missing answer content. If a completed turn's content
+  is missing or unstable, the relay keeps the message outstanding, opens its
+  no-work interval and reads again. The cause shows in status and raises an
+  anomaly past `ANSWER_OPERATOR_BOUND`. Nothing partial and nothing of another
+  message is posted.
+- A turn that ends unsuccessfully without a reply leaves its message failed.
+  The relay retries it after a growing delay, behind new messages, until it
+  receives an answer or a later-admitted settled message from the same member
+  supersedes it. Each redelivery has a fresh boundary recorded before the
+  send. The relay reconciles that same boundary when acceptance is uncertain.
+  It uses the bound session and the presence and operator recovery rules above.
+  Repeated failed turns are visible to the operator. What the failed turn
+  already did is the agent's to reconcile
+  (`general/procedure/company-assistance`). The company relay declares
+  `FAILED_RETRY_DELAY`, `FAILED_RETRY_LIMIT`, and `ANSWER_OPERATOR_BOUND`
+  in `crates/instrukt-company/src/conversations.rs`.
+- When the source's identity changes, the relay reads the bound session's
+  entire thread from the new source. It matches turns by the addressed message's
+  boundary and retains existing answer and posting records. It commits the new
+  source position with any newly recovered turns. A message whose turn cannot
+  be found stays sent and uncertain, with its interval and a cause in status.
+  It is read again and never sent again merely because the turn is missing.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until it is complete — its
@@ -419,6 +433,11 @@ Scenario Outline: Recover the answer
     | the runtime moved its conversation store |
     | the conversation is deleted and the operator confirms the old session stopped before replacing it |
     | the conversation is archived and the operator unarchives it |
+
+Scenario: A completed request has nothing to post
+  Given a member has a message waiting for an answer in a connected conversation
+  When the turn completes with a bare NOOP
+  Then the request is complete and nothing is posted
 ```
 
 ### UC-CV11: Onboard a company while the runner runs

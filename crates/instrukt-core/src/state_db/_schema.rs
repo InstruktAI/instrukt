@@ -34,7 +34,15 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v21),
     Sql(V22),
     Step(v23),
+    Sql(V24),
 ];
+
+/// Version 24: failed messages keep their retry schedule on the operator clock.
+const V24: &str = "
+ALTER TABLE conversation_messages ADD COLUMN retry_at TEXT;
+ALTER TABLE conversation_messages ADD COLUMN failed_turns INTEGER NOT NULL DEFAULT 0;
+UPDATE conversation_messages SET attempted_at=NULL WHERE state='failed' AND superseded_at IS NULL;
+";
 
 /// Version 22: a consumer's former source no longer in the configuration is
 /// `abandoned`: its pending events stay unread in that Redis and its
