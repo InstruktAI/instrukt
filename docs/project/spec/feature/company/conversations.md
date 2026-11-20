@@ -169,8 +169,10 @@ connector gives.
   thinking and control input are not posted. A bare `NOOP` posts nothing.
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
-  conversation links. A position advances only after the connector accepted
-  the post; a failed post stays pending and is retried.
+  conversation links. The relay advances its position in the transaction
+  that retains the answers it reads. Posting settles each retained piece
+  separately through the protocol below. Retained answers can post while
+  the conversation source is unreadable.
 - A person receives each part of an answer once. Each part is recorded as
   being posted before its post is sent. A part the connector accepted is never
   posted again: when recording that acceptance fails, only the record is
@@ -194,17 +196,37 @@ connector gives.
   timeout window that finds no post. When receipt reads keep failing through
   that window, the piece settles as delivery unknown and later work proceeds.
   Status retains the cause, and the piece produces neither a retry nor a notice.
-- Completion comes only from the conversation source. A turn running however
-  long is left to run. A turn that ended failed has its message delivered again
-  to the session after a growing delay, at the end of the conversation's queue,
-  so later messages are not held behind it; what the failed turn already did is
-  the agent's to reconcile (`general/procedure/company-assistance`). A completed
-  turn whose content the source cannot yet read whole is read again every pass;
-  nothing partial and nothing of another message is posted meanwhile. When the
-  source's identity changes, the conversation's thread is read whole from the new
-  source and matched by each message's boundary; turns already posted are
-  recognised by their turn identity and not posted again; a message whose turn
-  cannot be found stays sent and goes to the operator, never delivered again.
+- Completion comes only from the conversation source's whole-turn evidence.
+  A turn running however long is left to run. A recent-message listing supplies
+  neither completion nor missing answer content. If a completed turn's content
+  is missing or unstable, the relay keeps the message outstanding, opens its
+  no-work interval and reads again. The cause shows in status and raises an
+  anomaly past `ANSWER_OPERATOR_BOUND`. Nothing partial and nothing of another
+  message is posted.
+- An unsuccessful terminal turn leaves its message failed. Text written
+  during that turn is progress and supplies no answer.
+  The relay retries it after a growing delay, behind new messages, until it
+  receives an answer or a later-admitted settled message from the same member
+  supersedes it. Each send has a fresh boundary recorded before dispatch.
+  The opening request keeps its recorded boundary through reconciliation.
+  The relay applies an acknowledgement only to the attempt it identifies
+  while that attempt is outstanding. It discards stale acknowledgements and
+  records them for the operator.
+  It uses the bound session and the presence and operator recovery rules above.
+  Repeated failed turns are visible to the operator. What the failed turn
+  already did is the agent's to reconcile
+  (`general/procedure/company-assistance`). The company relay declares
+  `FAILED_RETRY_DELAY`, `FAILED_RETRY_LIMIT`, and `ANSWER_OPERATOR_BOUND`
+  in `crates/instrukt-company/src/conversations.rs`.
+- When the source's identity changes, the relay reads the bound session's
+  entire thread from the new source. It matches turns by the addressed message's
+  boundary and retains existing answer and posting records. It commits the new
+  source position with any newly recovered turns. Any outstanding attempt,
+  including a send whose acknowledgement was lost, stays uncertain if the
+  moved source cannot identify its turn. The relay retains that attempt and
+  shows the cause in status. Only reconciliation of that attempt by its
+  boundary ends its no-work interval. A miss in the moved
+  source supplies no proof of absence and permits no repeat send.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until it is complete — its
@@ -388,7 +410,8 @@ Then the member gets one message, beginning with their mention, that the assista
 And writing again before they are answered brings no second one
 And another member waiting in the same conversation gets their own
 And the member's answer follows once the agent has done the work
-And a healthy wait or a turn completed without output does not earn an unavailable notice
+And a healthy wait does not earn an unavailable notice
+And a request completed successfully without a reply is complete without a post or an unavailable notice
 ```
 
 ### UC-CV19: Get an answer while another conversation is still opening
@@ -405,20 +428,14 @@ And a recovery command for a session with shell metacharacters can be retried in
 ### UC-CV8: Get the answer after the assistant's work failed
 
 ```gherkin
-Scenario Outline: Recover the answer
-  Given a member has a message waiting for an answer in a connected conversation
-  When <failure>
-  And the conversation recovers
-  Then the member gets the answer to that message
-  And nothing else is posted in the conversation, except the one notice that the assistant is temporarily unavailable when the recovery leaves the message without work for a minute
+Scenario: The member receives the answer after a retry
+  Given the assistant's work on a member's question ends in failure
+  When the assistant can work on the question again
+  Then the member receives one answer without sending the question again
+  And progress from the unsuccessful work is never posted as the answer
+  And another member can be answered while the failed question waits
+  And if the wait earns an unavailable notice, only one is posted before the answer
 
-  Examples:
-    | failure |
-    | the agent's turn failed |
-    | the turn's content was not yet readable |
-    | the runtime moved its conversation store |
-    | the conversation is deleted and the operator confirms the old session stopped before replacing it |
-    | the conversation is archived and the operator unarchives it |
 ```
 
 ### UC-CV11: Onboard a company while the runner runs
@@ -481,7 +498,8 @@ And the status clears once the answer arrives or the turn completes without a re
 Given the assistant has an answer for a member and its delivery is uncertain
 When the assistant recovers from the interruption
 Then an answer that reached the member is neither repeated nor followed by an unavailable notice for that answer
-And an answer confirmed absent can be sent again
+And an answer confirmed absent can be sent again even while its source remains unreadable
+And the member sees the unavailable status while delivery is blocked
 And if delivery cannot be established, the operator sees that outcome and the member can still ask another question
 ```
 
@@ -503,6 +521,39 @@ When they ask another question and the assistant completes it
 Then the later question is served even while the earlier one remains unserved
 And its completion clears the earlier failure from the member's status
 And a subsequent outage can earn its own notice
+```
+
+### UC-CV20: Keep a question when the conversation thread is archived or deleted
+
+```gherkin
+Scenario Outline: Restore a conversation with work waiting
+  Given a member has a question waiting and the assistant's thread for that conversation is <state>
+  When the operator <recovery>
+  Then the member gets one answer to their saved question in the same conversation
+  And the operator sees how to recover the work that is waiting
+  And their question waits for the operator's recovery action
+  And answers already saved for posting can still reach their members while the question waits
+
+  Examples:
+    | state    | recovery                                             |
+    | archived | unarchives the thread                                |
+    | deleted  | confirms the stopped session and replaces the thread |
+```
+
+### UC-CV21: Keep an answer through an interruption at its source
+
+```gherkin
+Scenario Outline: Receive the complete answer when it can be read
+  Given a member has a question waiting for an answer
+  When <interruption>
+  Then the member receives the complete answer once it can be read
+  And no partial answer is posted
+  And earlier answers are never repeated and the member does not need to ask again
+
+  Examples:
+    | interruption                                                  |
+    | the source temporarily holds only part of the completed answer |
+    | the runtime moves its records while an answer is due           |
 ```
 
 ## Known caveats

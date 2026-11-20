@@ -1248,27 +1248,20 @@ fn a_failed_link_pass_retries_without_another_native_change() {
     let wakes = env.path("native-wakes");
     std::fs::write(&wakes, "0").unwrap();
     env.set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
-    let store = history::T3Store::new(&env);
-    std::fs::write(
-        env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 1\nrunner: {runtime: t3}\nmodules: {history: false}\n",
-    )
-    .unwrap();
-    let fake = runtime::FakeT3::create(&env);
-    fake.seed("parent", env.home(), "peer-a", "Opening A.");
-    fake.seed("child", env.home(), "peer-b", "Opening B.");
-    env.instrukt(env.home())
+    let mut c = crate::fixtures::conversing::Company::prepared_for_recovery(env);
+    c.runtime
+        .seed("parent", c.env.home(), "peer-a", "Opening A.");
+    c.runtime
+        .seed("child", c.env.home(), "peer-b", "Opening B.");
+    c.env
+        .instrukt(c.env.home())
         .env("T3CODE_THREAD_ID", "parent")
         .args(["discuss", "open", "child"])
         .assert()
         .success();
+    c.run();
+    let (env, store, fake) = (&c.env, &c.store, &c.runtime);
     let home = instrukt_core::home::Home::at_user_home(env.home().into());
-    let _runner = crate::fixtures::conversing::Running::spawn(
-        env.instrukt_process(env.home())
-            .arg("run")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null()),
-    );
     let log = env.home().join(".local/state/instrukt-ai/instrukt/run.log");
     wait_for(|| {
         std::fs::read_to_string(&log)
@@ -1284,6 +1277,35 @@ fn a_failed_link_pass_retries_without_another_native_change() {
     wait_for(|| fake.message_count("child") == 2);
     assert!(fake.message("child", 1).contains("Parent reply."));
     assert_eq!(fake.message_count("parent"), 1);
+    let at = "2026-11-08T10:00:00Z";
+    store.thread("s3", None, None, at);
+    c.slack.direct("D30", "USTEVEN", "Is the report ready?");
+    let state = instrukt_core::state_db::rusqlite::Connection::open(
+        env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait_for(|| {
+        state
+            .query_row(
+                "SELECT session='t3:s3' FROM connected_conversations WHERE conversation='D30'",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap_or(false)
+    });
+    fake.delete("s3");
+    store.unproject_thread("s3");
+    wake("2");
+    let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
+    wait_for(|| read_log().contains("event=conversation_presence_probe_confirmed"));
+    let shows = || {
+        fake.calls()
+            .iter()
+            .filter(|call| call.as_str() == "thread show --json --messages 0 -- s3")
+            .count()
+    };
+    let before = shows();
+
     store.exclude_readers();
     store.turn(
         "child",
@@ -1292,7 +1314,7 @@ fn a_failed_link_pass_retries_without_another_native_change() {
         "Question.",
         "Reply after recovery.",
     );
-    wake("2");
+    wake("3");
     wait_for(|| {
         links::status(&home).unwrap().iter().any(|link| {
             link.directions.iter().any(|direction| {
@@ -1307,4 +1329,69 @@ fn a_failed_link_pass_retries_without_another_native_change() {
     wait_for(|| fake.message_count("parent") == 2);
     assert!(fake.message("parent", 1).contains("Reply after recovery."));
     assert_eq!(fake.message_count("child"), 2);
+
+    store.unproject_thread("child");
+    wake("4");
+    wait_for(|| {
+        links::status(&home).unwrap().iter().any(|link| {
+            link.directions.iter().any(|direction| {
+                direction
+                    .failure
+                    .as_deref()
+                    .is_some_and(|cause| cause.contains("linked source conversation is missing"))
+            })
+        })
+    });
+    let retries = read_log()
+        .matches("event=conversation_link_retry_processed")
+        .count();
+    store.thread("child", None, None, at);
+    store.turn(
+        "child",
+        "timer-reply",
+        2,
+        "Question.",
+        "Recovered on the timer.",
+    );
+    wait_for(|| {
+        fake.message_count("parent") == 3
+            && read_log()
+                .matches("event=conversation_link_retry_processed")
+                .count()
+                > retries
+    });
+    assert!(
+        fake.message("parent", 2)
+            .contains("Recovered on the timer.")
+    );
+    assert_eq!(std::fs::read_to_string(wakes).unwrap(), "4");
+    assert_eq!(
+        shows(),
+        before,
+        "a link timer must not issue another company show"
+    );
+    let log = read_log();
+    assert_eq!(
+        log.matches("event=conversation_presence_probe_started")
+            .count(),
+        1
+    );
+    assert_eq!(
+        log.matches("event=conversation_presence_probe_confirmed")
+            .count(),
+        1
+    );
+    assert!(
+        instrukt_company::conversations::status(&home)
+            .unwrap()
+            .conversations
+            .iter()
+            .any(|row| {
+                row.conversation == "D30"
+                    && row
+                        .failures
+                        .iter()
+                        .any(|cause| cause.contains("--stopped t3:s3"))
+            })
+    );
 }

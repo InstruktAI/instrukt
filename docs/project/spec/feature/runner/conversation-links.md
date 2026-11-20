@@ -199,6 +199,9 @@ recorded work.
 Failed link passes retry with backoff beginning at `LINK_RETRY_DELAY`, bounded
 by `MOST_RETRY`, even without a further native change.
 
+A timed link retry alone leaves the company relay's completed thread
+presence confirmations in place.
+
 ## Use cases
 
 ### UC-CL1: Bring two agents into a shared discussion
