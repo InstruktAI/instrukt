@@ -713,47 +713,55 @@ fn started(c: &Company, before: &[String]) -> String {
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV7
 #[test]
-fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() {
-    std::thread::scope(|scope| {
-        scope.spawn(the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed);
-        scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Found));
-        scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Missing));
-        scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Late));
-        scope.spawn(|| {
-            legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithNewNotice)
-        });
-        scope.spawn(|| {
-            legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice)
-        });
-        scope.spawn(a_mixed_notice_epoch_waits_for_the_final_answer_piece);
-        scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
-        scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice(" \n "));
-        scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
-        scope.spawn(pruning_keeps_the_context_boundary_after_out_of_order_delivery);
-        scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
-        scope.spawn(notice_epochs_and_reconciliation);
-        scope.spawn(an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text);
-        scope.spawn(an_answer_to_one_member_does_not_restart_anothers_minute);
-        notice_and_status_for_one_member();
-    });
+fn found_legacy_answer_is_confirmed() {
+    legacy_answer_attempt_releases_conversation(LegacyReceipt::Found);
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV7
 #[test]
-fn slack_metadata_read_back_preserves_one_answer_and_one_notice() {
+fn missing_legacy_answer_expires() {
+    legacy_answer_attempt_releases_conversation(LegacyReceipt::Missing);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn late_legacy_answer_upgrades_unknown_delivery() {
+    legacy_answer_attempt_releases_conversation(LegacyReceipt::Late);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn late_legacy_answer_leaves_a_newer_notice_intact() {
+    legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithNewNotice);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn late_legacy_answer_leaves_an_unconfirmed_newer_notice_intact() {
+    legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn successful_empty_turns_rearm_notices() {
     std::thread::scope(|scope| {
-        scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
-        scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
-        scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
-        scope.spawn(a_successful_answer_without_timestamp_needs_no_read_back);
-        scope.spawn(failed_metadata_reads_expire_without_sending_again);
-        scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
-        scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
-        scope.spawn(the_status_tracks_a_slow_answer_and_its_receipt);
+        scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
+        an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
     });
 }
 
-fn notice_and_status_for_one_member() {
+fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    instrukt_core::fsx::LockGuard::acquire(
+        &home.state_dir().join("runtime-dispatch.lock"),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap()
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_members_status_tracks_start_and_turn_updates() {
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     // The operator's clock, moved by the test alone.
     let clock = c.env.path("clock");
@@ -768,15 +776,7 @@ fn notice_and_status_for_one_member() {
     // unavailable text; once the runtime accepts the message, the working
     // text again; while its turn runs, the newest message the agent has
     // written in it, as written; and nothing once the answer is posted.
-    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    let dispatch = || {
-        instrukt_core::fsx::LockGuard::acquire(
-            &home.state_dir().join("runtime-dispatch.lock"),
-            std::time::Duration::from_secs(5),
-        )
-        .unwrap()
-    };
-    let held = dispatch();
+    let held = hold_dispatch(&c);
     projected(&c);
     let asked = c
         .slack
@@ -818,7 +818,13 @@ fn notice_and_status_for_one_member() {
     // While the answer is posted the status keeps the agent's newest
     // message; it is cleared once the answer is posted.
     insta::assert_json_snapshot!("status-tells-the-state", shown(&c, channel, &asked));
+}
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn working_status_stays_visible_during_a_slow_start() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
     // A start that is slow but healthy shows the working text throughout.
     let before = c.sessions();
     c.runtime.flag("hold-start", true);
@@ -838,16 +844,22 @@ fn notice_and_status_for_one_member() {
     c.runtime.flag("hold-start", false);
     let session = started(&c, &before);
     c.finish_turn(&session, 0, "Ada reviews it.");
-    wait("the slow start's answer", || c.slack.posts().len() == 2);
+    wait("the slow start's answer", || c.slack.posts().len() == 1);
     wait("the status cleared", || {
         shown(&c, channel, &slow).last().map(String::as_str) == Some("")
     });
     assert_eq!(shown(&c, channel, &slow), [WORKING, ""]);
+}
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
     // A message waits on the runtime's dispatch lock past the wait: the
     // working text, then the unavailable text; once the lock is had, the
     // message is started and answered.
-    let held = dispatch();
+    let held = hold_dispatch(&c);
     let before = c.sessions();
     projected(&c);
     let locked = c
@@ -874,7 +886,7 @@ fn notice_and_status_for_one_member() {
         c.slack.status(channel, &locked).as_deref() == Some(WORKING)
     });
     c.finish_turn(&session, 0, "It is green.");
-    wait("the locked message's answer", || answers(&c) == 3);
+    wait("the locked message's answer", || answers(&c) == 1);
     wait("the status cleared", || {
         shown(&c, channel, &locked).last().map(String::as_str) == Some("")
     });
@@ -886,7 +898,7 @@ fn notice_and_status_for_one_member() {
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV7
 #[test]
-fn a_members_status_follows_recovery_and_queued_turns() {
+fn unavailable_status_clears_when_the_source_or_post_recovers() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
 
@@ -948,7 +960,13 @@ fn a_members_status_follows_recovery_and_queued_turns() {
         shown(&c, channel, &unposted).last().map(String::as_str) == Some("")
     });
     assert_eq!(shown(&c, channel, &unposted), [WORKING, UNAVAILABLE, ""]);
+}
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn working_status_clears_for_a_noop_and_carries_queued_turns() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
     // A turn that completes with a bare `NOOP` completes its message:
     // nothing is posted, and the status is cleared without ever saying the
     // assistant is unavailable.
@@ -970,8 +988,8 @@ fn a_members_status_follows_recovery_and_queued_turns() {
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_secs(90),
     );
-    assert_eq!(answers(&c), 2);
-    assert_eq!(notices(&c, "USTEVEN"), 1);
+    assert_eq!(answers(&c), 0);
+    assert_eq!(notices(&c, "USTEVEN"), 0);
 
     // A second message waits behind the conversation's running turn: the
     // status shows that turn's work, never the unavailable text, and both
@@ -1004,24 +1022,26 @@ fn a_members_status_follows_recovery_and_queued_turns() {
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_secs(90),
     );
-    assert_eq!(notices(&c, "USTEVEN"), 1);
+    assert_eq!(notices(&c, "USTEVEN"), 0);
     c.finish_turn(&session, 0, "The release.");
     wait("the second message handed over", || {
         c.runtime.message_count(&session) == 2
     });
     c.finish_turn(&session, 1, "The roadmap.");
-    wait("both answers", || answers(&c) == 4);
+    wait("both answers", || answers(&c) == 2);
     wait("the status cleared", || {
         shown(&c, channel, &first).last().map(String::as_str) == Some("")
     });
     assert!(!shown(&c, channel, &first).contains(&UNAVAILABLE.to_owned()));
-    assert_eq!(notices(&c, "USTEVEN"), 1);
+    assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
 fn interval_clock(clock: &std::path::Path) -> jiff::Timestamp {
     std::fs::read_to_string(clock).unwrap().parse().unwrap()
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn notice_epochs_and_reconciliation() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -1146,36 +1166,40 @@ fn notice_epochs_and_reconciliation() {
         notice_state(&c, &conversation, sender).is_none()
             && notice_state(&c, &conversation, other).is_none()
     });
-    // A new epoch can owe another notice. A post still in flight has time
-    // to become visible without sending a second copy.
-    set_clock(
-        &clock,
-        interval_clock(&clock) + jiff::SignedDuration::from_secs(1),
-    );
-    c.runtime.flag("send-failure", true);
-    let next = c.slack.mention(
-        channel,
-        sender,
-        "<@UAGENT> Where are the notes?",
-        Some(&first),
-    );
+    for post in c.slack.posts() {
+        assert_eq!(post.channel, channel);
+        assert_eq!(post.thread.as_deref(), Some(first.as_str()));
+    }
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_notice_in_flight_reconciles_after_a_noop() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
+    let sender = "USTEVEN";
+    c.runtime.flag("separate-completion", true);
+    c.runtime.flag("list-failure", true);
+    projected(&c);
+    let next = c
+        .slack
+        .mention(channel, sender, "<@UAGENT> Where are the notes?", None);
+    let conversation = format!("{channel}/{next}");
     let next_at = interval_at(&c, &next);
     c.slack.fate(&notice_text(sender), Fate::Late, 1);
     set_clock(&clock, next_at + minute());
-    wait("the following epoch's notice sent", || {
+    wait("the notice sent", || {
         notice_state(&c, &conversation, sender).as_deref() == Some("posting")
     });
-    let reads = c.slack.reads();
+    let reads = c.slack.metadata_reads();
     wait(
         "a reconciliation read while the notice is in flight",
-        || c.slack.reads() > reads,
+        || c.slack.metadata_reads() > reads,
     );
-    assert_eq!(notices(&c, sender), 2);
-    c.runtime.flag("send-failure", false);
-    wait("the new epoch's input accepted", || {
-        c.runtime.message_count(&session) == 4
-    });
-    c.finish_turn(&session, 3, "NOOP");
+    assert_eq!(notices(&c, sender), 0);
+    c.runtime.flag("list-failure", false);
+    let session = started(&c, &[]);
+    c.finish_turn(&session, 0, "NOOP");
     wait("the completed message leaves no pending message", || {
         c.conversations()
             .conversations
@@ -1186,29 +1210,31 @@ fn notice_epochs_and_reconciliation() {
     // identity until the eventual post is reconciled without a duplicate.
     c.slack.commit_late();
     wait("the in-flight notice becomes visible", || {
-        notices(&c, sender) == 3
+        notices(&c, sender) == 1
     });
     set_clock(&clock, next_at + jiff::SignedDuration::from_mins(3));
     wait(
         "the late notice reconciled and its settled epoch removed",
         || notice_state(&c, &conversation, sender).is_none(),
     );
-    assert_eq!(notices(&c, sender), 3);
+    assert_eq!(notices(&c, sender), 1);
     c.slack
-        .mention(channel, sender, "<@UAGENT> And the contract?", Some(&first));
+        .mention(channel, sender, "<@UAGENT> And the contract?", Some(&next));
     wait("the next input accepted", || {
-        c.runtime.message_count(&session) == 5
+        c.runtime.message_count(&session) == 2
     });
-    c.finish_turn(&session, 4, "In the wiki.");
+    c.finish_turn(&session, 1, "In the wiki.");
     wait("the new epoch's answer", || {
         c.slack.posts_beginning("In the wiki.") == 1
     });
     for post in c.slack.posts() {
-        assert_eq!(post.channel, "C1");
-        assert_eq!(post.thread.as_deref(), Some(first.as_str()));
+        assert_eq!(post.channel, channel);
+        assert_eq!(post.thread.as_deref(), Some(next.as_str()));
     }
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn a_normalized_notice_is_reconciled_after_a_restart() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D18";
@@ -1273,6 +1299,37 @@ fn run_log(c: &Company) -> String {
     .unwrap_or_default()
 }
 
+/// Make a control member overdue on the operator clock. Seeing their notice
+/// confirms eligibility was evaluated while the answer remained unresolved.
+fn observe_notice_pass(c: &Company, clock: &std::path::Path, now: jiff::Timestamp) {
+    use instrukt_core::state_db::rusqlite::{Connection, params};
+    c.runtime.flag("list-failure", true);
+    let control = c
+        .slack
+        .direct("D99", "UANNA", "Is the assistant available?");
+    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    wait("the control member admitted", || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND admission_position IS NOT NULL)",
+            [&control],
+            |row| row.get::<_, bool>(0),
+        ).unwrap()
+    });
+    // The answer relay can be blocked in the provider read. Give the
+    // control member a retained failed turn so no dispatch is needed.
+    db.execute(
+        "UPDATE conversation_messages SET state='failed',unavailable_since=?2 WHERE message=?1",
+        params![control, (now - minute()).to_string()],
+    )
+    .unwrap();
+    set_clock(clock, now);
+    wait("the control member's notice posted", || {
+        notices(c, "UANNA") == 1
+    });
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn a_lost_answer_response_defers_notices_until_read_back() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1292,19 +1349,17 @@ fn a_lost_answer_response_defers_notices_until_read_back() {
     wait("the restarted relay reading back the answer", || {
         c.slack.held() > held
     });
-    // Wait through two eligibility passes while the provider read stays held.
-    // Slack's request timeout is 30 seconds.
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(11);
-    while std::time::Instant::now() < until {
-        assert_eq!(notices(&c, "USTEVEN"), 0, "the answer is already visible");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    observe_notice_pass(&c, &clock, opened + minute());
+    assert_eq!(notices(&c, "USTEVEN"), 0, "the answer is already visible");
+    assert!(!answers_recorded(&c));
     c.slack.release_reads();
     wait("the answer reconciled", || answers_recorded(&c));
     assert_eq!(c.slack.posts_beginning("Ada signed."), 1);
     assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn an_unconfirmed_answer_is_reconciled_before_retry() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1330,21 +1385,18 @@ fn an_unconfirmed_answer_is_reconciled_before_retry() {
     });
     assert!(c.slack.posts().is_empty());
     let opened = interval_at(&c, &asked);
+    let held = c.slack.held();
     c.slack.hold_reads_from(&asked);
     c.slack.commit_late();
+    wait("the later read-back is held", || c.slack.held() > held);
     assert_eq!(c.slack.posts_beginning(answer), 1);
     set_clock(&clock, opened + minute());
-    // Keep read-back blocked through two notice passes. The answer has
-    // arrived, but the runner still needs to reconcile its earlier attempt.
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(11);
-    while std::time::Instant::now() < until {
-        assert_eq!(
-            notices(&c, "USTEVEN"),
-            0,
-            "the earlier answer already landed"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    observe_notice_pass(&c, &clock, opened + minute());
+    assert_eq!(
+        notices(&c, "USTEVEN"),
+        0,
+        "the earlier answer already landed"
+    );
     c.slack.release_reads();
     wait(
         "the earlier answer reconciled without an early retry",
@@ -1352,6 +1404,8 @@ fn an_unconfirmed_answer_is_reconciled_before_retry() {
     );
     assert_eq!(c.slack.posts_beginning(answer), 1);
     assert_eq!(notices(&c, "USTEVEN"), 0);
+
+    c.runtime.flag("list-failure", false);
 
     // An empty read after the timeout can settle a post that never appears.
     // A confirmed rejection then permits a notice.
@@ -1683,6 +1737,8 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
     assert_eq!(notices(&c, member), expected_notices);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn a_successful_answer_without_timestamp_needs_no_read_back() {
     let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1699,6 +1755,8 @@ fn a_successful_answer_without_timestamp_needs_no_read_back() {
     assert_eq!(interval(&c, &event), None);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn failed_metadata_reads_expire_without_sending_again() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -1750,6 +1808,8 @@ fn failed_metadata_reads_expire_without_sending_again() {
     assert_eq!(c.slack.posts().len(), 2);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
     let at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
     let (mut c, clock) = status_company(at);
@@ -1813,9 +1873,7 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
         Some("posted"),
         "a NOOP and a partial answer must keep the mixed epoch"
     );
-    set_clock(&clock, opened + minute());
-    // Give the notice worker a pass while the final piece is still refused.
-    std::thread::sleep(std::time::Duration::from_secs(6));
+    observe_notice_pass(&c, &clock, opened + minute());
     assert_eq!(notices(&c, member), 1);
     c.slack.clear_fates();
     wait(
@@ -1828,6 +1886,8 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
     assert_eq!(notices(&c, member), 1);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn an_unconfirmed_post_waits_after_a_metadata_miss() {
     let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1890,6 +1950,8 @@ fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
     assert_eq!(c.slack.posts().len(), 2);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D21";
@@ -2022,70 +2084,97 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
         notices(&c, sender) == 2 && notice_state(&c, channel, sender).as_deref() == Some("posted")
     });
 
-    c.slack.direct(channel, sender, "Did the rotation change?");
-    wait("the next question can settle without a reply", || {
-        c.runtime.message_count(&session) == 5
-    });
-    let younger = interval_clock(&clock);
-    c.finish_turn(&session, 4, " \n ");
-    wait(
-        "the successful blank reply supersedes the fourth question",
-        || notice_state(&c, channel, sender).is_none(),
-    );
-
-    let sixth = c.slack.direct(channel, sender, "Who should I page?");
-    wait("another turn starts", || {
-        c.runtime.message_count(&session) == 6
-    });
-    let input = c.runtime.message(&session, 5);
-    c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store.failed_turn(&session, "failed-turn-6", 6, &input);
-    interval_at(&c, &sixth);
-
-    use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension as _};
-    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
-    let retained = |message: &str| -> Option<(String, Option<String>)> {
-        db.query_row(
-            "SELECT state,superseded_at FROM conversation_messages WHERE message=?1",
-            [message],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .unwrap()
-    };
     for message in [&first, &second] {
         assert_eq!(
-            retained(message),
-            Some(("failed".into(), Some(format!("{first_settled:.9}"))))
+            superseded_at(&c, message),
+            Some(Some(format!("{first_settled:.9}")))
         );
     }
-    assert_eq!(
-        retained(&fourth),
-        Some(("failed".into(), Some(format!("{younger:.9}"))))
-    );
-    assert_eq!(retained(&sixth), Some(("failed".into(), None)));
-
-    c.runner_dies();
-    set_clock(
-        &clock,
-        first_settled
-            + jiff::SignedDuration::from_hours(7 * 24)
-            + jiff::SignedDuration::from_secs(1),
-    );
-    c.run();
-    wait(
-        "the relay prunes failures superseded more than seven days ago",
-        || retained(&first).is_none() && retained(&second).is_none(),
-    );
-    assert_eq!(
-        retained(&fourth),
-        Some(("failed".into(), Some(format!("{younger:.9}"))))
-    );
-    assert_eq!(retained(&sixth), Some(("failed".into(), None)));
-    assert_eq!(retained(&third), Some(("answered".into(), None)));
 }
 
+fn superseded_at(c: &Company, message: &str) -> Option<Option<String>> {
+    use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension as _};
+    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    db.query_row(
+        "SELECT superseded_at FROM conversation_messages WHERE message=?1",
+        [message],
+        |row| row.get(0),
+    )
+    .optional()
+    .unwrap()
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_blank_reply_supersedes_a_failed_question() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "D21";
+    let sender = "USTEVEN";
+    c.runtime.flag("separate-completion", true);
+    projected(&c);
+    let failed = c.slack.direct(channel, sender, "Who is on call?");
+    let session = started(&c, &[]);
+    let input = c.runtime.message(&session, 0);
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    c.store.failed_turn(&session, "failed-turn", 1, &input);
+    set_clock(&clock, interval_at(&c, &failed) + minute());
+    wait("the failed question's notice posted", || {
+        notice_state(&c, channel, sender).as_deref() == Some("posted")
+    });
+    c.slack.direct(channel, sender, "Did the rotation change?");
+    wait("the next question can settle without a reply", || {
+        c.runtime.message_count(&session) == 2
+    });
+    let settled = interval_clock(&clock);
+    c.finish_turn(&session, 1, " \n ");
+    wait("the blank reply supersedes the failed question", || {
+        notice_state(&c, channel, sender).is_none()
+    });
+    assert_eq!(
+        superseded_at(&c, &failed),
+        Some(Some(format!("{settled:.9}")))
+    );
+    assert_eq!(interval(&c, &failed), None);
+    assert_eq!(notices(&c, sender), 1);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn pruning_keeps_younger_and_unsuperseded_failures() {
+    use instrukt_core::state_db::rusqlite::{Connection, params};
+    let now: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
+    let (mut c, _) = status_company(now);
+    c.runner_dies();
+    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    let cutoff = now - jiff::SignedDuration::from_hours(7 * 24);
+    let second = jiff::SignedDuration::from_secs(1);
+    for (position, message, state, superseded) in [
+        (1, "old", "failed", Some(cutoff - second)),
+        (2, "young", "failed", Some(cutoff + second)),
+        (3, "unserved", "failed", None),
+        (4, "answered", "answered", None),
+    ] {
+        db.execute(
+            "INSERT INTO conversation_messages(company,connector,conversation,message,written_us,written_at,arrived_at,state,text,admission_position,superseded_at)
+             VALUES (?1,'slack','D21',?2,?3,'2026-11-08T10:00:00Z','2026-11-08T10:00:00Z',?4,'Retained question',?3,?5)",
+            params![c.company().as_str(), message, position, state, superseded.map(|time| format!("{time:.9}"))],
+        ).unwrap();
+    }
+    c.run();
+    wait("the relay prunes the expired superseded failure", || {
+        superseded_at(&c, "old").is_none()
+    });
+    assert_eq!(
+        superseded_at(&c, "young"),
+        Some(Some(format!("{:.9}", cutoff + second)))
+    );
+    assert_eq!(superseded_at(&c, "unserved"), Some(None));
+    assert_eq!(superseded_at(&c, "answered"), Some(None));
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
@@ -2217,6 +2306,8 @@ fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
     assert!(!input.contains(failed_text), "{input}");
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn legacy_messages_keep_status_and_the_notice_anchor() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -2288,6 +2379,8 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
     });
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D11";
@@ -2357,7 +2450,7 @@ fn status_company(at: jiff::Timestamp) -> (Company, std::path::PathBuf) {
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV7
 #[test]
-fn a_members_status_recovers_after_lock_waits_and_a_refused_start() {
+fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let now: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
     let channel = "C1";
@@ -2398,7 +2491,7 @@ fn a_members_status_recovers_after_lock_waits_and_a_refused_start() {
         std::time::Duration::from_secs(60),
         || c.sessions().len() > before.len(),
     );
-    let now = running.stop();
+    running.stop();
     let session = started(&c, &before);
     c.finish_turn(&session, 0, "Linus is on call.");
     wait("the answer beside the held lock", || {
@@ -2409,11 +2502,17 @@ fn a_members_status_recovers_after_lock_waits_and_a_refused_start() {
         Some(apart.as_str())
     );
     drop(other_lock);
+}
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn the_notice_minute_starts_when_a_slow_start_fails() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
     // A start under way a minute and a half, then refused: the message's
     // interval opens when the refusal is established, on the clock then.
     let posts = c.slack.posts().len();
-    let asked_at = now + jiff::SignedDuration::from_mins(10);
+    let asked_at = interval_clock(&clock);
     set_clock(&clock, asked_at);
     let before = c.sessions();
     c.runtime.flag("hold-start", true);
@@ -2444,7 +2543,14 @@ fn a_members_status_recovers_after_lock_waits_and_a_refused_start() {
     let session = started(&c, &before);
     c.finish_turn(&session, 0, "Margaret signs it off.");
     wait("the late start's answer", || answers(&c) == posts + 1);
+}
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    use sha2::Digest as _;
     // In a direct message each message has a status of its own. A message
     // queued behind the running turn and that turn's own message both have
     // their interval opened while the conversation's lock is held past its
@@ -2471,11 +2577,7 @@ fn a_members_status_recovers_after_lock_waits_and_a_refused_start() {
         std::time::Duration::from_secs(5),
     )
     .unwrap();
-    let running = RunningClock::start(
-        clock.clone(),
-        refused_at + jiff::SignedDuration::from_mins(20),
-        30,
-    );
+    let running = RunningClock::start(clock.clone(), interval_clock(&clock), 30);
     halt_at_intervals(&c, running, &clock, &[&own, &queued]);
     wait("both statuses unavailable", || {
         c.slack.status(direct, &own).as_deref() == Some(UNAVAILABLE)
@@ -2498,6 +2600,8 @@ fn a_members_status_recovers_after_lock_waits_and_a_refused_start() {
     wait("both direct answers", || c.slack.posts().len() == posts + 2);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn the_status_tracks_a_slow_answer_and_its_receipt() {
     let done_at = "2026-11-19T10:00:00Z".parse().unwrap();
     let (mut c, clock) = status_company(done_at);
@@ -2627,6 +2731,8 @@ fn the_status_tracks_a_slow_answer_and_its_receipt() {
     assert_eq!(interval(&c, &patient), None);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn an_answer_to_one_member_does_not_restart_anothers_minute() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
@@ -2687,7 +2793,9 @@ fn an_answer_to_one_member_does_not_restart_anothers_minute() {
     });
 }
 
-fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_relay_restart_keeps_the_unavailable_interval() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
 
@@ -2755,7 +2863,13 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
     assert_eq!(c.conversations().relay_failure, None);
     c.finish_turn(&session, 0, "The office manager.");
     wait("the answer after the restart", || answers(&c) == posts + 1);
+}
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_running_turn_closes_an_observation_failure() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
     // The session's running turn cannot be observed: the message's own
     // interval opens; once its turn is observed running again, it closes.
     let posts = c.slack.posts().len();
@@ -2797,7 +2911,14 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
     wait("the answer once observed", || {
         c.slack.posts().len() == posts + 1
     });
+    assert_eq!(notices(&c, "USTEVEN"), 0);
+}
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_queued_turn_acceptance_closes_the_unavailable_interval() {
+    let (mut c, _) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
     // The runtime accepts the message but has not started executing it: the
     // acceptance alone ends the interval its refused listing opened, and the
     // working text shows before execution starts.
@@ -2824,13 +2945,12 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
     wait("the queued message's answer", || {
         c.slack.posts().len() == posts + 1
     });
-
-    assert_eq!(notices(&c, "USTEVEN"), 1);
-    #[cfg(debug_assertions)]
-    a_completed_turn_is_read_again_after_a_locked_read();
+    assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
 #[cfg(debug_assertions)]
+#[test]
 fn a_completed_turn_is_read_again_after_a_locked_read() {
     use sha2::Digest as _;
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
@@ -3686,6 +3806,8 @@ fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
     assert_eq!(destinations(&c), [("C1".to_owned(), Some(question))]);
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
 fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() {
     let done_at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
     let (mut c, clock) = status_company(done_at);
