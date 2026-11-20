@@ -1348,15 +1348,12 @@ fn deliver_one(
     admitted: &Admitted,
     adapter: &dyn RuntimeAdapter,
     source: &dyn ConversationSource,
-    state: &RunnerState,
     c: &Conversation,
+    next: &Message,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
+    let state = &RunnerState::new(invocation.home());
     let now = clock();
-    let open = open_messages(state, c)?;
-    let Some(next) = next_message(&open, c) else {
-        return Ok(());
-    };
     let result = match &c.session {
         None => start(invocation, admitted, adapter, source, c, next, now),
         Some(session) => send(adapter, state, c, session, next, now),
@@ -2434,6 +2431,27 @@ fn blocked(
     Ok(())
 }
 
+#[cfg(debug_assertions)]
+fn hold_presence_for_fixture(c: &Conversation, presence: Option<Presence>) {
+    if presence != Some(Presence::Present) || !instrukt_core::fsx::fence_active() {
+        return;
+    }
+    let Some(path) = std::env::var_os("INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD") else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(c.semantic_key.as_str()) {
+        return;
+    }
+    if instrukt_core::fsx::write(path.with_extension("observed"), "").is_err() {
+        return;
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while path.exists() && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// The connector destination of the finished-turn relay `instrukt run`
 /// already hosts: for every conversation, read its finished turns into
 /// answers, post what is retained, observe the turn its session runs, then
@@ -2478,7 +2496,12 @@ pub fn relay(
         let Some(mut c) = reread(&state, &initial)? else {
             continue;
         };
+        // Intake runs alongside source reads. Only work already captured
+        // when the read began may use the presence it observed.
+        let before_read = open_messages(&state, &c)?;
         let observed = answers(admitted, &state, source, connectors, accepted, &c)?;
+        #[cfg(debug_assertions)]
+        hold_presence_for_fixture(&c, observed);
         if let Some(session) = &c.session
             && matches!(observed, Some(Presence::Present | Presence::Archived))
         {
@@ -2576,8 +2599,12 @@ pub fn relay(
             continue;
         };
         observe(adapter, source, &state, &c, &|| connectors.now())?;
-        let ready = next_message(&open_messages(&state, &c)?, &c).map(|m| m.message.clone());
-        let Some(ready) = ready else {
+        let open = open_messages(&state, &c)?;
+        let Some(ready) = next_message(&open, &c).filter(|candidate| {
+            before_read.iter().any(|message| {
+                message.stage == Stage::Pending && message.message == candidate.message
+            })
+        }) else {
             continue;
         };
         if matches!(dispatch, Dispatch::Untried) {
@@ -2593,18 +2620,29 @@ pub fn relay(
             Dispatch::Held(invocation) => invocation,
             // The message waited on the dispatch lock it did not get.
             Dispatch::TimedOut | Dispatch::Untried => {
-                unavailable(&state, &c, std::slice::from_ref(&ready), connectors.now())?;
+                unavailable(
+                    &state,
+                    &c,
+                    std::slice::from_ref(&ready.message),
+                    connectors.now(),
+                )?;
                 continue;
             }
         };
-        // Its failure stays with the message it concerns.
+        // The dispatch lock can wait while intake changes the head of
+        // the queue. Hand over only the candidate checked against this read.
+        let open = open_messages(&state, &c)?;
+        let Some(next) = next_message(&open, &c).filter(|next| next.message == ready.message)
+        else {
+            continue;
+        };
         let _ = deliver_one(
             invocation,
             admitted,
             adapter,
             source,
-            &state,
             &c,
+            next,
             // Restrictions are judged on the runner's clock, as dispatch
             // and `agents availability` judge them.
             &|| connectors.now(),

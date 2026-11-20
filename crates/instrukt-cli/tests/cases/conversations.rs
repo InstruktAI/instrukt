@@ -905,14 +905,27 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         std::fs::write(&next, revision.to_string()).unwrap();
         std::fs::rename(next, &wakes).unwrap();
     };
+    let presence_hold = c.env.path("presence-hold");
+    std::fs::write(
+        &presence_hold,
+        conversations::key(&c.company(), SLACK, "D30"),
+    )
+    .unwrap();
     if cfg!(debug_assertions) {
         c.runner_dies();
         wake(0);
         c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
         c.env
             .set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
+        c.env.set_env(
+            "INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD",
+            presence_hold.to_str().unwrap(),
+        );
         c.run();
     }
+    wait("the relay has read the old presence", || {
+        presence_hold.with_extension("observed").exists()
+    });
     let absence_calls = |c: &Company| {
         let show = format!("thread show --json --messages 0 -- {session}");
         c.runtime
@@ -925,11 +938,26 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
     c.runtime.flag("show-failure", true);
     c.runtime.delete(&session);
     c.store.unproject_thread(&session);
-    c.slack.direct("D30", "USTEVEN", "What changed?");
+    let question = c.slack.direct("D30", "USTEVEN", "What changed?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait(
+        "intake captures the question after the thread disappears",
+        || {
+            db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='pending')", [&question], |row| row.get::<_, bool>(0)).unwrap()
+        },
+    );
+    std::fs::remove_file(&presence_hold).unwrap();
     wait("the failed confirmation is scheduled for retry", || {
         run_log(&c).contains("event=conversation_presence_probe_retry")
     });
-    assert_eq!(absence_calls(&c) - before_deletion, 1);
+    assert_eq!(
+        absence_calls(&c) - before_deletion,
+        1,
+        "only the absence worker may check the thread"
+    );
     c.runtime.flag("show-failure", false);
     deliver_probe_wake(&c, &wake, 1);
     deliver_probe_wake(&c, &wake, 2);
