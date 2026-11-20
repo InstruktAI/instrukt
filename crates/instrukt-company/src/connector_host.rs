@@ -508,9 +508,16 @@ fn notice_worker(
     key: &str,
     stop: &dyn Fn() -> bool,
 ) {
+    // A fixture can request a pass after it advances its operator clock.
+    // This signal is independent of the clock used in lock-wait scenarios.
+    let wake_file = cfg!(debug_assertions)
+        .then(|| std::env::var_os("INSTRUKT_TEST_NOTICE_WAKE_FILE"))
+        .flatten();
+    let wake = || wake_file.as_ref().and_then(|path| std::fs::read(path).ok());
     std::thread::scope(|scope| {
         let mut pending = BTreeMap::new();
         while !stop() {
+            let current_wake = wake();
             pending
                 .retain(|_, task: &mut std::thread::ScopedJoinHandle<'_, ()>| !task.is_finished());
             let now = reach.connectors.now();
@@ -545,6 +552,9 @@ fn notice_worker(
             }
             let until = Instant::now() + conversations::INTAKE_INTERVAL;
             while Instant::now() < until && !stop() {
+                if wake() != current_wake {
+                    break;
+                }
                 std::thread::sleep(Duration::from_millis(100));
             }
         }

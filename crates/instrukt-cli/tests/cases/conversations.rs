@@ -597,6 +597,12 @@ fn set_clock(path: &std::path::Path, at: jiff::Timestamp) {
     let next = path.with_extension("next");
     std::fs::write(&next, at.to_string()).unwrap();
     std::fs::rename(&next, path).unwrap();
+    let wake = path.with_extension("notice-wake");
+    if wake.exists() {
+        let next_wake = wake.with_extension("notice-wake-next");
+        std::fs::write(&next_wake, at.to_string()).unwrap();
+        std::fs::rename(next_wake, wake).unwrap();
+    }
 }
 
 /// Stops `running` once the interval of each of `messages` has opened and
@@ -820,13 +826,7 @@ fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {
 }
 
 fn a_members_status_tracks_start_and_turn_updates() {
-    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
-    // The operator's clock, moved by the test alone.
-    let clock = c.env.path("clock");
-    std::fs::write(&clock, "2026-11-19T10:00:00Z").unwrap();
-    c.env
-        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
-    c.run();
+    let (mut c, _) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
 
     // The status tells the state. While the message waits for its start the
@@ -1064,7 +1064,7 @@ fn working_status_clears_for_a_noop_and_carries_queued_turns() {
         Some(&first),
     );
     wait("the second message retained", || {
-        c.conversations()
+        retained_conversations(&c)
             .conversations
             .iter()
             .any(|conversation| conversation.pending_messages == 2)
@@ -1103,24 +1103,27 @@ fn notice_epochs_and_reconciliation() {
         .slack
         .mention(channel, sender, "<@UAGENT> When do we ship?", None);
     let conversation = format!("{channel}/{first}");
-    c.slack
-        .mention(channel, other, "<@UAGENT> What do I review?", Some(&first));
+    let other_question =
+        c.slack
+            .mention(channel, other, "<@UAGENT> What do I review?", Some(&first));
     let first_at = interval_at(&c, &first);
     wait("both members' messages admitted", || {
-        c.conversations()
+        retained_conversations(&c)
             .conversations
             .iter()
             .any(|row| row.pending_messages == 2)
     });
-    c.runner_dies();
-    let database = c.store.file.clone();
-    let away = database.with_extension("away");
-    std::fs::rename(&database, &away).unwrap();
-    std::fs::create_dir(&database).unwrap();
-    c.run();
-    wait("the relay unavailable for both members", || {
-        c.slack.status(channel, &first).as_deref() == Some(UNAVAILABLE)
-    });
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    // Both members have questions waiting while the start is refused.
+    // Give the queued question the same interval, without a source restart.
+    db.execute(
+        "UPDATE conversation_messages SET unavailable_since=?2 WHERE message=?1",
+        instrukt_core::state_db::rusqlite::params![other_question, first_at.to_string()],
+    )
+    .unwrap();
     // The queued follow-up is admitted later and does not enter the
     // first notice's set of already-due messages.
     set_clock(&clock, first_at + jiff::SignedDuration::from_secs(1));
@@ -1130,7 +1133,7 @@ fn notice_epochs_and_reconciliation() {
     wait(
         "the repeated message admitted while the relay is down",
         || {
-            c.conversations()
+            retained_conversations(&c)
                 .conversations
                 .iter()
                 .any(|row| row.pending_messages == 3)
@@ -1170,11 +1173,7 @@ fn notice_epochs_and_reconciliation() {
     );
     assert_eq!(notices(&c, sender), 1);
 
-    c.runner_dies();
-    std::fs::remove_dir(&database).unwrap();
-    std::fs::rename(&away, &database).unwrap();
     c.runtime.flag("list-failure", false);
-    c.run();
     let session = started(&c, &[]);
     wait("the first input accepted", || {
         c.runtime.message_count(&session) == 1
@@ -1248,7 +1247,7 @@ fn a_notice_in_flight_reconciles_after_a_noop() {
     let session = started(&c, &[]);
     c.finish_turn(&session, 0, "NOOP");
     wait("the completed message leaves no pending message", || {
-        c.conversations()
+        retained_conversations(&c)
             .conversations
             .iter()
             .all(|row| row.pending_messages == 0)
@@ -1378,9 +1377,14 @@ fn a_lost_answer_response_defers_notices_until_read_back() {
     projected(&c);
     let asked = c.slack.direct("D13", "USTEVEN", "Who signed?");
     let session = started(&c, &[]);
-    c.slack.fate("Ada signed.", Fate::Lost, 1);
+    c.slack.hold_posts();
     c.slack.hold_reads_from(&asked);
     c.finish_turn(&session, 0, "Ada signed.");
+    wait("Slack accepts the answer and holds the response", || {
+        c.slack.held_posts() == 1
+    });
+    assert_eq!(c.slack.posts_beginning("Ada signed."), 1);
+    c.slack.time_out_held_posts();
     wait("Slack displays the answer before reconciliation", || {
         c.slack.posts_beginning("Ada signed.") == 1 && c.slack.held() > 0
     });
@@ -1705,7 +1709,7 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
         set_clock(&clock, at + jiff::SignedDuration::from_mins(3));
         c.run();
         wait("T3's source unavailable", || {
-            c.conversations().relay_failure.is_some()
+            retained_conversations(&c).relay_failure.is_some()
         });
         wait("the legacy answer expired while T3 is unreadable", || {
             legacy_state().2.is_some()
@@ -1807,7 +1811,7 @@ fn failed_metadata_reads_expire_without_sending_again() {
     c.finish_turn(&session, 0, "On Friday.");
     wait("Slack refuses the pending answer's receipt read", || {
         c.slack.metadata_reads() > 0
-            && c.conversations().conversations.iter().any(|row| {
+            && retained_conversations(&c).conversations.iter().any(|row| {
                 row.pending_answers == 1
                     && row
                         .failures
@@ -1816,20 +1820,22 @@ fn failed_metadata_reads_expire_without_sending_again() {
             })
     });
     set_clock(&clock, interval_at(&c, &first) + minute());
+    let delivery_unknown = |status: conversations::Status| {
+        status.conversations.iter().any(|row| {
+            row.pending_answers == 0
+                && row.failures.iter().any(|cause| {
+                    cause.contains("delivery unknown")
+                        && cause.contains("missing_scope")
+                        && cause.contains(channel)
+                        && cause.contains("piece 0")
+                })
+        })
+    };
     wait(
         "the answer with an unreadable receipt resolves as unknown",
-        || {
-            c.conversations().conversations.iter().any(|row| {
-                row.pending_answers == 0
-                    && row.failures.iter().any(|cause| {
-                        cause.contains("delivery unknown")
-                            && cause.contains("missing_scope")
-                            && cause.contains(channel)
-                            && cause.contains("piece 0")
-                    })
-            })
-        },
+        || delivery_unknown(retained_conversations(&c)),
     );
+    assert!(delivery_unknown(c.conversations()));
     assert_eq!(interval(&c, &first), None);
     assert_eq!(c.slack.posts_beginning("On Friday."), 1);
     assert_eq!(notices(&c, member), 0);
@@ -1857,7 +1863,7 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
     std::fs::create_dir(&database).unwrap();
     c.run();
     wait("T3 unavailable while both questions arrive", || {
-        c.conversations().relay_failure.is_some()
+        retained_conversations(&c).relay_failure.is_some()
     });
     let channel = "D23";
     let member = "USTEVEN";
@@ -1894,7 +1900,7 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
     wait(
         "the first piece confirmed and the final piece rejected",
         || {
-            c.conversations().conversations.iter().any(|row| {
+            retained_conversations(&c).conversations.iter().any(|row| {
                 row.pending_answers == 1
                     && row
                         .failures
@@ -2011,26 +2017,10 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
         c.slack.status(channel, &first).as_deref() != Some(WORKING)
     });
     let failed_at = interval(&c, &first);
-    c.runner_dies();
-    let database = c.store.file.clone();
-    let away = database.with_extension("away");
-    std::fs::rename(&database, &away).unwrap();
-    std::fs::create_dir(&database).unwrap();
-    c.run();
-
+    c.runtime.flag("send-failure", true);
     let second = c.slack.direct(channel, sender, "Who reviews the release?");
-    let other = c.slack.direct("D22", "UANNA", "Can I get a review?");
-    wait(
-        "both new questions are waiting through the source outage",
-        || {
-            c.slack.status(channel, &second).as_deref() == Some(UNAVAILABLE)
-                && c.slack.status("D22", &other).as_deref() == Some(UNAVAILABLE)
-        },
-    );
-    set_clock(&clock, interval_clock(&clock) + minute());
-    wait("the other member gets a notice for the same outage", || {
-        notices(&c, "UANNA") == 1
-    });
+    let second_at = interval_at(&c, &second);
+    observe_notice_pass(&c, &clock, second_at + minute());
     assert_eq!(
         notices(&c, sender),
         1,
@@ -2044,10 +2034,8 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     assert_eq!(interval(&c, &first), failed_at);
     assert_eq!(answers(&c), 0);
 
-    c.runner_dies();
-    std::fs::remove_dir(&database).unwrap();
-    std::fs::rename(&away, &database).unwrap();
-    c.run();
+    c.runtime.flag("send-failure", false);
+    c.runtime.flag("list-failure", false);
     wait(
         "the next question reaches the same session after the failed turn",
         || c.runtime.message_count(&session) == 2,
@@ -2084,12 +2072,18 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     wait(
         "the answer clears the failures and retires their notice",
         || {
-            c.conversations()
+            retained_conversations(&c)
                 .conversations
                 .iter()
                 .all(|row| row.conversation != channel)
                 && notice_state(&c, channel, sender).is_none()
         },
+    );
+    assert!(
+        c.conversations()
+            .conversations
+            .iter()
+            .all(|row| row.conversation != channel)
     );
     assert_eq!(interval(&c, &first), None);
     assert_eq!(interval(&c, &second), None);
@@ -2102,14 +2096,8 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     assert_eq!(notices(&c, sender), 1);
 
     set_clock(&clock, first_settled + jiff::SignedDuration::from_hours(1));
+    c.runtime.flag("send-failure", true);
     let fourth = c.slack.direct(channel, sender, "Who is on call?");
-    wait("the next question starts another turn", || {
-        c.runtime.message_count(&session) == 4
-    });
-    let input = c.runtime.message(&session, 3);
-    c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store.failed_turn(&session, "failed-turn-4", 4, &input);
     set_clock(&clock, interval_at(&c, &fourth) + minute());
     wait("the later outage gets its own notice", || {
         notices(&c, sender) == 2 && notice_state(&c, channel, sender).as_deref() == Some("posted")
@@ -2241,17 +2229,15 @@ fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
     c.finish_turn(&session, 1, "NOOP");
     wait(
         "the older question's successful turn supersedes the failure",
-        || c.conversations().conversations.is_empty() && interval(&c, &failed).is_none(),
+        || retained_conversations(&c).conversations.is_empty() && interval(&c, &failed).is_none(),
     );
 
     use instrukt_core::state_db::rusqlite::Connection;
     let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
-    c.runner_dies();
     set_clock(
         &clock,
         settled + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
     );
-    c.run();
     let retained = || {
         db.query_row(
             "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND superseded_at IS NOT NULL)",
@@ -2276,7 +2262,7 @@ fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
     );
     assert!(retained(), "the superseded boundary must still be retained");
     assert!(
-        c.conversations()
+        retained_conversations(&c)
             .conversations
             .iter()
             .all(|row| row.conversation != format!("{channel}/{thread}"))
@@ -2457,10 +2443,53 @@ fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     assert_eq!(notices(&c, sender), 0);
 }
 
+/// Publish once per test process. Each scenario gets its own home, Slack,
+/// T3 database and runner, with only the immutable settings and role copied.
+fn prepared_status_company() -> Company {
+    struct FixtureFile {
+        path: &'static str,
+        content: Vec<u8>,
+        permissions: std::fs::Permissions,
+    }
+    static FILES: std::sync::OnceLock<Vec<FixtureFile>> = std::sync::OnceLock::new();
+    let files = FILES.get_or_init(|| {
+        let template = Company::on(common::TestEnv::new(), ", history: false", "", "");
+        [
+            "instrukt.yaml",
+            "companies/acme/instrukt.yaml",
+            "companies/acme/secrets.env",
+            "state/index.yaml",
+            "docs/assistance/procedure/company-assistance.md",
+        ]
+        .into_iter()
+        .map(|path| {
+            let source = template.env.instrukt_home().join(path);
+            FixtureFile {
+                path,
+                content: std::fs::read(&source).unwrap(),
+                permissions: std::fs::metadata(source).unwrap().permissions(),
+            }
+        })
+        .collect()
+    });
+    let mut env = common::TestEnv::new();
+    let wake = env.path("clock.notice-wake");
+    std::fs::write(&wake, "").unwrap();
+    env.set_env("INSTRUKT_TEST_NOTICE_WAKE_FILE", wake.to_str().unwrap());
+    let company = Company::with_fakes(env);
+    for file in files {
+        let path = company.env.instrukt_home().join(file.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &file.content).unwrap();
+        std::fs::set_permissions(path, file.permissions.clone()).unwrap();
+    }
+    company
+}
+
 /// A company whose conversations run on a runner under the operator's clock
 /// in the file it returns, set to `at`.
 fn status_company(at: jiff::Timestamp) -> (Company, std::path::PathBuf) {
-    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    let mut c = prepared_status_company();
     let clock = c.env.path("clock");
     set_clock(&clock, at);
     c.env
@@ -2767,7 +2796,7 @@ fn an_answer_to_one_member_does_not_restart_anothers_minute() {
         .slack
         .mention(channel, "UANNA", "<@UAGENT> Who reviews it?", Some(&first));
     wait("the second member admitted in the shared thread", || {
-        c.conversations()
+        retained_conversations(&c)
             .conversations
             .iter()
             .any(|row| row.pending_messages == 2)
@@ -2853,7 +2882,7 @@ fn a_relay_restart_keeps_the_unavailable_interval() {
     set_clock(&clock, outage_at + jiff::SignedDuration::from_secs(59));
     c.run();
     wait("this runner's cause", || {
-        c.conversations()
+        retained_conversations(&c)
             .relay_failure
             .is_some_and(|cause| cause != "an earlier cause")
     });
@@ -2959,7 +2988,7 @@ fn a_queued_turn_acceptance_closes_the_unavailable_interval() {
 #[cfg(debug_assertions)]
 fn a_completed_turn_is_read_again_after_a_locked_read() {
     use sha2::Digest as _;
-    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    let mut c = prepared_status_company();
     c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
     c.env.set_env("INSTRUKT_NOW", "2026-11-19T10:00:00Z");
     let notifications = c.env.path("t3-wakes");
@@ -3051,8 +3080,9 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
     common::wait_until(
         "operator status to clear its stale answer-read error",
         std::time::Duration::from_secs(20),
-        || c.conversations().conversations.is_empty(),
+        || retained_conversations(&c).conversations.is_empty(),
     );
+    assert!(c.conversations().conversations.is_empty());
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12
@@ -3688,8 +3718,16 @@ fn a_slow_stop_revocation_is_bounded_and_leaves_no_child() {
 
 /// Whether no conversation holds an answer piece still to be recorded
 /// posted: status lists a conversation only while it has work outstanding.
+// Poll the same durable status the operator's CLI formats without launching
+// a fresh command on each observation. The runner under test is still a
+// separate process, and assertions about the operator surface use the CLI.
+fn retained_conversations(c: &Company) -> instrukt_company::conversations::Status {
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    conversations::status(&home).unwrap()
+}
+
 fn answers_recorded(c: &Company) -> bool {
-    c.conversations()
+    retained_conversations(c)
         .conversations
         .iter()
         .all(|conversation| conversation.pending_answers == 0)

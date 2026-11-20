@@ -127,6 +127,14 @@ fn people() -> std::collections::BTreeMap<String, Person> {
     .collect()
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum PostResponse {
+    #[default]
+    Send,
+    Hold,
+    Timeout,
+}
+
 #[derive(Default)]
 struct Workspace {
     /// Slack's records of its people, by id.
@@ -158,7 +166,7 @@ struct Workspace {
     refuse_metadata_reads: bool,
     metadata_reads: usize,
     /// A post Slack accepted is answered only once released.
-    hold_posts: bool,
+    post_response: PostResponse,
     /// Every post fails, accepting nothing.
     fail_posts: bool,
     /// A post waits until released, then fails, accepting nothing.
@@ -311,15 +319,24 @@ impl FakeSlack {
                             Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
                         // A held post is accepted, and its answer waits: the
                         // poster may be gone by the time it is sent.
-                        if method == "chat.postMessage" && workspace.lock().unwrap().hold_posts {
+                        if method == "chat.postMessage"
+                            && workspace.lock().unwrap().post_response == PostResponse::Hold
+                        {
                             workspace.lock().unwrap().held_posts += 1;
-                            while workspace.lock().unwrap().hold_posts
+                            while workspace.lock().unwrap().post_response == PostResponse::Hold
                                 && !stop.load(Ordering::Acquire)
                             {
                                 std::thread::sleep(Duration::from_millis(20));
                             }
+                            let response = if workspace.lock().unwrap().post_response
+                                == PostResponse::Timeout
+                            {
+                                json!({"ok": false, "error": "request_timeout"})
+                            } else {
+                                answer
+                            };
                             let _ = request
-                                .respond(tiny_http::Response::from_string(answer.to_string()));
+                                .respond(tiny_http::Response::from_string(response.to_string()));
                             return;
                         }
                         request
@@ -886,11 +903,16 @@ impl FakeSlack {
     /// History and replies reads wait until [`FakeSlack::release_reads`].
     /// Every later post is accepted, and its answer held until released.
     pub fn hold_posts(&self) {
-        self.workspace.lock().unwrap().hold_posts = true;
+        self.workspace.lock().unwrap().post_response = PostResponse::Hold;
     }
 
     pub fn release_posts(&self) {
-        self.workspace.lock().unwrap().hold_posts = false;
+        self.workspace.lock().unwrap().post_response = PostResponse::Send;
+    }
+
+    /// End accepted, held posts with a provider timeout on demand.
+    pub fn time_out_held_posts(&self) {
+        self.workspace.lock().unwrap().post_response = PostResponse::Timeout;
     }
 
     /// How many accepted posts had their answer held.
