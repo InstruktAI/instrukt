@@ -19,7 +19,6 @@ const REPORTING_PERIOD: SignedDuration = SignedDuration::from_hours(30 * 24);
 const SCAN_OVERLAP: SignedDuration = SignedDuration::from_secs(60);
 
 const SCHEMA: &str = "
-BEGIN;
 CREATE TABLE IF NOT EXISTS scans(
     company TEXT, connector TEXT, first_seen INTEGER NOT NULL, retained_until INTEGER,
     started INTEGER, lower_bound INTEGER, position TEXT, page TEXT, retry_at INTEGER, failure TEXT,
@@ -34,15 +33,17 @@ CREATE INDEX IF NOT EXISTS seen_by_time ON seen(written_us);
 CREATE TABLE IF NOT EXISTS channel_gaps(
     company TEXT NOT NULL, connector TEXT NOT NULL, channel TEXT NOT NULL,
     direct INTEGER NOT NULL, lower_bound INTEGER NOT NULL, first_scan INTEGER NOT NULL,
-    through INTEGER NOT NULL,
+    through INTEGER NOT NULL, gap_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
     PRIMARY KEY(company,connector,channel)
 );
+";
+
+const RETIRED_GAPS_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS retired_channel_gaps(
+    gap_id TEXT NOT NULL PRIMARY KEY,
     company TEXT NOT NULL, connector TEXT NOT NULL, channel TEXT NOT NULL,
-    lower_bound INTEGER NOT NULL, through INTEGER NOT NULL, retired_at INTEGER NOT NULL,
-    PRIMARY KEY(company,connector,channel,lower_bound,through)
+    lower_bound INTEGER NOT NULL, through INTEGER NOT NULL, retired_at INTEGER NOT NULL
 );
-COMMIT;
 ";
 
 fn store_path(home: &Home) -> PathBuf {
@@ -92,7 +93,7 @@ fn open(home: &Home, write: bool) -> Result<Option<Connection>, StateError> {
             conn.pragma_update(None, "journal_mode", "WAL")
                 .map_err(state::sql(&path))?;
         }
-        conn.execute_batch(SCHEMA).map_err(state::sql(&path))?;
+        initialize(&conn).map_err(state::sql(&path))?;
     }
     if !write
         && !conn
@@ -106,6 +107,46 @@ fn open(home: &Home, write: bool) -> Result<Option<Connection>, StateError> {
         return Ok(None);
     }
     Ok(Some(conn))
+}
+
+fn initialize(conn: &Connection) -> instrukt_core::state_db::rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(SCHEMA)?;
+    let legacy_reports: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('retired_channel_gaps') WHERE name='company')
+         AND NOT EXISTS(SELECT 1 FROM pragma_table_info('retired_channel_gaps') WHERE name='gap_id')",
+        [], |row| row.get(0),
+    )?;
+    if legacy_reports {
+        tx.execute_batch("ALTER TABLE retired_channel_gaps RENAME TO legacy_gap_reports;")?;
+    }
+    tx.execute_batch(RETIRED_GAPS_SCHEMA)?;
+    if legacy_reports {
+        tx.execute_batch(
+            "INSERT INTO retired_channel_gaps(gap_id,company,connector,channel,lower_bound,through,retired_at)
+             SELECT lower(hex(randomblob(16))),company,connector,channel,lower_bound,through,retired_at
+             FROM legacy_gap_reports;
+             DROP TABLE legacy_gap_reports;"
+        )?;
+    }
+    let active_has_id: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('channel_gaps') WHERE name='gap_id')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !active_has_id {
+        tx.execute_batch(
+            "ALTER TABLE channel_gaps ADD COLUMN gap_id TEXT;
+             UPDATE channel_gaps SET gap_id=coalesce(
+                (SELECT report.gap_id FROM retired_channel_gaps report
+                 WHERE report.company=channel_gaps.company AND report.connector=channel_gaps.connector
+                 AND report.channel=channel_gaps.channel AND report.through=channel_gaps.lower_bound
+                 ORDER BY report.retired_at DESC LIMIT 1),
+                lower(hex(randomblob(16)))
+             );"
+        )?;
+    }
+    tx.commit()
 }
 
 pub(crate) fn observe(
@@ -203,9 +244,11 @@ fn retire_expired(
 ) -> instrukt_core::state_db::rusqlite::Result<()> {
     let cutoff = micros(now - REPORTING_PERIOD);
     tx.execute(
-        "INSERT INTO retired_channel_gaps(company,connector,channel,lower_bound,through,retired_at)
-         SELECT company,connector,channel,lower_bound,min(through,?1),?2 FROM channel_gaps
-         WHERE lower_bound<min(through,?1) ON CONFLICT DO NOTHING",
+        "INSERT INTO retired_channel_gaps(gap_id,company,connector,channel,lower_bound,through,retired_at)
+         SELECT gap_id,company,connector,channel,lower_bound,min(through,?1),?2 FROM channel_gaps
+         WHERE lower_bound<min(through,?1)
+         ON CONFLICT(gap_id) DO UPDATE SET through=excluded.through,retired_at=excluded.retired_at
+         WHERE excluded.through>retired_channel_gaps.through",
         params![cutoff, micros(now)],
     )?;
     tx.execute("DELETE FROM channel_gaps WHERE through<=?1", [cutoff])?;
@@ -214,7 +257,9 @@ fn retire_expired(
         [cutoff],
     )?;
     tx.execute(
-        "DELETE FROM retired_channel_gaps WHERE retired_at<?1",
+        "DELETE FROM retired_channel_gaps WHERE retired_at<?1 AND NOT EXISTS (
+            SELECT 1 FROM channel_gaps WHERE channel_gaps.gap_id=retired_channel_gaps.gap_id
+         )",
         [cutoff],
     )?;
     // An interrupted scan may still need identities from its saved window.
@@ -255,9 +300,11 @@ fn maintain(
         let absent = "NOT EXISTS(SELECT 1 FROM json_each(?1)
             WHERE value->>0=company AND (value->>1 IS NULL OR value->>1=connector))";
         tx.execute(
-            &format!("INSERT INTO retired_channel_gaps(company,connector,channel,lower_bound,through,retired_at)
-             SELECT company,connector,channel,lower_bound,through,?2 FROM channel_gaps
-             WHERE {absent} ON CONFLICT DO NOTHING"),
+            &format!("INSERT INTO retired_channel_gaps(gap_id,company,connector,channel,lower_bound,through,retired_at)
+             SELECT gap_id,company,connector,channel,lower_bound,through,?2 FROM channel_gaps
+             WHERE {absent}
+             ON CONFLICT(gap_id) DO UPDATE SET through=excluded.through,retired_at=excluded.retired_at
+             WHERE excluded.through>retired_channel_gaps.through"),
             params![configured, micros(now)],
         )?;
         for table in ["channel_gaps", "seen", "scans"] {
@@ -504,8 +551,8 @@ fn retain_page(
             expected: true,
         }) => {
             tx.execute(
-                "INSERT INTO channel_gaps(company,connector,channel,direct,lower_bound,first_scan,through)
-                 VALUES(?1,?2,?3,?4,?5,?6,?6)
+                "INSERT INTO channel_gaps(company,connector,channel,direct,lower_bound,first_scan,through,gap_id)
+                 VALUES(?1,?2,?3,?4,?5,?6,?6,lower(hex(randomblob(16))))
                  ON CONFLICT(company,connector,channel) DO UPDATE SET through=max(through,excluded.through)",
                 params![owner, key, channel, direct, micros(window.from), micros(window.started)],
             ).map_err(sql)?;

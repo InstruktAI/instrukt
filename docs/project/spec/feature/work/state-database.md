@@ -833,8 +833,10 @@ At runner start and each scan start, the store retires expired prefixes and
 prunes old records across connectors. The horizon is measured from each
 span's own lower bound. Recovery records any expired prefix and clears the
 remaining gap in one transaction. A connector no longer declared retires
-its gaps, scan state and seen identities. Each retired span leaves one operator report for 30 days. A
-channel whose ID changed remains pending under the old ID until its saved
+its gaps, scan state and seen identities. Each saved gap has one operator
+report for its expired span. As the expired boundary advances, the same
+report is updated. It remains visible for 30 days after its last advance.
+A channel whose ID changed remains pending under the old ID until its saved
 span expires.
 
 Seen identities retire after 30 days. Missed records within that period keep

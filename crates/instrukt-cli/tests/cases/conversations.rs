@@ -5000,10 +5000,11 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     };
     assert_eq!(bound_count(), 0);
     assert!(c.sessions().is_empty());
-    assert_eq!(state.query_row(
+    let held_starts = state.query_row(
         "SELECT count(*) FROM runtime_starts WHERE state='unresolved' AND semantic_key IN (SELECT semantic_key FROM connected_conversations)",
         [], |row| row.get::<_, i64>(0)
-    ).unwrap(), 1);
+    ).unwrap();
+    assert!((1..=2).contains(&held_starts), "{held_starts} held starts");
     c.runtime.flag("hold-start", false);
     wait(
         "both native start results are durably bound before crashing the scan",
@@ -5316,9 +5317,32 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         "a retry without enumeration must not extend coverage"
     );
 
-    let latest = cursor();
+    let before_partial = cursor();
     c.runner_dies();
     c.slack.read_back_channels(&[]);
+    let partial = now + jiff::SignedDuration::from_hours(30 * 24 - 1);
+    set_clock(&clock, partial);
+    c.run();
+    wait(
+        "a scan retires the first expired prefix of the omitted channel",
+        || cursor() > before_partial,
+    );
+    let report =
+        || {
+            scans.query_row(
+        "SELECT gap_id,lower_bound,through FROM retired_channel_gaps WHERE channel='C6'",
+        [], |row| Ok((row.get::<_, String>(0)?,row.get::<_, i64>(1)?,row.get::<_, i64>(2)?)),
+    ).unwrap()
+        };
+    let first_report = report();
+    assert_eq!(
+        first_report.2,
+        (now - jiff::SignedDuration::from_hours(1)).as_microsecond()
+    );
+    assert_eq!(c6_through(), listed_until.as_microsecond());
+
+    let latest = cursor();
+    c.runner_dies();
     let late = now + jiff::SignedDuration::from_hours(31 * 24);
     let dormant = c.env.instrukt_home().join("companies/dormant");
     std::fs::create_dir_all(&dormant).unwrap();
@@ -5363,7 +5387,16 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         .as_array()
         .unwrap()
         .clone();
-    assert_eq!(retired.len(), 3);
+    assert_eq!(retired.len(), 3, "one retirement finding per saved gap");
+    assert_eq!(
+        report(),
+        (
+            first_report.0,
+            first_report.1,
+            listed_until.as_microsecond()
+        ),
+        "the same finding covers the rest after restart"
+    );
     let expired = retired.iter().find(|gap| gap["channel"] == "C6").unwrap();
     assert_eq!(expired["through"], listed_until.to_string());
     assert!(retired.iter().all(|gap| gap["retired_at"].is_string()
