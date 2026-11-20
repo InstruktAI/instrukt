@@ -735,7 +735,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice(" \n "));
-        scope.spawn(a_failed_turn_keeps_the_member_notice_open);
+        scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
@@ -1871,7 +1871,7 @@ fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
     assert_eq!(c.slack.posts().len(), 2);
 }
 
-fn a_failed_turn_keeps_the_member_notice_open() {
+fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "D21";
     let sender = "USTEVEN";
@@ -1952,17 +1952,119 @@ fn a_failed_turn_keeps_the_member_notice_open() {
                 && c.slack.status(channel, &second).as_deref() == Some(WORKING)
         },
     );
+    let input = c.runtime.message(&session, 1);
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    c.store.failed_turn(&session, "failed-turn-2", 2, &input);
+    interval_at(&c, &second);
+    assert_eq!(notices(&c, sender), 1);
+
+    let third = c.slack.direct(channel, sender, "When can we release?");
+    wait("the third question reaches the same session", || {
+        c.runtime.message_count(&session) == 3
+    });
     let answer = "Ada reviews the release.";
-    c.finish_turn(&session, 1, answer);
+    let first_settled = interval_clock(&clock);
+    c.finish_turn(&session, 2, answer);
     wait("the next question is answered", || {
         c.slack.posts_beginning(answer) == 1
     });
-    wait("the next answer is recorded and its status clears", || {
-        c.slack.status(channel, &second).is_none() && answers_recorded(&c)
+    wait(
+        "the answer clears the failures and retires their notice",
+        || {
+            c.conversations()
+                .conversations
+                .iter()
+                .all(|row| row.conversation != channel)
+                && notice_state(&c, channel, sender).is_none()
+        },
+    );
+    assert_eq!(interval(&c, &first), None);
+    assert_eq!(interval(&c, &second), None);
+    assert_eq!(interval(&c, &third), None);
+    wait("all three Slack statuses clear", || {
+        [&first, &second, &third]
+            .into_iter()
+            .all(|message| c.slack.status(channel, message).is_none())
     });
-    assert_eq!(interval(&c, &first), failed_at);
-    assert_eq!(notice_state(&c, channel, sender).as_deref(), Some("posted"));
     assert_eq!(notices(&c, sender), 1);
+
+    set_clock(&clock, first_settled + jiff::SignedDuration::from_hours(1));
+    let fourth = c.slack.direct(channel, sender, "Who is on call?");
+    wait("the next question starts another turn", || {
+        c.runtime.message_count(&session) == 4
+    });
+    let input = c.runtime.message(&session, 3);
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    c.store.failed_turn(&session, "failed-turn-4", 4, &input);
+    set_clock(&clock, interval_at(&c, &fourth) + minute());
+    wait("the later outage gets its own notice", || {
+        notices(&c, sender) == 2 && notice_state(&c, channel, sender).as_deref() == Some("posted")
+    });
+
+    c.slack.direct(channel, sender, "Did the rotation change?");
+    wait("the next question can settle without a reply", || {
+        c.runtime.message_count(&session) == 5
+    });
+    let younger = interval_clock(&clock);
+    c.finish_turn(&session, 4, " \n ");
+    wait(
+        "the successful blank reply supersedes the fourth question",
+        || notice_state(&c, channel, sender).is_none(),
+    );
+
+    let sixth = c.slack.direct(channel, sender, "Who should I page?");
+    wait("another turn starts", || {
+        c.runtime.message_count(&session) == 6
+    });
+    let input = c.runtime.message(&session, 5);
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    c.store.failed_turn(&session, "failed-turn-6", 6, &input);
+    interval_at(&c, &sixth);
+
+    use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension as _};
+    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    let retained = |message: &str| -> Option<(String, Option<String>)> {
+        db.query_row(
+            "SELECT state,superseded_at FROM conversation_messages WHERE message=?1",
+            [message],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .unwrap()
+    };
+    for message in [&first, &second] {
+        assert_eq!(
+            retained(message),
+            Some(("failed".into(), Some(format!("{first_settled:.9}"))))
+        );
+    }
+    assert_eq!(
+        retained(&fourth),
+        Some(("failed".into(), Some(format!("{younger:.9}"))))
+    );
+    assert_eq!(retained(&sixth), Some(("failed".into(), None)));
+
+    c.runner_dies();
+    set_clock(
+        &clock,
+        first_settled
+            + jiff::SignedDuration::from_hours(7 * 24)
+            + jiff::SignedDuration::from_secs(1),
+    );
+    c.run();
+    wait(
+        "the relay prunes failures superseded more than seven days ago",
+        || retained(&first).is_none() && retained(&second).is_none(),
+    );
+    assert_eq!(
+        retained(&fourth),
+        Some(("failed".into(), Some(format!("{younger:.9}"))))
+    );
+    assert_eq!(retained(&sixth), Some(("failed".into(), None)));
+    assert_eq!(retained(&third), Some(("answered".into(), None)));
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {

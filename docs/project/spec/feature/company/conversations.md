@@ -272,11 +272,13 @@ admission positions of the person's messages that made the notice due.
 - Each answer piece carries the admission position of the message it answers.
   An epoch closes when every covered position is settled. A turn that
   completes successfully with a bare `NOOP` or blank output settles its
-  position. A failed turn with no reply leaves its message unsettled and its
-  interval open. Its notice epoch stays open across later overdue messages.
-  A multipart answer settles its position once each piece is
-  confirmed or resolved as delivery unknown. Provider timestamps and the runner
-  clock do not order answer receipts against notices.
+  position. A multipart answer settles its position once every piece is
+  confirmed or resolved as delivery unknown. A failed turn with no reply
+  keeps its interval and notice epoch open until a later-admitted message
+  from the same member in the same conversation settles. That settlement
+  supersedes every earlier failed message from that member, closes those
+  intervals, and settles those positions for the notice. Provider timestamps
+  and the runner clock do not order answers, notices, or supersession.
 - When the delivery of an attempted answer is uncertain, the relay reconciles
   it before a notice can post to that person. A confirmed rejection leaves the
   person's notice eligible once the no-work interval reaches a minute and

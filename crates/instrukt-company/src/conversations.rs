@@ -9,7 +9,8 @@
 //! acknowledges it), refused (its provider's record shows its sender is not
 //! one of the company's own), pending (its sender admitted and its
 //! accompanying messages captured), sent (accepted by the runtime as its own
-//! turn) and answered (its turn finished). Each answer piece stays pending
+//! turn), failed (its turn failed without a reply), and answered (its turn
+//! finished with an answer or successfully produced nothing). Each answer piece stays pending
 //! until the connector accepted its post.
 use std::path::PathBuf;
 
@@ -371,6 +372,17 @@ pub fn unfinished(
     company: &ProjectSlug,
     connector: &str,
 ) -> Result<Vec<Unfinished>, ConversationError> {
+    Ok(RunnerState::new(home)
+        .read(|conn, path| read_unfinished(conn, path, company, connector))?
+        .unwrap_or_default())
+}
+
+fn read_unfinished(
+    conn: &instrukt_core::state_db::rusqlite::Connection,
+    path: &std::path::Path,
+    company: &ProjectSlug,
+    connector: &str,
+) -> Result<Vec<Unfinished>, StateError> {
     type Row = (
         String,
         String,
@@ -381,36 +393,53 @@ pub fn unfinished(
         bool,
         Option<i64>,
     );
-    let read = RunnerState::new(home).read(|conn, path| {
-        let relay: Option<Option<String>> = conn
-            .query_row("SELECT updated_at FROM conversation_relay WHERE id=1 AND failure IS NOT NULL", [], |r| r.get(0))
-            .optional()
+    let relay: Option<Option<String>> = conn
+        .query_row(
+            "SELECT updated_at FROM conversation_relay WHERE id=1 AND failure IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(state::sql(path))?;
+    let mut q = conn
+            .prepare("SELECT m.conversation,m.message,m.sender,m.unavailable_since,m.admitted_at,m.turn_update,NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn AND a.delivery_unknown_at IS NOT NULL),m.admission_position FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5) OR (m.state=?6 AND m.superseded_at IS NULL) OR (m.state=?7 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL))) ORDER BY m.written_us, m.message")
             .map_err(state::sql(path))?;
-        let mut q = conn
-            .prepare("SELECT m.conversation,m.message,m.sender,m.unavailable_since,m.admitted_at,m.turn_update,NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn AND a.delivery_unknown_at IS NOT NULL),m.admission_position FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5,?6) OR (m.state=?7 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL))) ORDER BY m.written_us, m.message")
-            .map_err(state::sql(path))?;
-        let rows: Vec<Row> = q
-            .query_map(
-                params![company.as_str(), connector, Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str(), Stage::Failed.as_str(), Stage::Answered.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
-            )
-            .map_err(state::sql(path))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(state::sql(path))?;
-        Ok((relay.flatten(), rows))
-    })?;
-    let Some((relay, rows)) = read else {
-        return Ok(Vec::new());
-    };
-    let at = |text: Option<String>| -> Result<Option<Timestamp>, ConversationError> {
+    let rows: Vec<Row> = q
+        .query_map(
+            params![
+                company.as_str(),
+                connector,
+                Stage::Received.as_str(),
+                Stage::Pending.as_str(),
+                Stage::Sent.as_str(),
+                Stage::Failed.as_str(),
+                Stage::Answered.as_str()
+            ],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                ))
+            },
+        )
+        .map_err(state::sql(path))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(state::sql(path))?;
+    let at = |text: Option<String>| -> Result<Option<Timestamp>, StateError> {
         text.map(|text| {
             text.parse::<Timestamp>().map_err(|e| {
-                ConversationError::Refused(format!("unreadable interval time `{text}`: {e}"))
+                state::invalid(path, format!("unreadable interval time `{text}`: {e}"))
             })
         })
         .transpose()
     };
-    let relay = at(relay)?;
+    let relay = at(relay.flatten())?;
     rows.into_iter()
         .map(
             |(
@@ -503,22 +532,29 @@ pub fn notices(
         }
     }
     let state = RunnerState::new(home);
-    let rows = state.read(|conn, path| {
-        let mut q = conn.prepare(
-            "SELECT r.conversation,r.sender,r.state,r.post_id,
-                    (SELECT m.message FROM conversation_messages m
-                     WHERE m.company=r.company AND m.connector=r.connector AND m.conversation=r.conversation
-                       AND m.admission_position IN (SELECT value FROM json_each(r.covered_positions))
-                     ORDER BY m.written_us,m.message LIMIT 1)
+    let rows = state
+        .read(|conn, path| {
+            let mut q = conn
+                .prepare(
+                    "SELECT r.conversation,r.sender,r.state,r.post_id,r.anchor_message
              FROM conversation_refusals r WHERE r.company=?1 AND r.connector=?2
-               AND r.reason='unavailable' ORDER BY r.rowid"
-        ).map_err(state::sql(path))?;
-        q.query_map(params![company.as_str(), connector], |r| Ok((
-            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?,
-        ))).map_err(state::sql(path))?
-          .collect::<Result<Vec<_>, _>>().map_err(state::sql(path))
-    })?.unwrap_or_default();
+               AND r.reason='unavailable' ORDER BY r.rowid",
+                )
+                .map_err(state::sql(path))?;
+            q.query_map(params![company.as_str(), connector], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                ))
+            })
+            .map_err(state::sql(path))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(state::sql(path))
+        })?
+        .unwrap_or_default();
     let mut notices = Vec::new();
     // A posting record needs read-back even after its messages have answers.
     for (conversation, sender, phase, post_id, anchor) in &rows {
@@ -580,19 +616,19 @@ pub fn notice_step(
     now: Timestamp,
 ) -> Result<NoticeStep, ConversationError> {
     let accepted_turns = accepted.turns(company, connector, &notice.conversation);
-    let overdue = unfinished(home, company, connector)?
-        .into_iter()
-        .filter(|m| {
-            m.notice_eligible
-                && m.conversation == notice.conversation
-                && m.sender.as_deref() == Some(notice.sender.as_str())
-                && m.since.is_some_and(|since| since + NOTICE_AFTER <= now)
-        })
-        .filter_map(|message| message.admission_position)
-        .collect::<Vec<_>>();
-    let positions = serde_json::to_string(&overdue)?;
-    let step = RunnerState::new(home).write::<_, StateError>(|tx| {
+    let step = RunnerState::new(home).write::<_, ConversationError>(|tx| {
         let path = state::db_path(tx);
+        let overdue = read_unfinished(tx, &path, company, connector)?
+            .into_iter()
+            .filter(|m| {
+                m.notice_eligible
+                    && m.conversation == notice.conversation
+                    && m.sender.as_deref() == Some(notice.sender.as_str())
+                    && m.since.is_some_and(|since| since + NOTICE_AFTER <= now)
+            })
+            .filter_map(|message| message.admission_position)
+            .collect::<Vec<_>>();
+        let positions = serde_json::to_string(&overdue)?;
         let row = tx.query_row(
             "SELECT state,attempted_at,post_id FROM conversation_refusals WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
             params![company.as_str(), connector, notice.conversation, notice.sender],
@@ -657,7 +693,10 @@ pub fn notice_step(
         }
         if row.is_none() {
             tx.execute(
-                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,covered_positions) VALUES (?1,?2,?3,?4,'unavailable',?5,'owed',?6)",
+                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,covered_positions,anchor_message)
+                 VALUES (?1,?2,?3,?4,'unavailable',?5,'owed',?6,
+                   (SELECT m.message FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3
+                     AND m.admission_position IN (SELECT value FROM json_each(?6)) ORDER BY m.written_us,m.message LIMIT 1))",
                 params![company.as_str(), connector, notice.conversation, notice.sender, now.to_string(), positions],
             ).map_err(state::sql(&path))?;
         }
@@ -1657,9 +1696,9 @@ fn harvest(
                     params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
-                if output.is_empty() {
-                    retire_settled_notices(tx, c.company.as_str(), &c.connector, &c.conversation, None)?;
-                }
+            }
+            if answers.iter().any(|(_, _, output)| output.is_empty()) {
+                settle_failed_messages(tx, c.company.as_str(), &c.connector, &c.conversation, ended)?;
             }
             tx.execute(
                 "UPDATE connected_conversations SET position_json=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
@@ -1860,7 +1899,7 @@ fn post(
         if let Some(at) = receipt {
             let _held = held();
             accepted.keep(c, &piece.turn, piece.piece, at);
-            posted(state, c, piece, at)?;
+            posted(state, c, piece, at, connectors.now())?;
             accepted.release(c, &piece.turn, piece.piece);
             continue;
         }
@@ -1893,7 +1932,7 @@ fn post(
                 )));
             }
         };
-        if let Err(error) = posted(state, c, piece, at) {
+        if let Err(error) = posted(state, c, piece, at, connectors.now()) {
             accepted.keep(c, &piece.turn, piece.piece, at);
             return Err(error);
         }
@@ -2046,7 +2085,7 @@ pub(crate) fn expire_unconfirmed_answers(
             piece,
         );
         if let Some(at) = accepted.receipt(&identity) {
-            if let Err(error) = record_receipt(&state, &identity, at) {
+            if let Err(error) = record_receipt(&state, &identity, at, now) {
                 tracing::warn!(target: LOG_TARGET, event = "answer_receipt_unrecorded", %company, %connector, conversation = %identity.2, %error);
             } else {
                 accepted.release_receipt(&identity);
@@ -2087,7 +2126,7 @@ pub(crate) fn expire_unconfirmed_answers(
                 .map_err(state::sql(&state::db_path(tx)))?;
             if changed > 0 {
                 close_completed_interval(tx, &company, &connector, &conversation, &turn)?;
-                retire_settled_notices(tx, &company, &connector, &conversation, None)?;
+                settle_failed_messages(tx, &company, &connector, &conversation, now)?;
             }
             Ok(())
         })?;
@@ -2117,14 +2156,21 @@ fn posted(
     state: &RunnerState,
     c: &Conversation,
     piece: &Pending,
+    posted_at: Timestamp,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
-    record_receipt(state, &Accepted::key(c, &piece.turn, piece.piece), now)
+    record_receipt(
+        state,
+        &Accepted::key(c, &piece.turn, piece.piece),
+        posted_at,
+        now,
+    )
 }
 
 fn record_receipt(
     state: &RunnerState,
     identity: &AcceptedPiece,
+    posted_at: Timestamp,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
     let (company, connector, conversation, turn, piece) = identity;
@@ -2132,7 +2178,7 @@ fn record_receipt(
         let path = state::db_path(tx);
         let changed = tx.execute(
             "UPDATE conversation_answers SET posted_at=?6,delivery_unknown_at=NULL,receipt_failure_deadline=NULL,failure=NULL,attempted_at=NULL,latest_attempted_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5 AND posted_at IS NULL",
-            params![company, connector, conversation, turn, piece, now.to_string()],
+            params![company, connector, conversation, turn, piece, posted_at.to_string()],
         )
         .map_err(state::sql(&path))?;
         if changed == 0 {
@@ -2140,14 +2186,43 @@ fn record_receipt(
             return Ok(());
         }
         close_completed_interval(tx, company, connector, conversation, turn)?;
-        retire_settled_notices(tx, company, connector, conversation, None)?;
+        settle_failed_messages(tx, company, connector, conversation, now)?;
         Ok(())
     })?;
     Ok(())
 }
 
+/// A later settled turn supersedes earlier failures of the same sender.
+fn settle_failed_messages(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    company: &str,
+    connector: &str,
+    conversation: &str,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    tx.execute(
+        &format!(
+            "UPDATE conversation_messages AS failed
+             SET superseded_at=?4,unavailable_since=NULL,turn_update=NULL
+             WHERE failed.company=?1 AND failed.connector=?2 AND failed.conversation=?3
+               AND failed.state='failed' AND failed.superseded_at IS NULL
+               AND EXISTS(SELECT 1 FROM conversation_messages
+                 WHERE company=failed.company AND connector=failed.connector
+                   AND conversation=failed.conversation AND sender=failed.sender
+                   AND admission_position>failed.admission_position
+                   AND state='answered' AND turn IS NOT NULL AND NOT EXISTS({UNPOSTED}))"
+        ),
+        params![company, connector, conversation, format!("{now:.9}")],
+    )
+    .map_err(state::sql(&state::db_path(tx)))?;
+    retire_settled_notices(tx, company, connector, conversation, None)?;
+    Ok(())
+}
+
 /// Retire an epoch when every covered message has settled answer pieces or a
-/// successful turn with no output. An in-flight notice must reconcile first.
+/// successful turn with no output, or was superseded after a failure.
+/// An in-flight notice must reconcile first. Pruned positions are settled:
+/// only superseded failures can be pruned and the epoch keeps its anchor.
 fn retire_settled_notices(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
     company: &str,
@@ -2169,9 +2244,12 @@ fn retire_settled_notices(
                    AND p.posted_at IS NULL AND p.delivery_unknown_at IS NULL))
                AND NOT EXISTS(SELECT 1 FROM conversation_messages m
                  WHERE m.company=r.company AND m.connector=r.connector AND m.conversation=r.conversation
-                   AND m.admission_position=covered.value AND m.state='answered' AND m.turn IS NOT NULL
-                   AND NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company
-                     AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn)))",
+                   AND m.admission_position=covered.value
+                   AND (m.superseded_at IS NOT NULL OR (m.state='answered' AND m.turn IS NOT NULL
+                     AND NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company
+                       AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn))))
+               AND EXISTS(SELECT 1 FROM conversation_messages m WHERE m.company=r.company
+                 AND m.connector=r.connector AND m.conversation=r.conversation AND m.admission_position=covered.value))",
         params![company, connector, conversation, confirmed_absent_sender],
     ).map_err(state::sql(&state::db_path(tx)))
 }
@@ -2224,6 +2302,7 @@ pub fn relay(
     pass: CompanyRelayPass,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
+    prune_superseded_failures(&state, connectors.now())?;
     let mut dispatch = Dispatch::Untried;
     let work = match pass {
         CompanyRelayPass::CatchUp => conversations(&state, "", [])?,
@@ -2322,6 +2401,35 @@ pub fn relay(
     }
     clear_idle_answer_failures(&state)?;
     Ok(())
+}
+
+/// Remove only the oldest expired superseded failures in each relay pass.
+fn prune_superseded_failures(state: &RunnerState, now: Timestamp) -> Result<(), StateError> {
+    const RETENTION: jiff::SignedDuration = jiff::SignedDuration::from_hours(7 * 24);
+    const BATCH: i64 = 100;
+    let cutoff = format!("{:.9}", now - RETENTION);
+    let expired = "SELECT rowid FROM conversation_messages WHERE state='failed'
+        AND superseded_at IS NOT NULL AND superseded_at<?1";
+    let due = state.read(|conn, path| {
+        conn.query_row(&format!("SELECT EXISTS({expired})"), [&cutoff], |row| {
+            row.get::<_, bool>(0)
+        })
+        .map_err(state::sql(path))
+    })?;
+    if !due.unwrap_or(false) {
+        return Ok(());
+    }
+    state.write(|tx| {
+        tx.execute(
+            &format!(
+                "DELETE FROM conversation_messages WHERE rowid IN
+                ({expired} ORDER BY superseded_at, rowid LIMIT ?2)"
+            ),
+            params![cutoff, BATCH],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
 }
 
 /// A conversation without remaining answer work has no answer-read failure
@@ -2608,7 +2716,7 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("WITH addresses AS (SELECT company,connector,conversation FROM connected_conversations UNION SELECT company,connector,conversation FROM conversation_refusals) SELECT a.company,a.connector,a.conversation,(SELECT count(*) FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND m.state NOT IN (?1,?2)),(SELECT count(*) FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL),(SELECT count(*) FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND r.reason='not_own' AND r.replied_at IS NULL),(SELECT json_group_array(f) FROM (SELECT failure AS f FROM connected_conversations c WHERE c.company=a.company AND c.connector=a.connector AND c.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND failure IS NOT NULL)) FROM addresses a ORDER BY a.company,a.connector,a.conversation")
+                .prepare("WITH addresses AS (SELECT company,connector,conversation FROM connected_conversations UNION SELECT company,connector,conversation FROM conversation_refusals) SELECT a.company,a.connector,a.conversation,(SELECT count(*) FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND m.state NOT IN (?1,?2) AND m.superseded_at IS NULL),(SELECT count(*) FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL),(SELECT count(*) FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND r.reason='not_own' AND r.replied_at IS NULL),(SELECT json_group_array(f) FROM (SELECT failure AS f FROM connected_conversations c WHERE c.company=a.company AND c.connector=a.connector AND c.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_messages m WHERE m.company=a.company AND m.connector=a.connector AND m.conversation=a.conversation AND failure IS NOT NULL AND m.superseded_at IS NULL UNION ALL SELECT failure FROM conversation_answers x WHERE x.company=a.company AND x.connector=a.connector AND x.conversation=a.conversation AND failure IS NOT NULL UNION ALL SELECT failure FROM conversation_refusals r WHERE r.company=a.company AND r.connector=a.connector AND r.conversation=a.conversation AND failure IS NOT NULL)) FROM addresses a ORDER BY a.company,a.connector,a.conversation")
                 .map_err(state::sql(path))?;
             q.query_map([Stage::Answered.as_str(), Stage::Refused.as_str()], |r| {
                 Ok((

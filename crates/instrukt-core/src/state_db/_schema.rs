@@ -93,7 +93,9 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
         ("conversation_answers", "delivery_unknown_at", "TEXT"),
         ("conversation_answers", "receipt_failure_deadline", "TEXT"),
         ("conversation_refusals", "post_id", "TEXT"),
+        ("conversation_refusals", "anchor_message", "TEXT"),
         ("conversation_messages", "admission_position", "INTEGER"),
+        ("conversation_messages", "superseded_at", "TEXT"),
         ("conversation_answers", "admission_position", "INTEGER"),
         (
             "conversation_refusals",
@@ -118,6 +120,9 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
            WHERE admission_position IS NULL AND (sender_name IS NOT NULL OR state IN ('pending','sent','failed','answered'));
          CREATE UNIQUE INDEX IF NOT EXISTS conversation_admission_order
            ON conversation_messages(admission_position);
+         CREATE INDEX IF NOT EXISTS conversation_superseded_failures
+           ON conversation_messages(superseded_at)
+           WHERE state='failed' AND superseded_at IS NOT NULL;
          UPDATE conversation_answers AS a SET admission_position=(
            SELECT m.admission_position FROM conversation_messages m WHERE m.company=a.company
              AND m.connector=a.connector AND m.conversation=a.conversation AND m.turn=a.turn)
@@ -160,16 +165,17 @@ CREATE TABLE conversation_messages_v23 (
     turn_update  TEXT,
     turn_ended_at TEXT,
     admission_position INTEGER,
+    superseded_at TEXT,
     PRIMARY KEY (company, connector, conversation, message)
 );
 INSERT INTO conversation_messages_v23 (rowid, company, connector, conversation, message,
     sender, sender_name, sender_email, written_us, written_at, arrived_at, state, text,
     context_json, boundary, content, attempted_at, turn, failure, admitted_at,
-    unavailable_since, turn_update, turn_ended_at, admission_position)
+    unavailable_since, turn_update, turn_ended_at, admission_position, superseded_at)
 SELECT rowid, company, connector, conversation, message,
     sender, sender_name, sender_email, written_us, written_at, arrived_at, state, text,
     context_json, boundary, content, attempted_at, turn, failure, admitted_at,
-    unavailable_since, turn_update, turn_ended_at, admission_position
+    unavailable_since, turn_update, turn_ended_at, admission_position, superseded_at
 FROM conversation_messages;
 DROP TABLE conversation_messages;
 ALTER TABLE conversation_messages_v23 RENAME TO conversation_messages;
