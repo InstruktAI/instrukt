@@ -124,6 +124,19 @@ path is the same for every connector, whichever channel it speaks to
 
 ### One addressed message, one turn
 
+Each conversation keeps a durable receipt for every provider message the
+agent has received, identified in Slack by its timestamp. A receipt covers
+a message delivered as its own turn or as context for another message.
+For each delivery, including a retry, select only earlier messages in the
+provider's thread or channel range that lack a receipt. Exclude messages
+waiting for their own turns. Apply the context limit to that selection and
+include the omission note when the limit trims it. Record the selected
+messages and addressed message in the same transaction that records the
+delivery. A send or start whose acceptance is uncertain retains the exact
+input for reconciliation. Receipts follow message retention as stated in
+the state-database spec.
+
+
 - Each addressed message is delivered as its own input and starts its own
   turn. Messages of one conversation are delivered in the order they were
   written, as far as they have arrived; a later one waits until the session's

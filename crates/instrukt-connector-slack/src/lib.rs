@@ -931,12 +931,11 @@ impl Connector for Slack {
         &self,
         conversation: &str,
         message: &str,
-        previous: Option<&str>,
         text: &str,
         readable: &dyn Fn(instrukt_connector::ContextSnapshot),
     ) -> Result<Captured, ConnectorError> {
-        let (messages, left_out) =
-            read_context(self, conversation, message, previous).map_err(failed)?;
+        let messages = read_context(self, conversation, message).map_err(failed)?;
+        let limit = usize::try_from(self.context_messages).unwrap_or(usize::MAX);
         let me = self.cached_identity();
         let snapshot_me = me.clone();
         let messages = Arc::new(messages);
@@ -948,7 +947,7 @@ impl Connector for Slack {
                 render_context(
                     &snapshot_text,
                     &snapshot_messages,
-                    left_out,
+                    limit,
                     snapshot_me.as_ref(),
                     lookup,
                 )
@@ -959,7 +958,7 @@ impl Connector for Slack {
         Ok(render_context(
             text,
             &messages,
-            left_out,
+            limit,
             me.as_ref(),
             &mut |user| names.of(user),
         ))
@@ -1202,34 +1201,25 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
     Ok(Some(incoming))
 }
 
-/// What accompanies a received message: of the messages before the first
-/// in a conversation — of the thread, or of the channel when it starts the
-/// thread — or of those since the previous one, at most `context_messages`
-/// of the most recent, and whether earlier ones were left out. Speakers are
-/// named and mentions written as names, as for the addressed message.
+/// Earlier messages in the same thread, or channel history when the
+/// addressed message is the root. The host selects and trims at delivery.
 fn read_context(
     slack: &Slack,
     conversation: &str,
     message: &str,
-    previous: Option<&str>,
-) -> Result<(Vec<Value>, bool), SlackError> {
+) -> Result<Vec<Value>, SlackError> {
     let (channel, thread) = split_conversation(conversation);
-    let cap = usize::try_from(slack.context_messages).unwrap_or(usize::MAX);
-    match previous {
-        Some(previous) => slack
-            .api
-            .read(channel, thread, Some(previous), message, cap, false),
-        None => {
-            let within = thread.filter(|thread| *thread != message);
-            slack.api.read(channel, within, None, message, cap, false)
-        }
-    }
+    let within = thread.filter(|thread| *thread != message);
+    slack
+        .api
+        .read(channel, within, None, message, usize::MAX, false)
+        .map(|(messages, _)| messages)
 }
 
 fn render_context(
     text: &str,
     earlier: &[Value],
-    left_out: bool,
+    limit: usize,
     me: Option<&Me>,
     lookup: &mut dyn FnMut(&str) -> String,
 ) -> Captured {
@@ -1248,6 +1238,7 @@ fn render_context(
                 lookup(user)
             };
             Earlier {
+                id: m.get("ts").and_then(Value::as_str).map(str::to_owned),
                 speaker,
                 own: me.is_some_and(|me| own_message(m, me)),
                 at: m.get("ts").and_then(Value::as_str).and_then(ts_time),
@@ -1262,7 +1253,8 @@ fn render_context(
         text,
         accompanying: Accompanying {
             messages,
-            left_out,
+            limit: Some(limit),
+            left_out: false,
             unread: false,
         },
     }

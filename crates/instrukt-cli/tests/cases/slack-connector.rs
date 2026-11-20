@@ -490,6 +490,9 @@ fn the_agents_answer_is_posted_as_markdown_it_wrote_and_a_long_one_in_parts() {
 fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
     std::thread::scope(|scope| {
         scope.spawn(readable_context_survives_a_held_speaker_lookup);
+        scope.spawn(a_retry_keeps_context_the_agent_has_never_seen);
+        scope.spawn(a_retry_excludes_a_queued_question);
+        scope.spawn(receipts_survive_out_of_order_delivery_and_pruning);
         unread_context_expires_during_an_unrelated_sender_lookup();
     });
 }
@@ -502,8 +505,8 @@ fn set_context_clock(clock: &std::path::Path, at: jiff::Timestamp) {
     std::fs::rename(next, clock).unwrap();
 }
 
-fn context_company() -> (Company, std::path::PathBuf, jiff::Timestamp) {
-    let mut c = Company::new("");
+fn context_company(settings: &str) -> (Company, std::path::PathBuf, jiff::Timestamp) {
+    let mut c = Company::new(settings);
     let clock = c.env.path("context-clock");
     let at = "2026-11-19T10:00:00Z".parse().unwrap();
     set_context_clock(&clock, at);
@@ -517,7 +520,7 @@ fn context_company() -> (Company, std::path::PathBuf, jiff::Timestamp) {
 }
 
 fn unread_context_expires_during_an_unrelated_sender_lookup() {
-    let (mut c, clock, at) = context_company();
+    let (mut c, clock, at) = context_company("");
     c.slack.refuse_replies(true);
     c.run();
 
@@ -635,7 +638,7 @@ fn unread_context_expires_during_an_unrelated_sender_lookup() {
 }
 
 fn readable_context_survives_a_held_speaker_lookup() {
-    let (mut c, _, _) = context_company();
+    let (mut c, _, _) = context_company("");
     c.slack.hold_lookups_for("UANNA");
     c.run();
     let earlier = "The earlier message Slack already returned.";
@@ -665,4 +668,270 @@ fn readable_context_survives_a_held_speaker_lookup() {
     );
     assert_eq!(c.delivered(&session, 0).accompanying, 1);
     c.slack.release_lookups();
+}
+
+fn context_database(c: &Company) -> instrukt_core::state_db::rusqlite::Connection {
+    instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap()
+}
+
+fn wait_for_message_state(
+    db: &instrukt_core::state_db::rusqlite::Connection,
+    id: &str,
+    expected: &str,
+) {
+    wait(&format!("the message {id} reaches {expected}"), || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state=?2)",
+            [id, expected],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
+}
+
+fn wait_for_failed_context(db: &instrukt_core::state_db::rusqlite::Connection, id: &str) {
+    wait("the context attempt fails before Slack recovers", || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1
+             AND state='received' AND failure LIKE '%thread_not_found%')",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
+}
+
+fn a_retry_keeps_context_the_agent_has_never_seen() {
+    let (mut c, _, _) = context_company(", context_messages: 2");
+    // Keep the provider transcript fixed while the refusal is retried.
+    c.slack.fail_posts();
+    c.run();
+    let channel = "C1";
+    let root = c.slack.say(channel, "UBRAM", "Planning thread", None);
+    let unseen = "The budget was approved earlier.";
+    c.slack.say(channel, "UBRAM", unseen, Some(&root));
+    let refused = "A suggestion from a guest.";
+    let denied = c.slack.mention(channel, "USTRANGER", refused, Some(&root));
+    let db = context_database(&c);
+    wait_for_message_state(&db, &denied, "refused");
+    for text in ["Recent note one.", "Recent note two."] {
+        c.slack.say(channel, "UBRAM", text, Some(&root));
+    }
+    let late = c
+        .slack
+        .say(channel, "USTEVEN", "What can we review?", Some(&root));
+    let retry = c
+        .slack
+        .say(channel, "UANNA", "What was the budget?", Some(&root));
+    c.slack.refuse_replies_for(Some(&retry));
+    c.slack.notify_mention(
+        &retry,
+        channel,
+        "UANNA",
+        "What was the budget?",
+        Some(&root),
+    );
+    wait_for_failed_context(&db, &retry);
+
+    c.slack.notify_mention(
+        &late,
+        channel,
+        "USTEVEN",
+        "What can we review?",
+        Some(&root),
+    );
+    let session = c.session();
+    let input = c.input(&session, 0);
+    assert!(
+        input.contains("Recent note one.") && input.contains("Recent note two."),
+        "{input}"
+    );
+    assert!(!input.contains(unseen), "{input}");
+    assert!(c.delivered(&session, 0).left_out);
+    wait_for_message_state(&db, &late, "sent");
+    c.slack.refuse_replies_for(None);
+    wait_for_message_state(&db, &retry, "pending");
+    c.finish_turn(&session, 0, "NOOP");
+    wait("the retried budget question reaches the agent", || {
+        c.runtime.message_count(&session) == 2
+    });
+    let input = c.input(&session, 1);
+    assert!(input.contains(unseen) && input.contains(refused), "{input}");
+    assert!(
+        !input.contains("Recent note one.") && !input.contains("Recent note two."),
+        "{input}"
+    );
+    assert!(c.delivered(&session, 1).left_out);
+}
+
+fn a_retry_excludes_a_queued_question() {
+    let (mut c, _, _) = context_company("");
+    c.run();
+    let channel = "C1";
+    let root = c
+        .slack
+        .mention(channel, "USTEVEN", "Start the review.", None);
+    let session = c.session();
+    let db = context_database(&c);
+    let earlier = c.slack.say(
+        channel,
+        "USTEVEN",
+        "Check the queued checklist.",
+        Some(&root),
+    );
+    let detail = "The checklist is in the wiki.";
+    c.slack.say(channel, "UBRAM", detail, Some(&root));
+    let later = c
+        .slack
+        .say(channel, "UANNA", "Is the review complete?", Some(&root));
+    // The later question arrives first and its read fails. The earlier
+    // question takes its own place in the queue while that read waits.
+    c.slack.refuse_replies_for(Some(&later));
+    c.slack.notify_mention(
+        &later,
+        channel,
+        "UANNA",
+        "Is the review complete?",
+        Some(&root),
+    );
+    wait_for_failed_context(&db, &later);
+    c.slack.notify_mention(
+        &earlier,
+        channel,
+        "USTEVEN",
+        "Check the queued checklist.",
+        Some(&root),
+    );
+    wait_for_message_state(&db, &earlier, "pending");
+    c.slack.refuse_replies_for(None);
+    wait_for_message_state(&db, &later, "pending");
+    assert_eq!(c.runtime.message_count(&session), 1);
+    c.finish_turn(&session, 0, "NOOP");
+    wait("the earlier question takes its own turn", || {
+        c.runtime.message_count(&session) == 2
+    });
+    assert!(c.input(&session, 1).contains("Check the queued checklist."));
+    c.finish_turn(&session, 1, "NOOP");
+    wait("the later question takes its own turn", || {
+        c.runtime.message_count(&session) == 3
+    });
+    let input = c.input(&session, 2);
+    assert!(!input.contains("Check the queued checklist."), "{input}");
+    assert!(input.contains(detail), "{input}");
+    assert_eq!(c.delivered(&session, 2).accompanying, 1);
+    assert!(!c.delivered(&session, 2).left_out);
+}
+
+fn receipts_survive_out_of_order_delivery_and_pruning() {
+    let (mut c, clock, at) = context_company("");
+    c.runtime.flag("separate-completion", true);
+    c.store.thread("s1", None, None, "2026-11-08T10:00:00Z");
+    c.run();
+    let channel = "C1";
+    let thread = c.slack.say_at(
+        "1700000000.000100",
+        channel,
+        "USTEVEN",
+        "Release thread",
+        None,
+    );
+    let seen = "A release note delivered only as context.";
+    c.slack
+        .say_at("1700000002.000100", channel, "UBRAM", seen, Some(&thread));
+    let failed = c.slack.mention_at(
+        "1700000005.000100",
+        channel,
+        "USTEVEN",
+        "Was the release blocked?",
+        Some(&thread),
+    );
+    let session = c.session();
+    let first = c.runtime.message(&session, 0);
+    assert!(first.contains(seen));
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    c.store.failed_turn(&session, "failed-turn", 1, &first);
+    let db = context_database(&c);
+    wait_for_message_state(&db, &failed, "failed");
+
+    c.slack.mention_at(
+        "1700000004.000100",
+        channel,
+        "USTEVEN",
+        "Has the changelog been written?",
+        Some(&thread),
+    );
+    wait(
+        "the older question is delivered after the newer question",
+        || c.runtime.message_count(&session) == 2,
+    );
+    let older = c.input(&session, 1);
+    assert!(!older.contains(seen), "{older}");
+    c.finish_turn(&session, 1, "NOOP");
+    wait("the successful turn supersedes the failure", || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND superseded_at IS NOT NULL)",
+            [&failed], |row| row.get::<_, bool>(0),
+        ).unwrap()
+    });
+
+    c.runner_dies();
+    set_context_clock(
+        &clock,
+        at + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
+    );
+    c.run();
+    wait("the superseded failure is pruned at startup", || {
+        db.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1)",
+            [&failed],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
+    let fresh = "The release checklist is ready.";
+    c.slack
+        .say_at("1700000006.000100", channel, "UANNA", fresh, Some(&thread));
+    c.slack.mention_at(
+        "1700000007.000100",
+        channel,
+        "USTEVEN",
+        "When do we ship?",
+        Some(&thread),
+    );
+    wait("the next question reaches the agent after pruning", || {
+        c.runtime.message_count(&session) == 3
+    });
+    let input = c.input(&session, 2);
+    assert!(input.contains(fresh), "{input}");
+    assert!(
+        !input.contains(seen) && !input.contains("Was the release blocked?"),
+        "{input}"
+    );
+    assert_eq!(c.delivered(&session, 2).accompanying, 1);
+
+    // The grace window starts at pruning, not at the earlier delivery.
+    let pruned_at: String = db
+        .query_row(
+            "SELECT retired_at FROM conversation_context_receipts WHERE message=?1",
+            [&failed],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let pruned_at: jiff::Timestamp = pruned_at.parse().unwrap();
+    set_context_clock(
+        &clock,
+        pruned_at + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
+    );
+    wait("the receipt is pruned after its seven-day grace", || {
+        db.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM conversation_context_receipts WHERE message=?1)",
+            [&failed],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
 }

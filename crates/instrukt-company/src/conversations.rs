@@ -219,10 +219,6 @@ pub const CONTEXT_BOUND: jiff::SignedDuration = jiff::SignedDuration::from_mins(
 pub struct Unread {
     pub conversation: String,
     pub message: String,
-    /// The previous addressed message of the conversation in written order,
-    /// whether or not it was answered, if any: the lower bound of this one's
-    /// range.
-    pub previous: Option<String>,
     /// The sender's connector identity; `None` for a message stored before
     /// senders were kept, which was admitted when it was stored.
     pub sender: Option<String>,
@@ -243,16 +239,7 @@ pub fn unread(
         .read(|conn, path| {
             let mut q = conn
                 .prepare(
-                    "SELECT m.conversation,m.message,
-                     CASE WHEN json_type(m.context_json,'$.previous') IS NOT NULL
-                          THEN json_extract(m.context_json,'$.previous')
-                          ELSE (SELECT p.message FROM conversation_messages p
-                                WHERE p.company=m.company AND p.connector=m.connector
-                                  AND p.conversation=m.conversation AND p.written_us<m.written_us
-                                  AND (coalesce(json_extract(m.context_json,'$.retry'),0)=0
-                                       OR p.state IN ('sent','failed','answered'))
-                                ORDER BY p.written_us DESC, p.message DESC LIMIT 1) END,
-                     m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at
+                    "SELECT m.conversation,m.message,m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at
                      FROM conversation_messages m
                      WHERE m.company=?1 AND m.connector=?2 AND m.state=?3
                      ORDER BY m.written_us, m.message",
@@ -264,14 +251,13 @@ pub fn unread(
                     Ok(Unread {
                         conversation: r.get(0)?,
                         message: r.get(1)?,
-                        previous: r.get(2)?,
-                        sender: r.get(3)?,
-                        admitted: r.get(4)?,
-                        text: r.get(5)?,
-                        arrived_at: r.get::<_, String>(6)?.parse().map_err(
+                        sender: r.get(2)?,
+                        admitted: r.get(3)?,
+                        text: r.get(4)?,
+                        arrived_at: r.get::<_, String>(5)?.parse().map_err(
                             |error: jiff::Error| {
                                 instrukt_core::state_db::rusqlite::Error::FromSqlConversionFailure(
-                                    6,
+                                    5,
                                     instrukt_core::state_db::rusqlite::types::Type::Text,
                                     Box::new(error),
                                 )
@@ -300,8 +286,8 @@ pub fn admitted(
 ) -> Result<(), ConversationError> {
     RunnerState::new(home).write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,admitted_at=?8,admission_position=(SELECT coalesce(max(admission_position),0)+1 FROM conversation_messages),context_json=json_object('previous',?9),failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
-            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str(), now.to_string(), unread.previous],
+            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,admitted_at=?8,admission_position=(SELECT coalesce(max(admission_position),0)+1 FROM conversation_messages),failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
+            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str(), now.to_string()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -831,7 +817,7 @@ pub fn captured(
         Err(failure) => {
             state.write::<_, StateError>(|tx| {
                 tx.execute(
-                    "UPDATE conversation_messages SET failure=?5,context_json=json_object('retry',1) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?6",
+                    "UPDATE conversation_messages SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?6",
                     params![company.as_str(), connector, unread.conversation, unread.message, failure, Stage::Received.as_str()],
                 )
                 .map_err(state::sql(&state::db_path(tx)))?;
@@ -862,7 +848,7 @@ pub fn captured(
         &name,
         written_at,
         text,
-        &accompanying,
+        &Accompanying::default(),
     )?;
     let context = serde_json::to_string(&accompanying)?;
     state.write::<_, StateError>(|tx| {
@@ -1005,6 +991,7 @@ struct Conversation {
     position: Option<SourcePosition>,
 }
 
+#[derive(Clone)]
 struct Message {
     message: String,
     stage: Stage,
@@ -1356,6 +1343,130 @@ fn turn_update(
     })
 }
 
+/// Save the precise input before native I/O. A pending native attempt
+/// keeps its original input so lost acknowledgments can be reconciled.
+fn prepare_delivery(
+    state: &RunnerState,
+    c: &Conversation,
+    next: &Message,
+) -> Result<Message, ConversationError> {
+    if next.attempted || (c.session.is_none() && c.request.is_some()) {
+        return Ok(next.clone());
+    }
+    let Some(content) = next.content.as_deref() else {
+        return Ok(next.clone());
+    };
+    let row = state.read(|conn, path| {
+        conn.query_row(
+            "SELECT context_json,sender_name,written_at FROM conversation_messages
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            params![
+                c.company.as_str(),
+                c.connector,
+                c.conversation,
+                next.message
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .map_err(state::sql(path))
+    })?;
+    let Some((Some(captured), Some(sender), written_at)) = row else {
+        return Ok(next.clone());
+    };
+    let mut accompanying: Accompanying = serde_json::from_str(&captured)?;
+    let excluded = state.read(|conn, path| {
+        let mut query = conn.prepare(
+            "SELECT message FROM conversation_context_receipts
+             WHERE company=?1 AND connector=?2 AND conversation=?3
+             UNION SELECT message FROM conversation_messages
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN ('received','pending')",
+        ).map_err(state::sql(path))?;
+        query.query_map(params![c.company.as_str(), c.connector, c.conversation], |row| row.get::<_, String>(0))
+            .map_err(state::sql(path))?.collect::<Result<std::collections::HashSet<_>, _>>().map_err(state::sql(path))
+    })?.unwrap_or_default();
+    accompanying
+        .messages
+        .retain(|earlier| earlier.id.as_ref().is_none_or(|id| !excluded.contains(id)));
+    if let Some(limit) = accompanying.limit {
+        let trimmed = accompanying.messages.len().saturating_sub(limit);
+        accompanying.left_out = trimmed > 0;
+        accompanying.messages.drain(..trimmed);
+    }
+    let ids = accompanying
+        .messages
+        .iter()
+        .filter_map(|earlier| earlier.id.as_deref())
+        .collect::<Vec<_>>();
+    let text = envelopes::segment(content)
+        .into_iter()
+        .find_map(|span| match span {
+            Span::Member { body, .. } => Some(body),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ConversationError::Refused("the retained question has no member envelope".into())
+        })?;
+    let written_at: Timestamp = written_at
+        .parse()
+        .map_err(|error: jiff::Error| ConversationError::Refused(error.to_string()))?;
+    let (boundary, content) = framed(
+        &c.connector,
+        &c.conversation,
+        &sender,
+        written_at,
+        text,
+        &accompanying,
+    )?;
+    let ids = serde_json::to_string(&ids)?;
+    state.write::<_, StateError>(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET content=?5,boundary=?6,context_delivery_ids=?7
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            params![
+                c.company.as_str(),
+                c.connector,
+                c.conversation,
+                next.message,
+                content,
+                boundary,
+                ids
+            ],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
+    Ok(Message {
+        boundary: Some(boundary),
+        content: Some(content),
+        ..next.clone()
+    })
+}
+
+fn remember_delivery(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    c: &Conversation,
+    message: &str,
+) -> Result<(), StateError> {
+    tx.execute(
+        "INSERT INTO conversation_context_receipts(company,connector,conversation,message,delivery)
+         SELECT ?1,?2,?3,?4,?4
+         UNION ALL SELECT ?1,?2,?3,ids.value,?4 FROM conversation_messages m,
+              json_each(m.context_delivery_ids) ids
+         WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3 AND m.message=?4
+         ON CONFLICT(company,connector,conversation,message) DO UPDATE SET
+             delivery=excluded.delivery,retired_at=NULL",
+        params![c.company.as_str(), c.connector, c.conversation, message],
+    )
+    .map_err(state::sql(&state::db_path(tx)))?;
+    Ok(())
+}
+
 /// The runtime accepted `message` as its own turn, which ends its no-work
 /// interval; a first message's acceptance also binds the conversation's
 /// session.
@@ -1375,6 +1486,9 @@ fn accepted(
                AND state IN ('pending','failed') AND superseded_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, message, boundary],
         ).map_err(state::sql(&path))?;
+        if changed != 0 {
+            remember_delivery(tx, c, message)?;
+        }
         if changed != 0 && let Some(session) = session {
             tx.execute(
                 "UPDATE connected_conversations SET session=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
@@ -1456,11 +1570,11 @@ fn deliver_one(
 ) -> Result<(), ConversationError> {
     let state = &RunnerState::new(invocation.home());
     let now = clock();
-    let result = match &c.session {
+    let result = prepare_delivery(state, c, next).and_then(|prepared| match &c.session {
         None => opening_source
-            .and_then(|source| start(invocation, admitted, adapter, source, c, next, now)),
-        Some(session) => send(adapter, state, c, session, next, now),
-    };
+            .and_then(|source| start(invocation, admitted, adapter, source, c, &prepared, now)),
+        Some(session) => send(adapter, state, c, session, &prepared, now),
+    });
     record_delivery_failure(adapter, state, c, next, clock, &result)?;
     result
 }
@@ -1844,6 +1958,7 @@ fn harvest(
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
+                remember_delivery(tx, c, &message.message)?;
                 if !turn.succeeded {
                     tx.execute(
                         "UPDATE conversation_messages SET state='failed',failure=?5,turn_update=NULL,
@@ -1884,13 +1999,16 @@ fn harvest(
             if !batch.has_more {
                 for message in sent.iter().filter(|message| moved || message.source_uncertain) {
                     if found.contains(&message.message) {
-                        tx.execute(
+                        let changed = tx.execute(
                             "UPDATE conversation_messages SET state='sent',source_uncertain=0,failure=NULL,retry_at=NULL
                              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
                                AND state IN ('pending','sent','failed')
                                AND (state='sent' OR attempted_at IS NOT NULL) AND superseded_at IS NULL",
                             params![c.company.as_str(), c.connector, c.conversation, message.message],
                         ).map_err(state::sql(&path))?;
+                        if changed != 0 {
+                            remember_delivery(tx, c, &message.message)?;
+                        }
                     } else if moved {
                         tx.execute(
                             "UPDATE conversation_messages SET source_uncertain=1,failure=?5,
@@ -3330,36 +3448,39 @@ fn relay(
     Ok(())
 }
 
-/// Remove the oldest expired superseded failures with a later delivered
-/// message in the same conversation's written order.
+/// Prune superseded failures and retain their receipts for another window.
 fn prune_superseded_failures(state: &RunnerState, now: Timestamp) -> Result<(), StateError> {
     const RETENTION: jiff::SignedDuration = jiff::SignedDuration::from_hours(7 * 24);
     const BATCH: i64 = 100;
     let cutoff = format!("{:.9}", now - RETENTION);
-    let expired = "SELECT old.rowid FROM conversation_messages AS old
-        WHERE old.state='failed' AND old.superseded_at IS NOT NULL AND old.superseded_at<?1
-          AND EXISTS(SELECT 1 FROM conversation_messages AS later
-            WHERE later.company=old.company AND later.connector=old.connector
-              AND later.conversation=old.conversation AND later.written_us>old.written_us
-              AND later.state IN ('sent','failed','answered'))";
+    let expired = "SELECT rowid FROM conversation_messages
+        WHERE state='failed' AND superseded_at IS NOT NULL AND superseded_at<?1
+        ORDER BY superseded_at,rowid LIMIT ?2";
+    let retired = "SELECT rowid FROM conversation_context_receipts
+        WHERE retired_at<?1 ORDER BY retired_at,rowid LIMIT ?2";
     let due = state.read(|conn, path| {
-        conn.query_row(&format!("SELECT EXISTS({expired})"), [&cutoff], |row| {
-            row.get::<_, bool>(0)
-        })
+        conn.query_row(
+            &format!("SELECT EXISTS({expired}) OR EXISTS({retired})"),
+            params![cutoff, BATCH],
+            |row| row.get::<_, bool>(0),
+        )
         .map_err(state::sql(path))
     })?;
     if !due.unwrap_or(false) {
         return Ok(());
     }
     state.write(|tx| {
+        let path = state::db_path(tx);
         tx.execute(
-            &format!(
-                "DELETE FROM conversation_messages WHERE rowid IN
-                ({expired} ORDER BY superseded_at, rowid LIMIT ?2)"
-            ),
-            params![cutoff, BATCH],
-        )
-        .map_err(state::sql(&state::db_path(tx)))?;
+            &format!("UPDATE conversation_context_receipts SET retired_at=?3
+             WHERE (company,connector,conversation,delivery) IN
+             (SELECT company,connector,conversation,message FROM conversation_messages WHERE rowid IN ({expired}))"),
+            params![cutoff, BATCH, format!("{now:.9}")],
+        ).map_err(state::sql(&path))?;
+        tx.execute(&format!("DELETE FROM conversation_messages WHERE rowid IN ({expired})"), params![cutoff, BATCH])
+            .map_err(state::sql(&path))?;
+        tx.execute(&format!("DELETE FROM conversation_context_receipts WHERE rowid IN ({retired})"), params![cutoff, BATCH])
+            .map_err(state::sql(&path))?;
         Ok(())
     })
 }

@@ -806,7 +806,7 @@ impl ContextReads {
                         }
                     };
                     let result = connector.capture(
-                        &item.conversation, &item.message, item.previous.as_deref(), &item.text, &readable,
+                        &item.conversation, &item.message, &item.text, &readable,
                     );
                     if send.send(ContextReply::Finished(result, clock.now())).is_err() {
                         tracing::debug!(target: LOG_TARGET, event = "conversation_context_late_result", message = %item.message);
@@ -1143,7 +1143,6 @@ mod test_connector {
             &self,
             _: &str,
             _: &str,
-            _: Option<&str>,
             text: &str,
             _: &dyn Fn(instrukt_connector::ContextSnapshot),
         ) -> Result<Captured, ConnectorError> {

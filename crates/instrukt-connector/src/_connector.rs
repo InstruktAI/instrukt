@@ -30,15 +30,13 @@ pub trait Connector: Send + Sync {
     /// Whether `sender`, a provider identity, is one of the company's own.
     fn admit(&self, sender: &str) -> Admission;
     /// The addressed message `message` of `conversation` as the agent reads
-    /// it, with what accompanies it: since `previous`, the conversation's
-    /// previous addressed message, or from the conversation's start.
+    /// it and the earlier messages in its provider's context range.
     /// Publish readable context before any optional name enrichment. The
     /// host can use it when enrichment has not returned by the deadline.
     fn capture(
         &self,
         conversation: &str,
         message: &str,
-        previous: Option<&str>,
         text: &str,
         readable: &dyn Fn(ContextSnapshot),
     ) -> Result<Captured, ConnectorError>;

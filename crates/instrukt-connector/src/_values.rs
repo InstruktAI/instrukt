@@ -9,17 +9,22 @@ use serde::{Deserialize, Serialize};
 /// it accompanies until that message is delivered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Earlier {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub speaker: String,
     pub own: bool,
     pub at: Option<Timestamp>,
     pub text: String,
 }
 
-/// What accompanies one addressed message: at most `context_messages` of
-/// the most recent earlier messages, and whether earlier ones were left out.
+/// Earlier messages available at capture and their delivery limit. The
+/// conversation core applies the limit after excluding known deliveries.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Accompanying {
     pub messages: Vec<Earlier>,
+    /// The connector's delivery limit. Older captures were trimmed already.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
     pub left_out: bool,
     /// The context bound expired without a usable read.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

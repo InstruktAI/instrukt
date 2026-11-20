@@ -339,9 +339,8 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         c.conversations().conversations.is_empty() && c.slack.posts().len() == 3
     });
     assert_eq!(c.runtime.message_count(&session), 3);
-    // Each names the person who wrote it, in written order. The third was
-    // taken in before the second arrived, so what accompanies it holds the
-    // second too.
+    // Each names its sender in written order. The third's context excludes
+    // the second even though it was captured before the second was delivered.
     insta::assert_snapshot!(
         "three-turns-delivered",
         (0..3)
@@ -2155,7 +2154,6 @@ fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
         scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
         scope.spawn(a_blank_reply_supersedes_a_failed_question);
         scope.spawn(pruning_keeps_younger_and_unsuperseded_failures);
-        scope.spawn(pruning_keeps_the_context_boundary_after_out_of_order_delivery);
         scope.spawn(one_members_answer_proceeds_after_another_conversations_lock_times_out);
     });
 }
@@ -3700,137 +3698,6 @@ fn pruning_keeps_younger_and_unsuperseded_failures() {
     );
     assert_eq!(superseded_at(&c, "unserved"), Some(None));
     assert_eq!(superseded_at(&c, "answered"), Some(None));
-}
-
-fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    let channel = "C1";
-    let sender = "USTEVEN";
-    c.runtime.flag("separate-completion", true);
-    projected(&c);
-    let thread = c
-        .slack
-        .say_at("1700000000.000100", channel, sender, "Release thread", None);
-    let failed_text = "Was the original release blocked?";
-    let failed = c.slack.mention_at(
-        "1700000005.000100",
-        channel,
-        sender,
-        &format!("<@UAGENT> {failed_text}"),
-        Some(&thread),
-    );
-    let session = started(&c, &[]);
-    let input = c.runtime.message(&session, 0);
-    assert!(input.contains(failed_text));
-    c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store.failed_turn(&session, "failed-turn", 1, &input);
-    interval_at(&c, &failed);
-
-    // Slack delivers the older question only after the later-written turn
-    // failed. The older question still gets its own turn and supersedes it.
-    c.slack.mention_at(
-        "1700000004.000100",
-        channel,
-        sender,
-        "<@UAGENT> Has the changelog been written?",
-        Some(&thread),
-    );
-    wait("the older question reaches the session", || {
-        c.runtime.message_count(&session) == 2
-    });
-    let settled = interval_clock(&clock);
-    c.finish_turn(&session, 1, "NOOP");
-    wait(
-        "the older question's successful turn supersedes the failure",
-        || retained_conversations(&c).conversations.is_empty() && interval(&c, &failed).is_none(),
-    );
-
-    use instrukt_core::state_db::rusqlite::Connection;
-    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
-    c.runner_dies();
-    set_clock(
-        &clock,
-        settled + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
-    );
-    c.run();
-    let retained = || {
-        db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND superseded_at IS NOT NULL)",
-            [&failed],
-            |row| row.get::<_, bool>(0),
-        ).unwrap()
-    };
-
-    // Force a relay pass beyond the bound. A delivered row in another
-    // conversation cannot replace the boundary of this thread.
-    projected(&c);
-    c.slack.mention_at(
-        "1700000900.000100",
-        "C2",
-        "UANNA",
-        "<@UAGENT> Is the office open?",
-        None,
-    );
-    wait(
-        "the relay serves another conversation after the bound",
-        || c.sessions().len() == 2,
-    );
-    assert!(retained(), "the superseded boundary must still be retained");
-    assert!(
-        retained_conversations(&c)
-            .conversations
-            .iter()
-            .all(|row| row.conversation != format!("{channel}/{thread}"))
-    );
-    assert_eq!(notices(&c, sender), 0);
-
-    // Advance the written boundary with a delivered message in this thread.
-    // Only then may the relay prune the superseded failure.
-    c.runtime.flag("send-failure", true);
-    let later = c.slack.mention_at(
-        "1700000006.000100",
-        channel,
-        sender,
-        "<@UAGENT> Is the checklist ready?",
-        Some(&thread),
-    );
-    interval_at(&c, &later);
-    assert!(
-        retained(),
-        "an undelivered question cannot replace the boundary"
-    );
-    c.runtime.flag("send-failure", false);
-    wait("a later-written question reaches the session", || {
-        c.runtime.message_count(&session) == 3
-    });
-    assert!(!c.runtime.message(&session, 2).contains(failed_text));
-    wait(
-        "the superseded question is pruned behind the new boundary",
-        || !retained(),
-    );
-    c.finish_turn(&session, 2, "NOOP");
-    let new_context = "The release checklist is ready.";
-    c.slack.say_at(
-        "1700000007.000100",
-        channel,
-        sender,
-        new_context,
-        Some(&thread),
-    );
-    c.slack.mention_at(
-        "1700000008.000100",
-        channel,
-        sender,
-        "<@UAGENT> When do we ship?",
-        Some(&thread),
-    );
-    wait("the new question reaches the session", || {
-        c.runtime.message_count(&session) == 4
-    });
-    let input = c.runtime.message(&session, 3);
-    assert!(input.contains(new_context), "{input}");
-    assert!(!input.contains(failed_text), "{input}");
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {

@@ -35,6 +35,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V22),
     Step(v23),
     Sql(V24),
+    Step(v25),
 ];
 
 /// Version 24: failed messages keep their retry schedule on the operator clock.
@@ -44,6 +45,40 @@ ALTER TABLE conversation_messages ADD COLUMN failed_turns INTEGER NOT NULL DEFAU
 ALTER TABLE conversation_messages ADD COLUMN source_uncertain INTEGER NOT NULL DEFAULT 0;
 UPDATE conversation_messages SET attempted_at=NULL WHERE state='failed' AND superseded_at IS NULL;
 ";
+
+/// The provider identities delivered in each conversation.
+fn v25(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let has_delivery_ids: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages')
+         WHERE name='context_delivery_ids')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_delivery_ids {
+        tx.execute_batch(
+            "ALTER TABLE conversation_messages ADD COLUMN context_delivery_ids TEXT;",
+        )?;
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS conversation_context_receipts (
+    company TEXT NOT NULL,
+    connector TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    message TEXT NOT NULL,
+    delivery TEXT NOT NULL,
+    retired_at TEXT,
+    PRIMARY KEY (company, connector, conversation, message)
+);
+CREATE INDEX IF NOT EXISTS conversation_context_receipt_delivery
+    ON conversation_context_receipts(company, connector, conversation, delivery);
+CREATE INDEX IF NOT EXISTS conversation_context_receipt_retired
+    ON conversation_context_receipts(retired_at) WHERE retired_at IS NOT NULL;
+INSERT INTO conversation_context_receipts (company,connector,conversation,message,delivery)
+    SELECT company,connector,conversation,message,message FROM conversation_messages
+    WHERE state IN ('sent','failed','answered') ON CONFLICT DO NOTHING;
+",
+    )
+}
 
 /// Version 22: a consumer's former source no longer in the configuration is
 /// `abandoned`: its pending events stay unread in that Redis and its

@@ -206,15 +206,19 @@ skips does not fail the conversation.
 
 ### What accompanies an addressed message
 
-The connector reads the accompanying messages with the bot token when the
-addressed message arrives and keeps them with that message until it is
-delivered, so a message that waits for an earlier turn is delivered with
-exactly its own range.
+The connector reads the earlier messages in the Slack thread, or in the
+channel when the addressed message starts a thread. The conversation keeps
+a durable record of which Slack messages, identified by timestamp, have
+reached the agent as their own turn or as accompanying context.
 
-| Addressed message | Accompanied by |
-| --- | --- |
-| The first in a conversation | The messages before it: of the thread, or of the channel when the tag starts the thread. |
-| A later one | The messages written in that conversation after the previous addressed message and before this one. |
+For each delivery, first attempt or retry, the accompanying context is
+the earlier messages in that range absent from the record. Messages still
+pending as their own turn are excluded so they can take that turn. A
+message that was refused can still accompany an admitted message if the
+agent has never received it. The record is updated in the same transaction
+as the delivery receipt and follows the retention in the state-database
+spec. An attempt with uncertain acceptance keeps its exact framed input
+until reconciled.
 
 An addressed message is accompanied by at most `context_messages` messages.
 When its range holds more, the most recent ones accompany it and the
@@ -233,10 +237,7 @@ and `unarchive`, `channel_convert_to_private`, `channel_convert_to_public`,
 `channel_posting_permissions`, `pinned_item`, `unpinned_item` and
 `reminder_add`. Everything else is a message, in whatever form Slack records
 it: what a person or an integration wrote, and a form the connector does not
-know. The range is bounded by the previous addressed message whether or not
-that one was answered, and does not depend on whether the agent posted an
-answer. Messages the agent was sent before stay in its session and are not
-sent again.
+know.
 
 The context bound is declared by `CONTEXT_BOUND` in
 `crates/instrukt-company/src/conversations.rs`. It starts when the addressed
@@ -393,6 +394,10 @@ Then the message stays saved while context is still being read within the contex
 When the context bound passes
 Then the agent receives the member's question and identity with a note that earlier messages could not be read
 And the member receives the answer without a technical message about the read
+When context becomes readable on retry
+Then previously unseen messages can accompany the question even if a refused tag or a later delivery followed them
+And queued tags still take their own turns
+And messages already delivered out of written order or pruned within the receipt window are not replayed
 ```
 
 ## Known caveats
@@ -421,7 +426,10 @@ And the member receives the answer without a technical message about the read
   otherwise. What accompanies the later one was read when it arrived and is
   not read again, so it can hold the earlier message, which the agent then
   sees there and as its own turn.
-- If Slack delivers an addressed message after a superseded failure is pruned, and the message was written between the failed question and the later delivery that allowed pruning, the agent may see the failed question or its earlier context again.
+- An upgraded database can identify previously delivered addressed messages.
+  Accompanying messages delivered before their Slack timestamps were kept can
+  reappear in context. A Slack message can also reappear after its receipt's
+  retention window expires.
 
 ## See Also
 
