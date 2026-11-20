@@ -241,12 +241,15 @@ sent again.
 The context bound is declared by `CONTEXT_BOUND` in
 `crates/instrukt-company/src/conversations.rs`. It starts when the addressed
 message is retained and uses the runner's clock. The sender must still be
-admitted. If the accompanying messages are unavailable when the bound passes,
-the admitted question is delivered on the next intake pass without them,
-including when a read is still in flight. Later results cannot change that
-delivery. The delivered question uses names already available to the
-connector for mentions and Slack IDs for any others. The conversation context
-tells the agent that earlier messages could not be read. That line and the provider's error stay out of Slack.
+admitted. Context expiry and handoff run independently of sender lookups and
+other provider calls. If the messages could not be read by expiry, the
+admitted question proceeds without them, even during an active read, and
+the agent's context says they could not be read. If the messages were
+read in time, the agent receives them. Name enrichment gets at most the
+next intake retry interval and never extends the context bound. Names
+still unresolved at handoff use Slack IDs. Later results
+cannot change the stored delivery. The context note and provider errors
+stay out of Slack.
 
 ### Posting
 

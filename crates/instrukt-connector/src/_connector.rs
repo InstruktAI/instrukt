@@ -2,7 +2,8 @@
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
-    Accompanying, Admission, AnswerError, Captured, ConnectorError, Incoming, Limits, Place, Status,
+    Accompanying, Admission, AnswerError, Captured, ConnectorError, ContextSnapshot, Incoming,
+    Limits, Place, Status,
 };
 use jiff::Timestamp;
 
@@ -31,12 +32,15 @@ pub trait Connector: Send + Sync {
     /// The addressed message `message` of `conversation` as the agent reads
     /// it, with what accompanies it: since `previous`, the conversation's
     /// previous addressed message, or from the conversation's start.
+    /// Publish readable context before any optional name enrichment. The
+    /// host can use it when enrichment has not returned by the deadline.
     fn capture(
         &self,
         conversation: &str,
         message: &str,
         previous: Option<&str>,
         text: &str,
+        readable: &dyn Fn(ContextSnapshot),
     ) -> Result<Captured, ConnectorError>;
     /// Frame the addressed text after the context bound, without provider I/O.
     fn without_context(&self, text: &str) -> Captured {

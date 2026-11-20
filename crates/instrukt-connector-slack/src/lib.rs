@@ -695,12 +695,17 @@ fn name(record: &Value) -> Option<String> {
 /// name Slack cannot give is the Slack id.
 struct Names<'a> {
     api: &'a SlackApi,
-    known: std::sync::MutexGuard<'a, HashMap<String, String>>,
+    known: &'a Mutex<HashMap<String, String>>,
 }
 impl Names<'_> {
     fn of(&mut self, user: &str) -> String {
-        if let Some(name) = self.known.get(user) {
-            return name.clone();
+        if let Some(name) = self
+            .known
+            .lock()
+            .ok()
+            .and_then(|known| known.get(user).cloned())
+        {
+            return name;
         }
         let found = self
             .api
@@ -708,14 +713,14 @@ impl Names<'_> {
             .ok()
             .and_then(|record| name(&record))
             .unwrap_or_else(|| user.to_owned());
-        self.known.insert(user.to_owned(), found.clone());
+        self.remember(user, &found);
         found
     }
 
-    /// `text` with every mention written as `@` and that person's name;
-    /// nothing else changes.
-    fn written(&mut self, text: &str) -> String {
-        written_mentions(text, |user| self.of(user))
+    fn remember(&self, user: &str, name: &str) {
+        if let Ok(mut known) = self.known.lock() {
+            known.insert(user.to_owned(), name.to_owned());
+        }
     }
 }
 
@@ -812,7 +817,7 @@ impl Kind for SlackKind {
                 .count("context_messages")
                 .unwrap_or(DEFAULT_CONTEXT_MESSAGES),
             identities: Arc::clone(&self.identities),
-            names: Mutex::default(),
+            names: Arc::default(),
         }))
     }
 }
@@ -823,20 +828,23 @@ struct Slack {
     context_messages: u64,
     identities: Arc<Mutex<HashMap<String, (String, Me)>>>,
     /// The people's names asked of Slack while this connector is open.
-    names: Mutex<HashMap<String, String>>,
+    names: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Slack {
+    fn cached_identity(&self) -> Option<Me> {
+        let identities = self.identities.lock().ok()?;
+        let (token, me) = identities.get(&self.api.company)?;
+        (token == &self.api.bot_token).then(|| me.clone())
+    }
+
     /// The bot's identity in its workspace, asked of Slack once for these
     /// tokens.
     fn me(&self) -> Result<Me, SlackError> {
-        let company = self.api.company.clone();
-        if let Ok(identities) = self.identities.lock()
-            && let Some((token, me)) = identities.get(&company)
-            && *token == self.api.bot_token
-        {
-            return Ok(me.clone());
+        if let Some(me) = self.cached_identity() {
+            return Ok(me);
         }
+        let company = self.api.company.clone();
         let me = self.api.identity()?;
         if let Ok(mut identities) = self.identities.lock() {
             identities.insert(company, (self.api.bot_token.clone(), me.clone()));
@@ -847,12 +855,23 @@ impl Slack {
     fn names(&self) -> Names<'_> {
         Names {
             api: &self.api,
-            known: match self.names.lock() {
-                Ok(known) => known,
-                Err(poisoned) => poisoned.into_inner(),
-            },
+            known: &self.names,
         }
     }
+}
+
+fn cached_names<T>(
+    names: &Mutex<HashMap<String, String>>,
+    render: impl FnOnce(&mut dyn FnMut(&str) -> String) -> T,
+) -> T {
+    let known = names.try_lock().ok();
+    render(&mut |user| {
+        known
+            .as_ref()
+            .and_then(|names| names.get(user))
+            .cloned()
+            .unwrap_or_else(|| user.to_owned())
+    })
 }
 
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
@@ -892,9 +911,7 @@ impl Connector for Slack {
         match self.api.user(sender) {
             Ok(record) => match admission(&record, &me) {
                 Some(admitted) => {
-                    self.names()
-                        .known
-                        .insert(sender.to_owned(), admitted.name.clone());
+                    self.names().remember(sender, &admitted.name);
                     Admission::Admitted(admitted)
                 }
                 None => Admission::NotOwn,
@@ -916,25 +933,41 @@ impl Connector for Slack {
         message: &str,
         previous: Option<&str>,
         text: &str,
+        readable: &dyn Fn(instrukt_connector::ContextSnapshot),
     ) -> Result<Captured, ConnectorError> {
-        let me = self.me().map_err(failed)?;
-        let text = self.names().written(text);
-        let accompanying =
-            accompanying(self, &me, conversation, message, previous).map_err(failed)?;
-        Ok(Captured { text, accompanying })
+        let (messages, left_out) =
+            read_context(self, conversation, message, previous).map_err(failed)?;
+        let me = self.cached_identity();
+        let snapshot_me = me.clone();
+        let messages = Arc::new(messages);
+        let snapshot_messages = Arc::clone(&messages);
+        let snapshot_text = text.to_owned();
+        let names = Arc::clone(&self.names);
+        readable(Box::new(move || {
+            cached_names(&names, |lookup| {
+                render_context(
+                    &snapshot_text,
+                    &snapshot_messages,
+                    left_out,
+                    snapshot_me.as_ref(),
+                    lookup,
+                )
+            })
+        }));
+        let me = me.or_else(|| self.me().ok());
+        let mut names = self.names();
+        Ok(render_context(
+            text,
+            &messages,
+            left_out,
+            me.as_ref(),
+            &mut |user| names.of(user),
+        ))
     }
 
     fn without_context(&self, text: &str) -> Captured {
-        let known = self.names.try_lock().ok();
-        let text = written_mentions(text, |user| {
-            known
-                .as_ref()
-                .and_then(|names| names.get(user))
-                .cloned()
-                .unwrap_or_else(|| user.to_owned())
-        });
         Captured {
-            text,
+            text: cached_names(&self.names, |lookup| written_mentions(text, lookup)),
             accompanying: Accompanying {
                 unread: true,
                 ..Default::default()
@@ -1174,34 +1207,37 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
 /// thread — or of those since the previous one, at most `context_messages`
 /// of the most recent, and whether earlier ones were left out. Speakers are
 /// named and mentions written as names, as for the addressed message.
-fn accompanying(
+fn read_context(
     slack: &Slack,
-    me: &Me,
     conversation: &str,
     message: &str,
     previous: Option<&str>,
-) -> Result<Accompanying, SlackError> {
+) -> Result<(Vec<Value>, bool), SlackError> {
     let (channel, thread) = split_conversation(conversation);
-    let ts = message;
     let cap = usize::try_from(slack.context_messages).unwrap_or(usize::MAX);
-    let api = &slack.api;
-    let (earlier, left_out) = match previous {
-        Some(previous) => api.read(channel, thread, Some(previous), ts, cap, false)?,
+    match previous {
+        Some(previous) => slack
+            .api
+            .read(channel, thread, Some(previous), message, cap, false),
         None => {
-            let within = thread.filter(|thread| *thread != ts);
-            api.read(channel, within, None, ts, cap, false)?
+            let within = thread.filter(|thread| *thread != message);
+            slack.api.read(channel, within, None, message, cap, false)
         }
-    };
-    let mut names = slack.names();
+    }
+}
+
+fn render_context(
+    text: &str,
+    earlier: &[Value],
+    left_out: bool,
+    me: Option<&Me>,
+    lookup: &mut dyn FnMut(&str) -> String,
+) -> Captured {
+    let text = written_mentions(text, &mut *lookup);
     let messages = earlier
         .iter()
         .map(|m| {
             let user = m.get("user").and_then(Value::as_str).unwrap_or_default();
-            let own = m
-                .get("bot_id")
-                .and_then(Value::as_str)
-                .is_some_and(|bot| Some(bot) == me.bot.as_deref())
-                || (!user.is_empty() && user == me.user);
             let speaker = if user.is_empty() {
                 m.get("username")
                     .or_else(|| m.get("bot_id"))
@@ -1209,21 +1245,27 @@ fn accompanying(
                     .unwrap_or_default()
                     .to_owned()
             } else {
-                names.of(user)
+                lookup(user)
             };
             Earlier {
                 speaker,
-                own,
+                own: me.is_some_and(|me| own_message(m, me)),
                 at: m.get("ts").and_then(Value::as_str).and_then(ts_time),
-                text: names.written(m.get("text").and_then(Value::as_str).unwrap_or_default()),
+                text: written_mentions(
+                    m.get("text").and_then(Value::as_str).unwrap_or_default(),
+                    &mut *lookup,
+                ),
             }
         })
         .collect();
-    Ok(Accompanying {
-        messages,
-        left_out,
-        unread: false,
-    })
+    Captured {
+        text,
+        accompanying: Accompanying {
+            messages,
+            left_out,
+            unread: false,
+        },
+    }
 }
 
 #[cfg(test)]

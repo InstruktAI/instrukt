@@ -242,7 +242,7 @@ pub fn unread(
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT m.conversation,m.message,(SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1),m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
+                .prepare("SELECT m.conversation,m.message,CASE WHEN json_type(m.context_json,'$.previous') IS NOT NULL THEN json_extract(m.context_json,'$.previous') ELSE (SELECT p.message FROM conversation_messages p WHERE p.company=m.company AND p.connector=m.connector AND p.conversation=m.conversation AND p.written_us<m.written_us ORDER BY p.written_us DESC, p.message DESC LIMIT 1) END,m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.state=?3 ORDER BY m.written_us, m.message")
                 .map_err(state::sql(path))?;
             q.query_map(params![company.as_str(), connector, Stage::Received.as_str()], |r| {
                 Ok(Unread {
@@ -279,8 +279,8 @@ pub fn admitted(
 ) -> Result<(), ConversationError> {
     RunnerState::new(home).write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,admitted_at=?8,admission_position=(SELECT coalesce(max(admission_position),0)+1 FROM conversation_messages),failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
-            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str(), now.to_string()],
+            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,admitted_at=?8,admission_position=(SELECT coalesce(max(admission_position),0)+1 FROM conversation_messages),context_json=json_object('previous',?9),failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
+            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str(), now.to_string(), unread.previous],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())

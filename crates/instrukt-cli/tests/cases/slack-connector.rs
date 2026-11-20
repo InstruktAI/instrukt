@@ -420,17 +420,36 @@ fn the_agents_answer_is_posted_as_markdown_it_wrote_and_a_long_one_in_parts() {
 // spec: project/instrukt/spec/feature/company/slack-connector UC-SL6
 #[test]
 fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
+    std::thread::scope(|scope| {
+        scope.spawn(readable_context_survives_a_held_speaker_lookup);
+        unread_context_expires_during_an_unrelated_sender_lookup();
+    });
+}
+
+const CONTEXT_LIMIT: jiff::SignedDuration = jiff::SignedDuration::from_secs(120);
+
+fn set_context_clock(clock: &std::path::Path, at: jiff::Timestamp) {
+    let next = clock.with_extension("next");
+    std::fs::write(&next, at.to_string()).unwrap();
+    std::fs::rename(next, clock).unwrap();
+}
+
+fn context_company() -> (Company, std::path::PathBuf, jiff::Timestamp) {
     let mut c = Company::new("");
     let clock = c.env.path("context-clock");
-    let at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
-    let set_clock = |at: jiff::Timestamp| {
-        let next = clock.with_extension("next");
-        std::fs::write(&next, at.to_string()).unwrap();
-        std::fs::rename(next, &clock).unwrap();
-    };
-    set_clock(at);
+    let at = "2026-11-19T10:00:00Z".parse().unwrap();
+    set_context_clock(&clock, at);
     c.env
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
+    let pass = c.env.path("context-pass");
+    c.env
+        .set_env("INSTRUKT_TEST_CONTEXT_PASS", pass.to_str().unwrap());
+    (c, clock, at)
+}
+
+fn unread_context_expires_during_an_unrelated_sender_lookup() {
+    let (mut c, clock, at) = context_company();
     c.slack.refuse_replies(true);
     c.run();
 
@@ -470,18 +489,40 @@ fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
 
     c.slack.hold_reads();
     c.slack.refuse_replies(false);
-    let deadline = at + instrukt_company::conversations::CONTEXT_BOUND;
-    set_clock(deadline - jiff::SignedDuration::from_secs(1));
+    let deadline = at + CONTEXT_LIMIT;
+    let before = deadline - jiff::SignedDuration::from_secs(1);
+    set_context_clock(&clock, before);
     wait(
         "a context retry is still in flight just before its deadline",
-        || c.slack.held() > 0,
+        || c.slack.held() > 0 || !c.sessions().is_empty(),
     );
+    #[cfg(debug_assertions)]
+    wait(
+        "intake evaluated the full 119 seconds before expiry",
+        || {
+            std::fs::read_to_string(c.env.path("context-pass"))
+                .is_ok_and(|seen| seen == before.to_string())
+        },
+    );
+    let state: String = db
+        .query_row(
+            "SELECT state FROM conversation_messages WHERE message=?1",
+            [&question],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "received", "context must wait the full two minutes");
     assert!(c.sessions().is_empty());
 
-    set_clock(deadline);
+    c.slack.hold_lookups_for("UANNA");
+    c.slack.direct("D99", "UANNA", "What changed?");
+    wait("the unrelated sender lookup is held", || {
+        c.slack.held_lookups() > 0
+    });
+    set_context_clock(&clock, deadline);
     crate::common::wait_until(
-        "the saved question reaches the agent at expiry while the read is held",
-        std::time::Duration::from_secs(20),
+        "the saved question reaches the agent at expiry while both reads are held",
+        std::time::Duration::from_secs(12),
         || !c.sessions().is_empty(),
     );
     let session = c.session();
@@ -490,11 +531,70 @@ fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
     assert_eq!(delivered.accompanying, 0);
     assert!(!delivered.left_out);
     insta::assert_snapshot!("unread-thread-context", c.input(&session, 0));
-    c.finish_turn(&session, 0, "The notes are in the wiki.");
+    let reply = "The notes are in the wiki.";
+    c.finish_turn(&session, 0, reply);
     wait(
-        "the member gets the answer while the read is still held",
-        || c.slack.posts().len() == 1,
+        "the member gets the answer while both lookups are held",
+        || !c.slack.posts().is_empty(),
     );
-    assert_eq!(c.slack.posts_beginning("The notes are in the wiki."), 1);
+    let expected = [Post {
+        channel: "C1".into(),
+        thread: Some(thread),
+        text: None,
+        markdown: Some(reply.into()),
+    }];
+    assert_eq!(c.slack.posts(), expected);
+
+    c.slack.release_lookups();
     c.slack.release_reads();
+    let log = c
+        .env
+        .home()
+        .join(".local/state/instrukt-ai/instrukt/run.log");
+    wait(
+        "the late readable context has returned and been discarded",
+        || {
+            std::fs::read_to_string(&log).is_ok_and(|log| {
+                log.lines().any(|line| {
+                    line.contains("event=conversation_context_late_result")
+                        && line.contains(&question)
+                })
+            })
+        },
+    );
+    assert_eq!(c.runtime.message_count(&session), 1);
+    assert_eq!(c.slack.posts(), expected);
+}
+
+fn readable_context_survives_a_held_speaker_lookup() {
+    let (mut c, _, _) = context_company();
+    c.slack.hold_lookups_for("UANNA");
+    c.run();
+    let earlier = "The earlier message Slack already returned.";
+    let thread = c.slack.say("C1", "UANNA", earlier, None);
+    c.slack.mention(
+        "C1",
+        "USTEVEN",
+        "<@UAGENT> What did Anna say?",
+        Some(&thread),
+    );
+    wait(
+        "the context was read and the earlier speaker's name lookup is held",
+        || c.slack.held_lookups() > 0,
+    );
+    crate::common::wait_until(
+        "the readable context reaches the agent while the speaker lookup is held",
+        std::time::Duration::from_secs(12),
+        || !c.sessions().is_empty(),
+    );
+    let session = c.session();
+    let input = c.input(&session, 0);
+    assert!(input.contains(earlier), "{input}");
+    assert!(input.contains("--- UANNA ·"), "{input}");
+    assert!(
+        !input.contains("Earlier messages could not be read."),
+        "{input}"
+    );
+    assert_eq!(c.delivered(&session, 0).accompanying, 1);
+    c.slack.release_lookups();
 }

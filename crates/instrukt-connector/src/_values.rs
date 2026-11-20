@@ -88,6 +88,10 @@ pub struct Captured {
     pub accompanying: Accompanying,
 }
 
+/// Render context already read, using the names available at delivery.
+/// This snapshot performs no provider I/O.
+pub type ContextSnapshot = Box<dyn FnOnce() -> Captured + Send>;
+
 /// What a connector declares about its channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {

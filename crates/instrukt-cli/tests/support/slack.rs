@@ -178,6 +178,7 @@ struct Workspace {
     held_posts: usize,
     /// `users.info` answers wait until released.
     hold_lookups: bool,
+    hold_lookups_for: std::collections::BTreeSet<String>,
     /// How many lookups were held back.
     held_lookups: usize,
     reads: usize,
@@ -266,7 +267,15 @@ impl FakeSlack {
                         }
                         let mut counted = false;
                         while method == "users.info"
-                            && workspace.lock().unwrap().hold_lookups
+                            && {
+                                let workspace = workspace.lock().unwrap();
+                                workspace.hold_lookups
+                                    || body.split('&').any(|field| {
+                                        field.strip_prefix("user=").is_some_and(|user| {
+                                            workspace.hold_lookups_for.contains(user)
+                                        })
+                                    })
+                            }
                             && !stop.load(Ordering::Acquire)
                         {
                             if !counted {
@@ -895,8 +904,18 @@ impl FakeSlack {
         self.workspace.lock().unwrap().hold_lookups = true;
     }
 
+    pub fn hold_lookups_for(&self, user: &str) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .hold_lookups_for
+            .insert(user.to_owned());
+    }
+
     pub fn release_lookups(&self) {
-        self.workspace.lock().unwrap().hold_lookups = false;
+        let mut workspace = self.workspace.lock().unwrap();
+        workspace.hold_lookups = false;
+        workspace.hold_lookups_for.clear();
     }
 
     /// How many lookups were held back while lookups were held.
