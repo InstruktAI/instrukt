@@ -1,5 +1,6 @@
 //! Native database notifications drive the runner's independent relay reader.
 use super::{LinkError, failure, relay, status};
+use crate::interfaces::CompanyRelayPass;
 use instrukt_core::{
     config::{Current, Env},
     home::Home,
@@ -122,35 +123,42 @@ fn serve(
     *delay = Duration::from_secs(1);
     if let Some(cause) = failing.take() {
         tracing::info!(event = "conversation_relay_recovered", cause = %cause);
-        if let Some(destinations) = destinations {
-            destinations.company.relay_state(home, None);
-        }
+    }
+    // The source is acquired: a failure recorded for the relay ends, whether
+    // this process recorded it or an earlier runner did.
+    if let Some(destinations) = destinations {
+        destinations.company.relay_state(home, None);
     }
     // Links catch up at startup and on source changes only (native
     // notifications, and a missing source file that is now watched);
     // connector arrivals and the retry bound drive conversation work alone.
     let mut links_due = true;
+    let mut pass = CompanyRelayPass::CatchUp;
     loop {
-        if links_due {
-            if let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
-                record(home, &error);
-            }
-            links_due = false;
+        let source_pass = std::mem::take(&mut links_due);
+        if source_pass && let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
+            record(home, &error);
         }
         if let Some(destinations) = destinations
-            && let Err(error) =
-                destinations
-                    .company
-                    .relay(home, &current.get(), source.as_ref(), adapter.as_ref())
+            && let Err(error) = destinations.company.relay(
+                home,
+                &current.get(),
+                source.as_ref(),
+                adapter.as_ref(),
+                pass,
+            )
         {
             tracing::warn!(event = "conversation_relay_failed", error = %error);
+        }
+        if source_pass {
+            tracing::debug!(event = "conversation_relay_source_processed");
         }
         // Retained connector work that is not yet done is retried within a
         // bound; otherwise only a native change or new intake wakes the relay.
         let retry = destinations
             .is_some_and(|destinations| destinations.company.outstanding(home).unwrap_or(true));
         let until = std::time::Instant::now() + Duration::from_secs(2);
-        loop {
+        pass = loop {
             if stopping.try_recv().is_ok() {
                 return Ok(());
             }
@@ -158,19 +166,21 @@ fn serve(
                 d.arrivals
                     .lock()
                     .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
-            }) || (retry && std::time::Instant::now() >= until)
-            {
-                break;
+            }) {
+                break CompanyRelayPass::CatchUp;
+            }
+            if retry && std::time::Instant::now() >= until {
+                break CompanyRelayPass::Retry;
             }
             match notifications.wait(Duration::from_millis(100)) {
                 Ok(true) => {
                     links_due = true;
-                    break;
+                    break CompanyRelayPass::CatchUp;
                 }
                 Ok(false) => {}
                 Err(error) => return Err(LinkError::Source(error)),
             }
-        }
+        };
     }
 }
 fn observe_stopped(failure: &mut Option<LinkError>) -> Result<(), LinkError> {

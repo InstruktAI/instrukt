@@ -102,8 +102,11 @@ pub struct Company {
     turns: u64,
 }
 
+/// Waits for `condition`, longer than the connector's own bound on a Web API
+/// call (30 seconds), so a post slow under load is never taken for one that
+/// did not come.
 pub fn wait(what: &str, condition: impl FnMut() -> bool) {
-    common::wait_until(what, Duration::from_secs(20), condition);
+    common::wait_until(what, Duration::from_secs(45), condition);
 }
 
 /// The paths of the files process `pid` holds open, as the operating system
@@ -391,10 +394,15 @@ impl Company {
     /// The runtime finishes the turn started by the session's `n`th input,
     /// answering with `reply`, and the session becomes idle.
     pub fn finish_turn(&mut self, session: &str, n: usize, reply: &str) {
-        self.turns += 1;
-        let turn = format!("turn-{}", self.turns);
         self.store
             .thread(session, None, None, "2026-11-08T10:00:00.000Z");
+        self.finish_projected_turn(session, n, reply);
+    }
+
+    /// Complete a turn in an already projected thread with a single commit.
+    pub fn finish_projected_turn(&mut self, session: &str, n: usize, reply: &str) {
+        self.turns += 1;
+        let turn = format!("turn-{}", self.turns);
         let input = self.runtime.message(session, n);
         self.store.turn(session, &turn, self.turns, &input, reply);
         self.runtime.set_status(session, "idle");

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use crate::common::TestEnv;
 
 const SCRIPT: &str = r###"#!/usr/bin/env python3
-import json, os, pathlib, sqlite3, subprocess, sys
+import json, os, pathlib, sqlite3, subprocess, sys, time
 root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
@@ -133,6 +133,12 @@ def sync_inputs():
                     native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':status,'startedAt':at if entered else None,'requestedAt':at,'completedAt':completed}
                     if lifecycle: native['ordinal']=len(runs)
                     upsert('orchestration_v2_projection_runs',dict(run_id=run,thread_id=thread['threadId'],status=native['status'],requested_at=at,completed_at=completed,payload_json=json.dumps(native)))
+        # With `hide-inputs`, a thread whose id the flag file names keeps no
+        # input in the projection: its running turn's opening cannot be read.
+        hidden=root/'hide-inputs'
+        if hidden.exists():
+            for thread in hidden.read_text().split():
+                connection.execute("DELETE FROM orchestration_v2_projection_messages WHERE message_id LIKE ?",('fake:'+thread+':input:%',))
 def save(t):
     temporary=root/(t['threadId']+'.'+str(os.getpid())+'.tmp')
     temporary.write_text(json.dumps(t)); temporary.replace(root/(t['threadId']+'.json')); sync_inputs()
@@ -149,6 +155,9 @@ if command=='list':
         copy=dict(threads[0]); copy['threadId']='duplicate'; threads.append(copy)
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
+    while (root/'hold-start').exists():
+        (root/'start-held').touch(); time.sleep(0.02)
+    if (root/'start-failure').exists(): print('start failed',file=sys.stderr); sys.exit(1)
     if (root/'empty-start').exists(): sys.exit(0)
     if (root/'die-before-start').exists():
         (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
@@ -157,6 +166,9 @@ elif command=='start':
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
     t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
+    # With `queued-start`, the runtime accepts the thread's opening input
+    # and keeps it queued: neither entered nor completed.
+    if (root/'queued-start').exists(): t['status']='queued'
     if '--worktree' in flags:
         folder=root/'worktrees'/id
         folder.parent.mkdir(exist_ok=True)
@@ -319,6 +331,22 @@ impl FakeT3 {
         } else if p.exists() {
             std::fs::remove_file(p).unwrap();
         }
+    }
+    /// Whether a start has been held by the `hold-start` flag.
+    pub fn start_held(&self) -> bool {
+        self.state.join("start-held").exists()
+    }
+    /// The run thread `id` has active, as the fake records it.
+    pub fn active_run(&self, id: &str) -> String {
+        self.read(id)["activeRunId"].as_str().unwrap().to_owned()
+    }
+    /// Thread `id`'s inputs leave T3's projection and stay out until
+    /// [`FakeT3::show_inputs`].
+    pub fn hide_inputs(&self, id: &str) {
+        std::fs::write(self.state.join("hide-inputs"), id).unwrap();
+    }
+    pub fn show_inputs(&self) {
+        self.flag("hide-inputs", false);
     }
     pub fn set_status(&self, id: &str, value: &str) {
         if matches!(value, "idle" | "completed" | "stopped" | "failed") {

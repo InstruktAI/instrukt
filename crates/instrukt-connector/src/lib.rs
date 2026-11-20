@@ -19,5 +19,5 @@ pub use _connector::{Connector, Inbox, Kind, SecretResolver};
 pub use _declaration::{Declaration, Declared, Field, Rule};
 pub use _values::{
     Accompanying, Admission, Captured, Clock, ConnectorError, Earlier, Incoming, Limits, Place,
-    Sender,
+    Sender, Status,
 };

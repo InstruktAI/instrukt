@@ -984,8 +984,14 @@ fn discussion_log(env: &common::TestEnv, command: &str, link: &str) -> String {
             .join(format!(".local/state/instrukt-ai/instrukt/{command}.log")),
     )
     .unwrap();
+    let link_field = format!("link={link}");
     log.lines()
-        .filter(|line| line.contains("event=conversation_") || line.contains("event=discussion_"))
+        .filter(|line| {
+            (line.contains("event=conversation_") || line.contains("event=discussion_"))
+                && line
+                    .split_ascii_whitespace()
+                    .any(|field| field == link_field)
+        })
         .map(|line| {
             let line = line.split_once(' ').unwrap().1.replace(link, "[LINK]");
             let mut line = diagnostic_reference(&line);

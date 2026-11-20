@@ -7,7 +7,7 @@
 //! follow from the retained record, retried until done. A connector is
 //! opened from the admitted generation current at each pass, its secrets
 //! resolved from that generation: no connector reads a company's files.
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use instrukt_connector::{
     Admission, Clock, Connector, ConnectorError, Declared, Inbox, Incoming, Kind, Place,
-    SecretResolver, Sender,
+    SecretResolver, Sender, Status,
 };
 use instrukt_core::config::{Admitted, AdmittedSecrets, Current};
 use instrukt_core::home::Home;
@@ -463,7 +463,9 @@ fn intake_worker(
     while !stop.load(Ordering::Acquire) {
         if nudged || Instant::now() >= retry_at {
             let clean = match reach.connectors.open(&reach.current.get(), company, key) {
-                Ok(connector) => intake(home, company, key, connector.as_ref(), wakes),
+                Ok(connector) => intake(home, company, key, connector.as_ref(), wakes, &|| {
+                    reach.connectors.now()
+                }),
                 // A failure before any request stays with the outstanding work.
                 Err(error) => {
                     if let Err(record) =
@@ -528,6 +530,7 @@ fn intake(
     key: &str,
     connector: &dyn Connector,
     wakes: Wakes<'_>,
+    now: &dyn Fn() -> Timestamp,
 ) -> bool {
     let mut clean = true;
     let result = (|| -> Result<(), conversations::ConversationError> {
@@ -547,7 +550,7 @@ fn intake(
                 };
                 match next_record(connector.admit(sender)) {
                     Next::Admitted(admitted) => {
-                        conversations::admitted(home, company, key, &unread, &admitted)?;
+                        conversations::admitted(home, company, key, &unread, &admitted, now())?;
                         // Its working indicator is arranged now, not after
                         // the batch.
                         let _ = wakes.status.try_send(());
@@ -604,46 +607,69 @@ fn intake(
     clean
 }
 
-/// What one working pass does: the places to set (unfinished work whose
-/// indicator was not set yet, or was set `refresh` ago or more) and the
-/// places to clear (set by this process, with no unfinished work left).
+/// What one status shows for the unfinished messages it serves: the
+/// unavailable text while every one of them has its interval open;
+/// otherwise the newest message the agent has written in the running turn,
+/// or the working text before it has one.
+fn shown(statuses: &[&Status]) -> Status {
+    if !statuses.is_empty()
+        && statuses
+            .iter()
+            .all(|status| **status == Status::Unavailable)
+    {
+        return Status::Unavailable;
+    }
+    statuses
+        .iter()
+        .find_map(|status| match status {
+            Status::Update(update) => Some(Status::Update(update.clone())),
+            _ => None,
+        })
+        .unwrap_or(Status::Working)
+}
+
+/// What one status pass does: the places to set (unfinished work whose
+/// status was not set yet, shows something else now, or was set `refresh`
+/// ago or more) and the places to clear (set by this process, with no
+/// unfinished work left).
 #[derive(Debug, PartialEq, Eq)]
-struct WorkingPass {
-    set: Vec<Place>,
+struct StatusPass {
+    set: Vec<(Place, Status)>,
     clear: Vec<Place>,
 }
 
-fn working_pass(
-    wanted: &[Place],
-    attempted: &HashMap<Place, Instant>,
+fn status_pass(
+    wanted: &BTreeMap<Place, Status>,
+    attempted: &HashMap<Place, (Instant, Status)>,
     now: Instant,
     refresh: Option<Duration>,
-) -> WorkingPass {
-    let wanted: BTreeSet<&Place> = wanted.iter().collect();
+) -> StatusPass {
     let set = wanted
         .iter()
-        .filter(|place| {
-            attempted.get(**place).is_none_or(|at| {
-                refresh.is_some_and(|interval| now.saturating_duration_since(*at) >= interval)
+        .filter(|(place, status)| {
+            attempted.get(*place).is_none_or(|(at, shown)| {
+                shown != *status
+                    || refresh
+                        .is_some_and(|interval| now.saturating_duration_since(*at) >= interval)
             })
         })
-        .map(|place| (*place).clone())
+        .map(|(place, status)| (place.clone(), status.clone()))
         .collect();
     let mut clear: Vec<Place> = attempted
         .keys()
-        .filter(|place| !wanted.contains(place))
+        .filter(|place| !wanted.contains_key(*place))
         .cloned()
         .collect();
     clear.sort();
-    WorkingPass { set, clear }
+    StatusPass { set, clear }
 }
 
-/// The working indicator for one company, a courtesy kept on a best-effort
-/// basis apart from intake and the relay, so no indicator call holds a
-/// message. A plain periodic pass reads the places with unfinished admitted
-/// messages and does what [`working_pass`] decides. A message's admission
-/// wakes the pass, so its first indicator comes promptly. A call that fails
-/// or is skipped is left to the next regular setting; nothing is made up for
+/// The status for one company, a courtesy kept on a best-effort basis apart
+/// from intake and the relay, so no status call holds a message. A plain
+/// periodic pass reads the unfinished admitted messages with what each one's
+/// status shows and does what [`status_pass`] decides. A message's admission
+/// wakes the pass, so its first status comes promptly. A call that fails or
+/// is skipped is left to the next regular setting; nothing is made up for
 /// and nothing set by an earlier run is cleared.
 fn status_worker(
     home: &Home,
@@ -653,7 +679,7 @@ fn status_worker(
     stop: &dyn Fn() -> bool,
     admitted: &std::sync::mpsc::Receiver<()>,
 ) {
-    let mut attempted: HashMap<Place, Instant> = HashMap::new();
+    let mut attempted: HashMap<Place, (Instant, Status)> = HashMap::new();
     let mut failing: Option<String> = None;
     while !stop() {
         let pass = reach
@@ -661,16 +687,22 @@ fn status_worker(
             .open(&reach.current.get(), company, key)
             .map_err(|error| error.cause)
             .and_then(|connector| {
-                let working =
-                    conversations::working(home, company, key).map_err(|e| e.to_string())?;
-                Ok((connector, working))
+                let unfinished =
+                    conversations::unfinished(home, company, key).map_err(|e| e.to_string())?;
+                Ok((connector, unfinished))
             });
         match pass {
-            Ok((connector, working)) => {
+            Ok((connector, unfinished)) => {
                 if let Some(cause) = failing.take() {
                     tracing::info!(target: LOG_TARGET, event = "connector_status_recovered", company = %company, cause = %cause);
                 }
-                keep(connector.as_ref(), company, key, &working, &mut attempted);
+                keep(
+                    connector.as_ref(),
+                    company,
+                    key,
+                    &unfinished,
+                    &mut attempted,
+                );
             }
             // A continuing cause is logged once, when it starts or changes.
             Err(cause) => {
@@ -689,33 +721,55 @@ fn status_worker(
     }
 }
 
-/// One working pass on `connector`: set what stays and is due, clear once
-/// what no longer stays. Each call's outcome is only logged.
+/// What each place with unfinished work shows, where `connector` places
+/// each message.
+fn wanted(
+    connector: &dyn Connector,
+    unfinished: &[conversations::Unfinished],
+) -> BTreeMap<Place, Status> {
+    let mut served: BTreeMap<Place, Vec<&Status>> = BTreeMap::new();
+    for message in unfinished {
+        served
+            .entry(connector.place(&message.conversation, &message.message))
+            .or_default()
+            .push(&message.status);
+    }
+    served
+        .into_iter()
+        .map(|(place, statuses)| (place, shown(&statuses)))
+        .collect()
+}
+
+/// One status pass on `connector`: set what stays and is due or changed,
+/// clear once what no longer stays. Each call's outcome is only logged.
 fn keep(
     connector: &dyn Connector,
     company: &ProjectSlug,
     key: &str,
-    working: &[(String, String)],
-    attempted: &mut HashMap<Place, Instant>,
+    unfinished: &[conversations::Unfinished],
+    attempted: &mut HashMap<Place, (Instant, Status)>,
 ) {
-    let wanted: Vec<Place> = working
-        .iter()
-        .map(|(conversation, message)| connector.place(conversation, message))
-        .collect();
+    let wanted = wanted(connector, unfinished);
     let now = Instant::now();
-    let pass = working_pass(&wanted, attempted, now, connector.limits().working_refresh);
-    for place in pass.set {
-        attempted.insert(place.clone(), now);
-        call(connector, company, key, &place, true);
+    let pass = status_pass(&wanted, attempted, now, connector.limits().working_refresh);
+    for (place, status) in pass.set {
+        call(connector, company, key, &place, Some(&status));
+        attempted.insert(place, (now, status));
     }
     for place in pass.clear {
         attempted.remove(&place);
-        call(connector, company, key, &place, false);
+        call(connector, company, key, &place, None);
     }
 }
 
-fn call(connector: &dyn Connector, company: &ProjectSlug, key: &str, place: &Place, on: bool) {
-    if let Err(error) = connector.working(place, on) {
+fn call(
+    connector: &dyn Connector,
+    company: &ProjectSlug,
+    key: &str,
+    place: &Place,
+    status: Option<&Status>,
+) {
+    if let Err(error) = connector.status(place, status) {
         tracing::debug!(target: LOG_TARGET, event = "connector_status_skipped", company = %company, connector = key, error = %error);
     }
 }
@@ -723,9 +777,9 @@ fn call(connector: &dyn Connector, company: &ProjectSlug, key: &str, place: &Pla
 #[cfg(test)]
 mod test_connector {
     //! An in-memory connector whose facts each test sets: its limits and
-    //! where it places a message's working indicator. It records nothing.
+    //! where it places a message's status. It records nothing.
     use instrukt_connector::{
-        Admission, Captured, Connector, ConnectorError, Inbox, Limits, Place,
+        Admission, Captured, Connector, ConnectorError, Inbox, Limits, Place, Status,
     };
 
     pub(super) struct TestConnector {
@@ -773,7 +827,7 @@ mod test_connector {
                 Place(conversation.to_owned(), conversation.to_owned())
             }
         }
-        fn working(&self, _: &Place, _: bool) -> Result<(), ConnectorError> {
+        fn status(&self, _: &Place, _: Option<&Status>) -> Result<(), ConnectorError> {
             Ok(())
         }
     }
@@ -795,49 +849,97 @@ mod tests {
         }
     }
 
-    fn places(connector: &TestConnector, working: &[(&str, &str)]) -> Vec<Place> {
-        working
+    fn unfinished(messages: &[(&str, &str, Status)]) -> Vec<conversations::Unfinished> {
+        messages
             .iter()
-            .map(|(conversation, message)| connector.place(conversation, message))
+            .map(
+                |(conversation, message, status)| conversations::Unfinished {
+                    conversation: (*conversation).to_owned(),
+                    message: (*message).to_owned(),
+                    status: status.clone(),
+                },
+            )
             .collect()
     }
 
+    fn place(connector: &TestConnector, conversation: &str, message: &str) -> Place {
+        connector.place(conversation, message)
+    }
+
     #[test]
-    fn the_working_pass_sets_new_and_due_places_and_clears_finished_ones() {
+    fn the_status_pass_sets_new_changed_and_due_places_and_clears_finished_ones() {
         let connector = connector(false);
         let base = Instant::now();
         let refresh = connector.limits.working_refresh;
-        let wanted = places(&connector, &[("C1", "1"), ("C1", "2"), ("C2", "3")]);
+        let wanted = wanted(
+            &connector,
+            &unfinished(&[
+                ("C1", "1", Status::Working),
+                ("C1", "2", Status::Working),
+                ("C2", "3", Status::Working),
+            ]),
+        );
         // Nothing set yet: each place with unfinished work is set once.
-        let first = working_pass(&wanted, &HashMap::new(), base, refresh);
-        assert_eq!(first.set, places(&connector, &[("C1", "1"), ("C2", "3")]));
+        let first = status_pass(&wanted, &HashMap::new(), base, refresh);
+        assert_eq!(
+            first.set,
+            [
+                (place(&connector, "C1", "1"), Status::Working),
+                (place(&connector, "C2", "3"), Status::Working)
+            ]
+        );
         assert!(first.clear.is_empty());
-        let mut attempted: HashMap<Place, Instant> = first
+        let mut attempted: HashMap<Place, (Instant, Status)> = first
             .set
             .iter()
-            .map(|place| (place.clone(), base))
+            .map(|(place, status)| (place.clone(), (base, status.clone())))
             .collect();
         // Before the interval nothing is set again.
-        let early = working_pass(&wanted, &attempted, base + Duration::from_secs(29), refresh);
+        let early = status_pass(&wanted, &attempted, base + Duration::from_secs(29), refresh);
         assert!(early.set.is_empty());
+        // A place whose state changed is set at the next pass.
+        let changed = BTreeMap::from([(place(&connector, "C1", "1"), Status::Unavailable)]);
+        let next = status_pass(&changed, &attempted, base + Duration::from_secs(1), refresh);
+        assert_eq!(
+            next.set,
+            [(place(&connector, "C1", "1"), Status::Unavailable)]
+        );
         // At the interval a place that still has work is set again; one
         // whose work finished is cleared.
-        let later = places(&connector, &[("C1", "1")]);
-        let due = working_pass(&later, &attempted, base + Duration::from_secs(30), refresh);
-        assert_eq!(due.set, later);
-        assert_eq!(due.clear, places(&connector, &[("C2", "3")]));
+        let later = BTreeMap::from([(place(&connector, "C1", "1"), Status::Working)]);
+        let due = status_pass(&later, &attempted, base + Duration::from_secs(30), refresh);
+        assert_eq!(due.set, [(place(&connector, "C1", "1"), Status::Working)]);
+        assert_eq!(due.clear, [place(&connector, "C2", "3")]);
         // Without a refresh interval a set place is never set again.
-        attempted.insert(later[0].clone(), base);
-        let once = working_pass(&later, &attempted, base + Duration::from_secs(600), None);
+        attempted.insert(place(&connector, "C1", "1"), (base, Status::Working));
+        let once = status_pass(&later, &attempted, base + Duration::from_secs(600), None);
         assert!(once.set.is_empty());
     }
 
     #[test]
-    fn the_working_pass_follows_where_the_connector_places_each_message() {
+    fn the_status_pass_follows_where_the_connector_places_each_message() {
         let connector = connector(true);
-        let wanted = places(&connector, &[("D1", "1"), ("D1", "2")]);
-        let pass = working_pass(&wanted, &HashMap::new(), Instant::now(), None);
+        let wanted = wanted(
+            &connector,
+            &unfinished(&[("D1", "1", Status::Working), ("D1", "2", Status::Working)]),
+        );
+        let pass = status_pass(&wanted, &HashMap::new(), Instant::now(), None);
         assert_eq!(pass.set.len(), 2);
+    }
+
+    #[test]
+    fn one_status_says_unavailable_only_while_every_message_it_serves_is() {
+        let update = Status::Update("Reading the release notes.".to_owned());
+        assert_eq!(
+            shown(&[&Status::Unavailable, &Status::Unavailable]),
+            Status::Unavailable
+        );
+        assert_eq!(shown(&[&Status::Unavailable, &update]), update);
+        assert_eq!(
+            shown(&[&Status::Unavailable, &Status::Working]),
+            Status::Working
+        );
+        assert_eq!(shown(&[&Status::Working, &update]), update);
     }
 
     #[test]

@@ -43,7 +43,7 @@ the owners of the required behavior.
 | Upstream surface | Instrukt contracts to check |
 | --- | --- |
 | Contracts package, `packages/contracts/` | Runtime operations, response shapes and capability evidence in `project/instrukt/spec/feature/runner/session-continuity`. |
-| Server persistence migrations, `apps/server/src/persistence/Migrations.ts` and `apps/server/src/persistence/Migrations/`, and their projection writer, `apps/server/src/orchestration-v2/ProjectionStore.ts` | Runtime-owned conversation-source compatibility in `project/instrukt/spec/feature/runner/session-continuity`, extraction in `project/instrukt/spec/feature/runner/history`, and finished-turn relay in `project/instrukt/spec/feature/runner/conversation-links`. |
+| Server persistence migrations, `apps/server/src/persistence/Migrations.ts` and `apps/server/src/persistence/Migrations/`, and their projection writer, `apps/server/src/orchestration-v2/ProjectionStore.ts` | Runtime-owned conversation-source compatibility in `project/instrukt/spec/feature/runner/session-continuity`, extraction in `project/instrukt/spec/feature/runner/history`, finished-turn relay in `project/instrukt/spec/feature/runner/conversation-links`, and the running turn's assistant messages a conversation's status shows in `project/instrukt/spec/feature/company/conversations`. |
 | CLI entry and commands, `apps/server/scripts/cli.ts` and `apps/server/src/cli/` | Unattended runtime operations and evidence in `project/instrukt/spec/feature/runner/session-continuity`, and native input delivery in `project/instrukt/spec/feature/runner/conversation-links`. |
 
 ### Isolation and real evidence
@@ -198,8 +198,10 @@ And it leaves the maintainer's runtime and home untouched
   streaming/completion, reasoning/tool/diff payload generation, provider-created
   subagents, native child results, actual token/quota accounting and authenticated
   provider readiness are not live exercised. Completed-turn relay attribution
-  and ordering over provider-produced records therefore remain outside this
-  live guarantee; passing an empty-table shape check proves no such payload.
+  and ordering over provider-produced records, and the running turn's newest
+  assistant message a conversation's status shows, therefore remain outside
+  this live guarantee; passing an empty-table shape check proves no such
+  payload.
 - CLI start with an opening message starts execution. Its successful model turn,
   ready-thread send/consumption, automatic wake after completion and their fake
   success paths are not verified by provider-free help or queue acceptance.

@@ -179,8 +179,9 @@ connector gives.
   the notice read the same interval, the relay-wide failure included, so the
   indication never says working while the notice's minute runs. A slow but healthy
   start shows the working text. While the message's turn runs, the indication
-  carries the runtime's status updates for that turn, relayed as the runtime
-  reports them; before the first update it is the working text. The indication follows the message, not its turn: through a
+  carries the newest message the agent has written in the running turn,
+  relayed as the runtime records it, and keeps it until the turn's answer is
+  posted; before the agent has written one it is the working text. The indication follows the message, not its turn: through a
   failed turn awaiting redelivery and through an answer complete but not yet
   posted, it stays, with the text its interval gives; it is a courtesy, and each connector states
   how closely it follows the state.
@@ -203,7 +204,7 @@ is told only what belongs to their world):
 | Moment | What the person sees |
 | --- | --- |
 | Their message is admitted | The connector's indication of its state (above). |
-| The agent works on it, however long | The runtime's status updates for the turn, as it reports them; the indication that the assistant is working on the request until the first one. |
+| The agent works on it, however long | The newest message the agent has written in the running turn, as the runtime records it; the indication that the assistant is working on the request until the agent has written one. |
 | A failure shows the agent cannot work on it | The indication that the assistant is temporarily unavailable and the message is saved, from the next status pass after its no-work interval opens. |
 | The agent has been unable to work on it for one minute | One message, worded by the connector, beginning with the person's mention: "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again." Once per person and conversation until an answer to that person has been posted. |
 | The work is done | The agent's answer; the person never repeats their message. |
@@ -224,8 +225,12 @@ open nothing. It starts, if not already open:
 - when it has been handed to a turn: at the first failed observation of that turn
   (session state unobservable, source unreadable) — loss of reachability for work
   already handed over;
-- when its own turn is observed ended — with output, or failed — while its answer
-  is not posted.
+- when its own turn is observed ended failed;
+- when its own turn ended with an answer that cannot be posted: a post of it
+  failed, or it is found unposted after a post of it was tried, a restart
+  included. The interval then starts at that turn's end. A turn that ended and
+  whose answer is being posted opens nothing: the unavailable indication shows
+  only while a failure keeps the agent's answer from the person.
 
 It ends, for that message only: when the runtime accepts its hand-over (a
 redelivery included); when its own turn is observed running again; when a turn it

@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::connector_host::Connectors;
 use instrukt_runner::envelopes::{self, ContextEntry, Control, Span};
+use instrukt_runner::interfaces::CompanyRelayPass;
 use instrukt_runner::keyed::{self, RuntimeInvocation};
 use instrukt_runner::runtime::conversations::{
     AuthorKind, ConversationSource, Scope, SourcePosition,
@@ -246,19 +247,21 @@ pub fn unread(
         .unwrap_or_default())
 }
 
-/// Record the sender of a received message as admitted, with the name and
-/// email address the provider gave; once written they do not change.
+/// Record the sender of a received message as admitted at `now`, with the
+/// name and email address the provider gave; once written they do not
+/// change.
 pub fn admitted(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
     unread: &Unread,
     sender: &Sender,
+    now: Timestamp,
 ) -> Result<(), ConversationError> {
     RunnerState::new(home).write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
-            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str()],
+            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,admitted_at=?8,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
+            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str(), now.to_string()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -319,28 +322,94 @@ pub fn waiting(
     Ok(())
 }
 
-/// The admitted messages of one company's connector whose turn has not yet
-/// ended, oldest written first: those the connector shows the agent working
-/// on.
-pub fn working(
+/// When a message's no-work interval opened, as the status and the notice
+/// both read it: its own interval, or, while the relay cannot acquire the
+/// conversation source, that failure's start clamped at the message's
+/// admission, whichever is earlier. `None` while neither is open.
+pub fn effective_since(
+    own: Option<Timestamp>,
+    admitted: Option<Timestamp>,
+    relay: Option<Timestamp>,
+) -> Option<Timestamp> {
+    let relay = relay.map(|since| admitted.map_or(since, |admitted| since.max(admitted)));
+    match (own, relay) {
+        (Some(own), Some(relay)) => Some(own.min(relay)),
+        (own, relay) => own.or(relay),
+    }
+}
+
+/// An unfinished admitted message, and what its status shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unfinished {
+    pub conversation: String,
+    pub message: String,
+    pub status: instrukt_connector::Status,
+}
+
+/// The admitted messages of one company's connector that are not complete,
+/// oldest written first, each with what its status shows. A message is
+/// complete once its answer is posted, or its turn completed with nothing to
+/// post; one whose answer is not yet posted stays unfinished. It shows the
+/// unavailable text while its effective interval ([`effective_since`]) is
+/// open, the newest message the agent has written in its turn once there is
+/// one, until its answer is posted, and the working text otherwise.
+pub fn unfinished(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
-) -> Result<Vec<(String, String)>, ConversationError> {
-    Ok(RunnerState::new(home)
-        .read(|conn, path| {
-            let mut q = conn
-                .prepare("SELECT conversation,message FROM conversation_messages WHERE company=?1 AND connector=?2 AND ((state=?3 AND sender_name IS NOT NULL) OR state IN (?4,?5)) ORDER BY written_us, message")
-                .map_err(state::sql(path))?;
-            q.query_map(
-                params![company.as_str(), connector, Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+) -> Result<Vec<Unfinished>, ConversationError> {
+    type Row = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let read = RunnerState::new(home).read(|conn, path| {
+        let relay: Option<Option<String>> = conn
+            .query_row("SELECT updated_at FROM conversation_relay WHERE id=1 AND failure IS NOT NULL", [], |r| r.get(0))
+            .optional()
+            .map_err(state::sql(path))?;
+        let mut q = conn
+            .prepare("SELECT m.conversation,m.message,m.unavailable_since,m.admitted_at,m.turn_update FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5) OR (m.state=?6 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL))) ORDER BY m.written_us, m.message")
+            .map_err(state::sql(path))?;
+        let rows: Vec<Row> = q
+            .query_map(
+                params![company.as_str(), connector, Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str(), Stage::Answered.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(state::sql(path))
-        })?
-        .unwrap_or_default())
+            .map_err(state::sql(path))?;
+        Ok((relay.flatten(), rows))
+    })?;
+    let Some((relay, rows)) = read else {
+        return Ok(Vec::new());
+    };
+    let at = |text: Option<String>| -> Result<Option<Timestamp>, ConversationError> {
+        text.map(|text| {
+            text.parse::<Timestamp>().map_err(|e| {
+                ConversationError::Refused(format!("unreadable interval time `{text}`: {e}"))
+            })
+        })
+        .transpose()
+    };
+    let relay = at(relay)?;
+    rows.into_iter()
+        .map(|(conversation, message, own, admitted, update)| {
+            let open = effective_since(at(own)?, at(admitted)?, relay).is_some();
+            let status = match update {
+                _ if open => instrukt_connector::Status::Unavailable,
+                Some(update) => instrukt_connector::Status::Update(update),
+                _ => instrukt_connector::Status::Working,
+            };
+            Ok(Unfinished {
+                conversation,
+                message,
+                status,
+            })
+        })
+        .collect()
 }
 
 /// Record what accompanies an admitted received message and frame it for
@@ -549,12 +618,29 @@ struct Message {
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
 
-fn conversations(state: &RunnerState) -> Result<Vec<Conversation>, ConversationError> {
-    let sql = format!("SELECT {CONVERSATION_COLUMNS} FROM connected_conversations ORDER BY rowid");
+const RELAY_WORK: &str = "SELECT company,connector,conversation FROM conversation_messages WHERE state IN (?1,?2,?3)
+    UNION ALL SELECT company,connector,conversation FROM conversation_answers WHERE posted_at IS NULL";
+
+fn relay_stages() -> [&'static str; 3] {
+    [
+        Stage::Received.as_str(),
+        Stage::Pending.as_str(),
+        Stage::Sent.as_str(),
+    ]
+}
+
+fn conversations(
+    state: &RunnerState,
+    restriction: &str,
+    values: impl instrukt_core::state_db::rusqlite::Params,
+) -> Result<Vec<Conversation>, ConversationError> {
+    let sql = format!(
+        "SELECT {CONVERSATION_COLUMNS} FROM connected_conversations {restriction} ORDER BY rowid"
+    );
     let rows = state
         .read(|conn, path| {
             let mut q = conn.prepare(&sql).map_err(state::sql(path))?;
-            q.query_map([], |r| {
+            q.query_map(values, |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -609,9 +695,12 @@ fn reread(
     state: &RunnerState,
     c: &Conversation,
 ) -> Result<Option<Conversation>, ConversationError> {
-    Ok(conversations(state)?
-        .into_iter()
-        .find(|o| o.semantic_key == c.semantic_key))
+    Ok(conversations(
+        state,
+        "WHERE company=?1 AND connector=?2 AND conversation=?3",
+        params![c.company.as_str(), c.connector, c.conversation],
+    )?
+    .pop())
 }
 
 /// The conversation's messages neither answered nor refused, oldest written
@@ -781,8 +870,68 @@ fn set_message_failure(
     })
 }
 
-/// The runtime accepted `message` as its own turn; a first message's
-/// acceptance also binds the conversation's session.
+/// Open the no-work interval of each of `messages` at `at`, where none is
+/// open: a confirmed failure keeps the agent from the work they wait on.
+fn unavailable(
+    state: &RunnerState,
+    c: &Conversation,
+    messages: &[String],
+    at: Timestamp,
+) -> Result<(), StateError> {
+    if messages.is_empty() {
+        return Ok(());
+    }
+    state.write(|tx| {
+        for message in messages {
+            tx.execute(
+                "UPDATE conversation_messages SET unavailable_since=coalesce(unavailable_since,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                params![c.company.as_str(), c.connector, c.conversation, message, at.to_string()],
+            )
+            .map_err(state::sql(&state::db_path(tx)))?;
+        }
+        Ok(())
+    })
+}
+
+/// Close the no-work interval of each of `messages`: the work on them is
+/// shown to go on.
+fn available(state: &RunnerState, c: &Conversation, messages: &[String]) -> Result<(), StateError> {
+    if messages.is_empty() {
+        return Ok(());
+    }
+    state.write(|tx| {
+        for message in messages {
+            tx.execute(
+                "UPDATE conversation_messages SET unavailable_since=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND unavailable_since IS NOT NULL",
+                params![c.company.as_str(), c.connector, c.conversation, message],
+            )
+            .map_err(state::sql(&state::db_path(tx)))?;
+        }
+        Ok(())
+    })
+}
+
+/// Keep `update`, the newest message the agent has written in the running
+/// turn of `message`, as what its status shows.
+fn turn_update(
+    state: &RunnerState,
+    c: &Conversation,
+    message: &str,
+    update: Option<&str>,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET turn_update=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND turn_update IS NOT ?5",
+            params![c.company.as_str(), c.connector, c.conversation, message, update],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
+}
+
+/// The runtime accepted `message` as its own turn, which ends its no-work
+/// interval; a first message's acceptance also binds the conversation's
+/// session.
 fn accepted(
     state: &RunnerState,
     c: &Conversation,
@@ -792,7 +941,7 @@ fn accepted(
     state.write(|tx| {
         let path = state::db_path(tx);
         tx.execute(
-            "UPDATE conversation_messages SET state=?5,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+            "UPDATE conversation_messages SET state=?5,failure=NULL,unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
             params![c.company.as_str(), c.connector, c.conversation, message, Stage::Sent.as_str()],
         )
         .map_err(state::sql(&path))?;
@@ -807,6 +956,20 @@ fn accepted(
     })
 }
 
+/// The message the conversation delivers next, if one is ready: none while a
+/// turn it handed over has not finished. Until its session is bound, a
+/// captured opening request belongs to its own message alone.
+fn next_message<'a>(open: &'a [Message], c: &Conversation) -> Option<&'a Message> {
+    if open.iter().any(|m| m.stage == Stage::Sent) {
+        return None;
+    }
+    let next = match (&c.session, &c.opening) {
+        (None, Some(opening)) => open.iter().find(|m| &m.message == opening),
+        _ => open.first(),
+    }?;
+    (next.stage == Stage::Pending).then_some(next)
+}
+
 /// Deliver the conversation's next addressed message. The first starts its
 /// session by key in the company's home, with an opening request owned by
 /// that one message; a later one waits until the session's current turn has
@@ -818,25 +981,13 @@ fn deliver_one(
     source: &dyn ConversationSource,
     state: &RunnerState,
     c: &Conversation,
-    now: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
+    let now = clock();
     let open = open_messages(state, c)?;
-    if open.iter().any(|m| m.stage == Stage::Sent) {
-        return Ok(());
-    }
-    // A captured opening request belongs to its own message alone.
-    // Until its session is bound, a captured opening request belongs to its
-    // own message alone.
-    let next = match (&c.session, &c.opening) {
-        (None, Some(opening)) => open.iter().find(|m| &m.message == opening),
-        _ => open.first(),
-    };
-    let Some(next) = next else {
+    let Some(next) = next_message(&open, c) else {
         return Ok(());
     };
-    if next.stage != Stage::Pending {
-        return Ok(());
-    }
     let result = match &c.session {
         None => start(invocation, admitted, adapter, source, c, next, now),
         Some(session) => send(adapter, state, c, session, next, now),
@@ -860,6 +1011,12 @@ fn deliver_one(
         tracing::warn!(target: LOG_TARGET, event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
     }
     set_message_failure(state, c, &next.message, failure.as_deref())?;
+    // A start, send or listing that is refused or fails keeps the agent from
+    // the message: its no-work interval opens when the failure is
+    // established, read on the clock then.
+    if result.is_err() {
+        unavailable(state, c, std::slice::from_ref(&next.message), clock())?;
+    }
     result
 }
 
@@ -1054,6 +1211,7 @@ fn harvest(
     source: &dyn ConversationSource,
     c: &Conversation,
     message_chars: usize,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
     let (Some(session), Some(mut position)) = (c.session.clone(), c.position.clone()) else {
         return Ok(());
@@ -1137,6 +1295,7 @@ fn harvest(
             ));
         }
         position = batch.position;
+        let ended = clock();
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             for (message, turn, output) in &answers {
@@ -1149,9 +1308,14 @@ fn harvest(
                 }
                 tx.execute(
                     // The finished turn proves the message was accepted: its
-                    // resolved delivery cause is retired with it.
-                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                    params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn],
+                    // resolved delivery cause is retired with it. Its turn's
+                    // end is kept before any post is tried: a post that then
+                    // fails opens its interval from that end. A turn with an
+                    // answer to post opens nothing now, and its status keeps
+                    // its newest message while the answer is posted; one with
+                    // nothing to post completes the message.
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                    params![c.company.as_str(), c.connector, c.conversation, message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
             }
@@ -1367,9 +1531,25 @@ fn piece_failed(
     Ok(())
 }
 
+/// How this relay pass stands with the runtime's dispatch lock: not asked
+/// for yet, held, or not had within its wait.
+enum Dispatch {
+    Untried,
+    Held(RuntimeInvocation),
+    TimedOut,
+}
+
+/// How long the relay waits for a conversation's lock or the runtime's
+/// dispatch lock before it leaves that work for its next pass.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The connector destination of the finished-turn relay `instrukt run`
 /// already hosts: for every conversation, read its finished turns into
-/// answers, post what is retained, then deliver its next addressed message.
+/// answers, post what is retained, observe the turn its session runs, then
+/// deliver its next addressed message. A conversation whose lock is not had
+/// within its wait is left for the next pass, as is delivery while the
+/// runtime's dispatch lock is not had; the messages that waited on either
+/// have their no-work interval opened.
 pub fn relay(
     home: &Home,
     admitted: &Admitted,
@@ -1377,11 +1557,32 @@ pub fn relay(
     adapter: &dyn RuntimeAdapter,
     connectors: &dyn Connectors,
     accepted: &Accepted,
+    pass: CompanyRelayPass,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
-    let mut invocation = None;
-    for initial in conversations(&state)? {
-        let _lock = lock(home, &initial)?;
+    let mut dispatch = Dispatch::Untried;
+    let work = match pass {
+        CompanyRelayPass::CatchUp => conversations(&state, "", [])?,
+        CompanyRelayPass::Retry => conversations(
+            &state,
+            &format!("WHERE (company,connector,conversation) IN ({RELAY_WORK})"),
+            relay_stages(),
+        )?,
+    };
+    for initial in work {
+        let _lock = match lock(home, &initial) {
+            Ok(lock) => lock,
+            Err(error) => {
+                tracing::warn!(target: LOG_TARGET, event = "conversation_lock_unavailable", company = %initial.company, connector = %initial.connector, key = %initial.semantic_key, error = %error);
+                let waited = open_messages(&state, &initial)?
+                    .into_iter()
+                    .filter(|m| matches!(m.stage, Stage::Pending | Stage::Sent))
+                    .map(|m| m.message)
+                    .collect::<Vec<_>>();
+                unavailable(&state, &initial, &waited, connectors.now())?;
+                continue;
+            }
+        };
         let Some(c) = reread(&state, &initial)? else {
             continue;
         };
@@ -1411,26 +1612,40 @@ pub fn relay(
         let Some(c) = reread(&state, &c)? else {
             continue;
         };
-        if invocation.is_none() {
-            invocation = Some(RuntimeInvocation::acquire(
-                home,
-                std::time::Duration::from_secs(120),
-            )?);
+        observe(adapter, source, &state, &c, &|| connectors.now())?;
+        let ready = next_message(&open_messages(&state, &c)?, &c).map(|m| m.message.clone());
+        let Some(ready) = ready else {
+            continue;
+        };
+        if matches!(dispatch, Dispatch::Untried) {
+            dispatch = match RuntimeInvocation::acquire(home, LOCK_WAIT) {
+                Ok(invocation) => Dispatch::Held(invocation),
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, event = "conversation_dispatch_unavailable", error = %error);
+                    Dispatch::TimedOut
+                }
+            };
         }
-        if let Some(invocation) = &invocation {
-            // Its failure stays with the message it concerns.
-            let _ = deliver_one(
-                invocation,
-                admitted,
-                adapter,
-                source,
-                &state,
-                &c,
-                // Restrictions are judged on the runner's clock, as dispatch
-                // and `agents availability` judge them.
-                connectors.now(),
-            );
-        }
+        let invocation = match &dispatch {
+            Dispatch::Held(invocation) => invocation,
+            // The message waited on the dispatch lock it did not get.
+            Dispatch::TimedOut | Dispatch::Untried => {
+                unavailable(&state, &c, std::slice::from_ref(&ready), connectors.now())?;
+                continue;
+            }
+        };
+        // Its failure stays with the message it concerns.
+        let _ = deliver_one(
+            invocation,
+            admitted,
+            adapter,
+            source,
+            &state,
+            &c,
+            // Restrictions are judged on the runner's clock, as dispatch
+            // and `agents availability` judge them.
+            &|| connectors.now(),
+        );
         // A session bound just now may be one a recovery found with its
         // opening turn already finished while the runner was down: its answer
         // is read now, not left for an unrelated native change.
@@ -1441,12 +1656,101 @@ pub fn relay(
             answers(admitted, &state, source, connectors, accepted, &bound)?;
         }
     }
+    clear_idle_answer_failures(&state)?;
+    Ok(())
+}
+
+/// A conversation without remaining answer work has no answer-read failure
+/// to report. Clear it without locking the conversation or reading T3, even
+/// when all other work is also finished.
+fn clear_idle_answer_failures(state: &RunnerState) -> Result<(), StateError> {
+    let idle_failure =
+        format!("failure IS NOT NULL AND (company,connector,conversation) NOT IN ({RELAY_WORK})");
+    let due = state.read(|conn, path| {
+        conn.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM connected_conversations WHERE {idle_failure})"),
+            relay_stages(),
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(state::sql(path))
+    })?;
+    if !due.unwrap_or(false) {
+        return Ok(());
+    }
+    state.write(|tx| {
+        tx.execute(
+            &format!("UPDATE connected_conversations SET failure=NULL WHERE {idle_failure}"),
+            relay_stages(),
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
+}
+
+/// What the session's running turn shows of the messages handed to it. A
+/// running turn shows the work going on for every message waiting behind it,
+/// and for its own message, whose status then shows the newest message the
+/// agent has written in it. A session whose turn cannot be observed opens the
+/// no-work interval of what was handed to it; one showing no running turn
+/// changes nothing.
+fn observe(
+    adapter: &dyn RuntimeAdapter,
+    source: &dyn ConversationSource,
+    state: &RunnerState,
+    c: &Conversation,
+    clock: &dyn Fn() -> Timestamp,
+) -> Result<(), ConversationError> {
+    let Some(session) = &c.session else {
+        return Ok(());
+    };
+    let open = open_messages(state, c)?;
+    let names = |stage: Stage| {
+        open.iter()
+            .filter(|m| m.stage == stage)
+            .map(|m| m.message.clone())
+            .collect::<Vec<_>>()
+    };
+    let (sent, waiting) = (names(Stage::Sent), names(Stage::Pending));
+    if sent.is_empty() && waiting.is_empty() {
+        return Ok(());
+    }
+    let opening = match adapter.active_turn_input(session) {
+        Ok(Some(opening)) => opening,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            tracing::debug!(target: LOG_TARGET, event = "conversation_turn_unobserved", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+            unavailable(state, c, &sent, clock())?;
+            return Ok(());
+        }
+    };
+    available(state, c, &waiting)?;
+    let own = envelopes::segment(&opening)
+        .into_iter()
+        .find_map(|span| match span {
+            Span::Member { boundary, .. } => open
+                .iter()
+                .find(|m| m.stage == Stage::Sent && m.boundary.as_deref() == Some(boundary)),
+            _ => None,
+        });
+    let Some(own) = own else {
+        return Ok(());
+    };
+    available(state, c, std::slice::from_ref(&own.message))?;
+    match source.latest_update(&session.id) {
+        Ok(update) => turn_update(state, c, &own.message, update.as_deref())?,
+        Err(error) => {
+            tracing::debug!(target: LOG_TARGET, event = "conversation_turn_unobserved", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+            unavailable(state, c, std::slice::from_ref(&own.message), clock())?;
+        }
+    }
     Ok(())
 }
 
 /// Read the conversation's finished turns into answers and post what is
 /// retained. Returns whether the read succeeded; its cause is kept on the
-/// conversation until a later read recovers.
+/// conversation until a later read recovers. A failed read opens the no-work
+/// interval of the turns handed over; a turn read as ended whose answer is
+/// not posted opens its message's, and a posted answer closes it.
 fn answers(
     admitted: &Admitted,
     state: &RunnerState,
@@ -1455,12 +1759,20 @@ fn answers(
     accepted: &Accepted,
     c: &Conversation,
 ) -> Result<bool, ConversationError> {
+    // An answer tried earlier and not confirmed is kept from the person
+    // whatever this pass manages: its interval opens before anything here
+    // can fail.
+    unconfirmed(state, c, connectors.now())?;
     // Answers are split to the connector's own limit, so reading them waits
     // until the connector can be opened.
     let read = connectors
         .open(admitted, &c.company, &c.connector)
         .map_err(ConversationError::from)
-        .and_then(|connector| harvest(state, source, c, connector.limits().message_chars));
+        .and_then(|connector| {
+            harvest(state, source, c, connector.limits().message_chars, &|| {
+                connectors.now()
+            })
+        });
     set_failure(
         state,
         c,
@@ -1468,22 +1780,65 @@ fn answers(
     )?;
     if let Err(error) = read {
         tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+        let sent = open_messages(state, c)?
+            .into_iter()
+            .filter(|m| m.stage == Stage::Sent)
+            .map(|m| m.message)
+            .collect::<Vec<_>>();
+        unavailable(state, c, &sent, connectors.now())?;
         return Ok(false);
     }
     if let Err(error) = post(admitted, state, connectors, accepted, c) {
         tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
+    ended(state, c, connectors.now())?;
     Ok(true)
 }
 
-/// Whether any conversation work is outstanding: a message not yet
-/// accepted, an answer not yet posted or a refusal not yet sent.
+const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL";
+
+/// After the posts of a pass: a message whose answer is posted is complete,
+/// its interval closed and its update gone. One whose answer is still not
+/// posted although a post of it was tried has its interval opened, as
+/// [`unconfirmed`] does.
+fn ended(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<(), StateError> {
+    state.write::<_, StateError>(|tx| {
+        tx.execute(
+            &format!("UPDATE conversation_messages SET unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND (unavailable_since IS NOT NULL OR turn_update IS NOT NULL) AND NOT EXISTS({UNPOSTED})"),
+            params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })?;
+    unconfirmed(state, c, now)
+}
+
+/// A message whose answer is not posted although a post of it was tried —
+/// it failed, or its outcome was lost, a restart included — has its interval
+/// opened from its turn's end (`now` for a turn ended before that end was
+/// kept). A post that was not tried yet opens nothing: the healthy path never
+/// shows the unavailable text.
+fn unconfirmed(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<(), StateError> {
+    state.write(|tx| {
+        tx.execute(
+            &format!("UPDATE conversation_messages SET unavailable_since=coalesce(turn_ended_at,?5) WHERE company=?1 AND connector=?2 AND conversation=?3 AND state=?4 AND unavailable_since IS NULL AND EXISTS({UNPOSTED} AND (x.attempted_at IS NOT NULL OR x.failure IS NOT NULL))"),
+            params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), now.to_string()],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
+}
+
+/// Whether any conversation work is outstanding. A sent message stays
+/// outstanding until its turn is harvested: a native wake can precede
+/// readable completion evidence, and that read needs another chance even
+/// when the source makes no further write.
 pub fn outstanding(home: &Home) -> Result<bool, ConversationError> {
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE state IN (?1,?2)) OR EXISTS(SELECT 1 FROM conversation_answers WHERE posted_at IS NULL) OR EXISTS(SELECT 1 FROM conversation_refusals WHERE replied_at IS NULL)",
-                [Stage::Received.as_str(), Stage::Pending.as_str()],
+                &format!("SELECT EXISTS({RELAY_WORK}) OR EXISTS(SELECT 1 FROM conversation_refusals WHERE replied_at IS NULL)"),
+                relay_stages(),
                 |r| r.get::<_, bool>(0),
             )
             .map_err(state::sql(path))
@@ -1491,13 +1846,14 @@ pub fn outstanding(home: &Home) -> Result<bool, ConversationError> {
         .unwrap_or(false))
 }
 
-/// Record whether the finished-turn relay serving conversations runs: the
-/// cause of its failure to start or of its end, kept until it runs again.
-pub fn relay_state(home: &Home, failure: Option<&str>) {
+/// Record at `now` whether the finished-turn relay serving conversations
+/// runs: the cause of its failure to start or of its end, kept until it runs
+/// again, with the start of that failure kept across its retries.
+pub fn relay_state(home: &Home, failure: Option<&str>, now: Timestamp) {
     let result = RunnerState::new(home).write::<_, StateError>(|tx| {
         tx.execute(
-            "INSERT INTO conversation_relay(id,failure,updated_at) VALUES (1,?1,?2) ON CONFLICT(id) DO UPDATE SET failure=excluded.failure,updated_at=excluded.updated_at",
-            params![failure, Timestamp::now().to_string()],
+            "INSERT INTO conversation_relay(id,failure,updated_at) VALUES (1,?1,?2) ON CONFLICT(id) DO UPDATE SET failure=excluded.failure,updated_at=CASE WHEN excluded.failure IS NOT NULL AND conversation_relay.failure IS NOT NULL THEN conversation_relay.updated_at ELSE excluded.updated_at END",
+            params![failure, now.to_string()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -1865,6 +2221,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
         admitted: &Admitted,
         source: &dyn ConversationSource,
         adapter: &dyn RuntimeAdapter,
+        pass: CompanyRelayPass,
     ) -> Result<(), instrukt_runner::interfaces::CompanyError> {
         let Some(connectors) = self.hosted() else {
             return Ok(());
@@ -1876,6 +2233,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
             adapter,
             connectors.as_ref(),
             &self.accepted,
+            pass,
         )
         .map_err(company_error)
     }
@@ -1884,8 +2242,13 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
         outstanding(home).map_err(company_error)
     }
 
+    /// Recorded on the clock the hosted connectors read, or the system's
+    /// before any are hosted.
     fn relay_state(&self, home: &Home, failure: Option<&str>) {
-        relay_state(home, failure);
+        let now = self
+            .hosted()
+            .map_or_else(Timestamp::now, |connectors| connectors.now());
+        relay_state(home, failure, now);
     }
 
     fn status(
@@ -1906,9 +2269,50 @@ impl instrukt_runner::interfaces::CompanySupervision for crate::connector_host::
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage, opening_procedure,
-        split,
+        COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage, effective_since,
+        opening_procedure, split,
     };
+
+    #[test]
+    fn a_messages_interval_is_its_own_or_the_relays_failure_from_its_admission() {
+        let at = |text: &str| Some(text.parse::<jiff::Timestamp>().unwrap());
+        // Nothing open: no interval.
+        assert_eq!(
+            effective_since(None, at("2026-11-19T10:00:00Z"), None),
+            None
+        );
+        // Its own interval alone.
+        assert_eq!(
+            effective_since(at("2026-11-19T10:05:00Z"), at("2026-11-19T10:00:00Z"), None),
+            at("2026-11-19T10:05:00Z")
+        );
+        // A relay failure that began before the message was admitted counts
+        // from its admission.
+        assert_eq!(
+            effective_since(None, at("2026-11-19T10:00:00Z"), at("2026-11-19T09:00:00Z")),
+            at("2026-11-19T10:00:00Z")
+        );
+        // One that began after it counts from its start.
+        assert_eq!(
+            effective_since(None, at("2026-11-19T10:00:00Z"), at("2026-11-19T10:02:00Z")),
+            at("2026-11-19T10:02:00Z")
+        );
+        // Both open: the earlier one.
+        assert_eq!(
+            effective_since(
+                at("2026-11-19T10:01:00Z"),
+                at("2026-11-19T10:00:00Z"),
+                at("2026-11-19T10:02:00Z")
+            ),
+            at("2026-11-19T10:01:00Z")
+        );
+        // A message admitted before its admission was recorded counts from
+        // the relay failure's start.
+        assert_eq!(
+            effective_since(None, None, at("2026-11-19T09:00:00Z")),
+            at("2026-11-19T09:00:00Z")
+        );
+    }
 
     /// An index holding the procedure declaring the conversation role,
     /// pending its delivering todo when `pending`.

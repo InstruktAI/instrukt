@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use instrukt_connector::{
     Accompanying, Admission, Captured, Clock, Connector, ConnectorError, Declaration, Declared,
-    Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender,
+    Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender, Status,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -28,9 +28,13 @@ pub const SLACK: &str = "slack";
 /// receives, in a channel and in a direct message alike.
 pub const TURN_AWAY: &str = "I only answer members of this workspace.";
 
-/// The text of Slack's status line while the agent works; Slack puts the
-/// app's name in front of it.
+/// The text of Slack's status line from a message's admission until the
+/// agent has written in its running turn; Slack puts the app's name in front
+/// of it.
 pub const WORKING: &str = "is working on your request";
+
+/// The status text while the assistant cannot work on a message.
+pub const UNAVAILABLE: &str = "is temporarily unavailable — your message is saved";
 
 /// Slack's own user that posts its notices; never one of the company's own.
 const SLACKBOT: &str = "USLACKBOT";
@@ -906,10 +910,16 @@ impl Connector for Slack {
         Place(channel.to_owned(), thread.unwrap_or(message).to_owned())
     }
 
-    fn working(&self, place: &Place, on: bool) -> Result<(), ConnectorError> {
-        self.api
-            .status(&place.0, &place.1, if on { WORKING } else { "" })
-            .map_err(failed)
+    /// The two fixed texts, the agent's own message as it wrote it, or an
+    /// empty status, which clears it.
+    fn status(&self, place: &Place, state: Option<&Status>) -> Result<(), ConnectorError> {
+        let text = match state {
+            Some(Status::Working) => WORKING,
+            Some(Status::Unavailable) => UNAVAILABLE,
+            Some(Status::Update(text)) => text.as_str(),
+            None => "",
+        };
+        self.api.status(&place.0, &place.1, text).map_err(failed)
     }
 }
 

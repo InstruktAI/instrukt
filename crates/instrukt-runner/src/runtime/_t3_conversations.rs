@@ -10,7 +10,7 @@ use instrukt_core::state_db::rusqlite::types::ValueRef;
 use instrukt_core::{
     config::Env,
     home::Home,
-    state_db::rusqlite::{Connection, OpenFlags, params},
+    state_db::rusqlite::{Connection, OpenFlags, OptionalExtension, params},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -182,6 +182,56 @@ pub(super) fn active_opening(
         .as_str()
         .map(|text| Some(text.to_owned()))
         .ok_or_else(|| source_error("opening input text"))
+}
+
+/// The newest assistant message the runtime has recorded in `thread`'s
+/// running turn, taken whole: the run [`active_opening`] takes as the
+/// thread's active one, and among that run's `assistant_message` turn items
+/// no longer streaming, the one with the highest ordinal, its text as T3
+/// recorded it, whatever phase the provider gave it. `None` when no run is
+/// active, or the active one has no finished assistant message yet.
+fn latest_update(path: &Path, thread: &str) -> Result<Option<String>, SourceError> {
+    let db = open(path)?;
+    let run: Option<String> = db
+        .query_row(
+            "SELECT run_id FROM orchestration_v2_projection_runs \
+             WHERE thread_id=?1 AND status IN ('starting','running','waiting') \
+             ORDER BY rowid DESC LIMIT 1",
+            params![thread],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(run) = run else {
+        return Ok(None);
+    };
+    let mut statement = db.prepare(
+        "SELECT payload_json FROM orchestration_v2_projection_turn_items \
+         WHERE thread_id=?1 AND type='assistant_message' \
+         AND json_extract(payload_json,'$.runId')=?2 ORDER BY rowid",
+    )?;
+    let items = statement
+        .query_map(params![thread, run], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut newest: Option<(u64, String)> = None;
+    for item in items {
+        let item: Value = serde_json::from_str(&item)?;
+        if item["threadId"] != thread || item["runId"] != run.as_str() {
+            return Err(source_error("assistant message identity"));
+        }
+        if item["streaming"].as_bool() == Some(true) {
+            continue;
+        }
+        let ordinal = item["ordinal"]
+            .as_u64()
+            .ok_or_else(|| source_error("assistant message ordinal"))?;
+        let text = item["text"]
+            .as_str()
+            .ok_or_else(|| source_error("assistant message text"))?;
+        if newest.as_ref().is_none_or(|(at, _)| ordinal >= *at) {
+            newest = Some((ordinal, text.to_owned()));
+        }
+    }
+    Ok(newest.map(|(_, text)| text))
 }
 
 /// Run allocation precedes entry: queued/preparing inputs already have run IDs.
@@ -894,5 +944,8 @@ impl ConversationSource for T3Conversations {
     }
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError> {
         super::_t3_notifications::subscribe(&self.path)
+    }
+    fn latest_update(&self, thread: &SessionId) -> Result<Option<String>, SourceError> {
+        latest_update(&self.path, thread.as_str())
     }
 }

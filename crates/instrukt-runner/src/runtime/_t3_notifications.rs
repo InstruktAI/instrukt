@@ -4,6 +4,12 @@ use std::path::Path;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(super) fn subscribe(path: &Path) -> Result<Box<dyn ConversationNotifications>, SourceError> {
+    #[cfg(debug_assertions)]
+    if instrukt_core::fsx::fence_active()
+        && let Some(path) = std::env::var_os("INSTRUKT_TEST_T3_WAKES")
+    {
+        return fixture::subscribe(path.into());
+    }
     native::subscribe(path)
 }
 
@@ -13,6 +19,53 @@ pub(super) fn subscribe(_path: &Path) -> Result<Box<dyn ConversationNotification
     Err(SourceError::Shape(
         "native source notifications are unsupported",
     ))
+}
+
+/// A notification source supplied by the out-of-process T3 fixture. Each
+/// revision is consumed once, independently of SQLite's filesystem activity.
+#[cfg(all(debug_assertions, any(target_os = "macos", target_os = "linux")))]
+mod fixture {
+    use super::{ConversationNotifications, SourceError};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    struct Fixture {
+        path: PathBuf,
+        revision: u64,
+    }
+
+    pub(super) fn subscribe(
+        path: PathBuf,
+    ) -> Result<Box<dyn ConversationNotifications>, SourceError> {
+        Ok(Box::new(Fixture {
+            revision: revision(&path)?,
+            path,
+        }))
+    }
+
+    fn revision(path: &Path) -> Result<u64, SourceError> {
+        std::fs::read_to_string(path)
+            .map_err(|source| SourceError::Io {
+                path: path.to_owned(),
+                source,
+            })?
+            .trim()
+            .parse()
+            .map_err(|_| SourceError::Shape("invalid fixture notification revision"))
+    }
+
+    impl ConversationNotifications for Fixture {
+        fn wait(&mut self, timeout: Duration) -> Result<bool, SourceError> {
+            std::thread::sleep(timeout);
+            let revision = revision(&self.path)?;
+            if revision <= self.revision {
+                return Ok(false);
+            }
+            self.revision = revision;
+            tracing::debug!(event = "t3_fixture_wake", revision);
+            Ok(true)
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
