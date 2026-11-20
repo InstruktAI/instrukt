@@ -701,25 +701,49 @@ and `message`, the connector's identity of that message.
 | `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
+| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully without a reply, keeping its status and notice coverage without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
 | `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
 | `turn` | The native turn that answered it; `NULL` until then. |
-| `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
+| `failure` | Cause of its last failed capture, delivery, or turn. `NULL` once the message is served. A superseded message keeps its cause. |
 | `admitted_at` | When its sender was admitted; `NULL` until then, and for a message admitted before it was recorded. |
+| `admission_position` | Durable sequence assigned at admission. Migration 23 seeds older admitted messages in retained row order. |
+| `superseded_at` | The operator clock time when a later-admitted message from the same sender in the same conversation settles and supersedes this failed row. `NULL` until then. Supersession closes the interval and removes the row from status and unfinished work while retaining its failure record. |
 | `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
 | `turn_update` | The newest message the agent has written in its turn, as the runtime records it, which its status shows; `NULL` until the agent has written one, and once its answer is posted or its turn completed with nothing to post. |
 | `turn_ended_at` | When its turn was read as ended, recorded before any post of its answer; a post of that answer that fails opens its interval from this time. `NULL` until then. |
 
+Superseded failed rows are retained for at least seven days from
+`superseded_at`, measured on the runner's operator clock. Each conversation
+relay pass prunes at most 100 eligible rows older than that bound, oldest first.
+Only rows in state `failed` with a recorded `superseded_at` are eligible, and
+only while the same conversation retains a delivered message with a greater
+`written_us`. Until then the failed row is kept as the context boundary while
+remaining absent from status and notice eligibility.
+
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
 address, `turn` and `piece`. Columns: `text`, the piece's text;
-`attempted_at`, when its post was last begun, recorded before the connector can
-accept it, `NULL` before a first attempt; `posted_at`, when the connector
+`admission_position`, the message this piece answers;
+`attempted_at`, the earliest unconfirmed post attempt, and
+`latest_attempted_at`, the latest unconfirmed attempt. Both are recorded
+before the provider can accept a post. A single attempt kept by an earlier
+version supplies both bounds. `post_id` is the piece's opaque identity,
+allocated before its first post and kept across retries. An attempted piece
+from before migration 23 has no id. `legacy_read_at` records when its one
+read-back began. `receipt_failure_deadline` records when a metadata read
+failure can settle the attempt as unknown if receipt reads remain unavailable.
+`delivery_unknown_at` records resolution after
+the settle window without confirmation. The piece leaves the retry queue,
+and a matching read-back that returns later replaces the unknown result.
+`posted_at`, when the connector
 accepted its post, `NULL` while outstanding; `failure`, the cause of its last
 failed post, `NULL` once posted. A piece with `attempted_at` and no `posted_at`
-may have been accepted; the conversation core looks for it at the connector
-before it is posted again
+may have been accepted. A piece resolved with unknown delivery keeps its
+cause and no longer counts as pending. The conversation core looks for
+unresolved attempts at the connector
+before it is posted again. A rejected retry preserves earlier attempts unless
+a read started after their latest request's timeout and found no post
 (`project/instrukt/spec/feature/company/conversations`).
 
 **`conversation_refusals`** — the platform's own replies owed to a sender in a
@@ -727,10 +751,20 @@ conversation (`project/instrukt/spec/feature/company/conversations`). Key: the
 address, `sender` and `reason`: `not_own`, the one fixed reply to a sender the agent
 does not answer, or `unavailable`, the one notice of the sender's current epoch.
 Columns: `received_at`; `state` for `unavailable`: `owed`, `posting` (a post was
-sent, its effect possibly in flight) with `attempted_at`, or `posted`; `replied_at`,
+sent, its effect possibly in flight) with `attempted_at`, or `posted`; `post_id`,
+the notice's opaque identity, allocated before its first post and reused
+until the epoch ends; `covered_positions`, the admission positions that
+made the notice due; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
-records the decision, never proof of delivery. An `unavailable` row is deleted
-when an answer to that sender is posted in the conversation; `not_own` rows stay.
+records the decision, never proof of delivery. An `unavailable` row is retired
+only when every covered position has settled and any attempted notice is
+reconciled. A posted answer, a successful empty turn, a delivery-unknown
+resolution or a superseded failure can settle a position. `not_own` rows stay.
+
+A notice's `anchor_message` retains the provider id at the start of its
+read-back range. Its admission coverage remains available to reconcile the
+notice after a superseded failed message is pruned. Pruning applies only to
+settled positions.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
@@ -770,7 +804,9 @@ are written in one transaction.
 Reading a finished turn and the connector accepting a post are separate
 boundaries: an answer's pieces are stored in the same transaction as the
 position that read them and the message's `answered` state, and `posted_at`
-is set only when the connector accepted that piece. These tables hold no
+is set only when the connector accepted that piece. Recording the final
+piece's receipt closes the message's no-work interval and clears its turn
+update in the same transaction. These tables hold no
 credential.
 
 **`connector_private_messages`** — the messages a connector posted for one

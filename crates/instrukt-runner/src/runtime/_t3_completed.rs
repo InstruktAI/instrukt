@@ -144,6 +144,7 @@ pub(super) fn completed(
             order: run.native["ordinal"]
                 .as_u64()
                 .ok_or_else(|| shape("run ordinal is unavailable"))?,
+            succeeded: run.native["status"].as_str() == Some("completed"),
             contributions,
         });
     }

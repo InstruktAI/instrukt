@@ -163,8 +163,8 @@ message alike.
 ### While the agent works
 
 From the admission of an addressed message until it is complete — its answer
-posted, or its turn completed with a bare `NOOP` — the connector shows Slack's
-status line for it, with the text the message's state gives
+posted, or its turn completed with a bare `NOOP` or a successful blank reply —
+the connector shows Slack's status line for it, with the text the message's state gives
 (`project/instrukt/spec/feature/company/conversations`):
 
 | The message's state | Text |
@@ -185,9 +185,9 @@ one.
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
 
-A message is unfinished until its answer is posted or its turn completes with a
-bare `NOOP`; a failed turn awaiting redelivery and an answer not yet posted leave
-it unfinished.
+A posted answer, a bare `NOOP`, or a successful blank reply completes the message.
+A failed turn awaiting redelivery or an answer awaiting posting leaves it
+unfinished.
 
 Admitting a message wakes the connector's status pass, so the person normally
 sees at once that the request was taken on; that first setting can wait behind
@@ -265,16 +265,20 @@ followed by no empty part. Nothing is inserted, so no part is longer than
 The one platform notice of `project/instrukt/spec/feature/company/conversations`
 is posted the same way, worded
 `<@member-id> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.`,
-with the waiting person's Slack id. To recognise a notice whose post lost its
-response, the connector reads the conversation (`conversations.replies` for a
-thread, `conversations.history` for a direct message) from that person's epoch
-for a post of its own beginning with that mention and sentence.
+with the waiting person's Slack id. Each notice and answer piece carries
+`chat.postMessage` metadata with event type `instrukt_post` and a single
+opaque id in `event_payload.id`. The connector uses
+`include_all_metadata=true` with `conversations.replies` for a thread or
+`conversations.history` for a direct message. It matches the id on a post
+by its own bot and returns the posting timestamp. It reads notices from the
+current epoch's anchor and answers from the first addressed message.
+For an answer attempted before ids were recorded, the single best-effort
+read matches an untagged post from the same bot and conversation by text
+and requires a provider timestamp after the recorded attempt.
 
-To recognise a part of an answer whose post lost its response, or whose
-acceptance went unrecorded, the connector reads the conversation the same way
-(`conversations.replies` for a thread, `conversations.history` for a direct
-message) from the conversation's first addressed message, and gives back the
-text of each post of its own: one its bot user wrote or its bot posted.
+These Web API calls use the existing bot scopes `chat:write` and the
+conversation's history scope. The metadata Events API scope is needed for
+metadata event subscriptions. The connector uses Web API read-back.
 
 ### Reading back after a connection
 
@@ -398,9 +402,6 @@ And the member is answered
   documented; the connector passes them on unchanged.
 - The agent's earlier answers come back among the accompanying messages as
   Slack returns their text, which can differ from what the agent wrote.
-- A part of an answer whose post lost its response is recognised by its text as
-  Slack returns it; where that differs from what was posted, the part is posted
-  again.
 - One Slack workspace serves one company home.
 - Two people with the same name look alike to the agent.
 - Slack does not promise the order in which it sends messages. A message that
@@ -409,6 +410,7 @@ And the member is answered
   otherwise. What accompanies the later one was read when it arrived and is
   not read again, so it can hold the earlier message, which the agent then
   sees there and as its own turn.
+- If Slack delivers an addressed message after a superseded failure is pruned, and the message was written between the failed question and the later delivery that allowed pruning, the agent may see the failed question or its earlier context again.
 
 ## See Also
 
@@ -424,5 +426,6 @@ And the member is answered
 - https://docs.slack.dev/reference/block-kit/blocks/markdown-block/ — the Markdown Slack renders, and that an image shows as link text.
 - https://docs.slack.dev/reference/objects/user-object/ — the fields that tell a full member from a bot, a guest and a member of another workspace.
 - https://docs.slack.dev/messaging/message-metadata/ — message metadata: an `event_type` of letters, digits, underscores and hyphens, attached with the `metadata` argument, needing no registration; `conversations.history` returns it with `include_all_metadata`.
+- https://docs.slack.dev/reference/methods/conversations.replies/ — thread read-back with `include_all_metadata` and the applicable history scope.
 - https://docs.slack.dev/reference/methods/chat.postMessage/#post-to-a-direct-message-channel — a bot posts in its direct messages with a person by passing the person's user id as the channel, with `chat:write`.
 - https://docs.slack.dev/reference/methods/assistant.threads.setStatus/ — the status line: its text, its two-minute limit and its removal when the app replies.

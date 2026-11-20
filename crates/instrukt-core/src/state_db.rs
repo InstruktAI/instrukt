@@ -531,6 +531,141 @@ mod tests {
     }
 
     #[test]
+    fn version_23_keeps_every_stored_reply_as_a_not_own_one() {
+        // The shape before version 23, the last migration.
+        let before = _schema::MIGRATIONS.len() - 1;
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(before) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", u32::try_from(before).unwrap())
+            .unwrap();
+        conn.execute("INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,attempted_at) VALUES('acme','slack','C1/1','turn-1',0,'Kept answer','2026-11-18T10:00:00Z')", []).unwrap();
+        conn.execute_batch(
+            "INSERT INTO conversation_messages(company,connector,conversation,message,written_us,written_at,arrived_at,state,text,turn,unavailable_since,turn_update)
+             VALUES ('acme','slack','C1/1','pending-piece',1,'2026-11-18T10:00:00Z','2026-11-18T10:00:00Z','answered','First','turn-1','2026-11-18T10:00:00Z','Working'),
+                    ('acme','slack','C1/1','posted-piece',2,'2026-11-18T10:00:01Z','2026-11-18T10:00:01Z','answered','Second','turn-2','2026-11-18T10:00:01Z','Working');
+             INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at)
+             VALUES ('acme','slack','C1/1','turn-2',0,'Posted answer','2026-11-18T10:00:02Z');",
+        ).unwrap();
+        conn.execute_batch("INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,replied_at) VALUES('acme','slack','C1/1','UOTHER','2026-11-18T10:00:00Z','2026-11-18T10:00:02Z');INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,failure) VALUES('acme','slack','D1/2','UGUEST','2026-11-18T10:01:00Z','Slack chat.postMessage: timeout');").unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let attempt = conn
+            .query_row(
+                "SELECT attempted_at,latest_attempted_at,post_id,legacy_read_at,delivery_unknown_at FROM conversation_answers WHERE turn='turn-1'",
+                [],
+                |row| Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                )),
+            )
+            .unwrap();
+        assert_eq!(
+            attempt,
+            ("2026-11-18T10:00:00Z".to_owned(), None, None, None, None)
+        );
+        let positions: Vec<(i64, i64)> = conn
+            .prepare("SELECT m.admission_position,a.admission_position FROM conversation_messages m JOIN conversation_answers a USING(company,connector,conversation,turn) ORDER BY m.admission_position")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(positions, [(1, 1), (2, 2)]);
+        let intervals: Vec<(Option<String>, Option<String>)> = conn
+            .prepare("SELECT unavailable_since,turn_update FROM conversation_messages ORDER BY written_us")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            intervals,
+            [
+                (
+                    Some("2026-11-18T10:00:00Z".to_owned()),
+                    Some("Working".to_owned())
+                ),
+                (None, None)
+            ]
+        );
+        type Row = (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let kept: Vec<Row> = conn
+            .prepare("SELECT sender,reason,state,replied_at,failure FROM conversation_refusals ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        insta::assert_debug_snapshot!(kept, @r#"
+        [
+            (
+                "UOTHER",
+                "not_own",
+                None,
+                Some(
+                    "2026-11-18T10:00:02Z",
+                ),
+                None,
+            ),
+            (
+                "UGUEST",
+                "not_own",
+                None,
+                None,
+                Some(
+                    "Slack chat.postMessage: timeout",
+                ),
+            ),
+        ]
+        "#);
+        // The widened state retains an unserved message without changing its
+        // position in the notice's coverage.
+        conn.execute(
+            "UPDATE conversation_messages SET state='failed' WHERE message='pending-piece'",
+            [],
+        )
+        .unwrap();
+        let failed: (String, i64) = conn
+            .query_row(
+                "SELECT state,admission_position FROM conversation_messages WHERE message='pending-piece'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(failed, ("failed".to_owned(), 1));
+        // A sender has a notice beside a fixed reply; a notice keeps its
+        // decision, and a fixed reply none.
+        conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','UOTHER','unavailable','2026-11-18T10:03:00Z','owed')", []).unwrap();
+        assert!(
+            conn.execute(
+                "UPDATE conversation_refusals SET state='posting' WHERE reason='unavailable'",
+                []
+            )
+            .is_err()
+        );
+        assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1','USTEVEN','unavailable','2026-11-18T10:03:00Z')", []).is_err());
+        assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','USTEVEN','not_own','2026-11-18T10:03:00Z','owed')", []).is_err());
+    }
+
+    #[test]
     fn version_21_keeps_stored_messages_with_nothing_open() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(20) {

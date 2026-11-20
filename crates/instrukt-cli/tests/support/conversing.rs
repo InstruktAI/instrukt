@@ -256,13 +256,10 @@ impl Company {
 
     /// The company as [`Self::on`] makes it, on a computer where no
     /// procedure declares the role its conversations start under yet.
-    pub fn without_procedure(mut env: TestEnv, modules: &str, machine: &str, extra: &str) -> Self {
-        let slack = FakeSlack::start();
-        env.set_env("INSTRUKT_SLACK_API_URL", &slack.api_url);
-        let store = T3Store::new(&env);
-        let runtime = FakeT3::create(&env);
+    pub fn without_procedure(env: TestEnv, modules: &str, machine: &str, extra: &str) -> Self {
+        let company = Self::with_fakes(env);
         std::fs::write(
-            env.instrukt_home().join("instrukt.yaml"),
+            company.env.instrukt_home().join("instrukt.yaml"),
             format!(
                 "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{{}}}\n{machine}",
                 instrukt_core::config::CURRENT_SCHEMA_VERSION,
@@ -271,12 +268,21 @@ impl Company {
         )
         .unwrap();
         company_home(
-            &env,
+            &company.env,
             COMPANY,
             APP_TOKEN,
             BOT_TOKEN,
             &slack_settings(MEMBERS, extra),
         );
+        company
+    }
+
+    /// Start independent stand-ins in the test home before applying settings.
+    pub fn with_fakes(mut env: TestEnv) -> Self {
+        let slack = FakeSlack::start();
+        env.set_env("INSTRUKT_SLACK_API_URL", &slack.api_url);
+        let store = T3Store::new(&env);
+        let runtime = FakeT3::create(&env);
         Self {
             env,
             store,

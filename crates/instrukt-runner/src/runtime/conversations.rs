@@ -54,6 +54,8 @@ pub struct CompletedTurn {
     pub conversation: SessionId,
     pub native_turn: NativeTurnRef,
     pub order: u64,
+    /// Whether the native run ended successfully.
+    pub succeeded: bool,
     pub contributions: Vec<TurnContribution>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -126,6 +126,7 @@ mod tests {
             conversation: SessionId::parse(from).unwrap(),
             native_turn: NativeTurnRef::parse("turn-1").unwrap(),
             order: 1,
+            succeeded: true,
             contributions,
         };
         let mut rendered =
