@@ -569,12 +569,10 @@ fallback. Capacity evidence never proves that startup created no thread.
 Every child command instrukt launches has a process group. Instrukt attempts
 to stop that group on every outcome: success, failure, timeout and interruption.
 It stops the descendants it can signal before reporting completion.
-An absent process group is already stopped. On macOS, once instrukt reaps
-the direct child, `EPERM` from a group signal means it can signal no member
-of the group. Instrukt logs a warning with the group ID, completes cleanup
-without retrying the signal, and preserves the outcome from the command wait.
-Before instrukt reaps the direct child, a group signal's `EPERM` remains an
-error.
+An absent process group is already stopped. On macOS, if the child has been
+reaped when instrukt attempts cleanup, a group instrukt can no longer signal
+counts as cleaned up. Instrukt logs the group ID, and the command keeps the
+child's result. A signal refused before the reap is an error.
 This concerns instrukt's own commands, not a machine-wide process janitor or
 the runtime's standing agent lifecycle, which T3 owns.
 
@@ -915,15 +913,9 @@ And a command given an internal input-lock key tells the operator to use the ass
 And an unreadable recovery lock reports the path problem and its operating system cause
 ```
 
-### UC-SS21: Leave no instrukt-owned child processes behind
+### UC-SS21: Leave no instrukt-owned child processes behind (retired)
 
-```gherkin
-Given instrukt runs a child command in its own process group on macOS
-When the command wait reaps the child and group cleanup cannot signal any remaining member
-Then cleanup completes and the command reports the child's exit result
-But if group signalling is refused before the child is reaped
-Then cleanup reports the permission error
-```
+Retired: owned child-command cleanup is part of the prose contract above.
 
 ### UC-SS4: Conversation archive lookup (retired)
 

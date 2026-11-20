@@ -571,16 +571,25 @@ struct ProcessGroup {
 
 impl ProcessGroup {
     fn stop(&self) -> std::io::Result<()> {
-        use rustix::{
-            io::Errno,
-            process::{Signal, kill_process_group},
-        };
+        use rustix::process::{Signal, kill_process_group};
 
-        match kill_process_group(self.pid, Signal::KILL) {
+        self.stop_with(|pid| kill_process_group(pid, Signal::KILL))
+    }
+
+    fn stop_with(
+        &self,
+        signal: impl FnOnce(rustix::process::Pid) -> rustix::io::Result<()>,
+    ) -> std::io::Result<()> {
+        use rustix::io::Errno;
+
+        // Classify the signal using the reap evidence available when it starts.
+        #[cfg(target_os = "macos")]
+        let reaped = self.reaped.load(Ordering::Acquire);
+        match signal(self.pid) {
             Ok(()) | Err(Errno::SRCH) => Ok(()),
             // Darwin's POSIX group signal found no member we can signal.
             #[cfg(target_os = "macos")]
-            Err(Errno::PERM) if self.reaped.load(Ordering::Acquire) => {
+            Err(Errno::PERM) if reaped => {
                 tracing::warn!(
                     event = "reaped_group_cannot_be_signalled",
                     pgid = self.pid.as_raw_nonzero().get(),
@@ -733,7 +742,22 @@ mod darwin_group_tests {
         );
     }
 
-    // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS21
+    #[test]
+    fn a_reap_during_a_signal_does_not_clear_its_permission_error() {
+        let group = ProcessGroup {
+            pid: rustix::process::getpid(),
+            reaped: AtomicBool::new(false),
+        };
+        let result = group.stop_with(|_| {
+            group.reaped.store(true, Ordering::Release);
+            Err(Errno::PERM)
+        });
+        assert_eq!(
+            result.unwrap_err().raw_os_error(),
+            Some(Errno::PERM.raw_os_error())
+        );
+    }
+
     #[test]
     fn an_unsignalable_group_preserves_the_reaped_childs_exit() {
         static CLOCK: LazyLock<LimitClock> =
