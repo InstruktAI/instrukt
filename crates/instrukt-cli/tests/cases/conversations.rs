@@ -884,7 +884,7 @@ fn retry_as_printed_in_shell(c: &Company, clock: &std::path::Path) {
     assert_eq!(response, serde_json::json!({"key": key, "session": target}));
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV8
+// spec: project/instrukt/spec/feature/company/conversations UC-CV20
 #[test]
 fn a_member_keeps_their_question_when_the_conversation_thread_is_archived_or_deleted() {
     std::thread::scope(|scope| {
@@ -947,7 +947,7 @@ fn finish_answer_turn(c: &mut Company, session: &str, input: usize, answer: &str
     answer_source_changed(c, revision.trim().parse::<u64>().unwrap() + 1);
 }
 
-// spec: project/instrukt/spec/feature/company/conversations UC-CV20
+// spec: project/instrukt/spec/feature/company/conversations UC-CV8
 #[test]
 fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     std::thread::scope(|scope| {

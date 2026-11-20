@@ -28,6 +28,7 @@ threads-required = 6
 filter = 'test(=conversations::a_member_can_keep_asking_after_the_assistant_fails_to_answer)'
 threads-required = 5
 
+# UC-CV20 exercises four recovery fixtures.
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_keeps_their_question_when_the_conversation_thread_is_archived_or_deleted)'
 threads-required = 4

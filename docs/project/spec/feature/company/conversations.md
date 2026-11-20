@@ -425,21 +425,17 @@ And if replacement later times out waiting for the stopped thread's input, the o
 And a recovery command for a session with shell metacharacters can be retried in a shell with the original output format
 ```
 
-### UC-CV8: Keep a question when the conversation thread is archived or deleted
+### UC-CV8: Get the answer after the assistant's work failed
 
 ```gherkin
-Scenario Outline: Restore a conversation with work waiting
-  Given a member has a question waiting and the assistant's thread for that conversation is <state>
-  When the operator <recovery>
-  Then the member gets one answer to their saved question in the same conversation
-  And the operator sees how to recover the work that is waiting
-  And their question waits for the operator's recovery action
-  And answers already saved for posting can still reach their members while the question waits
+Scenario: The member receives the answer after a retry
+  Given the assistant's work on a member's question ends in failure
+  When the assistant can work on the question again
+  Then the member receives one answer without sending the question again
+  And progress from the unsuccessful work is never posted as the answer
+  And another member can be answered while the failed question waits
+  And if the wait earns an unavailable notice, only one is posted before the answer
 
-  Examples:
-    | state    | recovery                                             |
-    | archived | unarchives the thread                                |
-    | deleted  | confirms the stopped session and replaces the thread |
 ```
 
 ### UC-CV11: Onboard a company while the runner runs
@@ -527,17 +523,21 @@ And its completion clears the earlier failure from the member's status
 And a subsequent outage can earn its own notice
 ```
 
-### UC-CV20: Get an answer after the assistant's work failed
+### UC-CV20: Keep a question when the conversation thread is archived or deleted
 
 ```gherkin
-Scenario: The member receives the answer after a retry
-  Given the assistant's work on a member's question ends in failure
-  When the assistant can work on the question again
-  Then the member receives one answer without sending the question again
-  And progress from the unsuccessful work is never posted as the answer
-  And another member can be answered while the failed question waits
-  And if the wait earns an unavailable notice, only one is posted before the answer
+Scenario Outline: Restore a conversation with work waiting
+  Given a member has a question waiting and the assistant's thread for that conversation is <state>
+  When the operator <recovery>
+  Then the member gets one answer to their saved question in the same conversation
+  And the operator sees how to recover the work that is waiting
+  And their question waits for the operator's recovery action
+  And answers already saved for posting can still reach their members while the question waits
 
+  Examples:
+    | state    | recovery                                             |
+    | archived | unarchives the thread                                |
+    | deleted  | confirms the stopped session and replaces the thread |
 ```
 
 ### UC-CV21: Keep an answer through an interruption at its source
