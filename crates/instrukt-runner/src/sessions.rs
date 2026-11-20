@@ -114,12 +114,21 @@ pub enum SessionsError {
     },
     #[error("bound thread {session} for `{key}` is archived; unarchive it or delete it")]
     ArchivedBound { key: String, session: SessionRef },
+    #[error(
+        "thread {session} for `{key}` changed native project from `{retained}` to `{observed}`; restore its original project before delivering pending work"
+    )]
+    ProjectChanged {
+        key: String,
+        session: SessionRef,
+        retained: String,
+        observed: String,
+    },
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
     #[error(
-        "thread {session} for `{key}` is absent; recover its retained phase worktree through native placement before resuming"
+        "thread {session} for `{key}` is deleted. Deletion does not prove the old session stopped. Once it has stopped, use `instrukt sessions replace-deleted {key} --stopped {session}`"
     )]
-    MissingBound { key: String, session: SessionRef },
+    DeletedBound { key: String, session: SessionRef },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]

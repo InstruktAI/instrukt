@@ -274,6 +274,7 @@ fn pump_inner(
             {
                 return Ok(());
             }
+            crate::standing::verify_delivery_project(state, adapter, &thread, now)?;
             // A selected or uncertain send retries its immutable content and target.
             adapter.send(target, &content)?;
             accept(state, target, &id, now)?;
@@ -300,6 +301,7 @@ fn pump_inner(
             "runtime input readiness is unknown; pending delivery retained".into(),
         ));
     }
+    crate::standing::verify_delivery_project(state, adapter, &thread, now)?;
     let idle = matches!(
         thread.state,
         SessionState::InputReady | SessionState::EndedFailed

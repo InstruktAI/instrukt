@@ -211,13 +211,15 @@ pub(crate) fn start(
     } = *assignment;
     let guard = KeyGuard::claim(invocation, adapter, &request.key, project, now)?;
     let result = start_claimed(adapter, assignment, &guard);
-    note(
-        &guard.state,
-        adapter.runtime(),
-        &request.key,
-        now,
-        result.as_ref().map(|_| ()),
-    );
+    if kind(&request.key) != "standing" {
+        note(
+            &guard.state,
+            adapter.runtime(),
+            &request.key,
+            now,
+            result.as_ref().map(|_| ()),
+        );
+    }
     result
 }
 
@@ -258,7 +260,7 @@ fn start_claimed(
         recorded.request = Some(resolved.clone());
     }
     let input = &resolved;
-    let mut fresh = recorded.request.is_none()
+    let fresh = recorded.request.is_none()
         && recorded.bound.is_none()
         && creation == CreationPermit::Initial;
     if recorded.request.is_none() && recorded.bound.is_none() {
@@ -319,10 +321,7 @@ fn start_claimed(
         match thread.presence {
             Presence::Archived => return Err(archived(&input.key, session)),
             Presence::Absent if recorded.bound.is_some() => {
-                retire_gone(guard, session, input, project, now)?;
-                recorded.bound = None;
-                recorded.accepted = false;
-                fresh = true;
+                return Err(deleted(&input.key, session));
             }
             Presence::Absent => return Err(SessionsError::Gone(session.clone())),
             Presence::Present => {
@@ -444,6 +443,38 @@ pub(crate) fn archived(key: &str, session: &SessionRef) -> SessionsError {
     }
 }
 
+pub(crate) fn deleted(key: &str, session: &SessionRef) -> SessionsError {
+    SessionsError::DeletedBound {
+        key: key.into(),
+        session: session.clone(),
+    }
+}
+
+pub(crate) fn verify_recorded_project(
+    state: &RunnerState,
+    key: &str,
+    thread: &Thread,
+) -> Result<(), SessionsError> {
+    let project: Option<String> = state.read(|conn, path| {
+        conn.query_row(
+            "SELECT project_id FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",
+            params![thread.session.runtime.as_str(), key, thread.session.to_string()],
+            |row| row.get(0),
+        ).optional().map_err(state::sql(path))
+    })?.flatten().flatten();
+    if let (Some(retained), Some(observed)) = (project, thread.project_id.as_ref())
+        && &retained != observed
+    {
+        return Err(SessionsError::ProjectChanged {
+            key: key.into(),
+            session: thread.session.clone(),
+            retained,
+            observed: observed.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// A bound ID survives a rename. Validate other assignment facts using the
 /// retained title, after ruling out any different semantic key.
 pub(crate) fn verify_bound(
@@ -485,7 +516,7 @@ fn retire_gone(
         // Store permission before releasing the old binding. An interrupted
         // replacement can then continue without treating absence as a lost reply.
         tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at)
-            VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'retry_allowed','bound_thread_absent','instrukt',?8)
+            VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'retry_allowed','operator_confirmed_provider_stopped','operator',?8)
             ON CONFLICT(runtime,semantic_key) DO UPDATE SET request=excluded.request,state='retry_allowed',resolution=excluded.resolution,resolved_by=excluded.resolved_by,resolved_at=excluded.resolved_at",
             params![guard.runtime, guard.key, project, kind(&guard.key), input.checkout.to_string_lossy(), input.brief, request, now.to_string()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE runtime_inputs SET state='failed', waiting=0, failure='target absent before observed consumption' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",
@@ -580,6 +611,116 @@ pub fn resolve(
         guard.state.write::<_,StateError>(|tx| { tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution='none' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?; Ok(()) })?;
     }
     note(&guard.state, adapter.runtime(), key, now, Ok(()));
+    Ok(())
+}
+
+/// Replace a deleted binding on the operator's confirmation that
+/// the provider session named by the command has stopped.
+pub fn replace_deleted(
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    stopped: &SessionRef,
+    now: Timestamp,
+) -> Result<Thread, SessionsError> {
+    if kind(key) == "standing" {
+        return crate::standing::replace_deleted(invocation, adapter, key, stopped, now);
+    }
+    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
+    let recorded = record(&guard.state, &guard.runtime, key)?;
+    if recorded.bound.as_ref() != Some(stopped) {
+        return Err(SessionsError::Refused(format!(
+            "`{key}` is not bound to {stopped}"
+        )));
+    }
+    if recorded.unresolved || recorded.retry_allowed {
+        return Err(SessionsError::Unresolved { key: key.into() });
+    }
+    confirm_deleted(adapter, stopped)?;
+    let request = recorded
+        .request
+        .as_ref()
+        .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
+    check_replacement_key(adapter, request, stopped, None)?;
+    if let Some(worktree) = &request.worktree
+        && instrukt_core::git::succeeds(
+            &request.checkout,
+            [
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{}", worktree.branch),
+            ],
+        )
+        .map_err(|error| SessionsError::Refused(error.to_string()))?
+    {
+        return Err(SessionsError::Refused(format!(
+            "phase branch `{}` still exists; T3 cannot start a replacement in its existing worktree",
+            worktree.branch
+        )));
+    }
+    retire_gone(&guard, stopped, request, recorded.project.as_deref(), now)?;
+    let result = start_claimed(
+        adapter,
+        &RuntimeAssignment {
+            invocation,
+            project: recorded.project.as_deref(),
+            request,
+            now,
+            creation: CreationPermit::Reconcile,
+        },
+        &guard,
+    );
+    note(
+        &guard.state,
+        adapter.runtime(),
+        key,
+        now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
+
+pub(crate) fn confirm_deleted(
+    adapter: &dyn RuntimeAdapter,
+    stopped: &SessionRef,
+) -> Result<(), SessionsError> {
+    if adapter.read_state(stopped)?.presence != Presence::Absent {
+        return Err(SessionsError::Refused(format!(
+            "thread {stopped} must be deleted before replacing it"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_replacement_key(
+    adapter: &dyn RuntimeAdapter,
+    request: &RuntimeStart,
+    stopped: &SessionRef,
+    standing: Option<&str>,
+) -> Result<(), SessionsError> {
+    let matches: Vec<_> = adapter
+        .list(&request.checkout)?
+        .into_iter()
+        .filter(|thread| {
+            &thread.session != stopped
+                && thread.semantic_key.as_deref().is_some_and(|key| {
+                    key == request.key
+                        || standing.is_some_and(|family| {
+                            key == family
+                                || key
+                                    .strip_prefix(family)
+                                    .is_some_and(|suffix| suffix.starts_with(":generation:"))
+                        })
+                })
+        })
+        .collect();
+    if !matches.is_empty() {
+        return Err(conflict(
+            &request.key,
+            matches.iter().map(|thread| &thread.session),
+        ));
+    }
     Ok(())
 }
 
@@ -692,31 +833,11 @@ fn followup_inner(
     match thread.presence {
         Presence::Archived => return Err(archived(&input.key, assignment.session)),
         Presence::Absent => {
-            if assignment.worktree_path.is_some() {
-                return Err(SessionsError::MissingBound {
-                    key: input.key.clone(),
-                    session: assignment.session.clone(),
-                });
-            }
-            let request =
-                if recorded.bound.is_none() && (recorded.unresolved || recorded.retry_allowed) {
-                    // An earlier replacement may already be in flight.
-                    recorded
-                        .request
-                        .as_ref()
-                        .ok_or_else(|| SessionsError::Unresolved {
-                            key: input.key.clone(),
-                        })?
-                } else {
-                    retire_gone(
-                        &guard,
-                        assignment.session,
-                        input,
-                        assignment.project,
-                        assignment.now,
-                    )?;
-                    input
-                };
+            let Some(request) = recorded.request.as_ref().filter(|_| {
+                recorded.bound.is_none() && (recorded.unresolved || recorded.retry_allowed)
+            }) else {
+                return Err(deleted(&input.key, assignment.session));
+            };
             return start_claimed(
                 adapter,
                 &RuntimeAssignment {

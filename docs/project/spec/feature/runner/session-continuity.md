@@ -336,15 +336,15 @@ The same discovery and start rules govern every key, for both `start` and
 4. Listing failure, malformed output, an unknown listing shape or multiple
    exact matches leaves the assignment pending and starts nothing. Multiple
    matches report a key conflict. Failed sends retain the same target for
-   retry. A bound id the runtime reports absent (an explicit unknown-thread
-   answer) is retired with its key's binding, and the start proceeds under the
-   same key. A bound id that is archived is no replacement: nothing is started,
+   retry. An explicit unknown-thread answer means the thread record is absent.
+   The binding and pending work stay in place until the operator confirms that
+   the deleted thread's provider session stopped. A bound id that is archived is no replacement: nothing is started,
    its completed answers are still read, and the operator is told. A bound id
    that is alive but no longer lists under its key (renamed) keeps being used by
    its id after verifying the retained project and worktree. Another live
    match still makes the key conflicted. An inaccessible id is an observation error, retried
    (`project/instrukt/policy/checks-and-guards`: a new actor starts only where the
-   earlier one is proven gone).
+   earlier one is proven unable to act).
 
 A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
@@ -368,17 +368,24 @@ never on how long anyone has waited:
 | --- | --- | --- |
 | Nothing started | Listing failed, the runtime not ready, no permitted model, rejection proven before creation | Retried every pass until it succeeds. |
 | Lost acknowledgement | An unresolved marker | Recorded; discovery reconciles every pass; `instrukt sessions resolve-start` is the operator's door. No fresh start. |
-| Proven absence | The runtime reports the bound thread absent | The binding is retired; a fresh start under the same key. |
+| Deleted thread | The runtime reports the bound thread absent | Work stays pending. The door is `instrukt sessions replace-deleted <key> --stopped <runtime:id>` once the operator knows the old provider session stopped. |
 | Live conflict | Two or more threads under one key | Nothing chosen, nothing started; the door is to archive or delete the extra thread. |
 | Archived | The bound thread is shown archived | Nothing started; its completed answers are read; the door is to unarchive or delete it. |
 | Renamed, alive | The bound thread reads, its key no longer lists | Used by its id. |
 
-An unresolved start, a live conflict and an archived thread that persist past the
+An unresolved start, a live conflict, an archived thread and a deleted thread awaiting confirmation that persist past the
 runner's `START_OPERATOR_BOUND` on the operator clock raise one anomaly per
 process per runtime key (`runner.notify`). `instrukt events status` shows the
 current condition and its door as soon as it is observed. A conflict lists the
 known competing threads. Reconciliation clears the status finding when the
 condition ends, whether or not a notification command is configured (`project/instrukt/spec/feature/runner/anomaly-notification`).
+
+`instrukt sessions replace-deleted <key> --stopped <runtime:id>` is the operator's
+confirmation that the named provider session has stopped. It requires the retained
+binding to match the given key and session and the adapter to report the thread
+absent. It retires the binding and uses the ordinary recorded start path under
+the same key. A standing replacement increments the retained generation number.
+A lost start reply follows the same reconciliation as any other start.
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains
@@ -562,7 +569,7 @@ GitHub command creates no second attention item.
 | `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
-| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Only absence retires a binding. |
+| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Absence requires operator confirmation of provider stoppage before retirement. |
 
 An unrecognised status or response shape, command failure or unreachable runtime
 is an observation error, never `gone` or success. Status spellings and optional
@@ -791,7 +798,9 @@ And the listing window has no part in that decision
 ```gherkin
 Given a developer's procedure keeps a standing agent for a subject
 When the developer deletes its thread in the runtime and a later event for that subject arrives
-Then a successor conversation for that subject handles the event
+Then no successor starts, the event stays pending and status gives the replacement command
+When the operator confirms the old provider stopped through that command
+Then the successor uses the same key and receives the pending and later events
 But when the developer archived the thread instead
 Then no successor starts, the event stays pending and status shows the developer the archived thread
 ```
@@ -801,7 +810,8 @@ Then no successor starts, the event stays pending and status shows the developer
 ```gherkin
 Given a developer renames the bound thread of a standing agent
 When a later event needs that agent and no other live thread claims its key
-Then the event reaches the same thread by its retained ID
+Then the event reaches the same thread by its retained ID within the retained native project
+But if the native project changed, the event stays pending and status reports the conflict
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

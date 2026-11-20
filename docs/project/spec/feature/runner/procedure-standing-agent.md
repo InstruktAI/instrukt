@@ -91,16 +91,15 @@ A runtime record that is actually purged is distinct from a settled thread.
 Failed observation, a failed send and ambiguous startup retain their fixed
 target and pending work. Reconciliation must account for that assignment and
 unresolved input before any confirmed terminal removal admits a successor;
-settled or idle status never supplies that terminal evidence. A bound session the
-runtime reports absent is that evidence for a subject-bound responsibility as for one
-without a subject: a later event's activation admits its successor generation. An
-archived session is not absent and admits none
-(`project/instrukt/spec/feature/runner/session-continuity`: only absence proves an
-actor gone).
+settled or idle status never supplies that terminal evidence. For both
+home and subject identity, thread deletion leaves the binding and pending
+events in place until the operator confirms the old provider session stopped
+through the replacement command in
+`project/instrukt/spec/feature/runner/session-continuity`. An archived thread
+stays bound and cannot be replaced by that command.
 
 Each responsibility retains its session generations and one current generation.
-The first uses its base standing key; a successor uses a recorded increasing
-generation under session-continuity. Retiring an old generation and admitting
+Successors keep the current standing key and increment the recorded generation. Retiring an old generation and admitting
 the next are one serialized durable decision, possible only after its terminal
 state is established and unresolved input is accounted for. No concurrent live
 generation is admitted. Discovery considers the responsibility's generation

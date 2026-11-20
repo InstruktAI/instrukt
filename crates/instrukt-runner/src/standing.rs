@@ -1,7 +1,9 @@
 //! Resolve durably accepted procedure responsibilities and hand over retained events.
 use crate::inputs::{self, Entry, InputKind, InputOutcome, Intent};
 use crate::keyed::{self, RuntimeInvocation};
-use crate::runtime::{CreationPermit, Presence, RuntimeAssignment, RuntimeStart};
+use crate::runtime::{
+    CreationPermit, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread,
+};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::{self, RunnerState, StateError};
 use instrukt_core::config::Configuration;
@@ -256,20 +258,14 @@ pub(crate) fn deliver_pending(
             &group,
             now,
         );
-        // A standing group can report a conflict before it has a keyed
-        // request. Keyed start reports its own generation's result.
-        if !matches!(
-            result,
-            Err(SessionsError::Unresolved { .. } | SessionsError::Uncertain { .. })
-        ) {
-            keyed::note(
-                &state,
-                selected,
-                &responsibility,
-                now,
-                result.as_ref().map(|_| ()),
-            );
-        }
+        // Standing owns the finding, including failures returned by its keyed start.
+        keyed::note(
+            &state,
+            selected,
+            &responsibility,
+            now,
+            result.as_ref().map(|_| ()),
+        );
         if let Err(error) = result {
             state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
             if keyed::report_start_finding(&state, selected, &error) {
@@ -405,18 +401,17 @@ fn deliver_group(
             ));
         }
     }
-    let mut fixed = existing
+    let fixed = existing
         .as_ref()
         .map(|r| serde_json::from_str::<IndexEntry>(&r.1))
         .transpose()
         .map_err(|e| SessionsError::Refused(e.to_string()))?
         .unwrap_or_else(|| first.declaration.clone());
-    let mut session = existing
+    let session = existing
         .as_ref()
         .and_then(|r| r.2.as_ref())
         .map(|s| SessionRef::parse(s).map_err(|e| SessionsError::Refused(e.to_string())))
         .transpose()?;
-    let mut planned_successor = false;
     let mut selected = items.to_vec();
     if let Some(target) = &session {
         let recorded = existing
@@ -435,6 +430,9 @@ fn deliver_group(
         if thread.presence == Presence::Archived {
             return Err(keyed::archived(&original.key, target));
         }
+        if thread.presence == Presence::Absent {
+            return Err(keyed::deleted(&original.key, target));
+        }
         if found.len() > 1
             || found
                 .first()
@@ -445,86 +443,36 @@ fn deliver_group(
                 found.iter().map(|thread| &thread.session).chain([target]),
             ));
         }
-        if thread.presence == Presence::Absent {
-            let newest = items.iter().map(|p| p.position).max().unwrap_or(0);
-            if newest <= recorded.3 {
-                return Err(SessionsError::Refused(format!(
-                    "standing session {target} closed; retained work is suspended until a later activation"
-                )));
-            }
-            let current = GlobalIndex::load_readable(state.home())
-                .map_err(|e| SessionsError::Refused(e.to_string()))?
-                .and_then(|index| {
-                    index
-                        .snippets
-                        .into_iter()
-                        .find(|e| e.id.as_str() == first.procedure && e.delivered_by.is_empty())
-                })
-                .ok_or_else(|| {
-                    SessionsError::Refused(
-                        "successor needs the currently published procedure".into(),
-                    )
-                })?;
-            let known=state.read(|conn,path|{let mut q=conn.prepare("SELECT semantic_key FROM procedure_generations WHERE responsibility=?1 UNION SELECT semantic_key FROM procedure_responsibilities WHERE responsibility=?1").map_err(state::sql(path))?;q.query_map([responsibility],|r|r.get::<_,String>(0)).map_err(state::sql(path))?.collect::<Result<Vec<_>,_>>().map_err(state::sql(path))})?.unwrap_or_default();
-            if listed
-                .iter()
-                .filter_map(|t| t.semantic_key.as_ref())
-                .any(|title| {
-                    (title == responsibility
-                        || title.starts_with(&format!("{responsibility}:generation:")))
-                        && !known.contains(title)
-                })
-            {
-                return Err(SessionsError::KeyConflict(responsibility.into()));
-            }
-            let prepared = prepare_successor(
-                state,
-                Successor {
-                    responsibility,
-                    home: &first.home,
-                    root: &root,
-                    project: project.as_deref(),
-                    old_session: target,
-                    current: &current,
-                    subject,
-                    opening: None,
-                    now,
-                },
-            )?;
-            existing = Some((
-                prepared.0,
-                serde_json::to_string(&current)
-                    .map_err(|e| SessionsError::Refused(e.to_string()))?,
-                None,
-                newest,
-            ));
-            selected = prepared.1;
-            fixed = current;
-            session = None;
-            planned_successor = true;
-        } else {
-            if found.first().is_some_and(|found| {
-                crate::runtime::project_conflict(&thread.project_id, &found.project_id)
-            }) {
-                return Err(keyed::conflict(&original.key, [target]));
-            }
-            keyed::verify_bound(adapter.as_ref(), &original, target, &thread)
-                .map_err(|_| keyed::conflict(&original.key, [target]))?;
-            inputs::observe(invocation, adapter.as_ref(), target, now)?;
-            let newest = items.iter().map(|p| p.position).max().unwrap_or(0);
-            state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET seen_position=?2 WHERE responsibility=?1",params![responsibility,newest]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
-            if !fixed.interruptible
-                && !matches!(
-                    thread.state,
-                    SessionState::InputReady | SessionState::EndedFailed
-                )
-            {
-                return Ok(());
-            }
+        keyed::verify_recorded_project(state, &original.key, &thread)?;
+        if found.first().is_some_and(|found| {
+            crate::runtime::project_conflict(&thread.project_id, &found.project_id)
+        }) {
+            return Err(keyed::conflict(&original.key, [target]));
+        }
+        keyed::verify_bound(adapter.as_ref(), &original, target, &thread)
+            .map_err(|_| keyed::conflict(&original.key, [target]))?;
+        keyed::note(state, selected_runtime, &original.key, now, Ok(()));
+        inputs::observe(invocation, adapter.as_ref(), target, now)?;
+        let newest = items.iter().map(|p| p.position).max().unwrap_or(0);
+        state.write::<_, StateError>(|tx| {
+            tx.execute(
+                "UPDATE procedure_responsibilities SET seen_position=?2 WHERE responsibility=?1",
+                params![responsibility, newest],
+            )
+            .map_err(state::sql(&state::db_path(tx)))?;
+            Ok(())
+        })?;
+        if !fixed.interruptible
+            && !matches!(
+                thread.state,
+                SessionState::InputReady | SessionState::EndedFailed
+            )
+        {
+            return Ok(());
         }
     }
     state.write::<_,StateError>(|tx|{for p in items{tx.execute("INSERT INTO standing_deliveries(event_id,procedure,exact_home,responsibility,envelope,declaration,state) VALUES (?1,?2,?3,?4,?5,?6,'pending') ON CONFLICT DO NOTHING",params![p.event,p.procedure,p.home,responsibility,p.envelope,serde_json::to_string(&p.declaration).map_err(|e|state::invalid(&state::db_path(tx),e))?]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
-    let mut fresh = planned_successor;
+    let mut fresh = false;
     let request = if let Some((request, _, _, _)) = &existing {
         serde_json::from_str::<RuntimeStart>(request)
             .map_err(|e| SessionsError::Refused(e.to_string()))?
@@ -588,25 +536,23 @@ fn deliver_group(
     let target = if let Some(session) = session {
         session
     } else {
-        let thread = adapter.start_or_wake(&RuntimeAssignment {
-            creation: if fresh {
-                CreationPermit::Initial
-            } else {
-                CreationPermit::Reconcile
-            },
-            invocation,
-            project: project.as_deref(),
-            request: &request,
-            now,
-        })?;
-        inputs::record_initial(
+        start_and_bind(
             state,
-            &thread.session,
-            &format!("assignment:{}", request.key),
-            &request.brief,
-            now,
+            adapter.as_ref(),
+            responsibility,
+            &selected,
+            &RuntimeAssignment {
+                creation: if fresh {
+                    CreationPermit::Initial
+                } else {
+                    CreationPermit::Reconcile
+                },
+                invocation,
+                project: project.as_deref(),
+                request: &request,
+                now,
+            },
         )?;
-        state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET session=?2 WHERE responsibility=?1",params![responsibility,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;for p in &selected{tx.execute("UPDATE standing_deliveries SET target=?4,state='delivered' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
         return Ok(());
     };
     state.write::<_,StateError>(|tx|{for p in &selected{
@@ -619,6 +565,61 @@ fn deliver_group(
     // The wake's shared pump composes all producers after selection.
     if inputs::outcome(state, &target, &input_id)? != InputOutcome::Pending {
         state.write::<_,StateError>(|tx|{for p in &selected{tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE standing_deliveries SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
+    }
+    Ok(())
+}
+
+fn start_and_bind(
+    state: &RunnerState,
+    adapter: &dyn RuntimeAdapter,
+    responsibility: &str,
+    selected: &[Pending],
+    assignment: &RuntimeAssignment<'_>,
+) -> Result<Thread, SessionsError> {
+    let thread = adapter.start_or_wake(assignment)?;
+    inputs::record_initial(
+        state,
+        &thread.session,
+        &format!("assignment:{}", assignment.request.key),
+        &assignment.request.brief,
+        assignment.now,
+    )?;
+    state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET session=?2 WHERE responsibility=?1",params![responsibility,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;for p in selected{tx.execute("UPDATE standing_deliveries SET target=?4,state='delivered' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
+    keyed::note(
+        state,
+        adapter.runtime(),
+        &assignment.request.key,
+        assignment.now,
+        Ok(()),
+    );
+    Ok(thread)
+}
+
+/// The shared input pump can retry a selected standing input without a new
+/// activation. Check the same retained project before handing it over again.
+pub(crate) fn verify_delivery_project(
+    state: &RunnerState,
+    adapter: &dyn RuntimeAdapter,
+    thread: &Thread,
+    now: Timestamp,
+) -> Result<(), SessionsError> {
+    let key: Option<String> = state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT semantic_key FROM procedure_responsibilities WHERE session=?1",
+                [thread.session.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(state::sql(path))
+        })?
+        .flatten();
+    if let Some(key) = key {
+        let result = keyed::verify_recorded_project(state, &key, thread);
+        if let Err(error) = &result {
+            keyed::note(state, adapter.runtime(), &key, now, Err(error));
+        }
+        result?;
     }
     Ok(())
 }
@@ -896,6 +897,83 @@ pub fn bind_manual(
     Ok(())
 }
 
+pub(crate) fn replace_deleted(
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    stopped: &SessionRef,
+    now: Timestamp,
+) -> Result<Thread, SessionsError> {
+    let state = RunnerState::new(invocation.home());
+    let found = state.read(|conn, path| {
+        conn.query_row(
+            "SELECT responsibility,procedure,exact_home,subject,request FROM procedure_responsibilities WHERE semantic_key=?1 AND session=?2",
+            params![key, stopped.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, String>(4)?)),
+        ).optional().map_err(state::sql(path))
+    })?.flatten();
+    let (responsibility, procedure, home, subject, request) = found
+        .ok_or_else(|| SessionsError::Refused(format!("`{key}` is not bound to {stopped}")))?;
+    keyed::confirm_deleted(adapter, stopped)?;
+    let old_request: RuntimeStart =
+        serde_json::from_str(&request).map_err(|err| SessionsError::Refused(err.to_string()))?;
+    keyed::check_replacement_key(adapter, &old_request, stopped, Some(&responsibility))?;
+    let (root, project) = checkout(&state, &home)?;
+    let config = execution_config(state.home(), &home, &root)?;
+    if config.runner_runtime()? != adapter.runtime()
+        || !config.module_enabled(instrukt_core::config::Module::Events)?
+    {
+        return Err(SessionsError::Refused(
+            "standing delivery is not enabled for this runtime and home".into(),
+        ));
+    }
+    let current = GlobalIndex::load_readable(state.home())
+        .map_err(|err| SessionsError::Refused(err.to_string()))?
+        .and_then(|index| {
+            index
+                .snippets
+                .into_iter()
+                .find(|entry| entry.id.as_str() == procedure && entry.delivered_by.is_empty())
+        })
+        .ok_or_else(|| {
+            SessionsError::Refused("successor needs the currently published procedure".into())
+        })?;
+    let (request, selected) = prepare_successor(
+        &state,
+        Successor {
+            responsibility: &responsibility,
+            home: &home,
+            root: &root,
+            project: project.as_deref(),
+            old_session: stopped,
+            current: &current,
+            subject: subject.as_deref(),
+            now,
+        },
+    )?;
+    let result = start_and_bind(
+        &state,
+        adapter,
+        &responsibility,
+        &selected,
+        &RuntimeAssignment {
+            creation: CreationPermit::Reconcile,
+            invocation,
+            project: project.as_deref(),
+            request: &request,
+            now,
+        },
+    );
+    keyed::note(
+        &state,
+        adapter.runtime(),
+        key,
+        now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
+
 struct Successor<'a> {
     responsibility: &'a str,
     home: &'a str,
@@ -904,19 +982,14 @@ struct Successor<'a> {
     old_session: &'a SessionRef,
     current: &'a IndexEntry,
     subject: Option<&'a str>,
-    opening: Option<&'a str>,
     now: Timestamp,
 }
 /// Retire an established closed assignment and account for undelivered input atomically.
 fn prepare_successor(
     state: &RunnerState,
     cx: Successor<'_>,
-) -> Result<(String, Vec<Pending>), SessionsError> {
-    let mut prefix = loader(state.home(), cx.current, cx.home, cx.subject)?;
-    if let Some(opening) = cx.opening {
-        prefix.push('\n');
-        prefix.push_str(opening);
-    }
+) -> Result<(RuntimeStart, Vec<Pending>), SessionsError> {
+    let prefix = loader(state.home(), cx.current, cx.home, cx.subject)?;
     let config = execution_config(state.home(), cx.home, cx.root)?;
     let home_order = crate::agents::home_order(state.home(), cx.home)?;
     let order = crate::agents::role_order(
@@ -937,7 +1010,7 @@ fn prepare_successor(
         let unresolved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM runtime_starts WHERE runtime=?2 AND semantic_key=?1)",params![old_key,cx.old_session.runtime.as_str()],|r|r.get(0)).map_err(state::sql(&path))?;
         if unresolved{return Err(SessionsError::Unresolved{key:old_key});}
         let next=generation.checked_add(1).ok_or_else(||SessionsError::Refused("standing generation counter exhausted".into()))?;
-        let next_key=format!("{}:generation:{next}",cx.responsibility);
+        let next_key=old_key.clone();
         tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()]).map_err(state::sql(&path))?;
         tx.execute("INSERT INTO procedure_generations(responsibility,generation,semantic_key,session,declaration,request,terminal) SELECT responsibility,generation,semantic_key,session,declaration,request,?2 FROM procedure_responsibilities WHERE responsibility=?1",params![cx.responsibility,cx.now.to_string()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE procedure_activations SET state='pending',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND d.responsibility=?1 AND d.target=?2 AND i.state IN ('pending','selected','accepted'))",params![cx.responsibility,cx.old_session.to_string()]).map_err(state::sql(&path))?;
@@ -955,8 +1028,8 @@ fn prepare_successor(
             tx.execute("INSERT INTO standing_deliveries(event_id,procedure,exact_home,responsibility,envelope,declaration,state,input_id) VALUES (?1,?2,?3,?4,?5,?6,'selected',?7) ON CONFLICT(event_id,procedure,exact_home) DO UPDATE SET state='selected',target=NULL,input_id=excluded.input_id",params![item.event,item.procedure,item.home,cx.responsibility,item.envelope,serde_json::to_string(&item.declaration).map_err(|e|SessionsError::Refused(e.to_string()))?,format!("assignment:{next_key}")]).map_err(state::sql(&path))?;
         }
         // This marker proves that creation was not attempted before the new assignment committed.
-        tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at) VALUES (?7,?1,?2,'standing',?1,?3,?4,?5,?6,0,'retry_allowed','successor_prepared_before_creation','instrukt',?6)",params![next_key,cx.project,cx.root.to_string_lossy(),request.brief,encoded,cx.now.to_string(),cx.old_session.runtime.as_str()]).map_err(state::sql(&path))?;
-        Ok((encoded,pending))
+        tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at) VALUES (?7,?1,?2,'standing',?1,?3,?4,?5,?6,0,'retry_allowed','operator_confirmed_provider_stopped','operator',?6)",params![next_key,cx.project,cx.root.to_string_lossy(),request.brief,encoded,cx.now.to_string(),cx.old_session.runtime.as_str()]).map_err(state::sql(&path))?;
+        Ok((request,pending))
     })
 }
 

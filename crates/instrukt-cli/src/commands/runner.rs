@@ -138,6 +138,14 @@ enum SessionsCommand {
     /// Resolve a standing agent's start whose result never arrived: bind
     /// the session the runtime did create, or declare that none was.
     ResolveStart(ResolveStartArgs),
+    /// Confirm a deleted thread's provider stopped and start its replacement.
+    ReplaceDeleted {
+        /// The retained runtime key shown in events status.
+        key: String,
+        /// The stopped session whose thread was deleted.
+        #[arg(long)]
+        stopped: SessionRef,
+    },
 }
 
 #[derive(Debug, clap::Args)]
@@ -227,6 +235,23 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
                     ))?;
                 }
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        SessionsCommand::ReplaceDeleted { key, stopped } => {
+            let adapter = sessions.adapter()?;
+            let invocation =
+                keyed::RuntimeInvocation::acquire(&ctx.home, Duration::from_secs(120))?;
+            let thread = keyed::replace_deleted(
+                &invocation,
+                adapter.as_ref(),
+                &key,
+                &stopped,
+                ctx.clock.now(),
+            )?;
+            ctx.out.line(&format!(
+                "replaced {stopped} with {} under {key}",
+                thread.session
+            ))?;
             Ok(ExitCode::SUCCESS)
         }
         SessionsCommand::ResolveStart(args) => {

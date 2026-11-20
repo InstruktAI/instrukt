@@ -26,9 +26,26 @@ pub(crate) fn note(
     now: Timestamp,
     outcome: Result<(), &SessionsError>,
 ) {
+    let owner_key = key;
+    let key = match outcome {
+        Err(
+            SessionsError::ArchivedBound { key, .. }
+            | SessionsError::DeletedBound { key, .. }
+            | SessionsError::ProjectChanged { key, .. }
+            | SessionsError::ConflictingThreads { key, .. }
+            | SessionsError::Unresolved { key }
+            | SessionsError::Uncertain { key, .. },
+        ) => key.as_str(),
+        _ => key,
+    };
     let worker = format!("{PREFIX}{}:{key}", runtime.name());
     let result = state.write::<_, StateError>(|tx| {
         let path = state::db_path(tx);
+        if owner_key != key {
+            tx.execute("DELETE FROM runner_workers WHERE worker=?1",
+                [format!("{PREFIX}{}:{owner_key}", runtime.name())],
+            ).map_err(state::sql(&path))?;
+        }
         match outcome {
             Ok(()) => tx.execute("DELETE FROM runner_workers WHERE worker=?1", [&worker]),
             Err(error) => {
@@ -40,7 +57,7 @@ pub(crate) fn note(
                         ).optional().map_err(state::sql(&path))?;
                         (format!("start `{key}` remains unresolved; use `instrukt sessions resolve-start {key} --session <runtime:id> | --none`"), begun.unwrap_or_else(|| now.to_string()))
                     }
-                    SessionsError::ArchivedBound { .. } | SessionsError::ConflictingThreads { .. } => (error.to_string(), now.to_string()),
+                    SessionsError::ArchivedBound { .. } | SessionsError::ProjectChanged { .. } | SessionsError::DeletedBound { .. } | SessionsError::ConflictingThreads { .. } => (error.to_string(), now.to_string()),
                     SessionsError::KeyConflict(_) => (format!("{error}; archive or delete the extra thread"), now.to_string()),
                     _ => return Ok(()),
                 };
