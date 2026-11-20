@@ -462,6 +462,48 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
     assert_eq!(deleted.delivered_to("later-event").to_string(), "t3:s2");
     assert!(deleted.runtime.input_log("s2").contains("later-event"));
     assert!(start_anomalies(&deleted).is_empty());
+    let pending = Responsibility::new("subscription_identity: subject\n");
+    pending
+        .computer
+        .db()
+        .execute_batch(
+            "CREATE TRIGGER fail_initial_receipt BEFORE INSERT ON runtime_inputs
+         WHEN NEW.session='s1' BEGIN SELECT RAISE(ABORT, 'standing opening receipt failed'); END;",
+        )
+        .unwrap();
+    pending.append("initial");
+    pending.tick();
+    let key = pending.runtime.key("s1");
+    pending
+        .computer
+        .env
+        .run(
+            pending.computer.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        )
+        .failure();
+    assert_eq!(pending.runtime.threads(), ["s1"]);
+    pending.runtime.set_status("s1", "stopped");
+    pending.runtime.delete("s1");
+    pending.tick();
+    assert!(pending.runtime.threads().is_empty());
+    let finding = start_anomalies(&pending);
+    assert!(
+        finding[0]["failure"].as_str().unwrap().contains(&format!(
+            "instrukt sessions replace-deleted {key} --stopped t3:s1"
+        )),
+        "{finding:?}"
+    );
+    pending.replace_deleted(&key);
+    assert_eq!(pending.delivered_to("initial").to_string(), "t3:s2");
+    pending.append("after-pending-replacement");
+    pending.tick();
+    assert_eq!(
+        pending
+            .delivered_to("after-pending-replacement")
+            .to_string(),
+        "t3:s2"
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS23
@@ -732,26 +774,65 @@ fn an_operator_can_resolve_an_uncertain_standing_start_to_its_exact_created_thre
     r.append("initial");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
+    let title = r.runtime.title("s1");
+    let key = title.rsplit(" · ").next().unwrap();
     r.runtime
         .change("s1", "title", "Renamed before resolution".into());
-    r.computer
-        .env
-        .run(
+    let resolve = || {
+        r.computer.env.run(
             r.computer.project.path(),
-            [
-                "sessions",
-                "resolve-start",
-                "reactions/procedure/respond@fork",
-                "--session",
-                "t3:s1",
-            ],
+            ["sessions", "resolve-start", key, "--session", "t3:s1"],
         )
-        .success();
+    };
+    resolve().success();
+    r.runtime.flag("hide-project-id", true);
+    let refused = resolve().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(
+        guidance.contains("cannot be verified against the retained project"),
+        "{guidance}"
+    );
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions resolve-start {key} --session t3:s1"
+        )),
+        "{guidance}"
+    );
+    r.runtime.flag("hide-project-id", false);
+    resolve().success();
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), 1);
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 1);
+    let interrupted = Responsibility::new("");
+    interrupted.runtime.flag("show-failure", true);
+    interrupted.append("initial");
+    interrupted.tick();
+    let pending: (String, bool) = interrupted
+        .computer
+        .db()
+        .query_row(
+            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
+            [key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(pending, ("t3:s1".into(), false));
+    interrupted
+        .runtime
+        .change("s1", "title", "Renamed after the failed show".into());
+    interrupted.runtime.seed(
+        "lookalike",
+        interrupted.computer.project.path(),
+        key,
+        "Unrelated opening.",
+    );
+    interrupted.runtime.flag("show-failure", false);
+    interrupted.tick();
+    assert_eq!(interrupted.delivered_to("initial").to_string(), "t3:s1");
+    assert_eq!(interrupted.runtime.message_count("s1"), 1);
+    assert_eq!(interrupted.runtime.message_count("lookalike"), 1);
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
 #[test]
@@ -840,11 +921,12 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         .failure();
     let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
     let confirmation = format!(
-        "instrukt events bind reactions/procedure/respond --reservation {token} --not-started --reason 'provider stopped and thread deleted'"
+        "instrukt events bind reactions/procedure/respond --reservation {token} --not-started --stopped t3:unverified --reason 'provider stopped and thread deleted'"
     );
     assert!(guidance.contains(&confirmation), "{guidance}");
     r.runtime.set_status("unverified", "stopped");
     r.runtime.delete("unverified");
+    r.runtime.flag("list-failure", true);
     r.computer
         .env
         .instrukt(root)
@@ -856,11 +938,14 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
             "--reservation",
             token,
             "--not-started",
+            "--stopped",
+            "t3:unverified",
             "--reason",
             "provider stopped and thread deleted",
         ])
         .assert()
         .success();
+    r.runtime.flag("list-failure", false);
     let retry = reserve().success();
     let retry: serde_json::Value = serde_json::from_slice(&retry.get_output().stdout).unwrap();
     assert_eq!(retry["reservation"], request["reservation"]);
@@ -892,6 +977,34 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
             .assert()
     };
     bind().success();
+    bind().success();
+    let wrong = serde_json::json!({"session":"t3:wrong","title":request["title"],"assignment":request["brief"]});
+    let calls_before = r.runtime.calls().len();
+    let refused = r
+        .computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            token,
+            "--session",
+            "t3:wrong",
+            "--evidence",
+            "-",
+        ])
+        .write_stdin(wrong.to_string())
+        .assert()
+        .failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains("records t3:s1"), "{guidance}");
+    assert!(guidance.contains("instrukt events status"), "{guidance}");
+    assert!(!guidance.contains("replace-deleted"), "{guidance}");
+    assert_eq!(r.runtime.calls().len(), calls_before);
+    start_anomalies(&r);
     bind().success();
     let retained_project: String = r
         .computer
@@ -978,6 +1091,69 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     r.replace_deleted(key);
     assert_eq!(
         r.delivered_to("recover-unverified-binding").to_string(),
+        "t3:s2"
+    );
+    let obsolete = bind().failure();
+    let guidance = String::from_utf8_lossy(&obsolete.get_output().stderr);
+    assert!(guidance.contains("records t3:s2"), "{guidance}");
+    assert!(!guidance.contains("replace-deleted"), "{guidance}");
+    start_anomalies(&r);
+    let live = Responsibility::new("");
+    let root = live.computer.project.path();
+    let out = live
+        .computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reserve",
+            "--json",
+        ])
+        .assert()
+        .success();
+    let request: instrukt_runner::standing::ManualReservation =
+        serde_json::from_slice(&out.get_output().stdout).unwrap();
+    live.runtime.seed("s1", root, &request.key, &request.brief);
+    let no_start = || {
+        live.computer
+            .env
+            .instrukt(root)
+            .env("T3CODE_THREAD_ID", "manual-parent")
+            .args([
+                "events",
+                "bind",
+                "reactions/procedure/respond",
+                "--reservation",
+                &request.reservation,
+                "--not-started",
+                "--reason",
+                "no start observed",
+            ])
+            .assert()
+    };
+    let refused = no_start().failure();
+    let expected = format!(
+        "instrukt sessions replace-deleted {} --stopped t3:s1",
+        request.key
+    );
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains(&expected), "{guidance}");
+    live.runtime
+        .change("s1", "title", "Renamed after refusal".into());
+    let refused = no_start().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains(&expected), "{guidance}");
+    live.append("pending-on-manual-entry");
+    live.tick();
+    assert_eq!(live.runtime.threads(), ["s1"]);
+    live.runtime.set_status("s1", "stopped");
+    live.runtime.delete("s1");
+    live.replace_deleted(&request.key);
+    assert_eq!(
+        live.delivered_to("pending-on-manual-entry").to_string(),
         "t3:s2"
     );
 }
@@ -1091,7 +1267,7 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
             .replace(&original.reservation, "[RESERVATION]")
             .replace(root.to_str().unwrap(), "[PROJECT]")
     );
-    assert_eq!(r.runtime.calls().len(), calls_before);
+    assert_eq!(r.runtime.calls().len(), calls_before + 1);
 
     r.runtime.seed("s1", root, &retried.key, &retried.brief);
     let evidence =

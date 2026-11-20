@@ -234,7 +234,7 @@ fn remember_in(
         }
         RequestEvidence::Unknown => None,
     };
-    tx.execute("INSERT INTO runtime_bindings (runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET session=excluded.session,project_id=COALESCE(excluded.project_id,runtime_bindings.project_id),worktree=excluded.worktree,accepted=excluded.accepted,display_title=excluded.display_title",params![runtime.name(),input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),accepted,request,thread.title]).map_err(state::sql(&path))?;
+    tx.execute("INSERT INTO runtime_bindings (runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET session=excluded.session,project_id=COALESCE(excluded.project_id,runtime_bindings.project_id),worktree=excluded.worktree,branch=COALESCE(runtime_bindings.branch,excluded.branch),accepted=excluded.accepted,display_title=excluded.display_title",params![runtime.name(),input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),accepted,request,thread.title]).map_err(state::sql(&path))?;
     if accepted {
         let resolution: Option<String> = tx
             .query_row(
@@ -583,32 +583,40 @@ fn start_claimed(
         tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,begun_at=excluded.begun_at,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=CASE WHEN runtime_starts.resolution GLOB 'operator_confirmed_*replacement:*' THEN runtime_starts.resolution END",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
         Ok(())
     })?;
-    let thread = adapter
+    let session = adapter
         .create_thread(input)
         .map_err(|e| SessionsError::Uncertain {
             key: input.key.clone(),
             detail: e.to_string(),
         })?;
-    // The returned ID and opening acknowledgement survive any later
-    // transaction failure. All retry paths use that exact pending ID.
     guard.state.write::<_, StateError>(|tx| {
-        remember_in(
-            tx,
-            adapter.runtime(),
-            input,
-            &thread,
-            project,
-            false,
-            RequestEvidence::Retained,
-        )?;
+        let path = state::db_path(tx);
+        let request = serde_json::to_string(input).map_err(|error| state::invalid(&path, error))?;
         tx.execute(
-            "UPDATE runtime_bindings SET request=json_set(request,'$.opening_acknowledged',1)
-             WHERE runtime=?1 AND semantic_key=?2",
-            params![guard.runtime, input.key],
-        )
-        .map_err(state::sql(&state::db_path(tx)))?;
+            "INSERT INTO runtime_bindings
+                (runtime,semantic_key,kind,project,subject,session,checkout,base_head,accepted,request)
+             VALUES (?1,?2,?3,?4,?2,?5,?6,?7,0,json_set(?8,'$.opening_acknowledged',1))",
+            params![guard.runtime,input.key,kind(&input.key),project,session.to_string(),
+                input.checkout.to_string_lossy(),input.worktree.as_ref().map(|w| &w.base),request],
+        ).map_err(state::sql(&path))?;
         Ok(())
     })?;
+    let thread = adapter.read_state(&session)?;
+    match thread.presence {
+        Presence::Archived => return Err(archived(&input.key, &session)),
+        Presence::Absent => return Err(deleted(&input.key, &session)),
+        Presence::Present => {}
+    }
+    adapter.verify_start(input, &thread)?;
+    remember(
+        &guard.state,
+        adapter,
+        input,
+        &thread,
+        project,
+        false,
+        RequestEvidence::Retained,
+    )?;
     accept_started(
         guard,
         adapter,
@@ -818,6 +826,14 @@ pub fn resolve(
         {
             return Err(SessionsError::KeyConflict(key.into()));
         }
+        if recorded.project_id.is_some()
+            && thread.project_id.is_none()
+            && listed.project_id.is_none()
+        {
+            return Err(SessionsError::Refused(format!(
+                "native project for {session} cannot be verified against the retained project. Restore native project visibility and retry `instrukt sessions resolve-start {key} --session {session}`"
+            )));
+        }
         let owned_elsewhere = guard.state.read(|conn, path| conn.query_row(
             "SELECT EXISTS(
                 SELECT 1 FROM runtime_bindings WHERE session=?1 AND semantic_key!=?2
@@ -852,6 +868,14 @@ pub fn resolve(
     }
     note(&guard.state, adapter.runtime(), key, now, Ok(()));
     Ok(())
+}
+
+pub(crate) fn recorded_session(
+    state: &RunnerState,
+    runtime: &str,
+    key: &str,
+) -> Result<Option<SessionRef>, StateError> {
+    Ok(record(state, runtime, key)?.bound)
 }
 
 pub(crate) fn replacement_started(

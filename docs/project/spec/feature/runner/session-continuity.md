@@ -350,13 +350,17 @@ The same discovery and start rules govern every key, for both `start` and
 A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
 One match recovers a start whose native ID was never returned. A returned ID
-is retained before acceptance and subsequent attempts use it directly. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
+is retained as a pending intent before reading the thread or verifying placement.
+Verification and subsequent attempts use that exact ID. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
 otherwise unconfirmed input may be resent there.
 An empty listing alone never clears a marker. Keep the assignment pending and
 show its key and the `instrukt sessions resolve-start <key>` door in status.
 `--session` uses the operator's explicit ID. It requires a present thread
 in the retained native project and any requested worktree, and refuses a
-thread already bound to another assignment; `--none` records the operator's confirmation that no thread
+thread already bound to another assignment. If a native project is retained,
+the listing or thread state must identify that project. The refusal directs the
+operator to restore project evidence and retry the same explicit ID. `--none`
+records the operator's confirmation that no thread
 was created and no start remains in flight, permitting retry under the same
 key. The resolved request retains its input and retry permission until retried.
 A rejection proven to precede creation also permits that retry. Failure to
@@ -635,6 +639,8 @@ When the developer confirms that no thread was created and no start remains in f
 Then the next wake-up may start that standing agent
 But when the developer identifies the keyed thread that was created
 Then instrukt verifies and binds that thread without starting another
+And when the returned ID was recorded before a failed first inspection, the retry uses that same ID
+And when explicit resolution lacks evidence of a retained native project, it refuses until the evidence is restored
 ```
 
 ### UC-SS3: A developer has runner pickup after choosing T3
@@ -815,6 +821,7 @@ When the developer deletes its thread in the runtime and a later event for that 
 Then no successor starts, the event stays pending and status gives the replacement command
 When the operator confirms the old provider stopped through that command
 Then the successor uses the same key and receives the pending and later events
+And the same command works for a deleted pending thread whose opening receipt did not commit
 But when the developer archived the thread instead
 Then no successor starts, the event stays pending and status shows the developer the archived thread
 ```

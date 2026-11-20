@@ -196,6 +196,8 @@ elif command=='send':
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
 elif command=='show':
+    if (root/'show-failure').exists():
+        print('native show unavailable', file=sys.stderr); sys.exit(1)
     sync_inputs()
     t=find(operands[0]); limit=int(flags.get('--messages',100))
     if limit==0 and (root/'busy-before-entry').exists():

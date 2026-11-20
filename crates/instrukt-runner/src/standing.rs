@@ -859,6 +859,28 @@ pub fn reserve_manual(
     state.write::<_,StateError>(|tx|{tx.execute("INSERT INTO manual_standing_reservations(responsibility,token,caller,home,declaration,request) VALUES (?1,?2,?3,?4,?5,?6)",params![key,request.reservation,caller.to_string(),home,serde_json::to_string(&fixed).map_err(|e|state::invalid(&state::db_path(tx),e))?,serde_json::to_string(&request).map_err(|e|state::invalid(&state::db_path(tx),e))?]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
     Ok(request)
 }
+fn manual_thread_exists(key: &str, session: &SessionRef) -> SessionsError {
+    SessionsError::Refused(format!(
+        "same-key thread {session} still exists. Stop and delete it, then run `instrukt sessions replace-deleted {key} --stopped {session}`"
+    ))
+}
+
+fn manual_start(request: &ManualReservation, adapter: &dyn RuntimeAdapter) -> RuntimeStart {
+    RuntimeStart {
+        preferences: request.preferences.clone(),
+        selection: request.selection.clone(),
+        selection_evidence: Some(
+            adapter.selection_realization(crate::runtime::SelectionOperation::NativeDelegation),
+        ),
+        checkout: request.checkout.clone(),
+        title: request.title.clone(),
+        key: request.key.clone(),
+        brief: request.brief.clone(),
+        worktree: None,
+        profiles: crate::runtime::Profiles::default(),
+    }
+}
+
 pub struct ManualBinding<'a> {
     pub config: &'a Configuration,
     pub env: &'a instrukt_core::config::Env,
@@ -866,6 +888,7 @@ pub struct ManualBinding<'a> {
     pub token: &'a str,
     pub evidence: Option<&'a ManualEvidence>,
     pub reason: Option<&'a str>,
+    pub stopped: Option<&'a SessionRef>,
     pub now: Timestamp,
 }
 pub fn bind_manual(
@@ -879,22 +902,77 @@ pub fn bind_manual(
         token,
         evidence,
         reason,
+        stopped,
         now,
     } = *request;
     let runtime = config.runner_runtime()?;
     let caller = config.caller(env)?.ok_or(SessionsError::NoActiveRuntime)?;
     let state = RunnerState::new(invocation.home());
     let adapter = crate::runtime::adapter(runtime);
-    let observed = if let Some(evidence) = evidence {
-        let (request, home, bound) = state.read(|conn, path| {
+    let (reserved, home, bound, seen, declaration) = state
+        .read(|conn, path| {
             conn.query_row(
-                "SELECT request,home,session FROM manual_standing_reservations WHERE token=?1 AND caller=?2",
+                "SELECT m.request,m.home,coalesce(p.session,m.session),
+                    json_extract(m.request,'$.observed_session'),m.declaration
+             FROM manual_standing_reservations m
+             LEFT JOIN procedure_responsibilities p ON p.responsibility=m.responsibility
+             WHERE m.token=?1 AND m.caller=?2",
                 params![token, caller.to_string()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)),
-            ).map_err(state::sql(path))
-        })?.ok_or_else(|| SessionsError::Refused("manual standing reservation is missing".into()))?;
-        let request: ManualReservation = serde_json::from_str(&request)
-            .map_err(|error| SessionsError::Refused(error.to_string()))?;
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(state::sql(path))
+        })?
+        .flatten()
+        .ok_or_else(|| SessionsError::Refused("manual standing reservation is missing".into()))?;
+    let reserved: ManualReservation = serde_json::from_str(&reserved)
+        .map_err(|error| SessionsError::Refused(error.to_string()))?;
+    let fixed: IndexEntry = serde_json::from_str(&declaration)
+        .map_err(|error| SessionsError::Refused(error.to_string()))?;
+    if fixed.id.as_str() != procedure {
+        return Err(SessionsError::Refused(
+            "reservation belongs to another procedure".into(),
+        ));
+    }
+    let _guard = keyed::KeyGuard::claim(invocation, adapter.as_ref(), &reserved.key, None, now)?;
+    let recorded = keyed::recorded_session(&state, runtime.name(), &reserved.key)?;
+    let retained = recorded.as_ref().map(ToString::to_string).or(bound);
+    let remember_observation = |session: &SessionRef| {
+        state.write::<_, StateError>(|tx| {
+            tx.execute(
+                "UPDATE manual_standing_reservations
+                 SET request=json_set(request,'$.observed_session',?2),retry_allowed=0 WHERE token=?1",
+                params![token, session.to_string()],
+            ).map_err(state::sql(&state::db_path(tx)))?;
+            Ok(())
+        })
+    };
+    let observed = if let Some(evidence) = evidence {
+        if let Some(id) = retained.as_deref().or(seen.as_deref())
+            && id != evidence.session.to_string()
+        {
+            return Err(SessionsError::Refused(format!(
+                "reservation for {} records {id}. Retry with that ID and its evidence. Inspect `instrukt events status`",
+                reserved.key
+            )));
+        }
+        if evidence.session.runtime.as_str() != runtime.name()
+            || evidence.title != reserved.title
+            || evidence.assignment != reserved.brief
+        {
+            return Err(SessionsError::Refused(
+                "native identity or initialized assignment differs from reserved facts".into(),
+            ));
+        }
+        let request = &reserved;
         let listed = adapter.list(&request.checkout)?;
         let mut matches = listed.iter().filter(|thread| {
             thread.presence == Presence::Present
@@ -909,13 +987,23 @@ pub fn bind_manual(
             || thread.presence != Presence::Present
             || thread.semantic_key.as_deref() != Some(&request.key)
         {
-            if bound.is_none() {
+            if retained.is_none() {
+                if !listed.iter().any(|entry| {
+                    entry.session == evidence.session
+                        && entry.semantic_key.as_deref() == Some(&request.key)
+                }) {
+                    return Err(SessionsError::Refused(format!(
+                        "thread {} cannot be verified for reservation {}. Inspect `instrukt events status`",
+                        evidence.session, request.key
+                    )));
+                }
+                remember_observation(&evidence.session)?;
                 let company = home
                     .strip_prefix("company:")
                     .map_or_else(String::new, |slug| format!(" --company {slug}"));
                 return Err(SessionsError::Refused(format!(
-                    "native project for unbound thread {} is unverified. Stop and delete the thread before confirming the reservation with `instrukt events bind {procedure}{company} --reservation {token} --not-started --reason 'provider stopped and thread deleted'`",
-                    evidence.session
+                    "native project for unbound thread {} is unverified. Stop and delete the thread before confirming the reservation with `instrukt events bind {procedure}{company} --reservation {token} --not-started --stopped {} --reason 'provider stopped and thread deleted'`",
+                    evidence.session, evidence.session
                 )));
             }
             return Err(keyed::unverified_project(&request.key, &evidence.session));
@@ -925,29 +1013,85 @@ pub fn bind_manual(
         }
         Some(thread)
     } else {
+        if reason.is_none_or(|reason| reason.trim().is_empty()) {
+            return Err(SessionsError::Refused(
+                "no-start resolution needs a reason".into(),
+            ));
+        }
+        if retained.is_some() {
+            return Err(SessionsError::Refused(
+                "a bound standing assignment cannot be declared not started".into(),
+            ));
+        }
+        let previously_seen = seen
+            .as_deref()
+            .map(SessionRef::parse)
+            .transpose()
+            .map_err(|error| SessionsError::Refused(error.to_string()))?;
+        if let Some(stopped) = stopped
+            && previously_seen.as_ref() != Some(stopped)
+        {
+            return Err(keyed::stopped_mismatch(&reserved.key, stopped));
+        }
+        let listed = match adapter.list(&reserved.checkout) {
+            Ok(listed) => listed,
+            Err(_) if stopped.is_some() => Vec::new(),
+            Err(error) => return Err(error),
+        };
+        let mut same_key = listed.iter().filter(|thread| {
+            thread.presence != Presence::Absent
+                && thread.semantic_key.as_deref() == Some(&reserved.key)
+        });
+        if let Some(thread) = same_key.next() {
+            if same_key.next().is_some() {
+                return Err(keyed::conflict(
+                    &reserved.key,
+                    listed
+                        .iter()
+                        .filter(|entry| {
+                            entry.presence != Presence::Absent
+                                && entry.semantic_key.as_deref() == Some(&reserved.key)
+                        })
+                        .map(|entry| &entry.session),
+                ));
+            }
+            if let Some(prior) = previously_seen
+                .as_ref()
+                .filter(|prior| **prior != thread.session)
+                && adapter.read_state(prior)?.presence != Presence::Absent
+            {
+                return Err(keyed::conflict(&reserved.key, [prior, &thread.session]));
+            }
+            remember_observation(&thread.session)?;
+            return Err(manual_thread_exists(&reserved.key, &thread.session));
+        }
+        if let Some(session) = previously_seen
+            && adapter.read_state(&session)?.presence != Presence::Absent
+        {
+            return Err(manual_thread_exists(&reserved.key, &session));
+        }
         None
     };
     state.write::<_,StateError>(|tx|{
         let db=state::db_path(tx);
-        let (responsibility,owner,home,declaration,request,bound):(String,String,String,String,String,Option<String>)=tx.query_row("SELECT responsibility,caller,home,declaration,request,session FROM manual_standing_reservations WHERE token=?1",[token],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(state::sql(&db))?;
-        let request:ManualReservation=serde_json::from_str(&request).map_err(|e|state::invalid(&db,e))?;
-        let fixed:IndexEntry=serde_json::from_str(&declaration).map_err(|e|state::invalid(&db,e))?;
-        if owner!=caller.to_string() || fixed.id.as_str()!=procedure { return Err(state::invalid(&db,"reservation belongs to another caller or procedure")); }
-        if let Some(e)=evidence {
-            if e.session.runtime.as_str()!=runtime.name() || e.title!=request.title || e.assignment!=request.brief || bound.as_deref().is_some_and(|s|s!=e.session.to_string()) { return Err(state::invalid(&db,"native identity or initialized assignment differs from reserved facts")); }
-            let native=RuntimeStart { preferences:request.preferences.clone(), selection:request.selection.clone(), selection_evidence:Some(crate::runtime::adapter(runtime).selection_realization(crate::runtime::SelectionOperation::NativeDelegation)),checkout:request.checkout.clone(),title:request.title.clone(),key:request.key.clone(),brief:request.brief.clone(),worktree:None,
-            profiles: crate::runtime::Profiles::default()};
-            let thread = observed.as_ref().ok_or_else(|| state::invalid(&db, "manual binding has no native project observation"))?;
+        if let Some(thread) = observed.as_ref() {
+            let native = manual_start(&reserved, adapter.as_ref());
+            let assignment = serde_json::to_string(&native).map_err(|e|state::invalid(&db,e))?;
+            let session = &thread.session;
+            let input = format!("assignment:{}", reserved.key);
             keyed::remember_manual(tx, runtime, &native, thread, None)?;
-            tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,1,?1,?4,?5,?6,?7) ON CONFLICT(responsibility) DO NOTHING",params![responsibility,procedure,home,request.checkout.to_string_lossy(),declaration,serde_json::to_string(&native).map_err(|e|state::invalid(&db,e))?,e.session.to_string()]).map_err(state::sql(&db))?;
-            tx.execute("UPDATE manual_standing_reservations SET session=?2 WHERE token=?1",params![token,e.session.to_string()]).map_err(state::sql(&db))?;
-            inputs::retain(tx,&e.session,&Entry{id:&format!("assignment:{}",request.key),kind:InputKind::Recovery,assignment:None,source_at:None,arrived_at:now,intent:Intent::Asap,content:&request.brief})?;
-            tx.execute("UPDATE runtime_inputs SET state='accepted',waiting=1,group_id=input_id,selected_content=content WHERE runtime=?1 AND session=?2 AND input_id=?3 AND state='pending'",params![runtime.name(),e.session.id.as_str(),format!("assignment:{}",request.key)]).map_err(state::sql(&db))?;
+            tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,1,?1,?4,?5,?6,?7) ON CONFLICT(responsibility) DO NOTHING",
+                params![reserved.key,procedure,home,reserved.checkout.to_string_lossy(),declaration,assignment,session.to_string()]).map_err(state::sql(&db))?;
+            tx.execute("UPDATE manual_standing_reservations SET session=?2,request=json_remove(request,'$.observed_session') WHERE token=?1",
+                params![token,session.to_string()]).map_err(state::sql(&db))?;
+            inputs::retain(tx,session,&Entry{id:&input,kind:InputKind::Recovery,assignment:None,source_at:None,arrived_at:now,intent:Intent::Asap,content:&reserved.brief})?;
+            tx.execute("UPDATE runtime_inputs SET state='accepted',waiting=1,group_id=input_id,selected_content=content WHERE runtime=?1 AND session=?2 AND input_id=?3 AND state='pending'",
+                params![runtime.name(),session.id.as_str(),input]).map_err(state::sql(&db))?;
         } else {
-            let reason=reason.filter(|s|!s.trim().is_empty()).ok_or_else(||state::invalid(&db,"no-start resolution needs explicit native proof or confirmation"))?;
-            if bound.is_some() { return Err(state::invalid(&db,"a bound standing assignment cannot be declared not started")); }
-            tx.execute("UPDATE manual_standing_reservations SET retry_allowed=1,no_start_reason=?2 WHERE token=?1",params![token,reason]).map_err(state::sql(&db))?;
-        } Ok(())
+            tx.execute("UPDATE manual_standing_reservations SET retry_allowed=1,no_start_reason=?2,request=json_remove(request,'$.observed_session') WHERE token=?1",
+                params![token,reason]).map_err(state::sql(&db))?;
+        }
+        Ok(())
     })?;
     Ok(())
 }
@@ -978,7 +1122,7 @@ pub(crate) fn replace_deleted(
                 "SELECT p.responsibility,p.procedure,p.exact_home,p.subject,p.request
              FROM procedure_responsibilities p
              LEFT JOIN runtime_bindings b ON p.session IS NULL AND b.semantic_key=p.semantic_key
-                 AND b.runtime=?3 AND b.accepted=1 AND b.kind='standing'
+                 AND b.runtime=?3 AND b.kind='standing'
              WHERE p.semantic_key=?1 AND (coalesce(p.session,b.session)=?2 OR (?4 AND p.session IS NULL))",
                 params![key, stopped.to_string(), adapter.runtime().name(), resuming],
                 |row| {
@@ -995,10 +1139,42 @@ pub(crate) fn replace_deleted(
             .map_err(state::sql(path))
         })?
         .flatten();
-    let (responsibility, procedure, home, subject, request) =
-        found.ok_or_else(|| keyed::stopped_mismatch(key, stopped))?;
-    let old_request: RuntimeStart =
-        serde_json::from_str(&request).map_err(|err| SessionsError::Refused(err.to_string()))?;
+    let manual = if found.is_none() {
+        state.read(|conn,path| conn.query_row(
+            "SELECT home,declaration,request FROM manual_standing_reservations
+             WHERE responsibility=?1 AND session IS NULL AND json_extract(request,'$.observed_session')=?2",
+            params![key,stopped.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        ).optional().map_err(state::sql(path)))?.flatten()
+    } else {
+        None
+    };
+    let mut manual_assignment = None;
+    let (responsibility, procedure, home, subject, old_request) =
+        if let Some((responsibility, procedure, home, subject, request)) = found {
+            let request = serde_json::from_str(&request)
+                .map_err(|err| SessionsError::Refused(err.to_string()))?;
+            (responsibility, procedure, home, subject, request)
+        } else if let Some((home, declaration, request)) = manual.as_ref() {
+            let fixed: IndexEntry = serde_json::from_str(declaration)
+                .map_err(|err| SessionsError::Refused(err.to_string()))?;
+            let request: ManualReservation = serde_json::from_str(request)
+                .map_err(|err| SessionsError::Refused(err.to_string()))?;
+            let native = manual_start(&request, adapter);
+            manual_assignment = Some(
+                serde_json::to_string(&native)
+                    .map_err(|err| SessionsError::Refused(err.to_string()))?,
+            );
+            (
+                key.to_owned(),
+                fixed.id.to_string(),
+                home.clone(),
+                None,
+                native,
+            )
+        } else {
+            return Err(keyed::stopped_mismatch(key, stopped));
+        };
     if !resuming {
         keyed::confirm_deleted(adapter, stopped)?;
         keyed::check_replacement_key(adapter, &old_request, stopped, Some(&responsibility))?;
@@ -1041,6 +1217,7 @@ pub(crate) fn replace_deleted(
                 root: &root,
                 project: project.as_deref(),
                 old_session: stopped,
+                manual_assignment: manual_assignment.as_deref(),
                 current: &current,
                 subject: subject.as_deref(),
                 now,
@@ -1076,6 +1253,7 @@ struct Successor<'a> {
     root: &'a std::path::Path,
     project: Option<&'a str>,
     old_session: &'a SessionRef,
+    manual_assignment: Option<&'a str>,
     current: &'a IndexEntry,
     subject: Option<&'a str>,
     now: Timestamp,
@@ -1102,9 +1280,35 @@ fn prepare_successor(
         .selection_realization(crate::runtime::SelectionOperation::ThreadStart);
     state.write::<_,SessionsError>(|tx|{
         let path=state::db_path(tx);
+        if let Some(assignment) = cx.manual_assignment {
+            let staged = tx.execute(
+                "INSERT INTO procedure_responsibilities
+                    (responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request)
+                 SELECT responsibility,?2,home,1,responsibility,?3,declaration,?4
+                 FROM manual_standing_reservations WHERE responsibility=?1 AND session IS NULL
+                 AND json_extract(request,'$.observed_session')=?5",
+                params![cx.responsibility,cx.current.id.as_str(),cx.root.to_string_lossy(),assignment,cx.old_session.to_string()],
+            ).map_err(state::sql(&path))?;
+            if staged != 1 {
+                return Err(keyed::stopped_mismatch(cx.responsibility, cx.old_session));
+            }
+            tx.execute("DELETE FROM manual_standing_reservations WHERE responsibility=?1",[cx.responsibility]).map_err(state::sql(&path))?;
+        }
         let (generation,old_key)=tx.query_row("SELECT generation,semantic_key FROM procedure_responsibilities WHERE responsibility=?1",[cx.responsibility],|r|Ok((r.get::<_,u64>(0)?,r.get::<_,String>(1)?))).map_err(state::sql(&path))?;
         let unresolved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM runtime_starts WHERE runtime=?2 AND semantic_key=?1)",params![old_key,cx.old_session.runtime.as_str()],|r|r.get(0)).map_err(state::sql(&path))?;
-        if unresolved{return Err(SessionsError::Unresolved{key:old_key});}
+        if unresolved {
+            let pending: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE runtime=?1
+                 AND semantic_key=?2 AND session=?3 AND accepted=0)",
+                params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()],
+                |row| row.get(0),
+            ).map_err(state::sql(&path))?;
+            if !pending {
+                return Err(SessionsError::Unresolved{key:old_key});
+            }
+            tx.execute("DELETE FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",
+                params![cx.old_session.runtime.as_str(),old_key]).map_err(state::sql(&path))?;
+        }
         let next=generation.checked_add(1).ok_or_else(||SessionsError::Refused("standing generation counter exhausted".into()))?;
         let next_key=old_key.clone();
         tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()]).map_err(state::sql(&path))?;

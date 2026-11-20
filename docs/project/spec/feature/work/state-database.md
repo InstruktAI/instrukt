@@ -607,12 +607,20 @@ identity and runtime endpoint/placement scope remain separate. Display-title
 changes do not change the semantic key or authorize a new start. Work's `session_bindings`
 retains todo/role/attempt facts, and task occurrence stamps own completion.
 One pending row per key keeps the exact returned ID and opening acceptance
+from the native start result, before thread inspection or placement verification,
 until the start commits. Retry reads that ID directly. The pending row becomes
 accepted when the owning records commit, or is retired by explicit recovery.
 An accepted replacement retains its most recent stopped ID so the same
 operator command can finish pending reflection and return its result.
 Discovery can recover a missing accepted binding. Removing a row proves no
 absence.
+
+**`manual_standing_reservations`** — runner-owned reservation keyed by standing
+responsibility. The request can retain one native ID observed for the reserved
+key, even before binding succeeds. Confirmation of no start clears that
+observation after native verification. Binding clears it when the session is
+recorded. Explicit replacement retires the reservation in the same transaction
+that stages the successor.
 
 **`runtime_key_locks`** — one starter/deliverer per runtime and exact key.
 Key: `(runtime, semantic_key)`.

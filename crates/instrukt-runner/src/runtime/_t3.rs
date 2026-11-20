@@ -38,7 +38,10 @@ impl T3 {
             .map_err(|error| failure("input observation", error.to_string()))
     }
 
-    pub(crate) fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError> {
+    pub(crate) fn create_thread(
+        &self,
+        request: &RuntimeStart,
+    ) -> Result<SessionRef, SessionsError> {
         let checkout = request.checkout.to_string_lossy();
         let mut args = vec!["thread", "start", "--title", request.title.as_str()];
         if let Some(worktree) = &request.worktree {
@@ -63,11 +66,7 @@ impl T3 {
         if id.is_empty() || id.chars().any(char::is_whitespace) {
             return Err(failure("start", "no unambiguous native thread id returned"));
         }
-        let session =
-            SessionRef::parse(&format!("t3:{id}")).map_err(|e| failure("start", e.to_string()))?;
-        let thread = self.read_state(&session)?;
-        verify_request(request, &thread)?;
-        Ok(thread)
+        SessionRef::parse(&format!("t3:{id}")).map_err(|e| failure("start", e.to_string()))
     }
 
     fn call(&self, args: &[&str], input: Option<&str>) -> Result<String, SessionsError> {
@@ -232,7 +231,7 @@ impl RuntimeAdapter for T3 {
         }
         native
     }
-    fn create_thread(&self, request: &RuntimeStart) -> Result<Thread, SessionsError> {
+    fn create_thread(&self, request: &RuntimeStart) -> Result<SessionRef, SessionsError> {
         T3::create_thread(self, request)
     }
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {

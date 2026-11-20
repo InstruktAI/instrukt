@@ -35,6 +35,18 @@ fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
     let fake = FakeT3::create(&p.env);
     insta::assert_snapshot!(p.env.git(&fake.worktree("s1"),["branch","--show-current"]),@"parser/prepare");
     assert!(fake.worktree("s1").is_dir());
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let branch: String = db
+        .query_row(
+            "SELECT branch FROM runtime_bindings WHERE session='t3:s1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(branch, "parser/prepare");
     for command in ["run", "send", "alive", "conversation", "link"] {
         p.env.run(p.repo.path(), ["sessions", command]).failure();
     }
