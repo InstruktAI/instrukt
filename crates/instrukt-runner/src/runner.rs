@@ -37,6 +37,7 @@ use crate::transport::{EventScope, ScopedTransport, TransportError};
 const RUN_LOCK_WAIT: Duration = Duration::from_secs(120);
 
 mod _holder;
+pub(crate) use _holder::incarnation;
 mod _readiness;
 
 /// What a running `instrukt run` publishes about the connectors it hosts.

@@ -211,7 +211,19 @@ impl<'a> Invocation<'a> {
     pub fn run(&self, timeout: Duration) -> Result<Finished, ProcessError> {
         let started = Instant::now();
         let limit = self.limit(timeout, started)?;
-        self.finish(limit, started)
+        self.finish(limit, started, |_| Ok(()))
+    }
+
+    /// Runs a child whose input is gated on a successful registration.
+    /// Before this callback succeeds the child gets no bytes on stdin.
+    pub fn run_before_input(
+        &self,
+        timeout: Duration,
+        register: impl FnOnce(u32) -> std::io::Result<()>,
+    ) -> Result<Finished, ProcessError> {
+        let started = Instant::now();
+        let limit = self.limit(timeout, started)?;
+        self.finish(limit, started, register)
     }
 
     /// As [`Invocation::run`], with `timeout` measured in real time even
@@ -223,10 +235,15 @@ impl<'a> Invocation<'a> {
             limit: timeout,
             start: Start::Real(started + timeout),
         };
-        self.finish(limit, started)
+        self.finish(limit, started, |_| Ok(()))
     }
 
-    fn finish(&self, limit: Limit, started: Instant) -> Result<Finished, ProcessError> {
+    fn finish(
+        &self,
+        limit: Limit,
+        started: Instant,
+        register: impl FnOnce(u32) -> std::io::Result<()>,
+    ) -> Result<Finished, ProcessError> {
         let mut command = Command::new(&self.program);
         command
             .args(&self.args)
@@ -234,7 +251,7 @@ impl<'a> Invocation<'a> {
         if let Some(cwd) = self.cwd {
             command.current_dir(cwd);
         }
-        let output = self.execute(&mut command, Some(limit), started)?;
+        let output = self.execute(&mut command, Some(limit), started, register)?;
         Ok(Finished {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -248,6 +265,7 @@ impl<'a> Invocation<'a> {
         command: &mut Command,
         limit: Option<Limit>,
         started: Instant,
+        register: impl FnOnce(u32) -> std::io::Result<()>,
     ) -> Result<std::process::Output, ProcessError> {
         command
             .stdin(if self.input.is_some() {
@@ -265,6 +283,7 @@ impl<'a> Invocation<'a> {
         // A helper thread the system cannot start is a handled failure:
         // the command's group is stopped and its direct child reaped.
         let helpers = (|| {
+            register(child.id())?;
             let writer = match (self.input, child.stdin.take()) {
                 (Some(input), Some(stdin)) => Some(feed(stdin, input.to_vec())?),
                 _ => None,
@@ -612,7 +631,7 @@ pub fn output(
     invocation.input = input;
     let started = Instant::now();
     let limit = invocation.limit(timeout, started)?;
-    invocation.execute(command, Some(limit), started)
+    invocation.execute(command, Some(limit), started, |_| Ok(()))
 }
 
 /// Executes a native command as [`output`] does, waiting for it to its end
@@ -626,7 +645,7 @@ pub fn output_to_end(
     let name = command.get_program().to_string_lossy().into_owned();
     let mut invocation = Invocation::program(&name, &[]);
     invocation.input = input;
-    invocation.execute(command, None, Instant::now())
+    invocation.execute(command, None, Instant::now(), |_| Ok(()))
 }
 
 #[cfg(test)]

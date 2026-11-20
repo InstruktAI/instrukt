@@ -416,6 +416,25 @@ impl RuntimeAdapter for T3 {
     fn start(&self, assignment: &super::RuntimeAssignment<'_>) -> Result<Thread, SessionsError> {
         crate::keyed::start(self, assignment)
     }
+    fn send_with_client(
+        &self,
+        session: &SessionRef,
+        text: &str,
+        register: &mut dyn FnMut(super::SendClient) -> std::io::Result<()>,
+    ) -> Result<(), SessionsError> {
+        if session.runtime.as_str() != "t3" {
+            return Err(SessionsError::UnknownRuntime(session.runtime.to_string()));
+        }
+        let result = Invocation::program("t3", &["thread", "send", "--", session.id.as_str(), "-"])
+            .input(text.as_bytes())
+            .run_before_input(self.timeout, |pid| {
+                register(super::SendClient::launch_identity(pid)?)
+            })?;
+        if !result.success {
+            return Err(failure("send", result.stderr));
+        }
+        Ok(())
+    }
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError> {
         if session.runtime.as_str() != "t3" {
             return Err(SessionsError::UnknownRuntime(session.runtime.to_string()));

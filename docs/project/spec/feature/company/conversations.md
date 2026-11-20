@@ -134,12 +134,17 @@ include the omission note when the limit trims it. Record the selected
 messages and addressed message in the same transaction that records the
 delivery. A send or start whose acceptance is uncertain retains the exact
 input for reconciliation and keeps later work queued until it is resolved.
-A lookup miss alone supplies no proof. After the two-minute `SETTLE` window
-used for posts, a live idle thread with no active or queued turn and no record
-of that input establishes non-acceptance. Retry with context selected again
+A lookup miss alone supplies no proof. The relay records a send before
+launching its CLI client. It records that client's PID and process start
+identity before releasing the message on stdin. A restarted relay stops the
+recorded client if that exact process is live. It must confirm the client and
+its process group cannot submit again before beginning the two-minute
+`SETTLE` window. After that window, a live idle thread with no active or queued
+turn and no record of the input establishes non-acceptance. Retry with context selected again
 and a fresh attempt boundary. An explicit refusal also establishes
 non-acceptance. Presence and its recovery doors still apply.
-If native reads fail or show work other than the attempted input through
+If the client cannot be confirmed stopped, native reads fail, or the runtime
+shows other work through
 `SEND_RECONCILE_BOUND` (five minutes from the attempt on the operator clock),
 retain the original input and record delivery unknown for the operator.
 The relay does not resend that input and releases its place in the queue.
@@ -460,6 +465,7 @@ Scenario: The member receives the answer after a retry
   And if the wait earns an unavailable notice, only one is posted before the answer
   And a send with a lost response and no runtime record is retried once the runtime is idle after the settle window
   And later questions reach the assistant after the saved question without a duplicate delivery
+  And after a runner crash a surviving send client is stopped before the settle window starts and only one turn takes the saved question
 
 ```
 

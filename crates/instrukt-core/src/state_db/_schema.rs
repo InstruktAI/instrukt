@@ -48,7 +48,7 @@ UPDATE conversation_messages SET attempted_at=NULL WHERE state='failed' AND supe
 
 /// The provider identities delivered in each conversation.
 fn v25(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
-    for column in ["context_delivery_ids", "send_unknown_at"] {
+    for column in ["context_delivery_ids", "send_unknown_at", "send_client"] {
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages') WHERE name=?1)",
             [column],

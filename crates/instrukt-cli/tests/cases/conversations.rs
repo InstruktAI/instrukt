@@ -953,6 +953,7 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
         #[cfg(debug_assertions)]
         scope.spawn(a_replacement_reports_the_old_acknowledgement);
         scope.spawn(an_idle_conversation_retries_an_unrecorded_send);
+        scope.spawn(a_crashed_runners_send_client_cannot_submit_after_retry);
         scope.spawn(a_busy_conversation_releases_an_unresolved_send);
         failed_work_is_retried_after_a_restart();
     });
@@ -1038,6 +1039,87 @@ fn an_idle_conversation_retries_an_unrecorded_send() {
             == 1
             && c.slack.posts_beginning("The review starts at noon.") == 1
     });
+}
+
+fn a_crashed_runners_send_client_cannot_submit_after_retry() {
+    let (mut c, clock, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let at = interval_clock(&clock);
+    let settle = jiff::SignedDuration::from_secs(120);
+    let marker = c.runtime.state_dir().join(format!("{session}.submit-held"));
+    let submitted = c.runtime.state_dir().join(format!("{session}.late-submit"));
+    c.runtime.flag(&format!("{session}.hold-next-submit"), true);
+    let message = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the release plan?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let retained_client = || {
+        db.query_row(
+            "SELECT send_client FROM conversation_messages WHERE message=?1",
+            [&message],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+    };
+    wait_for_answer_fixture(
+        "the original send client has the input but has not submitted",
+        || marker.exists(),
+    );
+    let pid: i32 = std::fs::read_to_string(marker).unwrap().parse().unwrap();
+    let pid = rustix::process::Pid::from_raw(pid).unwrap();
+    let retained = retained_client().unwrap();
+    assert_eq!(
+        retained["Running"]["pid"].as_i64(),
+        Some(i64::from(pid.as_raw_nonzero().get()))
+    );
+    assert!(
+        retained["Running"]["start"]
+            .as_str()
+            .is_some_and(|start| !start.is_empty())
+    );
+    c.kill_runner();
+    assert!(
+        rustix::process::test_kill_process_group(pid).is_ok(),
+        "the send client outlived its runner"
+    );
+    assert_eq!(c.runtime.message_count(&session), 1);
+
+    let restarted = at + settle;
+    set_clock(&clock, restarted);
+    c.run();
+    wait_for_answer_fixture(
+        "the restarted runner records that the original client can no longer submit",
+        || retained_client().is_some_and(|client| client["Stopped"].as_str().is_some()),
+    );
+    assert_eq!(
+        c.runtime.message_count(&session),
+        1,
+        "the original attempt is already old, but the client only just stopped"
+    );
+    set_clock(&clock, restarted + settle);
+    answer_source_changed(&c, 2);
+    wait_for_answer_fixture(
+        "the idle thread takes the single retry after the client settles",
+        || c.runtime.message_count(&session) == 2,
+    );
+    assert!(c.input(&session, 1).contains("Where is the release plan?"));
+    finish_answer_turn(&mut c, &session, 1, "The plan is by the calendar.");
+    wait_for_answer_fixture("the retry completes and the thread is idle", || {
+        c.slack.posts_beginning("The plan is by the calendar.") == 1 && answers_recorded(&c)
+    });
+
+    // With a surviving client this would submit the old request now.
+    c.runtime.flag(&format!("{session}.release-submit"), true);
+    wait_for_answer_fixture("the old request cannot submit after the retry", || {
+        rustix::process::test_kill_process_group(pid) == Err(rustix::io::Errno::SRCH)
+            || submitted.exists()
+    });
+    assert!(!submitted.exists());
+    assert_eq!(c.runtime.message_count(&session), 2);
 }
 
 fn a_busy_conversation_releases_an_unresolved_send() {

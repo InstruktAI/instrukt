@@ -204,6 +204,7 @@ elif command=='start':
         (root/'die-after-start').unlink(); os.kill(os.getppid(),9)
     elif not (root/'silent-start').exists(): print(id)
 elif command=='send':
+    text=sys.stdin.read() if operands[1]=='-' else operands[1]
     held=root/(operands[0]+'.hold-send')
     if held.exists():
         (root/(operands[0]+'.send-held')).write_text(str(os.getpid()))
@@ -219,8 +220,14 @@ elif command=='send':
         print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
     if (root/'send-failure').exists(): print('No running T3 Code server uses the fixture store. Start T3 Code, then retry.',file=sys.stderr); sys.exit(1)
     if (root/'send-unreachable').exists():
-        print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+sys.stdin.read(),file=sys.stderr); sys.exit(1)
-    text=sys.stdin.read() if operands[1]=='-' else operands[1]
+        print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+text,file=sys.stderr); sys.exit(1)
+    hold_submit=root/(operands[0]+'.hold-next-submit')
+    held_submit=hold_submit.exists()
+    if held_submit:
+        hold_submit.unlink()
+        (root/(operands[0]+'.submit-held')).write_text(str(os.getpid()))
+        while not (root/(operands[0]+'.release-submit')).exists(): time.sleep(0.02)
+        t=find(operands[0])
     t['settled']=False; t['settledAt']=None
     queued=True
     run='run:'+t['threadId']+':'+str(len(t['messages'])+2)
@@ -233,6 +240,7 @@ elif command=='send':
         (root/(operands[0]+'.deferred-input')).write_text(json.dumps(t))
         print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
     save(t)
+    if held_submit: (root/(operands[0]+'.late-submit')).touch()
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
     lost_ack=root/(t['threadId']+'.hold-show-after-send')

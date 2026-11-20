@@ -195,6 +195,70 @@ pub enum InputState {
     Consumed,
 }
 
+/// A send client that received authorization to read the input on stdin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SendClient {
+    pid: u32,
+    start: String,
+}
+
+impl SendClient {
+    fn launch_identity(pid: u32) -> std::io::Result<Self> {
+        Self::incarnation(pid)
+            .map(|start| Self { pid, start })
+            .ok_or_else(|| {
+                std::io::Error::other("cannot identify the send client before releasing its input")
+            })
+    }
+
+    fn incarnation(pid: u32) -> Option<String> {
+        let start = crate::runner::incarnation(pid)?;
+        #[cfg(target_os = "linux")]
+        {
+            let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+            Some(format!("{}:{start}", boot.trim()))
+        }
+        #[cfg(not(target_os = "linux"))]
+        Some(start)
+    }
+
+    pub fn gone(&self) -> bool {
+        self.group().is_some_and(|pid| {
+            rustix::process::test_kill_process_group(pid) == Err(rustix::io::Errno::SRCH)
+                && (rustix::process::test_kill_process(pid) == Err(rustix::io::Errno::SRCH)
+                    || Self::incarnation(self.pid).is_some_and(|start| start != self.start))
+        })
+    }
+
+    fn group(&self) -> Option<rustix::process::Pid> {
+        rustix::process::Pid::from_raw(i32::try_from(self.pid).ok()?)
+    }
+
+    /// Stops the identified client. A surviving or unverified group does
+    /// not authorize a retry.
+    pub fn stop(&self) -> bool {
+        if self.gone() {
+            return true;
+        }
+        if let Some(pid) = self.group()
+            && rustix::process::getpgid(Some(pid)) == Ok(pid)
+        {
+            #[cfg(target_os = "linux")]
+            if let Ok(handle) =
+                rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+                && Self::incarnation(self.pid).as_deref() == Some(self.start.as_str())
+            {
+                let _ = rustix::process::pidfd_send_signal(handle, rustix::process::Signal::KILL);
+            }
+            #[cfg(target_os = "macos")]
+            if Self::incarnation(self.pid).as_deref() == Some(self.start.as_str()) {
+                let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+            }
+        }
+        self.gone()
+    }
+}
+
 /// The runtime's reconciliation of one exact send attempt.
 pub enum SendEvidence {
     Accepted,
@@ -373,6 +437,12 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     fn list(&self, checkout: &Path) -> Result<Vec<Thread>, SessionsError>;
     fn start_or_wake(&self, assignment: &RuntimeAssignment<'_>) -> Result<Thread, SessionsError>;
     fn start(&self, request: &RuntimeAssignment<'_>) -> Result<Thread, SessionsError>;
+    fn send_with_client(
+        &self,
+        session: &SessionRef,
+        text: &str,
+        register: &mut dyn FnMut(SendClient) -> std::io::Result<()>,
+    ) -> Result<(), SessionsError>;
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError>;
     fn read_state(&self, session: &SessionRef) -> Result<Thread, SessionsError>;
     fn read_conversation(&self, session: &SessionRef) -> Result<Conversation, SessionsError>;
