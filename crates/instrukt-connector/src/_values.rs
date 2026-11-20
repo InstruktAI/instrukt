@@ -99,7 +99,11 @@ pub struct ReadBackGap {
 /// A change in coverage for one channel.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ReadBackCoverage {
-    ChannelUnavailable { channel: String, direct: bool },
+    ChannelUnavailable {
+        channel: String,
+        direct: bool,
+        expected: bool,
+    },
     ChannelCovered(String),
 }
 

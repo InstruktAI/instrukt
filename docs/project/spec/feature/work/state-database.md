@@ -825,10 +825,17 @@ A completed scan advances overall coverage while keeping each unavailable
 channel's uncovered span separately. These spans are authoritative, owned by
 the conversation core, and persisted as soon as a channel reports unavailable.
 Losing one can skip unread questions even when the overall cursor survives.
-Each later scan retries the span, including channels absent from enumeration.
-Complete traversal of the channel clears it. A later scan retires spans
-outside the 30-day read-back horizon and keeps one operator report per span
-for 30 days. Any newer uncovered portion remains pending.
+Later scans retry the saved span, including channels absent from enumeration.
+A retry extends a still-unavailable channel's span only when enumeration
+also establishes that the channel belongs to the new scan.
+
+At runner start and each scan start, the store retires expired prefixes and
+prunes old records across connectors. The horizon is measured from each
+span's own lower bound. Recovery records any expired prefix and clears the
+remaining gap in one transaction. A connector no longer declared retires
+its gaps, scan state and seen identities. Each retired span leaves one operator report for 30 days. A
+channel whose ID changed remains pending under the old ID until its saved
+span expires.
 
 Seen identities retire after 30 days. Missed records within that period keep
 the written time and provider link. They carry no message text. The active

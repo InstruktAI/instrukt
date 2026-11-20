@@ -725,6 +725,15 @@ pub enum CompanyRelayPass {
 /// report. The runner names no company type; the CLI wires the
 /// implementation.
 pub trait CompanyPorts: Send + Sync {
+    /// Retires old offline coverage when the runner starts, even with no
+    /// admitted connectors.
+    fn maintain_read_back(
+        &self,
+        _home: &instrukt_core::home::Home,
+        _now: jiff::Timestamp,
+    ) -> Result<(), CompanyError> {
+        Ok(())
+    }
     /// Whether `admitted` hosts any company's connector.
     fn demand(&self, admitted: &instrukt_core::config::Admitted) -> bool;
     /// Opens the hosted connections and supervises them. Each connector kind

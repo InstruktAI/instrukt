@@ -4981,9 +4981,35 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     c.store.thread("s1", None, None, "2026-11-08T10:00:00Z");
     c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
     c.slack.throttle_later_history_page("C1", 120);
+    c.slack.hold_later_history_pages();
+    c.runtime.flag("hold-start", true);
     set_clock(&clock, now);
     c.run();
     let state = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    wait("the fake T3 start is held before creating a thread", || {
+        c.runtime.state_dir().join("start-held").exists()
+    });
+    let bound_count = || {
+        state
+            .query_row(
+                "SELECT count(*) FROM connected_conversations WHERE session IS NOT NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(bound_count(), 0);
+    assert!(c.sessions().is_empty());
+    assert_eq!(state.query_row(
+        "SELECT count(*) FROM runtime_starts WHERE state='unresolved' AND semantic_key IN (SELECT semantic_key FROM connected_conversations)",
+        [], |row| row.get::<_, i64>(0)
+    ).unwrap(), 1);
+    c.runtime.flag("hold-start", false);
+    wait(
+        "both native start results are durably bound before crashing the scan",
+        || bound_count() == 2,
+    );
+    c.slack.release_reads();
     let checkpoint = || {
         scans
             .query_row("SELECT position,retry_at FROM scans", [], |row| {
@@ -5155,6 +5181,20 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
             .unwrap(),
         0
     );
+    let c6_through = || {
+        scans
+            .query_row(
+                "SELECT through FROM channel_gaps WHERE company='acme' AND channel='C6'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    let listed_until = now + jiff::SignedDuration::from_secs(121);
+    wait(
+        "an enumerated unavailable channel gains the new span",
+        || c6_through() == listed_until.as_microsecond(),
+    );
     let completed = cursor();
     c.runner_dies();
     let follow_up = slack_time(now + jiff::SignedDuration::from_secs(122));
@@ -5179,8 +5219,35 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     c.slack
         .read_back_channels(&["D30", "C2", "D31", "C1", "C3"]);
     projected(&c);
-    set_clock(&clock, now + jiff::SignedDuration::from_secs(123));
+    let recovery_started = now + jiff::SignedDuration::from_secs(123);
+    let initial_cutoff = recovery_started - jiff::SignedDuration::from_hours(30 * 24);
+    let old_prefix = initial_cutoff + jiff::SignedDuration::from_secs(10);
+    scans
+        .execute(
+            "UPDATE channel_gaps SET lower_bound=?1 WHERE company='acme' AND channel='C5'",
+            [old_prefix.as_microsecond()],
+        )
+        .unwrap();
+    let held = c.slack.held();
+    c.slack.hold_read_back_channel(Some("C5"));
+    set_clock(&clock, recovery_started);
     c.run();
+    wait("the old channel's recovery page is held", || {
+        c.slack.held() > held
+    });
+    assert_eq!(
+        scans
+            .query_row(
+                "SELECT count(*) FROM retired_channel_gaps WHERE channel='C5'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    let recovery_finished = recovery_started + jiff::SignedDuration::from_secs(20);
+    set_clock(&clock, recovery_finished);
+    c.slack.hold_read_back_channel(None);
     wait(
         "the repeated scan completes and dispatches the offline reply",
         || cursor() > completed && c.runtime.message_count(thread) == 2 && c.sessions().len() == 3,
@@ -5233,28 +5300,74 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         .as_array()
         .unwrap()
         .clone();
-    assert_eq!(gaps.len(), 1);
-    assert_eq!(gaps[0]["channel"], "C6");
+    assert_eq!(gaps.len(), 2);
+    assert_eq!(gaps[0]["channel"], "C5");
+    assert_eq!(gaps[0]["from"], old_prefix.to_string());
+    assert_eq!(
+        gaps[0]["through"],
+        (recovery_finished - jiff::SignedDuration::from_hours(30 * 24)).to_string()
+    );
+    assert!(gaps[0]["retired_at"].is_string());
+    assert_eq!(gaps[1]["channel"], "C6");
+    assert!(gaps[1]["retired_at"].is_null());
+    assert_eq!(
+        c6_through(),
+        listed_until.as_microsecond(),
+        "a retry without enumeration must not extend coverage"
+    );
 
     let latest = cursor();
     c.runner_dies();
     c.slack.read_back_channels(&[]);
-    set_clock(&clock, now + jiff::SignedDuration::from_hours(31 * 24));
-    c.run();
-    wait("the expired gap is retired after the next scan", || {
-        cursor() > latest
-    });
+    let late = now + jiff::SignedDuration::from_hours(31 * 24);
+    let dormant = c.env.instrukt_home().join("companies/dormant");
+    std::fs::create_dir_all(&dormant).unwrap();
+    std::fs::write(dormant.join("instrukt.yaml"), format!(
+        "schema_version: {}\ncompany: dormant\nconnectors: {{slack: {{app_token: '${{MISSING}}', bot_token: '${{MISSING}}'}}}}\n",
+        instrukt_core::config::CURRENT_SCHEMA_VERSION
+    )).unwrap();
+    let gap = |company: &str, channel: &str, through: jiff::Timestamp| {
+        scans.execute(
+            "INSERT INTO channel_gaps(company,connector,channel,direct,lower_bound,first_scan,through)
+             VALUES(?1,'slack',?2,0,?3,?4,?4)",
+            instrukt_core::state_db::rusqlite::params![company, channel, (through - jiff::SignedDuration::from_hours(1)).as_microsecond(), through.as_microsecond()],
+        ).unwrap();
+    };
+    gap("removed", "C7", late);
+    c.slack.refuse_app_connection(true);
+    let refused = c.slack.refused_app_connections();
+    set_clock(&clock, late);
+    c.start_runner();
+    wait(
+        "startup retires a removed connector before any scan",
+        || {
+            c.slack.refused_app_connections() > refused
+                && scans
+                    .query_row(
+                        "SELECT count(*) FROM retired_channel_gaps WHERE channel='C7'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap()
+                    == 1
+        },
+    );
+    assert_eq!(cursor(), latest);
+    gap("dormant", "C8", now);
+    c.slack.refuse_app_connection(false);
+    wait(
+        "another connector's scan retires the dormant connector's gap",
+        || cursor() > latest,
+    );
     let retired = c.status()["conversations"]["read_back_channel_gaps"]
         .as_array()
         .unwrap()
         .clone();
-    assert_eq!(retired.len(), 1);
-    assert_eq!(retired[0]["channel"], "C6");
-    assert!(retired[0]["retired_at"].is_string());
-    assert_eq!(
-        retired[0]["cause"],
-        "Messages may have been missed in this span."
-    );
+    assert_eq!(retired.len(), 3);
+    let expired = retired.iter().find(|gap| gap["channel"] == "C6").unwrap();
+    assert_eq!(expired["through"], listed_until.to_string());
+    assert!(retired.iter().all(|gap| gap["retired_at"].is_string()
+        && gap["cause"] == "Messages may have been missed in this span."));
     assert_eq!(c.slack.posts().len(), 4);
 }
 

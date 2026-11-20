@@ -310,7 +310,10 @@ while it was not connected:
 - A thread Slack reports missing ends its listing. An unavailable channel
   leaves a saved coverage gap and the scan continues with other channels.
   Later scans retry that channel, even if Slack omits it from the listing.
-  The gap clears after a complete scan of the channel. Operator status
+  Repeated unavailability extends a gap only when Slack enumerates the
+  channel for the new scan. A changed channel ID leaves the old ID to
+  expire under its saved window. The gap clears after a complete scan of
+  the channel. Operator status
   names unresolved gaps and reports spans that age out of the 30-day
   read-back horizon as possibly missed. Other errors retain the current
   position for retry.

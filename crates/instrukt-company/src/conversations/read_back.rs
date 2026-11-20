@@ -197,34 +197,90 @@ fn retry_channels(
     .collect()
 }
 
-fn retire_gaps(
+fn retire_expired(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
-    owner: &str,
-    key: &str,
     now: Timestamp,
 ) -> instrukt_core::state_db::rusqlite::Result<()> {
     let cutoff = micros(now - REPORTING_PERIOD);
     tx.execute(
         "INSERT INTO retired_channel_gaps(company,connector,channel,lower_bound,through,retired_at)
-         SELECT company,connector,channel,lower_bound,min(through,?3),?4 FROM channel_gaps
-         WHERE company=?1 AND connector=?2 AND first_scan<?3 AND lower_bound<min(through,?3)
-         ON CONFLICT DO NOTHING",
-        params![owner, key, cutoff, micros(now)],
+         SELECT company,connector,channel,lower_bound,min(through,?1),?2 FROM channel_gaps
+         WHERE lower_bound<min(through,?1) ON CONFLICT DO NOTHING",
+        params![cutoff, micros(now)],
+    )?;
+    tx.execute("DELETE FROM channel_gaps WHERE through<=?1", [cutoff])?;
+    tx.execute(
+        "UPDATE channel_gaps SET lower_bound=?1 WHERE lower_bound<?1",
+        [cutoff],
     )?;
     tx.execute(
-        "DELETE FROM channel_gaps WHERE company=?1 AND connector=?2 AND through<?3",
-        params![owner, key, cutoff],
+        "DELETE FROM retired_channel_gaps WHERE retired_at<?1",
+        [cutoff],
     )?;
+    // An interrupted scan may still need identities from its saved window.
     tx.execute(
-        "UPDATE channel_gaps SET lower_bound=max(lower_bound,?3),first_scan=through
-         WHERE company=?1 AND connector=?2 AND first_scan<?3",
-        params![owner, key, cutoff],
-    )?;
-    tx.execute(
-        "DELETE FROM retired_channel_gaps WHERE company=?1 AND connector=?2 AND retired_at<?3",
-        params![owner, key, cutoff],
+        "DELETE FROM seen WHERE written_us<?1 AND NOT EXISTS (
+            SELECT 1 FROM scans WHERE scans.company=seen.company AND scans.connector=seen.connector
+            AND started IS NOT NULL AND seen.written_us>=scans.lower_bound
+         )",
+        [cutoff],
     )?;
     Ok(())
+}
+
+/// An unreadable company remains possible. Its connectors must keep their gaps.
+fn configured(home: &Home) -> Result<String, super::ConversationError> {
+    use instrukt_core::config::{ConfigError, company_homes};
+    let mut configured = Vec::new();
+    for (company, config) in company_homes(home)? {
+        match config.and_then(|config| config.connectors()) {
+            Ok(connectors) => configured.extend(
+                connectors
+                    .into_iter()
+                    .map(|connector| (company.to_string(), Some(connector.key))),
+            ),
+            Err(ConfigError::NoLayer { .. }) => {}
+            Err(_) => configured.push((company.to_string(), None)),
+        }
+    }
+    Ok(serde_json::to_string(&configured)?)
+}
+
+fn maintain(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    now: Timestamp,
+    configured: Option<&str>,
+) -> instrukt_core::state_db::rusqlite::Result<()> {
+    if let Some(configured) = configured {
+        let absent = "NOT EXISTS(SELECT 1 FROM json_each(?1)
+            WHERE value->>0=company AND (value->>1 IS NULL OR value->>1=connector))";
+        tx.execute(
+            &format!("INSERT INTO retired_channel_gaps(company,connector,channel,lower_bound,through,retired_at)
+             SELECT company,connector,channel,lower_bound,through,?2 FROM channel_gaps
+             WHERE {absent} ON CONFLICT DO NOTHING"),
+            params![configured, micros(now)],
+        )?;
+        for table in ["channel_gaps", "seen", "scans"] {
+            tx.execute(&format!("DELETE FROM {table} WHERE {absent}"), [configured])?;
+        }
+    }
+    retire_expired(tx, now)
+}
+
+pub(crate) fn maintain_at_start(home: &Home, now: Timestamp) -> Result<(), ConnectorError> {
+    if !store_path(home).exists() {
+        return Ok(());
+    }
+    let Some(mut conn) = open(home, true).map_err(failed)? else {
+        return Ok(());
+    };
+    let configured = configured(home);
+    if let Err(error) = &configured {
+        tracing::warn!(event = "read_back_declarations_unreadable", %error);
+    }
+    let tx = conn.transaction().map_err(failed)?;
+    maintain(&tx, now, configured.as_deref().ok()).map_err(failed)?;
+    tx.commit().map_err(failed)
 }
 
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
@@ -250,7 +306,13 @@ pub(crate) fn scan(
     let path = state::db_path(&conn);
     let sql = |error| failed(state::sql(&path)(error));
     let owner = company.as_str();
+    let configured = configured(home);
+    if let Err(error) = &configured {
+        tracing::warn!(event = "read_back_declarations_unreadable", %error);
+    }
     let tx = conn.transaction().map_err(sql)?;
+    // Expire and prune all connectors, even when only this one scans.
+    maintain(&tx, requested, configured.as_deref().ok()).map_err(sql)?;
     let opened = tx
         .execute(
             "UPDATE scans SET started=?3,lower_bound=coalesce(retained_until,min(first_seen,?4))
@@ -264,10 +326,17 @@ pub(crate) fn scan(
         )
         .map_err(sql)?;
 
-    if opened != 0 {
-        retire_gaps(&tx, owner, key, requested).map_err(sql)?;
-    }
+    let remains: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM scans WHERE company=?1 AND connector=?2)",
+            [owner, key],
+            |row| row.get(0),
+        )
+        .map_err(sql)?;
     tx.commit().map_err(sql)?;
+    if opened == 0 && !remains {
+        return Ok(false);
+    }
 
     while !quit() {
         let progress = conn.query_row(
@@ -429,7 +498,11 @@ fn retain_page(
         ).map_err(sql)?;
     }
     match &page.coverage {
-        Some(ReadBackCoverage::ChannelUnavailable { channel, direct }) => {
+        Some(ReadBackCoverage::ChannelUnavailable {
+            channel,
+            direct,
+            expected: true,
+        }) => {
             tx.execute(
                 "INSERT INTO channel_gaps(company,connector,channel,direct,lower_bound,first_scan,through)
                  VALUES(?1,?2,?3,?4,?5,?6,?6)
@@ -438,13 +511,19 @@ fn retain_page(
             ).map_err(sql)?;
         }
         Some(ReadBackCoverage::ChannelCovered(channel)) => {
+            // The provider can take long enough for part of the gap to
+            // expire during the same scan. Report that prefix before clearing.
+            retire_expired(&tx, clock()).map_err(sql)?;
             tx.execute(
                 "DELETE FROM channel_gaps WHERE company=?1 AND connector=?2 AND channel=?3",
                 params![owner, key, channel],
             )
             .map_err(sql)?;
         }
-        None => {}
+        Some(ReadBackCoverage::ChannelUnavailable {
+            expected: false, ..
+        })
+        | None => {}
     }
     if let Some(next) = &page.next {
         tx.execute("UPDATE scans SET position=?3,page=NULL,retry_at=NULL,failure=NULL WHERE company=?1 AND connector=?2",

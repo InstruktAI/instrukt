@@ -4354,6 +4354,15 @@ fn company_error(error: impl std::fmt::Display) -> instrukt_runner::interfaces::
 }
 
 impl instrukt_runner::interfaces::CompanyPorts for Ports {
+    fn maintain_read_back(
+        &self,
+        home: &Home,
+        now: Timestamp,
+    ) -> Result<(), instrukt_runner::interfaces::CompanyError> {
+        read_back::maintain_at_start(home, now)
+            .map_err(|error| instrukt_runner::interfaces::CompanyError(error.cause))
+    }
+
     fn demand(&self, admitted: &Admitted) -> bool {
         !admitted_demand(admitted).is_empty()
     }

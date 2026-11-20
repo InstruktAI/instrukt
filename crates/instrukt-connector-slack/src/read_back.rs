@@ -43,6 +43,8 @@ struct Request {
     recovery: Option<ReadBackGap>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     skip_channels: Vec<String>,
+    #[serde(default)]
+    expected: bool,
 }
 
 impl Request {
@@ -52,6 +54,7 @@ impl Request {
             cursor: String::new(),
             recovery: None,
             skip_channels: Vec::new(),
+            expected: false,
         }
     }
 }
@@ -59,7 +62,7 @@ impl Request {
 fn starting_requests(gaps: &[ReadBackGap]) -> Vec<Request> {
     let mut channels = Request::new(Listing::Channels);
     channels.skip_channels = gaps.iter().map(|gap| gap.channel.clone()).collect();
-    let mut pending = vec![channels];
+    let mut pending = Vec::new();
     for gap in gaps.iter().rev() {
         pending.push(Request::new(Listing::Complete(gap.channel.clone())));
         let mut request = Request::new(Listing::History {
@@ -69,6 +72,7 @@ fn starting_requests(gaps: &[ReadBackGap]) -> Vec<Request> {
         request.recovery = Some(gap.clone());
         pending.push(request);
     }
+    pending.push(channels);
     pending
 }
 
@@ -154,6 +158,7 @@ impl Slack {
                     coverage: Some(ReadBackCoverage::ChannelUnavailable {
                         channel: channel.to_owned(),
                         direct,
+                        expected: request.recovery.is_none() || request.expected,
                     }),
                     next: continuation(&pending)?,
                     ..ReadBackPage::default()
@@ -190,7 +195,13 @@ impl Slack {
             match &request.listing {
                 Listing::Channels => {
                     let id = field(item, "id")?;
-                    if !request.skip_channels.iter().any(|channel| channel == id) {
+                    if request.skip_channels.iter().any(|channel| channel == id) {
+                        for retry in pending.iter_mut().filter(|next| {
+                            next.recovery.as_ref().is_some_and(|gap| gap.channel == id)
+                        }) {
+                            retry.expected = true;
+                        }
+                    } else {
                         children.push(Listing::History {
                             channel: id.to_owned(),
                             direct: item["is_im"].as_bool().unwrap_or(false),
@@ -239,6 +250,7 @@ impl Slack {
             }
         }
         let recovery = request.recovery.clone();
+        let expected = request.expected;
         if !next.is_empty() {
             pending.push(Request {
                 cursor: next.to_owned(),
@@ -247,6 +259,7 @@ impl Slack {
         }
         pending.extend(children.into_iter().rev().map(|listing| Request {
             recovery: recovery.clone(),
+            expected,
             ..Request::new(listing)
         }));
         Ok(ReadBackPage {
