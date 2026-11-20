@@ -729,7 +729,10 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(|| {
             legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice)
         });
-        scope.spawn(an_answer_response_without_a_timestamp_is_reconciled);
+        scope.spawn(a_successful_answer_without_timestamp_needs_no_read_back);
+        scope.spawn(failed_metadata_reads_expire_without_sending_again);
+        scope.spawn(a_mixed_notice_epoch_waits_for_the_final_answer_piece);
+        scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
         scope.spawn(a_noop_lets_the_next_question_receive_its_own_notice);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
@@ -1531,10 +1534,8 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
         None
     };
     if receipt == LegacyReceipt::Late {
-        assert_eq!(
-            notice_state(&c, &conversation, member).as_deref(),
-            Some("posted")
-        );
+        // Expiry settles this position and retires its confirmed notice.
+        assert!(notice_state(&c, &conversation, member).is_none());
         state.execute_batch(
             "CREATE TRIGGER hold_late_receipt BEFORE UPDATE OF posted_at ON conversation_answers
              WHEN OLD.delivery_unknown_at IS NOT NULL AND NEW.posted_at IS NOT NULL
@@ -1545,10 +1546,7 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             run_log(&c).contains("forced late receipt failure")
         });
         assert!(legacy_state().2.is_some());
-        assert_eq!(
-            notice_state(&c, &conversation, member).as_deref(),
-            Some("posted")
-        );
+        assert!(notice_state(&c, &conversation, member).is_none());
         state
             .execute_batch("DROP TRIGGER hold_late_receipt")
             .unwrap();
@@ -1667,13 +1665,158 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
     assert_eq!(notices(&c, member), expected_notices);
 }
 
-fn an_answer_response_without_a_timestamp_is_reconciled() {
+fn a_successful_answer_without_timestamp_needs_no_read_back() {
+    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    projected(&c);
+    let event = c.slack.direct("D17", "USTEVEN", "Is the release ready?");
+    let session = started(&c, &[]);
+    c.slack.fate("Ready.", Fate::MissingTimestamp, 1);
+    c.slack.refuse_metadata_reads();
+    c.finish_turn(&session, 0, "Ready.");
+    wait(
+        "the successful response confirmed without a timestamp",
+        || c.slack.posts_beginning("Ready.") == 1 && answers_recorded(&c),
+    );
+    assert_eq!(c.slack.metadata_reads(), 0);
+    assert_eq!(interval(&c, &event), None);
+}
+
+fn failed_metadata_reads_expire_without_sending_again() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    c.runtime.flag("separate-completion", true);
+    projected(&c);
+    let channel = "D22";
+    let member = "USTEVEN";
+    let first = c.slack.direct(channel, member, "When do we ship?");
+    let session = started(&c, &[]);
+    c.slack.fate("On Friday.", Fate::Lost, 1);
+    c.slack.refuse_metadata_reads();
+    c.finish_turn(&session, 0, "On Friday.");
+    wait("Slack refuses the pending answer's receipt read", || {
+        c.slack.metadata_reads() > 0
+            && c.conversations().conversations.iter().any(|row| {
+                row.pending_answers == 1
+                    && row
+                        .failures
+                        .iter()
+                        .any(|cause| cause.contains("missing_scope"))
+            })
+    });
+    set_clock(&clock, interval_at(&c, &first) + minute());
+    wait(
+        "the answer with an unreadable receipt resolves as unknown",
+        || {
+            c.conversations().conversations.iter().any(|row| {
+                row.pending_answers == 0
+                    && row.failures.iter().any(|cause| {
+                        cause.contains("delivery unknown")
+                            && cause.contains("missing_scope")
+                            && cause.contains(channel)
+                            && cause.contains("piece 0")
+                    })
+            })
+        },
+    );
+    assert_eq!(interval(&c, &first), None);
+    assert_eq!(c.slack.posts_beginning("On Friday."), 1);
+    assert_eq!(notices(&c, member), 0);
+
+    c.slack.direct(channel, member, "And the contract?");
+    wait("the later question is handed over", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "In the wiki.");
+    wait("the later answer confirmed", || {
+        c.slack.posts_beginning("In the wiki.") == 1 && answers_recorded(&c)
+    });
+    assert_eq!(c.slack.posts().len(), 2);
+}
+
+fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
+    let at: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
+    let (mut c, clock) = status_company(at);
+    c.runtime.flag("separate-completion", true);
+    projected(&c);
+    c.runner_dies();
+    let database = c.store.file.clone();
+    let hidden = database.with_extension("away");
+    std::fs::rename(&database, &hidden).unwrap();
+    std::fs::create_dir(&database).unwrap();
+    c.run();
+    wait("T3 unavailable while both questions arrive", || {
+        c.conversations().relay_failure.is_some()
+    });
+    let channel = "D23";
+    let member = "USTEVEN";
+    c.slack.direct(channel, member, "Any changes?");
+    let second = c.slack.direct(channel, member, "Can I see the report?");
+    let state = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait("both questions admitted while T3 is down", || {
+        state.query_row("SELECT count(*) FROM conversation_messages WHERE conversation=?1 AND admission_position IS NOT NULL", [channel], |row| row.get::<_, i64>(0)).unwrap() == 2
+    });
+    set_clock(&clock, at + minute());
+    wait("one notice covers both unanswered questions", || {
+        notices(&c, member) == 1 && state.query_row(
+            "SELECT count(*) FROM conversation_refusals WHERE conversation=?1 AND state='posted' AND json_array_length(covered_positions)=2",
+            [channel], |row| row.get::<_, i64>(0),
+        ).unwrap() == 1
+    });
+    std::fs::remove_dir(&database).unwrap();
+    std::fs::rename(&hidden, &database).unwrap();
+    let session = started(&c, &[]);
+    c.finish_turn(&session, 0, "NOOP");
+    wait("the report question handed over after the NOOP", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.slack.fate("Final line.", Fate::Refused, usize::MAX);
+    c.finish_turn(
+        &session,
+        1,
+        &format!("{}Final line.", "x".repeat(SLACK_MESSAGE_LIMIT)),
+    );
+    let opened = interval_at(&c, &second);
+    wait(
+        "the first piece confirmed and the final piece rejected",
+        || {
+            c.conversations().conversations.iter().any(|row| {
+                row.pending_answers == 1
+                    && row
+                        .failures
+                        .iter()
+                        .any(|cause| cause.contains("not_in_channel"))
+            }) && c.slack.posts_beginning("xxxxxxxx") == 1
+        },
+    );
+    assert_eq!(
+        notice_state(&c, channel, member).as_deref(),
+        Some("posted"),
+        "a NOOP and a partial answer must keep the mixed epoch"
+    );
+    set_clock(&clock, opened + minute());
+    // Give the notice worker a pass while the final piece is still refused.
+    std::thread::sleep(std::time::Duration::from_secs(6));
+    assert_eq!(notices(&c, member), 1);
+    c.slack.clear_fates();
+    wait(
+        "the final piece confirmed and the mixed epoch closed",
+        || {
+            c.slack.posts_beginning("Final line.") == 1
+                && notice_state(&c, channel, member).is_none()
+        },
+    );
+    assert_eq!(notices(&c, member), 1);
+}
+
+fn an_unconfirmed_post_waits_after_a_metadata_miss() {
     let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
     let asked = c.slack.direct("D17", "USTEVEN", "Is the release ready?");
     let session = started(&c, &[]);
     let answer = "Ready.";
-    c.slack.fate(answer, Fate::MissingTimestamp, 1);
+    c.slack.fate(answer, Fate::Lost, 1);
     c.slack.miss_metadata_read_before_holding(&asked);
     c.finish_turn(&session, 0, answer);
     common::wait_until(

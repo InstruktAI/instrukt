@@ -722,7 +722,9 @@ before the provider can accept a post. A single attempt kept by an earlier
 version supplies both bounds. `post_id` is the piece's opaque identity,
 allocated before its first post and kept across retries. An attempted piece
 from before migration 23 has no id. `legacy_read_at` records when its one
-read-back began and `delivery_unknown_at` records resolution after
+read-back began. `receipt_failure_deadline` records when a metadata read
+failure can settle the attempt as unknown if receipt reads remain unavailable.
+`delivery_unknown_at` records resolution after
 the settle window without confirmation. The piece leaves the retry queue,
 and a matching read-back that returns later replaces the unknown result.
 `posted_at`, when the connector
@@ -746,8 +748,9 @@ until the epoch ends; `covered_positions`, the admission positions that
 made the notice due; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
 records the decision, never proof of delivery. An `unavailable` row is retired
-only when all its covered positions have confirmed answers or completed bare
-`NOOP` turns and any attempted notice is reconciled. `not_own` rows stay.
+only when every covered position has a completed bare `NOOP` or all its
+answer pieces are confirmed or resolved as unknown, and any attempted notice
+is reconciled. `not_own` rows stay.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,

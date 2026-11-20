@@ -90,6 +90,7 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
         ("conversation_answers", "post_id", "TEXT"),
         ("conversation_answers", "legacy_read_at", "TEXT"),
         ("conversation_answers", "delivery_unknown_at", "TEXT"),
+        ("conversation_answers", "receipt_failure_deadline", "TEXT"),
         ("conversation_refusals", "post_id", "TEXT"),
         ("conversation_messages", "admission_position", "INTEGER"),
         ("conversation_answers", "admission_position", "INTEGER"),

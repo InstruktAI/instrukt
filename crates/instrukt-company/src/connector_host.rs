@@ -515,9 +515,9 @@ fn notice_worker(
                 .retain(|_, task: &mut std::thread::ScopedJoinHandle<'_, ()>| !task.is_finished());
             let now = reach.connectors.now();
             if let Err(error) =
-                conversations::expire_legacy_answers(home, company, key, reach.accepted, now)
+                conversations::expire_unconfirmed_answers(home, company, key, reach.accepted, now)
             {
-                tracing::warn!(target: LOG_TARGET, event = "legacy_answer_expiry_failed", company = %company, connector = key, %error);
+                tracing::warn!(target: LOG_TARGET, event = "answer_expiry_failed", company = %company, connector = key, %error);
             }
             match conversations::notices(home, company, key, now) {
                 Ok(notices) => {
@@ -604,7 +604,14 @@ fn deliver_notice(
                 .answer(&notice.conversation, &text, &post_id)
                 .map_err(|error| error.cause);
             tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
-            conversations::notice_posted(home, company, key, notice, outcome)
+            conversations::notice_posted(
+                home,
+                company,
+                key,
+                notice,
+                outcome,
+                reach.connectors.now(),
+            )
         }
         Ok(_) => Ok(()),
         Err(error) => Err(error),

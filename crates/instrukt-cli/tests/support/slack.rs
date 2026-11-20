@@ -155,6 +155,8 @@ struct Workspace {
     hold_reads: bool,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
+    refuse_metadata_reads: bool,
+    metadata_reads: usize,
     /// A post Slack accepted is answered only once released.
     hold_posts: bool,
     /// Every post fails, accepting nothing.
@@ -430,6 +432,12 @@ impl FakeSlack {
                 json!({"ok": true})
             }
             "conversations.history" | "conversations.replies" => {
+                if arg("include_all_metadata") == Some("true") {
+                    w.metadata_reads += 1;
+                    if w.refuse_metadata_reads {
+                        return json!({"ok": false, "error": "missing_scope"});
+                    }
+                }
                 let channel = arg("channel").unwrap();
                 let thread = arg("ts");
                 let mut found: Vec<Value> = w
@@ -880,6 +888,14 @@ impl FakeSlack {
 
     pub fn hold_reads(&self) {
         self.workspace.lock().unwrap().hold_reads = true;
+    }
+
+    pub fn refuse_metadata_reads(&self) {
+        self.workspace.lock().unwrap().refuse_metadata_reads = true;
+    }
+
+    pub fn metadata_reads(&self) -> usize {
+        self.workspace.lock().unwrap().metadata_reads
     }
 
     /// Omit the receipt on the first metadata read and hold later reads
