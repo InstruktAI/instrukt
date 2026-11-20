@@ -953,9 +953,70 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
         #[cfg(debug_assertions)]
         scope.spawn(a_replacement_reports_the_old_acknowledgement);
         scope.spawn(an_idle_conversation_retries_an_unrecorded_send);
+        scope.spawn(an_outage_before_dispatch_keeps_the_question);
         scope.spawn(a_late_original_dispatch_is_deduplicated_after_restart);
         scope.spawn(a_busy_conversation_releases_an_unresolved_send);
         failed_work_is_retried_after_a_restart();
+    });
+}
+
+fn an_outage_before_dispatch_keeps_the_question() {
+    let (mut c, clock, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let descriptor = c.env.home().join(".t3/userdata/server-runtime.json");
+    let held = descriptor.with_extension("held");
+    std::fs::rename(&descriptor, &held).unwrap();
+    let question = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the outage report?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let retained = || {
+        db.query_row(
+        "SELECT dispatch_command_id,dispatch_write_at,send_unknown_at FROM conversation_messages WHERE message=?1",
+        [&question],
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?)),
+    ).ok()
+    };
+    wait_for_answer_fixture("the operator sees the dispatch outage", || {
+        conversation_finding(&c, "t3 conversation delivery").is_some()
+            && interval(&c, &question).is_some()
+    });
+    let before = retained().unwrap();
+    let command_id = before.0.as_deref().unwrap();
+    assert_eq!((before.1, before.2), (None, None));
+    let read = format!("thread show --json --messages 0 -- {session}");
+    let reads = |c: &Company| {
+        c.runtime
+            .calls()
+            .iter()
+            .filter(|line| **line == read)
+            .count()
+    };
+    let prior_reads = reads(&c);
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_mins(6),
+    );
+    answer_source_changed(&c, 2);
+    wait_for_answer_fixture(
+        "the relay retries after the send reconciliation bound",
+        || reads(&c) >= prior_reads + 2 || retained().is_some_and(|row| row.2.is_some()),
+    );
+    assert_eq!(retained(), Some((Some(command_id.to_owned()), None, None)));
+    assert_eq!(c.runtime.message_count(&session), 1);
+    std::fs::rename(&held, &descriptor).unwrap();
+    wait_for_answer_fixture(
+        "dispatch resumes without replacing the command identity",
+        || c.runtime.message_count(&session) == 2,
+    );
+    let ids = std::fs::read_to_string(c.runtime.state_dir().join("dispatch-ids")).unwrap();
+    assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id]);
+    finish_answer_turn(&mut c, &session, 1, "The report is in the drive.");
+    wait_for_answer_fixture("the saved question is answered once", || {
+        c.slack.posts_beginning("The report is in the drive.") == 1
     });
 }
 

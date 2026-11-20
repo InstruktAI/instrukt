@@ -515,24 +515,53 @@ fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
         )),
     }
 }
+// Counts bytes accepted by the TCP stream, including partial writes.
+struct FrameStream {
+    stream: TcpStream,
+    written: usize,
+}
+
+impl std::io::Read for FrameStream {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        std::io::Read::read(&mut self.stream, bytes)
+    }
+}
+
+impl std::io::Write for FrameStream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let written = std::io::Write::write(&mut self.stream, bytes)?;
+        self.written += written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::Write::flush(&mut self.stream)
+    }
+}
+
+use super::DispatchError::{self, AfterFrame, BeforeFrame};
+
 pub(super) fn dispatch(
     home: &Home,
     env: &Env,
     payload: serde_json::Value,
-) -> Result<(), SessionsError> {
-    let endpoint = server_endpoint(home, env)?;
-    let mut token = Token::issue_scoped("orchestration:operate", "instrukt-conversation-send")?;
+    before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+) -> Result<(), DispatchError> {
+    let endpoint = server_endpoint(home, env).map_err(BeforeFrame)?;
+    let mut token = Token::issue_scoped("orchestration:operate", "instrukt-conversation-send")
+        .map_err(BeforeFrame)?;
     let outcome = rpc(
         &endpoint,
         &token.secret,
         "orchestration.dispatchCommand",
         payload,
+        before_write,
     )
     .and_then(|value| {
         value["sequence"]
             .as_u64()
             .map(|_| ())
-            .ok_or_else(|| refused("invalid dispatch receipt"))
+            .ok_or_else(|| AfterFrame(refused("invalid dispatch receipt")))
     });
     // A cleanup failure cannot undo an accepted dispatch.
     if let Err(error) = token.revoke() {
@@ -546,10 +575,11 @@ fn rpc(
     token: &str,
     tag: &str,
     payload: serde_json::Value,
-) -> Result<serde_json::Value, SessionsError> {
+    before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+) -> Result<serde_json::Value, DispatchError> {
     let addresses = endpoint
         .socket_addrs(|| None)
-        .map_err(|_| refused("cannot resolve local server address"))?;
+        .map_err(|_| BeforeFrame(refused("cannot resolve local server address")))?;
     let deadline = Instant::now() + TIMEOUT;
     let mut connected = None;
     for address in addresses {
@@ -560,54 +590,73 @@ fn rpc(
             break;
         }
     }
-    let stream = connected.ok_or_else(|| refused("cannot connect to local server"))?;
+    let stream = connected.ok_or_else(|| BeforeFrame(refused("cannot connect to local server")))?;
     stream
         .set_read_timeout(Some(TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
-        .map_err(|_| refused("cannot bound readiness transport"))?;
+        .map_err(|_| BeforeFrame(refused("cannot bound readiness transport")))?;
     let mut request = endpoint
         .as_str()
         .into_client_request()
-        .map_err(|_| refused("invalid readiness upgrade request"))?;
+        .map_err(|_| BeforeFrame(refused("invalid readiness upgrade request")))?;
     request.headers_mut().insert(
         "Authorization",
         format!("Bearer {token}")
             .parse()
-            .map_err(|_| refused("invalid issued bearer token"))?,
+            .map_err(|_| BeforeFrame(refused("invalid issued bearer token")))?,
     );
-    let (mut socket, _) = tungstenite::client(request, stream)
-        .map_err(|_| refused("WebSocket upgrade refused or protocol version unsupported"))?;
+    let (mut socket, _) = tungstenite::client(request, FrameStream { stream, written: 0 })
+        .map_err(|_| {
+            BeforeFrame(refused(
+                "WebSocket upgrade refused or protocol version unsupported",
+            ))
+        })?;
     socket.set_config(|config| {
         config.max_message_size = Some(8 * 1024 * 1024);
         config.max_frame_size = Some(8 * 1024 * 1024);
     });
-    socket
-        .send(Message::Text(
-            json!({"_tag":"Request","id":RPC_REQUEST_ID,"tag":tag,"payload":payload,"headers":[]})
-                .to_string()
-                .into(),
-        ))
-        .map_err(|_| refused("snapshot request failed"))?;
+    let frame =
+        json!({"_tag":"Request","id":RPC_REQUEST_ID,"tag":tag,"payload":payload,"headers":[]})
+            .to_string();
+    // Tungstenite writes one uncompressed client text frame: two header
+    // bytes, optional extended length, four mask bytes, then the payload.
+    let frame_bytes = frame.len()
+        + match frame.len() {
+            0..=125 => 6,
+            126..=65535 => 8,
+            _ => 14,
+        };
+    before_write().map_err(BeforeFrame)?;
+    socket.get_mut().written = 0;
+    if socket.send(Message::Text(frame.into())).is_err() {
+        let error = refused("RPC request write failed");
+        return Err(if socket.get_mut().written >= frame_bytes {
+            AfterFrame(error)
+        } else {
+            BeforeFrame(error)
+        });
+    }
     for _ in 0..32 {
         socket
             .get_mut()
+            .stream
             .set_read_timeout(Some(
                 deadline
                     .saturating_duration_since(Instant::now())
                     .max(Duration::from_millis(1)),
             ))
-            .map_err(|_| refused("cannot bound snapshot read"))?;
+            .map_err(|_| AfterFrame(refused("cannot bound snapshot read")))?;
         let message = socket
             .read()
-            .map_err(|_| refused("snapshot response failed or timed out"))?;
+            .map_err(|_| AfterFrame(refused("snapshot response failed or timed out")))?;
         let Message::Text(text) = message else {
             if matches!(message, Message::Ping(_) | Message::Pong(_)) {
                 continue;
             }
-            return Err(refused("unexpected snapshot frame"));
+            return Err(AfterFrame(refused("unexpected snapshot frame")));
         };
-        let value: serde_json::Value =
-            serde_json::from_str(&text).map_err(|_| refused("unrecognized RPC response"))?;
+        let value: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|_| AfterFrame(refused("unrecognized RPC response")))?;
         let frames = if let Some(frames) = value.as_array() {
             frames.clone()
         } else {
@@ -617,11 +666,11 @@ fn rpc(
             if frame["_tag"] == "Ping" {
                 socket
                     .send(Message::Text(json!({"_tag":"Pong"}).to_string().into()))
-                    .map_err(|_| refused("RPC keepalive failed"))?;
+                    .map_err(|_| AfterFrame(refused("RPC keepalive failed")))?;
                 continue;
             }
             if frame["_tag"] != "Exit" || frame["requestId"] != RPC_REQUEST_ID {
-                return Err(refused("unrecognized RPC response"));
+                return Err(AfterFrame(refused("unrecognized RPC response")));
             }
             let _ = socket.close(None);
             if frame["exit"]["_tag"] == "Success" {
@@ -637,20 +686,25 @@ fn rpc(
                             .and_then(serde_json::Value::as_str)
                     })
                     .unwrap_or("T3 refused the WebSocket dispatch");
-                return Err(SessionsError::Failed {
+                return Err(AfterFrame(SessionsError::Failed {
                     runtime: "t3".into(),
                     operation: "send".into(),
                     detail: detail.into(),
-                });
+                }));
             }
-            return Err(refused("unrecognized or refused snapshot response"));
+            return Err(AfterFrame(refused(
+                "unrecognized or refused snapshot response",
+            )));
         }
     }
-    Err(refused("RPC response did not complete"))
+    Err(AfterFrame(refused("RPC response did not complete")))
 }
 
 fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError> {
-    let value = rpc(endpoint, token, "server.getConfig", json!({}))?;
+    let value = rpc(endpoint, token, "server.getConfig", json!({}), &mut || {
+        Ok(())
+    })
+    .map_err(DispatchError::into_inner)?;
     let snapshot: Snapshot = serde_json::from_value(value)
         .map_err(|_| refused("unrecognized provider snapshot shape"))?;
     let mut ids = BTreeSet::new();

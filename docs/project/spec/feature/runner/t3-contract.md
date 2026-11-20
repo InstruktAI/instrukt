@@ -78,7 +78,7 @@ interfaces and real CLI boundaries, without widening implementation visibility:
 Each disposable server start waits for the runtime descriptor to report
 that server's assigned port before connecting, including after a restart.
 
-Company conversation sends use authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID. T3 reserves the ID and appends the dispatch events in one persisted transaction.
+Company conversation sends use authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and T3's automated sender provenance. The release and its fake are compared for queued acceptance and replay without a duplicate, with a deferred opening run keeping both checks provider-free.
 
 The consumed expectations derive from the owning specs and adapter contract,
 not from copying every field of an upstream response. Additional upstream fields

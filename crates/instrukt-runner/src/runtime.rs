@@ -195,6 +195,22 @@ pub enum InputState {
     Consumed,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum DispatchError {
+    #[error(transparent)]
+    BeforeFrame(SessionsError),
+    #[error(transparent)]
+    AfterFrame(SessionsError),
+}
+
+impl DispatchError {
+    pub(crate) fn into_inner(self) -> SessionsError {
+        match self {
+            Self::BeforeFrame(error) | Self::AfterFrame(error) => error,
+        }
+    }
+}
+
 /// The runtime's reconciliation of one exact send attempt.
 pub enum SendEvidence {
     Accepted,
@@ -383,7 +399,8 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
         session: &SessionRef,
         command_id: &str,
         text: &str,
-    ) -> Result<(), SessionsError>;
+        before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+    ) -> Result<(), DispatchError>;
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError>;
     fn read_state(&self, session: &SessionRef) -> Result<Thread, SessionsError>;
     fn read_conversation(&self, session: &SessionRef) -> Result<Conversation, SessionsError>;

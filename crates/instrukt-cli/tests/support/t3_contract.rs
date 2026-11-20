@@ -749,6 +749,50 @@ pub fn fake_steering(root: &Path) -> Result<Value> {
     )
 }
 
+/// Exercise the production WebSocket adapter against a deferred opening
+/// input. The runtime can accept and queue work without entering a provider.
+pub fn websocket_dispatch(id: &str) -> Result<Value> {
+    let adapter = T3::default();
+    let session = SessionRef::parse(&format!("t3:{id}"))?;
+    let command = "contract-websocket";
+    let text = "contract WebSocket queued input";
+    for _ in 0..2 {
+        adapter.dispatch_send(&session, command, text, &mut || Ok(()))?;
+    }
+    let observation = adapter.observe_input(&session, text, "2026-11-10T12:00:00Z".parse()?)?;
+    ensure!(
+        observation.state == InputState::Accepted,
+        "WebSocket input must be queued"
+    );
+    let db = instrukt_core::state_db::rusqlite::Connection::open_with_flags(
+        Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/statev2.sqlite"),
+        instrukt_core::state_db::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let count: u32 = db.query_row(
+        "SELECT count(*) FROM orchestration_v2_projection_messages
+         WHERE thread_id=?1 AND role='user' AND json_extract(payload_json,'$.text')=?2",
+        instrukt_core::state_db::rusqlite::params![id, text],
+        |row| row.get(0),
+    )?;
+    ensure!(count == 1, "WebSocket replay created a second input");
+
+    let mut token = Token::scoped(&["orchestration:operate"])?;
+    for field in ["createdBy", "creationSource"] {
+        let mut malformed = json!({
+            "type":"message.dispatch", "commandId":"contract-malformed", "threadId":id,
+            "messageId":"contract-malformed", "text":"malformed", "attachments":[],
+            "createdBy":"agent", "creationSource":"mcp", "dispatchMode":{"type":"queue_after_active"}
+        });
+        malformed.as_object_mut().unwrap().remove(field);
+        ensure!(
+            rpc(&token.secret, "orchestration.dispatchCommand", malformed).is_err(),
+            "WebSocket dispatch accepted a request without {field}"
+        );
+    }
+    token.revoke()?;
+    Ok(json!({"queued":true,"inputs_after_replay":count,"missing_provenance_rejected":true}))
+}
+
 pub fn real(root: &Path) -> Result<()> {
     grammar()?;
     let _server = Server::start(root)?;
@@ -840,6 +884,7 @@ pub fn real(root: &Path) -> Result<()> {
     }
     ensure!(changed, "durable input change was not observed");
     let result = observe(id)?;
+    let websocket = websocket_dispatch(id)?;
     ensure!(
         adapter
             .read_state(&SessionRef::parse("t3:contract-missing")?)?
@@ -861,7 +906,7 @@ pub fn real(root: &Path) -> Result<()> {
     let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket})
             .to_string(),
     )?;
     Ok(())

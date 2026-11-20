@@ -140,6 +140,10 @@ dispatch. An uncertain retry keeps that ID and framed input. T3's durable
 command receipt prevents a second turn across connections and restarts.
 A confirmed refusal allows the next attempt to select context again and use a
 fresh boundary. Presence and its recovery doors still apply.
+Failures before a complete request frame is written leave the message waiting
+with its command ID and an operator-visible cause. The relay retries these
+outages without a delivery-unknown deadline. Once a complete frame may have
+reached T3, the same ID is used to reconcile or retry it.
 If the runtime has other work or cannot confirm delivery through
 `SEND_RECONCILE_BOUND` (five minutes on the operator clock), retain the input,
 record delivery unknown for the operator, and release its place in the queue.
@@ -461,6 +465,7 @@ Scenario: The member receives the answer after a retry
   And if the wait earns an unavailable notice, only one is posted before the answer
   And a send with a lost response and no runtime record is retried with the same command identity once the runtime is idle
   And if the original dispatch reaches T3 after a runner restart and its retry, only one turn takes the question
+  And an outage before dispatch keeps a saved question retryable even past the reconciliation bound
   And later questions reach the assistant after the saved question without a duplicate delivery
 
 ```

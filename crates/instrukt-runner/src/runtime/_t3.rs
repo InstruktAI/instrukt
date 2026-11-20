@@ -429,15 +429,19 @@ impl RuntimeAdapter for T3 {
         session: &SessionRef,
         command_id: &str,
         text: &str,
-    ) -> Result<(), SessionsError> {
+        before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+    ) -> Result<(), super::DispatchError> {
+        use super::DispatchError::BeforeFrame;
         if session.runtime.as_str() != "t3" {
-            return Err(SessionsError::UnknownRuntime(session.runtime.to_string()));
+            return Err(BeforeFrame(SessionsError::UnknownRuntime(
+                session.runtime.to_string(),
+            )));
         }
         let user_home = self
             .env
             .get("HOME")
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| failure("send", "machine home is unavailable"))?;
+            .ok_or_else(|| BeforeFrame(failure("send", "machine home is unavailable")))?;
         let home = instrukt_core::home::Home::at_user_home(user_home.into());
         super::_t3_readiness::dispatch(
             &home,
@@ -448,9 +452,12 @@ impl RuntimeAdapter for T3 {
                 "threadId": session.id,
                 "messageId": command_id,
                 "text": text,
+                "createdBy": "agent",
+                "creationSource": "mcp",
                 "attachments": [],
                 "dispatchMode": {"type": "queue_after_active"}
             }),
+            before_write,
         )
     }
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError> {

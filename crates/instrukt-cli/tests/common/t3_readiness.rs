@@ -226,12 +226,33 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
 
 fn dispatch(dir: &Path, home: &Path, payload: &Value) -> Value {
     use std::io::Write as _;
+    // The required message.dispatch shape exercised by the pinned release
+    // contract. Reject malformed requests before the fake accepts input.
+    let required = ["commandId", "threadId", "messageId"];
+    if payload["type"] != "message.dispatch"
+        || required
+            .iter()
+            .any(|field| payload[*field].as_str().is_none_or(str::is_empty))
+        || !payload["text"].is_string()
+        || !matches!(
+            payload["createdBy"].as_str(),
+            Some("user" | "agent" | "system")
+        )
+        || !matches!(
+            payload["creationSource"].as_str(),
+            Some("web" | "mobile" | "mcp" | "provider" | "server")
+        )
+        || !payload["attachments"].is_array()
+        || payload["dispatchMode"]["type"] != "queue_after_active"
+    {
+        return json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":"invalid message.dispatch request"}}]});
+    }
     let id = payload["commandId"].as_str().unwrap();
     let thread = payload["threadId"].as_str().unwrap();
     let text = payload["text"].as_str().unwrap();
-    assert_eq!(payload["type"], "message.dispatch");
     assert_eq!(payload["messageId"], id);
-    assert_eq!(payload["dispatchMode"]["type"], "queue_after_active");
+    assert_eq!(payload["createdBy"], "agent");
+    assert_eq!(payload["creationSource"], "mcp");
     assert_eq!(payload["attachments"], json!([]));
     let root = dir.parent().unwrap();
     let mut child = std::process::Command::new(root.join("runtime-bin/t3"))

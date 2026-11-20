@@ -48,9 +48,10 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                     Some("contract queued input"),
                 )?;
                 let result = release::observe("contract-thread")?;
+                let websocket = release::websocket_dispatch("contract-thread")?;
                 fs::write(
                     root.join("fake.json"),
-                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?}).to_string(),
+                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket}).to_string(),
                 )?;
                 Ok(())
             })()
@@ -149,6 +150,12 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         assert!(
             real["adapter"]["relationships"] == emulated["adapter"]["relationships"],
             "fake persisted input/run relationships differ"
+        );
+        manifest["operation"] = json!("WebSocket queued dispatch, replay, and required fields");
+        assert_eq!(real["websocket_dispatch"], emulated["websocket_dispatch"]);
+        manifest["websocket_dispatch"] = real["websocket_dispatch"].clone();
+        manifest["fake_operations"]["WebSocket dispatch"] = json!(
+            "compared queued acceptance, duplicate suppression and rejection of omitted provenance"
         );
         let mut observed = real["adapter"].clone();
         let mut fake_observed = emulated["adapter"].clone();

@@ -52,6 +52,7 @@ fn v25(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
         "context_delivery_ids",
         "send_unknown_at",
         "dispatch_command_id",
+        "dispatch_write_at",
     ] {
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages') WHERE name=?1)",
