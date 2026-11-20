@@ -594,7 +594,9 @@ and initialized-assignment evidence are explicit adapter capabilities, with
 unknown/unsupported outcomes instead of synthesized conversations or run ids.
 The adapter is always selected by `runner.runtime`.
 
-**`runtime_bindings`** — cached sessions for instrukt-owned start kinds. Key:
+**`runtime_bindings`** — runner-owned native identities scoped to this computer
+and runtime. The pending row is the authoritative record of the native ID
+returned by a keyed start. Key:
 `(runtime, semantic_key)`. Columns are `runtime`, `semantic_key`, `kind`, `project`,
 `subject` (the assignment's durable semantic address), `session`, optional `native_project_id`, `display_title`,
 `checkout`, `worktree`, `branch`, `base_head`, `accepted`, original structured
@@ -604,10 +606,13 @@ and `procedure_generations`, joined by `semantic_key`. The native project id is 
 identity and runtime endpoint/placement scope remain separate. Display-title
 changes do not change the semantic key or authorize a new start. Work's `session_bindings`
 retains todo/role/attempt facts, and task occurrence stamps own completion.
-Discovery repairs the cache before a start. Removing it proves no absence. After
-a todo replacement returns its native ID, its pending runtime binding
-retains that ID with `accepted` false. The replacement cannot adopt a
-different ID through discovery.
+One pending row per key keeps the exact returned ID and opening acceptance
+until the start commits. Retry reads that ID directly. The pending row becomes
+accepted when the owning records commit, or is retired by explicit recovery.
+An accepted replacement retains its most recent stopped ID so the same
+operator command can finish pending reflection and return its result.
+Discovery can recover a missing accepted binding. Removing a row proves no
+absence.
 
 **`runtime_key_locks`** — one starter/deliverer per runtime and exact key.
 Key: `(runtime, semantic_key)`.

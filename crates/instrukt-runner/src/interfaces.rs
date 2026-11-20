@@ -320,6 +320,13 @@ pub trait SessionBindings: Send + Sync {
         ) -> Result<(), crate::state::StateError>,
     ) -> Result<(), WorkInterfaceError>;
 
+    /// Retry reflection after local replacement acceptance has committed.
+    fn reflect_dispatch_replacement(
+        &self,
+        project: &ProjectRef,
+        key: &str,
+    ) -> Result<(), WorkInterfaceError>;
+
     /// Commit the accepted assignment and optional occurrence stamp together.
     fn record_dispatch(
         &self,

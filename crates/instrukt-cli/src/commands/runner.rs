@@ -254,6 +254,9 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
                 "replaced {stopped} with {} under {key}",
                 thread.session
             ))?;
+            if let Some(warning) = thread.warning {
+                ctx.out.line(&format!("warning: {warning}"))?;
+            }
             Ok(ExitCode::SUCCESS)
         }
         SessionsCommand::ResolveStart(args) => {

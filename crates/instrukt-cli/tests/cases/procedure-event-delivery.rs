@@ -401,8 +401,60 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
         .failure();
     let error = String::from_utf8_lossy(&wrong.get_output().stderr);
     assert!(error.contains("instrukt events status"), "{error}");
+    let db = deleted.computer.db();
+    db.execute_batch(
+        "CREATE TRIGGER fail_standing_receipt BEFORE INSERT ON runtime_inputs
+        WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'standing opening receipt failed'); END;",
+    )
+    .unwrap();
+    deleted
+        .computer
+        .env
+        .run(
+            deleted.computer.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        )
+        .failure();
+    let pending_id: (String, bool) = db
+        .query_row(
+            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
+            [&key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(pending_id, ("t3:s2".into(), false));
+    deleted.runtime.seed(
+        "lookalike",
+        deleted.computer.project.path(),
+        &key,
+        "Unrelated opening.",
+    );
+    deleted
+        .runtime
+        .change("s2", "title", "Renamed replacement".into());
+    db.execute_batch("DROP TRIGGER fail_standing_receipt;")
+        .unwrap();
+    db.execute_batch("CREATE TRIGGER fail_standing_binding BEFORE UPDATE OF session ON procedure_responsibilities
+        WHEN NEW.session='t3:s2' BEGIN SELECT RAISE(ABORT, 'standing binding write failed'); END;").unwrap();
+    let failed = deleted
+        .computer
+        .env
+        .run(
+            deleted.computer.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        )
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&failed.get_output().stderr)
+            .contains("standing binding write failed")
+    );
+    db.execute_batch("DROP TRIGGER fail_standing_binding;")
+        .unwrap();
     deleted.replace_deleted(&key);
-    assert_eq!(deleted.runtime.key("s2"), key);
+    deleted.replace_deleted(&key);
+    assert_eq!(deleted.runtime.message_count("s2"), 1);
+    assert_eq!(deleted.runtime.message_count("lookalike"), 1);
+    deleted.runtime.delete("lookalike");
     assert_eq!(deleted.delivered_to("after-delete").to_string(), "t3:s2");
     deleted.append("later-event");
     deleted.tick();
@@ -680,6 +732,8 @@ fn an_operator_can_resolve_an_uncertain_standing_start_to_its_exact_created_thre
     r.append("initial");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
+    r.runtime
+        .change("s1", "title", "Renamed before resolution".into());
     r.computer
         .env
         .run(
@@ -755,6 +809,62 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     assert_eq!(request["reservation"], repeated["reservation"]);
     assert_eq!(repeated["start_allowed"].as_bool(), Some(false));
     assert_eq!(r.runtime.calls().len(), before);
+    r.runtime.seed(
+        "unverified",
+        root,
+        request["key"].as_str().unwrap(),
+        request["brief"].as_str().unwrap(),
+    );
+    r.runtime
+        .change("unverified", "projectId", serde_json::Value::Null);
+    let unverified = serde_json::json!({"session":"t3:unverified","title":request["title"],"assignment":request["brief"]});
+    let token = request["reservation"].as_str().unwrap();
+    let refused = r
+        .computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            token,
+            "--session",
+            "t3:unverified",
+            "--evidence",
+            "-",
+        ])
+        .write_stdin(unverified.to_string())
+        .assert()
+        .failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    let confirmation = format!(
+        "instrukt events bind reactions/procedure/respond --reservation {token} --not-started --reason 'provider stopped and thread deleted'"
+    );
+    assert!(guidance.contains(&confirmation), "{guidance}");
+    r.runtime.set_status("unverified", "stopped");
+    r.runtime.delete("unverified");
+    r.computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            token,
+            "--not-started",
+            "--reason",
+            "provider stopped and thread deleted",
+        ])
+        .assert()
+        .success();
+    let retry = reserve().success();
+    let retry: serde_json::Value = serde_json::from_slice(&retry.get_output().stdout).unwrap();
+    assert_eq!(retry["reservation"], request["reservation"]);
+    assert_eq!(retry["start_allowed"], true);
     r.runtime.seed(
         "s1",
         root,
@@ -849,6 +959,27 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     r.runtime.change("s1", "title", request["title"].clone());
     r.tick();
     assert_eq!(r.delivered_to("after-project-move").to_string(), "t3:s1");
+    r.computer
+        .db()
+        .execute("UPDATE runtime_bindings SET project_id=NULL", [])
+        .unwrap();
+    r.runtime.consume("s1");
+    r.runtime
+        .change("s1", "title", "No verifiable project".into());
+    r.append("recover-unverified-binding");
+    r.tick();
+    let key = request["key"].as_str().unwrap();
+    let status = start_anomalies(&r);
+    assert!(status[0]["failure"].as_str().unwrap().contains(&format!(
+        "instrukt sessions replace-deleted {key} --stopped t3:s1"
+    )));
+    r.runtime.set_status("s1", "stopped");
+    r.runtime.delete("s1");
+    r.replace_deleted(key);
+    assert_eq!(
+        r.delivered_to("recover-unverified-binding").to_string(),
+        "t3:s2"
+    );
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA11
 #[test]

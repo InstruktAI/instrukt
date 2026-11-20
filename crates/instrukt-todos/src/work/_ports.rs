@@ -736,8 +736,28 @@ impl SessionBindings for Work {
                 accept_runtime(tx).map_err(|error| WorkError::refused(error.to_string()))
             },
         )?;
-        s.flush()?;
         Ok(())
+    }
+
+    fn reflect_dispatch_replacement(
+        &self,
+        project: &ProjectRef,
+        key: &str,
+    ) -> Result<(), WorkInterfaceError> {
+        let mut s = Session::open(self, project)?;
+        let todo = replacement_todo(&s, key)?;
+        let index = s.enter(&todo)?;
+        s.flush()?;
+        match s.status(index) {
+            ReflectionStatus::Reflected => Ok(()),
+            ReflectionStatus::Pending(reason) => {
+                Err(WorkError::refused(super::_session::describe(&reason)).into())
+            }
+            ReflectionStatus::Conflicted => Err(WorkError::refused(
+                "todo reflection has a conflicting revision. Run `instrukt todo refresh`",
+            )
+            .into()),
+        }
     }
 
     fn record_dispatch(

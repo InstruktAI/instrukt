@@ -349,12 +349,14 @@ The same discovery and start rules govern every key, for both `start` and
 
 A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
-One match recovers the same session. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
+One match recovers a start whose native ID was never returned. A returned ID
+is retained before acceptance and subsequent attempts use it directly. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
 otherwise unconfirmed input may be resent there.
 An empty listing alone never clears a marker. Keep the assignment pending and
 show its key and the `instrukt sessions resolve-start <key>` door in status.
-`--session` verifies the exact key, project and any recorded worktree request
-before binding; `--none` records the operator's confirmation that no thread
+`--session` uses the operator's explicit ID. It requires a present thread
+in the retained native project and any requested worktree, and refuses a
+thread already bound to another assignment; `--none` records the operator's confirmation that no thread
 was created and no start remains in flight, permitting retry under the same
 key. The resolved request retains its input and retry permission until retried.
 A rejection proven to precede creation also permits that retry. Failure to
@@ -394,6 +396,10 @@ can supply the actual session with `sessions resolve-start --session` before
 retrying. Replacement checks the work record again before committing the
 runtime binding, work binding, claim, opening receipt and execution tracking
 together.
+
+The command reports success once the local acceptance commits. Deferred
+reflection appears as a warning, and the same command can retry reflection
+and report the already-committed session.
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains

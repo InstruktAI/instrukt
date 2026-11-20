@@ -99,7 +99,9 @@ through the replacement command in
 stays bound and cannot be replaced by that command.
 
 Manual binding records the native project from the reserved checkout's exact
-key and session. A retained binding without project evidence can establish it
+key and session. An unbound reservation that cannot verify a thread's native
+project stays open. Once the operator has stopped and deleted that unbound
+thread, the reservation's no-start confirmation permits another attempt. A retained binding without project evidence can establish it
 through that same discovery. A renamed thread with no retained project evidence
 keeps its input pending. When the original native project cannot be verified,
 the operator stops the session, deletes the thread, and uses the replacement

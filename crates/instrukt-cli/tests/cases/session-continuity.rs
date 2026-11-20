@@ -213,7 +213,30 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     db.execute_batch("DROP TRIGGER fail_opening_receipt;")
         .unwrap();
 
+    db.execute_batch(
+        "CREATE TRIGGER fail_replacement_reflection BEFORE INSERT ON reflections
+        WHEN NEW.pending=0 AND (SELECT claim_session FROM todos WHERE id=NEW.todo_id)='t3:s2'
+        BEGIN SELECT RAISE(ABORT, 'reflection save failed'); END;",
+    )
+    .unwrap();
+    let replaced = command().success();
+    let text = String::from_utf8_lossy(&replaced.get_output().stdout);
+    assert!(
+        text.contains("warning:") && text.contains("reflection save failed"),
+        "{text}"
+    );
+    let repeated = command().success();
+    assert!(
+        String::from_utf8_lossy(&repeated.get_output().stdout)
+            .contains("replaced t3:s1 with t3:s2")
+    );
+    db.execute_batch("DROP TRIGGER fail_replacement_reflection;")
+        .unwrap();
     command().success();
+    let pending: bool = db
+        .query_row("SELECT pending FROM reflections", [], |row| row.get(0))
+        .unwrap();
+    assert!(!pending);
     assert_eq!(
         sessions(),
         ("t3:s2".into(), "t3:s2".into(), "t3:s2".into(), true)
@@ -241,6 +264,16 @@ fn conflicting_keyed_threads_never_admit_a_replacement() {
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     let key = fake.title("s1").rsplit(" · ").next().unwrap().to_owned();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted)
+         VALUES ('t3','other-key','run','other-key','t3:s1',?1,1)",
+        [p.repo.path().to_string_lossy().as_ref()],
+    )
+    .unwrap();
     let out = p
         .env
         .run(
@@ -1123,6 +1156,16 @@ fn mixed_legacy_and_readable_titles_for_one_key_conflict() {
     let title = fake.title("s1");
     let key = title.rsplit(" · ").next().unwrap();
     fake.seed("legacy", p.repo.path(), key, &fake.message("s1", 0));
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted)
+         VALUES ('t3','other-key','run','other-key','t3:s1',?1,1)",
+        [p.repo.path().to_string_lossy().as_ref()],
+    )
+    .unwrap();
     let out = p
         .env
         .run(
