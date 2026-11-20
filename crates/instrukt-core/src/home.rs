@@ -27,10 +27,23 @@ pub enum HomeError {
 pub struct Home {
     user_home: PathBuf,
     root: PathBuf,
+    state_dir: PathBuf,
     machine_user_home: PathBuf,
     development: bool,
     inspection: bool,
     state_read_only: bool,
+}
+
+// Resolve an existing ancestor even when first use has not created the
+// state directory yet.
+fn canonical_location(path: &Path) -> PathBuf {
+    match path.canonicalize() {
+        Ok(path) => path,
+        Err(_) => match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => canonical_location(parent).join(name),
+            _ => path.to_path_buf(),
+        },
+    }
 }
 
 impl Home {
@@ -41,6 +54,7 @@ impl Home {
                 let mut selected = Self::at_user_home(PathBuf::from(home));
                 if let Some(root) = std::env::var_os("INSTRUKT_HOME").filter(|s| !s.is_empty()) {
                     selected.root = PathBuf::from(root);
+                    selected.state_dir = canonical_location(&selected.root.join("state"));
                 }
                 if std::env::var_os("INSTRUKT_DEVELOPMENT").as_deref()
                     == Some(std::ffi::OsStr::new("1"))
@@ -63,6 +77,7 @@ impl Home {
         Self {
             machine_user_home: user_home.clone(),
             user_home,
+            state_dir: canonical_location(&root.join("state")),
             root,
             development: false,
             inspection: false,
@@ -180,7 +195,7 @@ impl Home {
 
     /// `~/.instrukt/state/`.
     pub fn state_dir(&self) -> PathBuf {
-        self.root.join("state")
+        self.state_dir.clone()
     }
 
     /// `~/.instrukt/state/publication/` — per project, the published commit

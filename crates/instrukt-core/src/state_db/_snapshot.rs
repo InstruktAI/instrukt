@@ -2,9 +2,8 @@
 //! memory through the last checksum-valid commit, then opened by SQLite itself.
 //! WAL framing/checksums: https://www.sqlite.org/fileformat2.html#walformat
 use super::{Connection, StateDbError};
-use crate::home::Home;
 use std::path::{Path, PathBuf};
-fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+pub(super) fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
     name.into()
@@ -16,11 +15,9 @@ fn bytes(path: &Path) -> Result<Vec<u8>, StateDbError> {
         Err(e) => Err(StateDbError::invalid(path, e.to_string())),
     }
 }
-pub(super) fn read(home: &Home, path: &Path) -> Result<Connection, StateDbError> {
+pub(super) fn read(path: &Path) -> Result<Connection, StateDbError> {
     let wal_path = sidecar(path, "-wal");
     let journal = sidecar(path, "-journal");
-    super::refuse_links(home, &wal_path)?;
-    super::refuse_links(home, &journal)?;
     for _ in 0..8 {
         let main = bytes(path)?;
         let wal = bytes(&wal_path)?;
@@ -42,11 +39,9 @@ pub(super) fn read(home: &Home, path: &Path) -> Result<Connection, StateDbError>
             super::rusqlite::MAIN_DB,
             image.as_slice(),
             image.len(),
-            true,
+            false,
         )
         .map_err(StateDbError::sqlite(path))?;
-        conn.pragma_update(None, "query_only", true)
-            .map_err(StateDbError::sqlite(path))?;
         return Ok(conn);
     }
     Err(StateDbError::invalid(

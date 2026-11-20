@@ -1214,7 +1214,7 @@ fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, 
     use sha2::{Digest, Sha256};
     let digest = hex::encode(&Sha256::digest(c.semantic_key.as_bytes())[..8]);
     Ok(instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!("conversation-{digest}.lock")),
+        &home.state_dir().join(format!("conversation-{digest}.lock")),
         std::time::Duration::from_secs(120),
     )?)
 }
