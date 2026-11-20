@@ -733,6 +733,50 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     });
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV19
+#[test]
+fn one_conversation_opens_while_another_start_is_being_verified() {
+    let (mut c, _) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    projected(&c);
+    let held = c.runtime.state_dir().join("s1.hold-show");
+    std::fs::write(&held, "").unwrap();
+    c.slack.direct("D30", "USTEVEN", "Where is the release?");
+    wait("the first start has reached its post-create check", || {
+        c.runtime.held_show_running("s1")
+    });
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
+    c.slack.direct("D31", "UANNA", "Who is on call?");
+    wait(
+        "the second conversation starts during the held check",
+        || c.sessions().iter().any(|session| session == "s2"),
+    );
+    c.finish_turn("s2", 0, "Ada is on call.");
+    wait(
+        "the second conversation answers during the held check",
+        || c.slack.posts_beginning("Ada is on call.") == 1,
+    );
+    assert!(c.runtime.held_show_running("s1"));
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    let same_key = c
+        .env
+        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&same_key.get_output().stderr)
+            .contains("already owned by an active dispatch")
+    );
+    std::fs::remove_file(held).unwrap();
+
+    c.finish_turn("s1", 0, "The release is in the wiki.");
+    wait("the first conversation gets its own answer", || {
+        c.slack.posts_beginning("The release is in the wiki.") == 1 && answers_recorded(&c)
+    });
+    assert_eq!(c.runtime.message_count("s1"), 1);
+    assert_eq!(c.runtime.message_count("s2"), 1);
+    assert_eq!(c.slack.posts().len(), 2);
+}
+
 // spec: project/instrukt/spec/feature/company/conversations UC-CV8
 #[test]
 fn a_member_gets_the_answer_after_the_assistants_work_failed() {

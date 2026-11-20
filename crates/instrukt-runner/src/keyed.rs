@@ -1,4 +1,4 @@
-//! Durable keyed dispatch. Callers hold the machine runner lock across operations.
+//! Durable keyed dispatch. Exact-key OS ownership spans native operations.
 //! Key ownership is kept in SQLite; no writer transaction spans runtime I/O.
 use instrukt_core::fsx::LockGuard;
 use instrukt_core::home::Home;
@@ -55,42 +55,32 @@ pub fn task_key(project: &str, slug: &str, occurrence: Timestamp) -> String {
     )
 }
 
-/// A live machine invocation. Construction recovers dead ownership once;
-/// its private OS guard proves that no previous invocation is still dispatching.
+/// Admission to a dispatch. The machine gate is released on admission;
+/// exact-key ownership protects the subsequent runtime calls.
 pub struct RuntimeInvocation {
     home: Home,
     owner: String,
-    _guard: LockGuard,
 }
 impl RuntimeInvocation {
     pub fn acquire(home: &Home, wait: Duration) -> Result<Self, StateError> {
-        Self::from_guard(
-            home,
-            LockGuard::acquire(&home.state_dir().join("runtime-dispatch.lock"), wait)?,
-        )
+        let _gate = LockGuard::acquire(&home.state_dir().join("runtime-dispatch.lock"), wait)?;
+        Self::admitted(home)
     }
     pub fn try_acquire(home: &Home) -> Result<Option<Self>, StateError> {
-        LockGuard::try_acquire(&home.state_dir().join("runtime-dispatch.lock"))?
-            .map(|guard| Self::from_guard(home, guard))
-            .transpose()
+        let Some(_gate) = LockGuard::try_acquire(&home.state_dir().join("runtime-dispatch.lock"))?
+        else {
+            return Ok(None);
+        };
+        Self::admitted(home).map(Some)
     }
-    fn from_guard(home: &Home, guard: LockGuard) -> Result<Self, StateError> {
+    fn admitted(home: &Home) -> Result<Self, StateError> {
         let owner = instrukt_core::machine::random_hex(16).map_err(|source| StateError::Read {
             path: "/dev/urandom".into(),
             source,
         })?;
-        RunnerState::new(home).write::<_, StateError>(|tx| {
-            tx.execute(
-                "UPDATE runtime_key_locks SET owner=NULL WHERE owner IS NOT NULL",
-                [],
-            )
-            .map_err(state::sql(&state::db_path(tx)))?;
-            Ok(())
-        })?;
         Ok(Self {
             home: home.clone(),
             owner,
-            _guard: guard,
         })
     }
     pub fn home(&self) -> &Home {
@@ -98,14 +88,16 @@ impl RuntimeInvocation {
     }
 }
 
-pub(crate) struct KeyGuard {
+/// Exclusive ownership of one key, including across processes.
+pub struct KeyGuard {
     state: RunnerState,
     runtime: String,
     key: String,
     owner: String,
+    _lock: LockGuard,
 }
 impl KeyGuard {
-    pub(crate) fn claim(
+    pub fn claim(
         invocation: &RuntimeInvocation,
         adapter: &dyn RuntimeAdapter,
         key: &str,
@@ -115,19 +107,29 @@ impl KeyGuard {
         let state = RunnerState::new(invocation.home());
         let owner = invocation.owner.clone();
         let runtime = adapter.runtime().name().to_owned();
-        let acquired=state.write::<_,StateError>(|tx| {
-            tx.execute("INSERT INTO runtime_key_locks (runtime,semantic_key,project,owner,acquired_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(runtime,semantic_key) DO UPDATE SET owner=excluded.owner,acquired_at=excluded.acquired_at WHERE runtime_key_locks.owner IS NULL",params![runtime,key,project,owner,now.to_string()]).map_err(state::sql(&state::db_path(tx)))
+        use sha2::{Digest, Sha256};
+        let name = Sha256::digest(format!("{runtime}:{key}").as_bytes());
+        let path = invocation
+            .home()
+            .locks_dir()
+            .join(format!("runtime-key-{name:x}.lock"));
+        let lock = LockGuard::try_acquire(&path)
+            .map_err(StateError::from)?
+            .ok_or_else(|| {
+                SessionsError::Refused(format!(
+                    "runtime key `{key}` is already owned by an active dispatch"
+                ))
+            })?;
+        state.write::<_,StateError>(|tx| {
+            tx.execute("INSERT INTO runtime_key_locks (runtime,semantic_key,project,owner,acquired_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(runtime,semantic_key) DO UPDATE SET owner=excluded.owner,acquired_at=excluded.acquired_at",params![runtime,key,project,owner,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;
+            Ok(())
         })?;
-        if acquired != 1 {
-            return Err(SessionsError::Refused(format!(
-                "runtime key `{key}` is already owned by an active dispatch"
-            )));
-        }
         Ok(Self {
             state,
             runtime,
             key: key.into(),
             owner,
+            _lock: lock,
         })
     }
 }
@@ -444,6 +446,14 @@ pub(crate) fn start(
         );
     }
     result
+}
+
+pub(crate) fn start_owned(
+    adapter: &dyn RuntimeAdapter,
+    assignment: &RuntimeAssignment<'_>,
+    guard: &KeyGuard,
+) -> Result<Thread, SessionsError> {
+    start_claimed(adapter, assignment, guard, None)
 }
 
 fn start_claimed(
@@ -907,17 +917,11 @@ fn retire_gone(
 
 /// Repair a lost cache only after the caller recovered the assignment's original facts.
 pub(crate) fn recover_binding(
+    guard: &KeyGuard,
     adapter: &dyn RuntimeAdapter,
     assignment: &crate::runtime::RuntimeAssignment<'_>,
     thread: &Thread,
 ) -> Result<(), SessionsError> {
-    let guard = KeyGuard::claim(
-        assignment.invocation,
-        adapter,
-        &assignment.request.key,
-        assignment.project,
-        assignment.now,
-    )?;
     adapter.verify_start(assignment.request, thread)?;
     remember(
         &guard.state,
@@ -1115,6 +1119,7 @@ pub fn replace_deleted(
 ) -> Result<ReplacementResult, SessionsError> {
     let state = RunnerState::new(invocation.home());
     let runtime = adapter.runtime().name();
+    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
     let recorded = record(&state, runtime, key)?;
     let standing = kind(key) == "standing";
     let todo = matches!(kind(key), "todo" | "task");
@@ -1138,14 +1143,15 @@ pub fn replace_deleted(
         note(&state, adapter.runtime(), key, now, Err(&error));
         return Err(error);
     }
+    let _inputs = KeyGuard::claim(invocation, adapter, &format!("input:{stopped}"), None, now)?;
     if standing {
-        let thread = crate::standing::replace_deleted(invocation, adapter, key, stopped, now)?;
+        let thread =
+            crate::standing::replace_deleted(&guard, invocation, adapter, key, stopped, now)?;
         return Ok(ReplacementResult {
             session: thread.session,
             warning: None,
         });
     }
-    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
     let resuming = recorded
         .replacement
         .as_ref()

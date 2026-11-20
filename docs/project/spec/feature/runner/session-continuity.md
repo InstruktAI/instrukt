@@ -254,9 +254,11 @@ Every start or wake claims `runtime_key_locks` before discovery and retains
 ownership through binding and delivery-result recording. This applies to
 operational start resolution and runner dispatch, not native child delegation. Lock changes are short
 transactions under the writer lock; no transaction spans a runtime command.
-The machine runtime-dispatch guard serializes eligible owners, including `resolve-start`. The long-lived runner holds its separate lifetime lock while acquiring this dispatch guard only for each wake, so operational resolution can run between wakes.
-A successor holding that lock may recover a dead invocation's key ownership
-while retaining unresolved markers; elapsed time alone permits no new start.
+The machine runtime-dispatch lock gates entry to dispatch and is released
+before any runtime command. Each owner holds an OS lock for its exact key
+through the operation, including `resolve-start`. An owner taking that key's
+lock can recover the prior owner's row while retaining unresolved markers.
+Elapsed time alone permits no new start.
 
 ### Human-facing thread titles
 

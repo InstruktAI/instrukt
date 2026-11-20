@@ -290,6 +290,14 @@ fn deliver_group(
         return Ok(());
     }
     let selected_runtime = config.runner_runtime()?;
+    let adapter = crate::runtime::adapter(selected_runtime);
+    let guard = keyed::KeyGuard::claim(
+        invocation,
+        adapter.as_ref(),
+        responsibility,
+        project.as_deref(),
+        now,
+    )?;
     let manual=state.read(|conn,path|conn.query_row("SELECT token FROM manual_standing_reservations WHERE responsibility=?1 AND session IS NULL",[responsibility],|r|r.get::<_,String>(0)).optional().map_err(state::sql(path)))?.flatten();
     if manual.is_some() {
         return Err(SessionsError::Unresolved {
@@ -297,7 +305,6 @@ fn deliver_group(
         });
     }
     let mut existing=state.read(|conn,path|conn.query_row("SELECT request,declaration,session,seen_position FROM procedure_responsibilities WHERE responsibility=?1",[responsibility],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,u64>(3)?))).optional().map_err(state::sql(path)))?.flatten();
-    let adapter = crate::runtime::adapter(selected_runtime);
     if existing.is_none() {
         let family = adapter.list(&root)?;
         if family.iter().any(|t| {
@@ -369,6 +376,7 @@ fn deliver_group(
                 profiles: crate::runtime::Profiles::default(),
             };
             keyed::recover_binding(
+                &guard,
                 adapter.as_ref(),
                 &RuntimeAssignment {
                     creation: CreationPermit::Reconcile,
@@ -546,6 +554,7 @@ fn deliver_group(
         session
     } else {
         start_and_bind(
+            &guard,
             state,
             adapter.as_ref(),
             responsibility,
@@ -589,13 +598,14 @@ fn selected_opening_ids(
 }
 
 fn start_and_bind(
+    guard: &keyed::KeyGuard,
     state: &RunnerState,
     adapter: &dyn RuntimeAdapter,
     responsibility: &str,
     selected: &[Pending],
     assignment: &RuntimeAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
-    let thread = adapter.start_or_wake(assignment)?;
+    let thread = keyed::start_owned(adapter, assignment, guard)?;
     state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET session=?2 WHERE responsibility=?1",params![responsibility,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;for p in selected{tx.execute("UPDATE standing_deliveries SET target=?4,state='delivered' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
     keyed::note(
         state,
@@ -824,6 +834,8 @@ pub fn reserve_manual(
             .message
     );
     let key = key(entry.id.as_str(), &home, None);
+    let adapter = crate::runtime::adapter(runtime);
+    let _guard = keyed::KeyGuard::claim(invocation, adapter.as_ref(), &key, None, now)?;
     let state = RunnerState::new(invocation.home());
     let existing = state
         .read(|conn, path| {
@@ -1128,6 +1140,7 @@ pub(crate) fn replacement_is_bound(
 }
 
 pub(crate) fn replace_deleted(
+    guard: &keyed::KeyGuard,
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
     key: &str,
@@ -1245,6 +1258,7 @@ pub(crate) fn replace_deleted(
         )?
     };
     let result = start_and_bind(
+        guard,
         &state,
         adapter,
         &responsibility,

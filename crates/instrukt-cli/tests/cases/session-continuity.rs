@@ -146,70 +146,80 @@ fn keyed_recovery_doors_follow_binding_state() {
         }
         return;
     }
-    for phase in ["prepare", "work", "task"] {
-        let mut p = Tracked::new(true);
-        let fake = FakeT3::create(&p.env);
-        let worktree = phase != "task";
-        if worktree {
-            change(&p, "recovery");
-            if phase == "work" {
-                p.todo([
-                    "artifacts",
-                    "write",
-                    "recovery",
-                    "implementation-plan",
-                    "Plan.",
-                ]);
-                p.todo([
-                    "artifacts",
-                    "write",
-                    "recovery",
-                    "plan-review-findings",
-                    "Approved.",
-                ]);
-                p.todo([
-                    "stamp",
-                    "recovery",
-                    "--verdict",
-                    "approve",
-                    "--phase",
-                    "plan_review",
-                ]);
-            }
-        } else {
-            p.authorized_task("recovery", "2030-01-06T09:00:00Z", &[]);
-            p.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:20Z");
+    std::thread::scope(|scope| {
+        for phase in ["prepare", "work", "task"] {
+            scope.spawn(move || check_todo_recovery_doors(phase));
         }
-        let db = recovery_db(&p.env);
-        fail_recovery_receipt(&db, "s1");
-        p.tick();
-        check_recovery_doors(
-            &p.env,
-            p.repo.path(),
-            &fake,
-            &db,
-            worktree.then_some(phase),
-            || {
-                p.tick();
-            },
-            |key, native| {
-                let (bound, claimed): (String, String) = db.query_row(
+        scope.spawn(check_run_recovery_doors);
+        crate::procedure_event_delivery::check_standing_recovery_doors();
+    });
+}
+
+fn check_todo_recovery_doors(phase: &str) {
+    let mut p = Tracked::new(true);
+    let fake = FakeT3::create(&p.env);
+    let worktree = phase != "task";
+    if worktree {
+        change(&p, "recovery");
+        if phase == "work" {
+            p.todo([
+                "artifacts",
+                "write",
+                "recovery",
+                "implementation-plan",
+                "Plan.",
+            ]);
+            p.todo([
+                "artifacts",
+                "write",
+                "recovery",
+                "plan-review-findings",
+                "Approved.",
+            ]);
+            p.todo([
+                "stamp",
+                "recovery",
+                "--verdict",
+                "approve",
+                "--phase",
+                "plan_review",
+            ]);
+        }
+    } else {
+        p.authorized_task("recovery", "2030-01-06T09:00:00Z", &[]);
+        p.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:20Z");
+    }
+    let db = recovery_db(&p.env);
+    fail_recovery_receipt(&db, "s1");
+    p.tick();
+    check_recovery_doors(
+        &p.env,
+        p.repo.path(),
+        &fake,
+        &db,
+        worktree.then_some(phase),
+        || {
+            p.tick();
+        },
+        |key, native| {
+            let (bound, claimed): (String, String) = db.query_row(
                     "SELECT b.session, t.claim_session FROM session_bindings b
                      JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?1 AND b.released_at IS NULL",
                     [key], |row| Ok((row.get(0)?,row.get(1)?)),
                 ).unwrap();
-                assert_eq!(bound, format!("t3:{native}"), "{phase}");
-                assert_eq!(claimed, bound, "{phase}");
-                fake.set_status(native, "idle");
-                run_recovery_worker(&p.env, p.repo.path(), key, Some(&claimed));
-                assert!(
-                    fake.input_log(native).contains(RECOVERY_FOLLOWUP),
-                    "{phase}"
-                );
-            },
-        );
-    }
+            assert_eq!(bound, format!("t3:{native}"), "{phase}");
+            assert_eq!(claimed, bound, "{phase}");
+            fake.set_status(native, "idle");
+            run_recovery_worker(&p.env, p.repo.path(), key, Some(&claimed));
+            assert!(
+                fake.input_log(native).contains(RECOVERY_FOLLOWUP),
+                "{phase}"
+            );
+        },
+    );
+}
 
+fn check_run_recovery_doors() {
     let p = Tracked::new(false);
     let fake = FakeT3::create(&p.env);
     let db = recovery_db(&p.env);
@@ -253,7 +263,6 @@ fn keyed_recovery_doors_follow_binding_state() {
             assert!(fake.input_log(native).contains(RECOVERY_FOLLOWUP));
         },
     );
-    crate::procedure_event_delivery::check_standing_recovery_doors();
 }
 
 fn run_recovery_worker(

@@ -73,9 +73,9 @@ meaning and the writes of the conversation tables.
   belongs to it.
 - The runner lock `~/.instrukt/state/runner.lock` serializes runner
   lifetimes. Runtime dispatches also take `state/runtime-dispatch.lock` for
-  their invocation or one runner wake. Releasing that guard between wakes
-  admits agent-issued session commands while `run` remains alive. Neither
-  guard owns stored data.
+  admission to an invocation or runner wake. They release it before calling
+  the runtime and use an OS lock per exact runtime key for ownership.
+  The machine locks own no stored data.
 
 ### Scope of what is stored
 
@@ -643,10 +643,11 @@ Key: `(runtime, semantic_key)`.
 | `owner` | Owning invocation token, including operational start resolution; `NULL` when released. |
 | `acquired_at` | Acquisition time for diagnosis; elapsed time permits no new start. |
 
-Acquisition is an atomic conditional write under the writer lock. Only the owner
-performs the list/start/send sequence and releases the row. No transaction spans
-a runtime command. A successor holding the machine runtime-dispatch guard can recover dead
-ownership while preserving unresolved `runtime_starts`. Every instrukt-owned start and wake,
+Acquisition writes the row under the writer lock after acquiring an OS lock
+for this exact runtime and key. Only that owner performs the list/start/send
+sequence and releases the row. No transaction spans a runtime command. A
+successor holding the same key's OS lock can recover its ownership row while
+preserving unresolved `runtime_starts`. Every instrukt-owned start and wake,
 including lane orchestrators and task occurrences, uses this table. Native
 worker attempts do not enter this keyed-discovery table.
 

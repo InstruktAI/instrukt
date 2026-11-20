@@ -1922,6 +1922,15 @@ impl RelayWorkers {
                 return Ok(());
             };
             let adapter = instrukt_runner::runtime::adapter(runtime);
+            let _key = current.session.as_ref().map(|_| {
+                keyed::KeyGuard::claim(
+                    &invocation,
+                    adapter.as_ref(),
+                    &current.semantic_key,
+                    None,
+                    connectors.now(),
+                )
+            }).transpose()?;
             if let Some(session) = &current.session
                 && keyed::replacement_binding(&home, adapter.as_ref(), &current.semantic_key, session)?
                     .is_some()

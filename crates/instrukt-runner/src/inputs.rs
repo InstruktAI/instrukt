@@ -211,7 +211,7 @@ pub(crate) fn outcome(
     })
 }
 
-/// Each invocation owns the machine guard; a target key also serializes event and todo workers.
+/// The target key serializes event and todo workers.
 pub(crate) fn pump(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
