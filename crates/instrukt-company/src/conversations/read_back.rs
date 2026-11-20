@@ -12,7 +12,7 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::PathBuf, time::Duration};
 
-pub(super) const ANSWERING_BOUND: SignedDuration = SignedDuration::from_hours(24);
+const ANSWERING_BOUND: SignedDuration = SignedDuration::from_hours(24);
 const REPORTING_PERIOD: SignedDuration = SignedDuration::from_hours(30 * 24);
 const SCAN_OVERLAP: SignedDuration = SignedDuration::from_secs(60);
 
@@ -233,7 +233,7 @@ pub(crate) fn scan(
         if quit() {
             break;
         }
-        match retain_page(&mut conn, home, company, key, &page, started) {
+        match retain_page(&mut conn, home, company, key, &page, started, clock) {
             Ok(true) => nudge(),
             Ok(false) => {}
             Err(error) => {
@@ -268,7 +268,8 @@ fn retain_page(
     company: &ProjectSlug,
     key: &str,
     page: &ReadBackPage,
-    started: Timestamp,
+    window_started: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<bool, ConnectorError> {
     let owner = company.as_str();
     let path = state::db_path(conn);
@@ -279,8 +280,8 @@ fn retain_page(
         if item.connector != key {
             return Err(failed("unexpected connector during read-back"));
         }
-        if item.written_at > started
-            || item.written_at < started - REPORTING_PERIOD
+        if item.written_at > window_started
+            || item.written_at < window_started - REPORTING_PERIOD
             || !unique.insert((channel(item), item.message.as_str()))
         {
             continue;
@@ -294,53 +295,39 @@ fn retain_page(
         }
     }
 
-    let intake = RunnerState::new(home);
-    // Only IDs the scan has never seen need a read-only check against messages
-    // received live or committed before an interrupted scan checkpoint.
-    let existing = if novel.is_empty() {
-        HashSet::new()
+    let (inserted, missed) = if novel.is_empty() {
+        (false, Vec::new())
     } else {
-        intake.read(|db, path| {
-            let mut query = db.prepare(
-                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
-                 UNION ALL SELECT 1 FROM conversation_context_receipts
-                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND delivery=message)",
-            ).map_err(state::sql(path))?;
-            let mut existing = HashSet::new();
-            for (item, _) in &novel {
-                if query.query_row(params![owner, key, item.conversation, item.message], |row| row.get::<_, bool>(0))
-                    .map_err(state::sql(path))?
-                {
-                    existing.insert((channel(item), item.message.as_str()));
-                }
-            }
-            Ok(existing)
-        }).map_err(failed)?.unwrap_or_default()
-    };
-    let retained = |item: &Incoming| existing.contains(&(channel(item), item.message.as_str()));
-    let recent = |item: &Incoming| item.written_at >= started - ANSWERING_BOUND;
-    let batch: Vec<_> = novel
-        .iter()
-        .filter(|(item, _)| recent(item) && !retained(item))
-        .map(|(item, _)| *item)
-        .collect();
-    let inserted = if batch.is_empty() {
-        false
-    } else {
-        intake
+        RunnerState::new(home)
             .write::<_, StateError>(|tx| {
+                // The intake transaction owns the actual arrival time. The saved
+                // window only decides which messages it admits.
+                let arrived_at = clock();
                 let mut inserted = false;
-                for item in batch {
-                    inserted |= retain_in(tx, company, item, started)? != 0;
+                let mut missed = Vec::with_capacity(novel.len());
+                for (item, link) in &novel {
+                    if item.written_at >= window_started - ANSWERING_BOUND {
+                        inserted |= retain_in(tx, company, item, arrived_at)? != 0;
+                        missed.push(None);
+                    } else {
+                        missed.push(miss_in(tx, company, item)?.then_some(*link));
+                    }
                 }
-                Ok(inserted)
+                tx.execute(
+                    "DELETE FROM conversation_missed_identities WHERE rowid IN (
+                    SELECT rowid FROM conversation_missed_identities
+                    WHERE written_us<?1 ORDER BY written_us LIMIT 100
+                )",
+                    [micros(window_started - REPORTING_PERIOD)],
+                )
+                .map_err(state::sql(&state::db_path(tx)))?;
+                Ok((inserted, missed))
             })
             .map_err(failed)?
     };
 
     let tx = conn.transaction().map_err(sql)?;
-    for (item, link) in novel {
-        let missed = (!recent(item) && !retained(item)).then_some(link);
+    for ((item, _), missed) in novel.into_iter().zip(missed) {
         tx.execute(
             "INSERT INTO seen(company,connector,channel,message,conversation,written_us,missed_link)
              VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO NOTHING",
@@ -353,10 +340,10 @@ fn retain_page(
     } else {
         tx.execute("UPDATE scans SET retained_until=?3,started=NULL,lower_bound=NULL,position=NULL,page=NULL,retry_at=NULL,failure=NULL
                     WHERE company=?1 AND connector=?2",
-            params![owner, key, micros(started - SCAN_OVERLAP)]).map_err(sql)?;
+            params![owner, key, micros(window_started - SCAN_OVERLAP)]).map_err(sql)?;
         tx.execute(
             "DELETE FROM seen WHERE company=?1 AND connector=?2 AND written_us<?3",
-            params![owner, key, micros(started - REPORTING_PERIOD)],
+            params![owner, key, micros(window_started - REPORTING_PERIOD)],
         )
         .map_err(sql)?;
     }
@@ -364,18 +351,42 @@ fn retain_page(
     Ok(inserted)
 }
 
-pub(super) fn was_missed(
-    home: &Home,
+fn miss_in(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
     company: &ProjectSlug,
     item: &Incoming,
 ) -> Result<bool, StateError> {
-    let Some(conn) = open(home, false)? else {
-        return Ok(false);
-    };
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM seen WHERE company=?1 AND connector=?2 AND channel=?3 AND message=?4 AND missed_link IS NOT NULL)",
-        params![company.as_str(), item.connector, channel(item), item.message], |row| row.get(0),
-    ).map_err(state::sql(&state::db_path(&conn)))
+    let path = state::db_path(tx);
+    let identity = params![
+        company.as_str(),
+        item.connector,
+        item.conversation,
+        item.message,
+        micros(item.written_at)
+    ];
+    tx.execute(
+        "INSERT INTO conversation_missed_identities(company,connector,conversation,message,written_us)
+         SELECT ?1,?2,?3,?4,?5 WHERE NOT EXISTS(
+             SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+             UNION ALL SELECT 1 FROM conversation_context_receipts
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND delivery=message
+         ) ON CONFLICT DO NOTHING",
+        identity,
+    ).map_err(state::sql(&path))?;
+    // A durable missed marker also recovers a crash after the intake
+    // transaction committed and before the scan recorded its finding.
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM conversation_missed_identities
+         WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4)",
+        params![
+            company.as_str(),
+            item.connector,
+            item.conversation,
+            item.message
+        ],
+        |row| row.get(0),
+    )
+    .map_err(state::sql(&path))
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -169,6 +169,7 @@ struct Workspace {
     refuse_app_connection: bool,
     refused_app_connections: usize,
     read_back_limit: Option<(String, u64)>,
+    delete_thread_on_scan: Option<(String, String)>,
     history_pages: Vec<(String, Option<String>)>,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
@@ -509,6 +510,22 @@ impl FakeSlack {
             }
             "conversations.history" | "conversations.replies" => {
                 if method == "conversations.replies"
+                    && arg("latest").is_none()
+                    && w.delete_thread_on_scan
+                        .as_ref()
+                        .is_some_and(|(channel, parent)| {
+                            arg("channel") == Some(channel) && arg("ts") == Some(parent)
+                        })
+                {
+                    let (channel, parent) = w.delete_thread_on_scan.take().unwrap();
+                    w.messages.retain(|message| {
+                        message["channel"] != channel
+                            || (message["ts"] != parent && message["thread_ts"] != parent)
+                    });
+                    return json!({"ok": false, "error": "thread_not_found"});
+                }
+
+                if method == "conversations.replies"
                     && (w.refuse_replies
                         || w.refused_reply
                             .as_deref()
@@ -686,6 +703,19 @@ impl FakeSlack {
 
     pub fn refused_app_connections(&self) -> usize {
         self.workspace.lock().unwrap().refused_app_connections
+    }
+
+    pub fn delete_thread_on_scan(&self, channel: &str, parent: &str) {
+        self.workspace.lock().unwrap().delete_thread_on_scan =
+            Some((channel.to_owned(), parent.to_owned()));
+    }
+
+    pub fn scan_deleted_thread(&self) -> bool {
+        self.workspace
+            .lock()
+            .unwrap()
+            .delete_thread_on_scan
+            .is_none()
     }
 
     pub fn throttle_later_history_page(&self, channel: &str, seconds: u64) {

@@ -803,20 +803,23 @@ persists across retries.
 retained message time for each existing connector. It supplies a first
 observation when the scan store has none and establishes no scan coverage.
 
-**`state/connector-read-back.sqlite`** — external bookkeeping owned by the
-company conversation core, scoped to one home's connectors. Losing it can
-force provider reads again and lose the window in which a missed question
-can still be recovered. It has its own SQLite writer outside live intake.
+**`state/connector-read-back.sqlite`** — the company conversation core owns
+this store for one home's connectors. Its saved window is authoritative and
+durable when first learned. Losing it can skip an unread question the window
+would have recovered. Provider positions and seen identities record external
+bookkeeping. The store has its own SQLite writer outside live intake.
 
 Each connector keeps one active window with its start and lower bound, the
 provider position, the current fetched page until processed, and any
 provider retry time. Restarts resume those records. Only completion advances
 coverage to the window's start less the overlap. Page identities are kept by
 provider channel and message ID. A page with new addressed messages writes
-them in one live-intake transaction. A read-only intake check reconciles
-messages received live or committed before the scan checkpoint. Already
-seen page identities skip that check. Provider reads run outside intake
-transactions.
+them in one live-intake transaction. This transaction reconciles previously
+received messages and records missed identities in `conversation_missed_identities`.
+Live intake checks those same identities within its write transaction. The
+first committed decision wins. Already seen page identities skip intake.
+Provider reads run outside intake transactions. Unseen missed identity markers
+older than the reporting period retire on a later intake batch.
 
 Seen identities retire after 30 days. Missed records within that period keep
 the written time and provider link. They carry no message text. The active

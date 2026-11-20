@@ -87,8 +87,20 @@ impl Slack {
                 self.api.call(method, false, &form)
             }
             result => result,
-        }
-        .map_err(web_error)?;
+        };
+        let body = match body {
+            Err(SlackError::Api { cause, .. })
+                if (method == "conversations.history" && cause == "channel_not_found")
+                    || (method == "conversations.replies"
+                        && matches!(cause.as_str(), "channel_not_found" | "thread_not_found")) =>
+            {
+                return Ok(ReadBackPage {
+                    items: Vec::new(),
+                    next: continuation(&pending)?,
+                });
+            }
+            result => result.map_err(web_error)?,
+        };
         let page = body[collection]
             .as_array()
             .ok_or_else(|| failed(format!("{method} omitted {collection}")))?;
@@ -162,12 +174,18 @@ impl Slack {
             listing,
             cursor: String::new(),
         }));
-        let next = if pending.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&pending).map_err(failed)?)
-        };
-        Ok(ReadBackPage { items, next })
+        Ok(ReadBackPage {
+            items,
+            next: continuation(&pending)?,
+        })
+    }
+}
+
+fn continuation(pending: &[Request]) -> Result<Option<String>, ReadBackError> {
+    if pending.is_empty() {
+        Ok(None)
+    } else {
+        serde_json::to_string(pending).map(Some).map_err(failed)
     }
 }
 

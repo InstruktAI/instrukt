@@ -393,6 +393,8 @@ messages by provider identity. An admitted offline message uses the same
 delivery receipt rule for context as a live message: earlier messages absent
 from the durable receipt record supply context. A send to a retained session
 uses the same durable command identity and replay path as a live message.
+The saved window decides whether a recovered message is answered. Its
+context deadline starts when intake actually records the message.
 An interrupted scan resumes its saved window and provider page before
 covering the interval since that window began. Scan failures and older
 missed messages are visible to the operator without posting a diagnostic in

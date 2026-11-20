@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS connector_read_back_seed (
 INSERT INTO connector_read_back_seed(company, connector, first_seen)
     SELECT company, connector, min(written_us) FROM conversation_messages GROUP BY company, connector
     ON CONFLICT(company,connector) DO NOTHING;
+CREATE TABLE IF NOT EXISTS conversation_missed_identities (
+    company TEXT NOT NULL, connector TEXT NOT NULL, conversation TEXT NOT NULL,
+    message TEXT NOT NULL, written_us INTEGER NOT NULL,
+    PRIMARY KEY(company, connector, conversation, message)
+);
+CREATE INDEX IF NOT EXISTS conversation_missed_identities_by_time
+    ON conversation_missed_identities(written_us);
 ";
 
 /// Version 24: failed messages keep their retry schedule on the operator clock.

@@ -173,11 +173,6 @@ pub fn retain(
     incoming: &Incoming,
     now: Timestamp,
 ) -> Result<Intake, ConversationError> {
-    if incoming.written_at < now - read_back::ANSWERING_BOUND
-        && read_back::was_missed(home, company, incoming)?
-    {
-        return Ok(Intake::Repeated);
-    }
     let state = RunnerState::new(home);
     let inserted = state.write(|tx| retain_in(tx, company, incoming, now))?;
     if inserted == 0 {
@@ -197,6 +192,19 @@ fn retain_in(
 ) -> Result<usize, StateError> {
     let semantic = key(company, &incoming.connector, &incoming.conversation);
     let path = state::db_path(tx);
+    let settled: bool = tx.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM conversation_missed_identities
+            WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+            UNION ALL SELECT 1 FROM conversation_context_receipts
+            WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND delivery=message
+         )",
+        params![company.as_str(), incoming.connector, incoming.conversation, incoming.message],
+        |row| row.get(0),
+    ).map_err(state::sql(&path))?;
+    if settled {
+        return Ok(0);
+    }
     tx.execute(
             "INSERT INTO connected_conversations(company,connector,conversation,semantic_key) VALUES (?1,?2,?3,?4) ON CONFLICT DO NOTHING",
             params![

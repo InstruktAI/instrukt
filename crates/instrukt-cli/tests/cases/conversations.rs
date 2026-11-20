@@ -4775,6 +4775,14 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
     let retained = slack_time(newer);
     c.slack
         .say_at(&retained, "D30", "USTEVEN", "Already answered.", None);
+    let earlier = "Context Slack can still read after the restart.";
+    c.slack.say_at(
+        &slack_time(now - jiff::SignedDuration::from_hours(25)),
+        "D30",
+        "USTEVEN",
+        earlier,
+        None,
+    );
     c.slack.say_at(
         &slack_time(now - jiff::SignedDuration::from_hours(23)),
         "D30",
@@ -4788,7 +4796,9 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
         params![retained, newer.as_microsecond(), newer.to_string()],
     ).unwrap();
     state
-        .execute_batch("DROP TABLE connector_read_back_seed;")
+        .execute_batch(
+            "DROP TABLE connector_read_back_seed; DROP TABLE conversation_missed_identities;",
+        )
         .unwrap();
     state
         .pragma_update(None, "user_version", schema_version() - 1)
@@ -4839,6 +4849,16 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
             .message(&session, 0)
             .contains("Did we miss this question?")
     );
+    let input = c.runtime.message(&session, 0);
+    assert!(input.contains(earlier), "{input}");
+    assert!(
+        !input.contains("Earlier messages could not be read."),
+        "{input}"
+    );
+    assert_eq!(state.query_row(
+        "SELECT arrived_at FROM conversation_messages WHERE text='Did we miss this question?'",
+        [], |row| row.get::<_, String>(0)
+    ).unwrap(), (now + jiff::SignedDuration::from_hours(2)).to_string());
     c.finish_turn(&session, 0, "I found it.");
     wait("the earlier missed question is answered", || {
         c.slack.posts_beginning("I found it.") == 1 && answers_recorded(&c)
@@ -4932,8 +4952,23 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
         .say_at(&recent, "D30", "USTEVEN", "Where is the report?", None);
     c.slack
         .say_at(&recent, "C3", "USTEVEN", "The notes are ready.", None);
+    c.slack.say_at(
+        &old_parent,
+        "C4",
+        "USTEVEN",
+        "A thread about to be deleted.",
+        None,
+    );
+    c.slack.say_at(
+        &recent,
+        "C4",
+        "USTEVEN",
+        "<@UAGENT> Do not deliver this deleted reply.",
+        Some(&old_parent),
+    );
+    c.slack.delete_thread_on_scan("C4", &old_parent);
     c.slack
-        .read_back_channels(&["D30", "C2", "D31", "C1", "C3"]);
+        .read_back_channels(&["D30", "C2", "D31", "C4", "C1", "C3"]);
     c.store.thread("s1", None, None, "2026-11-08T10:00:00Z");
     c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
     c.slack.throttle_later_history_page("C1", 120);
@@ -4950,6 +4985,7 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     wait("the throttled page and retry time are retained", || {
         checkpoint().is_some()
     });
+    assert!(c.slack.scan_deleted_thread());
     let saved = checkpoint().unwrap();
     assert_eq!(
         saved.1,
@@ -5075,6 +5111,26 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
             .unwrap()
             .starts_with("https://app.slack.com/archives/")
     }));
+    c.slack.notify_mention(
+        &old,
+        "C2",
+        "USTEVEN",
+        "<@UAGENT> Is this release out?",
+        Some(&old_parent),
+    );
+    wait("Slack acknowledges the delayed live event", || {
+        c.slack.acknowledged().contains(&format!("envelope-{old}"))
+    });
+    assert_eq!(
+        state
+            .query_row(
+                "SELECT count(*) FROM conversation_messages WHERE conversation LIKE 'C2/%'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
     let completed = cursor();
     c.runner_dies();
     let follow_up = slack_time(now + jiff::SignedDuration::from_secs(122));
