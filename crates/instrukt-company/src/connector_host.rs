@@ -155,6 +155,7 @@ struct Hosted {
 struct Reach<'a> {
     current: &'a Current,
     connectors: &'a dyn Connectors,
+    accepted: &'a conversations::Accepted,
 }
 
 /// The connections `instrukt run` holds open, supervised by the run loop.
@@ -162,6 +163,7 @@ pub struct Connections {
     home: Home,
     current: Current,
     connectors: Arc<dyn Connectors>,
+    accepted: Arc<conversations::Accepted>,
     stop: Arc<AtomicBool>,
     wake: SyncSender<()>,
     supervise: SyncSender<()>,
@@ -176,6 +178,7 @@ impl Connections {
         home: &Home,
         current: &Current,
         connectors: Arc<dyn Connectors>,
+        accepted: Arc<conversations::Accepted>,
         wake: SyncSender<()>,
         supervise: SyncSender<()>,
     ) -> Result<Self, conversations::ConversationError> {
@@ -183,6 +186,7 @@ impl Connections {
             home: home.clone(),
             current: current.clone(),
             connectors,
+            accepted,
             stop: Arc::new(AtomicBool::new(false)),
             wake,
             supervise,
@@ -211,6 +215,7 @@ impl Connections {
         let home = self.home.clone();
         let current = self.current.clone();
         let connectors = Arc::clone(&self.connectors);
+        let accepted = Arc::clone(&self.accepted);
         let stop = Arc::clone(&self.stop);
         let wake = self.wake.clone();
         let notice = ExitNotice(self.supervise.clone());
@@ -223,6 +228,7 @@ impl Connections {
                 let reach = Reach {
                     current: &current,
                     connectors: connectors.as_ref(),
+                    accepted: &accepted,
                 };
                 connection(&home, reach, &company, &key, &stop, &wake);
             });
@@ -380,6 +386,10 @@ fn connection(
             let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
             status_worker(home, reach, company, key, &quit, &admissions);
         });
+        scope.spawn(move || {
+            let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
+            notice_worker(home, reach, company, key, &quit);
+        });
         let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
         let mut backoff = Duration::from_secs(1);
         while !quit() {
@@ -486,6 +496,150 @@ fn intake_worker(
                 break;
             }
         }
+    }
+}
+
+/// Evaluate eligibility on its own cadence. Each member and conversation
+/// has at most one delivery in flight, and provider reads run independently.
+fn notice_worker(
+    home: &Home,
+    reach: Reach<'_>,
+    company: &ProjectSlug,
+    key: &str,
+    stop: &dyn Fn() -> bool,
+) {
+    // A fixture can request a pass after it advances its operator clock.
+    // This signal is independent of the clock used in lock-wait scenarios.
+    let wake_file = cfg!(debug_assertions)
+        .then(|| std::env::var_os("INSTRUKT_TEST_NOTICE_WAKE_FILE"))
+        .flatten();
+    let wake = || wake_file.as_ref().and_then(|path| std::fs::read(path).ok());
+    std::thread::scope(|scope| {
+        let mut pending = BTreeMap::new();
+        while !stop() {
+            let current_wake = wake();
+            pending
+                .retain(|_, task: &mut std::thread::ScopedJoinHandle<'_, ()>| !task.is_finished());
+            let now = reach.connectors.now();
+            if let Err(error) =
+                conversations::expire_unconfirmed_answers(home, company, key, reach.accepted, now)
+            {
+                tracing::warn!(target: LOG_TARGET, event = "answer_expiry_failed", company = %company, connector = key, %error);
+            }
+            match conversations::notices(home, company, key, now) {
+                Ok(notices) => {
+                    for notice in notices {
+                        let member = (notice.conversation.clone(), notice.sender.clone());
+                        if let std::collections::btree_map::Entry::Vacant(entry) =
+                            pending.entry(member)
+                        {
+                            match std::thread::Builder::new().spawn_scoped(scope, move || {
+                                deliver_notice(home, reach, company, key, &notice);
+                            }) {
+                                Ok(task) => {
+                                    entry.insert(task);
+                                }
+                                Err(error) => {
+                                    tracing::warn!(target: LOG_TARGET, event = "conversation_notice_worker_unstarted", company = %company, connector = key, %error)
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, %error)
+                }
+            }
+            let until = Instant::now() + conversations::INTAKE_INTERVAL;
+            while Instant::now() < until && !stop() {
+                if wake() != current_wake {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    });
+}
+
+/// Read back the post outside the conversation lock, then decide and post
+/// under the lock shared with answers.
+fn deliver_notice(
+    home: &Home,
+    reach: Reach<'_>,
+    company: &ProjectSlug,
+    key: &str,
+    notice: &conversations::Notice,
+) {
+    let connector = match reach.connectors.open(&reach.current.get(), company, key) {
+        Ok(connector) => connector,
+        Err(error) => {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error.cause);
+            return;
+        }
+    };
+    let text = connector.unavailable_notice(&notice.sender);
+    let reconciliation = if notice.posting {
+        let read_at = reach.connectors.now();
+        let Some(post_id) = &notice.post_id else {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_missing_post_identity", company = %company, connector = key);
+            return;
+        };
+        match connector.post_receipt(&notice.conversation, &notice.since_message, post_id) {
+            Ok(receipt) => Some((read_at, receipt)),
+            // Not knowing whether it landed, nothing is posted now.
+            Err(error) => {
+                tracing::warn!(target: LOG_TARGET, event = "conversation_notice_unread", company = %company, connector = key, error = %error.cause);
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let lock = conversations::post_lock(company, key, &notice.conversation);
+    let _held = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let step = conversations::notice_step(
+        home,
+        company,
+        key,
+        notice,
+        reconciliation,
+        reach.accepted,
+        reach.connectors.now(),
+    );
+    let result = match step {
+        Ok(conversations::NoticeStep::Post(post_id)) => {
+            let outcome = connector
+                .answer(&notice.conversation, &text, &post_id)
+                .map_err(|error| error.cause);
+            tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
+            conversations::notice_posted(
+                home,
+                company,
+                key,
+                notice,
+                outcome,
+                reach.connectors.now(),
+            )
+        }
+        Ok(_) => Ok(()),
+        Err(error) => Err(error),
+    };
+    // Append only after the decision and any resulting post have completed,
+    // so a fixture holding a receipt can wait for this member's own task.
+    if cfg!(debug_assertions)
+        && result.is_ok()
+        && let Some(path) = std::env::var_os("INSTRUKT_TEST_NOTICE_DECISIONS")
+        && let Ok(mut file) =
+            instrukt_core::fsx::open(std::fs::OpenOptions::new().create(true).append(true), path)
+    {
+        use std::io::Write as _;
+        let decision = format!("{}\t{}\n", notice.conversation, notice.sender);
+        let _ = file.write_all(decision.as_bytes());
+    }
+    if let Err(error) = result {
+        tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error);
     }
 }
 
@@ -781,6 +935,7 @@ mod test_connector {
     use instrukt_connector::{
         Admission, Captured, Connector, ConnectorError, Inbox, Limits, Place, Status,
     };
+    use jiff::Timestamp;
 
     pub(super) struct TestConnector {
         pub limits: Limits,
@@ -811,14 +966,35 @@ mod test_connector {
                 accompanying: Default::default(),
             })
         }
-        fn answer(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
-            Ok(())
+        fn answer(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<Timestamp>, instrukt_connector::AnswerError> {
+            Ok(None)
         }
-        fn own_posts(&self, _: &str, _: &str) -> Result<Vec<String>, ConnectorError> {
-            Ok(Vec::new())
+        fn post_receipt(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<Timestamp>, ConnectorError> {
+            Ok(None)
+        }
+        fn legacy_answer_receipt(
+            &self,
+            _: &str,
+            _: Timestamp,
+            _: &str,
+        ) -> Result<Option<Timestamp>, ConnectorError> {
+            Ok(None)
         }
         fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
             Ok(())
+        }
+        fn unavailable_notice(&self, member: &str) -> String {
+            format!("{member}: unavailable")
         }
         fn place(&self, conversation: &str, message: &str) -> Place {
             if self.per_message {
@@ -843,6 +1019,7 @@ mod tests {
         TestConnector {
             limits: Limits {
                 message_chars: 100,
+                answer_timeout: Duration::from_secs(30),
                 working_refresh: Some(Duration::from_secs(30)),
             },
             per_message,
@@ -856,6 +1033,10 @@ mod tests {
                 |(conversation, message, status)| conversations::Unfinished {
                     conversation: (*conversation).to_owned(),
                     message: (*message).to_owned(),
+                    sender: Some("USTEVEN".to_owned()),
+                    since: None,
+                    notice_eligible: true,
+                    admission_position: None,
                     status: status.clone(),
                 },
             )

@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use instrukt_connector::{
-    Accompanying, Admission, Captured, Clock, Connector, ConnectorError, Declaration, Declared,
-    Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender, Status,
+    Accompanying, Admission, AnswerError, Captured, Clock, Connector, ConnectorError, Declaration,
+    Declared, Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender, Status,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -27,6 +27,9 @@ pub const SLACK: &str = "slack";
 /// The one fixed reply a sender who is not one of the company's own
 /// receives, in a channel and in a direct message alike.
 pub const TURN_AWAY: &str = "I only answer members of this workspace.";
+
+/// The one notice's sentence, after the waiting person's mention.
+pub const NOTICE: &str = "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.";
 
 /// The text of Slack's status line from a message's admission until the
 /// agent has written in its running turn; Slack puts the app's name in front
@@ -69,6 +72,9 @@ const NOTICES: [&str; 20] = [
 /// posted in parts, in order.
 pub const SLACK_MESSAGE_LIMIT: usize = 12_000;
 
+/// Slack metadata event type for answer pieces and notices.
+const POST_EVENT_TYPE: &str = "instrukt_post";
+
 /// The upper end of a read that reaches to now: a Slack time no message
 /// carries yet.
 const UNTIL_NOW: &str = "9999999999.999999";
@@ -106,6 +112,8 @@ pub static SLACK_DECLARATION: Declaration = Declaration {
 /// two minutes. The status is a courtesy; nothing promises this timing.
 pub(crate) const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 
+/// The default bound on a Slack Web API call.
+const WEB_API_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long one status call may take.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -169,6 +177,9 @@ pub enum SlackError {
     /// token.
     #[error("Slack {method}: {cause}")]
     Api { method: String, cause: String },
+    /// A Slack response confirms the post was rejected.
+    #[error("Slack {method}: {cause}")]
+    RejectedPost { method: String, cause: String },
     #[error(
         "`{API_URL_SETTING}` may only name a loopback address (http://127.0.0.1, http://localhost or http://[::1]); unset it to reach Slack"
     )]
@@ -284,7 +295,7 @@ impl SlackApi {
             app_token,
             bot_token,
             agent: ureq::Agent::config_builder()
-                .timeout_global(Some(Duration::from_secs(30)))
+                .timeout_global(Some(WEB_API_TIMEOUT))
                 .http_status_as_error(false)
                 .build()
                 .into(),
@@ -355,12 +366,33 @@ impl SlackApi {
         if body.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(body)
         } else {
-            Err(fail(
-                body.get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("not ok")
-                    .to_owned(),
-            ))
+            let cause = body
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("not ok");
+            if method == "chat.postMessage"
+                && body.get("ok").and_then(Value::as_bool) == Some(false)
+                && matches!(
+                    cause,
+                    "invalid_auth"
+                        | "not_authed"
+                        | "missing_scope"
+                        | "channel_not_found"
+                        | "not_in_channel"
+                        | "is_archived"
+                        | "restricted_action"
+                        | "restricted_action_read_only_channel"
+                        | "restricted_action_thread_locked"
+                        | "msg_too_long"
+                        | "no_text"
+                )
+            {
+                return Err(SlackError::RejectedPost {
+                    method: method.into(),
+                    cause: cause.into(),
+                });
+            }
+            Err(fail(cause.into()))
         }
     }
 
@@ -432,13 +464,28 @@ impl SlackApi {
     /// Post an answer into a conversation as the agent wrote it, as Markdown
     /// Slack renders (`markdown_text`): its thread in a channel, or the
     /// direct-message channel.
-    pub fn answer(&self, conversation: &str, markdown: &str) -> Result<(), SlackError> {
+    pub fn answer(
+        &self,
+        conversation: &str,
+        markdown: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, SlackError> {
         let (channel, thread) = split_conversation(conversation);
-        let mut form = vec![("channel", channel), ("markdown_text", markdown)];
+        let metadata = serde_json::json!({
+            "event_type": POST_EVENT_TYPE,
+            "event_payload": { "id": post_id },
+        })
+        .to_string();
+        let mut form = vec![
+            ("channel", channel),
+            ("markdown_text", markdown),
+            ("metadata", metadata.as_str()),
+        ];
         if let Some(thread) = thread {
             form.push(("thread_ts", thread));
         }
-        self.call("chat.postMessage", false, &form).map(drop)
+        self.call("chat.postMessage", false, &form)
+            .map(|post| post.get("ts").and_then(Value::as_str).and_then(ts_time))
     }
 
     /// Post `text` into a conversation: its thread in a channel, or the
@@ -465,6 +512,7 @@ impl SlackApi {
         oldest: Option<&str>,
         latest: &str,
         cap: usize,
+        include_metadata: bool,
     ) -> Result<(Vec<Value>, bool), SlackError> {
         let method = if thread.is_some() {
             "conversations.replies"
@@ -494,6 +542,9 @@ impl SlackApi {
                 ("inclusive", "false"),
                 ("limit", limit.as_str()),
             ];
+            if include_metadata {
+                form.push(("include_all_metadata", "true"));
+            }
             if let Some(oldest) = oldest {
                 form.push(("oldest", oldest));
             }
@@ -806,10 +857,18 @@ fn failed(error: impl std::fmt::Display) -> ConnectorError {
     }
 }
 
+fn own_message(message: &Value, me: &Me) -> bool {
+    message["bot_id"]
+        .as_str()
+        .is_some_and(|bot| Some(bot) == me.bot.as_deref())
+        || message["user"].as_str() == Some(me.user.as_str())
+}
+
 impl Connector for Slack {
     fn limits(&self) -> instrukt_connector::Limits {
         instrukt_connector::Limits {
             message_chars: SLACK_MESSAGE_LIMIT,
+            answer_timeout: WEB_API_TIMEOUT,
             working_refresh: Some(STATUS_INTERVAL),
         }
     }
@@ -870,38 +929,85 @@ impl Connector for Slack {
         Ok(Captured { text, accompanying })
     }
 
-    fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError> {
-        self.api.answer(conversation, part).map_err(failed)
+    fn answer(
+        &self,
+        conversation: &str,
+        part: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, AnswerError> {
+        self.api
+            .answer(conversation, part, post_id)
+            .map_err(|error| AnswerError {
+                rejected: matches!(
+                    error,
+                    SlackError::RejectedPost { .. } | SlackError::Limited { .. }
+                ),
+                cause: error.to_string(),
+            })
     }
 
-    /// Read as the accompanying messages are: the thread's replies for a
-    /// channel, the direct-message channel's history otherwise.
-    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError> {
+    /// Slack may rewrite Markdown when returning it. Match metadata from
+    /// this app's own bot posts and use only Slack's timestamp as receipt.
+    fn post_receipt(
+        &self,
+        conversation: &str,
+        since: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError> {
         let me = self.me().map_err(failed)?;
         let (channel, thread) = split_conversation(conversation);
         let (messages, _) = self
             .api
-            .read(channel, thread, Some(since), UNTIL_NOW, usize::MAX)
+            .read(channel, thread, Some(since), UNTIL_NOW, usize::MAX, true)
             .map_err(failed)?;
-        Ok(messages
-            .iter()
-            .filter(|m| {
-                m.get("bot_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|bot| Some(bot) == me.bot.as_deref())
-                    || m.get("user").and_then(Value::as_str) == Some(me.user.as_str())
-            })
-            .map(|m| {
-                m.get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned()
-            })
-            .collect())
+        Ok(messages.iter().find_map(|message| {
+            let metadata = &message["metadata"];
+            if own_message(message, &me)
+                && metadata["event_type"].as_str() == Some(POST_EVENT_TYPE)
+                && metadata["event_payload"]["id"].as_str() == Some(post_id)
+            {
+                return message["ts"].as_str().and_then(ts_time);
+            }
+            None
+        }))
+    }
+
+    fn legacy_answer_receipt(
+        &self,
+        conversation: &str,
+        attempted_at: Timestamp,
+        part: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError> {
+        let me = self.me().map_err(failed)?;
+        let (channel, thread) = split_conversation(conversation);
+        let micros = attempted_at.as_microsecond();
+        let since = format!(
+            "{}.{:06}",
+            micros.div_euclid(1_000_000),
+            micros.rem_euclid(1_000_000)
+        );
+        let (messages, _) = self
+            .api
+            .read(channel, thread, Some(&since), UNTIL_NOW, usize::MAX, true)
+            .map_err(failed)?;
+        Ok(messages.iter().find_map(|message| {
+            if own_message(message, &me)
+                && message["metadata"].is_null()
+                && message["text"].as_str() == Some(part)
+            {
+                let at = message["ts"].as_str().and_then(ts_time)?;
+                return (at > attempted_at).then_some(at);
+            }
+            None
+        }))
     }
 
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError> {
         self.api.post(conversation, TURN_AWAY).map_err(failed)
+    }
+
+    fn unavailable_notice(&self, member: &str) -> String {
+        format!("<@{member}> {NOTICE}")
     }
 
     /// A channel conversation's thread; a direct message's addressed message.
@@ -1068,10 +1174,10 @@ fn accompanying(
     let ts = message;
     let cap = usize::try_from(context_messages).unwrap_or(usize::MAX);
     let (earlier, left_out) = match previous {
-        Some(previous) => api.read(channel, thread, Some(previous), ts, cap)?,
+        Some(previous) => api.read(channel, thread, Some(previous), ts, cap, false)?,
         None => {
             let within = thread.filter(|thread| *thread != ts);
-            api.read(channel, within, None, ts, cap)?
+            api.read(channel, within, None, ts, cap, false)?
         }
     };
     let messages = earlier

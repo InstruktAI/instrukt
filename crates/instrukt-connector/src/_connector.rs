@@ -1,7 +1,10 @@
 //! The operations of a channel provider and of one company's connector, and
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
-use crate::_values::{Admission, Captured, ConnectorError, Incoming, Limits, Place, Status};
+use crate::_values::{
+    Admission, AnswerError, Captured, ConnectorError, Incoming, Limits, Place, Status,
+};
+use jiff::Timestamp;
 
 /// The host's side of [`Connector::listen`].
 pub trait Inbox: Sync {
@@ -35,14 +38,38 @@ pub trait Connector: Send + Sync {
         previous: Option<&str>,
         text: &str,
     ) -> Result<Captured, ConnectorError>;
-    /// Post one part of an answer to `conversation`.
-    fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError>;
-    /// The text of each post of this connector's own in `conversation` after
-    /// its provider message `since`, oldest first: how a part whose post lost
-    /// its response, or whose acceptance went unrecorded, is recognised.
-    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError>;
+    /// Post an answer piece or notice with its durable identity, returning
+    /// the provider's posting time when its receipt has one.
+    fn answer(
+        &self,
+        conversation: &str,
+        part: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, AnswerError>;
+    /// Look for this connector's own post by its durable identity after
+    /// the provider message `since`, returning the receipt's posting time.
+    fn post_receipt(
+        &self,
+        conversation: &str,
+        since: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError>;
+    /// Best-effort recovery for a post made before durable identities
+    /// existed. Only this connector's own untagged posts after the attempt
+    /// are candidates.
+    fn legacy_answer_receipt(
+        &self,
+        conversation: &str,
+        attempted_at: Timestamp,
+        part: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
+    /// The one notice that the assistant is temporarily unavailable, worded
+    /// by the connector and beginning with `member`'s mention; it is posted
+    /// through [`Connector::answer`] and reconciled by
+    /// [`Connector::post_receipt`].
+    fn unavailable_notice(&self, member: &str) -> String;
     /// Where the status for `message` of `conversation` sits.
     fn place(&self, conversation: &str, message: &str) -> Place;
     /// Show `state` at `place`, or clear what is shown there with `None`;

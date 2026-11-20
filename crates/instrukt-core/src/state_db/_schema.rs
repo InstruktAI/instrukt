@@ -33,6 +33,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v20),
     Step(v21),
     Sql(V22),
+    Step(v23),
 ];
 
 /// Version 22: a consumer's former source no longer in the configuration is
@@ -56,6 +57,149 @@ CREATE INDEX IF NOT EXISTS consumer_open_announcements ON consumer_outcomes (
     json_extract(outcome, '$.parked.announced')
 ) WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL
       AND json_extract(outcome, '$.parked.announced') = 0;
+";
+
+/// Version 23: the platform's replies owed to a sender carry their reason
+/// in the key: `not_own`, the one fixed reply to a sender the agent does not
+/// answer, or `unavailable`, the one notice of the sender's current epoch,
+/// whose decision is kept as `owed`, `posting` (with when the post was
+/// sent) or `posted`. The table is rebuilt for its key; every stored reply
+/// is kept as a `not_own` one, in its order. Widen the message-state check
+/// so a failed turn remains outstanding without blocking relay work.
+fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let notice_rows_present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_refusals') WHERE name='reason')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !notice_rows_present {
+        tx.execute_batch(V23_REFUSALS)?;
+    }
+    // An existing attempt supplies both bounds until a new attempt extends
+    // the window. Keep the column if it is already present.
+    let latest_present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_answers') WHERE name='latest_attempted_at')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !latest_present {
+        tx.execute_batch("ALTER TABLE conversation_answers ADD COLUMN latest_attempted_at TEXT")?;
+    }
+    // Pre-metadata attempts retain their timestamp and acquire a resolution
+    // only when the relay reads the provider or the attempt window ends.
+    for (table, column, kind) in [
+        ("conversation_answers", "post_id", "TEXT"),
+        ("conversation_answers", "legacy_read_at", "TEXT"),
+        ("conversation_answers", "delivery_unknown_at", "TEXT"),
+        ("conversation_answers", "receipt_failure_deadline", "TEXT"),
+        ("conversation_refusals", "post_id", "TEXT"),
+        ("conversation_refusals", "anchor_message", "TEXT"),
+        ("conversation_messages", "admission_position", "INTEGER"),
+        ("conversation_messages", "superseded_at", "TEXT"),
+        ("conversation_answers", "admission_position", "INTEGER"),
+        (
+            "conversation_refusals",
+            "covered_positions",
+            "TEXT NOT NULL DEFAULT '[]'",
+        ),
+    ] {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
+            [table, column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
+        }
+    }
+    tx.execute_batch(V23_MESSAGES)?;
+    // Older records have no admission sequence. Their retained row order
+    // supplies a durable baseline without comparing provider or wall clocks.
+    tx.execute_batch(
+        "UPDATE conversation_messages SET admission_position=rowid
+           WHERE admission_position IS NULL AND (sender_name IS NOT NULL OR state IN ('pending','sent','failed','answered'));
+         CREATE UNIQUE INDEX IF NOT EXISTS conversation_admission_order
+           ON conversation_messages(admission_position);
+         CREATE INDEX IF NOT EXISTS conversation_superseded_failures
+           ON conversation_messages(superseded_at)
+           WHERE state='failed' AND superseded_at IS NOT NULL;
+         UPDATE conversation_answers AS a SET admission_position=(
+           SELECT m.admission_position FROM conversation_messages m WHERE m.company=a.company
+             AND m.connector=a.connector AND m.conversation=a.conversation AND m.turn=a.turn)
+           WHERE a.admission_position IS NULL;",
+    )?;
+    // Before the final receipt and interval closure were atomic, a runner
+    // could have stopped between those two writes.
+    tx.execute_batch(
+        "UPDATE conversation_messages AS m SET unavailable_since=NULL,turn_update=NULL
+         WHERE m.state='answered' AND (m.unavailable_since IS NOT NULL OR m.turn_update IS NOT NULL)
+           AND NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company
+             AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn
+             AND a.posted_at IS NULL AND a.delivery_unknown_at IS NULL)",
+    )?;
+    Ok(())
+}
+
+const V23_MESSAGES: &str = "
+CREATE TABLE conversation_messages_v23 (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    sender       TEXT,
+    sender_name  TEXT,
+    sender_email TEXT,
+    written_us   INTEGER NOT NULL,
+    written_at   TEXT NOT NULL,
+    arrived_at   TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('received', 'refused', 'pending', 'sent', 'failed', 'answered')),
+    text         TEXT NOT NULL,
+    context_json TEXT,
+    boundary     TEXT,
+    content      TEXT,
+    attempted_at TEXT,
+    turn         TEXT,
+    failure      TEXT,
+    admitted_at  TEXT,
+    unavailable_since TEXT,
+    turn_update  TEXT,
+    turn_ended_at TEXT,
+    admission_position INTEGER,
+    superseded_at TEXT,
+    PRIMARY KEY (company, connector, conversation, message)
+);
+INSERT INTO conversation_messages_v23 (rowid, company, connector, conversation, message,
+    sender, sender_name, sender_email, written_us, written_at, arrived_at, state, text,
+    context_json, boundary, content, attempted_at, turn, failure, admitted_at,
+    unavailable_since, turn_update, turn_ended_at, admission_position, superseded_at)
+SELECT rowid, company, connector, conversation, message,
+    sender, sender_name, sender_email, written_us, written_at, arrived_at, state, text,
+    context_json, boundary, content, attempted_at, turn, failure, admitted_at,
+    unavailable_since, turn_update, turn_ended_at, admission_position, superseded_at
+FROM conversation_messages;
+DROP TABLE conversation_messages;
+ALTER TABLE conversation_messages_v23 RENAME TO conversation_messages;
+";
+
+const V23_REFUSALS: &str = "
+CREATE TABLE conversation_refusals_v23 (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    sender       TEXT NOT NULL,
+    reason       TEXT NOT NULL CHECK (reason IN ('not_own', 'unavailable')),
+    received_at  TEXT NOT NULL,
+    state        TEXT CHECK (CASE WHEN reason = 'not_own' THEN state IS NULL ELSE coalesce(state IN ('owed', 'posting', 'posted'), 0) END),
+    attempted_at TEXT,
+    replied_at   TEXT,
+    failure      TEXT,
+    CHECK (state != 'posting' OR attempted_at IS NOT NULL),
+    PRIMARY KEY (company, connector, conversation, sender, reason)
+);
+INSERT INTO conversation_refusals_v23 (company, connector, conversation, sender, reason, received_at, replied_at, failure)
+    SELECT company, connector, conversation, sender, 'not_own', received_at, replied_at, failure FROM conversation_refusals ORDER BY rowid;
+DROP TABLE conversation_refusals;
+ALTER TABLE conversation_refusals_v23 RENAME TO conversation_refusals;
 ";
 
 /// Version 21: what a person is shown while their message is unfinished.

@@ -40,6 +40,20 @@ pub struct Post {
     pub markdown: Option<String>,
 }
 
+/// What becomes of a post whose text begins with a given beginning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fate {
+    /// Refused: nothing is committed, and the poster is told it failed.
+    Refused,
+    /// Committed, and its response lost: the poster is told it failed.
+    Lost,
+    /// Committed with a successful response that omits its timestamp.
+    MissingTimestamp,
+    /// Committed only once [`FakeSlack::commit_late`] is called, invisible
+    /// until then; the poster is told it failed, as after its own timeout.
+    Late,
+}
+
 /// One person in Slack's records: their names, address and standing.
 #[derive(Debug, Clone)]
 pub struct Person {
@@ -113,6 +127,14 @@ fn people() -> std::collections::BTreeMap<String, Person> {
     .collect()
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum PostResponse {
+    #[default]
+    Send,
+    Hold,
+    Timeout,
+}
+
 #[derive(Default)]
 struct Workspace {
     /// Slack's records of its people, by id.
@@ -132,14 +154,19 @@ struct Workspace {
     /// `user`, optional `bot_id`, `text`.
     messages: Vec<Value>,
     posts: Vec<Post>,
+    rendered_posts: std::collections::BTreeMap<String, String>,
     outgoing: VecDeque<String>,
     acknowledged: Vec<String>,
     connections: usize,
     next: u64,
     refuse: bool,
     hold_reads: bool,
+    hold_reads_from: std::collections::BTreeSet<String>,
+    metadata_miss_before_hold: Option<String>,
+    refuse_metadata_reads: bool,
+    metadata_reads: usize,
     /// A post Slack accepted is answered only once released.
-    hold_posts: bool,
+    post_response: PostResponse,
     /// Every post fails, accepting nothing.
     fail_posts: bool,
     /// A post waits until released, then fails, accepting nothing.
@@ -154,6 +181,11 @@ struct Workspace {
     held_lookups: usize,
     reads: usize,
     held: usize,
+    /// The fate of the next posts beginning with each beginning: how many
+    /// more it meets (`usize::MAX` until cleared).
+    fates: Vec<(String, Fate, usize)>,
+    /// Posts committed late, not yet visible.
+    late: Vec<(Value, Post)>,
 }
 
 pub struct FakeSlack {
@@ -212,7 +244,17 @@ impl FakeSlack {
                         // Held reads answer only once released.
                         let mut counted = false;
                         while method.starts_with("conversations.")
-                            && workspace.lock().unwrap().hold_reads
+                            && {
+                                let workspace = workspace.lock().unwrap();
+                                workspace.hold_reads
+                                    || workspace.hold_reads_from.iter().any(|oldest| {
+                                        body.split('&').any(|field| {
+                                            field.strip_prefix("oldest=") == Some(oldest)
+                                        }) && body
+                                            .split('&')
+                                            .any(|field| field == "latest=9999999999.999999")
+                                    })
+                            }
                             && !stop.load(Ordering::Acquire)
                         {
                             if !counted {
@@ -269,7 +311,7 @@ impl FakeSlack {
                                 std::thread::sleep(Duration::from_millis(20));
                             }
                             let _ = request.respond(tiny_http::Response::from_string(
-                                json!({"ok": false, "error": "fatal_error"}).to_string(),
+                                json!({"ok": false, "error": "not_in_channel"}).to_string(),
                             ));
                             return;
                         }
@@ -277,15 +319,24 @@ impl FakeSlack {
                             Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
                         // A held post is accepted, and its answer waits: the
                         // poster may be gone by the time it is sent.
-                        if method == "chat.postMessage" && workspace.lock().unwrap().hold_posts {
+                        if method == "chat.postMessage"
+                            && workspace.lock().unwrap().post_response == PostResponse::Hold
+                        {
                             workspace.lock().unwrap().held_posts += 1;
-                            while workspace.lock().unwrap().hold_posts
+                            while workspace.lock().unwrap().post_response == PostResponse::Hold
                                 && !stop.load(Ordering::Acquire)
                             {
                                 std::thread::sleep(Duration::from_millis(20));
                             }
+                            let response = if workspace.lock().unwrap().post_response
+                                == PostResponse::Timeout
+                            {
+                                json!({"ok": false, "error": "request_timeout"})
+                            } else {
+                                answer
+                            };
                             let _ = request
-                                .respond(tiny_http::Response::from_string(answer.to_string()));
+                                .respond(tiny_http::Response::from_string(response.to_string()));
                             return;
                         }
                         request
@@ -398,6 +449,12 @@ impl FakeSlack {
                 json!({"ok": true})
             }
             "conversations.history" | "conversations.replies" => {
+                if arg("include_all_metadata") == Some("true") {
+                    w.metadata_reads += 1;
+                    if w.refuse_metadata_reads {
+                        return json!({"ok": false, "error": "missing_scope"});
+                    }
+                }
                 let channel = arg("channel").unwrap();
                 let thread = arg("ts");
                 let mut found: Vec<Value> = w
@@ -421,7 +478,22 @@ impl FakeSlack {
                     .map_or(PAGE, |l| l.parse::<usize>().unwrap())
                     .min(PAGE);
                 let from: usize = arg("cursor").map_or(0, |c| c.parse().unwrap());
-                let page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
+                let mut page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
+                let include_metadata = arg("include_all_metadata") == Some("true");
+                let miss = include_metadata
+                    && w.metadata_miss_before_hold
+                        .as_deref()
+                        .is_some_and(|oldest| Some(oldest) == arg("oldest"));
+                if miss && let Some(oldest) = w.metadata_miss_before_hold.take() {
+                    w.hold_reads_from.insert(oldest);
+                }
+                if !include_metadata || miss {
+                    for message in &mut page {
+                        if let Some(metadata) = message.get_mut("metadata") {
+                            *metadata = json!({"event_type": metadata["event_type"]});
+                        }
+                    }
+                }
                 let more = from + size < found.len();
                 w.reads += 1;
                 json!({"ok": true, "messages": page, "has_more": more, "response_metadata": {"next_cursor": if more { (from + size).to_string() } else { String::new() }}})
@@ -438,7 +510,7 @@ impl FakeSlack {
                 json!({"ok": false, "error": "no_text"})
             }
             "chat.postMessage" if w.fail_posts => {
-                json!({"ok": false, "error": "fatal_error"})
+                json!({"ok": false, "error": "not_in_channel"})
             }
             "chat.postMessage" => {
                 let post = Post {
@@ -447,11 +519,34 @@ impl FakeSlack {
                     text: arg("text").map(str::to_owned),
                     markdown: arg("markdown_text").map(str::to_owned),
                 };
+                let shown = post
+                    .markdown
+                    .clone()
+                    .or(post.text.clone())
+                    .unwrap_or_default();
+                let fate = w
+                    .fates
+                    .iter_mut()
+                    .find(|(beginning, _, left)| *left > 0 && shown.starts_with(beginning.as_str()))
+                    .map(|(_, fate, left)| {
+                        *left = left.saturating_sub(usize::from(*left != usize::MAX));
+                        *fate
+                    });
+                if fate == Some(Fate::Refused) {
+                    return json!({"ok": false, "error": "not_in_channel"});
+                }
                 let ts = Self::posted(&mut w);
-                let shown = post.markdown.as_ref().or(post.text.as_ref());
-                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": shown});
+                let rendered = w.rendered_posts.get(&shown).unwrap_or(&shown);
+                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": rendered});
+                if let Some(metadata) = arg("metadata") {
+                    message["metadata"] = serde_json::from_str(metadata).unwrap();
+                }
                 if let Some(thread) = &post.thread {
                     message["thread_ts"] = json!(thread);
+                }
+                if fate == Some(Fate::Late) {
+                    w.late.push((message, post));
+                    return json!({"ok": false, "error": "request_timeout"});
                 }
                 w.messages.push(message);
                 // Slack drops the app's status in the place it posts to: the
@@ -461,6 +556,12 @@ impl FakeSlack {
                         || post.thread.as_ref().is_some_and(|posted| posted != thread)
                 });
                 w.posts.push(post);
+                if fate == Some(Fate::Lost) {
+                    return json!({"ok": false, "error": "request_timeout"});
+                }
+                if fate == Some(Fate::MissingTimestamp) {
+                    return json!({"ok": true});
+                }
                 json!({"ok": true, "ts": ts})
             }
             other => json!({"ok": false, "error": format!("unknown_method {other}")}),
@@ -541,12 +642,24 @@ impl FakeSlack {
         thread: Option<&str>,
     ) -> String {
         let ts = self.say_at(ts, channel, user, text, thread);
+        self.notify_mention(&ts, channel, user, text, thread);
+        ts
+    }
+
+    /// Deliver the tag event for a message already visible through Slack's API.
+    pub fn notify_mention(
+        &self,
+        ts: &str,
+        channel: &str,
+        user: &str,
+        text: &str,
+        thread: Option<&str>,
+    ) {
         let mut event = json!({"type": "app_mention", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
         if let Some(thread) = thread {
             event["thread_ts"] = json!(thread);
         }
         self.deliver(&format!("envelope-{ts}"), event);
-        ts
     }
 
     /// A person writes to the agent in a direct message.
@@ -790,11 +903,16 @@ impl FakeSlack {
     /// History and replies reads wait until [`FakeSlack::release_reads`].
     /// Every later post is accepted, and its answer held until released.
     pub fn hold_posts(&self) {
-        self.workspace.lock().unwrap().hold_posts = true;
+        self.workspace.lock().unwrap().post_response = PostResponse::Hold;
     }
 
     pub fn release_posts(&self) {
-        self.workspace.lock().unwrap().hold_posts = false;
+        self.workspace.lock().unwrap().post_response = PostResponse::Send;
+    }
+
+    /// End accepted, held posts with a provider timeout on demand.
+    pub fn time_out_held_posts(&self) {
+        self.workspace.lock().unwrap().post_response = PostResponse::Timeout;
     }
 
     /// How many accepted posts had their answer held.
@@ -806,8 +924,40 @@ impl FakeSlack {
         self.workspace.lock().unwrap().hold_reads = true;
     }
 
+    pub fn refuse_metadata_reads(&self) {
+        self.workspace.lock().unwrap().refuse_metadata_reads = true;
+    }
+
+    pub fn metadata_reads(&self) -> usize {
+        self.workspace.lock().unwrap().metadata_reads
+    }
+
+    /// Omit the receipt on the first metadata read and hold later reads
+    /// of the same range until the test releases them.
+    pub fn miss_metadata_read_before_holding(&self, oldest: &str) {
+        self.workspace.lock().unwrap().metadata_miss_before_hold = Some(oldest.into());
+    }
+
+    pub fn hold_reads_from(&self, oldest: &str) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .hold_reads_from
+            .insert(oldest.into());
+    }
+
+    pub fn release_reads_from(&self, oldest: &str) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .hold_reads_from
+            .remove(oldest);
+    }
+
     pub fn release_reads(&self) {
-        self.workspace.lock().unwrap().hold_reads = false;
+        let mut workspace = self.workspace.lock().unwrap();
+        workspace.hold_reads = false;
+        workspace.hold_reads_from.clear();
     }
 
     /// How many reads were held back while reads were held.
@@ -827,6 +977,51 @@ impl FakeSlack {
 
     pub fn posts(&self) -> Vec<Post> {
         self.workspace.lock().unwrap().posts.clone()
+    }
+
+    /// What Slack returns as text for the submitted Markdown.
+    pub fn render_post(&self, submitted: &str, returned: &str) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .rendered_posts
+            .insert(submitted.into(), returned.into());
+    }
+
+    /// The next `times` posts beginning with `beginning` meet `fate`
+    /// (`usize::MAX`: every one, until [`FakeSlack::clear_fates`]).
+    pub fn fate(&self, beginning: &str, fate: Fate, times: usize) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .fates
+            .push((beginning.to_owned(), fate, times));
+    }
+
+    pub fn clear_fates(&self) {
+        self.workspace.lock().unwrap().fates.clear();
+    }
+
+    /// Every post committed late becomes visible, as it lands at Slack.
+    pub fn commit_late(&self) {
+        let mut w = self.workspace.lock().unwrap();
+        for (message, post) in std::mem::take(&mut w.late) {
+            w.messages.push(message);
+            w.posts.push(post);
+        }
+    }
+
+    /// The posts that begin with `beginning`, as Slack shows them.
+    pub fn posts_beginning(&self, beginning: &str) -> usize {
+        self.posts()
+            .iter()
+            .filter(|post| {
+                post.markdown
+                    .as_deref()
+                    .or(post.text.as_deref())
+                    .is_some_and(|text| text.starts_with(beginning))
+            })
+            .count()
     }
 
     pub fn acknowledged(&self) -> Vec<String> {

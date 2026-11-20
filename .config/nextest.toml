@@ -8,3 +8,22 @@ fail-fast = false
 [profile.ci]
 # Preserve all failures in one run; never retry away a flake.
 retries = 0
+
+# These acceptance tests share a use-case binding, but each runs several
+# independent runner fixtures in parallel. Count those fixtures in nextest's
+# scheduling budget so grouping by use case does not oversubscribe the host.
+[[profile.default.overrides]]
+filter = 'test(=conversations::a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer)'
+threads-required = 10
+
+[[profile.default.overrides]]
+filter = 'test(=conversations::a_member_can_follow_the_status_of_an_unanswered_message) | test(=conversations::an_interrupted_answer_is_reconciled_and_the_member_can_keep_asking)'
+threads-required = 8
+
+[[profile.default.overrides]]
+filter = 'test(=conversations::an_operator_can_resume_conversations_with_uncertain_answers_after_upgrade)'
+threads-required = 6
+
+[[profile.default.overrides]]
+filter = 'test(=conversations::a_member_can_keep_asking_after_the_assistant_fails_to_answer)'
+threads-required = 5

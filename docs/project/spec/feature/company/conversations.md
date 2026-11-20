@@ -155,8 +155,23 @@ connector gives.
   retried. A part left being posted with no acceptance recorded, because its
   post's response was lost or the runner stopped in between, is first looked
   for among the connector's own posts in the conversation since its first
-  addressed message: when more of them carry its text than parts with that
-  text are recorded posted, it is recorded posted; otherwise it is posted.
+  addressed message. The connector matches a durable id reserved for the
+  piece before the post. For a retained attempt that predates those ids, the
+  relay makes one best-effort read within the existing settle window. A
+  matching bot post after the attempt supplies the receipt. If the window
+  ends without a match, the connector's notice pass settles the piece with
+  delivery unknown using the retained record. Expiry proceeds during a
+  source or provider outage. The piece produces neither a retry nor a
+  notice, and later work proceeds. Status keeps the cause with the
+  conversation, turn and piece. A matching receipt from a read started
+  within the window still confirms delivery if it arrives after expiry.
+  It replaces the unknown result. Expiry leaves a confirmed delivery intact.
+  A successful post response confirms delivery even when the provider omits
+  its timestamp. A lost or failed response that leaves delivery uncertain
+  is read back by metadata. Another attempt waits for a read begun after the
+  timeout window that finds no post. When receipt reads keep failing through
+  that window, the piece settles as delivery unknown and later work proceeds.
+  Status retains the cause, and the piece produces neither a retry nor a notice.
 - Completion comes only from the conversation source. A turn running however
   long is left to run. A turn that ended failed has its message delivered again
   to the session after a growing delay, at the end of the conversation's queue,
@@ -171,8 +186,9 @@ connector gives.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until it is complete — its
-  answer posted, or its turn completed with a bare `NOOP` — the connector shows in that conversation the message's state, where its provider
-  has a way to: that the assistant is working on the request from its
+  answer posted, or its turn completed successfully with a bare `NOOP` or blank
+  output — the connector shows the message's state where the provider supports
+  it. The state shows that the assistant is working on the request from its
   admission, and that the assistant is temporarily unavailable and the message
   is saved while its no-work interval is open, which happens only once a failure
   shows the agent cannot work on it ("The minute", below). The indication and
@@ -235,34 +251,51 @@ open nothing. It starts, if not already open:
 It ends, for that message only: when the runtime accepts its hand-over (a
 redelivery included); when its own turn is observed running again; when a turn it
 waits behind is observed running; when its answer is posted; or when its turn
-completes with a bare `NOOP`. An answer to another person, a read showing an idle,
-archived or absent session, an empty read and a refused attempt end nothing. A
-person's interval is the earliest among their unanswered messages. While the relay
-cannot acquire the conversation source, every unanswered message counts from the
-later of its admission and the start of that failure, unless its own interval
-started earlier. The interval is evaluated by each connector's intake pass, at
-least once per intake interval while an admitted message of its company has no
-posted answer, from the state database and the clock alone, so a held lock or an absent
-source never delays it.
+completes successfully with a bare `NOOP` or blank output. An answer to another
+person, a read showing an idle, archived or absent session, an empty read and a
+refused attempt end nothing. A person's interval is the earliest among their
+unanswered messages. While the relay cannot acquire the conversation source,
+every unanswered message counts from the later of its admission and the start
+of that failure, unless its own interval started earlier. Each connector
+evaluates notice eligibility from the state
+database and the clock alone at least once per intake interval while an admitted
+message of its company has no posted answer. A provider read for one member
+leaves the eligibility evaluation and other members' reads free to proceed.
+A retained message without a provider sender still has status and cannot
+produce an addressed notice.
 
-**The one notice** is once per person per epoch: from the posting of the last
-answer to that person in that conversation (or the conversation's start) until
-the next answer to them is posted.
+**The one notice** is once per person per epoch. An epoch records the durable
+admission positions of the person's messages that made the notice due.
 
 - The decision is recorded before the post (owed, posting with the attempt's time,
   posted); the record is never taken as proof of delivery.
-- Only an answer posted to that person — one whose post the connector accepted,
-  correlated through its turn to one of that person's messages of the epoch —
-  supersedes the notice. Output that is complete but not yet posted does not.
+- Each answer piece carries the admission position of the message it answers.
+  An epoch closes when every covered position is settled. A turn that
+  completes successfully with a bare `NOOP` or blank output settles its
+  position. A multipart answer settles its position once every piece is
+  confirmed or resolved as delivery unknown. A failed turn with no reply
+  keeps its interval and notice epoch open until a later-admitted message
+  from the same member in the same conversation settles. That settlement
+  supersedes every earlier failed message from that member, closes those
+  intervals, and settles those positions for the notice. Provider timestamps
+  and the runner clock do not order answers, notices, or supersession.
+- When the delivery of an attempted answer is uncertain, the relay reconciles
+  it before a notice can post to that person. A confirmed rejection leaves the
+  person's notice eligible once the no-work interval reaches a minute and
+  no earlier attempt is still uncertain. A read that finds no post clears
+  earlier uncertainty only if it began after the latest unconfirmed request's
+  timeout window.
 - The notice and the conversation's answers are posted under one short
   per-conversation post lock, held for the decision and one post, never for a
-  read at the provider or a runtime call. An answer post cancels the person's
-  notice in the same critical section once the provider accepted it.
+  read at the provider or a runtime call. An answer receipt can retire a fully
+  answered epoch in the same critical section once the notice's own delivery is
+  known. An unconfirmed notice keeps its id until read-back finds it or
+  establishes absence after the settle window.
 - A notice whose post timed out or lost its response is not posted again before
   the settle bound after the attempt has passed. After it, the connector reads the
-  conversation from the epoch's start for a post of its own that begins with that
-  person's mention and the sentence; finding one records it posted, finding none
-  posts again.
+  conversation from the epoch's start for a post of its own with the notice's
+  durable id. Finding one records it posted, and finding none posts again
+  with the same id.
 
 If a post is committed by the provider later than the settle bound after it was sent,
 the person can see the sentence twice, or once after their answer: the provider's
@@ -333,8 +366,7 @@ Then the member gets one message, beginning with their mention, that the assista
 And writing again before they are answered brings no second one
 And another member waiting in the same conversation gets their own
 And the member's answer follows once the agent has done the work
-But when the agent works on the message, however long, its start is slow but healthy, or it completes the message without output
-Then nothing but the answer is posted
+And a healthy wait or a turn completed without output does not earn an unavailable notice
 ```
 
 ### UC-CV8: Get the answer after the assistant's work failed
@@ -399,6 +431,46 @@ Scenario Outline: An answer is posted once
     | the runner stops before it records that the connector accepted the post |
 ```
 
+### UC-CV15: Follow the status of a question while waiting
+
+```gherkin
+Given a member asks the assistant in a conversation that shows work status
+When the question waits, work begins, service becomes unavailable, or work resumes
+Then the member sees whether the assistant is working or temporarily unavailable
+And the member sees the assistant's newest update while the turn is working
+And the status clears once the answer arrives or the turn completes without a reply
+```
+
+### UC-CV16: Get a saved answer after its delivery is interrupted
+
+```gherkin
+Given the assistant has an answer for a member and its delivery is uncertain
+When the assistant recovers from the interruption
+Then an answer that reached the member is neither repeated nor followed by an unavailable notice for that answer
+And an answer confirmed absent can be sent again
+And if delivery cannot be established, the operator sees that outcome and the member can still ask another question
+```
+
+### UC-CV17: Keep serving conversations after an upgrade
+
+```gherkin
+Given an operator upgrades a runner that stopped while an answer was being delivered
+When the operator resumes serving the conversation
+Then a delivered answer is recognized when the provider can confirm it
+And if delivery cannot be determined, the operator sees that outcome without an extra reply or notice for that question
+And members can continue asking questions and receiving answers
+```
+
+### UC-CV18: Keep asking questions after unsuccessful work
+
+```gherkin
+Given a member is still waiting after the assistant failed to answer an earlier question
+When they ask another question and the assistant completes it
+Then the later question is served even while the earlier one remains unserved
+And its completion clears the earlier failure from the member's status
+And a subsequent outage can earn its own notice
+```
+
 ## Known caveats
 
 - Read-back reads what the provider still serves; its retention, the app's
@@ -408,9 +480,6 @@ Scenario Outline: An answer is posted once
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message. The direct messages instrukt sends about a
   person's sign-ins are instrukt's own, not the agent's.
-- A part whose post lost its response is recognised by its text as the
-  connector's provider returns it; where the provider returns different text,
-  the part is posted again.
 - A conversation session loads its procedure, and its agent program reads
   the company's knowledge from the home's committed `AGENTS.md`, when the
   session starts. A later change to either
