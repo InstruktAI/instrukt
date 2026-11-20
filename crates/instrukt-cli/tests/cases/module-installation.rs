@@ -3012,6 +3012,46 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
         "runner-service-without-a-service-manager",
         String::from_utf8_lossy(&unmet.get_output().stdout)
     );
+    // Pause a second service waiter, release the lock, then resume past
+    // the deadline. The next acquisition must win over the elapsed bound.
+    let hand = Running::spawn(
+        bare.env
+            .instrukt_process(bare.env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
+    wait("the hand runner owns the lock", || {
+        bare.slack.connections() == 1
+    });
+    let clock = bare.env.path("service-acquire-clock");
+    std::fs::write(&clock, "2030-01-06T00:00:00Z").unwrap();
+    let service_error = bare.env.path("acquiring-service.stderr");
+    let mut acquiring = Running::spawn(
+        bare.env
+            .instrukt_process(bare.env.home())
+            .args(["run", "--service"])
+            .env("INSTRUKT_NOW", format!("@{}", clock.display()))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::fs::File::create(&service_error).unwrap()),
+    );
+    wait("the second service starts waiting", || {
+        std::fs::read_to_string(&service_error)
+            .is_ok_and(|text| text.contains("waiting for the runner lock"))
+    });
+    acquiring.signal(rustix::process::Signal::STOP);
+    wait("the service waiter is stopped", || acquiring.stopped());
+    drop(hand);
+    std::fs::write(&clock, "2030-01-06T00:05:00Z").unwrap();
+    acquiring.signal(rustix::process::Signal::CONT);
+    wait("the service keeps the lock it acquired", || {
+        assert!(
+            acquiring.exited().is_none(),
+            "{}",
+            std::fs::read_to_string(&service_error).unwrap()
+        );
+        bare.slack.connections() == 2
+    });
 }
 
 // spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8

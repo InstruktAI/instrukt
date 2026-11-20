@@ -33,7 +33,9 @@ diagnostics would otherwise be gone with them.
   for (`sdlc/policy/observability`) — go to the log, in the contract's line
   format, from the logging crate the contract ships for Rust
   (`instrukt-ai-logging`), pinned to the released crates.io version
-  `=0.10.0`. instrukt does not format log lines itself.
+  `=0.10.0` with the stderr sink patch in `vendor/instrukt-ai-logging`.
+  instrukt does not format log lines itself. The same layer redacts event
+  messages and fields before writing to either destination.
 - What a command reports to its caller stays on standard output and standard
   error as each command's spec says; a refusal or failure is still printed
   to the caller, and is also logged.
@@ -51,7 +53,7 @@ diagnostics would otherwise be gone with them.
   before the command runs. When the file writer cannot open its destination,
   the command continues and standard error carries the failure followed by
   fallback diagnostics. The fallback writes INFO and above for instrukt and
-  WARNING and above for third-party loggers.
+  WARNING and above for third-party loggers. Stderr writes are best effort.
 
 ## Use cases
 
@@ -69,7 +71,7 @@ Then the published documentation is retrievable and the publication's record sit
 Given instrukt cannot open the developer's log directory
 When the developer runs a command
 Then the command produces its usual output and exit status
-And standard error reports the file logging failure and carries the command's diagnostics
+And standard error reports the file logging failure and carries the command's diagnostics with the same credential redaction as the file
 ```
 
 ## Known caveats

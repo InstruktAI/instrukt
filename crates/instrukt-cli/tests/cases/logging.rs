@@ -92,7 +92,8 @@ fn an_unwritable_log_directory_keeps_publication_output_and_logs_to_stderr() {
             ),
         )],
     );
-    let blocked = env.path("blocked");
+    let credential = "fixture-credential-never-printed";
+    let blocked = env.path(&format!("Bearer {credential}"));
     std::fs::write(&blocked, "not a directory").unwrap();
     env.set_env("XDG_STATE_HOME", blocked.to_str().unwrap());
     let output = env.run(repo.path(), ["sync"]).success();
@@ -107,8 +108,15 @@ fn an_unwritable_log_directory_keeps_publication_output_and_logs_to_stderr() {
         "publication-output-with-logging-fallback",
         redact(&output.get_output().stdout)
     );
-    insta::assert_snapshot!(
-        "publication-diagnostics-on-stderr",
-        redact(&output.get_output().stderr)
+    let diagnostics = redact(&output.get_output().stderr);
+    assert!(
+        !diagnostics.contains(credential),
+        "credential leaked in a fallback record"
     );
+    let records = diagnostics
+        .lines()
+        .map(|line| format!("[TIME] {}", line.split_once(' ').unwrap().1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!("publication-diagnostics-on-stderr", records);
 }

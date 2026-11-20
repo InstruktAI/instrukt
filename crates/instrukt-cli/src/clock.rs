@@ -10,6 +10,7 @@
 //! first reading must succeed. After that, a failed reading advances the
 //! last valid value by elapsed monotonic time.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -19,6 +20,8 @@ use jiff::Timestamp;
 
 /// The environment variable that overrides the clock.
 pub const OVERRIDE_VAR: &str = "INSTRUKT_NOW";
+
+static FILE_OVERRIDE: Mutex<Option<Arc<FileClock>>> = Mutex::new(None);
 
 #[derive(Debug, Clone)]
 pub enum Clock {
@@ -37,6 +40,7 @@ pub struct FileClock {
 #[derive(Debug)]
 struct LastReading {
     time: Timestamp,
+    observed: Timestamp,
     read_at: Instant,
     warned: bool,
 }
@@ -48,6 +52,7 @@ impl FileClock {
             path: path.into(),
             last: Mutex::new(LastReading {
                 time,
+                observed: time,
                 read_at: Instant::now(),
                 warned: false,
             }),
@@ -55,20 +60,25 @@ impl FileClock {
     }
 
     fn now(&self) -> Timestamp {
+        self.now_with_diagnostics(std::io::stderr())
+    }
+
+    fn now_with_diagnostics(&self, mut diagnostics: impl Write) -> Timestamp {
         let mut last = self
             .last
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match read_file(&self.path) {
+        let reading = match read_file(&self.path) {
             Ok(time) => {
-                last.time = time;
+                last.time = time.max(last.observed);
                 last.read_at = Instant::now();
-                time
+                last.time
             }
             Err(error) => {
                 if !last.warned {
                     last.warned = true;
-                    eprintln!(
+                    let _ = writeln!(
+                        diagnostics,
                         "instrukt: {}; continuing from the last clock reading",
                         crate::output::error_line(&error)
                     );
@@ -77,7 +87,9 @@ impl FileClock {
                     .saturating_add(last.read_at.elapsed())
                     .unwrap_or(Timestamp::MAX)
             }
-        }
+        };
+        last.observed = last.observed.max(reading);
+        last.observed
     }
 }
 
@@ -91,19 +103,27 @@ impl Clock {
                     .to_str()
                     .with_context(|| format!("{OVERRIDE_VAR} is not valid UTF-8"))?;
                 if let Some(path) = text.strip_prefix('@') {
+                    let mut shared = FILE_OVERRIDE
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if let Some(clock) = &*shared {
+                        return Ok(Clock::File(Arc::clone(clock)));
+                    }
                     let clock = Arc::new(FileClock::open(Path::new(path))?);
-                    eprintln!(
+                    let _ = writeln!(
+                        std::io::stderr(),
                         "instrukt: clock overridden to the time in {}",
                         clock.path.display()
                     );
                     let limits = Arc::clone(&clock);
                     instrukt_core::process::measure_limits_on(Box::new(move || Ok(limits.now())));
+                    *shared = Some(Arc::clone(&clock));
                     return Ok(Clock::File(clock));
                 }
                 let at = parse_rfc3339(text).with_context(|| {
                     format!("{OVERRIDE_VAR}=`{text}` is not an RFC 3339 time; unset it or give one")
                 })?;
-                eprintln!("instrukt: clock overridden to {at}");
+                let _ = writeln!(std::io::stderr(), "instrukt: clock overridden to {at}");
                 Ok(Clock::Fixed(at))
             }
         }
@@ -188,6 +208,53 @@ fn is_rfc3339(b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restored_file_cannot_move_an_in_flight_clock_backward() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("clock");
+        let initial = "2030-01-06T00:00:00Z";
+        std::fs::write(&path, initial).unwrap();
+        let clock = FileClock::open(&path).unwrap();
+        std::fs::rename(&path, directory.path().join("removed-clock")).unwrap();
+
+        clock.last.lock().unwrap().read_at -= std::time::Duration::from_secs(2);
+        let during_loss = clock.now();
+        assert!(during_loss > initial.parse::<Timestamp>().unwrap());
+
+        std::fs::write(&path, initial).unwrap();
+        assert_eq!(clock.now(), during_loss);
+        std::fs::write(&path, "2029-12-01T00:00:00Z").unwrap();
+        assert_eq!(clock.now(), during_loss);
+
+        std::fs::rename(&path, directory.path().join("restored-clock")).unwrap();
+        clock.last.lock().unwrap().read_at -= std::time::Duration::from_secs(2);
+        assert!(clock.now() > during_loss);
+        std::fs::write(&path, "2030-02-01T00:00:00Z").unwrap();
+        assert_eq!(
+            clock.now(),
+            "2030-02-01T00:00:00Z".parse::<Timestamp>().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_failed_warning_write_does_not_interrupt_clock_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("clock");
+        std::fs::write(&path, "2030-01-06T00:00:00Z").unwrap();
+        let clock = FileClock::open(&path).unwrap();
+        let before = clock.now();
+        std::fs::rename(&path, directory.path().join("removed-clock")).unwrap();
+        clock.last.lock().unwrap().read_at -= std::time::Duration::from_secs(2);
+
+        let (mut stderr, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        stderr.shutdown(std::net::Shutdown::Write).unwrap();
+        assert_eq!(
+            stderr.write_all(b"probe").unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert!(clock.now_with_diagnostics(&mut stderr) > before);
+    }
 
     #[test]
     fn a_utc_date_time_is_accepted() {

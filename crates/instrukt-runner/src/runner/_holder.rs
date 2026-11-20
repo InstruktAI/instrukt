@@ -7,6 +7,7 @@
 //! missing, partial or mismatching record, one left by a holder that died,
 //! one whose incarnation cannot be read, or one not yet replaced by a new
 //! holder, names no holder; the contender keeps waiting.
+use std::io::Write as _;
 use std::os::unix::fs::FileExt as _;
 use std::path::Path;
 use std::time::Duration;
@@ -154,20 +155,21 @@ pub(super) fn run(home: &Home, service: bool) -> Result<RunnerLock, RunnerError>
     };
     let limit = Limit::start(RUN_LOCK_WAIT).map_err(clock_error)?;
     let mut announced = false;
+    let mut expired = false;
     loop {
-        match limit
-            .judge(LockGuard::try_acquire(&path)?)
-            .map_err(clock_error)?
-        {
-            Look::Ended(guard) => {
-                let kind = if service {
-                    Holder::Service
-                } else {
-                    Holder::Run
-                };
-                return RunnerLock::publish(guard, kind);
-            }
-            Look::Passed if service => {
+        if let Some(guard) = LockGuard::try_acquire(&path)? {
+            let kind = if service {
+                Holder::Service
+            } else {
+                Holder::Run
+            };
+            return RunnerLock::publish(guard, kind);
+        }
+        if !service && holder(&path) == Some(Holder::Service) {
+            return Err(RunnerError::ServiceRunning);
+        }
+        if expired {
+            if service {
                 let holder = holder(&path).map_or("unknown", |holder| match holder {
                     Holder::Service => "the runner service",
                     Holder::Run => "`instrukt run` started by hand",
@@ -178,20 +180,20 @@ pub(super) fn run(home: &Home, service: bool) -> Result<RunnerLock, RunnerError>
                     holder,
                 });
             }
-            Look::Passed => {
-                return Err(FsError::LockTimeout {
-                    path,
-                    waited: RUN_LOCK_WAIT,
-                }
-                .into());
+            return Err(FsError::LockTimeout {
+                path,
+                waited: RUN_LOCK_WAIT,
             }
-            Look::Running => {}
+            .into());
         }
-        if !service && holder(&path) == Some(Holder::Service) {
-            return Err(RunnerError::ServiceRunning);
+        if limit.judge(None::<()>).map_err(clock_error)? == Look::Passed {
+            // Give an acquisition that became possible at the bound precedence.
+            expired = true;
+            continue;
         }
         if !announced {
-            eprintln!(
+            let _ = writeln!(
+                std::io::stderr(),
                 "instrukt: waiting for the runner lock, which another runner invocation holds"
             );
             announced = true;

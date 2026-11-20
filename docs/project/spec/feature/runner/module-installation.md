@@ -158,7 +158,8 @@ it runs, the minute tick exits at once and a second `instrukt run` is refused
 naming the service. While a run started by hand holds the lock, the service's
 process waits for the lock for at most `RUN_LOCK_WAIT`, measured on the
 process-limit clock. If the wait expires, it exits nonzero naming the
-holder when known, and its manager starts it again. Installation writes the service's
+holder when known, and its manager starts it again. An acquired lock is kept
+even when the wait bound has elapsed. Installation writes the service's
 definition and restarts the service every time it runs, so the installed
 executable and configuration are the ones running; it keeps no record of what the
 running process executes (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). `install --check` reports
@@ -483,6 +484,7 @@ But when the computer has no service manager that can keep a process running
 Then installation reports that prerequisite and claims no success
 When a run started by hand keeps the runner lock past the service's wait bound
 Then the service invocation exits nonzero naming that holder
+But if the service acquires the lock when it next checks, it runs even when the wait bound has elapsed
 ```
 
 ### UC-MI15: Install over definitions instrukt wrote without its records

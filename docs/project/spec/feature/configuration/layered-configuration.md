@@ -352,8 +352,11 @@ well. A file that is missing or holds no RFC 3339 time when the command starts
 refuses the command. One that becomes unreadable later keeps time running from the
 last valid reading, advanced by elapsed monotonic time since that reading.
 The command clock and the process-limit clock use the same reader and last
-valid reading. The invocation warns once, and a valid file reading restores
-file time. Lock waits are measured on the process-limit clock.
+valid reading. File-clock readings never move backward during the invocation.
+When a valid file reading resumes, the clock uses the later of that value and
+the last observed time. The invocation warns once when the file becomes
+unreadable. Stderr failure does not interrupt a clock reading. Lock waits are
+measured on the process-limit clock.
 
 ### External state declarations
 
@@ -447,6 +450,7 @@ Given a developer started the runner with a valid operator clock file
 When the file disappears during the run
 Then the runner warns once and keeps time from its last reading by elapsed monotonic time
 And a later wake dispatches pending work through the runtime with the clock file still absent
+And the runner continues even if standard error is unavailable
 ```
 
 ## Known caveats

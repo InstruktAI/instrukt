@@ -443,44 +443,32 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         "instrukt_connector",
         "instrukt_connector_slack",
     ];
-    let mut builder = instrukt_ai_logging::Builder::new("instrukt").source(source);
-    for prefix in APP_TARGETS {
-        builder = builder.app_prefix(*prefix);
-    }
+    let builder = || {
+        APP_TARGETS.iter().fold(
+            instrukt_ai_logging::Builder::new("instrukt").source(source),
+            |builder, prefix| builder.app_prefix(*prefix),
+        )
+    };
+    let mut file = builder();
     if matches!(command, Command::Mcp(_)) {
         // The HTTP client's records carry what an MCP server sent back, a
         // reflected login among it, before instrukt can remove it: for this
         // command no third-party record below a warning is written.
-        builder = builder.env_lookup(|name| match name {
+        file = file.env_lookup(|name| match name {
             "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("WARNING".into()),
             "INSTRUKT_THIRD_PARTY_LOGGERS" => None,
             other => std::env::var_os(other),
         });
     }
-    let destination = match builder.init() {
+    let destination = match file.init() {
         Ok(_) => LogDestination::File(source),
         Err(error) => {
-            use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
-            let filter = tracing_subscriber::filter::filter_fn(|metadata| {
-                let target = metadata.target().split([':', '.']).next();
-                let level = if target.is_some_and(|target| APP_TARGETS.contains(&target)) {
-                    tracing::Level::INFO
-                } else {
-                    tracing::Level::WARN
-                };
-                *metadata.level() <= level
-            });
-            let layer = tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_ansi(false)
-                .without_time();
-            let stderr = tracing_subscriber::registry().with(filter).with(layer);
-            if stderr.try_init().is_ok() {
+            if builder().env_lookup(|_| None).init_stderr().is_ok() {
                 tracing::warn!(event = "file_logging_unavailable", %error, "logging to stderr");
             } else {
-                eprintln!(
-                    "instrukt: cannot initialise file logging: {}",
-                    output::error_line(&error.into())
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "instrukt: cannot initialise diagnostic logging"
                 );
             }
             LogDestination::Stderr

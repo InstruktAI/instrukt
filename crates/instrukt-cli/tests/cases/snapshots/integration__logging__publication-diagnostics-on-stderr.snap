@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/logging.rs
-expression: redact(&output.get_output().stderr)
+expression: records
 ---
- WARN instrukt: logging to stderr event="file_logging_unavailable" error=cannot create log directory [TMP]/blocked/instrukt-ai: Not a directory (os error 20)
- INFO instrukt_core::publication::_sync: event="docs_published" project=demo commit=[SHA]
+[TIME] level=WARNING logger=instrukt msg="logging to stderr" error="cannot create log directory [TMP]/Bearer <REDACTED> Not a directory (os error 20)" event=file_logging_unavailable
+[TIME] level=INFO logger=instrukt_core::publication::_sync msg="" commit=[SHA] event=docs_published project=demo

@@ -309,8 +309,16 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL7
 #[test]
 fn a_runner_keeps_dispatching_after_its_clock_file_disappears() {
+    for closed_stderr in [false, true] {
+        dispatch_after_clock_loss(closed_stderr);
+    }
+}
+
+fn dispatch_after_clock_loss(closed_stderr: bool) {
     use crate::fixtures::{conversing::Running, documented, flavor::Tracked, t3::FakeT3};
-    use std::{process::Stdio, time::Duration};
+    use std::{
+        net::Shutdown, os::fd::OwnedFd, os::unix::net::UnixStream, process::Stdio, time::Duration,
+    };
 
     let p = Tracked::new(true);
     let redis = common::redis::RedisServer::new(&p.env);
@@ -345,13 +353,19 @@ fn a_runner_keeps_dispatching_after_its_clock_file_disappears() {
     // The independent GitHub fixture can validate tokens even after the
     // runner's clock file disappears.
     common::github::sync_auth_clock(p.env.home(), Some(at));
+    let (sink, peer) = if closed_stderr {
+        let (writer, peer) = UnixStream::pair().unwrap();
+        (Stdio::from(OwnedFd::from(writer)), Some(peer))
+    } else {
+        (Stdio::from(std::fs::File::create(&stderr).unwrap()), None)
+    };
     let mut runner = Running::spawn(
         command
             .arg("run")
             .env("INSTRUKT_NOW", format!("@{}", clock.display()))
             .env("INSTRUKT_LOG_LEVEL", "DEBUG")
             .stdout(Stdio::null())
-            .stderr(std::fs::File::create(&stderr).unwrap()),
+            .stderr(sink),
     );
     let log = p
         .env
@@ -373,6 +387,9 @@ fn a_runner_keeps_dispatching_after_its_clock_file_disappears() {
     assert!(runtime.threads().is_empty());
     common::github::sync_auth_clock(p.env.home(), Some(at));
 
+    if let Some(peer) = peer {
+        peer.shutdown(Shutdown::Both).unwrap();
+    }
     std::fs::rename(&clock, clock.with_extension("removed")).unwrap();
     let event = serde_json::json!({
         "id":"clock-removed","type":"example.clock_wake","source":machine.to_string(),
@@ -426,6 +443,10 @@ fn a_runner_keeps_dispatching_after_its_clock_file_disappears() {
     let wake = wake.parse::<jiff::Timestamp>().unwrap();
     assert!(wake > at.parse::<jiff::Timestamp>().unwrap());
     assert!(!clock.exists());
+    if closed_stderr {
+        assert!(runner.exited().is_none());
+        return;
+    }
     let diagnostics = std::fs::read_to_string(&stderr).unwrap();
     assert_eq!(
         diagnostics
