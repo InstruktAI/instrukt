@@ -208,12 +208,21 @@ elif command=='send':
     t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued}); save(t)
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
+    if (root/'hold-show-after-send').exists():
+        (root/'hold-show-after-send').unlink()
+        (root/(t['threadId']+'.show-held')).unlink(missing_ok=True)
+        (root/(t['threadId']+'.hold-show')).touch()
+        print('send acknowledgment lost', file=sys.stderr); sys.exit(1)
 elif command=='show':
     if (root/'show-failure').exists():
         print('native show unavailable', file=sys.stderr); sys.exit(1)
     held=root/(operands[0]+'.hold-show')
     if held.exists():
-        (root/(operands[0]+'.show-held')).touch()
+        try:
+            with (root/(operands[0]+'.show-held')).open('x') as marker:
+                marker.write(str(os.getpid()))
+        except FileExistsError:
+            pass
     while held.exists(): time.sleep(0.02)
     t=find(operands[0]); limit=int(flags.get('--messages',100))
     if limit or not os.environ.get('INSTRUKT_TEST_T3_WAKES'): sync_inputs()
@@ -500,6 +509,10 @@ impl FakeT3 {
             .status()
             .unwrap()
             .success()
+    }
+    /// The original held show is still running, even if another was launched.
+    pub fn held_show_running(&self, session: &str) -> bool {
+        self.running(&format!("{session}.show-held"))
     }
     /// How many `auth session issue` launches were held so far.
     pub fn held_issues(&self) -> usize {

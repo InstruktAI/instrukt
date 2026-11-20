@@ -738,7 +738,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
 fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     std::thread::scope(|scope| {
         scope.spawn(archived_conversation_waits_for_unarchive);
-        scope.spawn(a_held_absence_probe_leaves_another_conversation_free);
+        scope.spawn(held_runtime_checks_leave_another_conversation_free);
         #[cfg(debug_assertions)]
         scope.spawn(a_live_deletion_is_confirmed_once_across_relay_passes);
         scope.spawn(a_live_pending_successor_leaves_retained_answers_free_to_post);
@@ -875,25 +875,77 @@ fn archived_conversation_waits_for_unarchive() {
     assert_eq!(c.slack.posts().len(), 4);
 }
 
-fn a_held_absence_probe_leaves_another_conversation_free() {
+fn held_runtime_checks_leave_another_conversation_free() {
     let (mut c, _, session) = answered_conversation(true);
     let held = c.runtime.state_dir().join(format!("{session}.hold-show"));
-    std::fs::write(&held, "").unwrap();
-    c.runtime.delete(&session);
-    c.store.unproject_thread(&session);
-    c.slack.direct("D30", "USTEVEN", "What changed?");
     let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
-    wait("the deleted session's probe is held", || marker.exists());
+    std::fs::write(&held, "").unwrap();
+    c.slack.direct("D30", "USTEVEN", "What changed?");
+    wait("the bound session's dispatch check is held", || {
+        c.runtime.held_show_running(&session)
+    });
 
     c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
     c.slack.direct("D31", "UANNA", "Where is the meeting?");
-    let other = started(&c, &[]);
+    wait(
+        "the other conversation starts during the dispatch check",
+        || c.sessions().iter().any(|id| id != &session),
+    );
+    let other = started(&c, std::slice::from_ref(&session));
     c.finish_turn(&other, 0, "In the main office.");
     wait(
-        "the second conversation is answered without releasing the probe",
+        "the second conversation is answered during the dispatch check",
         || c.slack.posts_beginning("In the main office.") == 1,
     );
-    std::fs::remove_file(held).unwrap();
+    assert!(c.runtime.held_show_running(&session));
+    assert_eq!(c.runtime.message_count(&session), 1);
+
+    c.runtime.flag("hold-show-after-send", true);
+    std::fs::remove_file(&marker).unwrap();
+    std::fs::remove_file(&held).unwrap();
+    wait("the lost acknowledgment's read-back check is held", || {
+        c.runtime.held_show_running(&session)
+    });
+    c.slack.direct("D31", "UANNA", "When does it start?");
+    wait("the other conversation dispatches during read-back", || {
+        c.runtime.message_count(&other) == 2
+    });
+    assert!(c.runtime.held_show_running(&session));
+    c.finish_turn(&other, 1, "At noon.");
+    std::fs::remove_file(&held).unwrap();
+
+    c.finish_turn(&session, 1, "The changes are in the appendix.");
+    wait(
+        "the lost acknowledgment reconciles without another send",
+        || c.slack.posts_beginning("The changes are in the appendix.") == 1 && answers_recorded(&c),
+    );
+    assert_eq!(c.runtime.message_count(&session), 2);
+
+    // T3's projection remains absent throughout. The failed send proves
+    // the runtime already confirmed that the thread was live.
+    let sends = || {
+        let send = format!("thread send -- {session} -");
+        c.runtime
+            .calls()
+            .iter()
+            .filter(|call| **call == send)
+            .count()
+    };
+    let before = sends();
+    c.store.unproject_thread(&session);
+    c.runtime.flag("send-failure", true);
+    let question = c.slack.direct("D30", "USTEVEN", "Who wrote it?");
+    wait(
+        "a send is attempted after T3 confirms the thread is present",
+        || sends() > before,
+    );
+    c.runtime.delete(&session);
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    let door = format!("instrukt sessions replace-deleted {key} --stopped t3:{session}");
+    wait("the later deletion replaces the live confirmation", || {
+        conversation_finding(&c, &door).is_some()
+            && c.slack.status("D30", &question).as_deref() == Some(UNAVAILABLE)
+    });
 }
 
 #[cfg(debug_assertions)]
@@ -3126,7 +3178,6 @@ fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
         std::time::Duration::from_secs(60),
         || c.sessions().len() > before.len(),
     );
-    running.stop();
     let session = started(&c, &before);
     c.finish_turn(&session, 0, "Linus is on call.");
     wait("the answer beside the held lock", || {
@@ -3136,6 +3187,7 @@ fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
         c.slack.posts().last().unwrap().thread.as_deref(),
         Some(apart.as_str())
     );
+    running.stop();
     drop(other_lock);
 }
 

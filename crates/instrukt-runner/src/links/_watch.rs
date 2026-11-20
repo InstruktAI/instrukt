@@ -167,7 +167,7 @@ fn serve(
                     .lock()
                     .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
             }) {
-                break CompanyRelayPass::CatchUp;
+                break CompanyRelayPass::Retry;
             }
             if retry && std::time::Instant::now() >= until {
                 break CompanyRelayPass::Retry;
