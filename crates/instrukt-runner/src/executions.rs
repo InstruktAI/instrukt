@@ -256,7 +256,20 @@ impl<'a> Executions<'a> {
                     .alive(&execution.session)
                     .unwrap_or_else(|err| Observation::Unobservable(err.to_string()))
             };
-            match step(&execution, progressed, &observed) {
+            let recovery_id = format!("recovery:{}:{}", execution.session, execution.state);
+            let unconfirmed = !progressed
+                && !execution.anomaly_raised
+                && matches!(
+                    crate::inputs::outcome(self.state, &execution.session, &recovery_id)?,
+                    crate::inputs::InputOutcome::Unconfirmed
+                        | crate::inputs::InputOutcome::SetAside
+                );
+            let next = if unconfirmed {
+                Step::RaiseAnomaly
+            } else {
+                step(&execution, progressed, &observed)
+            };
+            match next {
                 Step::Wait | Step::Reported => {}
                 Step::Progressed => {
                     execution.state = current;
@@ -267,7 +280,7 @@ impl<'a> Executions<'a> {
                     cx.invocation,
                     &execution.session,
                     &crate::inputs::Entry {
-                        id: &format!("recovery:{}:{}", execution.session, execution.state),
+                        id: &recovery_id,
                         kind: crate::inputs::InputKind::Recovery,
                         assignment: None,
                         source_at: Some(&cx.now.to_string()),
@@ -285,6 +298,15 @@ impl<'a> Executions<'a> {
                     ) => {
                         execution.recovery_sent = true;
                         tracing::info!(event = "execution_recovery_sent", todo = %execution.todo, session = %execution.session);
+                    }
+                    Ok(
+                        crate::inputs::InputOutcome::Unconfirmed
+                        | crate::inputs::InputOutcome::SetAside,
+                    ) => {
+                        execution.recovery_sent = true;
+                        execution.anomaly_raised = true;
+                        tracing::warn!(event="execution_incomplete", todo=%execution.todo, session=%execution.session);
+                        anomaly::notify(config, env, &execution.session.to_string(), None);
                     }
                     Err(err @ SessionsError::Gone(_)) => {
                         tracing::warn!(event = "execution_recovery_undeliverable", todo = %execution.todo, session = %execution.session, error = %err);
@@ -304,6 +326,7 @@ impl<'a> Executions<'a> {
                     }
                 },
                 Step::RaiseAnomaly => {
+                    execution.recovery_sent = true;
                     execution.anomaly_raised = true;
                     tracing::warn!(event = "execution_incomplete", todo = %execution.todo, session = %execution.session);
                     anomaly::notify(config, env, &execution.session.to_string(), None);

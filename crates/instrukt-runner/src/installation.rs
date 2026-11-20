@@ -671,7 +671,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     // What the runner keeps in its state is reported whatever the files say
     // now: an invalid machine layer must not hide why the runner holds on.
     let failures=state.read(|conn,path| {
-        let mut stmt=conn.prepare("SELECT event_id, state, failure FROM procedure_activations WHERE failure IS NOT NULL").map_err(crate::state::sql(path))?;
+        let mut stmt=conn.prepare("SELECT event_id, state, failure FROM procedure_activations WHERE failure IS NOT NULL AND state!='set_aside'").map_err(crate::state::sql(path))?;
         let rows=stmt.query_map([],|row| Ok(serde_json::json!({"id":row.get::<_,String>(0)?,"state":row.get::<_,String>(1)?,"failure":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
         rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
@@ -681,12 +681,25 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     let stopped_executions = crate::executions::Executions::new(&state).stopped()?;
     let input_findings = state.read(|conn, path| {
         let sql = crate::state::sql(path);
-        let mut stmt = conn.prepare("SELECT runtime,session,input_id,state,failure FROM runtime_inputs WHERE state IN ('unconfirmed','set_aside') ORDER BY rowid").map_err(&sql)?;
+        let mut stmt = conn.prepare("SELECT runtime,session,input_id,state,failure,evidence_source,evidence_at FROM runtime_inputs WHERE state='unconfirmed' OR (state='accepted' AND waiting=1 AND failure IS NOT NULL) ORDER BY rowid").map_err(&sql)?;
         stmt.query_map([], |row| Ok(serde_json::json!({
             "session":format!("{}:{}", row.get::<_,String>(0)?,row.get::<_,String>(1)?),
-            "input_id":row.get::<_,String>(2)?,"state":row.get::<_,String>(3)?,"failure":row.get::<_,Option<String>>(4)?
+            "input_id":row.get::<_,String>(2)?,"state":row.get::<_,String>(3)?,"failure":row.get::<_,Option<String>>(4)?,"evidence_source":row.get::<_,Option<String>>(5)?,"evidence_at":row.get::<_,Option<String>>(6)?
         }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)
     })?.unwrap_or_default();
+    let set_aside = state.read(|conn, path| {
+        let sql = crate::state::sql(path);
+        // A mirrored activation and its input account for one retained entry.
+        let rows = "SELECT event_id AS id, accepted_at AS at, failure FROM procedure_activations WHERE state='set_aside'
+            UNION ALL SELECT i.input_id, i.arrived_at, i.failure FROM runtime_inputs i WHERE i.state='set_aside'
+            AND NOT EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.input_id=i.input_id AND d.target=(i.runtime || ':' || i.session) AND d.state='set_aside')";
+        let count: u64 = conn.query_row(&format!("SELECT count(*) FROM ({rows})"), [], |row| row.get(0)).map_err(&sql)?;
+        let mut statement = conn.prepare(&format!("SELECT id,at,failure FROM ({rows}) ORDER BY julianday(at) DESC,id LIMIT ?1")).map_err(&sql)?;
+        let recent = statement.query_map([crate::inputs::SET_ASIDE_STATUS_LIMIT], |row| Ok(serde_json::json!({
+            "id":row.get::<_,String>(0)?,"at":row.get::<_,String>(1)?,"failure":row.get::<_,Option<String>>(2)?
+        }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)?;
+        Ok(serde_json::json!({"count":count,"recent":recent}))
+    })?.unwrap_or_else(|| serde_json::json!({"count":0,"recent":[]}));
     // This computer's own machine ID, as it reads it, for comparison with the
     // other computers; reading creates no ID.
     let computer = instrukt_core::machine::existing_machine_id(request.home)
@@ -750,7 +763,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         // Nothing read from the configuration can be shown: what depends on
         // it is absent, and the admission error says why.
         return Ok(
-            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"links":links,"conversations":conversations,"runner_service":null}),
+            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"set_aside":set_aside,"links":links,"conversations":conversations,"runner_service":null}),
         );
     }
     let mut report = Report::default();
@@ -784,7 +797,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             .map(str::to_owned)
     };
     Ok(
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"links":links,"conversations":conversations,"runner_service":runner_service}),
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"set_aside":set_aside,"links":links,"conversations":conversations,"runner_service":runner_service}),
     )
 }
 

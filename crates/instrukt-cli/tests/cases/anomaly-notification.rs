@@ -21,8 +21,7 @@ fn dispatched_task() -> Tracked {
     project
 }
 
-#[test]
-fn a_failed_task_is_reported_once_by_reference_to_the_session_holding_it() {
+fn check_configured_notification() {
     let mut project = dispatched_task();
     project.todo_in_session(
         "s1",
@@ -69,25 +68,35 @@ fn a_stopped_execution_is_visible_without_a_notification_command() {
             .success();
         serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
     };
-    let thread = project.rt.state_dir().join("s1.json");
-    let stopped = thread.with_extension("stopped");
-    std::fs::rename(&thread, &stopped).unwrap();
-    project.tick_at("2030-01-06T09:01:20Z");
+    project.rt.set_status("s1", "ended ok");
+    // The pump accepted the recovery before the execution observer recorded it.
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        project.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_inputs(runtime,session,input_id,intent,content,state,kind,arrived_at,accepted_at,waiting,group_id,selected_content)
+        SELECT 't3','s1','recovery:' || session || ':' || workflow_state,'asap','interrupted recovery','accepted','recovery',
+        '2030-01-06T09:01:00Z','2030-01-06T09:01:00Z',1,'recovery:' || session || ':' || workflow_state,'interrupted recovery'
+        FROM executions WHERE session='t3:s1'",
+        [],
+    ).unwrap();
+    project.tick_at("2030-01-06T09:04:20Z");
     let report = status(&project);
     assert_eq!(report["notification_configured"], false);
     assert_eq!(report["stopped_executions"][0]["session"], "t3:s1");
     assert_eq!(report["stopped_executions"][0]["todo"], "weekly-status");
     assert!(project.rt.notifications().is_empty());
-    std::fs::rename(stopped, thread).unwrap();
     project.todo_in_session(
         "s1",
         ["stamp", "weekly-status", "--task-outcome", "success"],
     );
-    project.tick_at("2030-01-06T09:04:20Z");
+    project.tick_at("2030-01-06T09:05:20Z");
     assert_eq!(
         status(&project)["stopped_executions"],
         serde_json::json!([])
     );
+    check_configured_notification();
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3

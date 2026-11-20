@@ -452,7 +452,13 @@ capability, native reference, source and observation time; unknown/unsupported
 evidence leaves the slot occupied, rather than fabricating a transcript or run id,
 until `INPUT_WAIT_BOUND`: then the input is `unconfirmed` (outcome
 unknown, never sent again) and the slot is released. An item larger than the
-delivery limit on its own is `set_aside`, with its failure, and later items proceed. Wake requests coalesce per target.
+delivery limit on its own is `set_aside` and later items proceed. The runner
+compacts set-aside payloads and mirrored standing envelopes to a digest as soon
+as it records that disposition. Identity and failure metadata suppress replay
+until `SET_ASIDE_RETENTION` from the input's arrival or the activation's
+acceptance. The runner retires the input and any mirrored set-aside rows on
+its next wake after the bound. Status reports the retained count and up to
+`SET_ASIDE_STATUS_LIMIT` recent findings. Wake requests coalesce per target.
 Only-at-entry selection rechecks idleness before handover. Runtime calls run
 outside transactions; the fixed target and selected input commit before send.
 A lost acknowledgement can repeat input and remains distinguishable from

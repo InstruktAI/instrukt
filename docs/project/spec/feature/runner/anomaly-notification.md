@@ -56,6 +56,7 @@ the operator).
 
 For a stopped execution, `instrukt events status` lists its work item,
 session, workflow state and whether a notification command is configured.
+A recovery input that ends unconfirmed raises the stopped-execution anomaly.
 The finding persists until the workflow advances or the execution is released.
 
 ## Use cases

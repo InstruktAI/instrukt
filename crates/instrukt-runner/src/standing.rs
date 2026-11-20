@@ -238,7 +238,7 @@ pub(crate) fn deliver_pending(
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     let state = RunnerState::new(invocation.home());
-    settle(&state)?;
+    settle(&state, now)?;
     let selected = Configuration::load_global(state.home())?.runner_runtime()?;
     let mut groups = std::collections::BTreeMap::<String, (Option<String>, Vec<Pending>)>::new();
     for item in pending(&state)? {
@@ -572,7 +572,10 @@ fn deliver_group(
         tx.execute("UPDATE standing_deliveries SET target=?4,input_id=?5,state='pending_input' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,target.to_string(),id]).map_err(state::sql(&state::db_path(tx)))?;
     }Ok(())})?;
     // The wake's shared pump composes all producers after selection.
-    if inputs::outcome(state, &target, &input_id)? != InputOutcome::Pending {
+    if matches!(
+        inputs::outcome(state, &target, &input_id)?,
+        InputOutcome::Accepted | InputOutcome::Entered
+    ) {
         state.write::<_,StateError>(|tx|{for p in &selected{tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE standing_deliveries SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
     }
     Ok(())
@@ -633,10 +636,23 @@ pub(crate) fn verify_delivery_project(
     Ok(())
 }
 
-pub(crate) fn settle(state: &RunnerState) -> Result<(), StateError> {
+fn settle_terminal(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+) -> Result<(), StateError> {
+    tx.execute("UPDATE standing_deliveries AS d SET (state,failure,envelope)=(SELECT i.state,i.failure,CASE WHEN i.state='set_aside' THEN i.content ELSE d.envelope END FROM runtime_inputs i WHERE i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target) WHERE EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target AND i.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
+    tx.execute("UPDATE procedure_activations AS a SET (state,failure,envelope)=(SELECT d.state,d.failure,CASE WHEN d.state='set_aside' THEN d.envelope ELSE a.envelope END FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home) WHERE EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND d.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
+    Ok(())
+}
+
+pub(crate) fn settle(state: &RunnerState, now: Timestamp) -> Result<(), StateError> {
     state.write::<_,StateError>(|tx| {
-        tx.execute("UPDATE standing_deliveries AS d SET (state,failure)=(SELECT i.state,i.failure FROM runtime_inputs i WHERE i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target) WHERE EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target AND i.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
-        tx.execute("UPDATE procedure_activations AS a SET (state,failure)=(SELECT d.state,d.failure FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home) WHERE EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND d.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
+        settle_terminal(tx)?;
+        let path = state::db_path(tx);
+        let cutoff = now.saturating_sub(inputs::SET_ASIDE_RETENTION).unwrap_or(Timestamp::MIN).to_string();
+        tx.execute("DELETE FROM standing_deliveries AS d WHERE d.state='set_aside' AND EXISTS (SELECT 1 FROM procedure_activations a WHERE a.event_id=d.event_id AND a.procedure=d.procedure AND a.exact_home=d.exact_home AND a.state='set_aside' AND julianday(a.accepted_at)<=julianday(?1))",[&cutoff]).map_err(state::sql(&path))?;
+        tx.execute("DELETE FROM procedure_activations WHERE state='set_aside' AND julianday(accepted_at)<=julianday(?1)",[&cutoff]).map_err(state::sql(&path))?;
+        tx.execute("DELETE FROM approval_attention AS a WHERE a.state='set_aside' AND EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=a.input_id AND a.target=(i.runtime || ':' || i.session) AND i.state='set_aside' AND julianday(i.arrived_at)<=julianday(?1))",[&cutoff]).map_err(state::sql(&path))?;
+        tx.execute("DELETE FROM runtime_inputs WHERE state='set_aside' AND julianday(arrived_at)<=julianday(?1)",[&cutoff]).map_err(state::sql(&path))?;
         tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND i.state IN ('accepted','entered'))",[]).map_err(state::sql(&state::db_path(tx)))?;
         tx.execute("UPDATE standing_deliveries SET state='delivered',failure=NULL WHERE EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=standing_deliveries.input_id AND (i.runtime || ':' || i.session)=standing_deliveries.target AND i.state IN ('accepted','entered'))",[]).map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -1314,6 +1330,7 @@ fn prepare_successor(
         let next_key=old_key.clone();
         tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()]).map_err(state::sql(&path))?;
         tx.execute("INSERT INTO procedure_generations(responsibility,generation,semantic_key,session,declaration,request,terminal) SELECT responsibility,generation,semantic_key,coalesce(session,?3),declaration,request,?2 FROM procedure_responsibilities WHERE responsibility=?1",params![cx.responsibility,cx.now.to_string(),cx.old_session.to_string()]).map_err(state::sql(&path))?;
+        settle_terminal(tx)?;
         tx.execute("UPDATE procedure_activations SET state='pending',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND d.responsibility=?1 AND d.target=?2 AND i.state IN ('pending','selected','accepted'))",params![cx.responsibility,cx.old_session.to_string()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure='target closed before observed consumption; standing events retained for successor, other input retains terminal failure' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![cx.old_session.runtime.as_str(),cx.old_session.id.as_str()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE standing_deliveries SET state='pending',target=NULL,input_id=NULL WHERE responsibility=?1 AND EXISTS (SELECT 1 FROM procedure_activations a WHERE a.event_id=standing_deliveries.event_id AND a.procedure=standing_deliveries.procedure AND a.exact_home=standing_deliveries.exact_home AND a.state='pending')",[cx.responsibility]).map_err(state::sql(&path))?;
@@ -1353,9 +1370,15 @@ fn compose_opening(
             return Ok(content);
         }
         let item = &pending[offset];
-        let params = params![item.event, item.procedure, item.home, inputs::OVERSIZED];
-        tx.execute("UPDATE procedure_activations SET state='set_aside',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3", params).map_err(state::sql(&path))?;
-        tx.execute("UPDATE standing_deliveries SET state='set_aside',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3", params).map_err(state::sql(&path))?;
+        let params = params![
+            item.event,
+            item.procedure,
+            item.home,
+            inputs::OVERSIZED,
+            inputs::digest(&item.envelope)
+        ];
+        tx.execute("UPDATE procedure_activations SET state='set_aside',failure=?4,envelope=?5 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3", params).map_err(state::sql(&path))?;
+        tx.execute("UPDATE standing_deliveries SET state='set_aside',failure=?4,envelope=?5 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3", params).map_err(state::sql(&path))?;
         offset += 1;
     }
 }

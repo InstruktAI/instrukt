@@ -659,7 +659,7 @@ fn wake(
         if let Err(error) = crate::_attention::settle_approvals(state) {
             tracing::warn!(event="approval_settlement_failed",error=%error);
         }
-        if let Err(error) = standing::settle(state) {
+        if let Err(error) = standing::settle(state, now) {
             tracing::warn!(event="standing_settlement_failed",error=%error);
         }
     }

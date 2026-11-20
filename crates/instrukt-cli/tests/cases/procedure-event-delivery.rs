@@ -114,6 +114,25 @@ fn a_busy_runtime_accepts_one_message_and_combines_more_events_after_observed_co
     assert_eq!(r.runtime.message_count("s1"), 3);
     insta::assert_snapshot!("bounded-busy-log", r.conversation());
     r.runtime.hide_inputs("s1");
+    r.tick();
+    let out = r
+        .computer
+        .env
+        .run(r.computer.project.path(), ["events", "status", "--json"])
+        .success();
+    let gap: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        gap["input_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["state"] == "accepted"
+                && entry["failure"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("consumption unknown"))
+    );
+    assert_eq!(r.runtime.message_count("s1"), 3);
     r.append("after-unconfirmed");
     r.computer
         .env
@@ -139,6 +158,32 @@ fn a_busy_runtime_accepts_one_message_and_combines_more_events_after_observed_co
             .iter()
             .any(|entry| entry["state"] == "unconfirmed")
     );
+    // Recreate an interruption before the event disposition was settled.
+    let db = r.computer.db();
+    db.execute(
+        "UPDATE procedure_activations SET state='accepted' WHERE event_id IN ('third','fourth')",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE standing_deliveries SET state='pending_input' WHERE event_id IN ('third','fourth')",
+        [],
+    )
+    .unwrap();
+    let key = r.runtime.key("s1");
+    r.runtime.delete("s1");
+    r.replace_deleted(&key);
+    let opening = r.runtime.message("s2", 0);
+    assert!(!opening.contains("Entry: event:third:"), "{opening}");
+    assert!(!opening.contains("Entry: event:fourth:"), "{opening}");
+    let outcome: String = db
+        .query_row(
+            "SELECT state FROM procedure_activations WHERE event_id='third'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(outcome, "unconfirmed");
 }
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED2
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED4
@@ -675,19 +720,43 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     r.append("after-oversized");
     r.tick();
     assert_eq!(r.delivered_to("after-oversized").to_string(), "t3:s1");
-    let out = r
-        .computer
+    assert!(r.runtime.input_log("s1").contains("after-oversized"));
+    let db = r.computer.db();
+    for (table, payload) in [
+        ("runtime_inputs", "content"),
+        ("standing_deliveries", "envelope"),
+        ("procedure_activations", "envelope"),
+    ] {
+        let (count, smallest, largest): (u32, u32, u32) = db.query_row(
+            &format!("SELECT count(*),min(length({payload})),max(length({payload})) FROM {table} WHERE state='set_aside'"),
+            [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        ).unwrap();
+        assert!(count > 0);
+        assert_eq!((smallest, largest), (71, 71), "{table}");
+    }
+    for n in 0..12 {
+        db.execute("INSERT INTO runtime_inputs(runtime,session,input_id,intent,content,state,kind,arrived_at,failure)
+            VALUES('t3','test',?1,'asap','digest','set_aside','event','2026-11-05T00:00:00Z','too big')", [format!("retained-{n}")]).unwrap();
+    }
+    let status = || {
+        let out = r
+            .computer
+            .env
+            .run(r.computer.project.path(), ["events", "status", "--json"])
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+    };
+    let report = status();
+    assert_eq!(report["set_aside"]["count"], 14);
+    assert_eq!(report["set_aside"]["recent"].as_array().unwrap().len(), 10);
+    r.computer
         .env
-        .run(r.computer.project.path(), ["events", "status", "--json"])
+        .instrukt(r.computer.project.path())
+        .env("INSTRUKT_NOW", "2090-01-01T00:00:00Z")
+        .arg("tick")
+        .assert()
         .success();
-    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-    assert!(
-        status["input_findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["state"] == "set_aside")
-    );
+    assert_eq!(status()["set_aside"]["count"], 0);
 }
 fn append_oversized(r: &Responsibility) {
     let id = format!("oversized-{}", r.runtime.threads().len());
