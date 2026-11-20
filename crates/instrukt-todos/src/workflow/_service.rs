@@ -182,7 +182,7 @@ impl Workflow {
         };
         let facts = self.facts(&reading, &evidence)?;
         let derivation = self.evaluate(&reading, flow, &evidence, facts)?;
-        let index = GlobalIndex::load(&self.home)?;
+        let index = GlobalIndex::load_readable(&self.home)?;
         let responsible_role =
             derivation
                 .obligation
@@ -354,7 +354,7 @@ impl Workflow {
         }
         let config = Configuration::load(&self.home, Some(&project.root))?;
         let reading = self.reading(config, project.clone())?;
-        let index = GlobalIndex::load(&self.home)?;
+        let index = GlobalIndex::load_readable(&self.home)?;
         let Some((lane, derivation)) = self.lane(&reading, &evidence, index.as_ref())? else {
             return Ok(None);
         };
@@ -499,7 +499,7 @@ pub fn preparation_complete(
         },
     };
     let facts = facts_with(home, &reading, evidence, others)?;
-    let index = GlobalIndex::load(home)?;
+    let index = GlobalIndex::load_readable(home)?;
     let env = Env::default();
     Ok(lane_with(&env, &reading, evidence, facts, index.as_ref())?
         .map(|(lane, _, _)| lane != Lane::Prepare))

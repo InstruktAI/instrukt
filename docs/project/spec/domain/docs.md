@@ -13,8 +13,10 @@ snippet valid (the root rules in the binary and a position's `schema.yaml`),
 how pending material sits beside the current contract, and how an agent
 discovers and reads snippets. It answers `instrukt docs validate`, `instrukt
 docs index`, `instrukt docs get` and `instrukt docs schema`. Discovery reads the
-generated global index in the home's state (`~/.instrukt/state/`); published
-bodies, including project snippets, are read from the home. Project ids
+generated global index in the home's state (`~/.instrukt/state/`). Discovery
+and reading name and skip individual entries they cannot decode, and refuse
+an unreadable index document. Published bodies, including project snippets,
+are read from the home. Project ids
 resolve under `~/.instrukt/docs/project/<slug>/…`; source checkout paths name
 where to author, never a working-tree read fallback. Validation
 and `docs schema` read the invoking repository's working tree. Docs never

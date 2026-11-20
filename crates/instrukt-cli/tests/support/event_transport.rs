@@ -102,6 +102,16 @@ impl Computer {
             .unwrap()
     }
 
+    /// What `instrukt events status` shows of the retained consumers.
+    pub fn consumers_status(&self) -> serde_json::Value {
+        let shown = self
+            .env
+            .run(&self.env.path(""), ["events", "status", "--json"])
+            .success();
+        let status: serde_json::Value = serde_json::from_slice(&shown.get_output().stdout).unwrap();
+        status["consumers"].clone()
+    }
+
     pub fn group(&self) -> String {
         format!("consumer-procedure-activation-{}", self.computer())
     }

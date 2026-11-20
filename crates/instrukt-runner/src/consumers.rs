@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -128,8 +128,18 @@ pub enum SettledOutcome {
     Parked {
         destination: String,
         entry_id: String,
+        /// Whether `instrukt.system.event.dead_lettered` was announced. A
+        /// failed announcement is counted in status and never holds the
+        /// entries after it; a settlement recorded before this was kept was
+        /// announced.
+        #[serde(default = "announced")]
+        announced: bool,
     },
     PayloadLost,
+}
+
+fn announced() -> bool {
+    true
 }
 
 /// One registration set for a runner invocation. Every source has its own reader;
@@ -191,7 +201,7 @@ impl ConsumerRuntime {
                         retiring: false,
                     },
                 );
-                if let Err(error) = reader.prepare() {
+                if let Err(error) = reader.prepare_bound() {
                     ready = false;
                     tracing::warn!(event = "consumer_prepare_failed", consumer = %consumer.name, error = %error);
                 }
@@ -203,12 +213,15 @@ impl ConsumerRuntime {
     /// One bounded pending-first opportunity for every independent reader.
     pub fn drain(&self, now: Timestamp) {
         std::thread::scope(|threads| {
+            let (send, receive) = std::sync::mpsc::sync_channel(_parking::ANNOUNCEMENT_QUEUE);
+            threads.spawn(move || _parking::announce(self, receive));
             for ((consumer, gate), sources) in
                 self.consumers.iter().zip(&self.gates).zip(&self.sources)
             {
                 for source in sources {
-                    let reader = _reader::Reader::new(self, consumer, gate, source.clone());
-                    threads.spawn(move || { if let Err(error) = reader.drain(now, TICK_ENTRY_BUDGET) { tracing::warn!(event = "consumer_drain_failed", consumer = %consumer.name, error = %error); } });
+                    let source = source.clone();
+                    let send = send.clone();
+                    threads.spawn(move || { let mut reader = _reader::Reader::new(self, consumer, gate, source); reader.announcements = Some(&send); if let Err(error) = reader.drain(now, TICK_ENTRY_BUDGET) { tracing::warn!(event = "consumer_drain_failed", consumer = %consumer.name, error = %error); } });
                 }
             }
         });
@@ -227,7 +240,15 @@ impl ConsumerRuntime {
         let mut workers = ConsumerWorkers {
             stop,
             threads: Vec::new(),
+            announcement: None,
         };
+        let (send, receive) = std::sync::mpsc::sync_channel(_parking::ANNOUNCEMENT_QUEUE);
+        let runtime = self.clone();
+        workers.announcement = Some(
+            std::thread::Builder::new()
+                .name("dead-letter-announcements".into())
+                .spawn(move || _parking::announce(&runtime, receive))?,
+        );
         for ((consumer, gate), sources) in self.consumers.iter().zip(&self.gates).zip(&self.sources)
         {
             for source in sources {
@@ -237,8 +258,10 @@ impl ConsumerRuntime {
                 let gate = Arc::clone(gate);
                 let stop = Arc::clone(&workers.stop);
                 let clock = Arc::clone(&clock);
+                let send = send.clone();
                 let thread = std::thread::Builder::new().name(format!("event-{}", consumer.name)).spawn(move || {
-                    let reader = _reader::Reader::new(&runtime, &consumer, &gate, source);
+                    let mut reader = _reader::Reader::new(&runtime, &consumer, &gate, source);
+                    reader.announcements = Some(&send);
                     while !stop.requested.load(Ordering::Acquire) {
                         match reader.drain(clock(), TICK_ENTRY_BUDGET) {
                             Ok(_reader::DrainState::BudgetUsed) => continue,
@@ -268,18 +291,143 @@ struct Stop {
 pub struct ConsumerWorkers {
     stop: Arc<Stop>,
     threads: Vec<JoinHandle<()>>,
+    announcement: Option<JoinHandle<()>>,
+}
+
+impl ConsumerWorkers {
+    fn request_stop(&self) {
+        let _guard = self
+            .stop
+            .mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.stop.requested.store(true, Ordering::Release);
+        self.stop.wake.notify_all();
+    }
+
+    /// Signal once and wait only through the same deadline as source binding.
+    /// The caller keeps ownership of unfinished threads for the next wake.
+    pub(crate) fn stop_for_handover(&self) -> bool {
+        self.request_stop();
+        let deadline = Instant::now() + _sources::HANDOVER_WAIT;
+        loop {
+            if self
+                .threads
+                .iter()
+                .chain(&self.announcement)
+                .all(JoinHandle::is_finished)
+            {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(20)));
+        }
+    }
 }
 
 impl Drop for ConsumerWorkers {
     fn drop(&mut self) {
-        self.stop.requested.store(true, Ordering::Release);
-        self.stop.wake.notify_all();
+        self.request_stop();
         for thread in self.threads.drain(..) {
             if thread.join().is_err() {
                 tracing::error!(event = "consumer_reader_panicked");
             }
         }
+        if self
+            .announcement
+            .take()
+            .is_some_and(|worker| worker.join().is_err())
+        {
+            tracing::error!(event = "dead_letter_announcement_worker_panicked");
+        }
     }
+}
+
+const TRANSITION_PREFIX: &str = "consumer-source-transition:";
+const CONSUMER_TRANSITION_PREFIX: &str = "consumer-source-transition:consumer:";
+pub(crate) const RUNNER_TRANSITION: &str = "consumer-source-transition:runner";
+
+/// What `instrukt events status` shows of the retained consumers: the
+/// published subscriptions the activation matcher drops, each named with why
+/// (or why the index cannot be read); how many events settled with no
+/// activation; how many dead letters could not be announced; and each source
+/// abandoned when it left the configuration, whose pending events stay unread
+/// in that Redis.
+pub(crate) fn status(
+    home: &instrukt_core::home::Home,
+    state: &RunnerState,
+) -> Result<Value, crate::state::StateError> {
+    let subscriptions = match _activation::subscriptions(home) {
+        Ok(subscriptions) => serde_json::json!({"dropped": subscriptions.dropped}),
+        Err(error) => serde_json::json!({"error": error.to_string()}),
+    };
+    let count = |sql: &str| -> Result<u64, crate::state::StateError> {
+        Ok(state
+            .read(|conn, path| {
+                conn.query_row(sql, [_activation::ACTIVATION_CONSUMER], |row| row.get(0))
+                    .map_err(crate::state::sql(path))
+            })?
+            .unwrap_or(0))
+    };
+    let settled_without_activation = count(
+        "SELECT count(*) FROM consumer_outcomes WHERE consumer = ?1 AND json_extract(outcome, '$.accepted.activations') = 0",
+    )?;
+    let unannounced = state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT count(*) FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announced') = 0",
+                [],
+                |row| row.get::<_, u64>(0),
+            )
+            .map_err(crate::state::sql(path))
+        })?
+        .unwrap_or(0);
+    let abandoned_announcements = state.read(|conn, path| {
+        conn.query_row(
+            "SELECT count(*) FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announcement_abandoned') = 1",
+            [], |row| row.get::<_, u64>(0),
+        ).map_err(crate::state::sql(path))
+    })?.unwrap_or(0);
+    let transitions = state.read(|conn, path| {
+        let mut statement = conn.prepare(
+            "SELECT worker, failure, since FROM runner_workers WHERE worker LIKE ?1 ORDER BY worker",
+        ).map_err(crate::state::sql(path))?;
+        let rows = statement.query_map([format!("{TRANSITION_PREFIX}%")], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }).map_err(crate::state::sql(path))?;
+        let now = Timestamp::now();
+        rows.map(|row| {
+            let (worker, cause, since) = row.map_err(crate::state::sql(path))?;
+            let started: Timestamp = since.parse().map_err(|error| crate::state::invalid(path, error))?;
+            Ok(serde_json::json!({
+                "transition": worker.strip_prefix(TRANSITION_PREFIX).unwrap_or(&worker),
+                "cause": cause,
+                "since": since,
+                "age_seconds": now.duration_since(started).as_secs().max(0),
+            }))
+        }).collect::<Result<Vec<_>, crate::state::StateError>>()
+    })?.unwrap_or_default();
+    let abandoned = _sources::abandoned(state)?
+        .into_iter()
+        .map(|(consumer, source)| {
+            serde_json::json!({
+                "consumer": consumer,
+                "source": source,
+                "pending": "its pending events stay unread in that Redis until it is configured again",
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "subscriptions": subscriptions,
+        "settled_without_activation": settled_without_activation,
+        "unannounced_dead_letters": unannounced,
+        "abandoned_sources": abandoned,
+        "abandoned_announcements": abandoned_announcements,
+        "pending_source_transitions": transitions,
+    }))
 }
 
 /// Prepare the runner's retained readers before installation admits producers.
@@ -306,4 +454,21 @@ pub(crate) fn prepare_installation(
         "retained reader preparation failed; restore Redis and rerun instrukt install"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dead_letter_settled_before_its_announcement_was_kept_reads_as_announced() {
+        let stored = r#"{"parked":{"destination":"instrukt:events:dlq","entry_id":"1-0"}}"#;
+        assert!(matches!(
+            serde_json::from_str::<SettledOutcome>(stored).unwrap(),
+            SettledOutcome::Parked {
+                announced: true,
+                ..
+            }
+        ));
+    }
 }

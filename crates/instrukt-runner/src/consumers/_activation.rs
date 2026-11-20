@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use instrukt_core::config::{Configuration, Module};
 use instrukt_core::home::Home;
-use instrukt_core::index::{GlobalIndex, IndexEntry, IndexScope};
+use instrukt_core::index::{DroppedEntry, GlobalIndex, IndexEntries, IndexEntry, IndexScope};
 use instrukt_core::publication::PublishedRecord;
 use instrukt_core::state_db::rusqlite::params;
 use instrukt_core::subscription::SubscriptionHome;
@@ -24,10 +24,19 @@ fn failure(error: &dyn std::fmt::Display) -> ReactionError {
     }
 }
 
+/// The published subscriptions, read entry by entry: each active one with its
+/// patterns, and each entry that was dropped, named with why.
+pub(crate) struct Subscriptions {
+    pub selected: Vec<(IndexEntry, Vec<TypePattern>)>,
+    pub dropped: Vec<DroppedEntry>,
+}
+
 /// Reload per event rather than retaining a cache: an unreadable generation can
-/// never leave a stale set in memory. Validate the whole active set before matching.
-fn subscriptions(home: &Home) -> Result<Vec<(IndexEntry, Vec<TypePattern>)>, ReactionError> {
-    let index = GlobalIndex::load(home).map_err(|error| {
+/// never leave a stale set in memory. An entry that cannot be decoded, or that
+/// is no valid subscription, is dropped and named; every other one stays
+/// active. An index that cannot be read as a whole is a failure, never empty.
+pub(crate) fn subscriptions(home: &Home) -> Result<Subscriptions, ReactionError> {
+    let index = GlobalIndex::load_entries(home).map_err(|error| {
         tracing::warn!(event = "subscriptions_cleared", error = %error, "publication index unreadable; active subscriptions cleared");
         failure(&error)
     })?;
@@ -37,7 +46,7 @@ fn subscriptions(home: &Home) -> Result<Vec<(IndexEntry, Vec<TypePattern>)>, Rea
             .map_err(|error| failure(&error))?
             .is_empty() =>
         {
-            GlobalIndex::default()
+            IndexEntries::default()
         }
         None => {
             tracing::warn!(
@@ -49,35 +58,53 @@ fn subscriptions(home: &Home) -> Result<Vec<(IndexEntry, Vec<TypePattern>)>, Rea
             ));
         }
     };
+    let mut dropped = index.dropped;
     let mut selected = Vec::new();
     for entry in index
-        .snippets
+        .entries
         .into_iter()
         .filter(|entry| !entry.subscriptions.is_empty() && entry.delivered_by.is_empty())
     {
-        if entry.taxonomy != "procedure"
-            || entry
-                .role
-                .as_deref()
-                .is_none_or(|role| role.trim().is_empty())
-            || entry.activation_trigger.is_some()
-            || entry.subscription_home.is_none()
-            || (entry.scope == IndexScope::Local
-                && entry.subscription_home != Some(SubscriptionHome::Project))
+        let invalid = if entry.taxonomy != "procedure" {
+            Some("only a procedure may declare subscriptions".to_owned())
+        } else if entry
+            .role
+            .as_deref()
+            .is_none_or(|role| role.trim().is_empty())
         {
-            tracing::warn!(event = "subscriptions_cleared", procedure = %entry.id, "invalid subscription index; active subscriptions cleared");
-            return Err(failure(&format!(
-                "invalid published subscription {}",
-                entry.id
-            )));
+            Some("a subscribing procedure must declare a role".to_owned())
+        } else if entry.activation_trigger.is_some() {
+            Some("a subscribing procedure must not declare an activation trigger".to_owned())
+        } else if entry.subscription_home.is_none() {
+            Some("a subscribing procedure must declare its subscription home".to_owned())
+        } else if entry.scope == IndexScope::Local
+            && entry.subscription_home != Some(SubscriptionHome::Project)
+        {
+            Some("a project's own procedure must subscribe in its project".to_owned())
+        } else {
+            None
+        };
+        let patterns = match invalid {
+            Some(reason) => Err(reason),
+            None => entry
+                .subscriptions
+                .iter()
+                .map(|text| TypePattern::parse(text))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string()),
+        };
+        match patterns {
+            Ok(patterns) => selected.push((entry, patterns)),
+            Err(reason) => dropped.push(DroppedEntry {
+                id: Some(entry.id.to_string()),
+                reason,
+            }),
         }
-        let patterns = entry.subscriptions.iter().map(|text| TypePattern::parse(text)).collect::<Result<Vec<_>, _>>().map_err(|error| {
-            tracing::warn!(event = "subscriptions_cleared", error = %error, "invalid subscription index; active subscriptions cleared");
-            failure(&error)
-        })?;
-        selected.push((entry, patterns));
     }
-    Ok(selected)
+    for entry in &dropped {
+        tracing::warn!(event = "subscription_dropped", procedure = ?entry.id, reason = %entry.reason);
+    }
+    Ok(Subscriptions { selected, dropped })
 }
 
 fn exact_home(entry: &IndexEntry, origin: &EventHome) -> Option<String> {
@@ -117,7 +144,7 @@ pub(crate) fn consumer(
             if event.home == EventHome::Unknown {
                 return Ok(json!({"activations": 0}));
             }
-            let subscriptions = subscriptions(&home)?;
+            let subscriptions = subscriptions(&home)?.selected;
             let root = if let EventHome::Project(project) = &event.home {
                 PublishedRecord::load(&home, project)
                     .map_err(|error| failure(&error))?

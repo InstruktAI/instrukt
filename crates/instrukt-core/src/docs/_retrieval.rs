@@ -26,7 +26,7 @@ use crate::config::Configuration;
 use crate::git;
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug, SnippetId, TodoSlug};
-use crate::index::{GlobalIndex, IndexEntry, IndexScope, ThirdPartyEntry};
+use crate::index::{DroppedEntry, GlobalIndex, IndexEntry, IndexScope, ThirdPartyEntry};
 use crate::publication::{PublishedRecord, position_owners};
 
 /// What `docs index` lists. Every filter only narrows; an empty list is no
@@ -215,6 +215,27 @@ fn target_index(
     Ok(())
 }
 
+fn readable_index(home: &Home) -> Result<(Option<GlobalIndex>, Vec<DroppedEntry>), DocsError> {
+    let Some(mut entries) = GlobalIndex::load_entries(home)? else {
+        return Ok((None, Vec::new()));
+    };
+    let dropped = std::mem::take(&mut entries.dropped);
+    Ok((Some(entries.into_index()), dropped))
+}
+
+fn entry_warnings(entries: &[DroppedEntry]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "# WARNING: dropped published entry {}: {}",
+                entry.label(),
+                entry.reason
+            )
+        })
+        .collect()
+}
+
 const AREAS: &str = "principle|concept|policy|procedure|design|spec|adr";
 
 /// The `docs index` listing.
@@ -222,9 +243,8 @@ pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
     let started = Instant::now();
     let caller = Caller::of(req.cwd)?;
     let target = target_workspace(req.home, &caller, req.target)?;
-    let Some(mut index) =
-        GlobalIndex::load(req.home)?.or_else(|| target.as_ref().map(|_| GlobalIndex::default()))
-    else {
+    let (index, dropped) = readable_index(req.home)?;
+    let Some(mut index) = index.or_else(|| target.as_ref().map(|_| GlobalIndex::default())) else {
         return Ok(nothing_published());
     };
 
@@ -244,6 +264,7 @@ pub fn index(req: &IndexRequest<'_>) -> Result<String, DocsError> {
                 .join("|")
         ),
     ];
+    out.extend(entry_warnings(&dropped));
     if let Some(target) = &target {
         let root = &target.root;
         out.push(format!(
@@ -455,9 +476,8 @@ pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
     let started = Instant::now();
     let caller = Caller::of(req.cwd)?;
     let target = target_workspace(req.home, &caller, req.target)?;
-    let Some(mut index) =
-        GlobalIndex::load(req.home)?.or_else(|| target.as_ref().map(|_| GlobalIndex::default()))
-    else {
+    let (index, dropped) = readable_index(req.home)?;
+    let Some(mut index) = index.or_else(|| target.as_ref().map(|_| GlobalIndex::default())) else {
         return Err(DocsError::UnknownIds {
             ids: req.ids.to_vec(),
             nothing_published: true,
@@ -477,6 +497,20 @@ pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
             unknown.push(id.to_owned());
         }
     }
+    let mut broken = Vec::new();
+    unknown.retain(|id| {
+        let Some(entry) = dropped.iter().find(|entry| entry.id.as_ref() == Some(id)) else {
+            return true;
+        };
+        broken.push(format!("{id}: {}", entry.reason));
+        false
+    });
+    if !broken.is_empty() {
+        return Err(DocsError::PublishedEntriesUnreadable {
+            reasons: broken.join("; "),
+            unknown,
+        });
+    }
     if !unknown.is_empty() {
         return Err(DocsError::UnknownIds {
             ids: unknown,
@@ -495,11 +529,14 @@ pub fn get(req: &GetRequest<'_>) -> Result<Reading, DocsError> {
         target: target.as_ref(),
     };
     let warning = behind_warning(req.home, &caller)?;
-    let reading = if req.closure {
+    let mut reading = if req.closure {
         closure(&reader, req, &requested, &third_party, warning)?
     } else {
         plain(&reader, req, &requested, &third_party, warning)?
     };
+    if !dropped.is_empty() {
+        reading.text = format!("{}\n{}", entry_warnings(&dropped).join("\n"), reading.text);
+    }
     tracing::debug!(
         event = "docs_get_completed",
         requested = req.ids.len(),
@@ -651,7 +688,8 @@ fn closure<'i>(
 pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
     let started = Instant::now();
     let caller = Caller::of(req.cwd)?;
-    let index = GlobalIndex::load(req.home)?.unwrap_or_default();
+    let (index, dropped) = readable_index(req.home)?;
+    let index = index.unwrap_or_default();
     let owners = position_owners(req.home)?;
     let valid = valid_domains(&index, &owners);
     // One name given, so a successful resolution holds exactly one domain.
@@ -673,6 +711,7 @@ pub fn get_domain(req: &DomainRequest<'_>) -> Result<Reading, DocsError> {
         target: None,
     };
     let mut out = vec![format!("# instrukt docs get --domain {domain}")];
+    out.extend(entry_warnings(&dropped));
     let Some(selection) = reader.domain_index(&domain)? else {
         out.push(format!(
             "# The domain `{domain}` has no {INDEX_FILE}: list its snippets with \

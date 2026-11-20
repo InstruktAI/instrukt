@@ -226,7 +226,8 @@ fn validate(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     if args.global
         && let Ok(agents) = config::Agents::load(&ctx.home)
     {
-        let index = instrukt_core::index::GlobalIndex::load(&ctx.home)?.unwrap_or_default();
+        let index =
+            instrukt_core::index::GlobalIndex::load_readable(&ctx.home)?.unwrap_or_default();
         let installed: Vec<&str> = index
             .snippets
             .iter()

@@ -360,6 +360,24 @@ stage recovery retain enough identity to recognize completed stages after a
 crash; no later event settles past unfinished parking. Raw malformed entries
 remain diagnosable at the transport boundary.
 
+**`consumer_outcomes`** — a parked outcome can carry an open announcement
+intent with the destination Redis identity, deterministic receipt key and
+complete encoded announcement. The worker records the intent before sending.
+A partial SQLite index covers only open intents, with a limit of 1,024
+on the computer. At the limit, the newly parked outcome remains unannounced
+and no append is attempted. Recovery takes up to 32 entries per sweep, in
+oldest-settled order. The runner keeps the last position in
+`state/announcement-recovery-cursor` across scheduled ticks and wraps
+after the final page. Recording a confirmed append retires the intent before
+the worker tries to delete its Redis receipt. Receipt deletion is best effort.
+The receipt expires seven days after the append or the most recent retry that
+finds it. A destination that is no longer configured retires the intent as
+abandoned and keeps that fact on the outcome for status.
+
+**`runner_workers`** — current worker failures and deferred consumer source
+transitions. Each deferred transition retains its first reported time across
+retries. Completing the transition removes the row.
+
 Redis itself owns stream payloads, group pending entries, transport progress,
 source-scoped ingress claims and dead letters. These are not alternate work
 records or database tables. Redis and SQLite have no shared transaction.

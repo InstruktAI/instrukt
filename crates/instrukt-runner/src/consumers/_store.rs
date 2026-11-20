@@ -185,3 +185,94 @@ pub(super) fn finish_parking(state: &RunnerState, s: &Settlement<'_>) -> Result<
         Ok(())
     })
 }
+
+pub(super) const ANNOUNCEMENT_BATCH: usize = 32;
+const OPEN_ANNOUNCEMENT_LIMIT: u32 = 1024;
+
+pub(super) struct AnnouncementIntent {
+    pub rowid: i64,
+    pub consumer: String,
+    pub coordinate: TransportCoordinate,
+    pub source: String,
+    pub receipt: String,
+    pub confirmed: bool,
+    // Earlier outcomes recorded a receipt without a replayable payload.
+    pub payload: Option<String>,
+}
+
+pub(super) fn record_announcement_intent(
+    state: &RunnerState,
+    consumer: &str,
+    coordinate: &TransportCoordinate,
+    source: &str,
+    receipt: &str,
+    payload: &str,
+) -> Result<bool, StateError> {
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        let open: u32 = tx.query_row(
+            "SELECT count(*) FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL AND json_extract(outcome, '$.parked.announced') = 0",
+            [], |row| row.get(0),
+        ).map_err(state::sql(&path))?;
+        if open >= OPEN_ANNOUNCEMENT_LIMIT {
+            return Ok(false);
+        }
+        let changed = tx.execute(
+            "UPDATE consumer_outcomes SET outcome = json_set(outcome, '$.parked.announcement_source', ?5, '$.parked.announcement_receipt', ?6, '$.parked.announcement_payload', ?7) WHERE consumer = ?1 AND source = ?2 AND stream = ?3 AND entry_id = ?4 AND json_extract(outcome, '$.parked.announced') = 0",
+            params![consumer, coordinate.source, coordinate.stream, coordinate.entry_id, source, receipt, payload],
+        ).map_err(state::sql(&path))?;
+        if changed != 1 {
+            return Err(state::invalid(&path, "no unannounced parking outcome for announcement intent"));
+        }
+        Ok(true)
+    })
+}
+
+pub(super) fn announcement_intents(
+    state: &RunnerState,
+    after: i64,
+) -> Result<Vec<AnnouncementIntent>, StateError> {
+    Ok(state.read(|conn, path| {
+        let mut statement = conn.prepare(
+            "SELECT rowid, consumer, source, stream, entry_id, json_extract(outcome, '$.parked.announcement_source'), json_extract(outcome, '$.parked.announcement_receipt'), json_extract(outcome, '$.parked.announcement_payload'), json_extract(outcome, '$.parked.announced') FROM consumer_outcomes WHERE rowid > ?1 AND json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL ORDER BY rowid LIMIT ?2",
+        ).map_err(state::sql(path))?;
+        let rows = statement.query_map(params![after, ANNOUNCEMENT_BATCH], |row| Ok(AnnouncementIntent {
+            rowid: row.get(0)?,
+            consumer: row.get(1)?,
+            coordinate: TransportCoordinate { source: row.get(2)?, stream: row.get(3)?, entry_id: row.get(4)? },
+            source: row.get(5)?,
+            receipt: row.get(6)?,
+            payload: row.get(7)?,
+            confirmed: row.get(8)?,
+        })).map_err(state::sql(path))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(state::sql(path))
+    })?.unwrap_or_default())
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum AnnouncementResult {
+    Published,
+    Abandoned,
+    MissingLegacyPayload,
+}
+
+pub(super) fn finish_announcement(
+    state: &RunnerState,
+    consumer: &str,
+    coordinate: &TransportCoordinate,
+    result: AnnouncementResult,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        let outcome = match result {
+            AnnouncementResult::Published => "json_set(outcome, '$.parked.announced', json('true'))",
+            AnnouncementResult::Abandoned => "json_set(outcome, '$.parked.announcement_abandoned', json('true'))",
+            AnnouncementResult::MissingLegacyPayload => "outcome",
+        };
+        tx.execute(
+            &format!("UPDATE consumer_outcomes SET outcome = json_remove({outcome}, '$.parked.announcement_source', '$.parked.announcement_receipt', '$.parked.announcement_payload') WHERE consumer = ?1 AND source = ?2 AND stream = ?3 AND entry_id = ?4"),
+            params![consumer, coordinate.source, coordinate.stream, coordinate.entry_id],
+        ).map_err(state::sql(&path))?;
+        Ok(())
+    })
+}

@@ -158,27 +158,82 @@ impl GlobalIndex {
         Self::load_from(&home.index_file())
     }
 
-    fn load_from(path: &Path) -> Result<Option<Self>, IndexError> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => {
-                return Err(IndexError::Read {
-                    path: path.to_path_buf(),
-                    source,
-                });
+    /// The home's snippet entries, each decoded on its own: an entry this
+    /// version cannot decode is dropped and named, and every other entry is
+    /// kept. `None` when nothing has been published yet; an index that cannot
+    /// be read as a whole is an error, never taken as empty.
+    pub fn load_entries(home: &Home) -> Result<Option<IndexEntries>, IndexError> {
+        let path = home.index_file();
+        let Some(text) = read_text(&path)? else {
+            return Ok(None);
+        };
+        Self::entries(&path, &text).map(Some)
+    }
+
+    /// Read available entries and log the ones this version cannot decode.
+    /// Publication uses the strict loader before rewriting the index.
+    pub fn load_readable(home: &Home) -> Result<Option<Self>, IndexError> {
+        Ok(Self::load_entries(home)?.map(|entries| {
+            for dropped in &entries.dropped {
+                tracing::warn!(event = "published_index_entry_dropped", entry = dropped.label(), reason = %dropped.reason);
             }
+            entries.into_index()
+        }))
+    }
+
+    fn entries(path: &Path, text: &str) -> Result<IndexEntries, IndexError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Document {
+            schema_version: u64,
+            snippets: Vec<serde_yaml_ng::Value>,
+            #[serde(default)]
+            third_party: Vec<serde_yaml_ng::Value>,
+        }
+
+        let document: Document =
+            serde_yaml_ng::from_value(Self::prepared(path, text)?).map_err(|source| {
+                IndexError::Parse {
+                    path: path.into(),
+                    source,
+                }
+            })?;
+        let mut out = IndexEntries::default();
+        out.entries = decode_entries(document.snippets, &mut out.dropped);
+        out.third_party = decode_entries(document.third_party, &mut out.dropped);
+        if document.schema_version == 1 {
+            upcast_paths(&mut out.entries);
+        }
+        Ok(out)
+    }
+
+    fn load_from(path: &Path) -> Result<Option<Self>, IndexError> {
+        let Some(text) = read_text(path)? else {
+            return Ok(None);
         };
         Self::parse(path, &text).map(Some)
     }
 
-    fn parse(path: &Path, text: &str) -> Result<Self, IndexError> {
+    /// The index document as this version reads it: an index without a
+    /// schema version read as version 1, a newer one refused.
+    fn prepared(path: &Path, text: &str) -> Result<serde_yaml_ng::Value, IndexError> {
         let map: serde_yaml_ng::Mapping =
             serde_yaml_ng::from_str(text).map_err(|source| IndexError::Parse {
                 path: path.into(),
                 source,
             })?;
         let mut value = serde_yaml_ng::Value::Mapping(map);
+        if value
+            .get("snippets")
+            .is_some_and(|entries| !entries.is_sequence())
+        {
+            return Err(IndexError::Parse {
+                path: path.into(),
+                source: <serde_yaml_ng::Error as serde::de::Error>::custom(
+                    "snippets must be a YAML sequence",
+                ),
+            });
+        }
         let old = value.get("schema_version").is_none();
         if old {
             value["schema_version"] = 1.into();
@@ -203,6 +258,11 @@ impl GlobalIndex {
                 found,
             });
         }
+        Ok(value)
+    }
+
+    fn parse(path: &Path, text: &str) -> Result<Self, IndexError> {
+        let value = Self::prepared(path, text)?;
         let mut index: Self =
             serde_yaml_ng::from_value(value).map_err(|source| IndexError::Parse {
                 path: path.into(),
@@ -211,14 +271,88 @@ impl GlobalIndex {
         // Upcast old checkout locations without reading them. Publication
         // persists the current shape under its existing owner lock.
         if index.schema_version == 1 {
-            for entry in &mut index.snippets {
-                if entry.scope == IndexScope::Local {
-                    entry.path = PathBuf::from(format!("{}.md", entry.id.as_str()));
-                }
-            }
+            upcast_paths(&mut index.snippets);
             index.schema_version = 2;
         }
         Ok(index)
+    }
+}
+
+fn upcast_paths(entries: &mut [IndexEntry]) {
+    for entry in entries
+        .iter_mut()
+        .filter(|entry| entry.scope == IndexScope::Local)
+    {
+        entry.path = PathBuf::from(format!("{}.md", entry.id.as_str()));
+    }
+}
+
+fn decode_entries<T: serde::de::DeserializeOwned>(
+    values: Vec<serde_yaml_ng::Value>,
+    dropped: &mut Vec<DroppedEntry>,
+) -> Vec<T> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let id = value
+                .get("id")
+                .and_then(serde_yaml_ng::Value::as_str)
+                .map(str::to_owned);
+            match serde_yaml_ng::from_value(value) {
+                Ok(entry) => Some(entry),
+                Err(error) => {
+                    dropped.push(DroppedEntry {
+                        id,
+                        reason: error.to_string(),
+                    });
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+/// The index's text; `None` when it does not exist.
+fn read_text(path: &Path) -> Result<Option<String>, IndexError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(IndexError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// The snippet entries of the index, each decoded on its own.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct IndexEntries {
+    pub entries: Vec<IndexEntry>,
+    third_party: Vec<ThirdPartyEntry>,
+    /// The entries this version could not decode.
+    pub dropped: Vec<DroppedEntry>,
+}
+
+impl IndexEntries {
+    pub fn into_index(self) -> GlobalIndex {
+        GlobalIndex {
+            schema_version: 2,
+            snippets: self.entries,
+            third_party: self.third_party,
+        }
+    }
+}
+
+/// An index entry that was dropped: its id when it has one, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DroppedEntry {
+    pub id: Option<String>,
+    pub reason: String,
+}
+
+impl DroppedEntry {
+    pub fn label(&self) -> &str {
+        self.id.as_deref().unwrap_or("<missing id>")
     }
 }
 
@@ -310,6 +444,41 @@ mod tests {
             index.procedures_declaring(&RoleName::parse("nobody").unwrap()),
             []
         );
+    }
+
+    #[test]
+    fn an_entry_this_version_cannot_decode_is_dropped_and_named_beside_the_others() {
+        let text = format!(
+            "schema_version: 2\nsnippets:\n{}- id: acme/procedure/broken\n  type: procedure\n- 7\n",
+            procedure("acme/procedure/kept", "global", "acme", "helper", None)
+        );
+        let entries = GlobalIndex::entries(Path::new("index.yaml"), &text).unwrap();
+        assert_eq!(
+            entries
+                .entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            ["acme/procedure/kept"]
+        );
+        insta::assert_debug_snapshot!(entries.dropped, @r#"
+        [
+            DroppedEntry {
+                id: Some(
+                    "acme/procedure/broken",
+                ),
+                reason: "missing field `description`",
+            },
+            DroppedEntry {
+                id: None,
+                reason: "invalid type: integer `7`, expected struct IndexEntry",
+            },
+        ]
+        "#);
+        assert!(matches!(
+            GlobalIndex::entries(Path::new("index.yaml"), "schema_version: 2\nsnippets: 7\n"),
+            Err(IndexError::Parse { .. })
+        ));
     }
 
     #[test]
