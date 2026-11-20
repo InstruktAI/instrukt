@@ -806,7 +806,19 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     r.runtime.flag("list-failure", false);
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 1);
+    let assert_event_ids = |message: &str, expected: std::ops::Range<u32>| {
+        let ids = message
+            .lines()
+            .filter_map(|line| line.strip_prefix("Entry: event:"))
+            .map(|entry| entry.split_once(':').unwrap().0)
+            .collect::<Vec<_>>();
+        let expected = expected
+            .map(|i| format!("event-{i:02}"))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, expected, "native delivery event IDs");
+    };
     let first = r.runtime.message("s1", 0);
+    assert_event_ids(&first, 0..32);
     assert!(first.len() <= 64 * 1024);
     // Snapshot the readable ending from the CLI's full conversation response.
     let out = r.conversation();
@@ -824,7 +836,9 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     );
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
-    assert!(r.runtime.message("s1", 1).len() <= 64 * 1024);
+    let remainder = r.runtime.message("s1", 1);
+    assert_event_ids(&remainder, 32..40);
+    assert!(remainder.len() <= 64 * 1024);
     r.runtime.consume("s1");
     append_oversized(&r);
     r.append("after-oversized");
