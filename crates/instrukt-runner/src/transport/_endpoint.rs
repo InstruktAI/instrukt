@@ -159,7 +159,28 @@ impl Endpoint {
         {
             self.record_reachability(result.is_ok());
         }
-        result.map_err(|error| TransportError::Redis {
+        result.map_err(|error| self.redis_error(error))
+    }
+
+    /// One worker owns this short-lived connection. It never borrows a
+    /// reader's slot, even when local and cluster share this endpoint.
+    pub fn run_best_effort<T>(
+        &self,
+        timeout: Duration,
+        operation: impl FnOnce(&mut redis::Connection) -> redis::RedisResult<T>,
+    ) -> Result<T, TransportError> {
+        let timeout = timeout.min(self.timeout);
+        let result = (|| {
+            let mut conn = self.client.get_connection_with_timeout(timeout)?;
+            conn.set_read_timeout(Some(timeout))?;
+            conn.set_write_timeout(Some(timeout))?;
+            operation(&mut conn)
+        })();
+        result.map_err(|error| self.redis_error(error))
+    }
+
+    fn redis_error(&self, error: redis::RedisError) -> TransportError {
+        TransportError::Redis {
             source_id: self.identity.clone(),
             kind: format!(
                 "{}{}",
@@ -168,7 +189,7 @@ impl Endpoint {
                     .code()
                     .map_or(String::new(), |code| format!("/{code}"))
             ),
-        })
+        }
     }
 
     fn connect(&self) -> redis::RedisResult<redis::Connection> {
@@ -195,5 +216,71 @@ impl Endpoint {
         if let Err(error) = result {
             tracing::warn!(event = "redis_reachability_not_recorded", error = %error);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Duration, Endpoint, RedisEndpoint, RunnerState};
+    use instrukt_core::home::Home;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    #[test]
+    fn an_in_flight_announcement_leaves_the_only_reader_slot_available() {
+        // Disable Redis handshake commands. The listener keeps both TCP
+        // connections open while the closures signal when they get a slot.
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let url = format!("redis://{}/", listener.local_addr().unwrap());
+        let state = RunnerState::new(&Home::at_user_home(std::path::PathBuf::from("/dev/null")));
+        let mut endpoint = Endpoint::new(
+            &RedisEndpoint {
+                url,
+                username: None,
+                password: None,
+                max_connections: 1,
+                socket_timeout: 5,
+            },
+            "cluster",
+            &state,
+        )
+        .unwrap();
+        let info = endpoint.client.get_connection_info().clone();
+        let settings = info.redis_settings().clone().set_skip_set_lib_name();
+        endpoint.client = redis::Client::open(info.set_redis_settings(settings)).unwrap();
+        let (writing, started) = mpsc::channel();
+        let (release, held) = mpsc::channel();
+        let (reading, proceeded) = mpsc::channel();
+        std::thread::scope(|threads| {
+            let endpoint = &endpoint;
+            threads.spawn(move || {
+                endpoint
+                    .run_best_effort(Duration::from_secs(1), |_| {
+                        writing.send(()).unwrap();
+                        held.recv().unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+            });
+            started.recv_timeout(Duration::from_secs(2)).unwrap();
+            threads.spawn(move || {
+                // A Redis command refusal does not write reachability state.
+                endpoint
+                    .run::<()>(|_| {
+                        reading.send(()).unwrap();
+                        Err(redis::RedisError::from((
+                            redis::ErrorKind::Client,
+                            "test command",
+                        )))
+                    })
+                    .unwrap_err();
+            });
+            let during_announcement = proceeded.recv_timeout(Duration::from_secs(2));
+            release.send(()).unwrap();
+            assert!(
+                during_announcement.is_ok(),
+                "reader waited for the announcement socket"
+            );
+        });
     }
 }

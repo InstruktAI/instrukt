@@ -144,7 +144,7 @@ fn pickup(
     if kinds.is_empty() {
         return Vec::new();
     }
-    let index = match GlobalIndex::load(cx.home) {
+    let index = match GlobalIndex::load_readable(cx.home) {
         Ok(index) => index.unwrap_or_default(),
         Err(err) => {
             tracing::warn!(event = "index_unreadable", error = %err);

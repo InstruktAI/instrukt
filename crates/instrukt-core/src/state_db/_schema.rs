@@ -32,7 +32,31 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V19),
     Step(v20),
     Step(v21),
+    Sql(V22),
 ];
+
+/// Version 22: a consumer's former source no longer in the configuration is
+/// `abandoned`: its pending events stay unread in that Redis and its
+/// `prepared` fact is kept, so configuring it again drains its own group.
+/// The table is rebuilt to widen its `state` check; every row is kept.
+/// Index only open dead-letter announcement intents for the journal cap.
+const V22: &str = "
+CREATE TABLE consumer_sources_v22 (
+    consumer TEXT NOT NULL,
+    source TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'retiring', 'retired', 'abandoned')),
+    prepared INTEGER NOT NULL,
+    PRIMARY KEY (consumer, source)
+);
+INSERT INTO consumer_sources_v22 (consumer, source, state, prepared)
+    SELECT consumer, source, state, prepared FROM consumer_sources;
+DROP TABLE consumer_sources;
+ALTER TABLE consumer_sources_v22 RENAME TO consumer_sources;
+CREATE INDEX IF NOT EXISTS consumer_open_announcements ON consumer_outcomes (
+    json_extract(outcome, '$.parked.announced')
+) WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL
+      AND json_extract(outcome, '$.parked.announced') = 0;
+";
 
 /// Version 21: what a person is shown while their message is unfinished.
 /// Each message keeps when its sender was admitted, when its no-work

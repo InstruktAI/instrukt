@@ -40,7 +40,7 @@ pub struct Launch {
 
 /// The published procedure `id`, from the home's index.
 pub fn procedure(home: &Home, id: &SnippetId) -> Result<IndexEntry, LaunchError> {
-    let entry = GlobalIndex::load(home)?
+    let entry = GlobalIndex::load_readable(home)?
         .and_then(|index| index.snippets.into_iter().find(|entry| &entry.id == id))
         .ok_or_else(|| LaunchError::UnknownProcedure(id.clone()))?;
     if !entry.delivered_by.is_empty() {

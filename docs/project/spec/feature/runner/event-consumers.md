@@ -61,7 +61,7 @@ parked. Invocation shutdown retains pending obligations for the next drain.
 Malformed envelopes enter this failure path with original raw evidence.
 
 At the attempt ceiling the consumer persists a dead-letter record on its failing
-Redis, announces `instrukt.system.event.dead_lettered`, then ACKs the original.
+Redis and ACKs the original before queuing `instrukt.system.event.dead_lettered`.
 The record names consumer and source coordinate, retains original envelope or raw
 entry, and records attempts, first/last attempt and failure details. The
 announcement names the consumer and parked entry, uses a stream-entry subject
@@ -69,10 +69,15 @@ and none origin, and is a declared stateless fact. It never states successful
 business handling. Parking advances settled accounting only after the persist
 and the ACK succeed. A failed persist or ACK remains unsettled and retries
 unfinished parking before later entries; already completed stages remain
-recognizable after interruption. A failed announcement — local transport not
-prepared, the envelope not encodable, local Redis unreachable — is counted in
-`instrukt events status` and parking completes without it, so it never holds later
-entries. Other groups keep their own progress.
+recognizable after interruption. A bounded worker records the complete
+announcement intent in the settled outcome before sending on its own Redis
+connection. Reader connections stay available even when both scopes use one
+endpoint. One Redis script checks the receipt, then appends and records it
+only when it is absent. The worker replays open intents with the same script,
+so a lost reply can be recovered without a duplicate while the receipt is
+retained. Status counts
+unannounced dead letters and reports abandoned announcements separately.
+Other groups keep their own progress.
 
 A reaction that panics is caught where it is called: the entry counts a failed
 attempt, as any failure does, and the reader goes on.
@@ -80,8 +85,10 @@ attempt, as any failure does, and the reader goes on.
 The activation matcher reads the published subscriptions entry by entry: an entry
 that cannot be decoded, or that is invalid, is dropped and named in
 `instrukt events status`, and every other subscription stays active. An index that
-cannot be read as a whole fails the event's handling, which is retried and then
-parked; it is never taken as empty.
+cannot be read as a whole, including a document whose snippet list is missing or is not a YAML sequence, fails
+the event's handling, which is retried and then parked. A valid procedure
+can start a successor and be read with `instrukt docs get` while another
+index entry is broken. The reading names the dropped entries.
 `instrukt events status` counts events settled with no activation.
 
 ### Lifetime distinction
@@ -159,7 +166,7 @@ Then selection is identical and only the selected reaction interprets data
 Given a developer has an event that fails through the attempt ceiling, including a malformed entry
 When parking succeeds
 Then its original evidence and failure facts are inspectable as that consumer's dead letter
-And later entries proceed, whether or not its announcement could be made
+And later entries proceed even while its announcement is waiting for local Redis
 And a dead letter that could not be announced is counted in status
 But a failed persist or ACK leaves it unsettled and resumes the unfinished stages after interruption
 ```
@@ -187,14 +194,19 @@ Then it receives subsequent occurrences without replaying stream or local-log hi
 Given a developer has published two procedures that subscribe to events, and the subscription entry of one of them is broken
 When an event the other procedure subscribes to arrives
 Then that procedure's agent takes the event up
-And the developer sees the broken entry named in status
+And if the agent has closed, its successor takes the next event up
+And the developer can read that procedure and sees the broken entry named in the reading and in status
 ```
 
 ## Known caveats
 
 - Duplicate protection lasts seven days and replay lasts only while Redis retains payloads. This is no permanent exactly-once business-effect contract.
 - UC-EC11 and UC-EC12's TeleClaude notification/correlation goals have no admitted instrukt consumers in this port and are not imported or repurposed.
-- A dead-letter announcement failure can hold later entries of that consumer; it never blocks another group. Failure reporting remains bounded rather than recursively reporting failures of reporting.
+- An interruption before recording announcement intent leaves the recovered
+  parking unannounced. An older receipt-only intent can be confirmed by its
+  receipt. If the receipt is absent, the intent retires unannounced because
+  the payload is unavailable. The dead letter remains inspectable. Receipt
+  retention is defined in [event transport](event-transport.md).
 
 ## See Also
 

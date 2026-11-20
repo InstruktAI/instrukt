@@ -1037,7 +1037,7 @@ impl Work {
             None
         } else {
             let domain = s.config.workflow_domain()?;
-            let procedure = instrukt_core::index::GlobalIndex::load(s.home())
+            let procedure = instrukt_core::index::GlobalIndex::load_readable(s.home())
                 .map_err(|error| WorkError::refused(error.to_string()))?
                 .and_then(|index| {
                     index

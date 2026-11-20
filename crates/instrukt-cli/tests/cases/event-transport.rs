@@ -249,6 +249,148 @@ fn independent_source_positions_are_never_compared_across_scopes() {
     assert_eq!(positions, 2);
 }
 
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET7
+#[test]
+fn a_source_left_out_of_the_configuration_is_abandoned_and_drained_when_it_returns() {
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    computer.config(&cluster, Some(&local));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    let envelope = |id: &str| {
+        serde_json::json!({"id":id, "type":"erp.invoice.paid", "source":computer.computer(), "subject":"todo:sample", "time":"2026-11-05T00:00:00Z", "data":{}, "home":"project:fork", "home_owner":"unresolved"}).to_string()
+    };
+    let append = |server: &RedisServer, id: &str| {
+        redis::cmd("XADD")
+            .arg(EVENT_STREAM)
+            .arg("*")
+            .arg("event")
+            .arg(envelope(id))
+            .query::<String>(&mut server.connection())
+            .unwrap();
+    };
+    // An event waits in local Redis when local Redis leaves the configuration.
+    append(&local, "left-in-local");
+    computer.config(&cluster, None);
+    append(&cluster, "after-the-change");
+    computer.tick();
+    // The new source runs at once; the former one is abandoned and named.
+    let accepted = || -> Vec<String> {
+        computer
+            .db()
+            .prepare("SELECT event_id FROM procedure_activations ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    insta::assert_debug_snapshot!(accepted(), @r#"
+        [
+            "after-the-change",
+        ]
+        "#);
+    let mut abandoned = computer.consumers_status()["abandoned_sources"].clone();
+    for source in abandoned.as_array_mut().unwrap() {
+        assert!(!source["source"].as_str().unwrap().is_empty());
+        source["source"] = "[SOURCE]".into();
+    }
+    insta::assert_json_snapshot!(abandoned, @r#"
+        [
+          {
+            "consumer": "procedure-activation",
+            "source": "[SOURCE]",
+            "pending": "its pending events stay unread in that Redis until it is configured again"
+          }
+        ]
+        "#);
+    // Configured again, it is drained from its own group.
+    computer.config(&cluster, Some(&local));
+    computer.tick();
+    insta::assert_debug_snapshot!(accepted(), @r#"
+        [
+            "after-the-change",
+            "left-in-local",
+        ]
+        "#);
+    insta::assert_json_snapshot!(computer.consumers_status()["abandoned_sources"], @"[]");
+}
+
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET7
+#[test]
+fn the_old_runtime_cannot_read_a_source_a_new_runtime_abandoned() {
+    use instrukt_core::config::{Configuration, Env};
+    use instrukt_core::home::Home;
+    use instrukt_runner::consumers::{Consumer, ConsumerRuntime, Interest};
+    use instrukt_runner::events::TypePattern;
+    use instrukt_runner::state::RunnerState;
+    use instrukt_runner::transport::{EventScope, ScopedTransport};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    let home = Home::at_user_home(computer.env.home().to_path_buf());
+    let state = RunnerState::new(&home);
+    instrukt_core::machine::machine_id(&home).unwrap();
+    let handled = Arc::new(AtomicUsize::new(0));
+    let consumer = Consumer {
+        name: "handover-test".into(),
+        interest: Interest {
+            patterns: vec![TypePattern::parse("erp.invoice.paid").unwrap()],
+            own_computer_only: false,
+            external_on_reacting: false,
+            subject_kinds: Vec::new(),
+            home_kinds: Vec::new(),
+        },
+        scopes: vec![EventScope::Local, EventScope::Cluster],
+        reaction: Arc::new({
+            let handled = Arc::clone(&handled);
+            move |_, _| {
+                handled.fetch_add(1, Ordering::Relaxed);
+                Ok(serde_json::Value::Null)
+            }
+        }),
+    };
+    let runtime = || {
+        let config = Configuration::load_global(&home).unwrap();
+        let transport = ScopedTransport::from_config(&config, &Env::default(), &state).unwrap();
+        ConsumerRuntime::new(state.clone(), transport, "handover", vec![consumer.clone()]).unwrap()
+    };
+    let now = jiff::Timestamp::now();
+    computer.config(&cluster, Some(&local));
+    let old = runtime();
+    old.drain(now);
+    let event = serde_json::json!({
+        "id": "left-behind", "type": "erp.invoice.paid", "source": "handover",
+        "subject": "todo:sample", "time": now.to_string(), "data": {},
+        "home": "project:fork", "home_owner": "unresolved"
+    });
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg(event.to_string())
+        .query::<String>(&mut local.connection())
+        .unwrap();
+
+    computer.config(&cluster, None);
+    let replacement = runtime();
+    old.drain(now);
+    replacement.drain(now);
+    assert_eq!(handled.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        computer.consumers_status()["abandoned_sources"][0]["consumer"],
+        "handover-test"
+    );
+
+    computer.config(&cluster, Some(&local));
+    runtime().drain(now);
+    assert_eq!(handled.load(Ordering::Relaxed), 1);
+}
+
 // spec: project/instrukt/spec/feature/runner/event-transport UC-ET5
 #[test]
 fn finalize_ready_keeps_its_stamp_and_occurrence_through_a_publication_failure() {
@@ -367,4 +509,144 @@ fn finalize_ready_keeps_its_stamp_and_occurrence_through_a_publication_failure()
             .id,
         id
     );
+}
+
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET7
+#[test]
+fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
+    use instrukt_core::config::{Configuration, Env};
+    use instrukt_core::home::Home;
+    use instrukt_runner::consumers::{Consumer, ConsumerRuntime, Interest};
+    use instrukt_runner::events::TypePattern;
+    use instrukt_runner::state::RunnerState;
+    use instrukt_runner::transport::{EventScope, ScopedTransport};
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    let gate = common::redis_proxy::DeliveryGate::new(&local);
+    let home = Home::at_user_home(computer.env.home().to_path_buf());
+    let state = RunnerState::new(&home);
+    let consumer = Consumer {
+        name: "blocked-handover".into(),
+        interest: Interest {
+            patterns: vec![TypePattern::parse("erp.invoice.paid").unwrap()],
+            own_computer_only: false,
+            external_on_reacting: false,
+            subject_kinds: Vec::new(),
+            home_kinds: Vec::new(),
+        },
+        scopes: vec![EventScope::Local, EventScope::Cluster],
+        reaction: Arc::new(|_, _| Ok(serde_json::Value::Null)),
+    };
+    let runtime = || {
+        let config = Configuration::load_global(&home).unwrap();
+        let transport = ScopedTransport::from_config(&config, &Env::default(), &state).unwrap();
+        ConsumerRuntime::new(state.clone(), transport, "handover", vec![consumer.clone()])
+    };
+    let now = jiff::Timestamp::now();
+    computer.config_urls(&cluster.url, Some(&gate.url));
+    let old = runtime().unwrap();
+    old.drain(now);
+    gate.arm();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg("held by Redis")
+        .query::<String>(&mut local.connection())
+        .unwrap();
+
+    std::thread::scope(|threads| {
+        threads.spawn(|| old.drain(now));
+        transport_support::until(|| gate.intercepted());
+        computer.config(&cluster, None);
+        let (send, result) = mpsc::channel();
+        let runtime = &runtime;
+        let binder =
+            threads.spawn(move || send.send(runtime().err().map(|error| error.to_string())));
+        let deferred = result.recv_timeout(Duration::from_secs(4));
+        let abandoned: usize = computer
+            .db()
+            .query_row(
+                "SELECT count(*) FROM consumer_sources WHERE state = 'abandoned'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        gate.release();
+        binder.join().unwrap().unwrap();
+        assert_eq!(abandoned, 0);
+        assert!(
+            matches!(deferred, Ok(Some(error)) if error.contains("lock")),
+            "handover should have deferred"
+        );
+    });
+    assert!(runtime().is_ok());
+    let abandoned: usize = computer
+        .db()
+        .query_row(
+            "SELECT count(*) FROM consumer_sources WHERE state = 'abandoned'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(abandoned, 1);
+}
+
+// spec: project/instrukt/spec/feature/runner/event-transport UC-ET7
+#[test]
+fn a_hosted_runner_reports_a_stalled_handover_and_retries_after_the_reader_stops() {
+    let mut computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    let gate = common::redis_proxy::DeliveryGate::new(&local);
+    let clock = computer.env.path("handover-clock");
+    let set_time = |time: &str| {
+        let staged = clock.with_extension("new");
+        std::fs::write(&staged, time).unwrap();
+        std::fs::rename(staged, &clock).unwrap();
+    };
+    set_time("2030-01-01T00:00:00Z");
+    computer
+        .env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    computer.config_urls(&cluster.url, Some(&gate.url));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+
+    gate.arm();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg("blocked")
+        .query::<String>(&mut local.connection())
+        .unwrap();
+    let _running = transport_support::Running::start(&computer);
+    transport_support::until(|| gate.intercepted());
+    computer.config(&cluster, None);
+    set_time("2030-01-01T00:01:01Z");
+    common::wait_until(
+        "a pending handover with an age while Redis withholds the read reply",
+        std::time::Duration::from_secs(12),
+        || {
+            let item = &computer.consumers_status()["pending_source_transitions"][0];
+            item["transition"] == "runner"
+                && item["age_seconds"].as_i64().is_some_and(|age| age >= 1)
+        },
+    );
+    gate.release();
+    set_time("2030-01-01T00:02:02Z");
+    transport_support::until(|| {
+        let status = computer.consumers_status();
+        status["pending_source_transitions"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+            && status["abandoned_sources"]
+                .as_array()
+                .is_some_and(|sources| sources.len() == 1)
+    });
 }

@@ -256,6 +256,15 @@ pub enum DocsError {
         ids: Vec<String>,
         nothing_published: bool,
     },
+    #[error("cannot read published snippet: {reasons}{}", if unknown.is_empty() {
+        String::new()
+    } else {
+        format!("; unknown snippet id{}: {}", plural(unknown.len()), unknown.join(", "))
+    })]
+    PublishedEntriesUnreadable {
+        reasons: String,
+        unknown: Vec<String>,
+    },
     #[error("unknown domain{}: {}; the published domains are: {}", plural(unknown.len()), unknown.join(", "), valid.join(", "))]
     UnknownDomains {
         unknown: Vec<String>,

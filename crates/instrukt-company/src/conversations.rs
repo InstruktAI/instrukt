@@ -1034,7 +1034,7 @@ fn start(
     let request = match &c.request {
         Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
         None => {
-            let index = GlobalIndex::load(home)?.unwrap_or_default();
+            let index = GlobalIndex::load_readable(home)?.unwrap_or_default();
             let role = RoleName::parse(COMPANY_AGENT_ROLE)
                 .map_err(|e| ConversationError::Refused(e.to_string()))?;
             let procedure =

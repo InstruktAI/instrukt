@@ -675,6 +675,8 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         let rows=stmt.query_map([],|row| Ok(serde_json::json!({"id":row.get::<_,String>(0)?,"state":row.get::<_,String>(1)?,"failure":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
         rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
+    // What the retained consumers hold whatever the files say now.
+    let consumers = crate::consumers::status(request.home, &state)?;
     // This computer's own machine ID, as it reads it, for comparison with the
     // other computers; reading creates no ID.
     let computer = instrukt_core::machine::existing_machine_id(request.home)
@@ -730,7 +732,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         // Nothing read from the configuration can be shown: what depends on
         // it is absent, and the admission error says why.
         return Ok(
-            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"links":links,"conversations":conversations,"runner_service":null}),
+            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"links":links,"conversations":conversations,"runner_service":null}),
         );
     }
     let mut report = Report::default();
@@ -764,7 +766,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             .map(str::to_owned)
     };
     Ok(
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"links":links,"conversations":conversations,"runner_service":runner_service}),
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"links":links,"conversations":conversations,"runner_service":runner_service}),
     )
 }
 

@@ -115,6 +115,18 @@ fn a_foreign_computer_occurrence_is_settled_without_activation() {
         last_outcome(&computer),
         SettledOutcome::Uninterested
     ));
+    // An occurrence this computer emitted that no procedure subscribes to
+    // is handed to the reaction, settles with no activation and is counted.
+    append(
+        &redis,
+        &event(&computer, "own-occurrence", "erp.order.placed"),
+    );
+    computer.tick();
+    assert_eq!((computer.accepted(), pending(&redis, &computer)), (0, 0));
+    insta::assert_snapshot!(
+        computer.consumers_status()["settled_without_activation"],
+        @"1"
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/event-consumers UC-EC5
@@ -377,11 +389,12 @@ fn a_failed_dead_letter_persist_keeps_later_work_unsettled_until_repaired() {
 
 // spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
 #[test]
-fn a_failed_announcement_resumes_without_persisting_a_second_dead_letter() {
+fn a_dead_letter_that_cannot_be_announced_is_counted_and_later_work_proceeds() {
     let computer = Computer::new();
     let cluster = RedisServer::new(&computer.env);
     let local = RedisServer::new(&computer.env);
     computer.config(&cluster, Some(&local));
+    computer.subscribe("erp.invoice.*");
     computer.tick();
     redis::cmd("XADD")
         .arg(EVENT_STREAM)
@@ -390,8 +403,10 @@ fn a_failed_announcement_resumes_without_persisting_a_second_dead_letter() {
         .arg("malformed")
         .query::<String>(&mut cluster.connection())
         .unwrap();
+    append(&cluster, &event(&computer, "later", "erp.invoice.paid"));
     computer.tick();
     computer.tick();
+    // Local Redis cannot take the announcement when the entry is parked.
     redis::cmd("SET")
         .arg(EVENT_STREAM)
         .arg("wrong-type")
@@ -402,12 +417,25 @@ fn a_failed_announcement_resumes_without_persisting_a_second_dead_letter() {
         .arg(DEAD_LETTER_STREAM)
         .query(&mut cluster.connection())
         .unwrap();
-    assert_eq!((letters, pending(&cluster, &computer)), (1, 1));
-    computer.tick();
+    assert_eq!(
+        (letters, pending(&cluster, &computer), computer.accepted()),
+        (1, 0, 1)
+    );
+    assert_eq!(computer.consumers_status()["unannounced_dead_letters"], 1);
+    assert_eq!(
+        redis::cmd("TYPE")
+            .arg(EVENT_STREAM)
+            .query::<String>(&mut local.connection())
+            .unwrap(),
+        "string"
+    );
+
+    // Recovery resends the durable intent after local Redis can append again.
     redis::cmd("DEL")
         .arg(EVENT_STREAM)
         .query::<u64>(&mut local.connection())
         .unwrap();
+    computer.tick();
     computer.tick();
     let letters: u64 = redis::cmd("XLEN")
         .arg(DEAD_LETTER_STREAM)
@@ -421,6 +449,7 @@ fn a_failed_announcement_resumes_without_persisting_a_second_dead_letter() {
         (letters, announcements, pending(&cluster, &computer)),
         (1, 1, 0)
     );
+    assert_eq!(computer.consumers_status()["unannounced_dead_letters"], 0);
 }
 
 // spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
@@ -477,8 +506,9 @@ fn a_binary_killed_after_parking_recovers_only_the_unfinished_ack_and_settlement
         .unwrap();
     assert_eq!(
         (letters, entries, pending(&redis, &computer), unfinished),
-        (1, 2, 0, 0)
+        (1, 1, 0, 0)
     );
+    assert_eq!(computer.consumers_status()["unannounced_dead_letters"], 1);
 }
 
 // spec: project/instrukt/spec/feature/runner/event-consumers UC-EC9
@@ -625,4 +655,477 @@ fn an_empty_type_segment_cannot_be_published_as_a_subscription() {
     .replace(&computer.project.path().display().to_string(), "[PROJECT]")
     .replace(&computer.project.head(), "[SHA]");
     insta::assert_snapshot!(text);
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn an_incomplete_index_retries_then_parks_the_event() {
+    let computer = Computer::new();
+    let redis = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    computer.config(&redis, Some(&local));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    std::fs::write(
+        computer.env.instrukt_home().join("state/index.yaml"),
+        "schema_version: 2\n",
+    )
+    .unwrap();
+    append(&redis, &event(&computer, "paid", "erp.invoice.paid"));
+    computer.tick();
+    assert_eq!(pending(&redis, &computer), 1);
+    assert_eq!(computer.accepted(), 0);
+    for _ in 1..MAX_HANDLING_ATTEMPTS {
+        computer.tick();
+    }
+    assert_eq!(pending(&redis, &computer), 0);
+    let parked: String = redis::cmd("XRANGE")
+        .arg(DEAD_LETTER_STREAM)
+        .arg("-")
+        .arg("+")
+        .query::<redis::streams::StreamRangeReply>(&mut redis.connection())
+        .unwrap()
+        .ids[0]
+        .get("record")
+        .unwrap();
+    assert!(parked.contains("missing field `snippets`"), "{parked}");
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn a_hung_announcement_does_not_delay_cluster_ack_or_later_work() {
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    computer.config(&cluster, Some(&local));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg("malformed")
+        .query::<String>(&mut cluster.connection())
+        .unwrap();
+    append(&cluster, &event(&computer, "later", "erp.invoice.paid"));
+    for _ in 1..MAX_HANDLING_ATTEMPTS {
+        computer.tick();
+    }
+    redis::cmd("CLIENT")
+        .arg("PAUSE")
+        .arg(30_000)
+        .arg("ALL")
+        .query::<()>(&mut local.connection())
+        .unwrap();
+    let _running = support::Running::start(&computer);
+    common::wait_until(
+        "the later cluster event is accepted while local Redis is paused",
+        std::time::Duration::from_secs(12),
+        || computer.accepted() == 1 && pending(&cluster, &computer) == 0,
+    );
+    let parked: bool = computer.db().query_row(
+        "SELECT EXISTS(SELECT 1 FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announced') = 0)",
+        [], |row| row.get(0)
+    ).unwrap();
+    assert!(parked);
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn a_suppressed_recursive_announcement_is_counted_as_unannounced() {
+    let computer = Computer::new();
+    let redis = RedisServer::new(&computer.env);
+    computer.config(&redis, None);
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    std::fs::write(
+        computer.env.instrukt_home().join("state/index.yaml"),
+        "schema_version: 99\nsnippets: []\n",
+    )
+    .unwrap();
+    append(
+        &redis,
+        &event(
+            &computer,
+            "failed-announcement",
+            "instrukt.system.event.dead_lettered",
+        ),
+    );
+    for _ in 0..MAX_HANDLING_ATTEMPTS {
+        computer.tick();
+    }
+    assert!(matches!(
+        last_outcome(&computer),
+        SettledOutcome::Parked {
+            announced: false,
+            ..
+        }
+    ));
+    assert_eq!(computer.consumers_status()["unannounced_dead_letters"], 1);
+}
+
+fn park_with_lost_announcement_reply() -> (
+    Computer,
+    RedisServer,
+    RedisServer,
+    common::redis_proxy::DeliveryGate,
+    String,
+) {
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    let gate = common::redis_proxy::DeliveryGate::announcements(&local);
+    computer.config_urls(&cluster.url, Some(&gate.url));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg("malformed")
+        .query::<String>(&mut cluster.connection())
+        .unwrap();
+    for _ in 1..MAX_HANDLING_ATTEMPTS {
+        computer.tick();
+    }
+    gate.arm();
+    let mut running = support::Running::start(&computer);
+    support::until(|| gate.intercepted());
+    running.kill();
+    assert_eq!(pending(&cluster, &computer), 0);
+    assert_eq!(computer.consumers_status()["unannounced_dead_letters"], 1);
+    let mut connection = local.connection();
+    let receipts: Vec<String> = redis::cmd("KEYS")
+        .arg("instrukt:events:parking:*:announced")
+        .query(&mut connection)
+        .unwrap();
+    assert_eq!(receipts.len(), 1, "an open intent still needs its receipt");
+    let receipt = receipts.into_iter().next().unwrap();
+    gate.release();
+    (computer, cluster, local, gate, receipt)
+}
+
+fn announcement_receipt_ttl(connection: &mut redis::Connection, receipt: &str) -> i64 {
+    redis::cmd("TTL").arg(receipt).query(connection).unwrap()
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn announcement_receipts_expire_refresh_on_replay_and_survive_endpoint_removal() {
+    let (computer, _cluster, local, _gate, receipt) = park_with_lost_announcement_reply();
+    let mut connection = local.connection();
+    let ttl = announcement_receipt_ttl(&mut connection, &receipt);
+    assert!((604_790..=604_800).contains(&ttl), "receipt TTL: {ttl}");
+
+    // Model operator-owned Redis. SET with expiry and early deletion are allowed.
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("default")
+        .arg("-expire")
+        .query::<()>(&mut connection)
+        .unwrap();
+    assert!(
+        redis::cmd("EXPIRE")
+            .arg(&receipt)
+            .arg(60)
+            .query::<bool>(&mut connection)
+            .is_err()
+    );
+    computer.tick();
+    assert_eq!(computer.consumers_status()["unannounced_dead_letters"], 0);
+    assert_eq!(announcement_receipt_ttl(&mut connection, &receipt), -2);
+    assert_eq!(
+        redis::cmd("XLEN")
+            .arg(EVENT_STREAM)
+            .query::<u64>(&mut connection)
+            .unwrap(),
+        1
+    );
+
+    // A separate lost reply lets us inspect the refreshed TTL after confirmation.
+    let (computer, _cluster, local, _gate, receipt) = park_with_lost_announcement_reply();
+    let mut connection = local.connection();
+    assert!(
+        redis::cmd("EXPIRE")
+            .arg(&receipt)
+            .arg(60)
+            .query::<bool>(&mut connection)
+            .unwrap()
+    );
+    // Keep the receipt inspectable after confirmation. DEL is best effort.
+    redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg("default")
+        .arg("-del")
+        .query::<()>(&mut connection)
+        .unwrap();
+    computer.tick();
+    assert_eq!(computer.consumers_status()["unannounced_dead_letters"], 0);
+    let ttl = announcement_receipt_ttl(&mut connection, &receipt);
+    assert!((604_790..=604_800).contains(&ttl), "refreshed TTL: {ttl}");
+    let entries: u64 = redis::cmd("XLEN")
+        .arg(EVENT_STREAM)
+        .query(&mut connection)
+        .unwrap();
+    assert_eq!(entries, 1);
+    let retained_address: bool = computer.db().query_row(
+        "SELECT EXISTS(SELECT 1 FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL)",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert!(!retained_address);
+
+    // Removing another destination before confirmation leaves an expiring receipt.
+    let (computer, cluster, local, _gate, receipt) = park_with_lost_announcement_reply();
+    computer.config(&cluster, None);
+    computer.tick();
+    assert_eq!(computer.consumers_status()["abandoned_announcements"], 1);
+    let ttl = announcement_receipt_ttl(&mut local.connection(), &receipt);
+    assert!(
+        (604_760..=604_800).contains(&ttl),
+        "orphaned receipt TTL: {ttl}"
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn a_null_snippet_list_leaves_a_matching_event_pending_for_retry() {
+    let computer = Computer::new();
+    let redis = RedisServer::new(&computer.env);
+    computer.config(&redis, None);
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    std::fs::write(
+        computer.env.instrukt_home().join("state/index.yaml"),
+        "schema_version: 2\nsnippets:\n",
+    )
+    .unwrap();
+    append(&redis, &event(&computer, "paid", "erp.invoice.paid"));
+    computer.tick();
+    assert_eq!(pending(&redis, &computer), 1);
+    assert!(
+        computer.consumers_status()["subscriptions"]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("snippets must be a YAML sequence"))
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC13
+#[test]
+fn docs_get_reports_why_a_requested_published_entry_was_dropped() {
+    let computer = Computer::new();
+    computer.subscribe("erp.invoice.*");
+    let path = computer.env.instrukt_home().join("state/index.yaml");
+    let mut index: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let id = "reactions/procedure/respond";
+    let entry = index["snippets"]
+        .as_sequence_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["id"].as_str() == Some(id))
+        .unwrap();
+    entry.as_mapping_mut().unwrap().remove("description");
+    std::fs::write(&path, serde_yaml_ng::to_string(&index).unwrap()).unwrap();
+
+    let shown = computer
+        .env
+        .run(
+            computer.project.path(),
+            ["docs", "get", id, "reactions/procedure/unknown"],
+        )
+        .failure();
+    let error = String::from_utf8_lossy(&shown.get_output().stderr);
+    assert!(
+        error.contains("unknown snippet id: reactions/procedure/unknown"),
+        "{error}"
+    );
+    assert!(
+        error.contains(id) && error.contains("missing field `description`"),
+        "{error}"
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn removed_endpoints_retire_open_announcements_in_oldest_first_batches() {
+    let computer = Computer::new();
+    let redis = RedisServer::new(&computer.env);
+    computer.config(&redis, None);
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    let connection = computer.db();
+    let payload = event(
+        &computer,
+        "announcement",
+        "instrukt.system.event.dead_lettered",
+    )
+    .encode()
+    .unwrap();
+    let outcome = json!({"parked":{
+        "destination": DEAD_LETTER_STREAM, "entry_id": "1-0", "announced": false,
+        "announcement_source": "removed-redis", "announcement_receipt": "instrukt:events:old",
+        "announcement_payload": payload,
+    }})
+    .to_string();
+    for entry in 1..=33 {
+        connection.execute(
+            "INSERT INTO consumer_outcomes VALUES ('procedure-activation', 'origin', ?1, ?2, ?3, '2026-11-05T00:00:00Z')",
+            (EVENT_STREAM, format!("{entry}-0"), &outcome),
+        ).unwrap();
+    }
+    computer.tick();
+    let open: String = connection.query_row(
+        "SELECT group_concat(entry_id) FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL",
+        [], |row| row.get(0),
+    ).unwrap_or_default();
+    assert_eq!(open, "33-0");
+    assert_eq!(computer.consumers_status()["abandoned_announcements"], 32);
+    computer.tick();
+    let open: u32 = connection.query_row(
+        "SELECT count(*) FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(open, 0);
+    assert_eq!(computer.consumers_status()["abandoned_announcements"], 33);
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn a_full_announcement_journal_leaves_new_parking_settled_without_an_intent() {
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let local = RedisServer::new(&computer.env);
+    computer.config(&cluster, Some(&local));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg("malformed")
+        .query::<String>(&mut cluster.connection())
+        .unwrap();
+    for _ in 1..MAX_HANDLING_ATTEMPTS {
+        computer.tick();
+    }
+    redis::cmd("SET")
+        .arg(EVENT_STREAM)
+        .arg("wrong-type")
+        .query::<()>(&mut local.connection())
+        .unwrap();
+    let socket = std::path::Path::new(local.url.strip_prefix("unix://").unwrap());
+    let socket = socket
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join(socket.file_name().unwrap());
+    let endpoint =
+        instrukt_runner::events::occurrence_id(&[&format!("unix:{}", socket.display()), "0"]);
+    let outcome = json!({"parked":{
+        "destination": DEAD_LETTER_STREAM, "entry_id": "1-0", "announced": false,
+        "announcement_source": endpoint, "announcement_receipt": "instrukt:events:pending",
+        "announcement_payload": "{}",
+    }})
+    .to_string();
+    let connection = computer.db();
+    let plan: String = connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT count(*) FROM consumer_outcomes
+         WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL
+         AND json_extract(outcome, '$.parked.announced') = 0",
+            [],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(
+        plan.contains("USING INDEX consumer_open_announcements"),
+        "{plan}"
+    );
+
+    connection.execute(
+        "WITH RECURSIVE entries(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM entries WHERE n < 1024)
+         INSERT INTO consumer_outcomes SELECT 'procedure-activation', 'older', ?1, n || '-0', ?2, '2026-11-05T00:00:00Z' FROM entries",
+        (EVENT_STREAM, outcome),
+    ).unwrap();
+    computer.tick();
+    assert_eq!(pending(&cluster, &computer), 0);
+    let open: u32 = connection.query_row(
+        "SELECT count(*) FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(open, 1024);
+    assert_eq!(
+        computer.consumers_status()["unannounced_dead_letters"],
+        1025
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn scheduled_ticks_resume_after_a_blocked_announcement_page_and_wrap() {
+    let computer = Computer::new();
+    let cluster = RedisServer::new(&computer.env);
+    let mut local = RedisServer::new(&computer.env);
+    computer.config(&cluster, Some(&local));
+    computer.subscribe("erp.invoice.*");
+    computer.tick();
+    let socket = std::path::Path::new(local.url.strip_prefix("unix://").unwrap());
+    let socket = socket
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join(socket.file_name().unwrap());
+    let offline =
+        instrukt_runner::events::occurrence_id(&[&format!("unix:{}", socket.display()), "0"]);
+    local.stop();
+
+    let db = computer.db();
+    for entry in 1..=33 {
+        let source = if entry == 33 {
+            "removed-redis"
+        } else {
+            &offline
+        };
+        let payload = event(
+            &computer,
+            &format!("announcement-{entry}"),
+            "instrukt.system.event.dead_lettered",
+        )
+        .encode()
+        .unwrap();
+        let outcome = json!({"parked":{
+            "destination": DEAD_LETTER_STREAM, "entry_id": "1-0", "announced": false,
+            "announcement_source": source, "announcement_receipt": format!("instrukt:events:pending:{entry}"),
+            "announcement_payload": payload,
+        }}).to_string();
+        db.execute(
+            "INSERT INTO consumer_outcomes VALUES ('procedure-activation', 'origin', ?1, ?2, ?3, '2026-11-05T00:00:00Z')",
+            (EVENT_STREAM, format!("{entry}-0"), outcome),
+        ).unwrap();
+    }
+    let counts = || {
+        db.query_row(
+            "SELECT count(*) FILTER (WHERE json_extract(outcome, '$.parked.announcement_receipt') IS NOT NULL),
+                    count(*) FILTER (WHERE json_extract(outcome, '$.parked.announcement_abandoned') = 1)
+             FROM consumer_outcomes",
+            [], |row| Ok((row.get::<_, u32>(0)?, row.get::<_, u32>(1)?)),
+        ).unwrap()
+    };
+    computer.tick();
+    assert_eq!(counts(), (33, 0), "only the blocked first page was tried");
+    computer.tick();
+    assert_eq!(
+        counts(),
+        (32, 1),
+        "the next tick reaches the removed endpoint"
+    );
+    local.restart();
+    computer.tick();
+    assert_eq!(
+        counts(),
+        (0, 1),
+        "recovery wraps to the now-reachable first page"
+    );
 }
