@@ -410,6 +410,7 @@ And the member is answered
   otherwise. What accompanies the later one was read when it arrived and is
   not read again, so it can hold the earlier message, which the agent then
   sees there and as its own turn.
+- If Slack delivers an addressed message after a superseded failure is pruned, and the message was written between the failed question and the later delivery that allowed pruning, the agent may see the failed question or its earlier context again.
 
 ## See Also
 
