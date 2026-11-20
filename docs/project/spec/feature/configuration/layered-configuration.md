@@ -350,9 +350,13 @@ verification can move the clock while a command runs. In this form the time
 limits instrukt gives the programs it starts are measured on that clock as
 well. A file that is missing or holds no RFC 3339 time when the command starts
 refuses the command. One that becomes unreadable later keeps time running from the
-last value read, advanced by the time elapsed since, for the command's clock and
-for the limits of the programs it starts alike, with one warning. Lock waits are measured on the same
-clock as those limits.
+last valid reading, advanced by elapsed monotonic time since that reading.
+The command clock and the process-limit clock use the same reader and last
+valid reading. File-clock readings never move backward during the invocation.
+When a valid file reading resumes, the clock uses the later of that value and
+the last observed time. The invocation warns once when the file becomes
+unreadable. Stderr failure does not interrupt a clock reading. Lock waits are
+measured on the process-limit clock.
 
 ### External state declarations
 
@@ -437,6 +441,16 @@ When an agent retrieves a procedure using those instructions
 Then its dispatch, child follow-up, peer message, conversation read, status inspection, listing and steering instructions come from that entry
 And instrukt executes none of that prose
 But a cloned project cannot replace the machine's agent-action values
+```
+
+### UC-CL7: Keep a runner operating when its clock file disappears
+
+```gherkin
+Given a developer started the runner with a valid operator clock file
+When the file disappears during the run
+Then the runner warns once and keeps time from its last reading by elapsed monotonic time
+And a later wake dispatches pending work through the runtime with the clock file still absent
+And the runner continues even if standard error is unavailable
 ```
 
 ## Known caveats

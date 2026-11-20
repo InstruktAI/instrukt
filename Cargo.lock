@@ -845,8 +845,6 @@ dependencies = [
 [[package]]
 name = "instrukt-ai-logging"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4092c407162eb69cdb949dba0be53147dc21cd68693fea80eb0f42b17bf20f8"
 dependencies = [
  "libc",
  "memchr",

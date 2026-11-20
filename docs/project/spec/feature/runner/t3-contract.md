@@ -75,6 +75,9 @@ interfaces and real CLI boundaries, without widening implementation visibility:
 | Accepted input | A provider-free deferred run supplies a busy target for native CLI queue delivery. Real show responses and persisted user-message/run relationships demonstrate acceptance separately from entry consumption. The deferred run is never released to a provider. |
 | Persistence and conversation source | The production source opens the real migrated database, validates every table/column/type it consumes and reads T3-written thread, deferred-run, user-message and turn-item payloads. An unchanged second read adds no duplicate records; a later durable change is observed through the normal source/notification boundary. Empty provider-generated tables still undergo shape validation. |
 
+Each disposable server start waits for the runtime descriptor to report
+that server's assigned port before connecting, including after a restart.
+
 The consumed expectations derive from the owning specs and adapter contract,
 not from copying every field of an upstream response. Additional upstream fields
 are acceptable where the adapter permits them. Release and migration numbers

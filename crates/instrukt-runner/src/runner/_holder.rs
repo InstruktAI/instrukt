@@ -7,16 +7,18 @@
 //! missing, partial or mismatching record, one left by a holder that died,
 //! one whose incarnation cannot be read, or one not yet replaced by a new
 //! holder, names no holder; the contender keeps waiting.
+use std::io::Write as _;
 use std::os::unix::fs::FileExt as _;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use instrukt_core::fsx::{FsError, LockGuard};
 use instrukt_core::home::Home;
+use instrukt_core::process::{Limit, Look};
 
 use super::{RUN_LOCK_WAIT, RunnerError};
 
-/// How often a run started by hand tries the lock again and rereads its
+/// How often a run tries the lock again and rereads its
 /// holder.
 const RETRY: Duration = Duration::from_millis(250);
 
@@ -142,33 +144,56 @@ pub(super) fn tick(home: &Home) -> Result<Option<RunnerLock>, RunnerError> {
         .transpose()
 }
 
-/// The lock for `instrukt run`. The service waits for whoever holds it. A
-/// run started by hand is refused as soon as the service is the holder,
-/// also when the service takes the lock while it waits, and otherwise
-/// waits a bounded time, saying so once.
+/// The lock for `instrukt run`. Both entry paths wait on the process-limit
+/// clock. A hand-started run still refuses immediately when a service holds
+/// the lock.
 pub(super) fn run(home: &Home, service: bool) -> Result<RunnerLock, RunnerError> {
     let path = home.runner_lock_file();
-    if service {
-        return RunnerLock::publish(LockGuard::wait(&path)?, Holder::Service);
-    }
-    let started = Instant::now();
+    let clock_error = |cause| FsError::Lock {
+        path: path.clone(),
+        source: std::io::Error::other(cause),
+    };
+    let limit = Limit::start(RUN_LOCK_WAIT).map_err(clock_error)?;
     let mut announced = false;
+    let mut expired = false;
     loop {
         if let Some(guard) = LockGuard::try_acquire(&path)? {
-            return RunnerLock::publish(guard, Holder::Run);
+            let kind = if service {
+                Holder::Service
+            } else {
+                Holder::Run
+            };
+            return RunnerLock::publish(guard, kind);
         }
-        if holder(&path) == Some(Holder::Service) {
+        if !service && holder(&path) == Some(Holder::Service) {
             return Err(RunnerError::ServiceRunning);
         }
-        if started.elapsed() >= RUN_LOCK_WAIT {
+        if expired {
+            if service {
+                let holder = holder(&path).map_or("unknown", |holder| match holder {
+                    Holder::Service => "the runner service",
+                    Holder::Run => "`instrukt run` started by hand",
+                    Holder::Tick => "`instrukt tick`",
+                });
+                return Err(RunnerError::ServiceLockTimeout {
+                    waited: RUN_LOCK_WAIT,
+                    holder,
+                });
+            }
             return Err(FsError::LockTimeout {
                 path,
                 waited: RUN_LOCK_WAIT,
             }
             .into());
         }
+        if limit.judge(None::<()>).map_err(clock_error)? == Look::Passed {
+            // Give an acquisition that became possible at the bound precedence.
+            expired = true;
+            continue;
+        }
         if !announced {
-            eprintln!(
+            let _ = writeln!(
+                std::io::stderr(),
                 "instrukt: waiting for the runner lock, which another runner invocation holds"
             );
             announced = true;

@@ -1,0 +1,115 @@
+<!-- Based on https://github.com/InstruktAI/logging/tree/v0.10.0.
+The 0.10.x API opens its own file and exposes neither a caller-supplied writer
+nor a shared redactor. This patch adds Builder::init_writer to reuse the
+file layer and redacts paths in write-failure diagnostics. Retire it when
+upstream ships both changes: https://github.com/InstruktAI/logging/pull/28. -->
+
+# instrukt-ai-logging
+
+A [`tracing`](https://docs.rs/tracing) layer that writes the InstruktAI logging
+contract: one human-readable logfmt line per event, in one predictable
+per-user location, safe under external log rotation. It follows the same
+contract as the Python writer
+([`instruktai-python-logger`](https://pypi.org/project/instruktai-python-logger/)),
+so a Rust service and a Python service under the same app write identical
+lines, and `instrukt-ai-logs` reads both.
+
+```text
+2026-11-05T09:30:12.345Z level=INFO logger=teleclaude::jobs msg="job_started" attempt=3 job_id=abc123
+```
+
+## Usage
+
+```toml
+[dependencies]
+instrukt-ai-logging = "0.7"
+tracing = "0.1"
+```
+
+```rust,no_run
+fn main() -> Result<(), instrukt_ai_logging::Error> {
+    // $XDG_STATE_HOME/instrukt-ai/teleclaude/teleclaude.log
+    // (~/.local/state when XDG_STATE_HOME is unset).
+    instrukt_ai_logging::init("teleclaude", None)?;
+    tracing::info!(job_id = "abc123", attempt = 3, "job_started");
+    Ok(())
+}
+```
+
+`init` installs the global subscriber and bridges the `log` crate, so
+dependencies that log through `log` go through the same selection. It fails
+(never panics) when the log file cannot be opened or a global subscriber or
+`log` logger is already set.
+
+For the less common knobs, use the `Builder`:
+
+```rust,no_run
+use tracing_subscriber::layer::SubscriberExt;
+
+// A separate cron.log next to the app's main log, extra crates counted as the
+// app's own, and a shorter cut-off for long values.
+let path = instrukt_ai_logging::Builder::new("instrukt")
+    .source("cron")
+    .app_prefix("instrukt_cli")
+    .app_prefix("instrukt_core")
+    .max_message_chars(2000)
+    .init()?;
+
+// Or compose your own subscriber: the layer carries its own per-layer
+// filter, so other layers still see every event.
+let (layer, path) = instrukt_ai_logging::Builder::new("teleclaude").layer()?;
+let subscriber = tracing_subscriber::registry().with(layer);
+# Ok::<(), instrukt_ai_logging::Error>(())
+```
+
+`resolve_log_root()`, `resolve_log_dir(app)` and `resolve_log_file(app, source)`
+return the locations without creating anything.
+
+Startup fails fast: `init` and `layer` return `Err` when the file cannot be
+opened (or is a symbolic link). Once running, a line that cannot be written is
+dropped and never panics; `instrukt_ai_logging::failure_count()` counts them,
+and stderr gets one bounded report a minute, without the line's content.
+
+## Configuration
+
+Read once, at initialization. `APP` is the app name upper-cased, with runs of
+other characters turned into `_`.
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `{APP}_LOG_LEVEL` | threshold for the app's own targets | `INFO` |
+| `{APP}_THIRD_PARTY_LOG_LEVEL` | threshold for third-party targets | `WARNING` |
+| `{APP}_THIRD_PARTY_LOGGERS` | CSV of third-party prefixes to spotlight; every other third-party target then passes at `WARNING`+ | none |
+| `{APP}_MUTED_LOGGERS` | CSV of prefixes held at `WARNING`+ | none |
+
+The longest matching prefix decides (muted wins a tie). Prefixes match on `.`
+and `::` boundaries, so `hyper` covers `hyper::client`.
+
+## What gets written
+
+- `level`, `logger` (the tracing target, unchanged), the always-quoted `msg`,
+  then the event's fields sorted by key. `WARN` is written as `WARNING`.
+- Bearer tokens, `sk-` keys and Telegram bot tokens are redacted; strings are
+  cut at `max_message_chars` characters (default 4000) and quoted unless they
+  are bare-safe; floats are written like Python's `repr`.
+- Capture is bounded: at most 17408 characters of the message and of each
+  string, `Debug` or `Display` value are held, so a multi-megabyte value costs
+  tens of kilobytes of memory, not its own size, and everything after the cut
+  (redaction, escaping, the line limit) works on those characters only. A
+  `Debug` or `Display` impl still runs to its end: the sink discards the rest
+  instead of failing the impl, so an impl that unwraps its writes cannot panic
+  inside a log call.
+- Only event fields are written. Span fields and span context are not.
+
+## Rotation
+
+The crate never configures rotation. Before each write it checks that the path
+still refers to the open file and reopens it when it was moved or removed, so
+rotation set up by `instrukt-ai-log-setup` (newsyslog or logrotate, in user
+space) just works.
+
+The full contract: [`docs/contract.md`](https://github.com/InstruktAI/logging/blob/main/docs/contract.md).
+
+## License
+
+MIT

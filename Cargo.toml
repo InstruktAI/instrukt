@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["vendor/instrukt-ai-logging"]
 members = [
     "crates/instrukt-cli",
     "crates/instrukt-core",
@@ -77,3 +78,6 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[patch.crates-io]
+instrukt-ai-logging = { path = "vendor/instrukt-ai-logging" }

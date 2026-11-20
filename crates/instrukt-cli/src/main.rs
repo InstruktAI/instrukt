@@ -96,7 +96,12 @@ enum Command {
 
 /// The log source of this run, once tracing writes to it: the panic hook
 /// names its file.
-static LOG_SOURCE: OnceLock<&'static str> = OnceLock::new();
+enum LogDestination {
+    File(&'static str),
+    Stderr,
+}
+
+static LOG_DESTINATION: OnceLock<LogDestination> = OnceLock::new();
 
 fn main() -> ExitCode {
     install_panic_hook();
@@ -363,10 +368,19 @@ fn install_panic_hook() {
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("a panic without a message");
+        if matches!(LOG_DESTINATION.get(), Some(LogDestination::Stderr)) {
+            let _ = writeln!(std::io::stderr(), "instrukt stopped unexpectedly");
+            return;
+        }
         tracing::error!(event = "panic", %location, message);
-        let log = LOG_SOURCE
+        let log = LOG_DESTINATION
             .get()
-            .and_then(|source| instrukt_ai_logging::resolve_log_file("instrukt", Some(source)).ok())
+            .and_then(|destination| match destination {
+                LogDestination::File(source) => {
+                    instrukt_ai_logging::resolve_log_file("instrukt", Some(source)).ok()
+                }
+                LogDestination::Stderr => None,
+            })
             .or_else(|| instrukt_ai_logging::resolve_log_dir("instrukt").ok())
             .map_or_else(
                 || "instrukt's log".to_owned(),
@@ -418,28 +432,53 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
             Some(source),
         )?)?;
     }
-    let mut builder = instrukt_ai_logging::Builder::new("instrukt")
-        .source(source)
-        .app_prefix("instrukt_cli")
-        .app_prefix("instrukt_core")
-        .app_prefix("instrukt_blueprint")
-        .app_prefix("instrukt_runner")
-        .app_prefix("instrukt_todos")
-        .app_prefix("instrukt_company")
-        .app_prefix("instrukt_connector")
-        .app_prefix("instrukt_connector_slack");
+    const APP_TARGETS: &[&str] = &[
+        "instrukt",
+        "instrukt_cli",
+        "instrukt_core",
+        "instrukt_blueprint",
+        "instrukt_runner",
+        "instrukt_todos",
+        "instrukt_company",
+        "instrukt_connector",
+        "instrukt_connector_slack",
+    ];
+    let builder = || {
+        APP_TARGETS.iter().fold(
+            instrukt_ai_logging::Builder::new("instrukt").source(source),
+            |builder, prefix| builder.app_prefix(*prefix),
+        )
+    };
+    let mut file = builder();
     if matches!(command, Command::Mcp(_)) {
         // The HTTP client's records carry what an MCP server sent back, a
         // reflected login among it, before instrukt can remove it: for this
         // command no third-party record below a warning is written.
-        builder = builder.env_lookup(|name| match name {
+        file = file.env_lookup(|name| match name {
             "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("WARNING".into()),
             "INSTRUKT_THIRD_PARTY_LOGGERS" => None,
             other => std::env::var_os(other),
         });
     }
-    builder.init()?;
-    let _ = LOG_SOURCE.set(source);
+    let destination = match file.init() {
+        Ok(_) => LogDestination::File(source),
+        Err(error) => {
+            if builder()
+                .env_lookup(|_| None)
+                .init_writer(std::io::stderr())
+                .is_ok()
+            {
+                tracing::warn!(event = "file_logging_unavailable", %error, "logging to stderr");
+            } else {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "instrukt: cannot initialise diagnostic logging"
+                );
+            }
+            LogDestination::Stderr
+        }
+    };
+    let _ = LOG_DESTINATION.set(destination);
     Ok(())
 }
 

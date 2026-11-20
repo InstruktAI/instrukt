@@ -33,7 +33,10 @@ diagnostics would otherwise be gone with them.
   for (`sdlc/policy/observability`) — go to the log, in the contract's line
   format, from the logging crate the contract ships for Rust
   (`instrukt-ai-logging`), pinned to the released crates.io version
-  `=0.10.0`. instrukt does not format log lines itself.
+  `=0.10.0` with the stderr sink patch in `vendor/instrukt-ai-logging`.
+  instrukt does not format log lines itself. The same layer redacts event
+  messages and fields before writing to either destination. The crate also
+  redacts paths in its own write-failure diagnostic.
 - What a command reports to its caller stays on standard output and standard
   error as each command's spec says; a refusal or failure is still printed
   to the caller, and is also logged.
@@ -48,8 +51,10 @@ diagnostics would otherwise be gone with them.
   (`project/instrukt/spec/feature/runner/mcp-access`,
   `sdlc/policy/security-awareness`).
 - The logging crate owns open and write failures. instrukt initialises it
-  before any other work. When initialisation fails, records go to standard
-  error and the command continues; the failure is the first record.
+  before the command runs. When the file writer cannot open its destination,
+  the command continues and standard error carries the failure followed by
+  fallback diagnostics. The fallback writes INFO and above for instrukt and
+  WARNING and above for third-party loggers. Stderr writes are best effort.
 
 ## Use cases
 
@@ -59,6 +64,17 @@ diagnostics would otherwise be gone with them.
 Given a developer commits to their project's main and the hook publishes its documentation
 When they later want to know what that publication did
 Then the published documentation is retrievable and the publication's record sits in instrukt's log under their own state directory, in the file of the command that wrote it, where the InstruktAI log reader finds it
+```
+
+### UC-LG2: A developer can run a command when its log directory is unwritable
+
+```gherkin
+Given instrukt cannot open the developer's log directory
+When the developer runs a command
+Then the command produces its usual output and exit status
+And standard error reports the file logging failure and carries the command's diagnostics with the same credential redaction as the file
+But if an active log file becomes unwritable during a run
+Then the write-failure diagnostic on standard error redacts credentials in the log path
 ```
 
 ## Known caveats
