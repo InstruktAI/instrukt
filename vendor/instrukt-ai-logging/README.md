@@ -1,7 +1,8 @@
-<!-- This copy is based on https://github.com/InstruktAI/logging/tree/v0.10.0.
-The local patch adds Builder::init_stderr using the same WriterLayer and
-redaction as the file sink. The released package's Rust source and MIT
-license are included. -->
+<!-- Based on https://github.com/InstruktAI/logging/tree/v0.10.0.
+The 0.10.x API opens its own file and exposes neither a caller-supplied writer
+nor a shared redactor. This patch adds Builder::init_writer to reuse the
+file layer and redacts paths in write-failure diagnostics. Retire it when
+upstream ships both changes: https://github.com/InstruktAI/logging/pull/28. -->
 
 # instrukt-ai-logging
 

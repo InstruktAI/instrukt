@@ -463,7 +463,11 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
     let destination = match file.init() {
         Ok(_) => LogDestination::File(source),
         Err(error) => {
-            if builder().env_lookup(|_| None).init_stderr().is_ok() {
+            if builder()
+                .env_lookup(|_| None)
+                .init_writer(std::io::stderr())
+                .is_ok()
+            {
                 tracing::warn!(event = "file_logging_unavailable", %error, "logging to stderr");
             } else {
                 let _ = writeln!(

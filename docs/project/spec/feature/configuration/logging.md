@@ -35,7 +35,8 @@ diagnostics would otherwise be gone with them.
   (`instrukt-ai-logging`), pinned to the released crates.io version
   `=0.10.0` with the stderr sink patch in `vendor/instrukt-ai-logging`.
   instrukt does not format log lines itself. The same layer redacts event
-  messages and fields before writing to either destination.
+  messages and fields before writing to either destination. The crate also
+  redacts paths in its own write-failure diagnostic.
 - What a command reports to its caller stays on standard output and standard
   error as each command's spec says; a refusal or failure is still printed
   to the caller, and is also logged.
@@ -72,6 +73,8 @@ Given instrukt cannot open the developer's log directory
 When the developer runs a command
 Then the command produces its usual output and exit status
 And standard error reports the file logging failure and carries the command's diagnostics with the same credential redaction as the file
+But if an active log file becomes unwritable during a run
+Then the write-failure diagnostic on standard error redacts credentials in the log path
 ```
 
 ## Known caveats

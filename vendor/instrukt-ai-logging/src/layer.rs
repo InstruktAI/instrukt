@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt::{self, Write as _};
-use std::io::Write as _;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use time::OffsetDateTime;
 use tracing::field::{Field, Visit};
@@ -30,10 +31,10 @@ const LOG_BRIDGE_FIELDS: [&str; 4] = ["log.target", "log.module_path", "log.file
 /// the same string as the Python writer's module name.
 const SELF_LOGGER: &str = "instrukt_ai_logging";
 
-/// Write one `WARNING` line per unknown level value straight to `file`,
+/// Write one `WARNING` line per unknown level value straight to the sink,
 /// bypassing selection: it reports on the configuration of selection itself.
 fn warn_unknown_levels(
-    file: &WatchedFile,
+    sink: &Sink,
     unknown: &[UnknownLevel],
     max_message_chars: usize,
 ) -> Result<(), Error> {
@@ -52,9 +53,12 @@ fn warn_unknown_levels(
             &fields,
             max_message_chars,
         );
-        file.write_line(&line).map_err(|source| Error::WriteFile {
-            path: file.path().to_path_buf(),
-            source,
+        sink.write_line(&line).map_err(|source| match sink {
+            Sink::File(file) => Error::WriteFile {
+                path: file.path().to_path_buf(),
+                source,
+            },
+            Sink::Writer(_) => Error::WriteSink { source },
         })?;
     }
     Ok(())
@@ -336,16 +340,33 @@ impl Visit for Collector {
 }
 
 /// Formats and writes events. Only reached for events the filter let through.
-#[derive(Debug)]
 pub(crate) struct WriterLayer {
     sink: Sink,
     max_message_chars: usize,
 }
 
-#[derive(Debug)]
 enum Sink {
     File(WatchedFile),
-    Stderr,
+    Writer(Mutex<Box<dyn io::Write + Send>>),
+}
+
+impl Sink {
+    fn write_line(&self, line: &str) -> io::Result<()> {
+        match self {
+            Self::File(file) => file.write_line(line),
+            Self::Writer(writer) => writer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .write_all(line.as_bytes()),
+        }
+    }
+
+    fn report_path(&self) -> &Path {
+        match self {
+            Self::File(file) => file.path(),
+            Self::Writer(_) => Path::new("<caller writer>"),
+        }
+    }
 }
 
 impl<S: Subscriber> Layer<S> for WriterLayer {
@@ -367,15 +388,8 @@ impl<S: Subscriber> Layer<S> for WriterLayer {
             &collector.fields,
             self.max_message_chars,
         );
-        match &self.sink {
-            Sink::File(file) => {
-                if let Err(err) = file.write_line(&line) {
-                    report::write_failed(file.path(), &err);
-                }
-            }
-            Sink::Stderr => {
-                let _ = std::io::stderr().lock().write_all(line.as_bytes());
-            }
+        if let Err(error) = self.sink.write_line(&line) {
+            report::write_failed(self.sink.report_path(), &error);
         }
     }
 }
@@ -466,10 +480,10 @@ impl Builder {
     fn build(self) -> Result<(WriterLayer, SelectionFilter, PathBuf), Error> {
         let (filter, unknown) = self.selection()?;
         let path = paths::log_file_with(&self.app, self.source.as_deref(), &self.env)?;
-        let file = WatchedFile::open(path.clone())?;
-        warn_unknown_levels(&file, &unknown, self.max_message_chars)?;
+        let sink = Sink::File(WatchedFile::open(path.clone())?);
+        warn_unknown_levels(&sink, &unknown, self.max_message_chars)?;
         let layer = WriterLayer {
-            sink: Sink::File(file),
+            sink,
             max_message_chars: self.max_message_chars,
         };
         Ok((layer, filter, path))
@@ -505,16 +519,23 @@ impl Builder {
         Ok(path)
     }
 
-    /// Install the same filtered and redacted writer on standard error.
-    /// A failed stderr write is ignored.
-    pub fn init_stderr(self) -> Result<(), Error> {
+    /// Install the global subscriber and log bridge with a caller-owned writer.
+    ///
+    /// Uses the same selection, formatting and redaction as [`Self::init`].
+    /// No log path is resolved and no file is opened. The caller owns
+    /// buffering and rotation. The writer must not log recursively.
+    /// Initialization errors are returned. Runtime write errors are counted
+    /// and reported through the usual rate-limited diagnostic.
+    pub fn init_writer(self, writer: impl io::Write + Send + 'static) -> Result<(), Error> {
         if tracing::dispatcher::has_been_set() {
             return Err(Error::AlreadyInitialized);
         }
-        let (filter, _) = self.selection()?;
+        let (filter, unknown) = self.selection()?;
+        let sink = Sink::Writer(Mutex::new(Box::new(writer)));
+        warn_unknown_levels(&sink, &unknown, self.max_message_chars)?;
         install(
             WriterLayer {
-                sink: Sink::Stderr,
+                sink,
                 max_message_chars: self.max_message_chars,
             },
             filter,
@@ -1106,9 +1127,9 @@ mod tests {
 
         // Rotated after the file was opened, before the first warning: both
         // land in the live file.
-        let file = WatchedFile::open(path.clone())?;
+        let sink = Sink::File(WatchedFile::open(path.clone())?);
         fs::rename(&path, &archive)?;
-        warn_unknown_levels(&file, &[app.clone(), third_party.clone()], 4000)?;
+        warn_unknown_levels(&sink, &[app.clone(), third_party.clone()], 4000)?;
         assert_eq!(lines_without_ts(&path)?, [WARN_APP, WARN_THIRD_PARTY]);
         assert!(lines_without_ts(&archive)?.is_empty());
 
@@ -1116,10 +1137,10 @@ mod tests {
         // file.
         fs::remove_file(&archive)?;
         fs::remove_file(&path)?;
-        let file = WatchedFile::open(path.clone())?;
-        warn_unknown_levels(&file, &[app], 4000)?;
+        let sink = Sink::File(WatchedFile::open(path.clone())?);
+        warn_unknown_levels(&sink, &[app], 4000)?;
         fs::rename(&path, &archive)?;
-        warn_unknown_levels(&file, &[third_party], 4000)?;
+        warn_unknown_levels(&sink, &[third_party], 4000)?;
         assert_eq!(lines_without_ts(&archive)?, [WARN_APP]);
         assert_eq!(lines_without_ts(&path)?, [WARN_THIRD_PARTY]);
         Ok(())
@@ -1129,12 +1150,12 @@ mod tests {
     fn unknown_level_warning_write_failure_is_write_file_error() -> TestResult {
         let tmp = tempfile::tempdir()?;
         let path = tmp.path().join("teleclaude.log");
-        let file = WatchedFile::open(path.clone())?;
+        let sink = Sink::File(WatchedFile::open(path.clone())?);
         // The path now names a directory: the reopen before the write fails.
         fs::remove_file(&path)?;
         fs::create_dir(&path)?;
         let res = warn_unknown_levels(
-            &file,
+            &sink,
             &[unknown("TELECLAUDE_LOG_LEVEL", "deubg", "INFO")],
             4000,
         );
