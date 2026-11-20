@@ -647,12 +647,15 @@ fn settle_terminal(
 pub(crate) fn settle(state: &RunnerState, now: Timestamp) -> Result<(), StateError> {
     state.write::<_,StateError>(|tx| {
         settle_terminal(tx)?;
+        crate::_attention::settle_terminal_approvals(tx)?;
         let path = state::db_path(tx);
         let cutoff = now.saturating_sub(inputs::SET_ASIDE_RETENTION).unwrap_or(Timestamp::MIN).to_string();
         tx.execute("DELETE FROM standing_deliveries AS d WHERE d.state='set_aside' AND EXISTS (SELECT 1 FROM procedure_activations a WHERE a.event_id=d.event_id AND a.procedure=d.procedure AND a.exact_home=d.exact_home AND a.state='set_aside' AND julianday(a.accepted_at)<=julianday(?1))",[&cutoff]).map_err(state::sql(&path))?;
         tx.execute("DELETE FROM procedure_activations WHERE state='set_aside' AND julianday(accepted_at)<=julianday(?1)",[&cutoff]).map_err(state::sql(&path))?;
         tx.execute("DELETE FROM approval_attention AS a WHERE a.state='set_aside' AND EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=a.input_id AND a.target=(i.runtime || ':' || i.session) AND i.state='set_aside' AND julianday(i.arrived_at)<=julianday(?1))",[&cutoff]).map_err(state::sql(&path))?;
-        tx.execute("DELETE FROM runtime_inputs WHERE state='set_aside' AND julianday(arrived_at)<=julianday(?1)",[&cutoff]).map_err(state::sql(&path))?;
+        tx.execute("DELETE FROM runtime_inputs AS i WHERE i.state='set_aside' AND julianday(i.arrived_at)<=julianday(?1)
+            AND NOT EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.input_id=i.input_id AND d.target=(i.runtime || ':' || i.session))
+            AND NOT EXISTS (SELECT 1 FROM approval_attention a WHERE a.input_id=i.input_id AND a.target=(i.runtime || ':' || i.session))",[&cutoff]).map_err(state::sql(&path))?;
         tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND i.state IN ('accepted','entered'))",[]).map_err(state::sql(&state::db_path(tx)))?;
         tx.execute("UPDATE standing_deliveries SET state='delivered',failure=NULL WHERE EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=standing_deliveries.input_id AND (i.runtime || ':' || i.session)=standing_deliveries.target AND i.state IN ('accepted','entered'))",[]).map_err(state::sql(&state::db_path(tx)))?;
         Ok(())

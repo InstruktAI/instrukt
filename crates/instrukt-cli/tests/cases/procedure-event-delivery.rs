@@ -749,6 +749,23 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     let report = status();
     assert_eq!(report["set_aside"]["count"], 14);
     assert_eq!(report["set_aside"]["recent"].as_array().unwrap().len(), 10);
+    // The runner stopped after compacting the input, before the approval
+    // settlement recorded its terminal disposition.
+    let digest = format!("sha256:{}", "a".repeat(64));
+    db.execute(
+        "UPDATE runtime_inputs SET kind='approval',content=?1 WHERE input_id='retained-0'",
+        [&digest],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO approval_attention(todo_id,decision_sequence,content,target,input_id,state)
+        VALUES('interrupted-approval',1,?1,'t3:test','retained-0','pending')",
+        ["x".repeat(71_757)],
+    )
+    .unwrap();
+    db.execute_batch("CREATE TRIGGER require_approval_settlement BEFORE DELETE ON approval_attention
+        WHEN OLD.todo_id='interrupted-approval' AND (OLD.state!='set_aside' OR length(OLD.content)!=71)
+        BEGIN SELECT RAISE(ABORT, 'approval must settle and compact before retirement'); END;").unwrap();
     r.computer
         .env
         .instrukt(r.computer.project.path())
@@ -757,6 +774,14 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
         .assert()
         .success();
     assert_eq!(status()["set_aside"]["count"], 0);
+    let approvals: u32 = db
+        .query_row(
+            "SELECT count(*) FROM approval_attention WHERE todo_id='interrupted-approval'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(approvals, 0, "expired approval settled before retirement");
 }
 fn append_oversized(r: &Responsibility) {
     let id = format!("oversized-{}", r.runtime.threads().len());

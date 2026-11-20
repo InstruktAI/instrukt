@@ -95,9 +95,16 @@ pub fn deliver_approval_attention(
     Ok(())
 }
 
+pub(crate) fn settle_terminal_approvals(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+) -> Result<(), StateError> {
+    tx.execute("UPDATE approval_attention AS a SET (state,failure,content)=(SELECT i.state,i.failure,CASE WHEN i.state='set_aside' THEN i.content ELSE a.content END FROM runtime_inputs i WHERE i.input_id=a.input_id AND (i.runtime || ':' || i.session)=a.target) WHERE a.state IN ('pending','accepted') AND EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=a.input_id AND (i.runtime || ':' || i.session)=a.target AND i.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
+    Ok(())
+}
+
 pub(crate) fn settle_approvals(state: &RunnerState) -> Result<(), StateError> {
     state.write(|tx|{
-        tx.execute("UPDATE approval_attention AS a SET (state,failure,content)=(SELECT i.state,i.failure,CASE WHEN i.state='set_aside' THEN i.content ELSE a.content END FROM runtime_inputs i WHERE i.input_id=a.input_id AND (i.runtime || ':' || i.session)=a.target) WHERE a.state IN ('pending','accepted') AND EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=a.input_id AND (i.runtime || ':' || i.session)=a.target AND i.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
+        settle_terminal_approvals(tx)?;
         tx.execute("UPDATE approval_attention SET failure=(SELECT i.failure FROM runtime_inputs i WHERE i.input_id=approval_attention.input_id AND (i.runtime || ':' || i.session)=approval_attention.target), state=CASE WHEN EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=approval_attention.input_id AND (i.runtime || ':' || i.session)=approval_attention.target AND i.state IN ('accepted','entered')) THEN 'accepted' ELSE state END WHERE state='pending'",[]).map_err(state::sql(&state::db_path(tx)))?;Ok(())
     })
 }
