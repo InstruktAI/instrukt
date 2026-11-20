@@ -932,36 +932,42 @@ impl Connector for Slack {
         conversation: &str,
         message: &str,
         text: &str,
-        readable: &dyn Fn(instrukt_connector::ContextSnapshot),
+        excluded: &std::collections::HashSet<String>,
+        readable: &dyn Fn(instrukt_connector::ContextSnapshot, bool) -> bool,
     ) -> Result<Captured, ConnectorError> {
-        let messages = read_context(self, conversation, message).map_err(failed)?;
         let limit = usize::try_from(self.context_messages).unwrap_or(usize::MAX);
         let me = self.cached_identity();
-        let snapshot_me = me.clone();
-        let messages = Arc::new(messages);
-        let snapshot_messages = Arc::clone(&messages);
-        let snapshot_text = text.to_owned();
-        let names = Arc::clone(&self.names);
-        readable(Box::new(move || {
-            cached_names(&names, |lookup| {
-                render_context(
-                    &snapshot_text,
-                    &snapshot_messages,
-                    limit,
-                    snapshot_me.as_ref(),
-                    lookup,
-                )
-            })
-        }));
+        let snapshot = |messages: Vec<Value>, stopped_early: bool, complete: bool| {
+            let me = me.clone();
+            let names = Arc::clone(&self.names);
+            let text = text.to_owned();
+            readable(
+                Box::new(move || {
+                    let mut captured = cached_names(&names, |lookup| {
+                        render_context(&text, &messages, limit, me.as_ref(), lookup)
+                    });
+                    captured.accompanying.stopped_early = stopped_early;
+                    captured.accompanying.unread = !complete;
+                    captured
+                }),
+                complete,
+            )
+        };
+        let (messages, stopped_early) =
+            read_context(self, conversation, message, excluded, limit, &snapshot)
+                .map_err(failed)?;
+        if !snapshot(messages.clone(), stopped_early, true) {
+            return Err(ConnectorError {
+                cause: "context capture reached its bound".into(),
+            });
+        }
         let me = me.or_else(|| self.me().ok());
         let mut names = self.names();
-        Ok(render_context(
-            text,
-            &messages,
-            limit,
-            me.as_ref(),
-            &mut |user| names.of(user),
-        ))
+        let mut captured = render_context(text, &messages, limit, me.as_ref(), &mut |user| {
+            names.of(user)
+        });
+        captured.accompanying.stopped_early = stopped_early;
+        Ok(captured)
     }
 
     fn without_context(&self, text: &str) -> Captured {
@@ -1201,19 +1207,151 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
     Ok(Some(incoming))
 }
 
-/// Earlier messages in the same thread, or channel history when the
-/// addressed message is the root. The host selects and trims at delivery.
+/// History is newest first. Replies are oldest first within a time range,
+/// so visit recent ranges first and split a full range before trusting its
+/// first page to contain the most recent replies.
 fn read_context(
     slack: &Slack,
     conversation: &str,
     message: &str,
-) -> Result<Vec<Value>, SlackError> {
+    excluded: &std::collections::HashSet<String>,
+    limit: usize,
+    snapshot: &dyn Fn(Vec<Value>, bool, bool) -> bool,
+) -> Result<(Vec<Value>, bool), SlackError> {
+    use std::collections::BTreeMap;
+
     let (channel, thread) = split_conversation(conversation);
-    let within = thread.filter(|thread| *thread != message);
-    slack
-        .api
-        .read(channel, within, None, message, usize::MAX, false)
-        .map(|(messages, _)| messages)
+    let thread = thread.filter(|thread| *thread != message);
+    let method = if thread.is_some() {
+        "conversations.replies"
+    } else {
+        "conversations.history"
+    };
+    let latest = ts_micros(message).ok_or_else(|| SlackError::Api {
+        method: method.into(),
+        cause: "invalid message time".into(),
+    })?;
+    // An exclusive lower bound one tick before the root includes the root.
+    let root = thread.and_then(ts_micros).map(|at| at.saturating_sub(1));
+    let recent = root.map(|root| root.max(latest.saturating_sub(60_000_000)));
+    let mut earlier = recent
+        .zip(root)
+        .filter(|(low, root)| low > root)
+        .map(|(low, root)| (Some(root), low.saturating_add(1)))
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut range = (recent, latest);
+    let mut cursor = None::<String>;
+    let mut messages = BTreeMap::new();
+    let current_upper = latest;
+    loop {
+        let (lower, upper) = range;
+        let latest = slack_timestamp(upper);
+        let oldest = lower.map(slack_timestamp);
+        let mut args = vec![
+            ("channel", channel),
+            ("latest", latest.as_str()),
+            ("inclusive", "false"),
+            ("limit", "200"),
+        ];
+        if let Some(oldest) = &oldest {
+            args.push(("oldest", oldest));
+        }
+        if let Some(thread) = thread {
+            args.push(("ts", thread));
+        }
+        if let Some(cursor) = &cursor {
+            args.push(("cursor", cursor));
+        }
+        let body = slack.api.call(method, false, &args)?;
+        let page = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .ok_or_else(|| SlackError::Api {
+                method: method.into(),
+                cause: "no messages".into(),
+            })?;
+        let next_cursor = body
+            .pointer("/response_metadata/next_cursor")
+            .and_then(Value::as_str)
+            .filter(|cursor| !cursor.is_empty());
+        let more =
+            next_cursor.is_some() || body.get("has_more").and_then(Value::as_bool) == Some(true);
+        for message in page {
+            let Some(at) =
+                message_ts(message).filter(|at| *at < upper && lower.is_none_or(|low| *at > low))
+            else {
+                continue;
+            };
+            if notice(message) || messages.contains_key(&at) {
+                continue;
+            }
+            messages.insert(at, message.clone());
+        }
+
+        if (thread.is_none() || !more)
+            && messages
+                .range((
+                    std::ops::Bound::Excluded(lower.unwrap_or(i64::MIN)),
+                    std::ops::Bound::Excluded(current_upper),
+                ))
+                .filter(|(_, m)| m["ts"].as_str().is_some_and(|id| !excluded.contains(id)))
+                .take(limit.saturating_add(1))
+                .count()
+                > limit
+        {
+            let stopped_early = more || !earlier.is_empty();
+            if let Some(lower) = lower {
+                messages = messages.split_off(&lower.saturating_add(1));
+            }
+            return Ok((messages.into_values().collect(), stopped_early));
+        }
+        if (more || !earlier.is_empty())
+            && !snapshot(messages.values().cloned().collect(), false, false)
+        {
+            return Err(SlackError::Api {
+                method: method.into(),
+                cause: "context capture reached its bound".into(),
+            });
+        }
+        if !more {
+            let Some(next) = earlier.pop() else {
+                return Ok((messages.into_values().collect(), false));
+            };
+            range = next;
+            cursor = None;
+        } else if let Some(low) = lower.filter(|low| upper.saturating_sub(*low) > 2) {
+            // Keep the part we already read for expiry, but don't count it
+            // as a complete newest-first selection until its range is read.
+            let mid = low.midpoint(upper);
+            earlier.push((Some(low), mid.saturating_add(1)));
+            range = (Some(mid), upper);
+            cursor = None;
+        } else if let Some(next) = next_cursor {
+            cursor = Some(next.to_owned());
+        } else if thread.is_none()
+            && let Some(oldest) = page
+                .iter()
+                .filter_map(message_ts)
+                .filter(|at| *at < upper)
+                .min()
+        {
+            range.1 = oldest;
+        } else {
+            return Err(SlackError::Api {
+                method: method.into(),
+                cause: "missing continuation for context".into(),
+            });
+        }
+    }
+}
+
+fn slack_timestamp(micros: i64) -> String {
+    format!(
+        "{}.{:06}",
+        micros.div_euclid(1_000_000),
+        micros.rem_euclid(1_000_000)
+    )
 }
 
 fn render_context(
@@ -1256,6 +1394,7 @@ fn render_context(
             limit: Some(limit),
             left_out: false,
             unread: false,
+            stopped_early: false,
         },
     }
 }

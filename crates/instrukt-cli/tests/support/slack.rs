@@ -161,6 +161,7 @@ struct Workspace {
     next: u64,
     refuse: bool,
     hold_reads: bool,
+    hold_later_history_pages: bool,
     refuse_replies: bool,
     refused_reply: Option<String>,
     hold_reads_from: std::collections::BTreeSet<String>,
@@ -250,6 +251,11 @@ impl FakeSlack {
                             && {
                                 let workspace = workspace.lock().unwrap();
                                 workspace.hold_reads
+                                    || (workspace.hold_later_history_pages
+                                        && method == "conversations.history"
+                                        && body
+                                            .split('&')
+                                            .any(|field| field.starts_with("cursor=")))
                                     || workspace.hold_reads_from.iter().any(|oldest| {
                                         body.split('&').any(|field| {
                                             field.strip_prefix("oldest=") == Some(oldest)
@@ -957,6 +963,11 @@ impl FakeSlack {
         self.workspace.lock().unwrap().refuse_replies = refused;
     }
 
+    /// Keep the first history page available and hold continuations.
+    pub fn hold_later_history_pages(&self) {
+        self.workspace.lock().unwrap().hold_later_history_pages = true;
+    }
+
     pub fn hold_reads(&self) {
         self.workspace.lock().unwrap().hold_reads = true;
     }
@@ -994,6 +1005,7 @@ impl FakeSlack {
     pub fn release_reads(&self) {
         let mut workspace = self.workspace.lock().unwrap();
         workspace.hold_reads = false;
+        workspace.hold_later_history_pages = false;
         workspace.hold_reads_from.clear();
     }
 

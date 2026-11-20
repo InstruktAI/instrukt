@@ -26,9 +26,32 @@ pub struct Accompanying {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
     pub left_out: bool,
-    /// The context bound expired without a usable read.
+    /// Older pages were left unread because the selection was known.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_early: bool,
+    /// Some or all of the needed context could not be read by the bound.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unread: bool,
+}
+
+impl Accompanying {
+    /// Preserve messages from a prior partial read. Prefer the latest
+    /// rendering of a message for any ID both reads supplied.
+    pub fn retain_read(&mut self, previous: Self) {
+        self.limit = self.limit.or(previous.limit);
+        let current: std::collections::HashSet<_> = self
+            .messages
+            .iter()
+            .filter_map(|entry| entry.id.as_deref())
+            .collect();
+        let remaining = previous
+            .messages
+            .into_iter()
+            .filter(|entry| entry.id.as_deref().is_some_and(|id| !current.contains(id)))
+            .collect::<Vec<_>>();
+        self.messages.extend(remaining);
+        self.messages.sort_by_key(|entry| entry.at);
+    }
 }
 
 /// What a connector supplies for one message addressed to the agent, as it

@@ -31,14 +31,16 @@ pub trait Connector: Send + Sync {
     fn admit(&self, sender: &str) -> Admission;
     /// The addressed message `message` of `conversation` as the agent reads
     /// it and the earlier messages in its provider's context range.
-    /// Publish readable context before any optional name enrichment. The
-    /// host can use it when enrichment has not returned by the deadline.
+    /// Publish usable pages as they arrive. The boolean is true once the
+    /// selection is known and only name enrichment remains. Stop reading
+    /// if the callback returns false.
     fn capture(
         &self,
         conversation: &str,
         message: &str,
         text: &str,
-        readable: &dyn Fn(ContextSnapshot),
+        excluded: &std::collections::HashSet<String>,
+        readable: &dyn Fn(ContextSnapshot, bool) -> bool,
     ) -> Result<Captured, ConnectorError>;
     /// Frame the addressed text after the context bound, without provider I/O.
     fn without_context(&self, text: &str) -> Captured {

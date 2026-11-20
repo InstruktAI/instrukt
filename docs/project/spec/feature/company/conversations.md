@@ -133,7 +133,8 @@ waiting for their own turns. Apply the context limit to that selection and
 include the omission note when the limit trims it. Record the selected
 messages and addressed message in the same transaction that records the
 delivery. A send or start whose acceptance is uncertain retains the exact
-input for reconciliation. Receipts follow message retention as stated in
+input for reconciliation. Once the runtime confirms non-acceptance,
+select context again before retrying. Receipts follow message retention as stated in
 the state-database spec.
 
 

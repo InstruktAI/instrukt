@@ -812,7 +812,7 @@ pub fn captured(
     accompanying: Result<Accompanying, String>,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
-    let accompanying = match accompanying {
+    let mut accompanying = match accompanying {
         Ok(accompanying) => accompanying,
         Err(failure) => {
             state.write::<_, StateError>(|tx| {
@@ -829,14 +829,21 @@ pub fn captured(
     let row = state
         .read(|conn, path| {
             conn.query_row(
-                "SELECT sender_name,written_at FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                "SELECT sender_name,written_at,context_json FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
                 params![company.as_str(), connector, unread.conversation, unread.message],
-                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
             )
             .map_err(state::sql(path))
         })?
         .ok_or_else(|| ConversationError::Refused("the received message is gone".into()))?;
-    let (name, written_at) = row;
+    let (name, written_at, previous) = row;
+    if accompanying.unread
+        && let Some(previous) = previous
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+    {
+        accompanying.retain_read(previous);
+    }
     let name = name
         .ok_or_else(|| ConversationError::Refused("the message's sender is not admitted".into()))?;
     let written_at: Timestamp = written_at
@@ -1343,22 +1350,41 @@ fn turn_update(
     })
 }
 
+pub(crate) fn context_exclusions(
+    state: &RunnerState,
+    company: &ProjectSlug,
+    connector: &str,
+    conversation: &str,
+) -> Result<std::collections::HashSet<String>, StateError> {
+    Ok(state.read(|conn, path| {
+        let mut query = conn.prepare(
+            "SELECT message FROM conversation_context_receipts
+             WHERE company=?1 AND connector=?2 AND conversation=?3
+             UNION SELECT message FROM conversation_messages
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN ('received','pending')",
+        ).map_err(state::sql(path))?;
+        query.query_map(params![company.as_str(), connector, conversation], |row| row.get::<_, String>(0))
+            .map_err(state::sql(path))?.collect::<Result<std::collections::HashSet<_>, _>>().map_err(state::sql(path))
+    })?.unwrap_or_default())
+}
+
 /// Save the precise input before native I/O. A pending native attempt
 /// keeps its original input so lost acknowledgments can be reconciled.
 fn prepare_delivery(
     state: &RunnerState,
     c: &Conversation,
     next: &Message,
-) -> Result<Message, ConversationError> {
+    now: Timestamp,
+) -> Result<Option<Message>, ConversationError> {
     if next.attempted || (c.session.is_none() && c.request.is_some()) {
-        return Ok(next.clone());
+        return Ok(Some(next.clone()));
     }
     let Some(content) = next.content.as_deref() else {
-        return Ok(next.clone());
+        return Ok(Some(next.clone()));
     };
     let row = state.read(|conn, path| {
         conn.query_row(
-            "SELECT context_json,sender_name,written_at FROM conversation_messages
+            "SELECT context_json,sender_name,written_at,arrived_at FROM conversation_messages
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
             params![
                 c.company.as_str(),
@@ -1371,30 +1397,44 @@ fn prepare_delivery(
                     row.get::<_, Option<String>>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             },
         )
         .map_err(state::sql(path))
     })?;
-    let Some((Some(captured), Some(sender), written_at)) = row else {
-        return Ok(next.clone());
+    let Some((Some(captured), Some(sender), written_at, arrived_at)) = row else {
+        return Ok(Some(next.clone()));
     };
     let mut accompanying: Accompanying = serde_json::from_str(&captured)?;
-    let excluded = state.read(|conn, path| {
-        let mut query = conn.prepare(
-            "SELECT message FROM conversation_context_receipts
-             WHERE company=?1 AND connector=?2 AND conversation=?3
-             UNION SELECT message FROM conversation_messages
-             WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN ('received','pending')",
-        ).map_err(state::sql(path))?;
-        query.query_map(params![c.company.as_str(), c.connector, c.conversation], |row| row.get::<_, String>(0))
-            .map_err(state::sql(path))?.collect::<Result<std::collections::HashSet<_>, _>>().map_err(state::sql(path))
-    })?.unwrap_or_default();
+    let excluded = context_exclusions(state, &c.company, &c.connector, &c.conversation)?;
     accompanying
         .messages
         .retain(|earlier| earlier.id.as_ref().is_none_or(|id| !excluded.contains(id)));
     if let Some(limit) = accompanying.limit {
         let trimmed = accompanying.messages.len().saturating_sub(limit);
+        if accompanying.stopped_early && trimmed == 0 {
+            let arrived_at: Timestamp = arrived_at
+                .parse()
+                .map_err(|error: jiff::Error| ConversationError::Refused(error.to_string()))?;
+            if now
+                < arrived_at
+                    .checked_add(CONTEXT_BOUND)
+                    .unwrap_or(Timestamp::MAX)
+            {
+                // Eligibility changed after the capture stopped. Let intake
+                // read further before handing over an incomplete selection.
+                state.write::<_, StateError>(|tx| {
+                    tx.execute(
+                        "UPDATE conversation_messages SET state='received' WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                        params![c.company.as_str(), c.connector, c.conversation, next.message],
+                    ).map_err(state::sql(&state::db_path(tx)))?;
+                    Ok(())
+                })?;
+                return Ok(None);
+            }
+            accompanying.unread = true;
+        }
         accompanying.left_out = trimmed > 0;
         accompanying.messages.drain(..trimmed);
     }
@@ -1441,11 +1481,11 @@ fn prepare_delivery(
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     })?;
-    Ok(Message {
+    Ok(Some(Message {
         boundary: Some(boundary),
         content: Some(content),
         ..next.clone()
-    })
+    }))
 }
 
 fn remember_delivery(
@@ -1570,10 +1610,15 @@ fn deliver_one(
 ) -> Result<(), ConversationError> {
     let state = &RunnerState::new(invocation.home());
     let now = clock();
-    let result = prepare_delivery(state, c, next).and_then(|prepared| match &c.session {
-        None => opening_source
-            .and_then(|source| start(invocation, admitted, adapter, source, c, &prepared, now)),
-        Some(session) => send(adapter, state, c, session, &prepared, now),
+    let result = prepare_delivery(state, c, next, now).and_then(|prepared| {
+        let Some(prepared) = prepared else {
+            return Ok(());
+        };
+        match &c.session {
+            None => opening_source
+                .and_then(|source| start(invocation, admitted, adapter, source, c, &prepared, now)),
+            Some(session) => send(adapter, state, c, session, &prepared, now),
+        }
     });
     record_delivery_failure(adapter, state, c, next, clock, &result)?;
     result

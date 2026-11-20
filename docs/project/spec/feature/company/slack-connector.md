@@ -218,11 +218,14 @@ message that was refused can still accompany an admitted message if the
 agent has never received it. The record is updated in the same transaction
 as the delivery receipt and follows the retention in the state-database
 spec. An attempt with uncertain acceptance keeps its exact framed input
-until reconciled.
+until reconciled. Once the runtime confirms non-acceptance,
+the next attempt selects context again against the current record.
 
 An addressed message is accompanied by at most `context_messages` messages.
 When its range holds more, the most recent ones accompany it and the
-conversation context says that earlier messages were left out.
+conversation context says that earlier messages were left out. Slack context is
+read from newest towards oldest, stopping once the eligible selection and
+whether earlier messages were left out are known.
 
 Each accompanying message carries its speaker and time; the agent's own posts
 are marked as its own. A speaker is named as a sender is, and in every message
@@ -243,9 +246,10 @@ The context bound is declared by `CONTEXT_BOUND` in
 `crates/instrukt-company/src/conversations.rs`. It starts when the addressed
 message is retained and uses the runner's clock. The sender must still be
 admitted. Context expiry and handoff run independently of sender lookups and
-other provider calls. If the messages could not be read by expiry, the
-admitted question proceeds without them, even during an active read, and
-the agent's context says they could not be read. If the messages were
+other provider calls. At expiry the admitted question proceeds, even during an active read.
+The context keeps usable messages already read and says that earlier
+messages could not be read only when part or all of the needed range
+remained unread. If the messages were
 read in time, the agent receives them. Name enrichment gets at most the
 next intake retry interval and never extends the context bound. Names
 still unresolved at handoff use Slack IDs. Later results
@@ -397,6 +401,8 @@ And the member receives the answer without a technical message about the read
 When context becomes readable on retry
 Then previously unseen messages can accompany the question even if a refused tag or a later delivery followed them
 And queued tags still take their own turns
+And a confirmed send refusal causes the next attempt to exclude messages delivered in the meantime
+And a stalled earlier page never drops context already read
 And messages already delivered out of written order or pruned within the receipt window are not replayed
 ```
 

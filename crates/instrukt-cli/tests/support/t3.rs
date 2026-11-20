@@ -209,6 +209,10 @@ elif command=='send':
         (root/(operands[0]+'.send-held')).write_text(str(os.getpid()))
     while held.exists(): time.sleep(0.02)
     t=find(operands[0])
+    fail_once=root/(operands[0]+'.fail-next-send')
+    if fail_once.exists():
+        fail_once.unlink()
+        print('send failed',file=sys.stderr); sys.exit(1)
     if (root/'send-failure').exists(): print('send failed',file=sys.stderr); sys.exit(1)
     if (root/'send-unreachable').exists():
         print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+sys.stdin.read(),file=sys.stderr); sys.exit(1)

@@ -492,6 +492,11 @@ fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
         scope.spawn(readable_context_survives_a_held_speaker_lookup);
         scope.spawn(a_retry_keeps_context_the_agent_has_never_seen);
         scope.spawn(a_retry_excludes_a_queued_question);
+        scope.spawn(a_refused_send_reselects_context);
+        scope.spawn(|| {
+            a_stalled_history_page_keeps_the_first_page(false);
+            a_stalled_history_page_keeps_the_first_page(true);
+        });
         scope.spawn(receipts_survive_out_of_order_delivery_and_pruning);
         unread_context_expires_during_an_unrelated_sender_lookup();
     });
@@ -823,6 +828,99 @@ fn a_retry_excludes_a_queued_question() {
     assert!(input.contains(detail), "{input}");
     assert_eq!(c.delivered(&session, 2).accompanying, 1);
     assert!(!c.delivered(&session, 2).left_out);
+}
+
+fn a_refused_send_reselects_context() {
+    let (mut c, _, _) = context_company("");
+    c.run();
+    let channel = "C1";
+    let root = c
+        .slack
+        .mention(channel, "USTEVEN", "Open the review.", None);
+    let session = c.session();
+    c.finish_turn(&session, 0, "NOOP");
+    let earlier_text = "Review the earlier draft.";
+    let earlier = c.slack.say(channel, "USTEVEN", earlier_text, Some(&root));
+    let detail = "The review checklist is in the wiki.";
+    c.slack.say(channel, "UBRAM", detail, Some(&root));
+    let hold = format!("{session}.hold-send");
+    c.runtime.flag(&hold, true);
+    let later = c
+        .slack
+        .mention(channel, "UANNA", "Can we ship?", Some(&root));
+    wait(
+        "the later question's first send waits before acceptance",
+        || c.runtime.held_send_running(&session),
+    );
+    let db = context_database(&c);
+    let first_input: String = db.query_row(
+        "SELECT content FROM conversation_messages WHERE message=?1 AND attempted_at IS NOT NULL",
+        [&later], |row| row.get(0),
+    ).unwrap();
+    assert!(first_input.contains(earlier_text), "{first_input}");
+    c.slack
+        .notify_mention(&earlier, channel, "USTEVEN", earlier_text, Some(&root));
+    wait_for_message_state(&db, &earlier, "pending");
+    c.runtime.flag(&format!("{session}.fail-next-send"), true);
+    c.runtime.flag(&hold, false);
+    wait("the earlier question takes its own turn", || {
+        c.runtime.message_count(&session) == 2
+    });
+    assert!(c.input(&session, 1).contains(earlier_text));
+    c.finish_turn(&session, 1, "NOOP");
+    wait("the refused later question is retried", || {
+        c.runtime.message_count(&session) == 3
+    });
+    let retried = c.input(&session, 2);
+    assert!(retried.contains(detail), "{retried}");
+    assert!(!retried.contains(earlier_text), "{retried}");
+}
+
+fn a_stalled_history_page_keeps_the_first_page(first_page_is_enough: bool) {
+    let (mut c, clock, at) = context_company(", context_messages: 1");
+    let channel = "C1";
+    c.slack
+        .say(channel, "USTEVEN", "An older note on the held page.", None);
+    if first_page_is_enough {
+        c.slack
+            .say(channel, "USTEVEN", "The next most recent note.", None);
+    } else {
+        c.slack
+            .notice(channel, "channel_join", "UANNA", "A Slack notice.", None);
+    }
+    let latest = "The newest note belongs in the context.";
+    c.slack.say(channel, "UBRAM", latest, None);
+    c.slack.hold_later_history_pages();
+    c.run();
+    c.slack
+        .mention(channel, "USTEVEN", "What did I miss?", None);
+    if first_page_is_enough {
+        crate::common::wait_until(
+            "page one supplies context and proves omission without page two",
+            std::time::Duration::from_secs(12),
+            || !c.sessions().is_empty() || c.slack.held() > 0,
+        );
+        assert_eq!(
+            c.slack.held(),
+            0,
+            "selection was known before the held page"
+        );
+    } else {
+        wait("the unread second page is held", || c.slack.held() > 0);
+        assert!(c.sessions().is_empty());
+        set_context_clock(&clock, at + CONTEXT_LIMIT);
+    }
+    let session = c.session();
+    let input = c.input(&session, 0);
+    assert!(input.contains(latest), "{input}");
+    assert_eq!(c.delivered(&session, 0).accompanying, 1);
+    assert_eq!(c.delivered(&session, 0).left_out, first_page_is_enough);
+    assert_eq!(
+        input.contains("Earlier messages could not be read."),
+        !first_page_is_enough,
+        "{input}"
+    );
+    c.slack.release_reads();
 }
 
 fn receipts_survive_out_of_order_delivery_and_pruning() {

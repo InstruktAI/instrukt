@@ -531,6 +531,73 @@ mod tests {
     }
 
     #[test]
+    fn delivery_receipts_upgrade_the_previous_schema_and_can_be_reapplied() {
+        let path = Path::new(":memory:");
+        let mut conn = Connection::open_in_memory().unwrap();
+        let before = schema_version() - 1;
+        for migration in _schema::MIGRATIONS
+            .iter()
+            .take(usize::try_from(before).unwrap())
+        {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", before).unwrap();
+        conn.execute_batch(
+            "INSERT INTO conversation_messages(company,connector,conversation,message,written_us,written_at,arrived_at,state,text)
+             VALUES ('acme','slack','C1/1','1.000001',1,'2026-11-18T10:00:00Z','2026-11-18T10:00:00Z','sent','Delivered'),
+                    ('acme','slack','C1/1','1.000002',2,'2026-11-18T10:00:01Z','2026-11-18T10:00:01Z','pending','Waiting');",
+        ).unwrap();
+        migrate(&mut conn, path).unwrap();
+        conn.execute(
+            r#"UPDATE conversation_messages SET context_delivery_ids='["1.000000"]' WHERE message='1.000001'"#,
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO conversation_context_receipts(company,connector,conversation,message,delivery,retired_at)
+             VALUES ('acme','slack','C1/1','1.000000','1.000001','2026-11-18T10:00:00Z')",
+            [],
+        ).unwrap();
+        conn.pragma_update(None, "user_version", before).unwrap();
+        migrate(&mut conn, path).unwrap();
+
+        assert_eq!(user_version(&conn, path).unwrap(), before + 1);
+        let receipts: Vec<(String, Option<String>)> = conn
+            .prepare(
+                "SELECT message,retired_at FROM conversation_context_receipts
+             WHERE company='acme' AND connector='slack' AND conversation='C1/1' ORDER BY message",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            receipts,
+            [
+                (
+                    "1.000000".to_owned(),
+                    Some("2026-11-18T10:00:00Z".to_owned())
+                ),
+                ("1.000001".to_owned(), None),
+            ]
+        );
+        let delivery: String = conn
+            .query_row(
+                "SELECT context_delivery_ids FROM conversation_messages WHERE message='1.000001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(delivery, r#"["1.000000"]"#);
+    }
+
+    #[test]
     fn version_23_keeps_every_stored_reply_as_a_not_own_one() {
         // The shape before version 23.
         let before = 22;
@@ -556,18 +623,6 @@ mod tests {
         ).unwrap();
         conn.execute_batch("INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,replied_at) VALUES('acme','slack','C1/1','UOTHER','2026-11-18T10:00:00Z','2026-11-18T10:00:02Z');INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,failure) VALUES('acme','slack','D1/2','UGUEST','2026-11-18T10:01:00Z','Slack chat.postMessage: timeout');").unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
-        let receipts: Vec<String> = conn
-            .prepare(
-                "SELECT message FROM conversation_context_receipts
-                      WHERE company='acme' AND connector='slack' AND conversation='C1/1'
-                      ORDER BY message",
-            )
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(receipts, ["pending-piece", "posted-piece"]);
         let attempt = conn
             .query_row(
                 "SELECT attempted_at,latest_attempted_at,post_id,legacy_read_at,delivery_unknown_at FROM conversation_answers WHERE turn='turn-1'",

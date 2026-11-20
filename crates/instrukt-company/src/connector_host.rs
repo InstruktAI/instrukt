@@ -20,6 +20,7 @@ use instrukt_connector::{
 use instrukt_core::config::{Admitted, AdmittedSecrets, Current};
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
+use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 use serde_yaml_ng::Value;
 
@@ -715,18 +716,19 @@ fn owed(refusals: Vec<(Refusal, bool)>) -> Vec<Refusal> {
 }
 
 enum ContextReply {
-    Readable(ContextSnapshot, Timestamp, Instant),
+    Readable(ContextSnapshot, Timestamp, Option<Instant>),
     Finished(Result<Captured, ConnectorError>, Timestamp),
 }
 
 struct ContextFlight {
     replies: std::sync::mpsc::Receiver<ContextReply>,
-    readable: Option<(ContextSnapshot, Instant)>,
+    readable: Option<(ContextSnapshot, Option<Instant>)>,
 }
 
 #[derive(Default)]
 struct ContextReads {
     active: BTreeMap<(String, String), ContextFlight>,
+    partial: BTreeMap<(String, String), Captured>,
 }
 
 impl ContextReads {
@@ -737,6 +739,10 @@ impl ContextReads {
         clock: &Arc<dyn Connectors>,
         wake: &SyncSender<()>,
         deadline: Timestamp,
+        exclusions: impl FnOnce() -> Result<
+            std::collections::HashSet<String>,
+            conversations::ConversationError,
+        >,
     ) -> Option<Result<Captured, ConnectorError>> {
         use std::sync::mpsc::{self, TryRecvError};
         let key = (item.conversation.clone(), item.message.clone());
@@ -745,28 +751,30 @@ impl ContextReads {
             loop {
                 match flight.replies.try_recv() {
                     Ok(ContextReply::Readable(snapshot, at, ready)) if at < deadline => {
-                        flight.readable = Some((snapshot, ready + RETRY));
+                        flight.readable = Some((snapshot, ready));
                     }
                     Ok(ContextReply::Readable(..)) => {}
                     Ok(ContextReply::Finished(Ok(captured), at)) if at < deadline => {
                         self.active.remove(&key);
+                        self.partial.remove(&key);
                         return Some(Ok(captured));
                     }
                     Ok(ContextReply::Finished(outcome, finished)) => {
-                        let readable = self.active.remove(&key).and_then(|flight| flight.readable);
-                        if let Some((snapshot, _)) = readable {
-                            return Some(Ok(snapshot()));
+                        if let Some(captured) = self.finish_read(&key) {
+                            return Some(Ok(captured));
                         }
                         if now >= deadline || finished >= deadline {
-                            return Some(Ok(connector.without_context(&item.text)));
+                            return Some(Ok(self
+                                .partial
+                                .remove(&key)
+                                .unwrap_or_else(|| connector.without_context(&item.text))));
                         }
                         return Some(outcome);
                     }
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
-                        let readable = self.active.remove(&key).and_then(|flight| flight.readable);
-                        if let Some((snapshot, _)) = readable {
-                            return Some(Ok(snapshot()));
+                        if let Some(captured) = self.finish_read(&key) {
+                            return Some(Ok(captured));
                         }
                         if now < deadline {
                             return Some(Err(ConnectorError {
@@ -783,15 +791,23 @@ impl ContextReads {
             .active
             .get(&key)
             .and_then(|flight| flight.readable.as_ref())
-            .is_some_and(|(_, ready)| Instant::now() >= *ready);
+            .and_then(|(_, ready)| *ready)
+            .is_some_and(|ready| Instant::now() >= ready);
         if now >= deadline || enrichment_done {
-            let readable = self.active.remove(&key).and_then(|flight| flight.readable);
-            return Some(Ok(readable.map_or_else(
-                || connector.without_context(&item.text),
-                |(snapshot, _)| snapshot(),
-            )));
+            let captured = self.finish_read(&key).or_else(|| self.partial.remove(&key));
+            return Some(Ok(
+                captured.unwrap_or_else(|| connector.without_context(&item.text))
+            ));
         }
         if let std::collections::btree_map::Entry::Vacant(slot) = self.active.entry(key) {
+            let excluded = match exclusions() {
+                Ok(excluded) => excluded,
+                Err(error) => {
+                    return Some(Err(ConnectorError {
+                        cause: error.to_string(),
+                    }));
+                }
+            };
             let connector = Arc::clone(connector);
             let clock = Arc::clone(clock);
             let item = item.clone();
@@ -800,13 +816,17 @@ impl ContextReads {
             let spawned = std::thread::Builder::new()
                 .name("conversation-context".into())
                 .spawn(move || {
-                    let readable = |snapshot| {
-                        if send.send(ContextReply::Readable(snapshot, clock.now(), Instant::now())).is_ok() {
+                    let readable = |snapshot, complete: bool| {
+                        let ready = complete.then(|| Instant::now() + RETRY);
+                        let at = clock.now();
+                        let reading = at < deadline && send.send(ContextReply::Readable(snapshot, at, ready)).is_ok();
+                        if reading {
                             let _ = wake.try_send(());
                         }
+                        reading
                     };
                     let result = connector.capture(
-                        &item.conversation, &item.message, &item.text, &readable,
+                        &item.conversation, &item.message, &item.text, &excluded, &readable,
                     );
                     if send.send(ContextReply::Finished(result, clock.now())).is_err() {
                         tracing::debug!(target: LOG_TARGET, event = "conversation_context_late_result", message = %item.message);
@@ -823,6 +843,21 @@ impl ContextReads {
                 readable: None,
             });
         }
+        None
+    }
+
+    fn finish_read(&mut self, key: &(String, String)) -> Option<Captured> {
+        let (snapshot, ready) = self.active.remove(key)?.readable?;
+        let mut captured = snapshot();
+        if let Some(previous) = self.partial.remove(key)
+            && captured.accompanying.unread
+        {
+            captured.accompanying.retain_read(previous.accompanying);
+        }
+        if ready.is_some() {
+            return Some(captured);
+        }
+        self.partial.insert(key.clone(), captured);
         None
     }
 }
@@ -909,7 +944,15 @@ fn capture_contexts(
             .arrived_at
             .checked_add(conversations::CONTEXT_BOUND)
             .unwrap_or(Timestamp::MAX);
-        match contexts.capture(connector, &unread, clock, wakes.context, deadline) {
+        match contexts.capture(connector, &unread, clock, wakes.context, deadline, || {
+            conversations::context_exclusions(
+                &RunnerState::new(home),
+                company,
+                key,
+                &unread.conversation,
+            )
+            .map_err(Into::into)
+        }) {
             Some(Ok(captured)) => {
                 conversations::captured(
                     home,
@@ -1144,7 +1187,8 @@ mod test_connector {
             _: &str,
             _: &str,
             text: &str,
-            _: &dyn Fn(instrukt_connector::ContextSnapshot),
+            _: &std::collections::HashSet<String>,
+            _: &dyn Fn(instrukt_connector::ContextSnapshot, bool) -> bool,
         ) -> Result<Captured, ConnectorError> {
             Ok(Captured {
                 text: text.to_owned(),
