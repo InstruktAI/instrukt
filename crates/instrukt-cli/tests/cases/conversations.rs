@@ -726,6 +726,10 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(|| {
             legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithNewNotice)
         });
+        scope.spawn(|| {
+            legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice)
+        });
+        scope.spawn(an_answer_response_without_a_timestamp_is_reconciled);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
@@ -1026,6 +1030,9 @@ fn notice_epochs_and_reconciliation() {
     wait("the relay unavailable for both members", || {
         c.slack.status(channel, &first).as_deref() == Some(UNAVAILABLE)
     });
+    // The queued follow-up is admitted later and does not enter the
+    // first notice's set of already-due messages.
+    set_clock(&clock, first_at + jiff::SignedDuration::from_secs(1));
     let again = c
         .slack
         .mention(channel, sender, "<@UAGENT> And what time?", Some(&first));
@@ -1354,23 +1361,38 @@ enum LegacyReceipt {
     Missing,
     Late,
     LateWithNewNotice,
+    LateWithUnconfirmedNotice,
 }
 
 fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
-    let late = matches!(
-        receipt,
-        LegacyReceipt::Late | LegacyReceipt::LateWithNewNotice
-    );
+    let out_of_order = receipt == LegacyReceipt::LateWithUnconfirmedNotice;
+    let notice_before_receipt = out_of_order || receipt == LegacyReceipt::LateWithNewNotice;
+    let late = notice_before_receipt || receipt == LegacyReceipt::Late;
     let at = jiff::Timestamp::from_second(1_700_000_010).unwrap();
     let (mut c, clock) = status_company(at);
     c.runtime.flag("separate-completion", true);
     let channel = "C1";
     let member = "USTEVEN";
     projected(&c);
-    let asked = c
-        .slack
-        .mention(channel, member, "<@UAGENT> Where are the notes?", None);
-    let conversation = format!("{channel}/{asked}");
+    let (asked, thread) = if out_of_order {
+        let thread = c
+            .slack
+            .say_at("1700000000.000100", channel, member, "Thread context", None);
+        let asked = c.slack.mention_at(
+            "1700000005.000100",
+            channel,
+            member,
+            "<@UAGENT> Where are the notes?",
+            Some(&thread),
+        );
+        (asked, thread)
+    } else {
+        let asked = c
+            .slack
+            .mention(channel, member, "<@UAGENT> Where are the notes?", None);
+        (asked.clone(), asked)
+    };
+    let conversation = format!("{channel}/{thread}");
     let session = started(&c, &[]);
     let legacy = "The legacy answer.";
     c.slack.hold_posts_to_fail();
@@ -1396,7 +1418,7 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             channel,
             crate::fixtures::slack::BOT_USER,
             legacy,
-            Some(&asked),
+            Some(&thread),
         );
     } else {
         // A same-text post by the bot before the attempt and another person's
@@ -1406,10 +1428,10 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             channel,
             crate::fixtures::slack::BOT_USER,
             legacy,
-            Some(&asked),
+            Some(&thread),
         );
         c.slack
-            .say_at("1700000011.000100", channel, member, legacy, Some(&asked));
+            .say_at("1700000011.000100", channel, member, legacy, Some(&thread));
     }
     let legacy_state = || -> (Option<String>, Option<String>, Option<String>) {
         state.query_row(
@@ -1421,15 +1443,15 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
     if receipt == LegacyReceipt::Late {
         // Keep an already delivered notice from this epoch in both systems.
         state.execute(
-            "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,replied_at,posted_us) VALUES (?1,'slack',?2,?3,'unavailable',?4,'posted',?4,1700000010500000)",
-            instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string()],
+            "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,replied_at,covered_positions) VALUES (?1,'slack',?2,?3,'unavailable',?4,'posted',?4,json_array((SELECT admission_position FROM conversation_messages WHERE company=?1 AND connector='slack' AND conversation=?2 AND message=?5)))",
+            instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string(), asked],
         ).unwrap();
         c.slack.say_at(
             "1700000010.500000",
             channel,
             crate::fixtures::slack::BOT_USER,
             &notice_text(member),
-            Some(&asked),
+            Some(&thread),
         );
     }
     if late {
@@ -1456,44 +1478,63 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
         );
         assert!(legacy_state().0.is_none());
     }
-    let later_noticed = if receipt == LegacyReceipt::LateWithNewNotice {
+    let later_noticed = if notice_before_receipt {
         c.runtime.flag("send-failure", true);
-        let later = c
-            .slack
-            .mention(channel, member, "<@UAGENT> And the contract?", Some(&asked));
-        // Intake is independent of the held relay. Give the admitted
+        let later = if out_of_order {
+            c.slack.fate(&notice_text(member), Fate::Lost, 1);
+            c.slack.hold_reads_from("1700000003.000100");
+            c.slack.mention_at(
+                "1700000003.000100",
+                channel,
+                member,
+                "<@UAGENT> And the contract?",
+                Some(&thread),
+            )
+        } else {
+            c.slack.mention(
+                channel,
+                member,
+                "<@UAGENT> And the contract?",
+                Some(&thread),
+            )
+        };
+        // Intake runs while the legacy read is held. Give this admitted
         // question the retained interval of a failed hand-over.
         common::wait_until(
             "the later question admitted while the first receipt is held",
             std::time::Duration::from_secs(7),
             || {
                 state.execute(
-                "UPDATE conversation_messages SET unavailable_since=?2 WHERE message=?1 AND state='pending'",
+                "UPDATE conversation_messages SET unavailable_since=?2 WHERE message=?1 AND state='pending' AND admission_position IS NOT NULL",
                 instrukt_core::state_db::rusqlite::params![later, (at + jiff::SignedDuration::from_secs(121)).to_string()],
             ).unwrap() == 1
             },
         );
+        if out_of_order {
+            assert!(state.query_row(
+                "SELECT newer.admission_position > older.admission_position AND newer.written_us < older.written_us FROM conversation_messages newer, conversation_messages older WHERE newer.message=?1 AND older.message=?2",
+                [&later, &asked], |row| row.get::<_, bool>(0),
+            ).unwrap());
+        }
         set_clock(&clock, at + jiff::SignedDuration::from_secs(181));
+        let phase = if out_of_order { "posting" } else { "posted" };
         common::wait_until(
             "Slack accepts the later question's notice before the older receipt",
             std::time::Duration::from_secs(8),
             || {
                 notices(&c, member) == 1
-                    && notice_state(&c, &conversation, member).as_deref() == Some("posted")
+                    && notice_state(&c, &conversation, member).as_deref() == Some(phase)
             },
         );
-        let at_us: i64 = state.query_row(
-            "SELECT posted_us FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
-            [&conversation, member], |row| row.get(0),
+        let id = state.query_row(
+            "SELECT post_id FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
+            [&conversation, member], |row| row.get::<_, String>(0),
         ).unwrap();
-        assert!(at_us > 1_700_000_011_000_100);
-        Some(at_us)
+        c.slack.release_reads_from("1700000010.000000");
+        Some(id)
     } else {
         None
     };
-    if receipt == LegacyReceipt::LateWithNewNotice {
-        c.slack.release_reads();
-    }
     if receipt == LegacyReceipt::Late {
         assert_eq!(
             notice_state(&c, &conversation, member).as_deref(),
@@ -1524,16 +1565,27 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             legacy_state().0.is_some()
         });
         assert!(legacy_state().2.is_none());
-        if let Some(at_us) = later_noticed {
-            let retained: Option<i64> = state.query_row(
-                "SELECT max(posted_us) FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable' AND state='posted'",
-                [&conversation, member], |row| row.get(0),
-            ).unwrap();
+        if let Some(id) = &later_noticed {
+            use instrukt_core::state_db::rusqlite::OptionalExtension as _;
+            let retained = state.query_row(
+                "SELECT post_id FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
+                [&conversation, member], |row| row.get::<_, String>(0),
+            ).optional().unwrap();
             assert_eq!(
-                retained,
-                Some(at_us),
-                "the recovered answer must leave the later notice in place"
+                retained.as_ref(),
+                Some(id),
+                "the recovered answer must leave the later notice and its ID in place"
             );
+            if out_of_order {
+                assert_eq!(
+                    notice_state(&c, &conversation, member).as_deref(),
+                    Some("posting")
+                );
+                c.slack.release_reads();
+                wait("the later notice reconciles by its original ID", || {
+                    notice_state(&c, &conversation, member).as_deref() == Some("posted")
+                });
+            }
             assert_eq!(notices(&c, member), 1);
         } else {
             assert!(notice_state(&c, &conversation, member).is_none());
@@ -1573,9 +1625,12 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
         if receipt == LegacyReceipt::Late {
             c.runtime.flag("send-failure", true);
         }
-        let later = c
-            .slack
-            .mention(channel, member, "<@UAGENT> And the contract?", Some(&asked));
+        let later = c.slack.mention(
+            channel,
+            member,
+            "<@UAGENT> And the contract?",
+            Some(&thread),
+        );
         if receipt == LegacyReceipt::Missing {
             wait("the later message admitted while T3 is unreadable", || {
                 state.query_row(
@@ -1615,6 +1670,29 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
     let expected_notices = usize::from(receipt != LegacyReceipt::Found);
     assert_eq!(c.slack.posts().len(), 1 + expected_notices);
     assert_eq!(notices(&c, member), expected_notices);
+}
+
+fn an_answer_response_without_a_timestamp_is_reconciled() {
+    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    projected(&c);
+    let asked = c.slack.direct("D17", "USTEVEN", "Is the release ready?");
+    let session = started(&c, &[]);
+    let answer = "Ready.";
+    c.slack.fate(answer, Fate::MissingTimestamp, 1);
+    c.slack.hold_reads_from(&asked);
+    c.finish_turn(&session, 0, answer);
+    wait(
+        "metadata read-back after Slack accepts without a timestamp",
+        || c.slack.held() > 0,
+    );
+    assert_eq!(c.slack.posts_beginning(answer), 1);
+    assert!(!answers_recorded(&c));
+    c.slack.release_reads();
+    wait("the provider receipt is recorded from read-back", || {
+        answers_recorded(&c)
+    });
+    assert_eq!(c.slack.posts_beginning(answer), 1);
+    assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {
@@ -1721,12 +1799,17 @@ fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     common::wait_until(
         "the answer posted during the read",
         std::time::Duration::from_secs(12),
-        || {
-            c.slack.posts_beginning("Ada signed.") == 1
-                && notice_state(&c, channel, sender).is_none()
-        },
+        || c.slack.posts_beginning("Ada signed.") == 1 && answers_recorded(&c),
+    );
+    assert_eq!(
+        notice_state(&c, channel, sender).as_deref(),
+        Some("posting")
     );
     c.slack.release_reads();
+    wait(
+        "the absent notice reconciled before its epoch closes",
+        || notice_state(&c, channel, sender).is_none(),
+    );
     // The next message can be admitted after the held read is released.
     let later = c.slack.direct(channel, sender, "Thanks.");
     wait("intake takes up the next message", || {

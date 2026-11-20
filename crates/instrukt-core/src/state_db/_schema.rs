@@ -91,8 +91,13 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
         ("conversation_answers", "legacy_read_at", "TEXT"),
         ("conversation_answers", "delivery_unknown_at", "TEXT"),
         ("conversation_refusals", "post_id", "TEXT"),
-        ("conversation_refusals", "notice_message", "TEXT"),
-        ("conversation_refusals", "posted_us", "INTEGER"),
+        ("conversation_messages", "admission_position", "INTEGER"),
+        ("conversation_answers", "admission_position", "INTEGER"),
+        (
+            "conversation_refusals",
+            "covered_positions",
+            "TEXT NOT NULL DEFAULT '[]'",
+        ),
     ] {
         let present: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
@@ -103,6 +108,18 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
             tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
         }
     }
+    // Older records have no admission sequence. Their retained row order
+    // supplies a durable baseline without comparing provider or wall clocks.
+    tx.execute_batch(
+        "UPDATE conversation_messages SET admission_position=rowid
+           WHERE admission_position IS NULL AND (sender_name IS NOT NULL OR state IN ('pending','sent','answered'));
+         CREATE UNIQUE INDEX IF NOT EXISTS conversation_admission_order
+           ON conversation_messages(admission_position);
+         UPDATE conversation_answers AS a SET admission_position=(
+           SELECT m.admission_position FROM conversation_messages m WHERE m.company=a.company
+             AND m.connector=a.connector AND m.conversation=a.conversation AND m.turn=a.turn)
+           WHERE a.admission_position IS NULL;",
+    )?;
     // Before the final receipt and interval closure were atomic, a runner
     // could have stopped between those two writes.
     tx.execute_batch(

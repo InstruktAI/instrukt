@@ -165,8 +165,9 @@ connector gives.
   notice, and later work proceeds. Status keeps the cause with the
   conversation, turn and piece. A matching receipt from a read started
   within the window still confirms delivery if it arrives after expiry.
-  It replaces the unknown result and closes the notice epoch. Expiry
-  leaves a confirmed delivery intact.
+  It replaces the unknown result. Expiry leaves a confirmed delivery intact.
+  A successful post response without a provider timestamp leaves the post
+  unconfirmed until metadata read-back returns a receipt.
 - Completion comes only from the conversation source. A turn running however
   long is left to run. A turn that ended failed has its message delivered again
   to the session after a growing delay, at the end of the conversation's queue,
@@ -257,15 +258,14 @@ leaves the eligibility evaluation and other members' reads free to proceed.
 A retained message without a provider sender still has status and cannot
 produce an addressed notice.
 
-**The one notice** is once per person per epoch: from the posting of the last
-answer to that person in that conversation (or the conversation's start) until
-the next answer to them is posted.
+**The one notice** is once per person per epoch. An epoch records the durable
+admission positions of the person's messages that made the notice due.
 
 - The decision is recorded before the post (owed, posting with the attempt's time,
   posted); the record is never taken as proof of delivery.
-- Only an answer posted to that person — one whose post the connector accepted,
-  correlated through its turn to one of that person's messages of the epoch —
-  supersedes the notice. Output that is complete but not yet posted does not.
+- Each answer piece carries the admission position of the message it answers.
+  An epoch closes when every covered position has a confirmed answer. Provider
+  timestamps and the runner clock do not order answer receipts against notices.
 - When the delivery of an attempted answer is uncertain, the relay reconciles
   it before a notice can post to that person. A confirmed rejection leaves the
   person's notice eligible once the no-work interval reaches a minute and
@@ -274,11 +274,10 @@ the next answer to them is posted.
   timeout window.
 - The notice and the conversation's answers are posted under one short
   per-conversation post lock, held for the decision and one post, never for a
-  read at the provider or a runtime call. A confirmed answer closes an earlier
-  notice in the same critical section. A receipt recovered later preserves a
-  notice whose provider posting time follows the answer's. Before a notice has
-  a provider timestamp, the order of its addressed message determines whether
-  it belongs to later work.
+  read at the provider or a runtime call. An answer receipt can retire a fully
+  answered epoch in the same critical section once the notice's own delivery is
+  known. An unconfirmed notice keeps its id until read-back finds it or
+  establishes absence after the settle window.
 - A notice whose post timed out or lost its response is not posted again before
   the settle bound after the attempt has passed. After it, the connector reads the
   conversation from the epoch's start for a post of its own with the notice's

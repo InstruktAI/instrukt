@@ -604,14 +604,7 @@ fn deliver_notice(
                 .answer(&notice.conversation, &text, &post_id)
                 .map_err(|error| error.cause);
             tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
-            conversations::notice_posted(
-                home,
-                company,
-                key,
-                notice,
-                outcome,
-                reach.connectors.now(),
-            )
+            conversations::notice_posted(home, company, key, notice, outcome)
         }
         Ok(_) => Ok(()),
         Err(error) => Err(error),
@@ -1014,6 +1007,7 @@ mod tests {
                     sender: Some("USTEVEN".to_owned()),
                     since: None,
                     notice_eligible: true,
+                    admission_position: None,
                     status: status.clone(),
                 },
             )

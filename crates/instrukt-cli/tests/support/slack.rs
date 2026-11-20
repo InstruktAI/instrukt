@@ -47,6 +47,8 @@ pub enum Fate {
     Refused,
     /// Committed, and its response lost: the poster is told it failed.
     Lost,
+    /// Committed with a successful response that omits its timestamp.
+    MissingTimestamp,
     /// Committed only once [`FakeSlack::commit_late`] is called, invisible
     /// until then; the poster is told it failed, as after its own timeout.
     Late,
@@ -151,7 +153,7 @@ struct Workspace {
     next: u64,
     refuse: bool,
     hold_reads: bool,
-    hold_reads_from: Option<String>,
+    hold_reads_from: std::collections::BTreeSet<String>,
     /// A post Slack accepted is answered only once released.
     hold_posts: bool,
     /// Every post fails, accepting nothing.
@@ -234,7 +236,7 @@ impl FakeSlack {
                             && {
                                 let workspace = workspace.lock().unwrap();
                                 workspace.hold_reads
-                                    || workspace.hold_reads_from.as_ref().is_some_and(|oldest| {
+                                    || workspace.hold_reads_from.iter().any(|oldest| {
                                         body.split('&').any(|field| {
                                             field.strip_prefix("oldest=") == Some(oldest)
                                         }) && body
@@ -522,6 +524,9 @@ impl FakeSlack {
                 w.posts.push(post);
                 if fate == Some(Fate::Lost) {
                     return json!({"ok": false, "error": "request_timeout"});
+                }
+                if fate == Some(Fate::MissingTimestamp) {
+                    return json!({"ok": true});
                 }
                 json!({"ok": true, "ts": ts})
             }
@@ -869,13 +874,25 @@ impl FakeSlack {
     }
 
     pub fn hold_reads_from(&self, oldest: &str) {
-        self.workspace.lock().unwrap().hold_reads_from = Some(oldest.into());
+        self.workspace
+            .lock()
+            .unwrap()
+            .hold_reads_from
+            .insert(oldest.into());
+    }
+
+    pub fn release_reads_from(&self, oldest: &str) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .hold_reads_from
+            .remove(oldest);
     }
 
     pub fn release_reads(&self) {
         let mut workspace = self.workspace.lock().unwrap();
         workspace.hold_reads = false;
-        workspace.hold_reads_from = None;
+        workspace.hold_reads_from.clear();
     }
 
     /// How many reads were held back while reads were held.

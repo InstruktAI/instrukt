@@ -708,12 +708,14 @@ and `message`, the connector's identity of that message.
 | `turn` | The native turn that answered it; `NULL` until then. |
 | `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
 | `admitted_at` | When its sender was admitted; `NULL` until then, and for a message admitted before it was recorded. |
+| `admission_position` | Durable sequence assigned at admission. Migration 23 seeds older admitted messages in retained row order. |
 | `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
 | `turn_update` | The newest message the agent has written in its turn, as the runtime records it, which its status shows; `NULL` until the agent has written one, and once its answer is posted or its turn completed with nothing to post. |
 | `turn_ended_at` | When its turn was read as ended, recorded before any post of its answer; a post of that answer that fails opens its interval from this time. `NULL` until then. |
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
 address, `turn` and `piece`. Columns: `text`, the piece's text;
+`admission_position`, the message this piece answers;
 `attempted_at`, the earliest unconfirmed post attempt, and
 `latest_attempted_at`, the latest unconfirmed attempt. Both are recorded
 before the provider can accept a post. A single attempt kept by an earlier
@@ -740,12 +742,12 @@ does not answer, or `unavailable`, the one notice of the sender's current epoch.
 Columns: `received_at`; `state` for `unavailable`: `owed`, `posting` (a post was
 sent, its effect possibly in flight) with `attempted_at`, or `posted`; `post_id`,
 the notice's opaque identity, allocated before its first post and reused
-until the epoch ends; `notice_message`, the addressed message that first
-made the notice due; `posted_us`, when the provider posted the notice, in
-Unix microseconds when known; `replied_at`,
+until the epoch ends; `covered_positions`, the admission positions that
+made the notice due; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
-records the decision, never proof of delivery. A confirmed answer retires an
-earlier `unavailable` row for that sender and conversation. `not_own` rows stay.
+records the decision, never proof of delivery. An `unavailable` row is retired
+only when all its covered positions have confirmed answers and any attempted
+notice is reconciled. `not_own` rows stay.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,

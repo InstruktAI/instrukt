@@ -573,6 +573,14 @@ mod tests {
             attempt,
             ("2026-11-18T10:00:00Z".to_owned(), None, None, None, None)
         );
+        let positions: Vec<(i64, i64)> = conn
+            .prepare("SELECT m.admission_position,a.admission_position FROM conversation_messages m JOIN conversation_answers a USING(company,connector,conversation,turn) ORDER BY m.admission_position")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(positions, [(1, 1), (2, 2)]);
         let intervals: Vec<(Option<String>, Option<String>)> = conn
             .prepare("SELECT unavailable_since,turn_update FROM conversation_messages ORDER BY written_us")
             .unwrap()
