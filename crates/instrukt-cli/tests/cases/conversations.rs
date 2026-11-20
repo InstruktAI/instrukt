@@ -2942,21 +2942,34 @@ fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() 
     c.runner_dies();
     c.slack.fail_held_posts();
     c.slack.hold_posts();
+    c.slack.hold_reads_from(&lost);
     set_clock(&clock, done_at + jiff::SignedDuration::from_secs(30));
+    let status_calls = c.slack.status_calls(channel, &lost);
     c.run();
+    // Hold the provider read until the restarted runner sets status.
+    // Slack can clear the display when it accepts the retry, even while
+    // the response is still held and the receipt remains pending.
+    wait(
+        "the restarted runner sets unavailable before the retry",
+        || {
+            c.slack
+                .status_texts(channel, &lost)
+                .iter()
+                .skip(status_calls)
+                .any(|status| status == UNAVAILABLE)
+        },
+    );
+    c.slack.release_reads();
     wait("the retry under way", || c.slack.held_posts() == 1);
-    wait("the unavailable text while the retry is under way", || {
-        c.slack.status(channel, &lost).as_deref() == Some(UNAVAILABLE)
-    });
     assert_eq!(interval(&c, &lost), Some(done_at.to_string()));
     // Shown while that first retry is still under way: no post of this
     // runner has failed, its own timeout included.
     assert_eq!(c.slack.held_posts(), 1);
+    let status = c.conversations();
     assert!(
-        c.conversations()
-            .conversations
-            .iter()
-            .all(|x| x.failures.is_empty())
+        status.conversations.iter().all(|x| x.failures.is_empty()),
+        "{:?}",
+        status.conversations
     );
     c.slack.release_posts();
     wait("the status cleared", || {
