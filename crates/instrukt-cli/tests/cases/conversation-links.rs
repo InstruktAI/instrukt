@@ -1131,6 +1131,114 @@ fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_posi
     drop(runner);
 }
 
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL3
+#[test]
+fn a_peer_link_delivers_while_another_links_send_and_reconciliation_wait() {
+    let env = common::TestEnv::new();
+    let store = history::T3Store::new(&env);
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 1\nrunner: {runtime: t3}\nmodules: {history: false}\n",
+    )
+    .unwrap();
+    let fake = runtime::FakeT3::create(&env);
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    for id in ["parent", "child", "other-parent", "other-child"] {
+        fake.seed(id, env.home(), id, "Local opening.");
+        store.thread(id, None, None, "2026-11-08T10:00:00Z");
+    }
+    for (from, to) in [("parent", "child"), ("other-parent", "other-child")] {
+        env.instrukt(env.home())
+            .env("T3CODE_THREAD_ID", from)
+            .args(["discuss", "open", to])
+            .assert()
+            .success();
+    }
+    let held_send = fake.state_dir().join("child.hold-send");
+    std::fs::write(&held_send, "").unwrap();
+    fake.hold_show_after_send("child");
+    let delivered = |turn: &str| {
+        links::status(&home)
+            .unwrap()
+            .iter()
+            .flat_map(|link| &link.directions)
+            .any(|direction| {
+                direction.delivered_turn.as_deref() == Some(turn) && direction.pending == 0
+            })
+    };
+    let _runner = Running(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    store.turn(
+        "parent",
+        "held-turn",
+        1,
+        "A question.",
+        "A retained contribution.",
+    );
+    common::wait_until(
+        "the first link enters its held send",
+        Duration::from_secs(15),
+        || fake.held_send_running("child"),
+    );
+    store.turn(
+        "other-parent",
+        "first-peer",
+        1,
+        "A question.",
+        "The first peer reply.",
+    );
+    common::wait_until(
+        "the peer records delivery during the held send",
+        Duration::from_secs(15),
+        || delivered("first-peer"),
+    );
+    assert!(
+        fake.input_log("other-child")
+            .contains("The first peer reply.")
+    );
+    assert!(fake.held_send_running("child"));
+    assert_eq!(fake.message_count("child"), 1);
+
+    std::fs::remove_file(held_send).unwrap();
+    common::wait_until(
+        "the first link enters its held read-back",
+        Duration::from_secs(15),
+        || fake.held_show_running("child"),
+    );
+    assert!(fake.input_log("child").contains("A retained contribution."));
+    store.turn(
+        "other-parent",
+        "second-peer",
+        2,
+        "Next question.",
+        "The second peer reply.",
+    );
+    common::wait_until(
+        "the peer records another delivery during the held read-back",
+        Duration::from_secs(15),
+        || delivered("second-peer"),
+    );
+    assert!(
+        fake.input_log("other-child")
+            .contains("The second peer reply.")
+    );
+    assert!(fake.held_show_running("child"));
+    std::fs::remove_file(fake.state_dir().join("child.hold-show")).unwrap();
+    common::wait_until(
+        "the first link reconciles its accepted send",
+        Duration::from_secs(15),
+        || delivered("held-turn"),
+    );
+    assert_eq!(fake.message_count("child"), 2);
+    assert_eq!(fake.message_count("other-child"), 3);
+}
+
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 #[cfg(debug_assertions)]

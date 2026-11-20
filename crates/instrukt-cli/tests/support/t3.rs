@@ -179,6 +179,11 @@ elif command=='start':
     while (root/(id+'.json')).exists() or (root/(id+'.deleted')).exists():
         n+=1
         id='s'+str(n)
+    named=root/'next-thread-id'
+    if named.exists():
+        id=named.read_text()
+        named.unlink()
+        assert not (root/(id+'.json')).exists() and not (root/(id+'.deleted')).exists()
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
     t={'threadId':id,'projectId':project_for(checkout),'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
@@ -195,6 +200,10 @@ elif command=='start':
         (root/'die-after-start').unlink(); os.kill(os.getppid(),9)
     elif not (root/'silent-start').exists(): print(id)
 elif command=='send':
+    held=root/(operands[0]+'.hold-send')
+    if held.exists():
+        (root/(operands[0]+'.send-held')).write_text(str(os.getpid()))
+    while held.exists(): time.sleep(0.02)
     t=find(operands[0])
     if (root/'send-failure').exists(): print('send failed',file=sys.stderr); sys.exit(1)
     if (root/'send-unreachable').exists():
@@ -208,8 +217,9 @@ elif command=='send':
     t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued}); save(t)
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
-    if (root/'hold-show-after-send').exists():
-        (root/'hold-show-after-send').unlink()
+    lost_ack=root/(t['threadId']+'.hold-show-after-send')
+    if lost_ack.exists():
+        lost_ack.unlink()
         (root/(t['threadId']+'.show-held')).unlink(missing_ok=True)
         (root/(t['threadId']+'.hold-show')).touch()
         print('send acknowledgment lost', file=sys.stderr); sys.exit(1)
@@ -277,6 +287,10 @@ impl FakeT3 {
             "project-{}",
             hex::encode(Sha256::digest(root.to_string_lossy().as_bytes()))
         )
+    }
+
+    pub fn next_thread_id(&self, id: &str) {
+        std::fs::write(self.state.join("next-thread-id"), id).unwrap();
     }
 
     pub fn register_project(&self, checkout: &std::path::Path, project: &str) {
@@ -509,6 +523,13 @@ impl FakeT3 {
             .status()
             .unwrap()
             .success()
+    }
+    pub fn held_send_running(&self, session: &str) -> bool {
+        self.running(&format!("{session}.send-held"))
+    }
+    /// Lose this target's next send acknowledgment and hold its read-back.
+    pub fn hold_show_after_send(&self, session: &str) {
+        self.flag(&format!("{session}.hold-show-after-send"), true);
     }
     /// The original held show is still running, even if another was launched.
     pub fn held_show_running(&self, session: &str) -> bool {

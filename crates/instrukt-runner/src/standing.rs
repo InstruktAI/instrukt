@@ -267,7 +267,7 @@ pub(crate) fn deliver_pending(
             result.as_ref().map(|_| ()),
         );
         if let Err(error) = result {
-            state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3 AND state NOT IN ('set_aside','unconfirmed')",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
+            state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3 AND state IN ('accepted','pending')",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
             if keyed::report_start_finding(&state, selected, &error) {
                 tracing::warn!(event="standing_delivery_failed",key=%responsibility,error=%error);
             }
@@ -290,6 +290,33 @@ fn deliver_group(
         return Ok(());
     }
     let selected_runtime = config.runner_runtime()?;
+    let adapter = crate::runtime::adapter(selected_runtime);
+    #[cfg(debug_assertions)]
+    keyed::hold_for_fixture("INSTRUKT_TEST_STANDING_CLAIM_HOLD", responsibility);
+    let guard = keyed::KeyGuard::claim(
+        invocation,
+        adapter.as_ref(),
+        responsibility,
+        project.as_deref(),
+        now,
+    )?;
+    let pending = state.read(|conn, path| {
+        let mut query = conn.prepare(
+            "SELECT EXISTS(SELECT 1 FROM procedure_activations WHERE rowid=?1
+             AND event_id=?2 AND procedure=?3 AND exact_home=?4 AND state IN ('accepted','pending'))",
+        ).map_err(state::sql(path))?;
+        items.iter().filter_map(|item| {
+            match query.query_row(params![item.position, item.event, item.procedure, item.home], |row| row.get::<_, bool>(0)) {
+                Ok(true) => Some(Ok(item.clone())),
+                Ok(false) => None,
+                Err(error) => Some(Err(state::sql(path)(error))),
+            }
+        }).collect::<Result<Vec<_>, StateError>>()
+    })?.unwrap_or_default();
+    let items = pending.as_slice();
+    let Some(first) = items.first() else {
+        return Ok(());
+    };
     let manual=state.read(|conn,path|conn.query_row("SELECT token FROM manual_standing_reservations WHERE responsibility=?1 AND session IS NULL",[responsibility],|r|r.get::<_,String>(0)).optional().map_err(state::sql(path)))?.flatten();
     if manual.is_some() {
         return Err(SessionsError::Unresolved {
@@ -297,7 +324,6 @@ fn deliver_group(
         });
     }
     let mut existing=state.read(|conn,path|conn.query_row("SELECT request,declaration,session,seen_position FROM procedure_responsibilities WHERE responsibility=?1",[responsibility],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,u64>(3)?))).optional().map_err(state::sql(path)))?.flatten();
-    let adapter = crate::runtime::adapter(selected_runtime);
     if existing.is_none() {
         let family = adapter.list(&root)?;
         if family.iter().any(|t| {
@@ -369,6 +395,7 @@ fn deliver_group(
                 profiles: crate::runtime::Profiles::default(),
             };
             keyed::recover_binding(
+                &guard,
                 adapter.as_ref(),
                 &RuntimeAssignment {
                     creation: CreationPermit::Reconcile,
@@ -546,6 +573,7 @@ fn deliver_group(
         session
     } else {
         start_and_bind(
+            &guard,
             state,
             adapter.as_ref(),
             responsibility,
@@ -589,13 +617,14 @@ fn selected_opening_ids(
 }
 
 fn start_and_bind(
+    guard: &keyed::KeyGuard,
     state: &RunnerState,
     adapter: &dyn RuntimeAdapter,
     responsibility: &str,
     selected: &[Pending],
     assignment: &RuntimeAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
-    let thread = adapter.start_or_wake(assignment)?;
+    let thread = keyed::start_owned(adapter, assignment, guard)?;
     state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET session=?2 WHERE responsibility=?1",params![responsibility,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;for p in selected{tx.execute("UPDATE standing_deliveries SET target=?4,state='delivered' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
     keyed::note(
         state,
@@ -824,6 +853,8 @@ pub fn reserve_manual(
             .message
     );
     let key = key(entry.id.as_str(), &home, None);
+    let adapter = crate::runtime::adapter(runtime);
+    let _guard = keyed::KeyGuard::claim(invocation, adapter.as_ref(), &key, None, now)?;
     let state = RunnerState::new(invocation.home());
     let existing = state
         .read(|conn, path| {
@@ -881,7 +912,8 @@ pub fn reserve_manual(
 }
 fn manual_thread_exists(key: &str, session: &SessionRef) -> SessionsError {
     SessionsError::Refused(format!(
-        "same-key thread {session} still exists. Stop and delete it, then run `instrukt sessions replace-deleted {key} --stopped {session}`"
+        "same-key thread {session} still exists. Stop and delete it, then run `{}`",
+        keyed::replace_command(key, session)
     ))
 }
 
@@ -980,8 +1012,9 @@ pub fn bind_manual(
             && id != evidence.session.to_string()
         {
             return Err(SessionsError::Refused(format!(
-                "reservation for {} records {id}. Retry with that ID and its evidence. Inspect `instrukt events status`",
-                reserved.key
+                "reservation for {} records {id}. Retry with that ID and its evidence. Inspect `{}`",
+                reserved.key,
+                keyed::recovery_command(["instrukt", "events", "status"])
             )));
         }
         if evidence.session.runtime.as_str() != runtime.name()
@@ -1013,17 +1046,31 @@ pub fn bind_manual(
                         && entry.semantic_key.as_deref() == Some(&request.key)
                 }) {
                     return Err(SessionsError::Refused(format!(
-                        "thread {} cannot be verified for reservation {}. Inspect `instrukt events status`",
-                        evidence.session, request.key
+                        "thread {} cannot be verified for reservation {}. Inspect `{}`",
+                        evidence.session,
+                        request.key,
+                        keyed::recovery_command(["instrukt", "events", "status"])
                     )));
                 }
                 remember_observation(&evidence.session)?;
-                let company = home
-                    .strip_prefix("company:")
-                    .map_or_else(String::new, |slug| format!(" --company {slug}"));
+                let company = home.strip_prefix("company:");
+                let stopped = evidence.session.to_string();
+                let command = keyed::recovery_command(
+                    ["instrukt", "events", "bind", procedure]
+                        .into_iter()
+                        .chain(company.into_iter().flat_map(|slug| ["--company", slug]))
+                        .chain([
+                            "--reservation",
+                            token,
+                            "--not-started",
+                            "--stopped",
+                            &stopped,
+                            "--reason",
+                            "provider stopped and thread deleted",
+                        ]),
+                );
                 return Err(SessionsError::Refused(format!(
-                    "native project for unbound thread {} is unverified. Stop and delete the thread before confirming the reservation with `instrukt events bind {procedure}{company} --reservation {token} --not-started --stopped {} --reason 'provider stopped and thread deleted'`",
-                    evidence.session, evidence.session
+                    "native project for unbound thread {stopped} is unverified. Stop and delete the thread before confirming the reservation with `{command}`"
                 )));
             }
             return Err(keyed::unverified_project(&request.key, &evidence.session));
@@ -1128,6 +1175,7 @@ pub(crate) fn replacement_is_bound(
 }
 
 pub(crate) fn replace_deleted(
+    guard: &keyed::KeyGuard,
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
     key: &str,
@@ -1245,6 +1293,7 @@ pub(crate) fn replace_deleted(
         )?
     };
     let result = start_and_bind(
+        guard,
         &state,
         adapter,
         &responsibility,

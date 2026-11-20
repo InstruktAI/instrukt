@@ -146,70 +146,82 @@ fn keyed_recovery_doors_follow_binding_state() {
         }
         return;
     }
-    for phase in ["prepare", "work", "task"] {
-        let mut p = Tracked::new(true);
-        let fake = FakeT3::create(&p.env);
-        let worktree = phase != "task";
-        if worktree {
-            change(&p, "recovery");
-            if phase == "work" {
-                p.todo([
-                    "artifacts",
-                    "write",
-                    "recovery",
-                    "implementation-plan",
-                    "Plan.",
-                ]);
-                p.todo([
-                    "artifacts",
-                    "write",
-                    "recovery",
-                    "plan-review-findings",
-                    "Approved.",
-                ]);
-                p.todo([
-                    "stamp",
-                    "recovery",
-                    "--verdict",
-                    "approve",
-                    "--phase",
-                    "plan_review",
-                ]);
-            }
-        } else {
-            p.authorized_task("recovery", "2030-01-06T09:00:00Z", &[]);
-            p.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:20Z");
+    std::thread::scope(|scope| {
+        for phase in ["prepare", "work", "task"] {
+            scope.spawn(move || check_todo_recovery_doors(phase));
         }
-        let db = recovery_db(&p.env);
-        fail_recovery_receipt(&db, "s1");
-        p.tick();
-        check_recovery_doors(
-            &p.env,
-            p.repo.path(),
-            &fake,
-            &db,
-            worktree.then_some(phase),
-            || {
-                p.tick();
-            },
-            |key, native| {
-                let (bound, claimed): (String, String) = db.query_row(
+        scope.spawn(check_run_recovery_doors);
+        #[cfg(debug_assertions)]
+        scope.spawn(concurrent_resolutions_bind_the_native_thread_to_only_one_key);
+        crate::procedure_event_delivery::check_standing_recovery_doors();
+    });
+}
+
+fn check_todo_recovery_doors(phase: &str) {
+    let mut p = Tracked::new(true);
+    let fake = FakeT3::create(&p.env);
+    let worktree = phase != "task";
+    if worktree {
+        change(&p, "recovery");
+        if phase == "work" {
+            p.todo([
+                "artifacts",
+                "write",
+                "recovery",
+                "implementation-plan",
+                "Plan.",
+            ]);
+            p.todo([
+                "artifacts",
+                "write",
+                "recovery",
+                "plan-review-findings",
+                "Approved.",
+            ]);
+            p.todo([
+                "stamp",
+                "recovery",
+                "--verdict",
+                "approve",
+                "--phase",
+                "plan_review",
+            ]);
+        }
+    } else {
+        p.authorized_task("recovery", "2030-01-06T09:00:00Z", &[]);
+        p.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:20Z");
+    }
+    let db = recovery_db(&p.env);
+    fail_recovery_receipt(&db, "s1");
+    p.tick();
+    check_recovery_doors(
+        &p.env,
+        p.repo.path(),
+        &fake,
+        &db,
+        worktree.then_some(phase),
+        || {
+            p.tick();
+        },
+        |key, native| {
+            let (bound, claimed): (String, String) = db.query_row(
                     "SELECT b.session, t.claim_session FROM session_bindings b
                      JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?1 AND b.released_at IS NULL",
                     [key], |row| Ok((row.get(0)?,row.get(1)?)),
                 ).unwrap();
-                assert_eq!(bound, format!("t3:{native}"), "{phase}");
-                assert_eq!(claimed, bound, "{phase}");
-                fake.set_status(native, "idle");
-                run_recovery_worker(&p.env, p.repo.path(), key, Some(&claimed));
-                assert!(
-                    fake.input_log(native).contains(RECOVERY_FOLLOWUP),
-                    "{phase}"
-                );
-            },
-        );
-    }
+            assert_eq!(bound, format!("t3:{native}"), "{phase}");
+            assert_eq!(claimed, bound, "{phase}");
+            fake.set_status(native, "idle");
+            run_recovery_worker(&p.env, p.repo.path(), key, Some(&claimed));
+            assert!(
+                fake.input_log(native).contains(RECOVERY_FOLLOWUP),
+                "{phase}"
+            );
+        },
+    );
+}
 
+fn check_run_recovery_doors() {
     let p = Tracked::new(false);
     let fake = FakeT3::create(&p.env);
     let db = recovery_db(&p.env);
@@ -253,7 +265,157 @@ fn keyed_recovery_doors_follow_binding_state() {
             assert!(fake.input_log(native).contains(RECOVERY_FOLLOWUP));
         },
     );
-    crate::procedure_event_delivery::check_standing_recovery_doors();
+
+    let home = instrukt_core::home::Home::at_user_home(p.env.home().into());
+    let broken_key = "instrukt:run:demo:broken-lock";
+    use sha2::{Digest, Sha256};
+    let name = Sha256::digest(format!("t3:{broken_key}").as_bytes());
+    let broken_lock = home.locks_dir().join(format!("runtime-key-{name:x}.lock"));
+    // An exact lock file path that is a directory fails even as root.
+    std::fs::create_dir_all(&broken_lock).unwrap();
+    let os_error = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&broken_lock)
+        .unwrap_err()
+        .to_string();
+    let broken = p
+        .env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", broken_key, "--none"],
+        )
+        .failure();
+    let stderr = String::from_utf8_lossy(&broken.get_output().stderr);
+    let diagnostic = format!(
+        "instrukt: cannot use the recovery lock in {} for semantic key `{broken_key}` ({os_error})",
+        home.locks_dir().display()
+    );
+    let errors = stderr
+        .lines()
+        .filter(|line| !line.starts_with("instrukt: clock overridden"))
+        .collect::<Vec<_>>();
+    assert_eq!(errors, [diagnostic.as_str()]);
+
+    let _dispatch = instrukt_core::fsx::LockGuard::acquire(
+        &home.state_dir().join("runtime-dispatch.lock"),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    for (command, option, session) in [
+        ("replace-deleted", "--stopped", "t3:s1"),
+        ("resolve-start", "--session", "t3:s1"),
+    ] {
+        let result = p
+            .env
+            .instrukt(p.repo.path())
+            .args(["sessions", command, "input:t3:s1", option, session])
+            .timeout(std::time::Duration::from_secs(10))
+            .assert()
+            .failure();
+        let stderr = String::from_utf8_lossy(&result.get_output().stderr);
+        assert!(stderr.lines().any(|line| line ==
+            "instrukt: `input:t3:s1` is an internal input-lock key. Use the assignment's `instrukt:…` semantic key from `instrukt events status`"
+        ), "{stderr}");
+    }
+}
+
+#[cfg(debug_assertions)]
+fn concurrent_resolutions_bind_the_native_thread_to_only_one_key() {
+    let p = Tracked::new(false);
+    let fake = FakeT3::create(&p.env);
+    let db = recovery_db(&p.env);
+    let keys = ["instrukt:run:demo:first", "instrukt:run:demo:second"];
+    fake.seed("s[1]", p.repo.path(), "An unbound thread", "Opening");
+    let resolve = |key: &str, marker: &str| {
+        let input = serde_json::json!({
+            "checkout": p.repo.path(), "key": key, "title": key,
+            "brief": "Retained opening", "worktree": null
+        });
+        db.execute(
+            "INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state)
+             VALUES('t3',?1,'demo','run',?1,?2,'Retained opening',?3,'2030-01-06T09:00:20Z',0,'unresolved')",
+            instrukt_core::state_db::rusqlite::params![key,p.repo.path().to_string_lossy(),input.to_string()],
+        ).unwrap();
+        let hold = p.env.path(marker);
+        std::fs::write(&hold, key).unwrap();
+        let child = p
+            .env
+            .instrukt_process(p.repo.path())
+            .env("INSTRUKT_TEST_RESOLVE_BINDING_HOLD", &hold)
+            .args(["sessions", "resolve-start", key, "--session", "t3:s[1]"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        (hold, child)
+    };
+    let (first, first_child) = resolve(keys[0], "first-binding");
+    let (second, second_child) = resolve(keys[1], "second-binding");
+    common::wait_until(
+        "both different keys reach the binding transaction",
+        std::time::Duration::from_secs(15),
+        || first.with_extension("observed").exists() && second.with_extension("observed").exists(),
+    );
+    std::fs::remove_file(first).unwrap();
+    std::fs::remove_file(second).unwrap();
+    let outputs = [
+        first_child.wait_with_output().unwrap(),
+        second_child.wait_with_output().unwrap(),
+    ];
+    assert_eq!(
+        outputs.iter().filter(|o| o.status.success()).count(),
+        1,
+        "{outputs:?}"
+    );
+    let winner = usize::from(!outputs[0].status.success());
+    let loser = 1 - winner;
+    let error = String::from_utf8_lossy(&outputs[loser].stderr);
+    assert!(
+        error.contains("already belongs to another runtime key"),
+        "{error}"
+    );
+    assert!(
+        error.contains(&format!(
+            "instrukt sessions resolve-start {} --session '<runtime:id>'",
+            keys[loser]
+        )),
+        "{error}"
+    );
+    let bound: String = db
+        .query_row(
+            "SELECT semantic_key FROM runtime_bindings WHERE session='t3:s[1]'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(bound, keys[winner]);
+    let state: String = db
+        .query_row(
+            "SELECT state FROM runtime_starts WHERE semantic_key=?1",
+            [keys[loser]],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "unresolved");
+
+    let existing = p
+        .env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", keys[winner], "--none"],
+        )
+        .failure();
+    let stderr = String::from_utf8_lossy(&existing.get_output().stderr);
+    let (_, hint) = stderr.split_once("Run `").unwrap();
+    let (command, _) = hint.split_once('`').unwrap();
+    std::fs::write(p.repo.path().join("t3:s1"), "").unwrap();
+    let resolved = p
+        .env
+        .recovery_shell(p.repo.path(), command)
+        .output()
+        .unwrap();
+    assert!(resolved.status.success(), "{resolved:?}");
+    assert!(String::from_utf8_lossy(&resolved.stdout).contains("t3:s[1]"));
 }
 
 fn run_recovery_worker(

@@ -254,9 +254,26 @@ Every start or wake claims `runtime_key_locks` before discovery and retains
 ownership through binding and delivery-result recording. This applies to
 operational start resolution and runner dispatch, not native child delegation. Lock changes are short
 transactions under the writer lock; no transaction spans a runtime command.
-The machine runtime-dispatch guard serializes eligible owners, including `resolve-start`. The long-lived runner holds its separate lifetime lock while acquiring this dispatch guard only for each wake, so operational resolution can run between wakes.
-A successor holding that lock may recover a dead invocation's key ownership
-while retaining unresolved markers; elapsed time alone permits no new start.
+The machine runtime-dispatch lock gates entry to dispatch and is released
+before any runtime command. Each owner holds an OS lock for its exact key
+through the operation. Operator recovery waits within the dispatch lock's
+usual bound for the exact key, and replacement also waits for any input
+already being handled for the stopped thread. Other keys keep dispatching.
+If the wait expires, the command names the semantic key and the exact command
+to retry after dispatch releases it, with POSIX shell quoting and the requested
+output format. Recovery commands in diagnostics and status use the same
+quoting, including standing reservation recovery through `instrukt events bind`.
+If the lock cannot be opened, the command reports the directory
+and the operating system's cause. An internal `input:<runtime:id>` lock
+key is refused before lock acquisition. The recovery commands take the
+assignment's `instrukt:…` semantic key.
+An owner taking that key's
+lock can recover the prior owner's row while retaining unresolved markers.
+Elapsed time alone permits no new start.
+Exact-session resolution checks native thread ownership and writes the binding
+in one transaction, so concurrent commands for different keys cannot claim
+the same thread. The losing command leaves its start unresolved.
+
 
 ### Human-facing thread titles
 
@@ -850,6 +867,7 @@ When the developer deletes its thread in the runtime and a later event for that 
 Then no successor starts, the event stays pending and status gives the replacement command
 When the operator confirms the old provider stopped through that command
 Then the successor uses the same key and receives the pending and later events
+And a wake already waiting on that key hands over only events still pending after replacement
 But when the developer archived the thread instead
 Then no successor starts, the event stays pending and status shows the developer the archived thread
 ```
@@ -885,6 +903,10 @@ Then no-start resolution clears the pending ID and permits a fresh start
 When a committed binding or pending successor is confirmed absent
 Then the printed replacement command retires the named ID after the operator confirms its provider stopped
 And a successful replacement of a committed binding receives later work
+But if two keys concurrently resolve to the same available thread
+Then only one resolution binds it and the other start stays unresolved
+And a command given an internal input-lock key tells the operator to use the assignment's semantic key
+And an unreadable recovery lock reports the path problem and its operating system cause
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

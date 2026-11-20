@@ -153,7 +153,9 @@ The relay is one more independent reader hosted by the existing long-lived
 read-only T3 projection-database reader, per-conversation fingerprints and
 native database change notifications used by history. Each link is an
 independent consumer with its own opaque source position; it never borrows
-history's extraction position. This reader needs no T3 session token. Native target delivery uses the adapter's supported input operation;
+history's extraction position. Native reads used for acceptance and native
+sends run in a worker for that link. A slow target can delay its own link's
+handover while other links and company conversations continue. This reader needs no T3 session token. Native target delivery uses the adapter's supported input operation;
 read scope alone grants no send authority. Redis is transport only and owns
 neither turns, link membership nor relay decisions. There is no separate relay
 process, agent relay tool, scheduled tick relay or periodic fallback. A relay pass
@@ -221,6 +223,15 @@ Given a developer is participating in a linked conversation with two agents
 When either agent closes its link through instrukt discuss close
 Then further contributions stop crossing between the conversations for everyone
 And the developer can continue separately in either conversation
+```
+
+### UC-CL3: Keep a peer discussion moving while another link recovers
+
+```gherkin
+Given two independent peer discussions are open
+When a delivery in one discussion pauses and its acknowledgment is lost
+Then contributions in the other discussion continue while that send and its read-back are pending
+And the first discussion's delivered contribution is reconciled without being sent twice
 ```
 
 ## Known caveats

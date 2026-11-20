@@ -1,6 +1,6 @@
-//! Durable keyed dispatch. Callers hold the machine runner lock across operations.
+//! Durable keyed dispatch. Exact-key OS ownership spans native operations.
 //! Key ownership is kept in SQLite; no writer transaction spans runtime I/O.
-use instrukt_core::fsx::LockGuard;
+use instrukt_core::fsx::{FsError, LockGuard};
 use instrukt_core::home::Home;
 use instrukt_core::ids::SessionRef;
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
@@ -55,42 +55,32 @@ pub fn task_key(project: &str, slug: &str, occurrence: Timestamp) -> String {
     )
 }
 
-/// A live machine invocation. Construction recovers dead ownership once;
-/// its private OS guard proves that no previous invocation is still dispatching.
+/// Admission to a dispatch. The machine gate is released on admission;
+/// exact-key ownership protects the subsequent runtime calls.
 pub struct RuntimeInvocation {
     home: Home,
     owner: String,
-    _guard: LockGuard,
 }
 impl RuntimeInvocation {
     pub fn acquire(home: &Home, wait: Duration) -> Result<Self, StateError> {
-        Self::from_guard(
-            home,
-            LockGuard::acquire(&home.state_dir().join("runtime-dispatch.lock"), wait)?,
-        )
+        let _gate = LockGuard::acquire(&home.state_dir().join("runtime-dispatch.lock"), wait)?;
+        Self::admitted(home)
     }
     pub fn try_acquire(home: &Home) -> Result<Option<Self>, StateError> {
-        LockGuard::try_acquire(&home.state_dir().join("runtime-dispatch.lock"))?
-            .map(|guard| Self::from_guard(home, guard))
-            .transpose()
+        let Some(_gate) = LockGuard::try_acquire(&home.state_dir().join("runtime-dispatch.lock"))?
+        else {
+            return Ok(None);
+        };
+        Self::admitted(home).map(Some)
     }
-    fn from_guard(home: &Home, guard: LockGuard) -> Result<Self, StateError> {
+    fn admitted(home: &Home) -> Result<Self, StateError> {
         let owner = instrukt_core::machine::random_hex(16).map_err(|source| StateError::Read {
             path: "/dev/urandom".into(),
             source,
         })?;
-        RunnerState::new(home).write::<_, StateError>(|tx| {
-            tx.execute(
-                "UPDATE runtime_key_locks SET owner=NULL WHERE owner IS NOT NULL",
-                [],
-            )
-            .map_err(state::sql(&state::db_path(tx)))?;
-            Ok(())
-        })?;
         Ok(Self {
             home: home.clone(),
             owner,
-            _guard: guard,
         })
     }
     pub fn home(&self) -> &Home {
@@ -98,36 +88,126 @@ impl RuntimeInvocation {
     }
 }
 
-pub(crate) struct KeyGuard {
+/// Exclusive ownership of one key, including across processes.
+pub struct KeyGuard {
     state: RunnerState,
     runtime: String,
     key: String,
     owner: String,
+    _lock: LockGuard,
 }
+struct OperatorRecovery<'a> {
+    key: &'a str,
+    command: String,
+}
+
+impl OperatorRecovery<'_> {
+    fn lock_error(&self, error: FsError) -> SessionsError {
+        let message = match error {
+            FsError::LockTimeout { .. } => format!(
+                "dispatch is still busy after the recovery wait for semantic key `{}`. Retry `{}` once dispatch releases it",
+                self.key, self.command
+            ),
+            FsError::Lock { path, source } | FsError::Write { path, source } => {
+                let directory = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+                format!(
+                    "cannot use the recovery lock in {} for semantic key `{}` ({source})",
+                    directory.display(),
+                    self.key
+                )
+            }
+            FsError::NoParent { .. } => format!(
+                "the recovery lock has no parent directory for semantic key `{}`",
+                self.key
+            ),
+        };
+        SessionsError::Refused(message)
+    }
+}
+
+/// Recovery operates on an assignment's semantic key.
+pub fn validate_recovery_key(key: &str) -> Result<(), SessionsError> {
+    if key.starts_with("input:") {
+        return Err(SessionsError::Refused(format!(
+            "`{key}` is an internal input-lock key. Use the assignment's `instrukt:…` semantic key from `{}`",
+            recovery_command(["instrukt", "events", "status"])
+        )));
+    }
+    Ok(())
+}
+
 impl KeyGuard {
-    pub(crate) fn claim(
+    pub fn claim(
         invocation: &RuntimeInvocation,
         adapter: &dyn RuntimeAdapter,
         key: &str,
         project: Option<&str>,
         now: Timestamp,
     ) -> Result<Self, SessionsError> {
+        Self::claim_inner(invocation, adapter, key, project, now, None)
+    }
+
+    fn claim_for_recovery(
+        invocation: &RuntimeInvocation,
+        adapter: &dyn RuntimeAdapter,
+        key: &str,
+        now: Timestamp,
+        recovery: &OperatorRecovery<'_>,
+    ) -> Result<Self, SessionsError> {
+        Self::claim_inner(invocation, adapter, key, None, now, Some(recovery))
+    }
+
+    fn claim_inner(
+        invocation: &RuntimeInvocation,
+        adapter: &dyn RuntimeAdapter,
+        key: &str,
+        project: Option<&str>,
+        now: Timestamp,
+        recovery: Option<&OperatorRecovery<'_>>,
+    ) -> Result<Self, SessionsError> {
         let state = RunnerState::new(invocation.home());
         let owner = invocation.owner.clone();
         let runtime = adapter.runtime().name().to_owned();
-        let acquired=state.write::<_,StateError>(|tx| {
-            tx.execute("INSERT INTO runtime_key_locks (runtime,semantic_key,project,owner,acquired_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(runtime,semantic_key) DO UPDATE SET owner=excluded.owner,acquired_at=excluded.acquired_at WHERE runtime_key_locks.owner IS NULL",params![runtime,key,project,owner,now.to_string()]).map_err(state::sql(&state::db_path(tx)))
+        use sha2::{Digest, Sha256};
+        let name = Sha256::digest(format!("{runtime}:{key}").as_bytes());
+        let path = invocation
+            .home()
+            .locks_dir()
+            .join(format!("runtime-key-{name:x}.lock"));
+        let lock_error = |error| match recovery {
+            Some(recovery) => recovery.lock_error(error),
+            None => StateError::from(error).into(),
+        };
+        let lock = match (LockGuard::try_acquire(&path).map_err(lock_error)?, recovery) {
+            (Some(lock), _) => lock,
+            (None, Some(_)) => {
+                #[cfg(debug_assertions)]
+                if instrukt_core::fsx::fence_active()
+                    && let Some(marker) = std::env::var_os("INSTRUKT_TEST_RECOVERY_WAIT")
+                {
+                    let _ = instrukt_core::fsx::atomic_write(
+                        std::path::Path::new(&marker),
+                        key.as_bytes(),
+                    );
+                }
+                LockGuard::acquire(&path, Duration::from_secs(120)).map_err(lock_error)?
+            }
+            (None, None) => {
+                return Err(SessionsError::Refused(format!(
+                    "runtime key `{key}` is already owned by an active dispatch"
+                )));
+            }
+        };
+        state.write::<_,StateError>(|tx| {
+            tx.execute("INSERT INTO runtime_key_locks (runtime,semantic_key,project,owner,acquired_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(runtime,semantic_key) DO UPDATE SET owner=excluded.owner,acquired_at=excluded.acquired_at",params![runtime,key,project,owner,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?;
+            Ok(())
         })?;
-        if acquired != 1 {
-            return Err(SessionsError::Refused(format!(
-                "runtime key `{key}` is already owned by an active dispatch"
-            )));
-        }
         Ok(Self {
             state,
             runtime,
             key: key.into(),
             owner,
+            _lock: lock,
         })
     }
 }
@@ -163,19 +243,81 @@ enum Recovery<'a> {
     ResumeReplacement(&'a SessionRef),
 }
 
+pub(crate) fn recovery_command<'a>(arguments: impl IntoIterator<Item = &'a str>) -> String {
+    arguments
+        .into_iter()
+        .map(|arg| {
+            if !arg.is_empty()
+                && arg
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte))
+            {
+                arg.to_owned()
+            } else {
+                instrukt_core::process::shell_quote(arg)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn resolve_command(key: &str, session: Option<&SessionRef>, json: bool) -> String {
+    let target = session.map(ToString::to_string);
+    recovery_command(
+        [
+            "instrukt",
+            "sessions",
+            "resolve-start",
+            key,
+            if session.is_some() {
+                "--session"
+            } else {
+                "--none"
+            },
+        ]
+        .into_iter()
+        .chain(target.as_deref())
+        .chain(json.then_some("--json")),
+    )
+}
+
+pub(crate) fn replace_command(key: &str, stopped: &SessionRef) -> String {
+    recovery_command([
+        "instrukt",
+        "sessions",
+        "replace-deleted",
+        key,
+        "--stopped",
+        &stopped.to_string(),
+    ])
+}
+
+fn resolve_session_template(key: &str) -> String {
+    recovery_command([
+        "instrukt",
+        "sessions",
+        "resolve-start",
+        key,
+        "--session",
+        "<runtime:id>",
+    ])
+}
+
+pub(crate) fn resolve_choices(key: &str) -> String {
+    format!(
+        "`{}` or `{}`",
+        resolve_session_template(key),
+        resolve_command(key, None, false)
+    )
+}
+
 impl Recovery<'_> {
     fn command(self, key: &str, session: &SessionRef) -> String {
         match self {
-            Self::ResolveNone => format!("instrukt sessions resolve-start {key} --none"),
-            Self::ResolveSession => {
-                format!("instrukt sessions resolve-start {key} --session {session}")
-            }
-            Self::ReplaceDeleted => {
-                format!("instrukt sessions replace-deleted {key} --stopped {session}")
-            }
-            Self::ResumeReplacement(stopped) => {
-                format!("instrukt sessions replace-deleted {key} --stopped {stopped}")
-            }
+            Self::ResolveNone => resolve_command(key, None, false),
+            Self::ResolveSession => resolve_command(key, Some(session), false),
+            Self::ReplaceDeleted => replace_command(key, session),
+            Self::ResumeReplacement(stopped) => replace_command(key, stopped),
         }
     }
 
@@ -413,11 +555,16 @@ fn accept_started(
         session: thread.session.clone(),
         worktree: thread.worktree.clone(),
     };
-    replacement.work.replace_dispatch(&project, &binding, replacement.original, &mut accept)
-        .map_err(|error| SessionsError::Refused(format!(
-            "replacement for `{}` was not confirmed in the todo record: {error}. Retry `instrukt sessions replace-deleted {} --stopped {}`",
-            binding.key, binding.key, replacement.stopped,
-        )))
+    replacement
+        .work
+        .replace_dispatch(&project, &binding, replacement.original, &mut accept)
+        .map_err(|error| {
+            SessionsError::Refused(format!(
+                "replacement for `{}` was not confirmed in the todo record: {error}. Retry `{}`",
+                binding.key,
+                replace_command(&binding.key, replacement.stopped),
+            ))
+        })
 }
 
 /// Discover before every start. Empty discovery cannot clear an ambiguous marker.
@@ -444,6 +591,14 @@ pub(crate) fn start(
         );
     }
     result
+}
+
+pub(crate) fn start_owned(
+    adapter: &dyn RuntimeAdapter,
+    assignment: &RuntimeAssignment<'_>,
+    guard: &KeyGuard,
+) -> Result<Thread, SessionsError> {
+    start_claimed(adapter, assignment, guard, None)
 }
 
 fn start_claimed(
@@ -907,17 +1062,11 @@ fn retire_gone(
 
 /// Repair a lost cache only after the caller recovered the assignment's original facts.
 pub(crate) fn recover_binding(
+    guard: &KeyGuard,
     adapter: &dyn RuntimeAdapter,
     assignment: &crate::runtime::RuntimeAssignment<'_>,
     thread: &Thread,
 ) -> Result<(), SessionsError> {
-    let guard = KeyGuard::claim(
-        assignment.invocation,
-        adapter,
-        &assignment.request.key,
-        assignment.project,
-        assignment.now,
-    )?;
     adapter.verify_start(assignment.request, thread)?;
     remember(
         &guard.state,
@@ -938,9 +1087,15 @@ pub fn resolve(
     adapter: &dyn RuntimeAdapter,
     key: &str,
     session: Option<&SessionRef>,
+    json: bool,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
-    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
+    validate_recovery_key(key)?;
+    let recovery = OperatorRecovery {
+        key,
+        command: resolve_command(key, session, json),
+    };
+    let guard = KeyGuard::claim_for_recovery(invocation, adapter, key, now, &recovery)?;
     let recorded = record(&guard.state, &guard.runtime, key)?;
     let input = recorded
         .request
@@ -1012,34 +1167,41 @@ pub fn resolve(
             && listed.project_id.is_none()
         {
             return Err(SessionsError::Refused(format!(
-                "native project for {session} cannot be verified against the retained project. Restore native project visibility and retry `instrukt sessions resolve-start {key} --session {session}`"
+                "native project for {session} cannot be verified against the retained project. Restore native project visibility and retry `{}`",
+                recovery.command
             )));
-        }
-        let owned_elsewhere = guard.state.read(|conn, path| conn.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM runtime_bindings WHERE session=?1 AND semantic_key!=?2
-                UNION ALL SELECT 1 FROM session_bindings WHERE session=?1 AND semantic_key!=?2 AND released_at IS NULL
-                UNION ALL SELECT 1 FROM procedure_responsibilities WHERE session=?1 AND semantic_key!=?2
-                UNION ALL SELECT 1 FROM connected_conversations WHERE session=?1 AND semantic_key!=?2
-             )",
-            params![session.to_string(), key],
-            |row| row.get::<_, bool>(0),
-        ).map_err(state::sql(path)))?.unwrap_or(false);
-        if owned_elsewhere {
-            return Err(SessionsError::KeyConflict(key.into()));
         }
         if !recorded.opening_acknowledged {
             adapter.verify_placement(input, &thread)?;
         }
-        remember(
-            &guard.state,
-            adapter,
-            input,
-            &thread,
-            recorded.project.as_deref(),
-            false,
-            RequestEvidence::Retained,
-        )?;
+        #[cfg(debug_assertions)]
+        hold_for_fixture("INSTRUKT_TEST_RESOLVE_BINDING_HOLD", key);
+        // Different keys can resolve concurrently. The writer transaction
+        // orders the ownership check with the binding change.
+        guard.state.write::<_, SessionsError>(|tx| {
+            let path = state::db_path(tx);
+            let owned_elsewhere = tx.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM runtime_bindings WHERE session=?1 AND semantic_key!=?2
+                    UNION ALL SELECT 1 FROM session_bindings WHERE session=?1 AND semantic_key!=?2 AND released_at IS NULL
+                    UNION ALL SELECT 1 FROM procedure_responsibilities WHERE session=?1 AND semantic_key!=?2
+                    UNION ALL SELECT 1 FROM connected_conversations WHERE session=?1 AND semantic_key!=?2
+                 )",
+                params![session.to_string(), key],
+                |row| row.get::<_, bool>(0),
+            ).map_err(state::sql(&path))?;
+            if owned_elsewhere {
+                return Err(SessionsError::Refused(format!(
+                    "thread {session} already belongs to another runtime key; choose a different session with `{}`",
+                    resolve_session_template(key)
+                )));
+            }
+            remember_in(
+                tx, adapter.runtime(), input, &thread, recorded.project.as_deref(), false,
+                RequestEvidence::Retained,
+            )?;
+            Ok(())
+        })?;
         // Retain the marker until the original input is accepted.
     } else {
         let absent = observed.filter(|thread| thread.presence == Presence::Absent);
@@ -1059,6 +1221,25 @@ pub fn resolve(
     }
     note(&guard.state, adapter.runtime(), key, now, Ok(()));
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn hold_for_fixture(setting: &str, key: &str) {
+    if !instrukt_core::fsx::fence_active() {
+        return;
+    }
+    let Some(path) = std::env::var_os(setting).map(std::path::PathBuf::from) else {
+        return;
+    };
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(key)
+        || instrukt_core::fsx::write(path.with_extension("observed"), "").is_err()
+    {
+        return;
+    }
+    let until = std::time::Instant::now() + Duration::from_secs(30);
+    while path.exists() && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 pub(crate) fn recorded_session(
@@ -1113,8 +1294,14 @@ pub fn replace_deleted(
     now: Timestamp,
     work: Option<&dyn crate::interfaces::SessionBindings>,
 ) -> Result<ReplacementResult, SessionsError> {
+    validate_recovery_key(key)?;
+    let recovery = OperatorRecovery {
+        key,
+        command: Recovery::ReplaceDeleted.command(key, stopped),
+    };
     let state = RunnerState::new(invocation.home());
     let runtime = adapter.runtime().name();
+    let guard = KeyGuard::claim_for_recovery(invocation, adapter, key, now, &recovery)?;
     let recorded = record(&state, runtime, key)?;
     let standing = kind(key) == "standing";
     let todo = matches!(kind(key), "todo" | "task");
@@ -1138,14 +1325,21 @@ pub fn replace_deleted(
         note(&state, adapter.runtime(), key, now, Err(&error));
         return Err(error);
     }
+    let _inputs = KeyGuard::claim_for_recovery(
+        invocation,
+        adapter,
+        &format!("input:{stopped}"),
+        now,
+        &recovery,
+    )?;
     if standing {
-        let thread = crate::standing::replace_deleted(invocation, adapter, key, stopped, now)?;
+        let thread =
+            crate::standing::replace_deleted(&guard, invocation, adapter, key, stopped, now)?;
         return Ok(ReplacementResult {
             session: thread.session,
             warning: None,
         });
     }
-    let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
     let resuming = recorded
         .replacement
         .as_ref()
@@ -1298,7 +1492,8 @@ pub fn presence_finding(
 
 pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {
     SessionsError::Refused(format!(
-        "`{key}` is not bound to {stopped}; run `instrukt events status` for the current key and stopped-session ID"
+        "`{key}` is not bound to {stopped}; run `{}` for the current key and stopped-session ID",
+        recovery_command(["instrukt", "events", "status"])
     ))
 }
 

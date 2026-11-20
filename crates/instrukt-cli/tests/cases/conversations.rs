@@ -129,9 +129,17 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // Nothing was created: the start is resolved as such, and the retry dies
     // after the runtime accepted the opening and before the runner bound it.
     c.runtime.flag("die-after-start", true);
-    c.env
-        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
-        .success();
+    let resolve = ["sessions", "resolve-start", &key, "--none"];
+    #[cfg(debug_assertions)]
+    {
+        let held = hold_recovery_key(&c, &key);
+        let command = recovery_waiting(&c, resolve, &key).unwrap();
+        drop(held);
+        let result = command.wait_with_output().unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+    #[cfg(not(debug_assertions))]
+    c.env.run(c.env.home(), resolve).success();
     c.runner_ended();
     let session = c.session();
     assert_eq!(c.runtime.message_count(&session), 1);
@@ -733,6 +741,149 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     });
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV19
+#[test]
+fn one_conversation_opens_while_another_start_is_being_verified() {
+    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    projected(&c);
+    let held = c.runtime.state_dir().join("s1.hold-show");
+    std::fs::write(&held, "").unwrap();
+    c.slack.direct("D30", "USTEVEN", "Where is the release?");
+    wait("the first start has reached its post-create check", || {
+        c.runtime.held_show_running("s1")
+    });
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
+    c.slack.direct("D31", "UANNA", "Who is on call?");
+    wait(
+        "the second conversation starts during the held check",
+        || c.sessions().iter().any(|session| session == "s2"),
+    );
+    c.finish_turn("s2", 0, "Ada is on call.");
+    wait(
+        "the second conversation answers during the held check",
+        || c.slack.posts_beginning("Ada is on call.") == 1,
+    );
+    assert!(c.runtime.held_show_running("s1"));
+    #[cfg(debug_assertions)]
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    #[cfg(debug_assertions)]
+    let same_key =
+        recovery_waiting(&c, ["sessions", "resolve-start", &key, "--none"], &key).unwrap();
+    std::fs::remove_file(held).unwrap();
+    #[cfg(debug_assertions)]
+    {
+        let result = same_key.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            !result.status.success() && stderr.contains("has no unresolved start"),
+            "{stderr}"
+        );
+    }
+
+    c.finish_turn("s1", 0, "The release is in the wiki.");
+    wait("the first conversation gets its own answer", || {
+        c.slack.posts_beginning("The release is in the wiki.") == 1 && answers_recorded(&c)
+    });
+    assert_eq!(c.runtime.message_count("s1"), 1);
+    assert_eq!(c.runtime.message_count("s2"), 1);
+    assert_eq!(c.slack.posts().len(), 2);
+
+    #[cfg(debug_assertions)]
+    {
+        c.runtime.delete("s1");
+        c.store.unproject_thread("s1");
+        let result = timeout_recovery(
+            &c,
+            &_clock,
+            "input:t3:s1",
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        );
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let diagnostic = format!(
+            "instrukt: dispatch is still busy after the recovery wait for semantic key `{key}`. Retry `instrukt sessions replace-deleted {key} --stopped t3:s1` once dispatch releases it"
+        );
+        let errors = stderr
+            .lines()
+            .filter(|line| !line.starts_with("instrukt: clock overridden"))
+            .collect::<Vec<_>>();
+        assert_eq!(errors, [diagnostic.as_str()]);
+        retry_as_printed_in_shell(&c, &_clock);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn timeout_recovery<const N: usize>(
+    c: &Company,
+    clock: &std::path::Path,
+    lock_key: &str,
+    args: [&str; N],
+) -> std::process::Output {
+    let _held = hold_recovery_key(c, lock_key);
+    let marker = c.env.path("recovery-lock-wait");
+    if marker.exists() {
+        std::fs::remove_file(marker).unwrap();
+    }
+    let mut command = recovery_waiting(c, args, lock_key).unwrap();
+    let clock = RunningClock::start(clock.to_owned(), interval_clock(clock), 60);
+    wait(
+        "operator recovery gives up waiting for the held lock",
+        || command.try_wait().unwrap().is_some(),
+    );
+    clock.stop();
+    let result = command.wait_with_output().unwrap();
+    assert!(!result.status.success());
+    result
+}
+
+#[cfg(debug_assertions)]
+fn retry_as_printed_in_shell(c: &Company, clock: &std::path::Path) {
+    let key = "instrukt:run:demo:retry[1]";
+    let target = "t3:s[1]";
+    c.runtime
+        .seed("s[1]", c.env.home(), "An unbound thread", "Opening");
+    let request = serde_json::json!({
+        "checkout": c.env.home(), "key": key, "title": key, "brief": "Retained opening"
+    });
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_starts(runtime,semantic_key,kind,subject,checkout,brief,request,begun_at,reported,state)
+         VALUES('t3',?1,'run',?1,?2,'Retained opening',?3,'2026-11-19T10:00:00Z',0,'unresolved')",
+        instrukt_core::state_db::rusqlite::params![key,c.env.home().to_string_lossy(),request.to_string()],
+    ).unwrap();
+    let failed = timeout_recovery(
+        c,
+        clock,
+        key,
+        [
+            "sessions",
+            "resolve-start",
+            key,
+            "--session",
+            target,
+            "--json",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    let (_, printed) = stderr.split_once("Retry `").unwrap();
+    let (printed, _) = printed.split_once("` once dispatch releases it").unwrap();
+    // Unquoted brackets would match these files even in a POSIX shell.
+    for name in ["instrukt:run:demo:retry1", "t3:s1"] {
+        std::fs::write(c.env.home().join(name), "").unwrap();
+    }
+    let result = c
+        .env
+        .recovery_shell(c.env.home(), printed)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    let response: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(response, serde_json::json!({"key": key, "session": target}));
+}
+
 // spec: project/instrukt/spec/feature/company/conversations UC-CV8
 #[test]
 fn a_member_gets_the_answer_after_the_assistants_work_failed() {
@@ -902,7 +1053,7 @@ fn held_runtime_checks_leave_another_conversation_free() {
     assert!(c.runtime.held_show_running(&session));
     assert_eq!(c.runtime.message_count(&session), 1);
 
-    c.runtime.flag("hold-show-after-send", true);
+    c.runtime.hold_show_after_send(&session);
     std::fs::remove_file(&marker).unwrap();
     std::fs::remove_file(&held).unwrap();
     wait("the lost acknowledgment's read-back check is held", || {
@@ -1236,10 +1387,21 @@ fn run_printed_replacement(c: &Company, expected: &str) {
         || conversation_finding(c, expected).is_some(),
     );
     let finding = conversation_finding(c, expected).unwrap();
-    let (_, command) = finding.split_once("use ").unwrap();
-    let mut words = command.trim_matches('`').split_whitespace();
-    assert_eq!(words.next(), Some("instrukt"));
-    c.env.run(c.env.home(), words.collect::<Vec<_>>()).success();
+    replay_replacement(c, &finding);
+}
+
+fn replay_replacement(c: &Company, finding: &str) {
+    let (_, command) = finding
+        .split_once("`instrukt sessions replace-deleted ")
+        .unwrap();
+    let (arguments, _) = command.split_once('`').unwrap();
+    let command = format!("instrukt sessions replace-deleted {arguments}");
+    let result = c
+        .env
+        .recovery_shell(c.env.home(), &command)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
 }
 
 fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
@@ -1358,32 +1520,84 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     wait_for_presence_notice(&c, &second, &clock, &door);
     assert!(c.sessions().is_empty());
 
-    c.store.thread("s2", None, None, "2026-11-08T10:00:00.000Z");
+    let pending = "s[2]";
+    c.runtime.next_thread_id(pending);
+    c.store
+        .thread(pending, None, None, "2026-11-08T10:00:00.000Z");
     db.execute_batch(
         "CREATE TRIGGER hold_replacement BEFORE UPDATE OF accepted ON runtime_bindings
-         WHEN NEW.session='t3:s2' AND NEW.accepted=1
+         WHEN NEW.session='t3:s[2]' AND NEW.accepted=1
          BEGIN SELECT RAISE(ABORT, 'held replacement acceptance'); END",
     )
     .unwrap();
+    let replace = ["sessions", "replace-deleted", &key, "--stopped", &stopped];
+    #[cfg(debug_assertions)]
+    let interrupted = {
+        let input = format!("input:{stopped}");
+        let held = hold_recovery_key(&c, &input);
+        let command = recovery_waiting(&c, replace, &input).unwrap();
+        drop(held);
+        command.wait_with_output().unwrap()
+    };
+    #[cfg(not(debug_assertions))]
     let interrupted = c
         .env
-        .run(
-            c.env.home(),
-            ["sessions", "replace-deleted", &key, "--stopped", &stopped],
-        )
-        .failure();
+        .run(c.env.home(), replace)
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&interrupted.stderr);
     assert!(
-        String::from_utf8_lossy(&interrupted.get_output().stderr)
-            .contains("held replacement acceptance")
+        !interrupted.status.success() && stderr.contains("held replacement acceptance"),
+        "{stderr}"
     );
-    assert_eq!(c.sessions(), ["s2"]);
-    c.runtime.delete("s2");
-    c.store.unproject_thread("s2");
+    assert_eq!(c.sessions(), [pending]);
+    c.runtime.delete(pending);
+    c.store.unproject_thread(pending);
     db.execute_batch("DROP TRIGGER hold_replacement").unwrap();
 
-    let pending_door = format!("instrukt sessions replace-deleted {key} --stopped t3:s2");
+    let pending_door = format!("instrukt sessions replace-deleted {key} --stopped t3:{pending}");
+    wait(
+        "conversation status names the deleted successor's ID",
+        || {
+            retained_conversations(&c)
+                .conversations
+                .iter()
+                .flat_map(|row| &row.failures)
+                .any(|failure| failure.replace('\'', "").contains(&pending_door))
+        },
+    );
+    let conversation = c
+        .conversations()
+        .conversations
+        .into_iter()
+        .flat_map(|row| row.failures)
+        .find(|failure| failure.replace('\'', "").contains(&pending_door))
+        .unwrap();
+
+    // The refusal records the keyed finding surfaced by plain events status.
+    let refusal = c
+        .env
+        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
+        .failure();
+    let stderr = String::from_utf8_lossy(&refusal.get_output().stderr);
+    let status = c.env.run(c.env.home(), ["events", "status"]).success();
+    let events: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    let finding = events["start_anomalies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["key"].as_str() == Some(&key))
+        .and_then(|row| row["failure"].as_str())
+        .unwrap();
+
     c.store.thread("s3", None, None, "2026-11-08T10:00:00Z");
-    run_printed_replacement(&c, &pending_door);
+    c.runtime.next_thread_id("s3");
+    // A POSIX shell expands unquoted t3:s[2] to this filename.
+    std::fs::write(c.env.home().join("t3:s2"), "").unwrap();
+    for hint in [stderr.as_ref(), &conversation, finding] {
+        replay_replacement(&c, hint);
+    }
     let successor = started(&c, &[]);
     assert_ne!(successor, session);
     assert!(
@@ -1512,6 +1726,48 @@ fn successful_empty_turns_rearm_notices() {
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
         an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
     });
+}
+
+#[cfg(debug_assertions)]
+fn hold_recovery_key(c: &Company, key: &str) -> instrukt_core::fsx::LockGuard {
+    use sha2::{Digest, Sha256};
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let name = Sha256::digest(format!("t3:{key}").as_bytes());
+    instrukt_core::fsx::LockGuard::acquire(
+        &home.locks_dir().join(format!("runtime-key-{name:x}.lock")),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap()
+}
+
+#[cfg(debug_assertions)]
+fn recovery_waiting<const N: usize>(
+    c: &Company,
+    args: [&str; N],
+    key: &str,
+) -> Result<std::process::Child, String> {
+    let marker = c.env.path("recovery-lock-wait");
+    let mut command = c
+        .env
+        .instrukt_process(c.env.home())
+        .env("INSTRUKT_TEST_RECOVERY_WAIT", &marker)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait("operator recovery encounters the held lock", || {
+        marker.exists() || command.try_wait().unwrap().is_some()
+    });
+    if command.try_wait().unwrap().is_some() {
+        let result = command.wait_with_output().unwrap();
+        return Err(format!(
+            "operator recovery exited before acquiring {key}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), key);
+    Ok(command)
 }
 
 fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {

@@ -520,6 +520,27 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
     );
     db.execute_batch("DROP TRIGGER fail_standing_binding;")
         .unwrap();
+    #[cfg(debug_assertions)]
+    let (hold, child) = {
+        let hold = deleted.computer.env.path("standing-snapshot");
+        std::fs::write(&hold, &key).unwrap();
+        let child = deleted
+            .computer
+            .env
+            .instrukt_process(deleted.computer.project.path())
+            .env("INSTRUKT_TEST_STANDING_CLAIM_HOLD", &hold)
+            .arg("tick")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        common::wait_until(
+            "the wake has retained its pending snapshot and is about to claim the key",
+            std::time::Duration::from_secs(15),
+            || hold.with_extension("observed").exists(),
+        );
+        (hold, child)
+    };
     deleted.replace_deleted(&key);
     deleted.replace_deleted(&key);
     deleted
@@ -528,12 +549,36 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
     assert_eq!(deleted.runtime.message_count("s2"), 1);
     assert_eq!(deleted.runtime.message_count("lookalike"), 1);
     deleted.runtime.delete("lookalike");
+    #[cfg(debug_assertions)]
+    {
+        assert!(deleted.runtime.message("s2", 0).contains("after-delete"));
+        std::fs::remove_file(hold).unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(result.status.success(), "{result:?}");
+        let followup: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s2' AND input_id LIKE 'event:after-delete:%')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert!(
+            !followup,
+            "the already delivered opening event was queued a second time"
+        );
+    }
     assert_eq!(deleted.delivered_to("after-delete").to_string(), "t3:s2");
     deleted.append("later-event");
     deleted.tick();
     assert_eq!(deleted.runtime.threads(), ["s2"]);
     assert_eq!(deleted.delivered_to("later-event").to_string(), "t3:s2");
     assert!(deleted.runtime.input_log("s2").contains("later-event"));
+    let deliveries = (0..deleted.runtime.message_count("s2"))
+        .filter(|&index| {
+            deleted
+                .runtime
+                .message("s2", index)
+                .contains("after-delete")
+        })
+        .count();
+    assert_eq!(deliveries, 1);
     assert!(start_anomalies(&deleted).is_empty());
 }
 
@@ -1089,14 +1134,14 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     assert_eq!(repeated["start_allowed"].as_bool(), Some(false));
     assert_eq!(r.runtime.calls().len(), before);
     r.runtime.seed(
-        "unverified",
+        "unverified[1]",
         root,
         request["key"].as_str().unwrap(),
         request["brief"].as_str().unwrap(),
     );
     r.runtime
-        .change("unverified", "projectId", serde_json::Value::Null);
-    let unverified = serde_json::json!({"session":"t3:unverified","title":request["title"],"assignment":request["brief"]});
+        .change("unverified[1]", "projectId", serde_json::Value::Null);
+    let unverified = serde_json::json!({"session":"t3:unverified[1]","title":request["title"],"assignment":request["brief"]});
     let token = request["reservation"].as_str().unwrap();
     let refused = r
         .computer
@@ -1110,7 +1155,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
             "--reservation",
             token,
             "--session",
-            "t3:unverified",
+            "t3:unverified[1]",
             "--evidence",
             "-",
         ])
@@ -1118,31 +1163,24 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         .assert()
         .failure();
     let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    let confirmation = format!(
-        "instrukt events bind reactions/procedure/respond --reservation {token} --not-started --stopped t3:unverified --reason 'provider stopped and thread deleted'"
+    let (_, line) = guidance.split_once("reservation with `").unwrap();
+    let (confirmation, _) = line.split_once('`').unwrap();
+    assert!(
+        confirmation.starts_with("instrukt events bind "),
+        "{confirmation}"
     );
-    assert!(guidance.contains(&confirmation), "{guidance}");
-    r.runtime.set_status("unverified", "stopped");
-    r.runtime.delete("unverified");
+    r.runtime.set_status("unverified[1]", "stopped");
+    r.runtime.delete("unverified[1]");
+    std::fs::write(root.join("t3:unverified1"), "").unwrap();
     r.runtime.flag("list-failure", true);
-    r.computer
+    let confirmed = r
+        .computer
         .env
-        .instrukt(root)
+        .recovery_shell(root, confirmation)
         .env("T3CODE_THREAD_ID", "manual-parent")
-        .args([
-            "events",
-            "bind",
-            "reactions/procedure/respond",
-            "--reservation",
-            token,
-            "--not-started",
-            "--stopped",
-            "t3:unverified",
-            "--reason",
-            "provider stopped and thread deleted",
-        ])
-        .assert()
-        .success();
+        .output()
+        .unwrap();
+    assert!(confirmed.status.success(), "{confirmed:?}");
     r.runtime.flag("list-failure", false);
     let retry = reserve().success();
     let retry: serde_json::Value = serde_json::from_slice(&retry.get_output().stdout).unwrap();
