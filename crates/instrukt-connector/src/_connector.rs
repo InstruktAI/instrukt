@@ -2,7 +2,8 @@
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
-    Admission, AnswerError, Captured, ConnectorError, Incoming, Limits, Place, Status,
+    Accompanying, Admission, AnswerError, Captured, ConnectorError, ContextSnapshot, Incoming,
+    Limits, Place, Status,
 };
 use jiff::Timestamp;
 
@@ -29,15 +30,28 @@ pub trait Connector: Send + Sync {
     /// Whether `sender`, a provider identity, is one of the company's own.
     fn admit(&self, sender: &str) -> Admission;
     /// The addressed message `message` of `conversation` as the agent reads
-    /// it, with what accompanies it: since `previous`, the conversation's
-    /// previous addressed message, or from the conversation's start.
+    /// it and the earlier messages in its provider's context range.
+    /// Publish usable pages as they arrive. The boolean is true once the
+    /// selection is known and only name enrichment remains. Stop reading
+    /// if the callback returns false.
     fn capture(
         &self,
         conversation: &str,
         message: &str,
-        previous: Option<&str>,
         text: &str,
+        excluded: &std::collections::HashSet<String>,
+        readable: &dyn Fn(ContextSnapshot, bool) -> bool,
     ) -> Result<Captured, ConnectorError>;
+    /// Frame the addressed text after the context bound, without provider I/O.
+    fn without_context(&self, text: &str) -> Captured {
+        Captured {
+            text: text.to_owned(),
+            accompanying: Accompanying {
+                unread: true,
+                ..Default::default()
+            },
+        }
+    }
     /// Post an answer piece or notice with its durable identity, returning
     /// the provider's posting time when its receipt has one.
     fn answer(

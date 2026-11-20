@@ -59,11 +59,12 @@ if args[:3]==['auth','session','issue']:
     sid='00000000-0000-4000-8000-%012d'%n
     ttl=args[args.index('--ttl')+1]
     seconds=int(ttl[:-1])*{'s':1,'m':60,'h':3600}[ttl[-1]]
-    claims={'v':1,'kind':'session','sid':sid,'method':'bearer-access-token','scopes':['orchestration:read']}
+    scope=args[args.index('--scope')+1]
+    claims={'v':1,'kind':'session','sid':sid,'method':'bearer-access-token','scopes':[scope]}
     token=base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')+'.test-signature'
     expires=(clock_now()+datetime.timedelta(seconds=seconds)).strftime('%Y-%m-%dT%H:%M:%SZ')
     (readiness/'tokens').mkdir(parents=True,exist_ok=True)
-    (readiness/'tokens'/(sid+'.json')).write_text(json.dumps({'digest':hashlib.sha256(token.encode()).hexdigest(),'expires':expires,'revoked':False}))
+    (readiness/'tokens'/(sid+'.json')).write_text(json.dumps({'digest':hashlib.sha256(token.encode()).hexdigest(),'expires':expires,'revoked':False,'scope':scope}))
     (readiness/'clock-source').write_text(os.environ.get('INSTRUKT_NOW',''))
     print(token); sys.exit(0)
 if args[:3]==['auth','session','revoke']:
@@ -104,6 +105,7 @@ def sync_inputs():
     db=pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite'
     db.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(db) as connection:
+        connection.execute('CREATE TABLE IF NOT EXISTS orchestration_command_receipts (command_id TEXT PRIMARY KEY, aggregate_kind TEXT, aggregate_id TEXT, command_type TEXT, status TEXT)')
         connection.execute('CREATE TABLE IF NOT EXISTS orchestration_v2_projection_messages (message_id TEXT PRIMARY KEY,thread_id TEXT,role TEXT,payload_json TEXT)')
         connection.execute('CREATE TABLE IF NOT EXISTS orchestration_v2_projection_runs (run_id TEXT,thread_id TEXT,payload_json TEXT,PRIMARY KEY(thread_id,run_id))')
         def upsert(table, values):
@@ -204,23 +206,70 @@ elif command=='start':
         (root/'die-after-start').unlink(); os.kill(os.getppid(),9)
     elif not (root/'silent-start').exists(): print(id)
 elif command=='send':
+    text=sys.stdin.read() if operands[1]=='-' else operands[1]
     held=root/(operands[0]+'.hold-send')
     if held.exists():
         (root/(operands[0]+'.send-held')).write_text(str(os.getpid()))
     while held.exists(): time.sleep(0.02)
     t=find(operands[0])
-    if (root/'send-failure').exists(): print('send failed',file=sys.stderr); sys.exit(1)
+    fail_once=root/(operands[0]+'.fail-next-send')
+    if fail_once.exists():
+        fail_once.unlink()
+        print('No running T3 Code server uses the fixture store. Start T3 Code, then retry.',file=sys.stderr); sys.exit(1)
+    ambiguous=root/(operands[0]+'.lose-next-send')
+    if ambiguous.exists():
+        ambiguous.unlink()
+        if (root/(operands[0]+'.hold-lost-response')).exists():
+            (root/(operands[0]+'.lost-response-held')).touch()
+            while not (root/(operands[0]+'.release-lost-response')).exists(): time.sleep(0.02)
+        print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
+    if (root/'send-failure').exists(): print('No running T3 Code server uses the fixture store. Start T3 Code, then retry.',file=sys.stderr); sys.exit(1)
     if (root/'send-unreachable').exists():
-        print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+sys.stdin.read(),file=sys.stderr); sys.exit(1)
-    text=sys.stdin.read() if operands[1]=='-' else operands[1]
+        print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+text,file=sys.stderr); sys.exit(1)
+    command_id=os.environ.get('T3_TEST_COMMAND_ID')
+    reject=root/(operands[0]+'.reject-next-command')
+    if command_id and reject.exists():
+        reject.unlink()
+        with sqlite3.connect(pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite') as db:
+            db.execute("INSERT INTO orchestration_command_receipts VALUES (?,'thread',?,'message.dispatch','rejected')", (command_id, operands[0]))
+        print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
+    hold_submit=root/(operands[0]+'.hold-next-submit')
+    held_submit=command_id and hold_submit.exists()
+    if held_submit:
+        hold_submit.unlink()
+        (root/(operands[0]+'.submit-held-input')).write_text(text)
+        (root/(operands[0]+'.submit-held')).write_text(command_id)
+        while not (root/(operands[0]+'.release-submit')).exists(): time.sleep(0.02)
+    if command_id:
+        with (root/'dispatch-ids').open('a') as calls: calls.write(command_id+'\n')
+        receipts=sqlite3.connect(root/'dispatch-receipts.sqlite')
+        receipts.execute('CREATE TABLE IF NOT EXISTS command_receipts (command_id TEXT PRIMARY KEY)')
+        receipts.execute('BEGIN IMMEDIATE')
+        if receipts.execute('SELECT 1 FROM command_receipts WHERE command_id=?',(command_id,)).fetchone():
+            if held_submit: (root/(operands[0]+'.late-deduplicated')).touch()
+            sys.exit(0)
+        t=find(operands[0])
     t['settled']=False; t['settledAt']=None
     queued=True
     run='run:'+t['threadId']+':'+str(len(t['messages'])+2)
     if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
         queued=False; t['latestRunId']=run; t['activeRunId']=run; t['status']='running'
-    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued}); save(t)
+    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued})
+    defer=root/(operands[0]+'.defer-next-send')
+    if defer.exists():
+        defer.unlink()
+        (root/(operands[0]+'.deferred-input')).write_text(json.dumps(t))
+        print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
+    save(t)
+    if command_id:
+        receipts.execute('INSERT INTO command_receipts VALUES (?)',(command_id,))
+        receipts.commit()
+    if held_submit: (root/(operands[0]+'.late-submit')).touch()
     if (root/'die-after-send').exists():
-        (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
+        (root/'die-after-send').unlink()
+        if command_id:
+            os.kill(int((root/'runner-owner').read_text()),9)
+        else: os.kill(os.getppid(),9)
     lost_ack=root/(t['threadId']+'.hold-show-after-send')
     if lost_ack.exists():
         lost_ack.unlink()
@@ -240,11 +289,28 @@ elif command=='show':
     while held.exists(): time.sleep(0.02)
     t=find(operands[0]); limit=int(flags.get('--messages',100))
     if limit or not os.environ.get('INSTRUKT_TEST_T3_WAKES'): sync_inputs()
+    deferred=root/(operands[0]+'.deferred-input')
+    missed=root/(operands[0]+'.deferred-input-missed')
+    if limit==0 and deferred.exists():
+        if missed.exists():
+            ready=root/(operands[0]+'.deferred-ready-read')
+            ready.write_text(str(os.getpid()))
+            while not (root/(operands[0]+'.release-deferred-input')).exists(): time.sleep(0.02)
+            # The readiness reply was read before the accepted input became
+            # visible. Publish acceptance now and return that older reply.
+            save(json.loads(deferred.read_text())); deferred.unlink(); missed.unlink()
+        else:
+            missed.touch()
+            t=dict(t,status='running')
+
     if limit==0 and (root/'busy-before-entry').exists():
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=3:
             t['status']='running'; save(t); (root/'busy-before-entry').unlink(); counter.unlink()
-    print(json.dumps({'thread':{k:v for k,v in t.items() if k not in ['messages','checkout'] and not (k=='projectId' and (root/'hide-project-id').exists())},'messages':[{k:v for k,v in m.items() if k!='queued'} for m in [m for m in t['messages'] if not m.get('queued',False)][-limit:]] if limit else []}))
+    summary={k:v for k,v in t.items() if k not in ['messages','checkout'] and not (k=='projectId' and (root/'hide-project-id').exists())}
+    if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
+        summary['activeRunId']=None
+    print(json.dumps({'thread':summary,'messages':[{k:v for k,v in m.items() if k!='queued'} for m in [m for m in t['messages'] if not m.get('queued',False)][-limit:]] if limit else []}))
     if limit==0 and (root/'busy-after-idle-read').exists():
         counter=root/'asap-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=2:

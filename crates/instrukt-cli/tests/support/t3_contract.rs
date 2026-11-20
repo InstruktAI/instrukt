@@ -265,6 +265,12 @@ pub fn connect(token: &str) -> Result<tungstenite::WebSocket<TcpStream>> {
 }
 
 pub fn rpc(token: &str, tag: &str, payload: Value) -> Result<Value> {
+    let exit = rpc_exit(token, tag, payload)?;
+    ensure!(exit["_tag"] == "Success", "RPC rejected at {tag}");
+    Ok(exit["value"].clone())
+}
+
+fn rpc_exit(token: &str, tag: &str, payload: Value) -> Result<Value> {
     let mut socket = connect(token)?;
     socket.send(Message::Text(
         json!({"_tag":"Request","id":"contract","tag":tag,"payload":payload,"headers":[]})
@@ -282,8 +288,7 @@ pub fn rpc(token: &str, tag: &str, payload: Value) -> Result<Value> {
             if frame["_tag"] == "Ping" {
                 socket.send(Message::Text(json!({"_tag":"Pong"}).to_string().into()))?;
             } else if frame["_tag"] == "Exit" && frame["requestId"] == "contract" {
-                ensure!(frame["exit"]["_tag"] == "Success", "RPC rejected at {tag}");
-                return Ok(frame["exit"]["value"].clone());
+                return Ok(frame["exit"].clone());
             }
         }
     }
@@ -749,6 +754,55 @@ pub fn fake_steering(root: &Path) -> Result<Value> {
     )
 }
 
+/// Exercise the production WebSocket adapter against a deferred opening
+/// input. The runtime can accept and queue work without entering a provider.
+pub fn websocket_dispatch(id: &str) -> Result<Value> {
+    let adapter = T3::default();
+    let session = SessionRef::parse(&format!("t3:{id}"))?;
+    let command = "contract-websocket";
+    let text = "contract WebSocket queued input";
+    for _ in 0..2 {
+        adapter.dispatch_send(&session, command, text, &mut || Ok(()))?;
+    }
+    let observation = adapter.observe_input(&session, text, "2026-11-10T12:00:00Z".parse()?)?;
+    ensure!(
+        observation.state == InputState::Accepted,
+        "WebSocket input must be queued"
+    );
+    let db = instrukt_core::state_db::rusqlite::Connection::open_with_flags(
+        Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/statev2.sqlite"),
+        instrukt_core::state_db::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let count: u32 = db.query_row(
+        "SELECT count(*) FROM orchestration_v2_projection_messages
+         WHERE thread_id=?1 AND role='user' AND json_extract(payload_json,'$.text')=?2",
+        instrukt_core::state_db::rusqlite::params![id, text],
+        |row| row.get(0),
+    )?;
+    ensure!(count == 1, "WebSocket replay created a second input");
+
+    let mut token = Token::scoped(&["orchestration:operate"])?;
+    for field in ["createdBy", "creationSource"] {
+        let mut malformed = json!({
+            "type":"message.dispatch", "commandId":"contract-malformed", "threadId":id,
+            "messageId":"contract-malformed", "text":"malformed", "attachments":[],
+            "createdBy":"agent", "creationSource":"mcp", "dispatchMode":{"type":"queue_after_active"}
+        });
+        malformed.as_object_mut().unwrap().remove(field);
+        let exit = rpc_exit(&token.secret, "orchestration.dispatchCommand", malformed)
+            .with_context(|| format!("no RPC rejection for missing {field}"))?;
+        // T3's RPC decoder uses a Die cause for a schema error.
+        // Require its missing-key response for this specific field.
+        let missing = format!("Missing key\n  at [{field:?}]");
+        ensure!(
+            exit == json!({"_tag":"Failure","cause":[{"_tag":"Die","defect":missing}]}),
+            "expected explicit RPC rejection for missing {field}: {exit}"
+        );
+    }
+    token.revoke()?;
+    Ok(json!({"queued":true,"inputs_after_replay":count,"missing_provenance_rejected":true}))
+}
+
 pub fn real(root: &Path) -> Result<()> {
     grammar()?;
     let _server = Server::start(root)?;
@@ -840,6 +894,7 @@ pub fn real(root: &Path) -> Result<()> {
     }
     ensure!(changed, "durable input change was not observed");
     let result = observe(id)?;
+    let websocket = websocket_dispatch(id)?;
     ensure!(
         adapter
             .read_state(&SessionRef::parse("t3:contract-missing")?)?
@@ -861,7 +916,7 @@ pub fn real(root: &Path) -> Result<()> {
     let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket})
             .to_string(),
     )?;
     Ok(())

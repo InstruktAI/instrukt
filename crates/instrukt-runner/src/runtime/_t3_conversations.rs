@@ -234,6 +234,32 @@ fn latest_update(path: &Path, thread: &str) -> Result<Option<String>, SourceErro
     Ok(newest.map(|(_, text)| text))
 }
 
+/// Read exact acceptance and quiescence from one projection snapshot.
+pub(super) fn send_evidence(
+    home: &Home,
+    env: &Env,
+    thread: &str,
+    text: &str,
+    command_id: Option<&str>,
+) -> Result<(bool, bool, bool), SourceError> {
+    let db = open(&T3Home::discover(home, env).database())?;
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
+                       WHERE thread_id=?1 AND role='user'
+                         AND json_extract(payload_json,'$.text')=?2),
+                EXISTS(SELECT 1 FROM orchestration_v2_projection_threads
+                       WHERE thread_id=?1 AND archived_at IS NULL AND deleted_at IS NULL)
+                AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runs
+                       WHERE thread_id=?1
+                         AND (status IS NULL OR status NOT IN ('completed','failed','interrupted','cancelled','rolled_back'))),
+                EXISTS(SELECT 1 FROM orchestration_command_receipts
+                       WHERE command_id=?3 AND aggregate_kind='thread' AND aggregate_id=?1
+                         AND command_type='message.dispatch' AND status='rejected')",
+        params![thread, text, command_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?)
+}
+
 /// Run allocation precedes entry: queued/preparing inputs already have run IDs.
 pub(super) fn inputs(
     home: &Home,

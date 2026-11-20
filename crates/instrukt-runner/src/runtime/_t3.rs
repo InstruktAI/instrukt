@@ -153,6 +153,26 @@ impl RuntimeAdapter for T3 {
         };
         super::_diagnostics::diagnose("t3", operation, error, native)
     }
+    fn send_certainly_rejected(&self, session: &SessionRef, error: &SessionsError) -> bool {
+        match error {
+            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. }) => true,
+            SessionsError::Failed {
+                operation, detail, ..
+            } if operation == "send" => {
+                let line = detail.lines().next().unwrap_or_default().trim();
+                line == format!("Thread {} is no longer available.", session.id)
+                    || matches!(
+                        super::_t3_diagnostics::cause(line),
+                        Some(super::NativeCause::ServerNotRunning)
+                    )
+                    || line
+                        .strip_prefix("Could not reach the T3 Code server at ")
+                        .and_then(|rest| rest.split_once(". "))
+                        .is_some_and(|(_, reason)| reason.starts_with("connect ECONNREFUSED "))
+            }
+            _ => false,
+        }
+    }
     fn conversation_source(
         &self,
         home: &instrukt_core::home::Home,
@@ -267,6 +287,57 @@ impl RuntimeAdapter for T3 {
                 | Capability::ConfiguredRuntimes
         )
     }
+    fn observe_send(
+        &self,
+        session: &SessionRef,
+        text: &str,
+        command_id: Option<&str>,
+    ) -> Result<super::SendEvidence, SessionsError> {
+        use super::SendEvidence;
+        let shown = match self.show(session, 0) {
+            Ok(shown) => shown,
+            Err(SessionsError::Gone(_)) => {
+                return Ok(SendEvidence::Presence(super::Presence::Absent));
+            }
+            Err(error) => return Err(error),
+        };
+        let idle =
+            shown.thread.active_run_id.is_none() && shown.thread.pending_request_count == Some(0);
+        let thread = shown.thread.decode()?;
+        if thread.presence != super::Presence::Present {
+            return Ok(SendEvidence::Presence(thread.presence));
+        }
+        let user_home = self
+            .env
+            .get("HOME")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| failure("input observation", "machine home is unavailable"))?;
+        let home = instrukt_core::home::Home::at_user_home(user_home.into());
+        let (accepted, empty, rejected) = super::_t3_conversations::send_evidence(
+            &home,
+            &self.env,
+            session.id.as_str(),
+            text,
+            command_id,
+        )
+        .map_err(|error| failure("input observation", error.to_string()))?;
+        Ok(if accepted {
+            SendEvidence::Accepted
+        } else if rejected {
+            SendEvidence::Rejected
+        } else if idle
+            && empty
+            && matches!(
+                thread.state,
+                SessionState::InputReady | SessionState::EndedFailed
+            )
+        {
+            SendEvidence::IdleWithoutInput
+        } else {
+            SendEvidence::Unresolved
+        })
+    }
+
     fn observe_input(
         &self,
         session: &SessionRef,
@@ -352,6 +423,42 @@ impl RuntimeAdapter for T3 {
     }
     fn start(&self, assignment: &super::RuntimeAssignment<'_>) -> Result<Thread, SessionsError> {
         crate::keyed::start(self, assignment)
+    }
+    fn dispatch_send(
+        &self,
+        session: &SessionRef,
+        command_id: &str,
+        text: &str,
+        before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+    ) -> Result<(), super::DispatchError> {
+        use super::DispatchError::BeforeFrame;
+        if session.runtime.as_str() != "t3" {
+            return Err(BeforeFrame(SessionsError::UnknownRuntime(
+                session.runtime.to_string(),
+            )));
+        }
+        let user_home = self
+            .env
+            .get("HOME")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| BeforeFrame(failure("send", "machine home is unavailable")))?;
+        let home = instrukt_core::home::Home::at_user_home(user_home.into());
+        super::_t3_readiness::dispatch(
+            &home,
+            &self.env,
+            serde_json::json!({
+                "type": "message.dispatch",
+                "commandId": command_id,
+                "threadId": session.id,
+                "messageId": command_id,
+                "text": text,
+                "createdBy": "agent",
+                "creationSource": "mcp",
+                "attachments": [],
+                "dispatchMode": {"type": "queue_after_active"}
+            }),
+            before_write,
+        )
     }
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError> {
         if session.runtime.as_str() != "t3" {

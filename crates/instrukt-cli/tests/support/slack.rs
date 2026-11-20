@@ -161,6 +161,9 @@ struct Workspace {
     next: u64,
     refuse: bool,
     hold_reads: bool,
+    hold_later_history_pages: bool,
+    refuse_replies: bool,
+    refused_reply: Option<String>,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
     refuse_metadata_reads: bool,
@@ -177,6 +180,7 @@ struct Workspace {
     held_posts: usize,
     /// `users.info` answers wait until released.
     hold_lookups: bool,
+    hold_lookups_for: std::collections::BTreeSet<String>,
     /// How many lookups were held back.
     held_lookups: usize,
     reads: usize,
@@ -247,6 +251,11 @@ impl FakeSlack {
                             && {
                                 let workspace = workspace.lock().unwrap();
                                 workspace.hold_reads
+                                    || (workspace.hold_later_history_pages
+                                        && method == "conversations.history"
+                                        && body
+                                            .split('&')
+                                            .any(|field| field.starts_with("cursor=")))
                                     || workspace.hold_reads_from.iter().any(|oldest| {
                                         body.split('&').any(|field| {
                                             field.strip_prefix("oldest=") == Some(oldest)
@@ -265,7 +274,15 @@ impl FakeSlack {
                         }
                         let mut counted = false;
                         while method == "users.info"
-                            && workspace.lock().unwrap().hold_lookups
+                            && {
+                                let workspace = workspace.lock().unwrap();
+                                workspace.hold_lookups
+                                    || body.split('&').any(|field| {
+                                        field.strip_prefix("user=").is_some_and(|user| {
+                                            workspace.hold_lookups_for.contains(user)
+                                        })
+                                    })
+                            }
                             && !stop.load(Ordering::Acquire)
                         {
                             if !counted {
@@ -449,6 +466,14 @@ impl FakeSlack {
                 json!({"ok": true})
             }
             "conversations.history" | "conversations.replies" => {
+                if method == "conversations.replies"
+                    && (w.refuse_replies
+                        || w.refused_reply
+                            .as_deref()
+                            .is_some_and(|id| arg("latest") == Some(id)))
+                {
+                    return json!({"ok": false, "error": "thread_not_found"});
+                }
                 if arg("include_all_metadata") == Some("true") {
                     w.metadata_reads += 1;
                     if w.refuse_metadata_reads {
@@ -891,8 +916,18 @@ impl FakeSlack {
         self.workspace.lock().unwrap().hold_lookups = true;
     }
 
+    pub fn hold_lookups_for(&self, user: &str) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .hold_lookups_for
+            .insert(user.to_owned());
+    }
+
     pub fn release_lookups(&self) {
-        self.workspace.lock().unwrap().hold_lookups = false;
+        let mut workspace = self.workspace.lock().unwrap();
+        workspace.hold_lookups = false;
+        workspace.hold_lookups_for.clear();
     }
 
     /// How many lookups were held back while lookups were held.
@@ -918,6 +953,19 @@ impl FakeSlack {
     /// How many accepted posts had their answer held.
     pub fn held_posts(&self) -> usize {
         self.workspace.lock().unwrap().held_posts
+    }
+
+    pub fn refuse_replies_for(&self, question: Option<&str>) {
+        self.workspace.lock().unwrap().refused_reply = question.map(str::to_owned);
+    }
+
+    pub fn refuse_replies(&self, refused: bool) {
+        self.workspace.lock().unwrap().refuse_replies = refused;
+    }
+
+    /// Keep the first history page available and hold continuations.
+    pub fn hold_later_history_pages(&self) {
+        self.workspace.lock().unwrap().hold_later_history_pages = true;
     }
 
     pub fn hold_reads(&self) {
@@ -957,6 +1005,7 @@ impl FakeSlack {
     pub fn release_reads(&self) {
         let mut workspace = self.workspace.lock().unwrap();
         workspace.hold_reads = false;
+        workspace.hold_later_history_pages = false;
         workspace.hold_reads_from.clear();
     }
 

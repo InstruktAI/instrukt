@@ -78,6 +78,8 @@ interfaces and real CLI boundaries, without widening implementation visibility:
 Each disposable server start waits for the runtime descriptor to report
 that server's assigned port before connecting, including after a restart.
 
+Company conversation sends use authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and T3's automated sender provenance. The release and its fake are compared for queued acceptance, replay without a duplicate, and explicit RPC rejection when required sender provenance is missing. A deferred opening run keeps the checks provider-free.
+
 The consumed expectations derive from the owning specs and adapter contract,
 not from copying every field of an upstream response. Additional upstream fields
 are acceptable where the adapter permits them. Release and migration numbers

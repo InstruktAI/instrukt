@@ -26,7 +26,7 @@ threads-required = 6
 
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_can_keep_asking_after_the_assistant_fails_to_answer)'
-threads-required = 5
+threads-required = 4
 
 # UC-CV20 exercises four recovery fixtures.
 [[profile.default.overrides]]
@@ -47,3 +47,11 @@ threads-required = 3
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_start_does_not_wait_on_an_outstanding_readiness_acquisition)'
 threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
+filter = 'test(=slack_connector::a_member_is_answered_when_slack_cannot_read_the_earlier_messages)'
+threads-required = 9
+
+[[profile.default.overrides]]
+filter = 'test(=conversations::a_member_gets_the_answer_after_the_assistants_work_failed)'
+threads-required = 6

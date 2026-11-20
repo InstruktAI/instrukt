@@ -14,12 +14,13 @@ use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
 
 use instrukt_connector::{
-    Admission, Clock, Connector, ConnectorError, Declared, Inbox, Incoming, Kind, Place,
-    SecretResolver, Sender, Status,
+    Admission, Captured, Clock, Connector, ConnectorError, ContextSnapshot, Declared, Inbox,
+    Incoming, Kind, Place, SecretResolver, Sender, Status,
 };
 use instrukt_core::config::{Admitted, AdmittedSecrets, Current};
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
+use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 use serde_yaml_ng::Value;
 
@@ -154,7 +155,7 @@ struct Hosted {
 #[derive(Clone, Copy)]
 struct Reach<'a> {
     current: &'a Current,
-    connectors: &'a dyn Connectors,
+    connectors: &'a Arc<dyn Connectors>,
     accepted: &'a conversations::Accepted,
 }
 
@@ -227,7 +228,7 @@ impl Connections {
                 let _notice = notice;
                 let reach = Reach {
                     current: &current,
-                    connectors: connectors.as_ref(),
+                    connectors: &connectors,
                     accepted: &accepted,
                 };
                 connection(&home, reach, &company, &key, &stop, &wake);
@@ -307,11 +308,12 @@ struct HostInbox<'a> {
     company: &'a ProjectSlug,
     key: &'a str,
     nudge: &'a SyncSender<()>,
+    clock: &'a dyn Connectors,
 }
 
 impl Inbox for HostInbox<'_> {
     fn retain(&self, incoming: Incoming) -> Result<(), ConnectorError> {
-        conversations::retain(self.home, self.company, &incoming, Timestamp::now()).map_err(
+        conversations::retain(self.home, self.company, &incoming, self.clock.now()).map_err(
             |error| ConnectorError {
                 cause: error.to_string(),
             },
@@ -359,38 +361,59 @@ fn connection(
     let ended = AtomicBool::new(false);
     let (nudge, nudges) = std::sync::mpsc::sync_channel::<()>(1);
     let (admitted, admissions) = std::sync::mpsc::sync_channel::<()>(1);
+    let (context_wake, context_wakes) = std::sync::mpsc::sync_channel::<()>(1);
     let ended = &ended;
+    let context_nudge = &context_wake;
+    struct Ended<'a>(&'a AtomicBool);
+    impl Drop for Ended<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
     std::thread::scope(|scope| {
         scope.spawn(move || {
-            struct Ended<'a>(&'a AtomicBool);
-            impl Drop for Ended<'_> {
-                fn drop(&mut self) {
-                    self.0.store(true, Ordering::Release);
-                }
-            }
             let _ended = Ended(ended);
-            intake_worker(
-                home,
-                reach,
-                company,
-                key,
-                stop,
-                Wakes {
-                    relay: wake,
-                    status: &admitted,
-                },
-                &nudges,
-            );
+            intake_worker(&quit, &nudges, reach.connectors.as_ref(), || {
+                intake_pass(home, reach, company, key, |connector| {
+                    admit_messages(
+                        home,
+                        company,
+                        key,
+                        connector.as_ref(),
+                        &admitted,
+                        context_nudge,
+                        reach.connectors.as_ref(),
+                    )
+                })
+            });
         });
         scope.spawn(move || {
-            let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
+            let _ended = Ended(ended);
+            let mut contexts = ContextReads::default();
+            intake_worker(&quit, &context_wakes, reach.connectors.as_ref(), || {
+                intake_pass(home, reach, company, key, |connector| {
+                    capture_contexts(
+                        home,
+                        company,
+                        key,
+                        &Arc::from(connector),
+                        Wakes {
+                            relay: wake,
+                            context: context_nudge,
+                        },
+                        reach.connectors,
+                        &mut contexts,
+                    )
+                })
+            });
+        });
+        scope.spawn(move || {
             status_worker(home, reach, company, key, &quit, &admissions);
         });
         scope.spawn(move || {
-            let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
             notice_worker(home, reach, company, key, &quit);
         });
-        let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
         let mut backoff = Duration::from_secs(1);
         while !quit() {
             state(home, company, key, ConnectionState::Connecting, None);
@@ -399,6 +422,7 @@ fn connection(
                 company,
                 key,
                 nudge: &nudge,
+                clock: reach.connectors.as_ref(),
             };
             let failure = reach
                 .connectors
@@ -439,7 +463,7 @@ fn connection(
 #[derive(Clone, Copy)]
 struct Wakes<'a> {
     relay: &'a SyncSender<()>,
-    status: &'a SyncSender<()>,
+    context: &'a SyncSender<()>,
 }
 
 /// How long intake waits before its next pass after `failures` failed
@@ -459,41 +483,61 @@ fn retry_wait(failures: u32) -> Duration {
 /// message nudges it, every [`RETRY`] while it runs clean, and after a
 /// failure once its wait ([`retry_wait`]) has passed.
 fn intake_worker(
+    stop: &dyn Fn() -> bool,
+    nudges: &std::sync::mpsc::Receiver<()>,
+    clock: &dyn Connectors,
+    mut pass: impl FnMut() -> IntakeProgress,
+) {
+    let mut failures: u32 = 0;
+    while !stop() {
+        let progress = pass();
+        if !progress.clean {
+            failures = failures.saturating_add(1);
+        } else if !progress.reading_context {
+            failures = 0;
+        }
+        let wait = if progress.reading_context {
+            RETRY
+        } else {
+            retry_wait(failures)
+        };
+        let retry_at = Instant::now() + wait;
+        while Instant::now() < retry_at
+            && progress
+                .next_deadline
+                .is_none_or(|deadline| clock.now() < deadline)
+            && !stop()
+        {
+            if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
+                break;
+            }
+        }
+    }
+}
+
+fn intake_pass(
     home: &Home,
     reach: Reach<'_>,
     company: &ProjectSlug,
     key: &str,
-    stop: &AtomicBool,
-    wakes: Wakes<'_>,
-    nudges: &std::sync::mpsc::Receiver<()>,
-) {
-    let mut failures: u32 = 0;
-    let mut retry_at = Instant::now();
-    let mut nudged = true;
-    while !stop.load(Ordering::Acquire) {
-        if nudged || Instant::now() >= retry_at {
-            let clean = match reach.connectors.open(&reach.current.get(), company, key) {
-                Ok(connector) => intake(home, company, key, connector.as_ref(), wakes, &|| {
-                    reach.connectors.now()
-                }),
-                // A failure before any request stays with the outstanding work.
-                Err(error) => {
-                    if let Err(record) =
-                        conversations::intake_failed(home, company, key, &error.cause)
-                    {
-                        tracing::warn!(target: LOG_TARGET, event = "connector_intake_failed", company = %company, connector = key, error = %record);
-                    }
-                    false
-                }
-            };
-            failures = if clean { 0 } else { failures.saturating_add(1) };
-            retry_at = Instant::now() + retry_wait(failures);
+    pass: impl FnOnce(Box<dyn Connector>) -> Result<IntakeProgress, conversations::ConversationError>,
+) -> IntakeProgress {
+    let failed = |error: conversations::ConversationError| {
+        tracing::warn!(target: LOG_TARGET, event = "connector_intake_failed", company = %company, connector = key, %error);
+        IntakeProgress {
+            clean: false,
+            ..Default::default()
         }
-        nudged = false;
-        while Instant::now() < retry_at && !stop.load(Ordering::Acquire) {
-            if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
-                nudged = true;
-                break;
+    };
+    match reach.connectors.open(&reach.current.get(), company, key) {
+        Ok(connector) => pass(connector).unwrap_or_else(failed),
+        Err(error) => {
+            if let Err(record) = conversations::intake_failed(home, company, key, &error.cause) {
+                return failed(record);
+            }
+            IntakeProgress {
+                clean: false,
+                ..Default::default()
             }
         }
     }
@@ -671,94 +715,278 @@ fn owed(refusals: Vec<(Refusal, bool)>) -> Vec<Refusal> {
         .collect()
 }
 
-/// Retained intake work of one company: decide for each received message,
-/// from what the connector says about its sender now, whether it is
-/// answered; read what accompanies each admitted one; post owed refusals. A
-/// failure stays with its record and is retried; while the provider cannot
-/// be asked, a message waits and nothing is delivered or replied. The relay
-/// is woken for what became deliverable. Returns whether the pass ended
-/// without a failure.
-fn intake(
+enum ContextReply {
+    Readable(ContextSnapshot, Timestamp, Option<Instant>),
+    Finished(Result<Captured, ConnectorError>, Timestamp),
+}
+
+struct ContextFlight {
+    replies: std::sync::mpsc::Receiver<ContextReply>,
+    readable: Option<(ContextSnapshot, Option<Instant>)>,
+}
+
+#[derive(Default)]
+struct ContextReads {
+    active: BTreeMap<(String, String), ContextFlight>,
+    partial: BTreeMap<(String, String), Captured>,
+}
+
+impl ContextReads {
+    fn capture(
+        &mut self,
+        connector: &Arc<dyn Connector>,
+        item: &conversations::Unread,
+        clock: &Arc<dyn Connectors>,
+        wake: &SyncSender<()>,
+        deadline: Timestamp,
+        exclusions: impl FnOnce() -> Result<
+            std::collections::HashSet<String>,
+            conversations::ConversationError,
+        >,
+    ) -> Option<Result<Captured, ConnectorError>> {
+        use std::sync::mpsc::{self, TryRecvError};
+        let key = (item.conversation.clone(), item.message.clone());
+        let now = clock.now();
+        if let Some(flight) = self.active.get_mut(&key) {
+            loop {
+                match flight.replies.try_recv() {
+                    Ok(ContextReply::Readable(snapshot, at, ready)) if at < deadline => {
+                        flight.readable = Some((snapshot, ready));
+                    }
+                    Ok(ContextReply::Readable(..)) => {}
+                    Ok(ContextReply::Finished(Ok(captured), at)) if at < deadline => {
+                        self.active.remove(&key);
+                        self.partial.remove(&key);
+                        return Some(Ok(captured));
+                    }
+                    Ok(ContextReply::Finished(outcome, finished)) => {
+                        if let Some(captured) = self.finish_read(&key) {
+                            return Some(Ok(captured));
+                        }
+                        if now >= deadline || finished >= deadline {
+                            return Some(Ok(self
+                                .partial
+                                .remove(&key)
+                                .unwrap_or_else(|| connector.without_context(&item.text))));
+                        }
+                        return Some(outcome);
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        if let Some(captured) = self.finish_read(&key) {
+                            return Some(Ok(captured));
+                        }
+                        if now < deadline {
+                            return Some(Err(ConnectorError {
+                                cause: "the context reader stopped before reporting its result"
+                                    .into(),
+                            }));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        let enrichment_done = self
+            .active
+            .get(&key)
+            .and_then(|flight| flight.readable.as_ref())
+            .and_then(|(_, ready)| *ready)
+            .is_some_and(|ready| Instant::now() >= ready);
+        if now >= deadline || enrichment_done {
+            let captured = self.finish_read(&key).or_else(|| self.partial.remove(&key));
+            return Some(Ok(
+                captured.unwrap_or_else(|| connector.without_context(&item.text))
+            ));
+        }
+        if let std::collections::btree_map::Entry::Vacant(slot) = self.active.entry(key) {
+            let excluded = match exclusions() {
+                Ok(excluded) => excluded,
+                Err(error) => {
+                    return Some(Err(ConnectorError {
+                        cause: error.to_string(),
+                    }));
+                }
+            };
+            let connector = Arc::clone(connector);
+            let clock = Arc::clone(clock);
+            let item = item.clone();
+            let wake = wake.clone();
+            let (send, replies) = mpsc::channel();
+            let spawned = std::thread::Builder::new()
+                .name("conversation-context".into())
+                .spawn(move || {
+                    let readable = |snapshot, complete: bool| {
+                        let ready = complete.then(|| Instant::now() + RETRY);
+                        let at = clock.now();
+                        let reading = at < deadline && send.send(ContextReply::Readable(snapshot, at, ready)).is_ok();
+                        if reading {
+                            let _ = wake.try_send(());
+                        }
+                        reading
+                    };
+                    let result = connector.capture(
+                        &item.conversation, &item.message, &item.text, &excluded, &readable,
+                    );
+                    if send.send(ContextReply::Finished(result, clock.now())).is_err() {
+                        tracing::debug!(target: LOG_TARGET, event = "conversation_context_late_result", message = %item.message);
+                    }
+                    let _ = wake.try_send(());
+                });
+            if let Err(error) = spawned {
+                return Some(Err(ConnectorError {
+                    cause: format!("cannot start context read: {error}"),
+                }));
+            }
+            slot.insert(ContextFlight {
+                replies,
+                readable: None,
+            });
+        }
+        None
+    }
+
+    fn finish_read(&mut self, key: &(String, String)) -> Option<Captured> {
+        let (snapshot, ready) = self.active.remove(key)?.readable?;
+        let mut captured = snapshot();
+        if let Some(previous) = self.partial.remove(key)
+            && captured.accompanying.unread
+        {
+            captured.accompanying.retain_read(previous.accompanying);
+        }
+        if ready.is_some() {
+            return Some(captured);
+        }
+        self.partial.insert(key.clone(), captured);
+        None
+    }
+}
+
+struct IntakeProgress {
+    clean: bool,
+    reading_context: bool,
+    next_deadline: Option<Timestamp>,
+}
+
+impl Default for IntakeProgress {
+    fn default() -> Self {
+        Self {
+            clean: true,
+            reading_context: false,
+            next_deadline: None,
+        }
+    }
+}
+
+/// Sender decisions and refusals can call Slack. Context expiry and relay
+/// handoff run on a different worker.
+fn admit_messages(
     home: &Home,
     company: &ProjectSlug,
     key: &str,
     connector: &dyn Connector,
-    wakes: Wakes<'_>,
-    now: &dyn Fn() -> Timestamp,
-) -> bool {
-    let mut clean = true;
-    let result = (|| -> Result<(), conversations::ConversationError> {
-        let mut readable = false;
-        for unread in conversations::unread(home, company, key)? {
-            if !unread.admitted {
-                let Some(sender) = unread.sender.as_deref() else {
-                    clean = false;
-                    conversations::waiting(
-                        home,
-                        company,
-                        key,
-                        &unread,
-                        "the message has no sender",
-                    )?;
-                    continue;
-                };
-                match next_record(connector.admit(sender)) {
-                    Next::Admitted(admitted) => {
-                        conversations::admitted(home, company, key, &unread, &admitted, now())?;
-                        // Its working indicator is arranged now, not after
-                        // the batch.
-                        let _ = wakes.status.try_send(());
-                    }
-                    Next::Refused => {
-                        conversations::refused(
-                            home,
-                            company,
-                            key,
-                            &unread,
-                            sender,
-                            Timestamp::now(),
-                        )?;
-                        continue;
-                    }
-                    Next::Waiting(cause) => {
-                        clean = false;
-                        conversations::waiting(home, company, key, &unread, &cause)?;
-                        continue;
-                    }
-                }
+    status: &SyncSender<()>,
+    context: &SyncSender<()>,
+    clock: &dyn Connectors,
+) -> Result<IntakeProgress, conversations::ConversationError> {
+    let mut progress = IntakeProgress::default();
+    for unread in conversations::unread(home, company, key)?
+        .into_iter()
+        .filter(|item| !item.admitted)
+    {
+        let Some(sender) = unread.sender.as_deref() else {
+            progress.clean = false;
+            conversations::waiting(home, company, key, &unread, "the message has no sender")?;
+            continue;
+        };
+        match next_record(connector.admit(sender)) {
+            Next::Admitted(admitted) => {
+                conversations::admitted(home, company, key, &unread, &admitted, clock.now())?;
+                let _ = status.try_send(());
+                let _ = context.try_send(());
             }
-            let captured = connector.capture(
-                &unread.conversation,
-                &unread.message,
-                unread.previous.as_deref(),
-                &unread.text,
-            );
-            readable |= captured.is_ok();
-            clean &= captured.is_ok();
-            let (text, accompanying) = match captured {
-                Ok(captured) => (captured.text, Ok(captured.accompanying)),
-                Err(error) => (String::new(), Err(error.cause)),
-            };
-            conversations::captured(home, company, key, &unread, &text, accompanying)?;
+            Next::Refused => {
+                conversations::refused(home, company, key, &unread, sender, Timestamp::now())?;
+            }
+            Next::Waiting(cause) => {
+                progress.clean = false;
+                conversations::waiting(home, company, key, &unread, &cause)?;
+            }
         }
-        if readable {
-            let _ = wakes.relay.try_send(());
-        }
-        // Replies owed, those decided now among them.
-        for refusal in owed(conversations::refusals(home, company, key)?) {
-            let outcome = connector
-                .turn_away(&refusal.conversation)
-                .map_err(|error| error.cause);
-            clean &= outcome.is_ok();
-            conversations::refusal_posted(home, company, key, &refusal, outcome, Timestamp::now())?;
-        }
-        Ok(())
-    })();
-    if let Err(error) = result {
-        clean = false;
-        tracing::warn!(target: LOG_TARGET, event = "connector_intake_failed", company = %company, connector = key, error = %error);
     }
-    clean
+    for refusal in owed(conversations::refusals(home, company, key)?) {
+        let outcome = connector
+            .turn_away(&refusal.conversation)
+            .map_err(|error| error.cause);
+        progress.clean &= outcome.is_ok();
+        conversations::refusal_posted(home, company, key, &refusal, outcome, Timestamp::now())?;
+    }
+    Ok(progress)
+}
+
+fn capture_contexts(
+    home: &Home,
+    company: &ProjectSlug,
+    key: &str,
+    connector: &Arc<dyn Connector>,
+    wakes: Wakes<'_>,
+    clock: &Arc<dyn Connectors>,
+    contexts: &mut ContextReads,
+) -> Result<IntakeProgress, conversations::ConversationError> {
+    let mut progress = IntakeProgress::default();
+    #[cfg(debug_assertions)]
+    let now = clock.now();
+    for unread in conversations::unread(home, company, key)?
+        .into_iter()
+        .filter(|item| item.admitted)
+    {
+        let deadline = unread
+            .arrived_at
+            .checked_add(conversations::CONTEXT_BOUND)
+            .unwrap_or(Timestamp::MAX);
+        match contexts.capture(connector, &unread, clock, wakes.context, deadline, || {
+            conversations::context_exclusions(
+                &RunnerState::new(home),
+                company,
+                key,
+                &unread.conversation,
+            )
+            .map_err(Into::into)
+        }) {
+            Some(Ok(captured)) => {
+                conversations::captured(
+                    home,
+                    company,
+                    key,
+                    &unread,
+                    &captured.text,
+                    Ok(captured.accompanying),
+                )?;
+                let _ = wakes.relay.try_send(());
+                continue;
+            }
+            Some(Err(error)) => {
+                progress.clean = false;
+                conversations::captured(home, company, key, &unread, "", Err(error.cause))?;
+            }
+            None => progress.reading_context = true,
+        }
+        progress.next_deadline = Some(
+            progress
+                .next_deadline
+                .map_or(deadline, |next| next.min(deadline)),
+        );
+    }
+    #[cfg(debug_assertions)]
+    if instrukt_core::fsx::fence_active()
+        && let Some(path) = std::env::var_os("INSTRUKT_TEST_CONTEXT_PASS")
+    {
+        let _ = instrukt_core::fsx::atomic_write(
+            std::path::Path::new(&path),
+            now.to_string().as_bytes(),
+        );
+    }
+    Ok(progress)
 }
 
 /// What one status shows for the unfinished messages it serves: the
@@ -958,8 +1186,9 @@ mod test_connector {
             &self,
             _: &str,
             _: &str,
-            _: Option<&str>,
             text: &str,
+            _: &std::collections::HashSet<String>,
+            _: &dyn Fn(instrukt_connector::ContextSnapshot, bool) -> bool,
         ) -> Result<Captured, ConnectorError> {
             Ok(Captured {
                 text: text.to_owned(),

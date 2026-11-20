@@ -372,6 +372,11 @@ impl Company {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null()),
         ));
+        std::fs::write(
+            self.runtime.state_dir().join("runner-owner"),
+            self.runner.as_ref().unwrap().child.id().to_string(),
+        )
+        .unwrap();
         wait("the connector's outward connection", || {
             self.slack.connections() > before
         });

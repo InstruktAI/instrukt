@@ -712,8 +712,12 @@ and `message`, the connector's identity of that message.
 | `arrived_at` | When it was stored. |
 | `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice coverage without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
 | `text` | The message's text as written. |
-| `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
-| `attempted_at` | When the current attempt began, recorded with the boundary that identifies it before the runtime can accept it. `NULL` before an attempt or when its turn settles. An acknowledgement applies only while its boundary identifies the outstanding attempt. |
+| `context_json`, `boundary`, `content` | The captured earlier messages with provider IDs and the context limit, how far an early read was complete, whether more context must be read, whether needed messages were unread, the delivery boundary, and the framed input. These fields are null until capture. The framed input is set to the selected context before an attempt and retained through uncertain acceptance. |
+| `context_delivery_ids` | The provider IDs selected for the most recent attempted input. The delivery transaction uses these IDs to write the receipts. |
+| `attempted_at` | When the current attempt began, recorded with the boundary that identifies it before the runtime can accept it. `NULL` before an attempt, after confirmed non-acceptance, or when its turn settles. An acknowledgement applies only while its boundary identifies the outstanding attempt. |
+| `dispatch_command_id` | The durable T3 command ID for the current send attempt, recorded before dispatch. An uncertain retry reuses its ID and framed input. The ID is cleared with the attempt when it settles. A retained CLI attempt without an ID cannot be replayed. Migration 25 adds the column. |
+| `dispatch_write_at` | When writing the first request byte could have begun under the recorded command ID. Recorded before writing and cleared if zero bytes were written and no earlier write made delivery uncertain. The first byte starts the reconciliation bound. Cleared when the attempt settles. Migration 25 adds it. |
+| `send_unknown_at` | When an unresolved send stopped blocking later work at `SEND_RECONCILE_BOUND`. The original frame, attempt boundary and time remain for a late match. The row is not dispatched again and produces no further waiting indication or notice. A match clears this field. Migration 25 adds it. |
 | `source_uncertain` | The current attempt is missing from a moved conversation source. The company relay records this with the new source position. It blocks repeated delivery until the source identifies that attempt or the binding is replaced through the operator door. Migration 24 initializes earlier rows without this finding. |
 | `retry_at`, `failed_turns` | The next eligible redelivery time on the operator clock and the failed-turn count used for its bounded delay. The company relay records them with the failure, updates the attempt boundary before sending, and clears retry eligibility when the message is served or superseded. Migration 24 leaves earlier rows intact. An earlier failed row without a schedule first receives one when the relay reads it. |
 | `turn` | The native turn that answered it; `NULL` until then. |
@@ -728,10 +732,19 @@ and `message`, the connector's identity of that message.
 Superseded failed rows are retained for at least seven days from
 `superseded_at`, measured on the runner's operator clock. Each conversation
 relay pass prunes at most 100 eligible rows older than that bound, oldest first.
-Only rows in state `failed` with a recorded `superseded_at` are eligible, and
-only while the same conversation retains a delivered message with a greater
-`written_us`. Until then the failed row is kept as the context boundary while
-remaining absent from status and notice eligibility.
+Only rows in state `failed` with a recorded `superseded_at` are eligible.
+
+**`conversation_context_receipts`** — the messages the agent has already
+received, with one row per conversation address and provider message ID.
+Each row records the addressed delivery that last carried the message.
+Both the addressed message and its accompanying messages are registered
+in the delivery transaction, including when reconciliation proves
+acceptance. Receipts stay while the carrying delivery is retained. When
+a superseded failed delivery is pruned, its receipts are kept for the
+same seven-day retention window, measured from the operator clock time
+of pruning. The relay prunes at most 100 expired receipts per pass.
+Migration 25 seeds the IDs of already delivered addressed messages.
+Older accompanying messages have no stored provider IDs to recover.
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
 address, `turn` and `piece`. Columns: `text`, the piece's text;
