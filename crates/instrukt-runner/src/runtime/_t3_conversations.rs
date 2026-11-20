@@ -240,7 +240,8 @@ pub(super) fn send_evidence(
     env: &Env,
     thread: &str,
     text: &str,
-) -> Result<(bool, bool), SourceError> {
+    command_id: Option<&str>,
+) -> Result<(bool, bool, bool), SourceError> {
     let db = open(&T3Home::discover(home, env).database())?;
     Ok(db.query_row(
         "SELECT EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
@@ -250,9 +251,12 @@ pub(super) fn send_evidence(
                        WHERE thread_id=?1 AND archived_at IS NULL AND deleted_at IS NULL)
                 AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runs
                        WHERE thread_id=?1
-                         AND (status IS NULL OR status NOT IN ('completed','failed','interrupted','cancelled','rolled_back')))",
-        params![thread, text],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+                         AND (status IS NULL OR status NOT IN ('completed','failed','interrupted','cancelled','rolled_back'))),
+                EXISTS(SELECT 1 FROM orchestration_command_receipts
+                       WHERE command_id=?3 AND aggregate_kind='thread' AND aggregate_id=?1
+                         AND command_type='message.dispatch' AND status='rejected')",
+        params![thread, text, command_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?)
 }
 

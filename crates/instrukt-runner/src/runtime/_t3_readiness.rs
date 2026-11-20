@@ -229,20 +229,28 @@ struct Token {
 }
 impl Token {
     fn issue() -> Result<Self, SessionsError> {
+        Self::issue_scoped("orchestration:read", "instrukt-readiness")
+    }
+
+    fn issue_scoped(scope: &str, label: &str) -> Result<Self, SessionsError> {
         let secret = command(
             &[
                 "auth",
                 "session",
                 "issue",
                 "--scope",
-                "orchestration:read",
+                scope,
                 "--ttl",
                 TOKEN_LIFETIME,
                 "--token-only",
                 "--label",
-                "instrukt-readiness",
+                label,
             ],
-            "cannot issue read-scoped token",
+            if scope == "orchestration:read" {
+                "cannot issue read-scoped token"
+            } else {
+                "cannot issue operate-scoped token"
+            },
         )?
         .trim()
         .to_owned();
@@ -301,6 +309,11 @@ fn endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
             None
         }
     };
+    tracing::debug!(event="t3_readiness_cli_release", cli_release=?cli);
+    server_endpoint(home, env)
+}
+
+fn server_endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
     let location = super::_t3_home::T3Home::discover(home, env);
     let bytes = std::fs::read(location.descriptor())
         .map_err(|_| refused("cannot discover the local running server"))?;
@@ -309,7 +322,7 @@ fn endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
     if state.version != 1 || state.pid == 0 || state.port == 0 {
         return Err(refused("unsupported server runtime descriptor shape"));
     }
-    tracing::debug!(event="t3_readiness_releases",cli_release=?cli,server_release=?state.server_version,descriptor_version=state.version,orchestration_protocol=2);
+    tracing::debug!(event="t3_readiness_releases",server_release=?state.server_version,descriptor_version=state.version,orchestration_protocol=2);
     let mut endpoint =
         url::Url::parse(&state.origin).map_err(|_| refused("invalid local server address"))?;
     if endpoint.scheme() != "http"
@@ -502,7 +515,38 @@ fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
         )),
     }
 }
-fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError> {
+pub(super) fn dispatch(
+    home: &Home,
+    env: &Env,
+    payload: serde_json::Value,
+) -> Result<(), SessionsError> {
+    let endpoint = server_endpoint(home, env)?;
+    let mut token = Token::issue_scoped("orchestration:operate", "instrukt-conversation-send")?;
+    let outcome = rpc(
+        &endpoint,
+        &token.secret,
+        "orchestration.dispatchCommand",
+        payload,
+    )
+    .and_then(|value| {
+        value["sequence"]
+            .as_u64()
+            .map(|_| ())
+            .ok_or_else(|| refused("invalid dispatch receipt"))
+    });
+    // A cleanup failure cannot undo an accepted dispatch.
+    if let Err(error) = token.revoke() {
+        tracing::warn!(event="t3_dispatch_token_cleanup_failed", error=%error);
+    }
+    outcome
+}
+
+fn rpc(
+    endpoint: &url::Url,
+    token: &str,
+    tag: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, SessionsError> {
     let addresses = endpoint
         .socket_addrs(|| None)
         .map_err(|_| refused("cannot resolve local server address"))?;
@@ -537,7 +581,13 @@ fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError>
         config.max_message_size = Some(8 * 1024 * 1024);
         config.max_frame_size = Some(8 * 1024 * 1024);
     });
-    socket.send(Message::Text(json!({"_tag":"Request","id":RPC_REQUEST_ID,"tag":"server.getConfig","payload":{},"headers":[]}).to_string().into())).map_err(|_|refused("snapshot request failed"))?;
+    socket
+        .send(Message::Text(
+            json!({"_tag":"Request","id":RPC_REQUEST_ID,"tag":tag,"payload":payload,"headers":[]})
+                .to_string()
+                .into(),
+        ))
+        .map_err(|_| refused("snapshot request failed"))?;
     for _ in 0..32 {
         socket
             .get_mut()
@@ -570,36 +620,58 @@ fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError>
                     .map_err(|_| refused("RPC keepalive failed"))?;
                 continue;
             }
-            if frame["_tag"] != "Exit"
-                || frame["requestId"] != RPC_REQUEST_ID
-                || frame["exit"]["_tag"] != "Success"
-            {
-                return Err(refused("unrecognized or refused snapshot response"));
-            }
-            let snapshot: Snapshot = serde_json::from_value(frame["exit"]["value"].clone())
-                .map_err(|_| refused("unrecognized provider snapshot shape"))?;
-            let mut ids = BTreeSet::new();
-            for provider in &snapshot.providers {
-                if provider.driver.is_empty()
-                    || !ids.insert(&provider.instance_id)
-                    || provider.models.iter().any(|m| m.slug.is_empty())
-                    || provider.usage_limits.as_ref().is_some_and(|usage| {
-                        usage.windows.iter().any(|window| {
-                            window.id.is_empty()
-                                || !window.used_percent.is_finite()
-                                || !(0.0..=100.0).contains(&window.used_percent)
-                        })
-                    })
-                {
-                    return Err(refused("invalid provider snapshot facts"));
-                }
+            if frame["_tag"] != "Exit" || frame["requestId"] != RPC_REQUEST_ID {
+                return Err(refused("unrecognized RPC response"));
             }
             let _ = socket.close(None);
-            return Ok(snapshot);
+            if frame["exit"]["_tag"] == "Success" {
+                return Ok(frame["exit"]["value"].clone());
+            }
+            if tag == "orchestration.dispatchCommand" {
+                let exit = &frame["exit"];
+                let detail = exit
+                    .pointer("/cause/0/error/detail")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| {
+                        exit.pointer("/cause/0/error/message")
+                            .and_then(serde_json::Value::as_str)
+                    })
+                    .unwrap_or("T3 refused the WebSocket dispatch");
+                return Err(SessionsError::Failed {
+                    runtime: "t3".into(),
+                    operation: "send".into(),
+                    detail: detail.into(),
+                });
+            }
+            return Err(refused("unrecognized or refused snapshot response"));
         }
     }
-    Err(refused("snapshot response did not complete"))
+    Err(refused("RPC response did not complete"))
 }
+
+fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError> {
+    let value = rpc(endpoint, token, "server.getConfig", json!({}))?;
+    let snapshot: Snapshot = serde_json::from_value(value)
+        .map_err(|_| refused("unrecognized provider snapshot shape"))?;
+    let mut ids = BTreeSet::new();
+    for provider in &snapshot.providers {
+        if provider.driver.is_empty()
+            || !ids.insert(&provider.instance_id)
+            || provider.models.iter().any(|m| m.slug.is_empty())
+            || provider.usage_limits.as_ref().is_some_and(|usage| {
+                usage.windows.iter().any(|window| {
+                    window.id.is_empty()
+                        || !window.used_percent.is_finite()
+                        || !(0.0..=100.0).contains(&window.used_percent)
+                })
+            })
+        {
+            return Err(refused("invalid provider snapshot facts"));
+        }
+    }
+    Ok(snapshot)
+}
+
 fn kind(driver: &str) -> Option<HarnessKind> {
     match driver {
         "claudeAgent" => Some(HarnessKind::Claude),

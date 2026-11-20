@@ -134,21 +134,17 @@ include the omission note when the limit trims it. Record the selected
 messages and addressed message in the same transaction that records the
 delivery. A send or start whose acceptance is uncertain retains the exact
 input for reconciliation and keeps later work queued until it is resolved.
-A lookup miss alone supplies no proof. The relay records a send before
-launching its CLI client. It records that client's PID and process start
-identity before releasing the message on stdin. A restarted relay stops the
-recorded client if that exact process is live. It must confirm the client and
-its process group cannot submit again before beginning the two-minute
-`SETTLE` window. After that window, a live idle thread with no active or queued
-turn and no record of the input establishes non-acceptance. Retry with context selected again
-and a fresh attempt boundary. An explicit refusal also establishes
-non-acceptance. Presence and its recovery doors still apply.
-If the client cannot be confirmed stopped, native reads fail, or the runtime
-shows other work through
-`SEND_RECONCILE_BOUND` (five minutes from the attempt on the operator clock),
-retain the original input and record delivery unknown for the operator.
-The relay does not resend that input and releases its place in the queue.
-A later match to that boundary confirms delivery and lets the answer proceed. Receipts follow message retention as stated in
+The relay sends through T3's authenticated WebSocket command endpoint. It
+records a command ID derived from the message and its attempt boundary before
+dispatch. An uncertain retry keeps that ID and framed input. T3's durable
+command receipt prevents a second turn across connections and restarts.
+A confirmed refusal allows the next attempt to select context again and use a
+fresh boundary. Presence and its recovery doors still apply.
+If the runtime has other work or cannot confirm delivery through
+`SEND_RECONCILE_BOUND` (five minutes on the operator clock), retain the input,
+record delivery unknown for the operator, and release its place in the queue.
+An older CLI attempt without a command ID cannot be retried automatically.
+A later match to either attempt confirms delivery and lets the answer proceed. Receipts follow message retention as stated in
 the state-database spec.
 
 
@@ -463,9 +459,9 @@ Scenario: The member receives the answer after a retry
   And progress from the unsuccessful work is never posted as the answer
   And another member can be answered while the failed question waits
   And if the wait earns an unavailable notice, only one is posted before the answer
-  And a send with a lost response and no runtime record is retried once the runtime is idle after the settle window
+  And a send with a lost response and no runtime record is retried with the same command identity once the runtime is idle
+  And if the original dispatch reaches T3 after a runner restart and its retry, only one turn takes the question
   And later questions reach the assistant after the saved question without a duplicate delivery
-  And after a runner crash a surviving send client is stopped before the settle window starts and only one turn takes the saved question
 
 ```
 

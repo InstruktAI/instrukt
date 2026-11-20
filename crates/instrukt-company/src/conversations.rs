@@ -34,8 +34,7 @@ use instrukt_runner::runtime::conversations::{
     AuthorKind, ConversationSource, RecordKind, Role, Scope, SourcePosition,
 };
 use instrukt_runner::runtime::{
-    CreationPermit, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, SendClient,
-    SendEvidence,
+    CreationPermit, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, SendEvidence,
 };
 use instrukt_runner::sessions::{SessionState, SessionsError};
 use instrukt_runner::state::{self, RunnerState, StateError};
@@ -501,7 +500,7 @@ fn read_unfinished(
 /// clock.
 pub const NOTICE_AFTER: jiff::SignedDuration = jiff::SignedDuration::from_mins(1);
 
-/// The settle window for an uncertain input, notice or pre-metadata answer.
+/// The settle window for an uncertain notice or pre-metadata answer.
 /// It extends beyond the provider request's own timeout.
 pub const SETTLE: jiff::SignedDuration = jiff::SignedDuration::from_mins(2);
 
@@ -1006,15 +1005,6 @@ struct Conversation {
     position: Option<SourcePosition>,
 }
 
-/// The launch record exists before spawn. Until `Running` is durable the
-/// client can only receive empty stdin if the runner dies.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-enum SendClientState {
-    AwaitingInput,
-    Running(SendClient),
-    Stopped(Timestamp),
-}
-
 #[derive(Clone)]
 struct Message {
     message: String,
@@ -1031,7 +1021,7 @@ struct Message {
     failed_turns: u32,
     source_uncertain: bool,
     send_unknown: bool,
-    send_client: Option<SendClientState>,
+    dispatch_id: Option<String>,
 }
 
 const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json";
@@ -1127,7 +1117,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,source_uncertain,send_unknown_at IS NOT NULL,send_client
+                .prepare("SELECT message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,source_uncertain,send_unknown_at IS NOT NULL,dispatch_command_id
                  FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) AND superseded_at IS NULL
                  ORDER BY state='failed', retry_at, written_us, message")
                 .map_err(state::sql(path))?;
@@ -1164,7 +1154,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                 failed_turns,
                 source_uncertain,
                 send_unknown,
-                send_client,
+                dispatch_id,
             )| {
                 Ok(Message {
                     message,
@@ -1183,10 +1173,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                     failed_turns,
                     source_uncertain,
                     send_unknown,
-                    send_client: send_client
-                        .as_deref()
-                        .map(serde_json::from_str)
-                        .transpose()?,
+                    dispatch_id,
                 })
             },
         )
@@ -1611,7 +1598,12 @@ fn next_message<'a>(open: &'a [Message], c: &Conversation, now: Timestamp) -> Op
     let next = match (&c.session, &c.opening) {
         (None, Some(opening)) => open.iter().find(|m| &m.message == opening),
         _ => available()
-            .find(|m| m.stage != Stage::Failed)
+            .find(|m| {
+                m.attempted.is_some()
+                    && m.dispatch_id.is_some()
+                    && matches!(m.stage, Stage::Pending | Stage::Failed)
+            })
+            .or_else(|| available().find(|m| m.stage != Stage::Failed))
             .or_else(|| available().find(|m| m.retry_at.is_some_and(|at| now >= at))),
     }?;
     matches!(next.stage, Stage::Pending | Stage::Failed).then_some(next)
@@ -1660,7 +1652,7 @@ fn deliver_one(
         Ok(Some(prepared)) => match &c.session {
             None => opening_source
                 .and_then(|source| start(invocation, admitted, adapter, source, c, &prepared, now)),
-            Some(session) => send(adapter, state, c, session, &prepared, clock),
+            Some(session) => send(adapter, state, c, session, &prepared, now),
         },
     };
     record_delivery_failure(adapter, state, c, next, clock, &result)?;
@@ -1692,6 +1684,12 @@ fn record_delivery_failure(
         && reports(error, next.failure.as_deref(), cause)
     {
         tracing::warn!(target: LOG_TARGET, event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
+    }
+    if let Some(cause) = &failure
+        && send_reconciliation_due(next, clock())
+    {
+        send_unknown(state, c, next, clock(), cause)?;
+        return Ok(());
     }
     set_message_failure(state, c, &next.message, failure.as_deref())?;
     // A start, send or listing that is refused or fails keeps the agent from
@@ -1830,70 +1828,43 @@ fn send(
     c: &Conversation,
     session: &SessionRef,
     next: &Message,
-    clock: &dyn Fn() -> Timestamp,
+    now: Timestamp,
 ) -> Result<(), ConversationError> {
-    let now = clock();
     let content = next
         .content
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
+    if let Some(id) = &next.dispatch_id {
+        adapter.dispatch_send(session, id, content)?;
+        accepted(state, c, &next.message, next.boundary.as_deref(), None)?;
+        return Ok(());
+    }
     let old_boundary = next
         .boundary
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message has no delivery boundary".into()))?;
     let boundary = envelopes::delivery_boundary(&[content])?;
     let content = content.replace(old_boundary, &boundary);
-    // A fresh wire send follows the readiness and earlier-attempt checks.
-    // Its boundary identifies it through any lost acknowledgement.
+    use sha2::{Digest, Sha256};
+    let id = format!(
+        "instrukt-company-{}",
+        hex::encode(Sha256::digest(serde_json::to_vec(&(
+            &c.semantic_key,
+            &next.message,
+            &boundary
+        ))?))
+    );
     let recorded = state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET attempted_at=?5,content=?6,boundary=?7,send_client=?9
+            "UPDATE conversation_messages SET attempted_at=?5,content=?6,boundary=?7,dispatch_command_id=?9
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
-               AND boundary=?8 AND source_uncertain=0 AND superseded_at IS NULL",
-            params![
-                c.company.as_str(),
-                c.connector,
-                c.conversation,
-                next.message,
-                now.to_string(),
-                content,
-                boundary,
-                old_boundary,
-                serde_json::to_string(&SendClientState::AwaitingInput)
-                    .map_err(|error| state::invalid(&state::db_path(tx), error))?
-            ],
-        )
-        .map_err(state::sql(&state::db_path(tx)))
+               AND boundary=?8 AND attempted_at IS NULL AND source_uncertain=0 AND superseded_at IS NULL",
+            params![c.company.as_str(), c.connector, c.conversation, next.message, now.to_string(),
+                content, boundary, old_boundary, id],
+        ).map_err(state::sql(&state::db_path(tx)))
     })?;
     if recorded != 0 {
-        let mut launched = None;
-        let result = adapter.send_with_client(session, &content, &mut |client| {
-            if !record_send_client(
-                state,
-                c,
-                &next.message,
-                &boundary,
-                &SendClientState::Running(client.clone()),
-            )
-            .map_err(|error| std::io::Error::other(error.to_string()))?
-            {
-                return Err(std::io::Error::other(
-                    "the send attempt changed before releasing its input",
-                ));
-            }
-            launched = Some(client);
-            Ok(())
-        });
-        if launched.is_some_and(|client| client.gone()) {
-            record_send_client(
-                state,
-                c,
-                &next.message,
-                &boundary,
-                &SendClientState::Stopped(clock()),
-            )?;
-        }
-        if let Err(error) = result {
+        if let Err(error) = adapter.dispatch_send(session, &id, &content) {
             if adapter.send_certainly_rejected(session, &error) {
                 clear_rejected_send(state, c, &next.message, &boundary)?;
             }
@@ -1904,25 +1875,6 @@ fn send(
     Ok(())
 }
 
-fn record_send_client(
-    state: &RunnerState,
-    c: &Conversation,
-    message: &str,
-    boundary: &str,
-    client: &SendClientState,
-) -> Result<bool, StateError> {
-    state.write(|tx| {
-        let path = state::db_path(tx);
-        let client = serde_json::to_string(client).map_err(|error| state::invalid(&path, error))?;
-        tx.execute(
-            "UPDATE conversation_messages SET send_client=?6
-             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND boundary=?5
-               AND attempted_at IS NOT NULL AND state IN ('pending','failed') AND send_unknown_at IS NULL",
-            params![c.company.as_str(), c.connector, c.conversation, message, boundary, client],
-        ).map(|changed| changed != 0).map_err(state::sql(&path))
-    })
-}
-
 fn clear_rejected_send(
     state: &RunnerState,
     c: &Conversation,
@@ -1931,7 +1883,7 @@ fn clear_rejected_send(
 ) -> Result<(), StateError> {
     state.write(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET attempted_at=NULL,send_client=NULL
+            "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND boundary=?5
                AND state IN ('pending','failed') AND send_unknown_at IS NULL",
             params![
@@ -2161,7 +2113,7 @@ fn harvest(
                 if !turn.succeeded {
                     tx.execute(
                         "UPDATE conversation_messages SET state='failed',failure=?5,turn_update=NULL,
-                         unavailable_since=coalesce(unavailable_since,?6),attempted_at=NULL,source_uncertain=0,send_unknown_at=NULL,retry_at=?7,failed_turns=failed_turns+1
+                         unavailable_since=coalesce(unavailable_since,?6),attempted_at=NULL,dispatch_command_id=NULL,source_uncertain=0,send_unknown_at=NULL,retry_at=?7,failed_turns=failed_turns+1
                          WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
                         params![c.company.as_str(), c.connector, c.conversation, message.message, FAILED_TURN, ended.to_string(), format!("{:.9}", ended + retry_delay(message.failed_turns))],
                     )
@@ -2187,7 +2139,7 @@ fn harvest(
                     // answer to post opens nothing now, and its status keeps
                     // its newest message while the answer is posted; one with
                     // nothing to post completes the message.
-                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,retry_at=NULL,attempted_at=NULL,source_uncertain=0,send_unknown_at=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,retry_at=NULL,attempted_at=NULL,dispatch_command_id=NULL,source_uncertain=0,send_unknown_at=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
                     params![c.company.as_str(), c.connector, c.conversation, message.message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
@@ -2279,9 +2231,8 @@ enum DeliveryCheck {
     Presence(Presence),
     Ready,
     Busy,
+    RetrySend,
     RejectedSend,
-    SendClientStopped(Timestamp),
-    UnconfirmedClient,
     UnconfirmedSend,
 }
 
@@ -2400,36 +2351,26 @@ impl RelayWorkers {
         let runtime = adapter.runtime();
         let target = session.clone();
         let attempted = next.attempted;
-        let client = next.send_client.clone();
-        let clock = Arc::clone(&self.connectors);
+        let command_id = next.dispatch_id.clone();
         let input = next.content.clone();
-        let now = self.connectors.now();
         let reply = self.spawn(move || {
             let adapter = instrukt_runner::runtime::adapter(runtime);
-            if let Some(attempted_at) = attempted {
+            if attempted.is_some() {
                 let Some(input) = input else {
                     return Ok(DeliveryCheck::UnconfirmedSend);
                 };
-                let stopped_at = match client {
-                    Some(SendClientState::Stopped(at)) => Some(at),
-                    Some(SendClientState::AwaitingInput) => Some(attempted_at),
-                    Some(SendClientState::Running(client)) if client.stop() => {
-                        return Ok(DeliveryCheck::SendClientStopped(clock.now()));
-                    }
-                    _ => None,
-                };
-                return Ok(match adapter.observe_send(&target, &input)? {
-                    SendEvidence::Accepted => DeliveryCheck::Accepted,
-                    SendEvidence::Presence(presence) => DeliveryCheck::Presence(presence),
-                    SendEvidence::IdleWithoutInput
-                        if stopped_at.is_some_and(|at| now >= at + SETTLE) =>
-                    {
-                        DeliveryCheck::RejectedSend
-                    }
-                    _ if stopped_at.is_none() => DeliveryCheck::UnconfirmedClient,
-                    SendEvidence::IdleWithoutInput => DeliveryCheck::Busy,
-                    SendEvidence::Unresolved => DeliveryCheck::UnconfirmedSend,
-                });
+                return Ok(
+                    match adapter.observe_send(&target, &input, command_id.as_deref())? {
+                        SendEvidence::Accepted => DeliveryCheck::Accepted,
+                        SendEvidence::Rejected => DeliveryCheck::RejectedSend,
+                        SendEvidence::Presence(presence) => DeliveryCheck::Presence(presence),
+                        SendEvidence::IdleWithoutInput if command_id.is_some() => {
+                            DeliveryCheck::RetrySend
+                        }
+                        SendEvidence::IdleWithoutInput => DeliveryCheck::UnconfirmedSend,
+                        SendEvidence::Unresolved => DeliveryCheck::UnconfirmedSend,
+                    },
+                );
             }
             let thread = adapter.read_state(&target)?;
             Ok(if thread.presence != Presence::Present {
@@ -3295,11 +3236,11 @@ fn adopt_replacement(
                 params![c.company.as_str(), c.connector, c.conversation, successor.to_string(), source.identity(), serialized],
             ).map_err(state::sql(&path))?;
             tx.execute(
-                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,source_uncertain=0,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5) AND send_unknown_at IS NULL",
+                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,dispatch_command_id=NULL,source_uncertain=0,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5) AND send_unknown_at IS NULL",
                 params![c.company.as_str(), c.connector, c.conversation, Stage::Pending.as_str(), Stage::Sent.as_str()],
             ).map_err(state::sql(&path))?;
             tx.execute(
-                "UPDATE conversation_messages SET attempted_at=NULL,source_uncertain=0,failure=CASE WHEN source_uncertain=1 THEN ?4 ELSE failure END WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL",
+                "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,source_uncertain=0,failure=CASE WHEN source_uncertain=1 THEN ?4 ELSE failure END WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL",
                 params![c.company.as_str(), c.connector, c.conversation, FAILED_TURN],
             ).map_err(state::sql(&path))?;
             Ok(())
@@ -3577,9 +3518,9 @@ fn relay(
                     Ok(
                         DeliveryCheck::Ready
                         | DeliveryCheck::Busy
+                        | DeliveryCheck::RetrySend
                         | DeliveryCheck::RejectedSend
-                        | DeliveryCheck::UnconfirmedSend
-                        | DeliveryCheck::UnconfirmedClient,
+                        | DeliveryCheck::UnconfirmedSend,
                     ) => Some(Presence::Present),
                     _ => None,
                 };
@@ -3680,32 +3621,18 @@ fn relay(
         {
             match result {
                 Ok(DeliveryCheck::Ready) => checked_head = candidate.head,
-                Ok(DeliveryCheck::SendClientStopped(at)) => {
-                    if let Some(boundary) = next.boundary.as_deref() {
-                        record_send_client(
-                            &state,
-                            &c,
-                            &next.message,
-                            boundary,
-                            &SendClientState::Stopped(at),
-                        )?;
-                    }
-                    continue;
-                }
                 Ok(DeliveryCheck::RejectedSend) => {
                     if let Some(boundary) = next.boundary.as_deref() {
                         clear_rejected_send(&state, &c, &next.message, boundary)?;
                     }
                     continue;
                 }
-                Ok(DeliveryCheck::UnconfirmedClient) if send_reconciliation_due(next, clock()) => {
-                    send_unknown(
-                        &state,
-                        &c,
-                        next,
-                        clock(),
-                        "the original T3 send client could not be confirmed stopped",
-                    )?;
+                Ok(DeliveryCheck::RetrySend) => {
+                    if next_message(&open, &c, clock())
+                        .is_some_and(|head| head.message == next.message)
+                    {
+                        workers.dispatch(home, admitted, adapter, source, c, next.message.clone());
+                    }
                     continue;
                 }
                 Ok(DeliveryCheck::UnconfirmedSend) if send_reconciliation_due(next, clock()) => {

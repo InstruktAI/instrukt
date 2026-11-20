@@ -62,6 +62,7 @@ impl Server {
         let runtime = env.home().join(".t3/userdata/server-runtime.json");
         std::fs::create_dir_all(runtime.parent().unwrap()).unwrap();
         std::fs::write(runtime,json!({"version":1,"pid":std::process::id(),"port":address.port(),"origin":format!("http://{address}"),"serverVersion":"0.1.7"}).to_string()).unwrap();
+        let home = env.home().to_path_buf();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
         // Held reads, numbered in the order they arrived.
@@ -77,7 +78,8 @@ impl Server {
                 // Each connection on its own, so a held read holds no other.
                 let dir = dir.clone();
                 let held = Arc::clone(&held);
-                std::thread::spawn(move || serve(&dir, stream, &held));
+                let home = home.clone();
+                std::thread::spawn(move || serve(&dir, &home, stream, &held));
             }
         });
         Self {
@@ -130,7 +132,7 @@ fn record(dir: &Path, file: &str, line: &str) {
     clippy::result_large_err,
     reason = "tungstenite fixes the handshake callback error to an HTTP response"
 )]
-fn serve(dir: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
+fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -138,10 +140,11 @@ fn serve(dir: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
         .set_write_timeout(Some(Duration::from_secs(5)))
         .unwrap();
     let header_dir = dir.to_path_buf();
+    let mut authenticated = None;
     let accepted = tungstenite::accept_hdr(
         stream,
-        move |request: &tungstenite::handshake::server::Request,
-              response: tungstenite::handshake::server::Response| {
+        |request: &tungstenite::handshake::server::Request,
+         response: tungstenite::handshake::server::Response| {
             let used = request
                 .headers()
                 .get("authorization")
@@ -156,6 +159,7 @@ fn serve(dir: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
                     .body(Some("unauthorized".into()))
                     .unwrap());
             }
+            authenticated = used;
             std::fs::write(header_dir.join("authenticated"), "yes").unwrap();
             std::fs::write(header_dir.join("path"), request.uri().to_string()).unwrap();
             Ok(response)
@@ -168,6 +172,17 @@ fn serve(dir: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
         return;
     };
     let request: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    if request["tag"] == "orchestration.dispatchCommand" {
+        let sid = authenticated.unwrap();
+        let token = std::fs::read(dir.join(format!("tokens/{sid}.json"))).unwrap();
+        let token: Value = serde_json::from_slice(&token).unwrap();
+        assert_eq!(token["scope"], "orchestration:operate");
+        let exit = dispatch(dir, home, &request["payload"]);
+        let reply = json!({"_tag":"Exit","requestId":request["id"],"exit":exit});
+        let _ = socket.send(tungstenite::Message::Text(reply.to_string().into()));
+        let _ = socket.close(None);
+        return;
+    }
     std::fs::write(dir.join("request.json"), request.to_string()).unwrap();
     // A held read stays open until the test releases it, every held read or
     // this one by its number, unless its client gives up first: it is
@@ -207,6 +222,40 @@ fn serve(dir: &Path, stream: TcpStream, held: &std::sync::atomic::AtomicUsize) {
     };
     let _ = socket.send(tungstenite::Message::Text(response.to_string().into()));
     let _ = socket.close(None);
+}
+
+fn dispatch(dir: &Path, home: &Path, payload: &Value) -> Value {
+    use std::io::Write as _;
+    let id = payload["commandId"].as_str().unwrap();
+    let thread = payload["threadId"].as_str().unwrap();
+    let text = payload["text"].as_str().unwrap();
+    assert_eq!(payload["type"], "message.dispatch");
+    assert_eq!(payload["messageId"], id);
+    assert_eq!(payload["dispatchMode"]["type"], "queue_after_active");
+    assert_eq!(payload["attachments"], json!([]));
+    let root = dir.parent().unwrap();
+    let mut child = std::process::Command::new(root.join("runtime-bin/t3"))
+        .args(["thread", "send", "--", thread, "-"])
+        .env("HOME", home)
+        .env("T3_TEST_COMMAND_ID", id)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(text.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    if output.status.success() {
+        json!({"_tag":"Success","value":{"sequence":1}})
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":detail.trim()}}]})
+    }
 }
 
 /// How many snapshot reads were held so far.

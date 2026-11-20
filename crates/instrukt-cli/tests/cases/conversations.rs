@@ -953,27 +953,18 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
         #[cfg(debug_assertions)]
         scope.spawn(a_replacement_reports_the_old_acknowledgement);
         scope.spawn(an_idle_conversation_retries_an_unrecorded_send);
-        scope.spawn(a_crashed_runners_send_client_cannot_submit_after_retry);
+        scope.spawn(a_late_original_dispatch_is_deduplicated_after_restart);
         scope.spawn(a_busy_conversation_releases_an_unresolved_send);
         failed_work_is_retried_after_a_restart();
     });
 }
 
 fn an_idle_conversation_retries_an_unrecorded_send() {
-    let (mut c, clock, session) = answered_conversation(false);
+    let (mut c, _, session) = answered_conversation(false);
     c.runtime.project(&c.env, &session);
-    let sent = |command: &str| {
-        c.runtime
-            .calls()
-            .iter()
-            .filter(|line| line.as_str() == command)
-            .count()
-    };
-    let wire = format!("thread send -- {session} -");
-    let show = format!("thread show --json --messages 0 -- {session}");
-    let before = sent(&wire);
-    let at = interval_clock(&clock);
+    let staged = c.runtime.state_dir().join(format!("{session}.submit-held"));
     c.runtime.flag(&format!("{session}.lose-next-send"), true);
+    c.runtime.flag(&format!("{session}.hold-next-submit"), true);
     let first = c
         .slack
         .direct("D30", "USTEVEN", "Where is the revised report?");
@@ -981,144 +972,97 @@ fn an_idle_conversation_retries_an_unrecorded_send() {
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    let attempt = || {
+    let id = || {
         db.query_row(
-        "SELECT boundary FROM conversation_messages WHERE message=?1 AND attempted_at IS NOT NULL",
-        [&first], |row| row.get::<_, String>(0),
-    ).ok()
+            "SELECT dispatch_command_id FROM conversation_messages WHERE message=?1",
+            [&first],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap()
     };
-    wait_for_answer_fixture("the first send failed and remains unconfirmed", || {
-        sent(&wire) == before + 1 && interval(&c, &first).is_some()
+    wait_for_answer_fixture("an idle thread retries the ambiguous send", || {
+        staged.exists()
     });
-    let original = attempt().unwrap();
+    assert_eq!(id(), Some(std::fs::read_to_string(staged).unwrap()));
+    assert_eq!(c.runtime.message_count(&session), 1);
     c.slack
         .direct("D30", "USTEVEN", "When does the review start?");
-    let checks = sent(&show);
-    set_clock(&clock, at + jiff::SignedDuration::from_secs(119));
-    answer_source_changed(&c, 2);
+    c.runtime.flag(&format!("{session}.release-submit"), true);
     wait_for_answer_fixture(
-        "the idle thread is checked inside the settle window",
-        || sent(&show) > checks,
-    );
-    assert_eq!(sent(&wire), before + 1);
-    assert_eq!(attempt().as_deref(), Some(original.as_str()));
-    assert_eq!(c.runtime.message_count(&session), 1);
-
-    set_clock(&clock, at + jiff::SignedDuration::from_secs(120));
-    answer_source_changed(&c, 3);
-    wait_for_answer_fixture(
-        "the saved question is retried once the idle thread proves no acceptance",
+        "the saved question is dispatched after the lost response",
         || c.runtime.message_count(&session) == 2,
     );
-    assert_ne!(attempt().as_deref(), Some(original.as_str()));
     assert!(
         c.input(&session, 1)
             .contains("Where is the revised report?")
     );
     finish_answer_turn(&mut c, &session, 1, "The revised report is in the drive.");
-    wait_for_answer_fixture("the next question is attempted without a duplicate", || {
-        c.runtime.message_count(&session) == 3
+    wait_for_answer_fixture("the next question follows without a duplicate", || {
+        c.runtime.message_count(&session) == 3 && id().is_none()
     });
-    assert_eq!(
-        c.runtime
-            .calls()
-            .iter()
-            .filter(|line| line.as_str() == wire)
-            .count(),
-        before + 3
-    );
     assert!(c.input(&session, 2).contains("When does the review start?"));
     assert!(
         !c.input(&session, 2)
             .contains("Where is the revised report?")
     );
-    finish_answer_turn(&mut c, &session, 2, "The review starts at noon.");
-    wait_for_answer_fixture("both questions are answered once", || {
-        c.slack
-            .posts_beginning("The revised report is in the drive.")
-            == 1
-            && c.slack.posts_beginning("The review starts at noon.") == 1
-    });
 }
 
-fn a_crashed_runners_send_client_cannot_submit_after_retry() {
-    let (mut c, clock, session) = answered_conversation(false);
+fn a_late_original_dispatch_is_deduplicated_after_restart() {
+    let (mut c, _, session) = answered_conversation(false);
     c.runtime.project(&c.env, &session);
-    let at = interval_clock(&clock);
-    let settle = jiff::SignedDuration::from_secs(120);
-    let marker = c.runtime.state_dir().join(format!("{session}.submit-held"));
-    let submitted = c.runtime.state_dir().join(format!("{session}.late-submit"));
+    let native = c.runtime.state_dir();
+    let staged = native.join(format!("{session}.submit-held"));
+    let replayed = native.join(format!("{session}.late-deduplicated"));
+    let duplicate = native.join(format!("{session}.late-submit"));
+    let calls = native.join("dispatch-ids");
     c.runtime.flag(&format!("{session}.hold-next-submit"), true);
     let message = c
         .slack
         .direct("D30", "USTEVEN", "Where is the release plan?");
+    wait_for_answer_fixture(
+        "the original authenticated request is held before commit",
+        || staged.exists(),
+    );
+    let original = std::fs::read_to_string(staged).unwrap();
+    let original_input =
+        std::fs::read(native.join(format!("{session}.submit-held-input"))).unwrap();
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    let retained_client = || {
-        db.query_row(
-            "SELECT send_client FROM conversation_messages WHERE message=?1",
-            [&message],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .unwrap()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-    };
-    wait_for_answer_fixture(
-        "the original send client has the input but has not submitted",
-        || marker.exists(),
-    );
-    let pid: i32 = std::fs::read_to_string(marker).unwrap().parse().unwrap();
-    let pid = rustix::process::Pid::from_raw(pid).unwrap();
-    let retained = retained_client().unwrap();
-    assert_eq!(
-        retained["Running"]["pid"].as_i64(),
-        Some(i64::from(pid.as_raw_nonzero().get()))
-    );
-    assert!(
-        retained["Running"]["start"]
-            .as_str()
-            .is_some_and(|start| !start.is_empty())
-    );
+    let tracked =
+        || {
+            db.query_row(
+        "SELECT attempted_at,dispatch_command_id FROM conversation_messages WHERE message=?1",
+        [&message], |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+    ).unwrap()
+        };
+    let before = tracked();
+    assert!(before.0.is_some());
+    assert_eq!(before.1.as_deref(), Some(original.as_str()));
     c.kill_runner();
-    assert!(
-        rustix::process::test_kill_process_group(pid).is_ok(),
-        "the send client outlived its runner"
-    );
     assert_eq!(c.runtime.message_count(&session), 1);
-
-    let restarted = at + settle;
-    set_clock(&clock, restarted);
     c.run();
     wait_for_answer_fixture(
-        "the restarted runner records that the original client can no longer submit",
-        || retained_client().is_some_and(|client| client["Stopped"].as_str().is_some()),
-    );
-    assert_eq!(
-        c.runtime.message_count(&session),
-        1,
-        "the original attempt is already old, but the client only just stopped"
-    );
-    set_clock(&clock, restarted + settle);
-    answer_source_changed(&c, 2);
-    wait_for_answer_fixture(
-        "the idle thread takes the single retry after the client settles",
+        "the new runner retries the exact command on a new connection",
         || c.runtime.message_count(&session) == 2,
     );
-    assert!(c.input(&session, 1).contains("Where is the release plan?"));
+    assert_eq!(c.runtime.message(&session, 1).as_bytes(), original_input);
     finish_answer_turn(&mut c, &session, 1, "The plan is by the calendar.");
-    wait_for_answer_fixture("the retry completes and the thread is idle", || {
-        c.slack.posts_beginning("The plan is by the calendar.") == 1 && answers_recorded(&c)
+    wait_for_answer_fixture("the retry answers and clears the current attempt", || {
+        c.slack.posts_beginning("The plan is by the calendar.") == 1 && tracked() == (None, None)
     });
-
-    // With a surviving client this would submit the old request now.
     c.runtime.flag(&format!("{session}.release-submit"), true);
-    wait_for_answer_fixture("the old request cannot submit after the retry", || {
-        rustix::process::test_kill_process_group(pid) == Err(rustix::io::Errno::SRCH)
-            || submitted.exists()
+    wait_for_answer_fixture("the original request reaches T3 after the retry", || {
+        replayed.exists() || duplicate.exists()
     });
-    assert!(!submitted.exists());
+    assert!(replayed.exists());
+    assert!(!duplicate.exists());
+    let sent = std::fs::read_to_string(calls).unwrap();
+    assert_eq!(
+        sent.lines().collect::<Vec<_>>(),
+        [original.as_str(), original.as_str()]
+    );
     assert_eq!(c.runtime.message_count(&session), 2);
 }
 
@@ -1127,9 +1071,20 @@ fn a_busy_conversation_releases_an_unresolved_send() {
     c.runtime.project(&c.env, &session);
     let at = interval_clock(&clock);
     c.runtime.flag(&format!("{session}.lose-next-send"), true);
+    c.runtime
+        .flag(&format!("{session}.hold-lost-response"), true);
     let first = c
         .slack
         .direct("D30", "USTEVEN", "Is the draft in the drive?");
+    let held = c
+        .runtime
+        .state_dir()
+        .join(format!("{session}.lost-response-held"));
+    wait_for_answer_fixture("the lost response is held", || held.exists());
+    c.runtime
+        .person_sends(&c.env, &session, "A turn the operator started in T3.");
+    c.runtime
+        .flag(&format!("{session}.release-lost-response"), true);
     wait_for_answer_fixture("the failed send has an open interval", || {
         interval(&c, &first).is_some()
     });
@@ -1146,8 +1101,6 @@ fn a_busy_conversation_releases_an_unresolved_send() {
         .unwrap()
     };
     let original = retained().0;
-    c.runtime
-        .person_sends(&c.env, &session, "A turn the operator started in T3.");
     c.slack
         .direct("D30", "USTEVEN", "Do we have meeting notes?");
     set_clock(&clock, at + jiff::SignedDuration::from_mins(5));

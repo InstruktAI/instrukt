@@ -291,6 +291,7 @@ impl RuntimeAdapter for T3 {
         &self,
         session: &SessionRef,
         text: &str,
+        command_id: Option<&str>,
     ) -> Result<super::SendEvidence, SessionsError> {
         use super::SendEvidence;
         let shown = match self.show(session, 0) {
@@ -312,11 +313,18 @@ impl RuntimeAdapter for T3 {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| failure("input observation", "machine home is unavailable"))?;
         let home = instrukt_core::home::Home::at_user_home(user_home.into());
-        let (accepted, empty) =
-            super::_t3_conversations::send_evidence(&home, &self.env, session.id.as_str(), text)
-                .map_err(|error| failure("input observation", error.to_string()))?;
+        let (accepted, empty, rejected) = super::_t3_conversations::send_evidence(
+            &home,
+            &self.env,
+            session.id.as_str(),
+            text,
+            command_id,
+        )
+        .map_err(|error| failure("input observation", error.to_string()))?;
         Ok(if accepted {
             SendEvidence::Accepted
+        } else if rejected {
+            SendEvidence::Rejected
         } else if idle
             && empty
             && matches!(
@@ -416,24 +424,34 @@ impl RuntimeAdapter for T3 {
     fn start(&self, assignment: &super::RuntimeAssignment<'_>) -> Result<Thread, SessionsError> {
         crate::keyed::start(self, assignment)
     }
-    fn send_with_client(
+    fn dispatch_send(
         &self,
         session: &SessionRef,
+        command_id: &str,
         text: &str,
-        register: &mut dyn FnMut(super::SendClient) -> std::io::Result<()>,
     ) -> Result<(), SessionsError> {
         if session.runtime.as_str() != "t3" {
             return Err(SessionsError::UnknownRuntime(session.runtime.to_string()));
         }
-        let result = Invocation::program("t3", &["thread", "send", "--", session.id.as_str(), "-"])
-            .input(text.as_bytes())
-            .run_before_input(self.timeout, |pid| {
-                register(super::SendClient::launch_identity(pid)?)
-            })?;
-        if !result.success {
-            return Err(failure("send", result.stderr));
-        }
-        Ok(())
+        let user_home = self
+            .env
+            .get("HOME")
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| failure("send", "machine home is unavailable"))?;
+        let home = instrukt_core::home::Home::at_user_home(user_home.into());
+        super::_t3_readiness::dispatch(
+            &home,
+            &self.env,
+            serde_json::json!({
+                "type": "message.dispatch",
+                "commandId": command_id,
+                "threadId": session.id,
+                "messageId": command_id,
+                "text": text,
+                "attachments": [],
+                "dispatchMode": {"type": "queue_after_active"}
+            }),
+        )
     }
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError> {
         if session.runtime.as_str() != "t3" {
