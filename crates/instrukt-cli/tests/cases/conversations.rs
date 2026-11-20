@@ -753,8 +753,12 @@ fn a_member_can_follow_the_status_of_an_unanswered_message() {
 #[test]
 fn an_interrupted_answer_is_reconciled_and_the_member_can_keep_asking() {
     std::thread::scope(|scope| {
-        scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
-        scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
+        // These held-receipt scenarios need the runner's debug decision marker.
+        #[cfg(debug_assertions)]
+        {
+            scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
+            scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
+        }
         scope.spawn(a_successful_answer_without_timestamp_needs_no_read_back);
         scope.spawn(failed_metadata_reads_expire_without_sending_again);
         scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
@@ -1379,6 +1383,7 @@ fn observe_notice_pass(c: &Company, clock: &std::path::Path, now: jiff::Timestam
 
 /// Wait for this member's notice task to finish its decision at the new
 /// time. Another member's post does not establish this ordering.
+#[cfg(debug_assertions)]
 fn wait_for_notice_decision(
     c: &Company,
     conversation: &str,
@@ -1402,6 +1407,7 @@ fn wait_for_notice_decision(
     });
 }
 
+#[cfg(debug_assertions)]
 fn a_lost_answer_response_defers_notices_until_read_back() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1434,6 +1440,7 @@ fn a_lost_answer_response_defers_notices_until_read_back() {
     assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
+#[cfg(debug_assertions)]
 fn an_unconfirmed_answer_is_reconciled_before_retry() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -2571,6 +2578,7 @@ fn prepared_status_company() -> Company {
     let wake = env.path("clock.notice-wake");
     std::fs::write(&wake, "").unwrap();
     env.set_env("INSTRUKT_TEST_NOTICE_WAKE_FILE", wake.to_str().unwrap());
+    #[cfg(debug_assertions)]
     env.set_env(
         "INSTRUKT_TEST_NOTICE_DECISIONS",
         env.path("notice-decisions").to_str().unwrap(),
