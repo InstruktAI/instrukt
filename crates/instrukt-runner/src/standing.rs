@@ -267,7 +267,7 @@ pub(crate) fn deliver_pending(
             result.as_ref().map(|_| ()),
         );
         if let Err(error) = result {
-            state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
+            state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3 AND state NOT IN ('set_aside','unconfirmed')",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
             if keyed::report_start_finding(&state, selected, &error) {
                 tracing::warn!(event="standing_delivery_failed",key=%responsibility,error=%error);
             }
@@ -497,12 +497,11 @@ fn deliver_group(
             return Err(SessionsError::KeyConflict(responsibility.into()));
         }
         let prefix = loader(state.home(), &fixed, &first.home, subject)?;
-        let entries = selected
-            .iter()
-            .map(log_entry)
-            .collect::<Result<Vec<_>, _>>()?;
-        let (count, content) = inputs::compose(now, &prefix, &entries)?;
-        selected.truncate(count);
+        let content = state
+            .write::<_, SessionsError>(|tx| compose_opening(tx, now, &prefix, &mut selected))?;
+        if selected.is_empty() {
+            return Ok(());
+        }
         let home_order = crate::agents::home_order(state.home(), &first.home)?;
         let preferences =
             crate::agents::role_order(&config, None, fixed.role.as_deref(), home_order.as_deref())?;
@@ -636,6 +635,8 @@ pub(crate) fn verify_delivery_project(
 
 pub(crate) fn settle(state: &RunnerState) -> Result<(), StateError> {
     state.write::<_,StateError>(|tx| {
+        tx.execute("UPDATE standing_deliveries AS d SET (state,failure)=(SELECT i.state,i.failure FROM runtime_inputs i WHERE i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target) WHERE EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target AND i.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
+        tx.execute("UPDATE procedure_activations AS a SET (state,failure)=(SELECT d.state,d.failure FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home) WHERE EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND d.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
         tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND i.state IN ('accepted','entered'))",[]).map_err(state::sql(&state::db_path(tx)))?;
         tx.execute("UPDATE standing_deliveries SET state='delivered',failure=NULL WHERE EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=standing_deliveries.input_id AND (i.runtime || ':' || i.session)=standing_deliveries.target AND i.state IN ('accepted','entered'))",[]).map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -1317,9 +1318,8 @@ fn prepare_successor(
         tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure='target closed before observed consumption; standing events retained for successor, other input retains terminal failure' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![cx.old_session.runtime.as_str(),cx.old_session.id.as_str()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE standing_deliveries SET state='pending',target=NULL,input_id=NULL WHERE responsibility=?1 AND EXISTS (SELECT 1 FROM procedure_activations a WHERE a.event_id=standing_deliveries.event_id AND a.procedure=standing_deliveries.procedure AND a.exact_home=standing_deliveries.exact_home AND a.state='pending')",[cx.responsibility]).map_err(state::sql(&path))?;
         let mut pending=Vec::new();for item in pending_on(tx,&path)? {if responsibility(&item)?.0==cx.responsibility{pending.push(item);}}
-        let entries=pending.iter().map(log_entry).collect::<Result<Vec<_>,_>>()?;
-        let (count,content)=inputs::compose(cx.now,&prefix,&entries)?;
-        let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);pending.truncate(count);
+        let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);
+        let content=compose_opening(tx,cx.now,&prefix,&mut pending)?;
         let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,profiles:crate::runtime::Profiles::default()};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
@@ -1331,6 +1331,33 @@ fn prepare_successor(
         tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at) VALUES (?7,?1,?2,'standing',?1,?3,?4,?5,?6,0,'retry_allowed',?8,'operator',?6)",params![next_key,cx.project,cx.root.to_string_lossy(),request.brief,encoded,cx.now.to_string(),cx.old_session.runtime.as_str(),format!("{}{}",keyed::REPLACEMENT,cx.old_session)]).map_err(state::sql(&path))?;
         Ok((request,pending))
     })
+}
+
+fn compose_opening(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    now: Timestamp,
+    prefix: &str,
+    pending: &mut Vec<Pending>,
+) -> Result<String, SessionsError> {
+    let path = state::db_path(tx);
+    let entries = pending
+        .iter()
+        .map(log_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut offset = 0;
+    loop {
+        let (count, content) = inputs::compose(now, prefix, &entries[offset..])?;
+        if count != 0 || offset == entries.len() {
+            pending.drain(..offset);
+            pending.truncate(count);
+            return Ok(content);
+        }
+        let item = &pending[offset];
+        let params = params![item.event, item.procedure, item.home, inputs::OVERSIZED];
+        tx.execute("UPDATE procedure_activations SET state='set_aside',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3", params).map_err(state::sql(&path))?;
+        tx.execute("UPDATE standing_deliveries SET state='set_aside',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3", params).map_err(state::sql(&path))?;
+        offset += 1;
+    }
 }
 
 fn standing_title(procedure: &str, subject: Option<&str>, key: &str) -> String {

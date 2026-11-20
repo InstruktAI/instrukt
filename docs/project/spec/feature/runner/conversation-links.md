@@ -192,7 +192,10 @@ are INFO events. Successful handovers are aggregated DEBUG completion summaries
 with counts and duration. A stopped reader is reported once and its failure stays
 visible in status until recovery. A blocked relay does not block unrelated
 runner readers. Native change notifications and runner restart continue the same
-recorded work; no second timer-driven delivery path is introduced.
+recorded work.
+
+Failed link passes retry with backoff beginning at `LINK_RETRY_DELAY`, bounded
+by `MOST_RETRY`, even without a further native change.
 
 ## Use cases
 
@@ -203,6 +206,7 @@ Given a developer wants two peer agents to discuss a problem with them
 When they ask one agent to open the discussion with the other through instrukt discuss open
 Then each agent receives the other agent's finished replies under that agent's identity
 And contributions are not echoed back to their original speaker
+And a failed source read retries after a delay and relays the contribution even without another native change
 ```
 
 Sharing the developer's clarification is indexed by UC-SS1 in

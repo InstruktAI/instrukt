@@ -108,12 +108,37 @@ fn a_busy_runtime_accepts_one_message_and_combines_more_events_after_observed_co
     r.append("third");
     r.append("fourth");
     r.tick();
-    r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
     r.runtime.consume("s1");
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 3);
     insta::assert_snapshot!("bounded-busy-log", r.conversation());
+    r.runtime.hide_inputs("s1");
+    r.append("after-unconfirmed");
+    r.computer
+        .env
+        .instrukt(r.computer.project.path())
+        .env("INSTRUKT_NOW", "2090-01-01T00:00:00Z")
+        .arg("tick")
+        .assert()
+        .success();
+    assert_eq!(r.runtime.message_count("s1"), 4);
+    let next = r.runtime.message("s1", 3);
+    assert!(next.contains("after-unconfirmed"));
+    assert!(!next.contains("Entry: event:third:"));
+    let status = r
+        .computer
+        .env
+        .run(r.computer.project.path(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    assert!(
+        status["input_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["state"] == "unconfirmed")
+    );
 }
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED2
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED4
@@ -620,6 +645,7 @@ fn a_burst_replaces_only_undelivered_state_and_keeps_distinct_occurrences() {
 #[test]
 fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     let r = Responsibility::new("");
+    append_oversized(&r);
     for i in 0..40 {
         r.append(&format!("event-{i:02}"));
     }
@@ -645,9 +671,36 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     assert_eq!(r.runtime.message_count("s1"), 2);
     assert!(r.runtime.message("s1", 1).len() <= 64 * 1024);
     r.runtime.consume("s1");
+    append_oversized(&r);
+    r.append("after-oversized");
     r.tick();
-    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert_eq!(r.delivered_to("after-oversized").to_string(), "t3:s1");
+    let out = r
+        .computer
+        .env
+        .run(r.computer.project.path(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        status["input_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["state"] == "set_aside")
+    );
 }
+fn append_oversized(r: &Responsibility) {
+    let id = format!("oversized-{}", r.runtime.threads().len());
+    let event = serde_json::json!({"id":id,"type":"example.changed","source":r.computer.computer(),"subject":"todo:demo","home":"project:fork","home_owner":"unresolved","time":"2026-11-05T00:00:00Z","data":{"message":"x".repeat(70*1024)}});
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg(event.to_string())
+        .query::<String>(&mut r.redis.connection())
+        .unwrap();
+}
+
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED15
 #[test]
 fn an_interrupted_native_turn_gets_its_same_batch_again() {
@@ -720,7 +773,6 @@ fn an_only_at_entry_wake_rechecks_idleness_at_the_handover() {
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
 }
-// spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED14
 #[test]
 fn payload_size_bounds_a_batch_before_the_entry_count_limit() {
     let r = Responsibility::new("");
@@ -1622,7 +1674,6 @@ fn unresolved_start_reporting_is_once_and_absence_alone_never_authorizes_another
     assert!(r.runtime.threads().is_empty());
 }
 
-// spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED12
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS10
 #[test]
 fn lost_send_acknowledgement_reconciles_visible_waiting_input_without_a_second_copy() {

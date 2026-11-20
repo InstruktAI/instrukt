@@ -447,10 +447,10 @@ failed outcome, native message identity when available, acceptance and entry
 evidence with its runtime source and observation time, and last failure. Each item retains its own source identity; event entries are always supplied as a bounded ordered batch. One waiting
 accepted message per target is permitted. A selected or uncertain send reserves
 that slot too, so concurrent senders cannot exceed it. New items stay pending;
-only verified consumption clears the slot. Evidence retains the runtime
+verified consumption normally clears the slot. Evidence retains the runtime
 capability, native reference, source and observation time; unknown/unsupported
 evidence leaves the slot occupied, rather than fabricating a transcript or run id,
-until the input bound (`runner/inputs.rs`): then the input is `unconfirmed` (outcome
+until `INPUT_WAIT_BOUND`: then the input is `unconfirmed` (outcome
 unknown, never sent again) and the slot is released. An item larger than the
 delivery limit on its own is `set_aside`, with its failure, and later items proceed. Wake requests coalesce per target.
 Only-at-entry selection rechecks idleness before handover. Runtime calls run

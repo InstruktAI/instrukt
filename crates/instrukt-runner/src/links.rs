@@ -465,6 +465,15 @@ pub fn relay(
     source: &dyn ConversationSource,
     adapter: &dyn RuntimeAdapter,
 ) -> Result<(), LinkError> {
+    relay_pass(home, source, adapter).map(|_| ())
+}
+
+pub(crate) fn relay_pass(
+    home: &Home,
+    source: &dyn ConversationSource,
+    adapter: &dyn RuntimeAdapter,
+) -> Result<bool, LinkError> {
+    let mut retry = false;
     for initial in directions(home)? {
         let _lock = link_lock(home, &initial.link)?;
         let Some(mut d) = directions(home)?
@@ -486,9 +495,10 @@ pub fn relay(
         }
         if let Err(error) = result {
             _diagnostics::relay_failure(home, &d, &error)?;
+            retry = true;
         }
     }
-    Ok(())
+    Ok(retry)
 }
 fn relay_direction(
     home: &Home,

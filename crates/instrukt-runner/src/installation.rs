@@ -678,6 +678,15 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     // What the retained consumers hold whatever the files say now.
     let consumers = crate::consumers::status(request.home, &state)?;
     let start_anomalies = crate::keyed::status(&state)?;
+    let stopped_executions = crate::executions::Executions::new(&state).stopped()?;
+    let input_findings = state.read(|conn, path| {
+        let sql = crate::state::sql(path);
+        let mut stmt = conn.prepare("SELECT runtime,session,input_id,state,failure FROM runtime_inputs WHERE state IN ('unconfirmed','set_aside') ORDER BY rowid").map_err(&sql)?;
+        stmt.query_map([], |row| Ok(serde_json::json!({
+            "session":format!("{}:{}", row.get::<_,String>(0)?,row.get::<_,String>(1)?),
+            "input_id":row.get::<_,String>(2)?,"state":row.get::<_,String>(3)?,"failure":row.get::<_,Option<String>>(4)?
+        }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)
+    })?.unwrap_or_default();
     // This computer's own machine ID, as it reads it, for comparison with the
     // other computers; reading creates no ID.
     let computer = instrukt_core::machine::existing_machine_id(request.home)
@@ -709,6 +718,14 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     // What the files admit now: each project's admitted modules, the findings
     // of what is left out, or why no generation can be admitted at all.
     let candidate = instrukt_core::config::Admitted::load(request.home);
+    let notification_configured = candidate.as_ref().ok().and_then(|candidate| {
+        candidate
+            .generation
+            .global()
+            .runner_notify()
+            .ok()
+            .map(|notify| matches!(notify, instrukt_core::config::Notify::Command(_)))
+    });
     let admission = match &candidate {
         Ok(candidate) => serde_json::json!({
             "error": null,
@@ -733,7 +750,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         // Nothing read from the configuration can be shown: what depends on
         // it is absent, and the admission error says why.
         return Ok(
-            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"links":links,"conversations":conversations,"runner_service":null}),
+            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"links":links,"conversations":conversations,"runner_service":null}),
         );
     }
     let mut report = Report::default();
@@ -767,7 +784,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             .map(str::to_owned)
     };
     Ok(
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"links":links,"conversations":conversations,"runner_service":runner_service}),
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"links":links,"conversations":conversations,"runner_service":runner_service}),
     )
 }
 

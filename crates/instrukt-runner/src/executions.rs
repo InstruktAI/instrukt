@@ -168,6 +168,14 @@ impl<'a> Executions<'a> {
         Ok(loaded.unwrap_or_default())
     }
 
+    pub(crate) fn stopped(&self) -> Result<Vec<Execution>, StateError> {
+        Ok(self
+            .load()?
+            .into_iter()
+            .filter(|execution| execution.anomaly_raised)
+            .collect())
+    }
+
     /// Replaces every watched execution with `executions`, in one
     /// transaction.
     fn save(&self, executions: &[Execution]) -> Result<(), StateError> {
