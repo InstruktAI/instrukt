@@ -163,7 +163,14 @@ fn serve(
             tracing::warn!(event = "conversation_relay_failed", error = %error);
         }
         if source_pass {
-            tracing::debug!(event = "conversation_relay_source_processed");
+            match pass {
+                CompanyRelayPass::CatchUp => {
+                    tracing::debug!(event = "conversation_relay_source_processed")
+                }
+                CompanyRelayPass::Retry => {
+                    tracing::debug!(event = "conversation_link_retry_processed")
+                }
+            }
         }
         // Retained connector work that is not yet done is retried within a
         // bound; otherwise only a native change or new intake wakes the relay.
@@ -175,6 +182,7 @@ fn serve(
                 return Ok(());
             }
             if link_retry.is_some_and(|at| std::time::Instant::now() >= at) {
+                // Retry link work without treating the timer as a native source change.
                 links_due = true;
                 break CompanyRelayPass::Retry;
             }

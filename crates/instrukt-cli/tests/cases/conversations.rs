@@ -1060,6 +1060,87 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         3,
         "one failure, one invalidated probe and one fresh confirmation"
     );
+
+    // The link uses different threads. Its failed read schedules a timer
+    // retry while the company's completed absence confirmation is retained.
+    let source = "retry-source";
+    let target = "retry-target";
+    let at = "2026-11-08T10:00:00Z";
+    for peer in [source, target] {
+        c.runtime.seed(peer, c.env.home(), peer, "Opening.");
+        c.store.thread(peer, None, None, at);
+    }
+    c.env
+        .instrukt(c.env.home())
+        .env("T3CODE_THREAD_ID", source)
+        .args(["discuss", "open", target])
+        .assert()
+        .success();
+    c.store.unproject_thread(source);
+    deliver_probe_wake(&c, &wake, 10);
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    wait("the link's source read failed", || {
+        instrukt_runner::links::status(&home)
+            .unwrap()
+            .iter()
+            .any(|link| {
+                link.directions.iter().any(|direction| {
+                    direction.failure.as_deref().is_some_and(|error| {
+                        error.contains("linked source conversation is missing")
+                    })
+                })
+            })
+    });
+    let retries = run_log(&c)
+        .matches("event=conversation_link_retry_processed")
+        .count();
+    let shows = absence_calls(&c);
+    let probes = run_log(&c)
+        .matches("event=conversation_presence_probe_started")
+        .count();
+    c.store.thread(source, None, None, at);
+    c.store.turn(
+        source,
+        "retry-reply",
+        1,
+        "Question.",
+        "Relayed on the timer.",
+    );
+    wait(
+        "the timer relays the turn and completes its company retry",
+        || {
+            c.runtime.message_count(target) == 2
+                && run_log(&c)
+                    .matches("event=conversation_link_retry_processed")
+                    .count()
+                    > retries
+        },
+    );
+    assert!(
+        c.runtime
+            .message(target, 1)
+            .contains("Relayed on the timer.")
+    );
+    assert_eq!(
+        run_log(&c)
+            .matches("event=conversation_presence_probe_started")
+            .count(),
+        probes,
+        "a timer retry must not schedule another show"
+    );
+    assert_eq!(std::fs::read_to_string(&wakes).unwrap(), "10");
+    assert_eq!(
+        absence_calls(&c),
+        shows,
+        "a timer retry must not issue another show"
+    );
+    assert_eq!(
+        run_log(&c)
+            .matches("event=conversation_presence_probe_confirmed")
+            .count(),
+        1
+    );
+    assert!(conversation_finding(&c, &stopped).is_some());
 }
 
 #[cfg(debug_assertions)]
