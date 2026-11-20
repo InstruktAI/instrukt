@@ -73,7 +73,9 @@ path is the same for every connector, whichever channel it speaks to
   It confirms a missing thread with the runtime once per observed absence,
   without blocking other conversations. Runtime checks before sending and
   when reconciling a lost acknowledgment also run independently for each
-  conversation. A newer native observation supersedes a cached confirmation.
+  conversation. At most one presence probe runs per conversation. A projection
+  change during a probe defers the next check until that probe returns.
+  A newer native observation supersedes a cached confirmation.
   Failed absence observations retry with a bounded backoff. A notification
   alone does not reset a completed confirmation. If an operator has a live
   replacement awaiting acceptance, the finding directs them to resume the
@@ -493,6 +495,11 @@ And a subsequent outage can earn its own notice
 ```
 
 ## Known caveats
+
+- If a thread is deleted after the relay checks readiness and before it
+  revalidates dispatch under lock, T3 can refuse the send, and the saved
+  question waits for the operator to run `instrukt sessions replace-deleted`
+  before delivery resumes.
 
 - Read-back reads what the provider still serves; its retention, the app's
   access and rate limits are its only limits.

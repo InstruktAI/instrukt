@@ -741,6 +741,8 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
         scope.spawn(held_runtime_checks_leave_another_conversation_free);
         #[cfg(debug_assertions)]
         scope.spawn(a_live_deletion_is_confirmed_once_across_relay_passes);
+        #[cfg(debug_assertions)]
+        scope.spawn(a_send_refused_after_readiness_is_delivered_once_after_replacement);
         scope.spawn(a_live_pending_successor_leaves_retained_answers_free_to_post);
         deleted_conversation_waits_for_confirmed_replacement();
     });
@@ -1030,22 +1032,101 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         marker.exists()
     });
 
-    // Queue a notification while the successful confirmation is in flight.
-    deliver_probe_wake(&c, &wake, 3);
+    let held_calls = absence_calls(&c);
+    for revision in 3..=6 {
+        if revision % 2 == 1 {
+            c.store.thread(&session, None, None, "2026-11-08T10:00:00Z");
+        } else {
+            c.store.unproject_thread(&session);
+        }
+        deliver_probe_wake(&c, &wake, revision);
+    }
+    assert_eq!(
+        absence_calls(&c),
+        held_calls,
+        "only one probe while the projection flips"
+    );
     std::fs::remove_file(held).unwrap();
     let stopped = format!("--stopped t3:{session}");
     wait(
         "the missing thread has its confirmed replacement finding",
         || conversation_finding(&c, &stopped).is_some(),
     );
-    for revision in 4..=6 {
+    for revision in 7..=9 {
         deliver_probe_wake(&c, &wake, revision);
     }
     assert_eq!(
         absence_calls(&c) - before_deletion,
-        2,
-        "one failure and one completed confirmation"
+        3,
+        "one failure, one invalidated probe and one fresh confirmation"
     );
+}
+
+#[cfg(debug_assertions)]
+fn a_send_refused_after_readiness_is_delivered_once_after_replacement() {
+    let (mut c, _, session) = answered_conversation(false);
+    let hold = c.env.path("dispatch-hold");
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    c.runner_dies();
+    c.env.set_env(
+        "INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD",
+        hold.to_str().unwrap(),
+    );
+    std::fs::write(&hold, &key).unwrap();
+    c.run();
+    let question = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the revised report?");
+    wait(
+        "the follow-up has passed readiness but not revalidated dispatch",
+        || hold.with_extension("observed").exists(),
+    );
+    c.runtime.delete(&session);
+    std::fs::remove_file(&hold).unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait("T3 refuses the send and the question stays pending", || {
+        db.query_row(
+            "SELECT state='pending' AND attempted_at IS NOT NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
+            [&question],
+            |row| row.get::<_, bool>(0),
+        ).unwrap()
+    });
+    c.store.unproject_thread(&session);
+    let door = format!("instrukt sessions replace-deleted {key} --stopped t3:{session}");
+    wait(
+        "the refused question is unavailable and has a recovery command",
+        || {
+            conversation_finding(&c, &door).is_some()
+                && c.slack.status("D30", &question).as_deref() == Some(UNAVAILABLE)
+        },
+    );
+    assert_eq!(c.slack.posts().len(), 1);
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
+    run_printed_replacement(&c, &door);
+    let successor = started(&c, &[]);
+    c.finish_turn(&successor, 0, "The replacement session is initialized.");
+    wait("the saved question reaches the successor", || {
+        c.runtime.message_count(&successor) == 2
+    });
+    assert!(
+        c.runtime
+            .message(&successor, 1)
+            .contains("Where is the revised report?")
+    );
+    c.finish_turn(&successor, 1, "The revised report is in the wiki.");
+    wait("the answer is posted and the status clears", || {
+        c.slack
+            .posts_beginning("The revised report is in the wiki.")
+            == 1
+            && answers_recorded(&c)
+            && c.slack.status("D30", &question).is_none()
+    });
+    assert_eq!(c.runtime.message_count(&successor), 2);
+    assert_eq!(c.slack.posts().len(), 2);
 }
 
 #[cfg(debug_assertions)]

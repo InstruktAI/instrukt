@@ -1716,6 +1716,7 @@ struct RelayWorkers {
     connectors: Arc<dyn Connectors>,
     wake: SyncSender<()>,
     probes: Mutex<BTreeMap<String, MissingProbe>>,
+    absence_reads: Mutex<BTreeMap<String, AbsenceRead>>,
     work: Mutex<BTreeMap<String, DeliveryWork>>,
 }
 
@@ -1725,6 +1726,7 @@ struct DeliveryCandidate {
     message: String,
     head: Option<String>,
     source_presence: Presence,
+    invalidated: bool,
 }
 
 enum DeliveryWork {
@@ -1787,6 +1789,18 @@ impl RelayWorkers {
         }
     }
 
+    fn update_check_source(&self, c: &Conversation, observed: Option<Presence>) {
+        if let Some(DeliveryWork::Checking { candidate, .. }) = self
+            .work
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&c.semantic_key)
+        {
+            candidate.invalidated |= c.session.as_ref() != Some(&candidate.session)
+                || observed != Some(candidate.source_presence);
+        }
+    }
+
     fn check(
         &self,
         adapter: &dyn RuntimeAdapter,
@@ -1837,6 +1851,7 @@ impl RelayWorkers {
                         message: next.message.clone(),
                         head: head.map(|head| head.message.clone()),
                         source_presence,
+                        invalidated: false,
                     },
                     reply,
                 },
@@ -1869,6 +1884,10 @@ impl RelayWorkers {
         let connectors = Arc::clone(&self.connectors);
         let reply = self.spawn(move || {
             let state = RunnerState::new(&home);
+            #[cfg(debug_assertions)]
+            if c.session.is_some() {
+                hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD");
+            }
             let ready = if c.session.is_some() {
                 RuntimeInvocation::try_acquire(&home)
             } else {
@@ -1942,12 +1961,14 @@ impl RelayWorkers {
     }
 }
 
-#[derive(Debug)]
+struct AbsenceRead {
+    session: SessionRef,
+    reply: Receiver<Option<Presence>>,
+    delay_secs: i64,
+    invalidated: bool,
+}
+
 enum MissingProbe {
-    Reading {
-        reply: std::sync::mpsc::Receiver<Option<Presence>>,
-        delay_secs: i64,
-    },
     Backoff {
         retry_at: Timestamp,
         delay_secs: i64,
@@ -1957,60 +1978,97 @@ enum MissingProbe {
 }
 
 impl RelayWorkers {
+    // A projection change can invalidate the result, but only the worker's
+    // completion releases the conversation's slot for another native read.
+    fn absence_in_flight(
+        &self,
+        c: &Conversation,
+        missing: Option<&SessionRef>,
+        now: Timestamp,
+    ) -> bool {
+        let mut reads = self
+            .absence_reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(read) = reads.get_mut(&c.semantic_key) else {
+            return false;
+        };
+        read.invalidated |= Some(&read.session) != missing;
+        let observation = match read.reply.try_recv() {
+            Ok(observation) => observation,
+            Err(TryRecvError::Disconnected) => None,
+            Err(TryRecvError::Empty) => return true,
+        };
+        if !read.invalidated {
+            let state = if let Some(presence) = observation {
+                Self::observation(presence, now)
+            } else {
+                let session = &read.session;
+                let retry_at = now + jiff::SignedDuration::from_secs(read.delay_secs);
+                tracing::debug!(target: LOG_TARGET, event = "conversation_presence_probe_retry", %session, %retry_at);
+                MissingProbe::Backoff {
+                    retry_at,
+                    delay_secs: (read.delay_secs * 2).min(30),
+                }
+            };
+            self.probes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(read.session.to_string(), state);
+        }
+        reads.remove(&c.semantic_key);
+        false
+    }
+
     fn confirm_missing(
         &self,
         adapter: &dyn RuntimeAdapter,
+        c: &Conversation,
         session: &SessionRef,
         now: Timestamp,
     ) -> Option<Presence> {
-        let mut probes = self
+        if self.absence_in_flight(c, Some(session), now) {
+            return None;
+        }
+        let id = session.to_string();
+        let delay_secs = match self
             .probes
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let id = session.to_string();
-        let delay_secs = match probes.get_mut(&id) {
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&id)
+        {
             Some(MissingProbe::Confirmed(presence)) => return Some(*presence),
             Some(MissingProbe::LiveUntil(retry_at)) if now < *retry_at => {
                 return Some(Presence::Present);
-            }
-            Some(MissingProbe::LiveUntil(_)) => 2,
-            Some(MissingProbe::Reading { reply, delay_secs }) => {
-                let observation = match reply.try_recv() {
-                    Ok(presence) => presence,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
-                    Err(std::sync::mpsc::TryRecvError::Empty) => return None,
-                };
-                let state = if let Some(presence) = observation {
-                    Self::observation(presence, now)
-                } else {
-                    let retry_at = now + jiff::SignedDuration::from_secs(*delay_secs);
-                    tracing::debug!(target: LOG_TARGET, event = "conversation_presence_probe_retry", %session, %retry_at);
-                    MissingProbe::Backoff {
-                        retry_at,
-                        delay_secs: (*delay_secs * 2).min(30),
-                    }
-                };
-                probes.insert(id, state);
-                return observation;
             }
             Some(MissingProbe::Backoff {
                 retry_at,
                 delay_secs,
             }) if now >= *retry_at => *delay_secs,
             Some(MissingProbe::Backoff { .. }) => return None,
-            None => 2,
+            _ => 2,
         };
         let runtime = adapter.runtime();
         let session = session.clone();
-        // The CLI may be slow. Its worker reads native state only and
-        // never takes a conversation lock or holds up a relay pass.
+        let target = session.clone();
         let reply = self.spawn(move || {
             instrukt_runner::runtime::adapter(runtime)
-                .read_state(&session)
+                .read_state(&target)
                 .ok()
                 .map(|thread| thread.presence)
         });
-        probes.insert(id, MissingProbe::Reading { reply, delay_secs });
+        self.absence_reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                c.semantic_key.clone(),
+                AbsenceRead {
+                    session,
+                    reply,
+                    delay_secs,
+                    invalidated: false,
+                },
+            );
         None
     }
 
@@ -2665,11 +2723,11 @@ fn blocked(
 }
 
 #[cfg(debug_assertions)]
-fn hold_presence_for_fixture(c: &Conversation, presence: Option<Presence>) {
-    if presence != Some(Presence::Present) || !instrukt_core::fsx::fence_active() {
+fn hold_conversation_for_fixture(c: &Conversation, setting: &str) {
+    if !instrukt_core::fsx::fence_active() {
         return;
     }
-    let Some(path) = std::env::var_os("INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD") else {
+    let Some(path) = std::env::var_os(setting) else {
         return;
     };
     let path = PathBuf::from(path);
@@ -2746,7 +2804,9 @@ fn relay(
         let before_read = open_messages(&state, &c)?;
         let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
         #[cfg(debug_assertions)]
-        hold_presence_for_fixture(&c, observed);
+        if observed == Some(Presence::Present) {
+            hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD");
+        }
         if let Some(session) = &c.session
             && matches!(observed, Some(Presence::Present | Presence::Archived))
         {
@@ -2760,10 +2820,15 @@ fn relay(
                 .changed_since(None, Scope::Only(std::slice::from_ref(&pending.id)))
                 .ok()
                 .and_then(|batch| batch.scoped_presence);
+            workers.update_check_source(&c, None);
             let presence = match observed {
-                Some(Presence::Absent) => workers.confirm_missing(adapter, &pending, clock()),
+                Some(Presence::Absent) if !matches!(check, CheckedDelivery::Checking) => {
+                    workers.confirm_missing(adapter, &c, &pending, clock())
+                }
+                Some(Presence::Absent) => None,
                 Some(presence) => {
                     workers.source_present(&pending);
+                    workers.absence_in_flight(&c, None, clock());
                     Some(presence)
                 }
                 None => None,
@@ -2777,6 +2842,8 @@ fn relay(
             if let Some(original) = &original_binding {
                 workers.source_present(original);
             }
+            workers.update_check_source(&c, None);
+            workers.absence_in_flight(&c, None, clock());
             continue;
         }
         let Some(observed) = observed else {
@@ -2793,7 +2860,9 @@ fn relay(
                     Ok(DeliveryCheck::Ready | DeliveryCheck::Busy) => Some(Presence::Present),
                     _ => None,
                 };
-                if observed != candidate.source_presence && checked_presence != Some(observed) {
+                if candidate.invalidated
+                    || (observed != candidate.source_presence && checked_presence != Some(observed))
+                {
                     None
                 } else {
                     if let Some(presence) = checked_presence
@@ -2818,6 +2887,7 @@ fn relay(
                 }
             }
             CheckedDelivery::Checking => {
+                workers.update_check_source(&c, Some(observed));
                 if let Some(session) = &c.session
                     && observed == Presence::Archived
                 {
@@ -2831,14 +2901,18 @@ fn relay(
         if let Some(session) = &c.session {
             let presence = if observed == Presence::Absent {
                 if open_messages(&state, &c)?.is_empty() {
+                    workers.absence_in_flight(&c, None, clock());
                     continue;
                 }
-                let confirmed = workers.confirm_missing(adapter, session, clock());
+                let confirmed = workers.confirm_missing(adapter, &c, session, clock());
                 if confirmed == Some(Presence::Present) {
                     set_failure(&state, &c, None)?;
                 }
                 confirmed
             } else {
+                if workers.absence_in_flight(&c, None, clock()) && observed == Presence::Present {
+                    continue;
+                }
                 Some(observed)
             };
             if presence != Some(Presence::Present) {
@@ -3473,6 +3547,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
             connectors: Arc::clone(&directory),
             wake: start.wake.clone(),
             probes: Mutex::default(),
+            absence_reads: Mutex::default(),
             work: Mutex::default(),
         }));
         crate::connector_host::Connections::start(
