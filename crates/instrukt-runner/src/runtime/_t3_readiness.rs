@@ -618,19 +618,11 @@ fn rpc(
     let frame =
         json!({"_tag":"Request","id":RPC_REQUEST_ID,"tag":tag,"payload":payload,"headers":[]})
             .to_string();
-    // Tungstenite writes one uncompressed client text frame: two header
-    // bytes, optional extended length, four mask bytes, then the payload.
-    let frame_bytes = frame.len()
-        + match frame.len() {
-            0..=125 => 6,
-            126..=65535 => 8,
-            _ => 14,
-        };
     before_write().map_err(BeforeFrame)?;
     socket.get_mut().written = 0;
     if socket.send(Message::Text(frame.into())).is_err() {
         let error = refused("RPC request write failed");
-        return Err(if socket.get_mut().written >= frame_bytes {
+        return Err(if socket.get_mut().written != 0 {
             AfterFrame(error)
         } else {
             BeforeFrame(error)

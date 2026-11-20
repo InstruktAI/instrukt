@@ -1907,8 +1907,8 @@ fn dispatch_frame(
         Ok(()) => Ok(()),
         Err(DispatchError::BeforeFrame(error)) => {
             if marked {
-                // Undo only the marker from this write. An earlier complete
-                // frame still makes the same command uncertain.
+                // This write sent zero bytes. Keep any marker from an earlier
+                // write that already made the command uncertain.
                 record_dispatch_write(state, c, &next.message, id, None)?;
             }
             Err(error.into())

@@ -140,10 +140,11 @@ dispatch. An uncertain retry keeps that ID and framed input. T3's durable
 command receipt prevents a second turn across connections and restarts.
 A confirmed refusal allows the next attempt to select context again and use a
 fresh boundary. Presence and its recovery doors still apply.
-Failures before a complete request frame is written leave the message waiting
-with its command ID and an operator-visible cause. The relay retries these
-outages without a delivery-unknown deadline. Once a complete frame may have
-reached T3, the same ID is used to reconcile or retry it.
+Failures before any byte of the request frame is written leave the message
+waiting with its command ID and an operator-visible cause. The relay retries
+these outages without a delivery-unknown deadline. Once any request byte has
+been written, delivery is uncertain and the same ID is used to reconcile or
+retry it.
 If the runtime has other work or cannot confirm delivery through
 `SEND_RECONCILE_BOUND` (five minutes on the operator clock), retain the input,
 record delivery unknown for the operator, and release its place in the queue.

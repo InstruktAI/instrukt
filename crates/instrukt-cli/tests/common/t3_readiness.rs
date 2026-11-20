@@ -228,6 +228,14 @@ fn dispatch(dir: &Path, home: &Path, payload: &Value) -> Value {
     use std::io::Write as _;
     // The required message.dispatch shape exercised by the pinned release
     // contract. Reject malformed requests before the fake accepts input.
+    for field in ["createdBy", "creationSource"] {
+        if payload.get(field).is_none() {
+            return json!({
+                "_tag":"Failure",
+                "cause":[{"_tag":"Die","defect":format!("Missing key\n  at [{field:?}]")}]
+            });
+        }
+    }
     let required = ["commandId", "threadId", "messageId"];
     if payload["type"] != "message.dispatch"
         || required

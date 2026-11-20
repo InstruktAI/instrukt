@@ -987,23 +987,26 @@ fn an_outage_before_dispatch_keeps_the_question() {
     let before = retained().unwrap();
     let command_id = before.0.as_deref().unwrap();
     assert_eq!((before.1, before.2), (None, None));
-    let read = format!("thread show --json --messages 0 -- {session}");
-    let reads = |c: &Company| {
-        c.runtime
-            .calls()
-            .iter()
-            .filter(|line| **line == read)
-            .count()
+    let failure = || {
+        db.query_row(
+            "SELECT failure FROM conversation_messages WHERE message=?1",
+            [&question],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap()
     };
-    let prior_reads = reads(&c);
+    let prior_failure = failure().unwrap();
     set_clock(
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_mins(6),
     );
+    // Keep dispatch unavailable with a different descriptor error. Only a
+    // retry that has finished after the clock advance can persist that cause.
+    std::fs::write(&descriptor, "invalid descriptor").unwrap();
     answer_source_changed(&c, 2);
     wait_for_answer_fixture(
-        "the relay retries after the send reconciliation bound",
-        || reads(&c) >= prior_reads + 2 || retained().is_some_and(|row| row.2.is_some()),
+        "the relay persists a fresh failure past the send reconciliation bound",
+        || failure().is_some_and(|cause| cause != prior_failure),
     );
     assert_eq!(retained(), Some((Some(command_id.to_owned()), None, None)));
     assert_eq!(c.runtime.message_count(&session), 1);

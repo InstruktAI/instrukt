@@ -265,6 +265,12 @@ pub fn connect(token: &str) -> Result<tungstenite::WebSocket<TcpStream>> {
 }
 
 pub fn rpc(token: &str, tag: &str, payload: Value) -> Result<Value> {
+    let exit = rpc_exit(token, tag, payload)?;
+    ensure!(exit["_tag"] == "Success", "RPC rejected at {tag}");
+    Ok(exit["value"].clone())
+}
+
+fn rpc_exit(token: &str, tag: &str, payload: Value) -> Result<Value> {
     let mut socket = connect(token)?;
     socket.send(Message::Text(
         json!({"_tag":"Request","id":"contract","tag":tag,"payload":payload,"headers":[]})
@@ -282,8 +288,7 @@ pub fn rpc(token: &str, tag: &str, payload: Value) -> Result<Value> {
             if frame["_tag"] == "Ping" {
                 socket.send(Message::Text(json!({"_tag":"Pong"}).to_string().into()))?;
             } else if frame["_tag"] == "Exit" && frame["requestId"] == "contract" {
-                ensure!(frame["exit"]["_tag"] == "Success", "RPC rejected at {tag}");
-                return Ok(frame["exit"]["value"].clone());
+                return Ok(frame["exit"].clone());
             }
         }
     }
@@ -784,9 +789,14 @@ pub fn websocket_dispatch(id: &str) -> Result<Value> {
             "createdBy":"agent", "creationSource":"mcp", "dispatchMode":{"type":"queue_after_active"}
         });
         malformed.as_object_mut().unwrap().remove(field);
+        let exit = rpc_exit(&token.secret, "orchestration.dispatchCommand", malformed)
+            .with_context(|| format!("no RPC rejection for missing {field}"))?;
+        // T3's RPC decoder uses a Die cause for a schema error.
+        // Require its missing-key response for this specific field.
+        let missing = format!("Missing key\n  at [{field:?}]");
         ensure!(
-            rpc(&token.secret, "orchestration.dispatchCommand", malformed).is_err(),
-            "WebSocket dispatch accepted a request without {field}"
+            exit == json!({"_tag":"Failure","cause":[{"_tag":"Die","defect":missing}]}),
+            "expected explicit RPC rejection for missing {field}: {exit}"
         );
     }
     token.revoke()?;
