@@ -339,9 +339,8 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         c.conversations().conversations.is_empty() && c.slack.posts().len() == 3
     });
     assert_eq!(c.runtime.message_count(&session), 3);
-    // Each names the person who wrote it, in written order. The third was
-    // taken in before the second arrived, so what accompanies it holds the
-    // second too.
+    // Each names its sender in written order. The third's context excludes
+    // the second even though it was captured before the second was delivered.
     insta::assert_snapshot!(
         "three-turns-delivered",
         (0..3)
@@ -953,8 +952,253 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     std::thread::scope(|scope| {
         #[cfg(debug_assertions)]
         scope.spawn(a_replacement_reports_the_old_acknowledgement);
+        scope.spawn(an_idle_conversation_retries_an_unrecorded_send);
+        scope.spawn(an_outage_before_dispatch_keeps_the_question);
+        scope.spawn(a_late_original_dispatch_is_deduplicated_after_restart);
+        scope.spawn(a_busy_conversation_releases_an_unresolved_send);
         failed_work_is_retried_after_a_restart();
     });
+}
+
+fn an_outage_before_dispatch_keeps_the_question() {
+    let (mut c, clock, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let descriptor = c.env.home().join(".t3/userdata/server-runtime.json");
+    let held = descriptor.with_extension("held");
+    std::fs::rename(&descriptor, &held).unwrap();
+    let question = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the outage report?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let retained = || {
+        db.query_row(
+        "SELECT dispatch_command_id,dispatch_write_at,send_unknown_at FROM conversation_messages WHERE message=?1",
+        [&question],
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?)),
+    ).ok()
+    };
+    wait_for_answer_fixture("the operator sees the dispatch outage", || {
+        conversation_finding(&c, "t3 conversation delivery").is_some()
+            && interval(&c, &question).is_some()
+    });
+    let before = retained().unwrap();
+    let command_id = before.0.as_deref().unwrap();
+    assert_eq!((before.1, before.2), (None, None));
+    let failure = || {
+        db.query_row(
+            "SELECT failure FROM conversation_messages WHERE message=?1",
+            [&question],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap()
+    };
+    let prior_failure = failure().unwrap();
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_mins(6),
+    );
+    // Keep dispatch unavailable with a different descriptor error. Only a
+    // retry that has finished after the clock advance can persist that cause.
+    std::fs::write(&descriptor, "invalid descriptor").unwrap();
+    answer_source_changed(&c, 2);
+    wait_for_answer_fixture(
+        "the relay persists a fresh failure past the send reconciliation bound",
+        || failure().is_some_and(|cause| cause != prior_failure),
+    );
+    assert_eq!(retained(), Some((Some(command_id.to_owned()), None, None)));
+    assert_eq!(c.runtime.message_count(&session), 1);
+    std::fs::rename(&held, &descriptor).unwrap();
+    wait_for_answer_fixture(
+        "dispatch resumes without replacing the command identity",
+        || c.runtime.message_count(&session) == 2,
+    );
+    let ids = std::fs::read_to_string(c.runtime.state_dir().join("dispatch-ids")).unwrap();
+    assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id]);
+    finish_answer_turn(&mut c, &session, 1, "The report is in the drive.");
+    wait_for_answer_fixture("the saved question is answered once", || {
+        c.slack.posts_beginning("The report is in the drive.") == 1
+    });
+}
+
+fn an_idle_conversation_retries_an_unrecorded_send() {
+    let (mut c, _, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let staged = c.runtime.state_dir().join(format!("{session}.submit-held"));
+    c.runtime.flag(&format!("{session}.lose-next-send"), true);
+    c.runtime.flag(&format!("{session}.hold-next-submit"), true);
+    let first = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the revised report?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let id = || {
+        db.query_row(
+            "SELECT dispatch_command_id FROM conversation_messages WHERE message=?1",
+            [&first],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap()
+    };
+    wait_for_answer_fixture("an idle thread retries the ambiguous send", || {
+        staged.exists()
+    });
+    assert_eq!(id(), Some(std::fs::read_to_string(staged).unwrap()));
+    assert_eq!(c.runtime.message_count(&session), 1);
+    c.slack
+        .direct("D30", "USTEVEN", "When does the review start?");
+    c.runtime.flag(&format!("{session}.release-submit"), true);
+    wait_for_answer_fixture(
+        "the saved question is dispatched after the lost response",
+        || c.runtime.message_count(&session) == 2,
+    );
+    assert!(
+        c.input(&session, 1)
+            .contains("Where is the revised report?")
+    );
+    finish_answer_turn(&mut c, &session, 1, "The revised report is in the drive.");
+    wait_for_answer_fixture("the next question follows without a duplicate", || {
+        c.runtime.message_count(&session) == 3 && id().is_none()
+    });
+    assert!(c.input(&session, 2).contains("When does the review start?"));
+    assert!(
+        !c.input(&session, 2)
+            .contains("Where is the revised report?")
+    );
+}
+
+fn a_late_original_dispatch_is_deduplicated_after_restart() {
+    let (mut c, _, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let native = c.runtime.state_dir();
+    let staged = native.join(format!("{session}.submit-held"));
+    let replayed = native.join(format!("{session}.late-deduplicated"));
+    let duplicate = native.join(format!("{session}.late-submit"));
+    let calls = native.join("dispatch-ids");
+    c.runtime.flag(&format!("{session}.hold-next-submit"), true);
+    let message = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the release plan?");
+    wait_for_answer_fixture(
+        "the original authenticated request is held before commit",
+        || staged.exists(),
+    );
+    let original = std::fs::read_to_string(staged).unwrap();
+    let original_input =
+        std::fs::read(native.join(format!("{session}.submit-held-input"))).unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let tracked =
+        || {
+            db.query_row(
+        "SELECT attempted_at,dispatch_command_id FROM conversation_messages WHERE message=?1",
+        [&message], |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+    ).unwrap()
+        };
+    let before = tracked();
+    assert!(before.0.is_some());
+    assert_eq!(before.1.as_deref(), Some(original.as_str()));
+    c.kill_runner();
+    assert_eq!(c.runtime.message_count(&session), 1);
+    c.run();
+    wait_for_answer_fixture(
+        "the new runner retries the exact command on a new connection",
+        || c.runtime.message_count(&session) == 2,
+    );
+    assert_eq!(c.runtime.message(&session, 1).as_bytes(), original_input);
+    finish_answer_turn(&mut c, &session, 1, "The plan is by the calendar.");
+    wait_for_answer_fixture("the retry answers and clears the current attempt", || {
+        c.slack.posts_beginning("The plan is by the calendar.") == 1 && tracked() == (None, None)
+    });
+    c.runtime.flag(&format!("{session}.release-submit"), true);
+    wait_for_answer_fixture("the original request reaches T3 after the retry", || {
+        replayed.exists() || duplicate.exists()
+    });
+    assert!(replayed.exists());
+    assert!(!duplicate.exists());
+    let sent = std::fs::read_to_string(calls).unwrap();
+    assert_eq!(
+        sent.lines().collect::<Vec<_>>(),
+        [original.as_str(), original.as_str()]
+    );
+    assert_eq!(c.runtime.message_count(&session), 2);
+}
+
+fn a_busy_conversation_releases_an_unresolved_send() {
+    let (mut c, clock, session) = answered_conversation(false);
+    c.runtime.project(&c.env, &session);
+    let at = interval_clock(&clock);
+    c.runtime.flag(&format!("{session}.lose-next-send"), true);
+    c.runtime
+        .flag(&format!("{session}.hold-lost-response"), true);
+    let first = c
+        .slack
+        .direct("D30", "USTEVEN", "Is the draft in the drive?");
+    let held = c
+        .runtime
+        .state_dir()
+        .join(format!("{session}.lost-response-held"));
+    wait_for_answer_fixture("the lost response is held", || held.exists());
+    c.runtime
+        .person_sends(&c.env, &session, "A turn the operator started in T3.");
+    c.runtime
+        .flag(&format!("{session}.release-lost-response"), true);
+    wait_for_answer_fixture("the failed send has an open interval", || {
+        interval(&c, &first).is_some()
+    });
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let retained = || {
+        db.query_row(
+            "SELECT content,send_unknown_at FROM conversation_messages WHERE message=?1",
+            [&first],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .unwrap()
+    };
+    let original = retained().0;
+    c.slack
+        .direct("D30", "USTEVEN", "Do we have meeting notes?");
+    set_clock(&clock, at + jiff::SignedDuration::from_mins(5));
+    answer_source_changed(&c, 2);
+    wait_for_answer_fixture(
+        "a busy thread releases the unresolved send at the operator bound",
+        || retained().1.is_some(),
+    );
+    assert_eq!(retained().0, original);
+    assert!(conversation_finding(&c, &format!("delivery unknown for message {first}")).is_some());
+    assert!(interval(&c, &first).is_none());
+    assert_eq!(c.runtime.message_count(&session), 2);
+    finish_answer_turn(&mut c, &session, 1, "NOOP");
+    wait_for_answer_fixture(
+        "later work proceeds without retrying the unknown send",
+        || c.runtime.message_count(&session) == 3,
+    );
+    assert!(c.input(&session, 2).contains("Do we have meeting notes?"));
+    assert!(!c.input(&session, 2).contains("Is the draft in the drive?"));
+    finish_answer_turn(&mut c, &session, 2, "The notes are saved.");
+    wait_for_answer_fixture("the later question's answer is recorded", || {
+        c.slack.posts_beginning("The notes are saved.") == 1 && answers_recorded(&c)
+    });
+    // The native runtime finally exposes the original input and its answer.
+    c.runtime.person_sends(&c.env, &session, &original);
+    finish_answer_turn(&mut c, &session, 3, "Yes, the draft is in the drive.");
+    wait_for_answer_fixture(
+        "the late answer posts and clears the unknown delivery",
+        || {
+            c.slack.posts_beginning("Yes, the draft is in the drive.") == 1
+                && retained().1.is_none()
+        },
+    );
+    assert_eq!(c.runtime.message_count(&session), 4);
 }
 
 fn failed_work_is_retried_after_a_restart() {
@@ -1865,13 +2109,16 @@ fn archived_and_deleted_conversations_keep_saved_work() {
         );
         c.runtime.delete(&session);
         std::fs::remove_file(hold).unwrap();
-        wait_for_answer_fixture("T3 refuses the send and the question stays pending", || {
-            db.query_row(
-                "SELECT state='pending' AND attempted_at IS NOT NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
+        wait_for_answer_fixture(
+            "T3 refuses the send and clears the attempt while keeping the question pending",
+            || {
+                db.query_row(
+                "SELECT state='pending' AND attempted_at IS NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
                 [&next],
                 |row| row.get::<_, bool>(0),
             ).unwrap()
-        });
+            },
+        );
     }
     c.store.unproject_thread(&session);
     let stopped = format!("t3:{session}");
@@ -2155,7 +2402,6 @@ fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
         scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
         scope.spawn(a_blank_reply_supersedes_a_failed_question);
         scope.spawn(pruning_keeps_younger_and_unsuperseded_failures);
-        scope.spawn(pruning_keeps_the_context_boundary_after_out_of_order_delivery);
         scope.spawn(one_members_answer_proceeds_after_another_conversations_lock_times_out);
     });
 }
@@ -3700,137 +3946,6 @@ fn pruning_keeps_younger_and_unsuperseded_failures() {
     );
     assert_eq!(superseded_at(&c, "unserved"), Some(None));
     assert_eq!(superseded_at(&c, "answered"), Some(None));
-}
-
-fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    let channel = "C1";
-    let sender = "USTEVEN";
-    c.runtime.flag("separate-completion", true);
-    projected(&c);
-    let thread = c
-        .slack
-        .say_at("1700000000.000100", channel, sender, "Release thread", None);
-    let failed_text = "Was the original release blocked?";
-    let failed = c.slack.mention_at(
-        "1700000005.000100",
-        channel,
-        sender,
-        &format!("<@UAGENT> {failed_text}"),
-        Some(&thread),
-    );
-    let session = started(&c, &[]);
-    let input = c.runtime.message(&session, 0);
-    assert!(input.contains(failed_text));
-    c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store.failed_turn(&session, "failed-turn", 1, &input);
-    interval_at(&c, &failed);
-
-    // Slack delivers the older question only after the later-written turn
-    // failed. The older question still gets its own turn and supersedes it.
-    c.slack.mention_at(
-        "1700000004.000100",
-        channel,
-        sender,
-        "<@UAGENT> Has the changelog been written?",
-        Some(&thread),
-    );
-    wait("the older question reaches the session", || {
-        c.runtime.message_count(&session) == 2
-    });
-    let settled = interval_clock(&clock);
-    c.finish_turn(&session, 1, "NOOP");
-    wait(
-        "the older question's successful turn supersedes the failure",
-        || retained_conversations(&c).conversations.is_empty() && interval(&c, &failed).is_none(),
-    );
-
-    use instrukt_core::state_db::rusqlite::Connection;
-    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
-    c.runner_dies();
-    set_clock(
-        &clock,
-        settled + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
-    );
-    c.run();
-    let retained = || {
-        db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND superseded_at IS NOT NULL)",
-            [&failed],
-            |row| row.get::<_, bool>(0),
-        ).unwrap()
-    };
-
-    // Force a relay pass beyond the bound. A delivered row in another
-    // conversation cannot replace the boundary of this thread.
-    projected(&c);
-    c.slack.mention_at(
-        "1700000900.000100",
-        "C2",
-        "UANNA",
-        "<@UAGENT> Is the office open?",
-        None,
-    );
-    wait(
-        "the relay serves another conversation after the bound",
-        || c.sessions().len() == 2,
-    );
-    assert!(retained(), "the superseded boundary must still be retained");
-    assert!(
-        retained_conversations(&c)
-            .conversations
-            .iter()
-            .all(|row| row.conversation != format!("{channel}/{thread}"))
-    );
-    assert_eq!(notices(&c, sender), 0);
-
-    // Advance the written boundary with a delivered message in this thread.
-    // Only then may the relay prune the superseded failure.
-    c.runtime.flag("send-failure", true);
-    let later = c.slack.mention_at(
-        "1700000006.000100",
-        channel,
-        sender,
-        "<@UAGENT> Is the checklist ready?",
-        Some(&thread),
-    );
-    interval_at(&c, &later);
-    assert!(
-        retained(),
-        "an undelivered question cannot replace the boundary"
-    );
-    c.runtime.flag("send-failure", false);
-    wait("a later-written question reaches the session", || {
-        c.runtime.message_count(&session) == 3
-    });
-    assert!(!c.runtime.message(&session, 2).contains(failed_text));
-    wait(
-        "the superseded question is pruned behind the new boundary",
-        || !retained(),
-    );
-    c.finish_turn(&session, 2, "NOOP");
-    let new_context = "The release checklist is ready.";
-    c.slack.say_at(
-        "1700000007.000100",
-        channel,
-        sender,
-        new_context,
-        Some(&thread),
-    );
-    c.slack.mention_at(
-        "1700000008.000100",
-        channel,
-        sender,
-        "<@UAGENT> When do we ship?",
-        Some(&thread),
-    );
-    wait("the new question reaches the session", || {
-        c.runtime.message_count(&session) == 4
-    });
-    let input = c.runtime.message(&session, 3);
-    assert!(input.contains(new_context), "{input}");
-    assert!(!input.contains(failed_text), "{input}");
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {

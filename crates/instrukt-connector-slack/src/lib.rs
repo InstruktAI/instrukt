@@ -695,12 +695,17 @@ fn name(record: &Value) -> Option<String> {
 /// name Slack cannot give is the Slack id.
 struct Names<'a> {
     api: &'a SlackApi,
-    known: std::sync::MutexGuard<'a, HashMap<String, String>>,
+    known: &'a Mutex<HashMap<String, String>>,
 }
 impl Names<'_> {
     fn of(&mut self, user: &str) -> String {
-        if let Some(name) = self.known.get(user) {
-            return name.clone();
+        if let Some(name) = self
+            .known
+            .lock()
+            .ok()
+            .and_then(|known| known.get(user).cloned())
+        {
+            return name;
         }
         let found = self
             .api
@@ -708,35 +713,39 @@ impl Names<'_> {
             .ok()
             .and_then(|record| name(&record))
             .unwrap_or_else(|| user.to_owned());
-        self.known.insert(user.to_owned(), found.clone());
+        self.remember(user, &found);
         found
     }
 
-    /// `text` with every mention written as `@` and that person's name;
-    /// nothing else changes.
-    fn written(&mut self, text: &str) -> String {
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(start) = rest.find("<@") {
-            out.push_str(&rest[..start]);
-            let after = &rest[start + 2..];
-            match after.find('>') {
-                Some(end) => {
-                    let inner = &after[..end];
-                    let user = inner.split('|').next().unwrap_or(inner);
-                    out.push('@');
-                    out.push_str(&self.of(user));
-                    rest = &after[end + 1..];
-                }
-                None => {
-                    out.push_str(&rest[start..]);
-                    rest = "";
-                }
+    fn remember(&self, user: &str, name: &str) {
+        if let Ok(mut known) = self.known.lock() {
+            known.insert(user.to_owned(), name.to_owned());
+        }
+    }
+}
+
+fn written_mentions(text: &str, mut name: impl FnMut(&str) -> String) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<@") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find('>') {
+            Some(end) => {
+                let inner = &after[..end];
+                let user = inner.split('|').next().unwrap_or(inner);
+                out.push('@');
+                out.push_str(&name(user));
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
             }
         }
-        out.push_str(rest);
-        out
     }
+    out.push_str(rest);
+    out
 }
 
 /// `<channel>/<thread ts>` for a channel thread, `<channel>` for a direct
@@ -808,7 +817,7 @@ impl Kind for SlackKind {
                 .count("context_messages")
                 .unwrap_or(DEFAULT_CONTEXT_MESSAGES),
             identities: Arc::clone(&self.identities),
-            names: Mutex::default(),
+            names: Arc::default(),
         }))
     }
 }
@@ -819,20 +828,23 @@ struct Slack {
     context_messages: u64,
     identities: Arc<Mutex<HashMap<String, (String, Me)>>>,
     /// The people's names asked of Slack while this connector is open.
-    names: Mutex<HashMap<String, String>>,
+    names: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Slack {
+    fn cached_identity(&self) -> Option<Me> {
+        let identities = self.identities.lock().ok()?;
+        let (token, me) = identities.get(&self.api.company)?;
+        (token == &self.api.bot_token).then(|| me.clone())
+    }
+
     /// The bot's identity in its workspace, asked of Slack once for these
     /// tokens.
     fn me(&self) -> Result<Me, SlackError> {
-        let company = self.api.company.clone();
-        if let Ok(identities) = self.identities.lock()
-            && let Some((token, me)) = identities.get(&company)
-            && *token == self.api.bot_token
-        {
-            return Ok(me.clone());
+        if let Some(me) = self.cached_identity() {
+            return Ok(me);
         }
+        let company = self.api.company.clone();
         let me = self.api.identity()?;
         if let Ok(mut identities) = self.identities.lock() {
             identities.insert(company, (self.api.bot_token.clone(), me.clone()));
@@ -843,12 +855,23 @@ impl Slack {
     fn names(&self) -> Names<'_> {
         Names {
             api: &self.api,
-            known: match self.names.lock() {
-                Ok(known) => known,
-                Err(poisoned) => poisoned.into_inner(),
-            },
+            known: &self.names,
         }
     }
+}
+
+fn cached_names<T>(
+    names: &Mutex<HashMap<String, String>>,
+    render: impl FnOnce(&mut dyn FnMut(&str) -> String) -> T,
+) -> T {
+    let known = names.try_lock().ok();
+    render(&mut |user| {
+        known
+            .as_ref()
+            .and_then(|names| names.get(user))
+            .cloned()
+            .unwrap_or_else(|| user.to_owned())
+    })
 }
 
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
@@ -888,9 +911,7 @@ impl Connector for Slack {
         match self.api.user(sender) {
             Ok(record) => match admission(&record, &me) {
                 Some(admitted) => {
-                    self.names()
-                        .known
-                        .insert(sender.to_owned(), admitted.name.clone());
+                    self.names().remember(sender, &admitted.name);
                     Admission::Admitted(admitted)
                 }
                 None => Admission::NotOwn,
@@ -910,23 +931,58 @@ impl Connector for Slack {
         &self,
         conversation: &str,
         message: &str,
-        previous: Option<&str>,
         text: &str,
+        excluded: &std::collections::HashSet<String>,
+        readable: &dyn Fn(instrukt_connector::ContextSnapshot, bool) -> bool,
     ) -> Result<Captured, ConnectorError> {
-        let me = self.me().map_err(failed)?;
+        let limit = usize::try_from(self.context_messages).unwrap_or(usize::MAX);
+        let me = self.cached_identity();
+        let snapshot = |messages: Vec<Value>,
+                        stopped_early: bool,
+                        complete_from: Option<Timestamp>,
+                        complete: bool| {
+            let me = me.clone();
+            let names = Arc::clone(&self.names);
+            let text = text.to_owned();
+            readable(
+                Box::new(move || {
+                    let mut captured = cached_names(&names, |lookup| {
+                        render_context(&text, &messages, limit, me.as_ref(), lookup)
+                    });
+                    captured.accompanying.stopped_early = stopped_early;
+                    captured.accompanying.complete_from = complete_from;
+                    captured.accompanying.unread = !complete;
+                    captured
+                }),
+                complete,
+            )
+        };
+        let (messages, stopped_early, complete_from) =
+            read_context(self, conversation, message, excluded, limit, &snapshot)
+                .map_err(failed)?;
+        if !snapshot(messages.clone(), stopped_early, complete_from, true) {
+            return Err(ConnectorError {
+                cause: "context capture reached its bound".into(),
+            });
+        }
+        let me = me.or_else(|| self.me().ok());
         let mut names = self.names();
-        let text = names.written(text);
-        let accompanying = accompanying(
-            &self.api,
-            self.context_messages,
-            &me,
-            &mut names,
-            conversation,
-            message,
-            previous,
-        )
-        .map_err(failed)?;
-        Ok(Captured { text, accompanying })
+        let mut captured = render_context(text, &messages, limit, me.as_ref(), &mut |user| {
+            names.of(user)
+        });
+        captured.accompanying.stopped_early = stopped_early;
+        captured.accompanying.complete_from = complete_from;
+        Ok(captured)
+    }
+
+    fn without_context(&self, text: &str) -> Captured {
+        Captured {
+            text: cached_names(&self.names, |lookup| written_mentions(text, lookup)),
+            accompanying: Accompanying {
+                unread: true,
+                ..Default::default()
+            },
+        }
     }
 
     fn answer(
@@ -1156,39 +1212,168 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
     Ok(Some(incoming))
 }
 
-/// What accompanies a received message: of the messages before the first
-/// in a conversation — of the thread, or of the channel when it starts the
-/// thread — or of those since the previous one, at most `context_messages`
-/// of the most recent, and whether earlier ones were left out. Speakers are
-/// named and mentions written as names, as for the addressed message.
-fn accompanying(
-    api: &SlackApi,
-    context_messages: u64,
-    me: &Me,
-    names: &mut Names<'_>,
+/// History is newest first. Replies are oldest first within a time range,
+/// so visit recent ranges first and split a full range before trusting its
+/// first page to contain the most recent replies.
+fn read_context(
+    slack: &Slack,
     conversation: &str,
     message: &str,
-    previous: Option<&str>,
-) -> Result<Accompanying, SlackError> {
+    excluded: &std::collections::HashSet<String>,
+    limit: usize,
+    snapshot: &dyn Fn(Vec<Value>, bool, Option<Timestamp>, bool) -> bool,
+) -> Result<(Vec<Value>, bool, Option<Timestamp>), SlackError> {
+    use std::collections::BTreeMap;
+
     let (channel, thread) = split_conversation(conversation);
-    let ts = message;
-    let cap = usize::try_from(context_messages).unwrap_or(usize::MAX);
-    let (earlier, left_out) = match previous {
-        Some(previous) => api.read(channel, thread, Some(previous), ts, cap, false)?,
-        None => {
-            let within = thread.filter(|thread| *thread != ts);
-            api.read(channel, within, None, ts, cap, false)?
-        }
+    let thread = thread.filter(|thread| *thread != message);
+    let method = if thread.is_some() {
+        "conversations.replies"
+    } else {
+        "conversations.history"
     };
+    let latest = ts_micros(message).ok_or_else(|| SlackError::Api {
+        method: method.into(),
+        cause: "invalid message time".into(),
+    })?;
+    // An exclusive lower bound one tick before the root includes the root.
+    let root = thread.and_then(ts_micros).map(|at| at.saturating_sub(1));
+    let recent = root.map(|root| root.max(latest.saturating_sub(60_000_000)));
+    let mut earlier = recent
+        .zip(root)
+        .filter(|(low, root)| low > root)
+        .map(|(low, root)| (Some(root), low.saturating_add(1)))
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut range = (recent, latest);
+    let mut cursor = None::<String>;
+    let mut messages = BTreeMap::new();
+    let current_upper = latest;
+    loop {
+        let (lower, upper) = range;
+        let latest = slack_timestamp(upper);
+        let oldest = lower.map(slack_timestamp);
+        let mut args = vec![
+            ("channel", channel),
+            ("latest", latest.as_str()),
+            ("inclusive", "false"),
+            ("limit", "200"),
+        ];
+        if let Some(oldest) = &oldest {
+            args.push(("oldest", oldest));
+        }
+        if let Some(thread) = thread {
+            args.push(("ts", thread));
+        }
+        if let Some(cursor) = &cursor {
+            args.push(("cursor", cursor));
+        }
+        let body = slack.api.call(method, false, &args)?;
+        let page = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .ok_or_else(|| SlackError::Api {
+                method: method.into(),
+                cause: "no messages".into(),
+            })?;
+        let next_cursor = body
+            .pointer("/response_metadata/next_cursor")
+            .and_then(Value::as_str)
+            .filter(|cursor| !cursor.is_empty());
+        let more =
+            next_cursor.is_some() || body.get("has_more").and_then(Value::as_bool) == Some(true);
+        for message in page {
+            let Some(at) =
+                message_ts(message).filter(|at| *at < upper && lower.is_none_or(|low| *at > low))
+            else {
+                continue;
+            };
+            if notice(message) || messages.contains_key(&at) {
+                continue;
+            }
+            messages.insert(at, message.clone());
+        }
+
+        if (thread.is_none() || !more)
+            && messages
+                .range((
+                    std::ops::Bound::Excluded(lower.unwrap_or(i64::MIN)),
+                    std::ops::Bound::Excluded(current_upper),
+                ))
+                .filter(|(_, m)| m["ts"].as_str().is_some_and(|id| !excluded.contains(id)))
+                .take(limit.saturating_add(1))
+                .count()
+                > limit
+        {
+            let stopped_early = more || !earlier.is_empty();
+            let complete_from =
+                lower.and_then(|low| Timestamp::from_microsecond(low.saturating_add(1)).ok());
+            return Ok((
+                messages.into_values().collect(),
+                stopped_early,
+                complete_from,
+            ));
+        }
+        if (more || !earlier.is_empty())
+            && !snapshot(messages.values().cloned().collect(), false, None, false)
+        {
+            return Err(SlackError::Api {
+                method: method.into(),
+                cause: "context capture reached its bound".into(),
+            });
+        }
+        if !more {
+            let Some(next) = earlier.pop() else {
+                return Ok((messages.into_values().collect(), false, None));
+            };
+            range = next;
+            cursor = None;
+        } else if let Some(low) = lower.filter(|low| upper.saturating_sub(*low) > 2) {
+            // Keep the part we already read for expiry, but don't count it
+            // as a complete newest-first selection until its range is read.
+            let mid = low.midpoint(upper);
+            earlier.push((Some(low), mid.saturating_add(1)));
+            range = (Some(mid), upper);
+            cursor = None;
+        } else if let Some(next) = next_cursor {
+            cursor = Some(next.to_owned());
+        } else if thread.is_none()
+            && let Some(oldest) = page
+                .iter()
+                .filter_map(message_ts)
+                .filter(|at| *at < upper)
+                .min()
+        {
+            range.1 = oldest;
+        } else {
+            return Err(SlackError::Api {
+                method: method.into(),
+                cause: "missing continuation for context".into(),
+            });
+        }
+    }
+}
+
+fn slack_timestamp(micros: i64) -> String {
+    format!(
+        "{}.{:06}",
+        micros.div_euclid(1_000_000),
+        micros.rem_euclid(1_000_000)
+    )
+}
+
+fn render_context(
+    text: &str,
+    earlier: &[Value],
+    limit: usize,
+    me: Option<&Me>,
+    lookup: &mut dyn FnMut(&str) -> String,
+) -> Captured {
+    let text = written_mentions(text, &mut *lookup);
     let messages = earlier
         .iter()
         .map(|m| {
             let user = m.get("user").and_then(Value::as_str).unwrap_or_default();
-            let own = m
-                .get("bot_id")
-                .and_then(Value::as_str)
-                .is_some_and(|bot| Some(bot) == me.bot.as_deref())
-                || (!user.is_empty() && user == me.user);
             let speaker = if user.is_empty() {
                 m.get("username")
                     .or_else(|| m.get("bot_id"))
@@ -1196,17 +1381,30 @@ fn accompanying(
                     .unwrap_or_default()
                     .to_owned()
             } else {
-                names.of(user)
+                lookup(user)
             };
             Earlier {
+                id: m.get("ts").and_then(Value::as_str).map(str::to_owned),
                 speaker,
-                own,
+                own: me.is_some_and(|me| own_message(m, me)),
                 at: m.get("ts").and_then(Value::as_str).and_then(ts_time),
-                text: names.written(m.get("text").and_then(Value::as_str).unwrap_or_default()),
+                text: written_mentions(
+                    m.get("text").and_then(Value::as_str).unwrap_or_default(),
+                    &mut *lookup,
+                ),
             }
         })
         .collect();
-    Ok(Accompanying { messages, left_out })
+    Captured {
+        text,
+        accompanying: Accompanying {
+            messages,
+            limit: Some(limit),
+            left_out: false,
+            unread: false,
+            ..Accompanying::default()
+        },
+    }
 }
 
 #[cfg(test)]

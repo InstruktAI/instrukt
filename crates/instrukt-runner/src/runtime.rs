@@ -195,6 +195,31 @@ pub enum InputState {
     Consumed,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum DispatchError {
+    #[error(transparent)]
+    BeforeFrame(SessionsError),
+    #[error(transparent)]
+    AfterFrame(SessionsError),
+}
+
+impl DispatchError {
+    pub(crate) fn into_inner(self) -> SessionsError {
+        match self {
+            Self::BeforeFrame(error) | Self::AfterFrame(error) => error,
+        }
+    }
+}
+
+/// The runtime's reconciliation of one exact send attempt.
+pub enum SendEvidence {
+    Accepted,
+    Rejected,
+    IdleWithoutInput,
+    Unresolved,
+    Presence(Presence),
+}
+
 /// Runtime-owned input evidence, independent of transcript/run-id representation.
 #[derive(Debug, Clone)]
 pub struct InputObservation {
@@ -277,6 +302,13 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     fn diagnostic(&self, operation: &str, error: &SessionsError) -> NativeDiagnostic {
         _diagnostics::diagnose(self.runtime().name(), operation, error, None)
     }
+    /// Whether the adapter can prove a send did not reach acceptance.
+    fn send_certainly_rejected(&self, _session: &SessionRef, error: &SessionsError) -> bool {
+        matches!(
+            error,
+            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. })
+        )
+    }
     fn runtime(&self) -> Runtime;
     /// One provider snapshot read now, with a token of its own: for a
     /// command that reads readiness once, never for a start.
@@ -320,6 +352,12 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     ) -> Result<(), SessionsError>;
     fn delivery_realization(&self) -> DeliveryRealization;
     fn supports(&self, capability: Capability) -> bool;
+    fn observe_send(
+        &self,
+        session: &SessionRef,
+        text: &str,
+        command_id: Option<&str>,
+    ) -> Result<SendEvidence, SessionsError>;
     fn observe_input(
         &self,
         _session: &SessionRef,
@@ -356,6 +394,13 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     fn list(&self, checkout: &Path) -> Result<Vec<Thread>, SessionsError>;
     fn start_or_wake(&self, assignment: &RuntimeAssignment<'_>) -> Result<Thread, SessionsError>;
     fn start(&self, request: &RuntimeAssignment<'_>) -> Result<Thread, SessionsError>;
+    fn dispatch_send(
+        &self,
+        session: &SessionRef,
+        command_id: &str,
+        text: &str,
+        before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+    ) -> Result<(), DispatchError>;
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError>;
     fn read_state(&self, session: &SessionRef) -> Result<Thread, SessionsError>;
     fn read_conversation(&self, session: &SessionRef) -> Result<Conversation, SessionsError>;

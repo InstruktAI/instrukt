@@ -124,6 +124,35 @@ path is the same for every connector, whichever channel it speaks to
 
 ### One addressed message, one turn
 
+Each conversation keeps a durable receipt for every provider message the
+agent has received, identified in Slack by its timestamp. A receipt covers
+a message delivered as its own turn or as context for another message.
+For each delivery, including a retry, select only earlier messages in the
+provider's thread or channel range that lack a receipt. Exclude messages
+waiting for their own turns. Apply the context limit to that selection and
+include the omission note when the limit trims it. Record the selected
+messages and addressed message in the same transaction that records the
+delivery. A send or start whose acceptance is uncertain retains the exact
+input for reconciliation and keeps later work queued until it is resolved.
+The relay sends through T3's authenticated WebSocket command endpoint. It
+records a command ID derived from the message and its attempt boundary before
+dispatch. An uncertain retry keeps that ID and framed input. T3's durable
+command receipt prevents a second turn across connections and restarts.
+A confirmed refusal allows the next attempt to select context again and use a
+fresh boundary. Presence and its recovery doors still apply.
+Failures before any byte of the request frame is written leave the message
+waiting with its command ID and an operator-visible cause. The relay retries
+these outages without a delivery-unknown deadline. Once any request byte has
+been written, delivery is uncertain and the same ID is used to reconcile or
+retry it.
+If the runtime has other work or cannot confirm delivery through
+`SEND_RECONCILE_BOUND` (five minutes on the operator clock), retain the input,
+record delivery unknown for the operator, and release its place in the queue.
+An older CLI attempt without a command ID cannot be retried automatically.
+A later match to either attempt confirms delivery and lets the answer proceed. Receipts follow message retention as stated in
+the state-database spec.
+
+
 - Each addressed message is delivered as its own input and starts its own
   turn. Messages of one conversation are delivered in the order they were
   written, as far as they have arrived; a later one waits until the session's
@@ -435,6 +464,10 @@ Scenario: The member receives the answer after a retry
   And progress from the unsuccessful work is never posted as the answer
   And another member can be answered while the failed question waits
   And if the wait earns an unavailable notice, only one is posted before the answer
+  And a send with a lost response and no runtime record is retried with the same command identity once the runtime is idle
+  And if the original dispatch reaches T3 after a runner restart and its retry, only one turn takes the question
+  And an outage before dispatch keeps a saved question retryable even past the reconciliation bound
+  And later questions reach the assistant after the saved question without a duplicate delivery
 
 ```
 

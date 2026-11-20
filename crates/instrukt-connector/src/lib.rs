@@ -18,6 +18,6 @@ mod _values;
 pub use _connector::{Connector, Inbox, Kind, SecretResolver};
 pub use _declaration::{Declaration, Declared, Field, Rule};
 pub use _values::{
-    Accompanying, Admission, AnswerError, Captured, Clock, ConnectorError, Earlier, Incoming,
-    Limits, Place, Sender, Status,
+    Accompanying, Admission, AnswerError, Captured, Clock, ConnectorError, ContextSnapshot,
+    Earlier, Incoming, Limits, Place, Sender, Status,
 };
