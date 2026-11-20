@@ -975,7 +975,7 @@ fn failed_work_is_retried_after_a_restart() {
     wait_for_answer_fixture("the opening answer is recorded", || {
         c.slack.posts_beginning("Ready to review.") == 1 && answers_recorded(&c)
     });
-    c.runtime.flag("hold-show-after-send", true);
+    c.runtime.hold_show_after_send(&session);
     let first = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> Can we ship?", Some(&parent));
@@ -1152,7 +1152,7 @@ fn a_replacement_reports_the_old_acknowledgement() {
     let hold = c.env.path("ack-hold");
     let key = conversations::key(&c.company(), SLACK, "D30");
     std::fs::write(&hold, &key).unwrap();
-    c.runtime.flag("hold-show-after-send", true);
+    c.runtime.hold_show_after_send(&session);
     let question = c.slack.direct("D30", "USTEVEN", "What changed?");
     wait_for_answer_fixture("the old input read-back is held", || {
         c.runtime.held_show_running(&session)
