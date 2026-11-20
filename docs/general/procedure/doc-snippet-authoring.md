@@ -1,5 +1,10 @@
 ---
-activation_trigger: Use when proposing, drafting, creating, changing or retiring a snippet under docs/general/, docs/domain/<name>/ or docs/project/ — before its shape is decided. READMEs, website copy and other prose outside those trees never activate it.
+activation_trigger: >-
+  Use as soon as you consider creating, changing or retiring a taxonomy snippet
+  under `docs/general/`, `docs/domain/<name>/` or `docs/project/`, companions
+  included. Ordinary README or website prose never activates it; directive text
+  for agents elsewhere still needs its owning snippet updated, per
+  `general/policy/documentation-discipline`.
 description: Establish whether documentation work is ready and authorized, then author
   snippets according to the taxonomy, schema, and policies.
 visibility: public
