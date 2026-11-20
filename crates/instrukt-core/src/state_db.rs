@@ -546,8 +546,17 @@ mod tests {
         }
         conn.pragma_update(None, "user_version", u32::try_from(before).unwrap())
             .unwrap();
+        conn.execute("INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,attempted_at) VALUES('acme','slack','C1/1','turn-1',0,'Kept answer','2026-11-18T10:00:00Z')", []).unwrap();
         conn.execute_batch("INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,replied_at) VALUES('acme','slack','C1/1','UOTHER','2026-11-18T10:00:00Z','2026-11-18T10:00:02Z');INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,failure) VALUES('acme','slack','D1/2','UGUEST','2026-11-18T10:01:00Z','Slack chat.postMessage: timeout');").unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let attempts: (String, Option<String>) = conn
+            .query_row(
+                "SELECT attempted_at,latest_attempted_at FROM conversation_answers",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(attempts, ("2026-11-18T10:00:00Z".to_owned(), None));
         type Row = (
             String,
             String,

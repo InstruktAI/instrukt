@@ -714,12 +714,15 @@ and `message`, the connector's identity of that message.
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the
 address, `turn` and `piece`. Columns: `text`, the piece's text;
-`attempted_at`, when its post was last begun, recorded before the connector can
-accept it, `NULL` before a first attempt; `posted_at`, when the connector
+`attempted_at`, the earliest unconfirmed post attempt, and
+`latest_attempted_at`, the latest unconfirmed attempt. Both are recorded
+before the provider can accept a post. A single attempt kept by an earlier
+version supplies both bounds. `posted_at`, when the connector
 accepted its post, `NULL` while outstanding; `failure`, the cause of its last
 failed post, `NULL` once posted. A piece with `attempted_at` and no `posted_at`
 may have been accepted; the conversation core looks for it at the connector
-before it is posted again
+before it is posted again. A rejected retry preserves earlier attempts unless
+a read started after their latest request's timeout and found no post
 (`project/instrukt/spec/feature/company/conversations`).
 
 **`conversation_refusals`** — the platform's own replies owed to a sender in a

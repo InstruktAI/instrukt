@@ -1,7 +1,16 @@
 //! The operations of a channel provider and of one company's connector, and
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
-use crate::_values::{Admission, Captured, ConnectorError, Incoming, Limits, Place, Status};
+use crate::_values::{
+    Admission, AnswerError, Captured, ConnectorError, Incoming, Limits, Place, Status,
+};
+use jiff::Timestamp;
+
+/// A post found in the connector's own messages.
+pub struct OwnPost {
+    pub text: String,
+    pub at: Timestamp,
+}
 
 /// The host's side of [`Connector::listen`].
 pub trait Inbox: Sync {
@@ -35,12 +44,13 @@ pub trait Connector: Send + Sync {
         previous: Option<&str>,
         text: &str,
     ) -> Result<Captured, ConnectorError>;
-    /// Post one part of an answer to `conversation`.
-    fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError>;
-    /// The text of each post of this connector's own in `conversation` after
+    /// Post one part of an answer to `conversation`, returning the provider's
+    /// posting time when its receipt has one.
+    fn answer(&self, conversation: &str, part: &str) -> Result<Option<Timestamp>, AnswerError>;
+    /// Each post of this connector's own in `conversation` after
     /// its provider message `since`, oldest first: how a part whose post lost
     /// its response, or whose acceptance went unrecorded, is recognised.
-    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError>;
+    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<OwnPost>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
     /// The one notice that the assistant is temporarily unavailable, worded

@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use instrukt_connector::{
-    Accompanying, Admission, Captured, Clock, Connector, ConnectorError, Declaration, Declared,
-    Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender, Status,
+    Accompanying, Admission, AnswerError, Captured, Clock, Connector, ConnectorError, Declaration,
+    Declared, Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender, Status,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -109,6 +109,8 @@ pub static SLACK_DECLARATION: Declaration = Declaration {
 /// two minutes. The status is a courtesy; nothing promises this timing.
 pub(crate) const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 
+/// The default bound on a Slack Web API call.
+const WEB_API_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long one status call may take.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -172,6 +174,9 @@ pub enum SlackError {
     /// token.
     #[error("Slack {method}: {cause}")]
     Api { method: String, cause: String },
+    /// A Slack response confirms the post was rejected.
+    #[error("Slack {method}: {cause}")]
+    RejectedPost { method: String, cause: String },
     #[error(
         "`{API_URL_SETTING}` may only name a loopback address (http://127.0.0.1, http://localhost or http://[::1]); unset it to reach Slack"
     )]
@@ -287,7 +292,7 @@ impl SlackApi {
             app_token,
             bot_token,
             agent: ureq::Agent::config_builder()
-                .timeout_global(Some(Duration::from_secs(30)))
+                .timeout_global(Some(WEB_API_TIMEOUT))
                 .http_status_as_error(false)
                 .build()
                 .into(),
@@ -358,12 +363,33 @@ impl SlackApi {
         if body.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(body)
         } else {
-            Err(fail(
-                body.get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("not ok")
-                    .to_owned(),
-            ))
+            let cause = body
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("not ok");
+            if method == "chat.postMessage"
+                && body.get("ok").and_then(Value::as_bool) == Some(false)
+                && matches!(
+                    cause,
+                    "invalid_auth"
+                        | "not_authed"
+                        | "missing_scope"
+                        | "channel_not_found"
+                        | "not_in_channel"
+                        | "is_archived"
+                        | "restricted_action"
+                        | "restricted_action_read_only_channel"
+                        | "restricted_action_thread_locked"
+                        | "msg_too_long"
+                        | "no_text"
+                )
+            {
+                return Err(SlackError::RejectedPost {
+                    method: method.into(),
+                    cause: cause.into(),
+                });
+            }
+            Err(fail(cause.into()))
         }
     }
 
@@ -435,13 +461,18 @@ impl SlackApi {
     /// Post an answer into a conversation as the agent wrote it, as Markdown
     /// Slack renders (`markdown_text`): its thread in a channel, or the
     /// direct-message channel.
-    pub fn answer(&self, conversation: &str, markdown: &str) -> Result<(), SlackError> {
+    pub fn answer(
+        &self,
+        conversation: &str,
+        markdown: &str,
+    ) -> Result<Option<Timestamp>, SlackError> {
         let (channel, thread) = split_conversation(conversation);
         let mut form = vec![("channel", channel), ("markdown_text", markdown)];
         if let Some(thread) = thread {
             form.push(("thread_ts", thread));
         }
-        self.call("chat.postMessage", false, &form).map(drop)
+        self.call("chat.postMessage", false, &form)
+            .map(|post| post.get("ts").and_then(Value::as_str).and_then(ts_time))
     }
 
     /// Post `text` into a conversation: its thread in a channel, or the
@@ -813,6 +844,7 @@ impl Connector for Slack {
     fn limits(&self) -> instrukt_connector::Limits {
         instrukt_connector::Limits {
             message_chars: SLACK_MESSAGE_LIMIT,
+            answer_timeout: WEB_API_TIMEOUT,
             working_refresh: Some(STATUS_INTERVAL),
         }
     }
@@ -873,13 +905,25 @@ impl Connector for Slack {
         Ok(Captured { text, accompanying })
     }
 
-    fn answer(&self, conversation: &str, part: &str) -> Result<(), ConnectorError> {
-        self.api.answer(conversation, part).map_err(failed)
+    fn answer(&self, conversation: &str, part: &str) -> Result<Option<Timestamp>, AnswerError> {
+        self.api
+            .answer(conversation, part)
+            .map_err(|error| AnswerError {
+                rejected: matches!(
+                    error,
+                    SlackError::RejectedPost { .. } | SlackError::Limited { .. }
+                ),
+                cause: error.to_string(),
+            })
     }
 
     /// Read as the accompanying messages are: the thread's replies for a
     /// channel, the direct-message channel's history otherwise.
-    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<String>, ConnectorError> {
+    fn own_posts(
+        &self,
+        conversation: &str,
+        since: &str,
+    ) -> Result<Vec<instrukt_connector::OwnPost>, ConnectorError> {
         let me = self.me().map_err(failed)?;
         let (channel, thread) = split_conversation(conversation);
         let (messages, _) = self
@@ -894,11 +938,15 @@ impl Connector for Slack {
                     .is_some_and(|bot| Some(bot) == me.bot.as_deref())
                     || m.get("user").and_then(Value::as_str) == Some(me.user.as_str())
             })
-            .map(|m| {
-                m.get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned()
+            .filter_map(|m| {
+                Some(instrukt_connector::OwnPost {
+                    at: m.get("ts").and_then(Value::as_str).and_then(ts_time)?,
+                    text: m
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                })
             })
             .collect())
     }

@@ -33,7 +33,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v20),
     Step(v21),
     Sql(V22),
-    Sql(V23),
+    Step(v23),
 ];
 
 /// Version 22: a consumer's former source no longer in the configuration is
@@ -65,7 +65,29 @@ CREATE INDEX IF NOT EXISTS consumer_open_announcements ON consumer_outcomes (
 /// whose decision is kept as `owed`, `posting` (with when the post was
 /// sent) or `posted`. The table is rebuilt for its key; every stored reply
 /// is kept as a `not_own` one, in its order.
-const V23: &str = "
+fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let notice_rows_present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_refusals') WHERE name='reason')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !notice_rows_present {
+        tx.execute_batch(V23_REFUSALS)?;
+    }
+    // An existing attempt supplies both bounds until a new attempt extends
+    // the window. Keep the column if it is already present.
+    let latest_present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_answers') WHERE name='latest_attempted_at')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !latest_present {
+        tx.execute_batch("ALTER TABLE conversation_answers ADD COLUMN latest_attempted_at TEXT")?;
+    }
+    Ok(())
+}
+
+const V23_REFUSALS: &str = "
 CREATE TABLE conversation_refusals_v23 (
     company      TEXT NOT NULL,
     connector    TEXT NOT NULL,

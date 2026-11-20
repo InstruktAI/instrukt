@@ -240,10 +240,12 @@ archived or absent session, an empty read and a refused attempt end nothing. A
 person's interval is the earliest among their unanswered messages. While the relay
 cannot acquire the conversation source, every unanswered message counts from the
 later of its admission and the start of that failure, unless its own interval
-started earlier. The interval is evaluated by each connector's intake pass, at
-least once per intake interval while an admitted message of its company has no
-posted answer, from the state database and the clock alone, so a held lock or an absent
-source never delays it.
+started earlier. Each connector evaluates notice eligibility from the state
+database and the clock alone at least once per intake interval while an admitted
+message of its company has no posted answer. A provider read for one member
+leaves the eligibility evaluation and other members' reads free to proceed.
+A retained message without a provider sender still has status and cannot
+produce an addressed notice.
 
 **The one notice** is once per person per epoch: from the posting of the last
 answer to that person in that conversation (or the conversation's start) until
@@ -254,6 +256,12 @@ the next answer to them is posted.
 - Only an answer posted to that person — one whose post the connector accepted,
   correlated through its turn to one of that person's messages of the epoch —
   supersedes the notice. Output that is complete but not yet posted does not.
+- When the delivery of an attempted answer is uncertain, the relay reconciles
+  it before a notice can post to that person. A confirmed rejection leaves the
+  person's notice eligible once the no-work interval reaches a minute and
+  no earlier attempt is still uncertain. A read that finds no post clears
+  earlier uncertainty only if it began after the latest unconfirmed request's
+  timeout window.
 - The notice and the conversation's answers are posted under one short
   per-conversation post lock, held for the decision and one post, never for a
   read at the provider or a runtime call. An answer post cancels the person's

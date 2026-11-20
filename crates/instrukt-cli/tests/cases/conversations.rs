@@ -635,16 +635,40 @@ fn notice_text(member: &str) -> String {
 
 /// How many of the app's posts are the one notice to `member`.
 fn notices(c: &Company, member: &str) -> usize {
-    c.slack.posts_beginning(&notice_text(member))
+    let expected = notice_text(member);
+    c.slack
+        .posts()
+        .iter()
+        .filter(|post| {
+            let text = post
+                .markdown
+                .as_deref()
+                .or(post.text.as_deref())
+                .unwrap_or_default();
+            if !text.starts_with(&expected) {
+                return false;
+            }
+            assert_eq!(text, expected);
+            true
+        })
+        .count()
 }
 
 fn notice_state(c: &Company, conversation: &str, member: &str) -> Option<String> {
+    notice_record(c, conversation, member).map(|(state, _)| state)
+}
+
+fn notice_record(
+    c: &Company,
+    conversation: &str,
+    member: &str,
+) -> Option<(String, Option<String>)> {
     use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension as _, params};
     let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
     db.query_row(
-        "SELECT state FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
+        "SELECT state,failure FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
         params![conversation, member],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )
     .optional()
     .unwrap()
@@ -693,6 +717,11 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     std::thread::scope(|scope| {
         scope.spawn(the_status_holds_through_locks_held_past_their_wait_and_slow_failures);
         scope.spawn(the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed);
+        scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
+        scope.spawn(a_rejected_retry_keeps_reconciling_the_earlier_answer);
+        scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
+        scope.spawn(notice_epochs_and_reconciliation);
+        scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
         scope.spawn(an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text);
         notice_and_status_for_one_member();
     });
@@ -954,7 +983,6 @@ fn notice_and_status_for_one_member() {
     });
     assert!(!shown(&c, channel, &first).contains(&UNAVAILABLE.to_owned()));
     assert_eq!(notices(&c, "USTEVEN"), 2);
-    notice_epochs_and_reconciliation();
 }
 
 fn interval_clock(clock: &std::path::Path) -> jiff::Timestamp {
@@ -964,13 +992,17 @@ fn interval_clock(clock: &std::path::Path) -> jiff::Timestamp {
 fn notice_epochs_and_reconciliation() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
-    let channel = "D10";
+    let channel = "C1";
     let sender = "USTEVEN";
     let other = "UANNA";
     projected(&c);
     c.runtime.flag("list-failure", true);
-    let first = c.slack.direct(channel, sender, "When do we ship?");
-    let other_message = c.slack.direct(channel, other, "What do I review?");
+    let first = c
+        .slack
+        .mention(channel, sender, "<@UAGENT> When do we ship?", None);
+    let conversation = format!("{channel}/{first}");
+    c.slack
+        .mention(channel, other, "<@UAGENT> What do I review?", Some(&first));
     let first_at = interval_at(&c, &first);
     wait("both members' messages admitted", || {
         c.conversations()
@@ -985,8 +1017,20 @@ fn notice_epochs_and_reconciliation() {
     std::fs::create_dir(&database).unwrap();
     c.run();
     wait("the relay unavailable for both members", || {
-        c.slack.status(channel, &other_message).as_deref() == Some(UNAVAILABLE)
+        c.slack.status(channel, &first).as_deref() == Some(UNAVAILABLE)
     });
+    let again = c
+        .slack
+        .mention(channel, sender, "<@UAGENT> And what time?", Some(&first));
+    wait(
+        "the repeated message admitted while the relay is down",
+        || {
+            c.conversations()
+                .conversations
+                .iter()
+                .any(|row| row.pending_messages == 3)
+        },
+    );
     c.slack.fate(&notice_text(sender), Fate::Lost, 1);
     c.slack.fate(&notice_text(other), Fate::Refused, 1);
     set_clock(&clock, first_at + minute());
@@ -994,19 +1038,26 @@ fn notice_epochs_and_reconciliation() {
         notices(&c, sender) == 1
     });
     wait("the other member's refused notice attempt", || {
-        notice_state(&c, channel, other).as_deref() == Some("posting")
+        notice_record(&c, &conversation, other)
+            .is_some_and(|(state, failure)| state == "posting" && failure.is_some())
     });
     assert_eq!(notices(&c, other), 0);
     c.runner_dies();
-    c.run();
-    let again = c.slack.direct(channel, sender, "And what time?");
-    wait(
-        "the repeated message admitted while the relay is down",
-        || c.slack.status(channel, &again).as_deref() == Some(UNAVAILABLE),
-    );
+    let held = c.slack.held();
+    c.slack.hold_reads_from(&first);
     set_clock(&clock, first_at + jiff::SignedDuration::from_mins(3));
+    c.run();
+    wait("the first member's reconciliation read held", || {
+        c.slack.held() > held
+    });
+    common::wait_until(
+        "the other member told while the first read is held",
+        std::time::Duration::from_secs(12),
+        || notices(&c, other) == 1,
+    );
+    c.slack.release_reads();
     wait("the lost response reconciled after restart", || {
-        notice_state(&c, channel, sender).as_deref() == Some("posted")
+        notice_state(&c, &conversation, sender).as_deref() == Some("posted")
     });
     wait(
         "the other member told after their own attempt did not land",
@@ -1030,10 +1081,24 @@ fn notice_epochs_and_reconciliation() {
     wait("the second input accepted", || {
         c.runtime.message_count(&session) == 2
     });
+    c.runtime.flag("send-failure", true);
     c.finish_turn(&session, 1, "The release notes.");
     wait("the second answer", || {
         c.slack.posts_beginning("The release notes.") == 1
     });
+    // The next input was queued before the first notice. Its new epoch
+    // must disregard that visible notice when the new attempt is refused.
+    let queued_at = interval_at(&c, &again);
+    c.slack.fate(&notice_text(sender), Fate::Refused, 1);
+    set_clock(&clock, queued_at + minute());
+    wait("the new attempt for the queued message", || {
+        notice_state(&c, &conversation, sender).as_deref() == Some("posting")
+    });
+    set_clock(&clock, queued_at + jiff::SignedDuration::from_mins(3));
+    wait("the new notice after the refused attempt settles", || {
+        notices(&c, sender) == 2
+    });
+    c.runtime.flag("send-failure", false);
     wait("the third input accepted", || {
         c.runtime.message_count(&session) == 3
     });
@@ -1042,7 +1107,8 @@ fn notice_epochs_and_reconciliation() {
         c.slack.posts_beginning("At noon.") == 1
     });
     wait("the members' notice records rearmed", || {
-        notice_state(&c, channel, sender).is_none() && notice_state(&c, channel, other).is_none()
+        notice_state(&c, &conversation, sender).is_none()
+            && notice_state(&c, &conversation, other).is_none()
     });
     // A new epoch can owe another notice. A post still in flight has time
     // to become visible without sending a second copy.
@@ -1051,41 +1117,51 @@ fn notice_epochs_and_reconciliation() {
         interval_clock(&clock) + jiff::SignedDuration::from_secs(1),
     );
     c.runtime.flag("send-failure", true);
-    let next = c.slack.direct(channel, sender, "Where are the notes?");
+    let next = c.slack.mention(
+        channel,
+        sender,
+        "<@UAGENT> Where are the notes?",
+        Some(&first),
+    );
     let next_at = interval_at(&c, &next);
     c.slack.fate(&notice_text(sender), Fate::Late, 1);
     set_clock(&clock, next_at + minute());
-    wait("the second epoch's notice sent", || {
-        notice_state(&c, channel, sender).as_deref() == Some("posting")
+    wait("the following epoch's notice sent", || {
+        notice_state(&c, &conversation, sender).as_deref() == Some("posting")
     });
     let reads = c.slack.reads();
     wait(
         "a reconciliation read while the notice is in flight",
         || c.slack.reads() > reads,
     );
-    assert_eq!(notices(&c, sender), 1);
+    assert_eq!(notices(&c, sender), 2);
     c.runtime.flag("send-failure", false);
     wait("the new epoch's input accepted", || {
         c.runtime.message_count(&session) == 4
     });
     c.finish_turn(&session, 3, "NOOP");
-    wait("the completed message's status cleared", || {
-        shown(&c, channel, &next).last().map(String::as_str) == Some("")
+    wait("the completed message leaves no pending message", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .all(|row| row.pending_messages == 0)
     });
     // NOOP completes one message and leaves the person's epoch and its
     // reconciliation range in place for the next message.
     c.runtime.flag("send-failure", true);
-    let after_quiet = c.slack.direct(channel, sender, "And the contract?");
+    let after_quiet = c
+        .slack
+        .mention(channel, sender, "<@UAGENT> And the contract?", Some(&first));
     interval_at(&c, &after_quiet);
     c.slack.commit_late();
     wait("the new epoch's notice visible", || {
-        notices(&c, sender) == 2
+        notices(&c, sender) == 3
     });
     set_clock(&clock, next_at + jiff::SignedDuration::from_mins(3));
     wait("the late notice reconciled", || {
-        notice_state(&c, channel, sender).as_deref() == Some("posted")
+        notice_state(&c, &conversation, sender).as_deref() == Some("posted")
     });
-    assert_eq!(notices(&c, sender), 2);
+    assert_eq!(notices(&c, sender), 3);
     c.runtime.flag("send-failure", false);
     wait("the next input accepted", || {
         c.runtime.message_count(&session) == 5
@@ -1093,6 +1169,183 @@ fn notice_epochs_and_reconciliation() {
     c.finish_turn(&session, 4, "In the wiki.");
     wait("the new epoch's answer", || {
         c.slack.posts_beginning("In the wiki.") == 1
+    });
+    for post in c.slack.posts() {
+        assert_eq!(post.channel, "C1");
+        assert_eq!(post.thread.as_deref(), Some(first.as_str()));
+    }
+}
+
+fn a_lost_answer_response_defers_notices_until_read_back() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    projected(&c);
+    let asked = c.slack.direct("D13", "USTEVEN", "Who signed?");
+    let session = started(&c, &[]);
+    c.slack.fate("Ada signed.", Fate::Lost, 1);
+    c.slack.hold_reads_from(&asked);
+    c.finish_turn(&session, 0, "Ada signed.");
+    wait("Slack displays the answer before reconciliation", || {
+        c.slack.posts_beginning("Ada signed.") == 1 && c.slack.held() > 0
+    });
+    c.runner_dies();
+    let opened = interval_at(&c, &asked);
+    set_clock(&clock, opened + minute());
+    let held = c.slack.held();
+    c.run();
+    wait("the restarted relay reading back the answer", || {
+        c.slack.held() > held
+    });
+    // Wait through two eligibility passes while the provider read stays held.
+    // Slack's request timeout is 30 seconds.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(11);
+    while std::time::Instant::now() < until {
+        assert_eq!(notices(&c, "USTEVEN"), 0, "the answer is already visible");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    c.slack.release_reads();
+    wait("the answer reconciled", || answers_recorded(&c));
+    assert_eq!(c.slack.posts_beginning("Ada signed."), 1);
+    assert_eq!(notices(&c, "USTEVEN"), 0);
+}
+
+fn a_rejected_retry_keeps_reconciling_the_earlier_answer() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    projected(&c);
+    let asked = c.slack.direct("D16", "USTEVEN", "Is the release ready?");
+    let session = started(&c, &[]);
+    let answer = "The release is ready.";
+    c.slack.fate(answer, Fate::Late, 1);
+    c.slack.fate(answer, Fate::Refused, usize::MAX);
+    c.slack.hold_reads_from(&asked);
+    c.finish_turn(&session, 0, answer);
+    wait("the first answer's read-back before retrying", || {
+        c.slack.held() > 0
+    });
+    assert!(c.slack.posts().is_empty());
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_secs(5),
+    );
+    c.slack.release_reads();
+    wait("the retry rejected after an empty read-back", || {
+        c.conversations().conversations.iter().any(|row| {
+            row.failures
+                .iter()
+                .any(|cause| cause.contains("not_in_channel"))
+        })
+    });
+    assert!(c.slack.posts().is_empty());
+    let opened = interval_at(&c, &asked);
+    c.slack.hold_reads_from(&asked);
+    c.slack.commit_late();
+    assert_eq!(c.slack.posts_beginning(answer), 1);
+    set_clock(&clock, opened + minute());
+    // Keep read-back blocked through two notice passes. The answer has
+    // arrived, but the runner still needs to reconcile its earlier attempt.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(11);
+    while std::time::Instant::now() < until {
+        assert_eq!(
+            notices(&c, "USTEVEN"),
+            0,
+            "the earlier answer already landed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    c.slack.release_reads();
+    wait(
+        "the earlier answer reconciled after a rejected retry",
+        || answers_recorded(&c),
+    );
+    assert_eq!(c.slack.posts_beginning(answer), 1);
+    assert_eq!(notices(&c, "USTEVEN"), 0);
+
+    // An empty read after the timeout can settle a post that never appears.
+    // A confirmed rejection then permits a notice.
+    let before = c.sessions();
+    projected(&c);
+    let absent = c.slack.direct("D17", "USTEVEN", "Who is on call?");
+    let session = started(&c, &before);
+    c.slack.fate("Ben.", Fate::Late, 1);
+    c.slack.fate("Ben.", Fate::Refused, usize::MAX);
+    c.finish_turn(&session, 0, "Ben.");
+    let opened = interval_at(&c, &absent);
+    set_clock(&clock, opened + minute());
+    wait(
+        "the member notified after read-back establishes absence",
+        || notices(&c, "USTEVEN") == 1,
+    );
+    assert_eq!(c.slack.posts_beginning("Ben."), 0);
+}
+
+fn legacy_messages_keep_status_and_the_notice_anchor() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    c.runtime.flag("separate-completion", true);
+    let channel = "D14";
+    let sender = "USTEVEN";
+    projected(&c);
+    let first = c.slack.direct(channel, sender, "Is there anything to do?");
+    let session = started(&c, &[]);
+    let run = c.runtime.active_run(&session);
+    c.store.agent_writes(&session, &run, 1, "Checking.");
+    wait("the running turn's update", || {
+        c.slack.status(channel, &first).as_deref() == Some("Checking.")
+    });
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    c.runtime.hide_inputs(&session);
+    c.runtime.project(&c.env, &session);
+    let opened = interval_at(&c, &first);
+    c.runtime.flag("list-failure", true);
+    let anonymous = c.slack.direct("D15", "UANNA", "What did I miss?");
+    let anonymous_at = interval_at(&c, &anonymous);
+    db.execute(
+        "UPDATE conversation_messages SET sender=NULL,admitted_at=NULL WHERE message=?1",
+        [&anonymous],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE conversation_messages SET admitted_at=NULL WHERE message=?1",
+        [&first],
+    )
+    .unwrap();
+    c.slack.fate(&notice_text(sender), Fate::Lost, 1);
+    c.slack.hold_reads_from(&first);
+    set_clock(&clock, opened.max(anonymous_at) + minute());
+    wait(
+        "the member's notice despite a legacy row without sender",
+        || notices(&c, sender) == 1,
+    );
+    wait(
+        "the legacy row still gets a status without a sender",
+        || c.slack.status("D15", &anonymous).as_deref() == Some(UNAVAILABLE),
+    );
+    assert_eq!(notices(&c, "UANNA"), 0);
+    // Keep the first notice's read-back unresolved until its trigger
+    // completed with NOOP and a second message is waiting.
+    c.runtime.show_inputs();
+    c.finish_turn(&session, 0, "NOOP");
+    wait("the legacy trigger finished with no output", || {
+        shown(&c, channel, &first).last().map(String::as_str) == Some("")
+    });
+    c.runtime.flag("send-failure", true);
+    let later = c.slack.direct(channel, sender, "And tomorrow?");
+    let later_at = interval_at(&c, &later);
+    set_clock(&clock, later_at + jiff::SignedDuration::from_mins(3));
+    c.slack.release_reads();
+    wait(
+        "the original notice reconciled after its legacy trigger completes",
+        || notice_state(&c, channel, sender).as_deref() == Some("posted"),
+    );
+    assert_eq!(notices(&c, sender), 1);
+    c.runtime.flag("send-failure", false);
+    wait("the follow-up accepted", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "Tomorrow is clear.");
+    wait("the follow-up answered", || {
+        c.slack.posts_beginning("Tomorrow is clear.") == 1
     });
 }
 
@@ -1125,11 +1378,16 @@ fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     });
     c.runtime.show_inputs();
     c.finish_turn(&session, 0, "Ada signed.");
-    wait("the answer posted during the read", || {
-        c.slack.posts_beginning("Ada signed.") == 1 && notice_state(&c, channel, sender).is_none()
-    });
+    common::wait_until(
+        "the answer posted during the read",
+        std::time::Duration::from_secs(12),
+        || {
+            c.slack.posts_beginning("Ada signed.") == 1
+                && notice_state(&c, channel, sender).is_none()
+        },
+    );
     c.slack.release_reads();
-    // A later admitted message makes the intake pass finish the held read.
+    // The next message can be admitted after the held read is released.
     let later = c.slack.direct(channel, sender, "Thanks.");
     wait("intake takes up the next message", || {
         c.runtime.message_count(&session) == 2
@@ -1369,9 +1627,11 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
 fn an_answer_to_one_member_does_not_restart_anothers_minute() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     c.runtime.flag("separate-completion", true);
-    let channel = "D12";
+    let channel = "C1";
     projected(&c);
-    let first = c.slack.direct(channel, "USTEVEN", "When do we ship?");
+    let first = c
+        .slack
+        .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
     let session = started(&c, &[]);
     let run = c.runtime.active_run(&session);
     c.store
@@ -1380,9 +1640,14 @@ fn an_answer_to_one_member_does_not_restart_anothers_minute() {
         "the relay observing the first member's running turn",
         || c.slack.status(channel, &first).as_deref() == Some("Checking the date."),
     );
-    let next = c.slack.direct(channel, "UANNA", "Who reviews it?");
-    wait("the second member's working status", || {
-        c.slack.status(channel, &next).as_deref() == Some(WORKING)
+    let next = c
+        .slack
+        .mention(channel, "UANNA", "<@UAGENT> Who reviews it?", Some(&first));
+    wait("the second member admitted in the shared thread", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|row| row.pending_messages == 2)
     });
     set_clock(
         &clock,
@@ -1560,7 +1825,6 @@ fn the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed() {
     assert_eq!(notices(&c, "USTEVEN"), 1);
     #[cfg(debug_assertions)]
     a_completed_turn_is_read_again_after_a_locked_read();
-    an_answer_can_post_while_its_notice_is_being_reconciled();
 }
 
 #[cfg(debug_assertions)]

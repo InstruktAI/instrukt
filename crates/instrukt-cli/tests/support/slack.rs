@@ -150,6 +150,7 @@ struct Workspace {
     next: u64,
     refuse: bool,
     hold_reads: bool,
+    hold_reads_from: Option<String>,
     /// A post Slack accepted is answered only once released.
     hold_posts: bool,
     /// Every post fails, accepting nothing.
@@ -229,7 +230,17 @@ impl FakeSlack {
                         // Held reads answer only once released.
                         let mut counted = false;
                         while method.starts_with("conversations.")
-                            && workspace.lock().unwrap().hold_reads
+                            && {
+                                let workspace = workspace.lock().unwrap();
+                                workspace.hold_reads
+                                    || workspace.hold_reads_from.as_ref().is_some_and(|oldest| {
+                                        body.split('&').any(|field| {
+                                            field.strip_prefix("oldest=") == Some(oldest)
+                                        }) && body
+                                            .split('&')
+                                            .any(|field| field == "latest=9999999999.999999")
+                                    })
+                            }
                             && !stop.load(Ordering::Acquire)
                         {
                             if !counted {
@@ -286,7 +297,7 @@ impl FakeSlack {
                                 std::thread::sleep(Duration::from_millis(20));
                             }
                             let _ = request.respond(tiny_http::Response::from_string(
-                                json!({"ok": false, "error": "fatal_error"}).to_string(),
+                                json!({"ok": false, "error": "not_in_channel"}).to_string(),
                             ));
                             return;
                         }
@@ -455,7 +466,7 @@ impl FakeSlack {
                 json!({"ok": false, "error": "no_text"})
             }
             "chat.postMessage" if w.fail_posts => {
-                json!({"ok": false, "error": "fatal_error"})
+                json!({"ok": false, "error": "not_in_channel"})
             }
             "chat.postMessage" => {
                 let post = Post {
@@ -478,7 +489,7 @@ impl FakeSlack {
                         *fate
                     });
                 if fate == Some(Fate::Refused) {
-                    return json!({"ok": false, "error": "fatal_error"});
+                    return json!({"ok": false, "error": "not_in_channel"});
                 }
                 let ts = Self::posted(&mut w);
                 let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": shown});
@@ -845,8 +856,14 @@ impl FakeSlack {
         self.workspace.lock().unwrap().hold_reads = true;
     }
 
+    pub fn hold_reads_from(&self, oldest: &str) {
+        self.workspace.lock().unwrap().hold_reads_from = Some(oldest.into());
+    }
+
     pub fn release_reads(&self) {
-        self.workspace.lock().unwrap().hold_reads = false;
+        let mut workspace = self.workspace.lock().unwrap();
+        workspace.hold_reads = false;
+        workspace.hold_reads_from = None;
     }
 
     /// How many reads were held back while reads were held.

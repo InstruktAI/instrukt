@@ -344,7 +344,7 @@ pub struct Unfinished {
     pub conversation: String,
     pub message: String,
     /// Its sender, the provider identity.
-    pub sender: String,
+    pub sender: Option<String>,
     /// When its effective interval ([`effective_since`]) opened, while it is
     /// open.
     pub since: Option<Timestamp>,
@@ -366,7 +366,7 @@ pub fn unfinished(
     type Row = (
         String,
         String,
-        String,
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -443,6 +443,9 @@ pub struct Notice {
     pub sender: String,
     /// The provider message at the start of the read-back range.
     pub since_message: String,
+    /// The last answer's posting time, which excludes an older notice when
+    /// all the waiting messages were already queued before that answer.
+    pub after: Option<Timestamp>,
     /// A post of it was sent and its effect is not known.
     pub posting: bool,
 }
@@ -460,8 +463,11 @@ pub fn notices(
     // conversation, in written order.
     let mut people: Vec<(String, String, String, Option<Timestamp>)> = Vec::new();
     for message in waiting {
-        match people.iter_mut().find(|(conversation, sender, ..)| {
-            *conversation == message.conversation && *sender == message.sender
+        let Some(sender) = message.sender else {
+            continue;
+        };
+        match people.iter_mut().find(|(conversation, member, ..)| {
+            *conversation == message.conversation && *member == sender
         }) {
             Some((.., since)) => {
                 *since = match (*since, message.since) {
@@ -469,22 +475,17 @@ pub fn notices(
                     (a, b) => a.or(b),
                 };
             }
-            None => people.push((
-                message.conversation,
-                message.sender,
-                message.message,
-                message.since,
-            )),
+            None => people.push((message.conversation, sender, message.message, message.since)),
         }
     }
     let state = RunnerState::new(home);
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT conversation,sender,state='posting' FROM conversation_refusals WHERE company=?1 AND connector=?2 AND reason='unavailable' AND state IN ('owed','posting') ORDER BY rowid")
+                .prepare("SELECT conversation,sender,state FROM conversation_refusals WHERE company=?1 AND connector=?2 AND reason='unavailable' ORDER BY rowid")
                 .map_err(state::sql(path))?;
             q.query_map(params![company.as_str(), connector], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?))
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
             })
             .map_err(state::sql(path))?
             .collect::<Result<Vec<_>, _>>()
@@ -495,18 +496,23 @@ pub fn notices(
     for (conversation, sender, first, since) in people {
         let retained = rows
             .iter()
-            .find(|(c, s, _)| *c == conversation && *s == sender);
+            .find(|(c, s, _)| *c == conversation && *s == sender)
+            .map(|(_, _, state)| state.as_str());
+        if retained == Some("posted") {
+            continue;
+        }
         if retained.is_some() || since.is_some_and(|since| since + NOTICE_AFTER <= now) {
-            let posting = retained.is_some_and(|(_, _, posting)| *posting);
-            let since_message = if posting {
-                epoch_start(&state, company, connector, &conversation, &sender)?.unwrap_or(first)
+            let posting = retained == Some("posting");
+            let (start, after) = if posting {
+                epoch_start(&state, company, connector, &conversation, &sender)?
             } else {
-                first
+                (None, None)
             };
             notices.push(Notice {
                 conversation,
                 sender,
-                since_message,
+                since_message: start.unwrap_or(first),
+                after,
                 posting,
             });
         }
@@ -514,36 +520,48 @@ pub fn notices(
     Ok(notices)
 }
 
-/// A message can finish with no output in an epoch that still has a notice.
-/// Include its provider message in the read-back range until an answer posts.
+/// Keep the read-back range anchored even when older waiting messages finish
+/// without output. After an answer, its input anchors the provider read and
+/// the answer's posting time excludes all posts from the earlier epoch.
 fn epoch_start(
     state: &RunnerState,
     company: &ProjectSlug,
     connector: &str,
     conversation: &str,
     sender: &str,
-) -> Result<Option<String>, StateError> {
+) -> Result<(Option<String>, Option<Timestamp>), StateError> {
     state
         .read(|conn, path| {
-            conn.query_row(
-                "WITH last_answer AS (
-                    SELECT max(julianday(a.posted_at)) AS at
-                    FROM conversation_answers a JOIN conversation_messages m
-                      USING (company,connector,conversation,turn)
-                    WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3 AND m.sender=?4
-                 )
-                 SELECT m.message FROM conversation_messages m, last_answer
+            let answer = conn
+                .query_row(
+                    "SELECT a.posted_at,m.message FROM conversation_answers a JOIN conversation_messages m
+                   USING (company,connector,conversation,turn)
                  WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3 AND m.sender=?4
-                   AND m.admitted_at IS NOT NULL
-                   AND (last_answer.at IS NULL OR julianday(m.admitted_at) > last_answer.at)
-                 ORDER BY m.written_us,m.message LIMIT 1",
-                params![company.as_str(), connector, conversation, sender],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(state::sql(path))
+                   AND a.posted_at IS NOT NULL
+                 ORDER BY a.rowid DESC LIMIT 1",
+                    params![company.as_str(), connector, conversation, sender],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+                .map_err(state::sql(path))?;
+            if let Some((at, message)) = answer {
+                let at = at.parse::<Timestamp>().map_err(|error| state::invalid(path, error))?;
+                return Ok((Some(message), Some(at)));
+            }
+            let first = conn
+                .query_row(
+                    "SELECT message FROM conversation_messages
+                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4
+                   AND (admitted_at IS NOT NULL OR state IN (?5,?6,?7))
+                 ORDER BY written_us,message LIMIT 1",
+                    params![company.as_str(), connector, conversation, sender, Stage::Pending.as_str(), Stage::Sent.as_str(), Stage::Answered.as_str()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(state::sql(path))?;
+            Ok((first, None))
         })
-        .map(Option::flatten)
+        .map(Option::unwrap_or_default)
 }
 
 /// What a notice's decision step under the conversation's post lock found.
@@ -575,7 +593,7 @@ pub fn notice_step(
     let accepted_turns = accepted.turns(company, connector, &notice.conversation);
     let overdue = unfinished(home, company, connector)?.iter().any(|m| {
         m.conversation == notice.conversation
-            && m.sender == notice.sender
+            && m.sender.as_deref() == Some(notice.sender.as_str())
             && m.since.is_some_and(|since| since + NOTICE_AFTER <= now)
     });
     let step = RunnerState::new(home).write::<_, StateError>(|tx| {
@@ -591,6 +609,19 @@ pub fn notice_step(
             if answered {
                 return Ok(NoticeStep::Cancelled);
             }
+        }
+        let unreconciled_answer = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_answers a JOIN conversation_messages m
+                    USING (company,connector,conversation,turn)
+                 WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3 AND m.sender=?4
+                   AND a.posted_at IS NULL AND a.attempted_at IS NOT NULL)",
+                params![company.as_str(), connector, notice.conversation, notice.sender],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(state::sql(&path))?;
+        if unreconciled_answer {
+            return Ok(NoticeStep::Cancelled);
         }
         let row: Option<(String, Option<String>)> = tx
             .query_row(
@@ -1619,7 +1650,7 @@ fn harvest(
 /// it has not yet recorded. Such a piece is never posted again: only its
 /// record is retried, on every pass, until it is written.
 #[derive(Debug, Default)]
-pub struct Accepted(std::sync::Mutex<std::collections::BTreeSet<AcceptedPiece>>);
+pub struct Accepted(std::sync::Mutex<std::collections::BTreeMap<AcceptedPiece, Timestamp>>);
 
 /// One accepted piece: its conversation's address, its turn and its index.
 type AcceptedPiece = (String, String, String, String, i64);
@@ -1631,7 +1662,7 @@ impl Accepted {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
+            .keys()
             .filter(|(c, k, place, _, _)| {
                 c == company.as_str() && k == connector && place == conversation
             })
@@ -1648,17 +1679,18 @@ impl Accepted {
             piece,
         )
     }
-    fn holds(&self, c: &Conversation, turn: &str, piece: i64) -> bool {
+    fn at(&self, c: &Conversation, turn: &str, piece: i64) -> Option<Timestamp> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&Self::key(c, turn, piece))
+            .get(&Self::key(c, turn, piece))
+            .copied()
     }
-    fn keep(&self, c: &Conversation, turn: &str, piece: i64) {
+    fn keep(&self, c: &Conversation, turn: &str, piece: i64, at: Timestamp) {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(Self::key(c, turn, piece));
+            .insert(Self::key(c, turn, piece), at);
     }
     fn release(&self, c: &Conversation, turn: &str, piece: i64) {
         self.0
@@ -1674,7 +1706,8 @@ struct Pending {
     turn: String,
     piece: i64,
     text: String,
-    attempted: bool,
+    attempted_at: Option<String>,
+    latest_attempted_at: Option<String>,
 }
 
 /// Post the conversation's retained answer pieces in order, each once. A
@@ -1693,14 +1726,15 @@ fn post(
     let pending = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT turn,piece,text,attempted_at IS NOT NULL FROM conversation_answers WHERE company=?1 AND connector=?2 AND conversation=?3 AND posted_at IS NULL ORDER BY rowid")
+                .prepare("SELECT turn,piece,text,attempted_at,latest_attempted_at FROM conversation_answers WHERE company=?1 AND connector=?2 AND conversation=?3 AND posted_at IS NULL ORDER BY rowid")
                 .map_err(state::sql(path))?;
             q.query_map(params![c.company.as_str(), c.connector, c.conversation], |r| {
                 Ok(Pending {
                     turn: r.get(0)?,
                     piece: r.get(1)?,
                     text: r.get(2)?,
-                    attempted: r.get(3)?,
+                    attempted_at: r.get(3)?,
+                    latest_attempted_at: r.get(4)?,
                 })
             })
             .map_err(state::sql(path))?
@@ -1716,7 +1750,7 @@ fn post(
     let connector = match connectors.open(admitted, &c.company, &c.connector) {
         Ok(connector) => connector,
         Err(error) => {
-            piece_failed(state, c, &pending[0], &error.cause)?;
+            piece_failed(state, c, &pending[0], &error.cause, None)?;
             return Err(error.into());
         }
     };
@@ -1728,50 +1762,75 @@ fn post(
         lock.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     };
+    let timeout = jiff::SignedDuration::try_from(connector.limits().answer_timeout)
+        .map_err(|error| ConversationError::Refused(error.to_string()))?;
     for piece in &pending {
-        if accepted.holds(c, &piece.turn, piece.piece)
-            || (piece.attempted && landed(state, connector.as_ref(), c, piece)?)
-        {
+        let read_at = connectors.now();
+        let receipt = match accepted.at(c, &piece.turn, piece.piece) {
+            None if piece.attempted_at.is_some() => landed(state, connector.as_ref(), c, piece)?,
+            receipt => receipt,
+        };
+        if let Some(at) = receipt {
             let _held = held();
-            accepted.keep(c, &piece.turn, piece.piece);
-            posted(state, c, piece, connectors.now())?;
+            accepted.keep(c, &piece.turn, piece.piece, at);
+            posted(state, c, piece, at)?;
             accepted.release(c, &piece.turn, piece.piece);
             continue;
         }
+        // A negative read only clears older uncertainty once it began
+        // after the latest unconfirmed request's timeout window.
+        let latest = piece
+            .latest_attempted_at
+            .as_deref()
+            .or(piece.attempted_at.as_deref());
+        let latest_at = latest
+            .map(str::parse::<Timestamp>)
+            .transpose()
+            .map_err(|error| {
+                ConversationError::Refused(format!("unreadable answer attempt time: {error}"))
+            })?;
+        let (prior, prior_latest) = if latest_at.is_some_and(|at| read_at < at + timeout) {
+            (piece.attempted_at.as_deref(), latest)
+        } else {
+            (None, None)
+        };
         let _held = held();
+        let attempt = connectors.now().to_string();
         state.write::<_, StateError>(|tx| {
             tx.execute(
-                "UPDATE conversation_answers SET attempted_at=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
-                params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, Timestamp::now().to_string()],
+                "UPDATE conversation_answers SET attempted_at=?6,latest_attempted_at=?7 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+                params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, prior.unwrap_or(&attempt), attempt],
             )
             .map_err(state::sql(&state::db_path(tx)))?;
             Ok(())
         })?;
-        if let Err(error) = connector.answer(&c.conversation, &piece.text) {
-            piece_failed(state, c, piece, &error.cause)?;
-            return Err(ConversationError::Refused(format!(
-                "post failed and stays pending: {}",
-                error.cause
-            )));
-        }
-        if let Err(error) = posted(state, c, piece, connectors.now()) {
-            accepted.keep(c, &piece.turn, piece.piece);
+        let at = match connector.answer(&c.conversation, &piece.text) {
+            Ok(at) => at.unwrap_or_else(|| connectors.now()),
+            Err(error) => {
+                let previous = error.rejected.then_some((prior, prior_latest));
+                piece_failed(state, c, piece, &error.cause, previous)?;
+                return Err(ConversationError::Refused(format!(
+                    "post failed and stays pending: {}",
+                    error.cause
+                )));
+            }
+        };
+        if let Err(error) = posted(state, c, piece, at) {
+            accepted.keep(c, &piece.turn, piece.piece, at);
             return Err(error);
         }
     }
     Ok(())
 }
 
-/// Whether the post of `piece`, begun earlier with no acceptance recorded,
-/// landed: more of the connector's own posts in the conversation since its
-/// first addressed message carry its text than pieces with that text are
-/// recorded posted.
+/// The provider's time of an unrecorded post carrying this piece's text,
+/// after the matching posts already recorded.
 fn landed(
     state: &RunnerState,
     connector: &dyn instrukt_connector::Connector,
     c: &Conversation,
     piece: &Pending,
-) -> Result<bool, ConversationError> {
+) -> Result<Option<Timestamp>, ConversationError> {
     let counted = state
         .read(|conn, path| {
             let first: Option<String> = conn
@@ -1792,17 +1851,22 @@ fn landed(
             Ok((first, recorded))
         })?;
     let Some((Some(first), recorded)) = counted else {
-        return Ok(false);
+        return Err(ConversationError::Refused(
+            "cannot reconcile an answer without its conversation's first message".into(),
+        ));
     };
     let own = match connector.own_posts(&c.conversation, &first) {
         Ok(own) => own,
         Err(error) => {
-            piece_failed(state, c, piece, &error.cause)?;
+            piece_failed(state, c, piece, &error.cause, None)?;
             return Err(error.into());
         }
     };
-    let carried = own.iter().filter(|text| **text == piece.text).count();
-    Ok(i64::try_from(carried).unwrap_or(i64::MAX) > recorded)
+    Ok(own
+        .iter()
+        .filter(|post| post.text == piece.text)
+        .nth(usize::try_from(recorded).unwrap_or(usize::MAX))
+        .map(|post| post.at))
 }
 
 /// Record that the connector accepted `piece`. The answer reached the people
@@ -1817,7 +1881,7 @@ fn posted(
     state.write::<_, StateError>(|tx| {
         let path = state::db_path(tx);
         tx.execute(
-            "UPDATE conversation_answers SET posted_at=?6,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+            "UPDATE conversation_answers SET posted_at=?6,failure=NULL,attempted_at=NULL,latest_attempted_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
             params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, now.to_string()],
         )
         .map_err(state::sql(&path))?;
@@ -1837,11 +1901,13 @@ fn piece_failed(
     c: &Conversation,
     piece: &Pending,
     cause: &str,
+    rejected: Option<(Option<&str>, Option<&str>)>,
 ) -> Result<(), ConversationError> {
+    let (earliest, latest) = rejected.unwrap_or_default();
     state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_answers SET failure=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
-            params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, cause],
+            "UPDATE conversation_answers SET failure=?6,attempted_at=CASE WHEN ?7 THEN ?8 ELSE attempted_at END,latest_attempted_at=CASE WHEN ?7 THEN ?9 ELSE latest_attempted_at END WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+            params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, cause, rejected.is_some(), earliest, latest],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
