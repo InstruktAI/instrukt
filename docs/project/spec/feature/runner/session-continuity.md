@@ -569,6 +569,11 @@ fallback. Capacity evidence never proves that startup created no thread.
 Every child command instrukt launches has a process group whose descendants
 are cleaned up on every outcome: success, failure, timeout and interruption.
 Completion is not reported while instrukt-owned descendants remain orphaned.
+An absent process group is already stopped. On macOS, after instrukt reaps
+the direct child, a signal can report a permission error as the group
+disappears. Instrukt treats that error as already stopped only when the
+operating system confirms no live member of the group remains. A permission
+error for a live group is reported.
 This concerns instrukt's own commands, not a machine-wide process janitor or
 the runtime's standing agent lifecycle, which T3 owns.
 

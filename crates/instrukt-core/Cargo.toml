@@ -28,6 +28,9 @@ tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+darwin-libproc.workspace = true
+
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true

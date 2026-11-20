@@ -16,8 +16,9 @@ use std::io::{Read, Write};
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// How a command ended.
@@ -277,15 +278,15 @@ impl<'a> Invocation<'a> {
             Ok(helpers) => helpers,
             Err(source) => {
                 group.stop().map_err(|source| self.io(source))?;
-                let _ = child.wait();
+                let _ = group.wait(&mut child);
                 return Err(self.io(source));
             }
         };
-        let status = match self.wait(&mut child, limit) {
+        let status = match self.wait(&group, &mut child, limit) {
             Ok(status) => status,
             Err(err) => {
                 group.stop().map_err(|source| self.io(source))?;
-                let _ = child.wait();
+                let _ = group.wait(&mut child);
                 return Err(err);
             }
         };
@@ -303,7 +304,7 @@ impl<'a> Invocation<'a> {
             Ok(pair) => pair,
             Err(error) => {
                 group.stop().map_err(|source| self.io(source))?;
-                let _ = child.wait();
+                let _ = group.wait(&mut child);
                 return Err(error);
             }
         };
@@ -326,17 +327,18 @@ impl<'a> Invocation<'a> {
     /// reported is the limit the command was given.
     fn wait(
         &self,
+        group: &OwnedProcessGroup,
         child: &mut Child,
         limit: Option<Limit>,
     ) -> Result<std::process::ExitStatus, ProcessError> {
         let Some(limit) = limit else {
-            return child.wait().map_err(|source| self.io(source));
+            return group.wait(child).map_err(|source| self.io(source));
         };
         let mut pause = Duration::from_millis(2);
         loop {
             match limit.start {
                 Start::Real(deadline) => {
-                    if let Some(status) = child.try_wait().map_err(|source| self.io(source))? {
+                    if let Some(status) = group.try_wait(child).map_err(|source| self.io(source))? {
                         return Ok(status);
                     }
                     let now = Instant::now();
@@ -346,7 +348,7 @@ impl<'a> Invocation<'a> {
                     std::thread::sleep(pause.min(deadline - now));
                 }
                 Start::Clock(..) => {
-                    let ended = child.try_wait().map_err(|source| self.io(source))?;
+                    let ended = group.try_wait(child).map_err(|source| self.io(source))?;
                     match limit.judge(ended).map_err(|reason| self.clock(reason))? {
                         Look::Ended(status) => return Ok(status),
                         Look::Passed => return Err(self.timeout(limit.limit)),
@@ -475,8 +477,8 @@ pub fn shell_quote(value: &str) -> String {
 }
 
 // OS signal delivery and child process groups are process-wide resources.
-// This registry contains only live owned groups, never domain/configuration state.
-static GROUPS: Mutex<Vec<rustix::process::Pid>> = Mutex::new(Vec::new());
+// A group stays registered until cleanup, including after its leader is reaped.
+static GROUPS: Mutex<Vec<Arc<ProcessGroup>>> = Mutex::new(Vec::new());
 static SIGNALS: OnceLock<Result<(), String>> = OnceLock::new();
 /// What a catchable stop runs after the owned command groups are stopped and
 /// before the process ends, in the order registered.
@@ -506,7 +508,7 @@ pub fn on_stop(hook: StopHook) -> std::io::Result<()> {
     Ok(())
 }
 
-fn groups() -> std::sync::MutexGuard<'static, Vec<rustix::process::Pid>> {
+fn groups() -> std::sync::MutexGuard<'static, Vec<Arc<ProcessGroup>>> {
     match GROUPS.lock() {
         Ok(groups) => groups,
         Err(poisoned) => poisoned.into_inner(),
@@ -517,8 +519,8 @@ fn install_signals() -> std::io::Result<()> {
         let mut signals=signal_hook::iterator::Signals::new([signal_hook::consts::SIGINT,signal_hook::consts::SIGTERM]).map_err(|e|e.to_string())?;
         std::thread::Builder::new().name("instrukt-child-signals".into()).spawn(move|| {
             for signal in signals.forever() {
-                for pid in groups().iter().copied() {
-                    if let Err(error)=kill_group(pid){tracing::error!(event="interrupted_group_cleanup_failed",pid=pid.as_raw_nonzero().get(),error=%error);}
+                for group in groups().iter() {
+                    if let Err(error)=group.stop() {tracing::error!(event="interrupted_group_cleanup_failed",pid=group.pid.as_raw_nonzero().get(),error=%error);}
                 }
                 let hooks = match STOP_HOOKS.lock() {
                     Ok(mut hooks) => std::mem::take(&mut *hooks),
@@ -542,34 +544,115 @@ fn install_signals() -> std::io::Result<()> {
 pub fn exit_stopping_owned(code: i32) -> ! {
     // Held to the end: no command starts after the groups were stopped.
     let registry = groups();
-    for pid in registry.iter().copied() {
-        if let Err(error) = kill_group(pid) {
-            tracing::error!(event="exit_group_cleanup_failed",pid=pid.as_raw_nonzero().get(),error=%error);
+    for group in registry.iter() {
+        if let Err(error) = group.stop() {
+            tracing::error!(event="exit_group_cleanup_failed",pid=group.pid.as_raw_nonzero().get(),error=%error);
         }
     }
     std::process::exit(code)
 }
 
-fn kill_group(pid: rustix::process::Pid) -> std::io::Result<()> {
-    match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(error) => Err(error.into()),
+struct ProcessGroup {
+    pid: rustix::process::Pid,
+    reaped: AtomicBool,
+}
+
+impl ProcessGroup {
+    fn stop(&self) -> std::io::Result<()> {
+        self.stop_with(|pid| {
+            rustix::process::kill_process_group(pid, rustix::process::Signal::KILL)
+        })
     }
+
+    fn stop_with(
+        &self,
+        signal: impl FnOnce(rustix::process::Pid) -> rustix::io::Result<()>,
+    ) -> std::io::Result<()> {
+        match signal(self.pid) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(rustix::io::Errno::PERM)
+                if self.reaped.load(Ordering::Acquire) && group_is_gone(self.pid) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn group_is_gone(group: rustix::process::Pid) -> bool {
+    use rustix::process::{Pid, getpgid, test_kill_process_group};
+
+    // XNU's POSIX group signal skips zombies. Its group lookup can succeed
+    // even though nobody can be signalled. Enumerate the group and resolve
+    // each member through getpgid, which only looks up live processes.
+    let members = || match darwin_libproc::pgrp_only_pids(group.as_raw_nonzero().get()) {
+        Ok(members) => Some(members),
+        // libproc's wrapper also reports an empty listing as an error.
+        Err(_) if test_kill_process_group(group) == Err(rustix::io::Errno::SRCH) => {
+            Some(Vec::new())
+        }
+        Err(_) => None,
+    };
+    let Some(before) = members() else {
+        return false;
+    };
+    let all_exited = before.iter().all(|&member| {
+        let Some(member) = Pid::from_raw(member) else {
+            return false;
+        };
+        match getpgid(Some(member)) {
+            Ok(actual) => actual != group,
+            Err(rustix::io::Errno::SRCH) => true,
+            Err(_) => false,
+        }
+    });
+    // Keep the error if a member appeared while earlier members exited.
+    all_exited && members().is_some_and(|after| after.iter().all(|member| before.contains(member)))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn group_is_gone(_: rustix::process::Pid) -> bool {
+    false
 }
 
 /// Ownership of one command's process group, retained until its descendants stop.
 pub struct OwnedProcessGroup {
-    pid: rustix::process::Pid,
+    group: Arc<ProcessGroup>,
     stopped: std::cell::Cell<bool>,
 }
 impl OwnedProcessGroup {
+    /// Waits for the direct child of this group and records the reap.
+    pub fn wait(&self, child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
+        self.check_child(child);
+        let status = child.wait()?;
+        self.group.reaped.store(true, Ordering::Release);
+        Ok(status)
+    }
+
+    /// Checks the direct child of this group without blocking, recording a reap.
+    pub fn try_wait(&self, child: &mut Child) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.check_child(child);
+        let _registry = groups();
+        let status = child.try_wait()?;
+        if status.is_some() {
+            self.group.reaped.store(true, Ordering::Release);
+        }
+        Ok(status)
+    }
+
+    fn check_child(&self, child: &Child) {
+        assert_eq!(child.id(), self.group.pid.as_raw_nonzero().get() as u32);
+    }
+
     pub fn stop(&self) -> std::io::Result<()> {
         if self.stopped.get() {
             return Ok(());
         }
         let mut registry = groups();
-        kill_group(self.pid)?;
-        registry.retain(|pid| *pid != self.pid);
+        self.group.stop()?;
+        registry.retain(|group| !Arc::ptr_eq(group, &self.group));
         self.stopped.set(true);
         Ok(())
     }
@@ -590,11 +673,15 @@ pub fn spawn(command: &mut Command) -> std::io::Result<(Child, OwnedProcessGroup
     let child = command.spawn()?;
     let pid = rustix::process::Pid::from_raw(child.id() as i32)
         .ok_or_else(|| std::io::Error::other("invalid child pid"))?;
-    registry.push(pid);
+    let group = Arc::new(ProcessGroup {
+        pid,
+        reaped: AtomicBool::new(false),
+    });
+    registry.push(Arc::clone(&group));
     Ok((
         child,
         OwnedProcessGroup {
-            pid,
+            group,
             stopped: std::cell::Cell::new(false),
         },
     ))
@@ -645,5 +732,65 @@ mod stop_hook_tests {
             Box::new(move || ran.store(true, Ordering::SeqCst)),
         ]);
         assert!(later.load(Ordering::SeqCst));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod darwin_group_tests {
+    use super::*;
+    use rustix::io::Errno;
+    use rustix::process::{Pid, WaitId, WaitIdOptions, test_kill_process_group, waitid};
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test child and signal setup")]
+    fn reaped_leader_does_not_hide_a_live_member_or_fail_on_a_zombie() {
+        let mut leader_command = Command::new("/bin/cat");
+        leader_command.stdin(Stdio::piped());
+        let (mut leader, group) = spawn(&mut leader_command).unwrap();
+        let pid = group.group.pid;
+        let mut member = Command::new("/bin/cat")
+            .process_group(pid.as_raw_nonzero().get())
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let permission_failure = |_| Err(Errno::PERM);
+        assert_eq!(
+            group
+                .group
+                .stop_with(permission_failure)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(Errno::PERM.raw_os_error())
+        );
+        drop(leader.stdin.take());
+        assert!(group.wait(&mut leader).unwrap().success());
+        // A reaped leader alone is insufficient: a live member still makes
+        // the same error a real permission failure.
+        assert_eq!(
+            group
+                .group
+                .stop_with(permission_failure)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(Errno::PERM.raw_os_error())
+        );
+
+        drop(member.stdin.take());
+        let member_pid = Pid::from_raw(member.id() as i32).unwrap();
+        assert!(
+            waitid(
+                WaitId::Pid(member_pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT
+            )
+            .unwrap()
+            .is_some()
+        );
+        // The member has exited and its zombie still keeps the group in the
+        // kernel. Hold that state until after the real cleanup signal.
+        assert_eq!(test_kill_process_group(pid), Err(Errno::PERM));
+        let stopped = group.stop();
+        assert!(member.wait().unwrap().success());
+        stopped.unwrap();
     }
 }
