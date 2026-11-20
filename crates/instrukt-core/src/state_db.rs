@@ -636,6 +636,21 @@ mod tests {
             ),
         ]
         "#);
+        // The widened state retains an unserved message without changing its
+        // position in the notice's coverage.
+        conn.execute(
+            "UPDATE conversation_messages SET state='failed' WHERE message='pending-piece'",
+            [],
+        )
+        .unwrap();
+        let failed: (String, i64) = conn
+            .query_row(
+                "SELECT state,admission_position FROM conversation_messages WHERE message='pending-piece'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(failed, ("failed".to_owned(), 1));
         // A sender has a notice beside a fixed reply; a notice keeps its
         // decision, and a fixed reply none.
         conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','UOTHER','unavailable','2026-11-18T10:03:00Z','owed')", []).unwrap();

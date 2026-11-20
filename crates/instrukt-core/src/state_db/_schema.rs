@@ -64,7 +64,8 @@ CREATE INDEX IF NOT EXISTS consumer_open_announcements ON consumer_outcomes (
 /// answer, or `unavailable`, the one notice of the sender's current epoch,
 /// whose decision is kept as `owed`, `posting` (with when the post was
 /// sent) or `posted`. The table is rebuilt for its key; every stored reply
-/// is kept as a `not_own` one, in its order.
+/// is kept as a `not_own` one, in its order. Widen the message-state check
+/// so a failed turn remains outstanding without blocking relay work.
 fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     let notice_rows_present: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_refusals') WHERE name='reason')",
@@ -109,11 +110,12 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
             tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
         }
     }
+    tx.execute_batch(V23_MESSAGES)?;
     // Older records have no admission sequence. Their retained row order
     // supplies a durable baseline without comparing provider or wall clocks.
     tx.execute_batch(
         "UPDATE conversation_messages SET admission_position=rowid
-           WHERE admission_position IS NULL AND (sender_name IS NOT NULL OR state IN ('pending','sent','answered'));
+           WHERE admission_position IS NULL AND (sender_name IS NOT NULL OR state IN ('pending','sent','failed','answered'));
          CREATE UNIQUE INDEX IF NOT EXISTS conversation_admission_order
            ON conversation_messages(admission_position);
          UPDATE conversation_answers AS a SET admission_position=(
@@ -132,6 +134,46 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     )?;
     Ok(())
 }
+
+const V23_MESSAGES: &str = "
+CREATE TABLE conversation_messages_v23 (
+    company      TEXT NOT NULL,
+    connector    TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    sender       TEXT,
+    sender_name  TEXT,
+    sender_email TEXT,
+    written_us   INTEGER NOT NULL,
+    written_at   TEXT NOT NULL,
+    arrived_at   TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('received', 'refused', 'pending', 'sent', 'failed', 'answered')),
+    text         TEXT NOT NULL,
+    context_json TEXT,
+    boundary     TEXT,
+    content      TEXT,
+    attempted_at TEXT,
+    turn         TEXT,
+    failure      TEXT,
+    admitted_at  TEXT,
+    unavailable_since TEXT,
+    turn_update  TEXT,
+    turn_ended_at TEXT,
+    admission_position INTEGER,
+    PRIMARY KEY (company, connector, conversation, message)
+);
+INSERT INTO conversation_messages_v23 (rowid, company, connector, conversation, message,
+    sender, sender_name, sender_email, written_us, written_at, arrived_at, state, text,
+    context_json, boundary, content, attempted_at, turn, failure, admitted_at,
+    unavailable_since, turn_update, turn_ended_at, admission_position)
+SELECT rowid, company, connector, conversation, message,
+    sender, sender_name, sender_email, written_us, written_at, arrived_at, state, text,
+    context_json, boundary, content, attempted_at, turn, failure, admitted_at,
+    unavailable_since, turn_update, turn_ended_at, admission_position
+FROM conversation_messages;
+DROP TABLE conversation_messages;
+ALTER TABLE conversation_messages_v23 RENAME TO conversation_messages;
+";
 
 const V23_REFUSALS: &str = "
 CREATE TABLE conversation_refusals_v23 (

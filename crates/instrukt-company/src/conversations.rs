@@ -79,6 +79,8 @@ enum Stage {
     Pending,
     /// Accepted by the runtime as its own turn.
     Sent,
+    /// Its turn failed without a reply; it remains unserved.
+    Failed,
     /// Its turn finished; its answer, if any, is retained for posting.
     Answered,
 }
@@ -89,6 +91,7 @@ impl Stage {
             Self::Refused => "refused",
             Self::Pending => "pending",
             Self::Sent => "sent",
+            Self::Failed => "failed",
             Self::Answered => "answered",
         }
     }
@@ -98,6 +101,7 @@ impl Stage {
             Self::Refused,
             Self::Pending,
             Self::Sent,
+            Self::Failed,
             Self::Answered,
         ]
         .into_iter()
@@ -383,11 +387,11 @@ pub fn unfinished(
             .optional()
             .map_err(state::sql(path))?;
         let mut q = conn
-            .prepare("SELECT m.conversation,m.message,m.sender,m.unavailable_since,m.admitted_at,m.turn_update,NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn AND a.delivery_unknown_at IS NOT NULL),m.admission_position FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5) OR (m.state=?6 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL))) ORDER BY m.written_us, m.message")
+            .prepare("SELECT m.conversation,m.message,m.sender,m.unavailable_since,m.admitted_at,m.turn_update,NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn AND a.delivery_unknown_at IS NOT NULL),m.admission_position FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5,?6) OR (m.state=?7 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL))) ORDER BY m.written_us, m.message")
             .map_err(state::sql(path))?;
         let rows: Vec<Row> = q
             .query_map(
-                params![company.as_str(), connector, Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str(), Stage::Answered.as_str()],
+                params![company.as_str(), connector, Stage::Received.as_str(), Stage::Pending.as_str(), Stage::Sent.as_str(), Stage::Failed.as_str(), Stage::Answered.as_str()],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
             )
             .map_err(state::sql(path))?
@@ -1027,15 +1031,15 @@ fn reread(
     .pop())
 }
 
-/// The conversation's messages neither answered nor refused, oldest written
-/// first.
+/// The conversation's messages still requiring relay work, oldest written
+/// first. Failed turns stay outstanding for status and notices.
 fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, ConversationError> {
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) ORDER BY written_us, message")
+                .prepare("SELECT message,state,boundary,content,attempted_at IS NOT NULL,failure FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5,?6) ORDER BY written_us, message")
                 .map_err(state::sql(path))?;
-            q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), Stage::Refused.as_str()], |r| {
+            q.query_map(params![c.company.as_str(), c.connector, c.conversation, Stage::Answered.as_str(), Stage::Refused.as_str(), Stage::Failed.as_str()], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -1621,11 +1625,11 @@ fn harvest(
             for (message, turn, output) in &answers {
                 if output.is_empty() && !turn.succeeded {
                     // The terminal run proves delivery to the runtime, but
-                    // there is no answer. Keep the sent message outstanding
-                    // and preserve its notice epoch until it is served.
+                    // there is no answer. Keep the message outstanding for
+                    // status and notices while later messages dispatch.
                     tx.execute(
                         "UPDATE conversation_messages SET state=?5,failure=?6,turn_update=NULL,unavailable_since=coalesce(unavailable_since,?7) WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
-                        params![c.company.as_str(), c.connector, c.conversation, message, Stage::Sent.as_str(), "the turn ended without a reply", ended.to_string()],
+                        params![c.company.as_str(), c.connector, c.conversation, message, Stage::Failed.as_str(), "the turn ended without a reply", ended.to_string()],
                     )
                     .map_err(state::sql(&path))?;
                     continue;
@@ -3061,6 +3065,7 @@ mod tests {
             Stage::Refused,
             Stage::Pending,
             Stage::Sent,
+            Stage::Failed,
             Stage::Answered,
         ] {
             assert_eq!(Stage::parse(stage.as_str()), Some(stage));

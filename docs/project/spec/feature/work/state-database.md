@@ -701,12 +701,12 @@ and `message`, the connector's identity of that message.
 | `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `answered` once its turn finished. |
+| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully without a reply, keeping its status and notice coverage without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The accompanying messages captured for it with whether earlier ones were left out, the delivery's boundary token, and the framed input; `NULL` while `received`. |
 | `attempted_at` | When a send to the runtime was begun, recorded before the runtime can accept it; `NULL` before a first attempt. |
 | `turn` | The native turn that answered it; `NULL` until then. |
-| `failure` | Cause of its last failed capture or delivery; `NULL` once that operation succeeds. |
+| `failure` | Cause of its last failed capture, delivery, or turn; `NULL` once resolved. |
 | `admitted_at` | When its sender was admitted; `NULL` until then, and for a message admitted before it was recorded. |
 | `admission_position` | Durable sequence assigned at admission. Migration 23 seeds older admitted messages in retained row order. |
 | `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |

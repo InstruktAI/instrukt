@@ -1931,6 +1931,38 @@ fn a_failed_turn_keeps_the_member_notice_open() {
     );
     assert_eq!(interval(&c, &first), failed_at);
     assert_eq!(answers(&c), 0);
+
+    c.runner_dies();
+    std::fs::remove_dir(&database).unwrap();
+    std::fs::rename(&away, &database).unwrap();
+    c.run();
+    wait(
+        "the next question reaches the same session after the failed turn",
+        || c.runtime.message_count(&session) == 2,
+    );
+    assert!(
+        c.runtime
+            .message(&session, 1)
+            .contains("Who reviews the release?")
+    );
+    wait(
+        "the failed question stays unavailable while the next turn works",
+        || {
+            c.slack.status(channel, &first).as_deref() == Some(UNAVAILABLE)
+                && c.slack.status(channel, &second).as_deref() == Some(WORKING)
+        },
+    );
+    let answer = "Ada reviews the release.";
+    c.finish_turn(&session, 1, answer);
+    wait("the next question is answered", || {
+        c.slack.posts_beginning(answer) == 1
+    });
+    wait("the next answer is recorded and its status clears", || {
+        c.slack.status(channel, &second).is_none() && answers_recorded(&c)
+    });
+    assert_eq!(interval(&c, &first), failed_at);
+    assert_eq!(notice_state(&c, channel, sender).as_deref(), Some("posted"));
+    assert_eq!(notices(&c, sender), 1);
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {
