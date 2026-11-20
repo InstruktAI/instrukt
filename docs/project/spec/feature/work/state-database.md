@@ -712,7 +712,7 @@ and `message`, the connector's identity of that message.
 | `arrived_at` | When it was stored. |
 | `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice coverage without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
 | `text` | The message's text as written. |
-| `context_json`, `boundary`, `content` | The captured earlier messages with provider IDs and the context limit, whether the read stopped early or left needed messages unread, the delivery boundary, and the framed input. These fields are null until capture. The framed input is set to the selected context before an attempt and retained through uncertain acceptance. |
+| `context_json`, `boundary`, `content` | The captured earlier messages with provider IDs and the context limit, how far an early read was complete, whether more context must be read, whether needed messages were unread, the delivery boundary, and the framed input. These fields are null until capture. The framed input is set to the selected context before an attempt and retained through uncertain acceptance. |
 | `context_delivery_ids` | The provider IDs selected for the most recent attempted input. The delivery transaction uses these IDs to write the receipts. |
 | `attempted_at` | When the current attempt began, recorded with the boundary that identifies it before the runtime can accept it. `NULL` before an attempt, after confirmed non-acceptance, or when its turn settles. An acknowledgement applies only while its boundary identifies the outstanding attempt. |
 | `source_uncertain` | The current attempt is missing from a moved conversation source. The company relay records this with the new source position. It blocks repeated delivery until the source identifies that attempt or the binding is replaced through the operator door. Migration 24 initializes earlier rows without this finding. |
@@ -740,7 +740,7 @@ acceptance. Receipts stay while the carrying delivery is retained. When
 a superseded failed delivery is pruned, its receipts are kept for the
 same seven-day retention window, measured from the operator clock time
 of pruning. The relay prunes at most 100 expired receipts per pass.
-The migration seeds the IDs of already delivered addressed messages.
+Migration 25 seeds the IDs of already delivered addressed messages.
 Older accompanying messages have no stored provider IDs to recover.
 
 **`conversation_answers`** — the pieces of an answer, in order. Key: the

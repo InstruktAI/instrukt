@@ -153,6 +153,26 @@ impl RuntimeAdapter for T3 {
         };
         super::_diagnostics::diagnose("t3", operation, error, native)
     }
+    fn send_certainly_rejected(&self, session: &SessionRef, error: &SessionsError) -> bool {
+        match error {
+            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. }) => true,
+            SessionsError::Failed {
+                operation, detail, ..
+            } if operation == "send" => {
+                let line = detail.lines().next().unwrap_or_default().trim();
+                line == format!("Thread {} is no longer available.", session.id)
+                    || matches!(
+                        super::_t3_diagnostics::cause(line),
+                        Some(super::NativeCause::ServerNotRunning)
+                    )
+                    || line
+                        .strip_prefix("Could not reach the T3 Code server at ")
+                        .and_then(|rest| rest.split_once(". "))
+                        .is_some_and(|(_, reason)| reason.starts_with("connect ECONNREFUSED "))
+            }
+            _ => false,
+        }
+    }
     fn conversation_source(
         &self,
         home: &instrukt_core::home::Home,

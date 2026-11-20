@@ -1864,13 +1864,16 @@ fn archived_and_deleted_conversations_keep_saved_work() {
         );
         c.runtime.delete(&session);
         std::fs::remove_file(hold).unwrap();
-        wait_for_answer_fixture("T3 refuses the send and the question stays pending", || {
-            db.query_row(
-                "SELECT state='pending' AND attempted_at IS NOT NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
+        wait_for_answer_fixture(
+            "T3 refuses the send and clears the attempt while keeping the question pending",
+            || {
+                db.query_row(
+                "SELECT state='pending' AND attempted_at IS NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
                 [&next],
                 |row| row.get::<_, bool>(0),
             ).unwrap()
-        });
+            },
+        );
     }
     c.store.unproject_thread(&session);
     let stopped = format!("t3:{session}");

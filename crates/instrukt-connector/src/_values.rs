@@ -29,6 +29,13 @@ pub struct Accompanying {
     /// Older pages were left unread because the selection was known.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stopped_early: bool,
+    /// A reply range is complete from this timestamp. Older pages already
+    /// fetched may be retained even though they do not prove coverage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complete_from: Option<Timestamp>,
+    /// Delivery needs a fresh read because eligibility changed after a short read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub refresh: bool,
     /// Some or all of the needed context could not be read by the bound.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unread: bool,

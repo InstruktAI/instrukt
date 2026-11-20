@@ -277,6 +277,13 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
     fn diagnostic(&self, operation: &str, error: &SessionsError) -> NativeDiagnostic {
         _diagnostics::diagnose(self.runtime().name(), operation, error, None)
     }
+    /// Whether the adapter can prove a send did not reach acceptance.
+    fn send_certainly_rejected(&self, _session: &SessionRef, error: &SessionsError) -> bool {
+        matches!(
+            error,
+            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. })
+        )
+    }
     fn runtime(&self) -> Runtime;
     /// One provider snapshot read now, with a token of its own: for a
     /// command that reads readiness once, never for a start.

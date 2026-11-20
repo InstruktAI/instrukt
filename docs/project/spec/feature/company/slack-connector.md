@@ -225,7 +225,8 @@ An addressed message is accompanied by at most `context_messages` messages.
 When its range holds more, the most recent ones accompany it and the
 conversation context says that earlier messages were left out. Slack context is
 read from newest towards oldest, stopping once the eligible selection and
-whether earlier messages were left out are known.
+whether earlier messages were left out are known. The read retains every page
+it already fetched for use if eligibility changes before delivery.
 
 Each accompanying message carries its speaker and time; the agent's own posts
 are marked as its own. A speaker is named as a sender is, and in every message

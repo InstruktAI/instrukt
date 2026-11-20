@@ -241,7 +241,9 @@ pub fn unread(
                 .prepare(
                     "SELECT m.conversation,m.message,m.sender,m.sender_name IS NOT NULL,m.text,m.arrived_at
                      FROM conversation_messages m
-                     WHERE m.company=?1 AND m.connector=?2 AND m.state=?3
+                     WHERE m.company=?1 AND m.connector=?2
+                       AND (m.state=?3 OR (m.state IN ('pending','failed') AND m.attempted_at IS NULL
+                            AND json_extract(m.context_json,'$.refresh')=1))
                      ORDER BY m.written_us, m.message",
                 )
                 .map_err(state::sql(path))?;
@@ -860,7 +862,12 @@ pub fn captured(
     let context = serde_json::to_string(&accompanying)?;
     state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET state=?5,context_json=?6,boundary=?7,content=?8,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?9",
+            "UPDATE conversation_messages
+             SET state=CASE WHEN state=?9 THEN ?5 ELSE state END,context_json=?6,boundary=?7,content=?8,
+                 failure=CASE WHEN state='failed' THEN failure END
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+               AND (state=?9 OR (state IN ('pending','failed') AND attempted_at IS NULL
+                    AND json_extract(context_json,'$.refresh')=1))",
             params![company.as_str(), connector, unread.conversation, unread.message, Stage::Pending.as_str(), context, token, content, Stage::Received.as_str()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
@@ -1407,13 +1414,28 @@ fn prepare_delivery(
         return Ok(Some(next.clone()));
     };
     let mut accompanying: Accompanying = serde_json::from_str(&captured)?;
+    if accompanying.refresh {
+        return Ok(None);
+    }
     let excluded = context_exclusions(state, &c.company, &c.connector, &c.conversation)?;
     accompanying
         .messages
         .retain(|earlier| earlier.id.as_ref().is_none_or(|id| !excluded.contains(id)));
     if let Some(limit) = accompanying.limit {
         let trimmed = accompanying.messages.len().saturating_sub(limit);
-        if accompanying.stopped_early && trimmed == 0 {
+        let has_covered_selection = accompanying
+            .messages
+            .iter()
+            .rev()
+            .take_while(|entry| {
+                accompanying
+                    .complete_from
+                    .is_none_or(|first| entry.at.is_some_and(|at| at >= first))
+            })
+            .take(limit.saturating_add(1))
+            .count()
+            > limit;
+        if accompanying.stopped_early && !has_covered_selection {
             let arrived_at: Timestamp = arrived_at
                 .parse()
                 .map_err(|error: jiff::Error| ConversationError::Refused(error.to_string()))?;
@@ -1426,7 +1448,8 @@ fn prepare_delivery(
                 // read further before handing over an incomplete selection.
                 state.write::<_, StateError>(|tx| {
                     tx.execute(
-                        "UPDATE conversation_messages SET state='received' WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                        "UPDATE conversation_messages SET context_json=json_set(context_json,'$.refresh',json('true'))
+                         WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
                         params![c.company.as_str(), c.connector, c.conversation, next.message],
                     ).map_err(state::sql(&state::db_path(tx)))?;
                     Ok(())
@@ -1610,16 +1633,15 @@ fn deliver_one(
 ) -> Result<(), ConversationError> {
     let state = &RunnerState::new(invocation.home());
     let now = clock();
-    let result = prepare_delivery(state, c, next, now).and_then(|prepared| {
-        let Some(prepared) = prepared else {
-            return Ok(());
-        };
-        match &c.session {
+    let result = match prepare_delivery(state, c, next, now) {
+        Ok(None) => return Ok(()),
+        Err(error) => Err(error),
+        Ok(Some(prepared)) => match &c.session {
             None => opening_source
                 .and_then(|source| start(invocation, admitted, adapter, source, c, &prepared, now)),
             Some(session) => send(adapter, state, c, session, &prepared, now),
-        }
-    });
+        },
+    };
     record_delivery_failure(adapter, state, c, next, clock, &result)?;
     result
 }
@@ -1820,10 +1842,38 @@ fn send(
         .map_err(state::sql(&state::db_path(tx)))
     })?;
     if recorded != 0 {
-        adapter.send(session, &content)?;
+        if let Err(error) = adapter.send(session, &content) {
+            if adapter.send_certainly_rejected(session, &error) {
+                clear_rejected_send(state, c, &next.message, &boundary)?;
+            }
+            return Err(error.into());
+        }
         accepted(state, c, &next.message, Some(&boundary), None)?;
     }
     Ok(())
+}
+
+fn clear_rejected_send(
+    state: &RunnerState,
+    c: &Conversation,
+    message: &str,
+    boundary: &str,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        tx.execute(
+            "UPDATE conversation_messages SET attempted_at=NULL
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND boundary=?5",
+            params![
+                c.company.as_str(),
+                c.connector,
+                c.conversation,
+                message,
+                boundary
+            ],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
+    })
 }
 
 /// Split `text` into parts of at most `limit` characters, changing nothing
@@ -2239,12 +2289,13 @@ impl RelayWorkers {
     ) {
         let runtime = adapter.runtime();
         let target = session.clone();
-        let attempted = next.content.clone().filter(|_| next.attempted);
+        let has_unconfirmed_attempt = next.attempted;
+        let attempted = next.content.clone().filter(|_| has_unconfirmed_attempt);
         let now = self.connectors.now();
         let reply = self.spawn(move || {
             let adapter = instrukt_runner::runtime::adapter(runtime);
-            if let Some(text) = attempted {
-                match adapter.observe_input(&target, &text, now) {
+            if let Some(text) = &attempted {
+                match adapter.observe_input(&target, text, now) {
                     Ok(observation) if observation.state != InputState::Unknown => {
                         return Ok(DeliveryCheck::Accepted);
                     }
@@ -2258,10 +2309,12 @@ impl RelayWorkers {
             let thread = adapter.read_state(&target)?;
             Ok(if thread.presence != Presence::Present {
                 DeliveryCheck::Presence(thread.presence)
-            } else if matches!(
-                thread.state,
-                SessionState::InputReady | SessionState::EndedFailed
-            ) {
+            } else if !has_unconfirmed_attempt
+                && matches!(
+                    thread.state,
+                    SessionState::InputReady | SessionState::EndedFailed
+                )
+            {
                 DeliveryCheck::Ready
             } else {
                 DeliveryCheck::Busy
@@ -3478,8 +3531,12 @@ fn relay(
                     && !m.source_uncertain
                     && before_read(m)
             });
+            if let Some(candidate) = unconfirmed {
+                workers.check(adapter, &c, session, candidate, next, observed);
+                continue;
+            }
             if next.map(|m| &m.message) != checked_head.as_ref() || checked_head.is_none() {
-                if let Some(candidate) = unconfirmed.or(next) {
+                if let Some(candidate) = next {
                     workers.check(adapter, &c, session, candidate, next, observed);
                 }
                 continue;

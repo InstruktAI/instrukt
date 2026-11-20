@@ -50,4 +50,4 @@ threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
 filter = 'test(=slack_connector::a_member_is_answered_when_slack_cannot_read_the_earlier_messages)'
-threads-required = 7
+threads-required = 9

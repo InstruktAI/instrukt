@@ -937,7 +937,10 @@ impl Connector for Slack {
     ) -> Result<Captured, ConnectorError> {
         let limit = usize::try_from(self.context_messages).unwrap_or(usize::MAX);
         let me = self.cached_identity();
-        let snapshot = |messages: Vec<Value>, stopped_early: bool, complete: bool| {
+        let snapshot = |messages: Vec<Value>,
+                        stopped_early: bool,
+                        complete_from: Option<Timestamp>,
+                        complete: bool| {
             let me = me.clone();
             let names = Arc::clone(&self.names);
             let text = text.to_owned();
@@ -947,16 +950,17 @@ impl Connector for Slack {
                         render_context(&text, &messages, limit, me.as_ref(), lookup)
                     });
                     captured.accompanying.stopped_early = stopped_early;
+                    captured.accompanying.complete_from = complete_from;
                     captured.accompanying.unread = !complete;
                     captured
                 }),
                 complete,
             )
         };
-        let (messages, stopped_early) =
+        let (messages, stopped_early, complete_from) =
             read_context(self, conversation, message, excluded, limit, &snapshot)
                 .map_err(failed)?;
-        if !snapshot(messages.clone(), stopped_early, true) {
+        if !snapshot(messages.clone(), stopped_early, complete_from, true) {
             return Err(ConnectorError {
                 cause: "context capture reached its bound".into(),
             });
@@ -967,6 +971,7 @@ impl Connector for Slack {
             names.of(user)
         });
         captured.accompanying.stopped_early = stopped_early;
+        captured.accompanying.complete_from = complete_from;
         Ok(captured)
     }
 
@@ -1216,8 +1221,8 @@ fn read_context(
     message: &str,
     excluded: &std::collections::HashSet<String>,
     limit: usize,
-    snapshot: &dyn Fn(Vec<Value>, bool, bool) -> bool,
-) -> Result<(Vec<Value>, bool), SlackError> {
+    snapshot: &dyn Fn(Vec<Value>, bool, Option<Timestamp>, bool) -> bool,
+) -> Result<(Vec<Value>, bool, Option<Timestamp>), SlackError> {
     use std::collections::BTreeMap;
 
     let (channel, thread) = split_conversation(conversation);
@@ -1301,13 +1306,16 @@ fn read_context(
                 > limit
         {
             let stopped_early = more || !earlier.is_empty();
-            if let Some(lower) = lower {
-                messages = messages.split_off(&lower.saturating_add(1));
-            }
-            return Ok((messages.into_values().collect(), stopped_early));
+            let complete_from =
+                lower.and_then(|low| Timestamp::from_microsecond(low.saturating_add(1)).ok());
+            return Ok((
+                messages.into_values().collect(),
+                stopped_early,
+                complete_from,
+            ));
         }
         if (more || !earlier.is_empty())
-            && !snapshot(messages.values().cloned().collect(), false, false)
+            && !snapshot(messages.values().cloned().collect(), false, None, false)
         {
             return Err(SlackError::Api {
                 method: method.into(),
@@ -1316,7 +1324,7 @@ fn read_context(
         }
         if !more {
             let Some(next) = earlier.pop() else {
-                return Ok((messages.into_values().collect(), false));
+                return Ok((messages.into_values().collect(), false, None));
             };
             range = next;
             cursor = None;
@@ -1394,7 +1402,7 @@ fn render_context(
             limit: Some(limit),
             left_out: false,
             unread: false,
-            stopped_early: false,
+            ..Accompanying::default()
         },
     }
 }

@@ -493,6 +493,8 @@ fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
         scope.spawn(a_retry_keeps_context_the_agent_has_never_seen);
         scope.spawn(a_retry_excludes_a_queued_question);
         scope.spawn(a_refused_send_reselects_context);
+        scope.spawn(uncertain_send_keeps_its_input_and_queue_position);
+        scope.spawn(early_stop_preserves_older_replies_already_read);
         scope.spawn(|| {
             a_stalled_history_page_keeps_the_first_page(false);
             a_stalled_history_page_keeps_the_first_page(true);
@@ -874,6 +876,132 @@ fn a_refused_send_reselects_context() {
     let retried = c.input(&session, 2);
     assert!(retried.contains(detail), "{retried}");
     assert!(!retried.contains(earlier_text), "{retried}");
+}
+
+fn uncertain_send_keeps_its_input_and_queue_position() {
+    let (mut c, _, _) = context_company("");
+    c.run();
+    let channel = "C1";
+    let root = c
+        .slack
+        .mention(channel, "USTEVEN", "Open the review.", None);
+    let session = c.session();
+    c.finish_turn(&session, 0, "NOOP");
+    let earlier_text = "Review the first draft.";
+    let earlier = c.slack.say(channel, "USTEVEN", earlier_text, Some(&root));
+    let hold = format!("{session}.hold-send");
+    c.runtime.flag(&hold, true);
+    c.runtime.flag(&format!("{session}.defer-next-send"), true);
+    let later = c
+        .slack
+        .mention(channel, "UANNA", "Can we publish?", Some(&root));
+    wait("the later handoff starts", || {
+        c.runtime.held_send_running(&session)
+    });
+    let db = context_database(&c);
+    let attempt = || -> (String, Option<String>, String) {
+        db.query_row(
+            "SELECT state,attempted_at,content FROM conversation_messages WHERE message=?1",
+            [&later],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    };
+    let original = attempt();
+    assert!(original.1.is_some());
+    assert!(original.2.contains(earlier_text));
+    c.slack
+        .notify_mention(&earlier, channel, "USTEVEN", earlier_text, Some(&root));
+    wait_for_message_state(&db, &earlier, "pending");
+    c.runtime.flag(&hold, false);
+    let ready = c
+        .runtime
+        .state_dir()
+        .join(format!("{session}.deferred-ready-read"));
+    wait(
+        "the first lookup missed and the readiness read is held",
+        || ready.exists(),
+    );
+    assert_eq!(attempt(), original);
+    c.runtime
+        .flag(&format!("{session}.release-deferred-input"), true);
+    wait(
+        "the handoff is reconciled or its attempt was cleared",
+        || {
+            let tracked = attempt();
+            tracked.0 == "sent" || tracked.1.is_none() || c.runtime.message_count(&session) > 2
+        },
+    );
+    assert_eq!(attempt(), ("sent".to_owned(), original.1, original.2));
+    assert_eq!(c.runtime.message_count(&session), 2);
+    assert_eq!(c.input(&session, 1).matches("Can we publish?").count(), 1);
+    c.finish_turn(&session, 1, "NOOP");
+    wait("the queued question takes its own turn", || {
+        c.runtime.message_count(&session) == 3
+    });
+    assert!(c.input(&session, 2).contains(earlier_text));
+    assert!(!c.input(&session, 2).contains("Can we publish?"));
+}
+
+fn early_stop_preserves_older_replies_already_read() {
+    let (mut c, clock, at) = context_company(", context_messages: 1");
+    c.run();
+    let channel = "C1";
+    let root = c
+        .slack
+        .mention(channel, "USTEVEN", "Open the project review.", None);
+    let session = c.session();
+    let older = "An older reply that was already read.";
+    c.slack
+        .say_at("1700000002.000100", channel, "UBRAM", older, Some(&root));
+    let nearer = "Review the newer draft.";
+    let newest = "Check the final draft.";
+    let second = "1700000018.000100";
+    let third = "1700000019.000100";
+    let question = "1700000020.000100";
+    for (ts, text) in [
+        (second, nearer),
+        (third, newest),
+        (question, "What did I miss?"),
+    ] {
+        c.slack.say_at(ts, channel, "USTEVEN", text, Some(&root));
+    }
+    c.slack.notify_mention(
+        question,
+        channel,
+        "USTEVEN",
+        "What did I miss?",
+        Some(&root),
+    );
+    let db = context_database(&c);
+    wait_for_message_state(&db, question, "pending");
+    // The newer replies take their own turns without any context from Slack.
+    c.slack.refuse_replies(true);
+    c.slack
+        .notify_mention(second, channel, "USTEVEN", nearer, Some(&root));
+    c.slack
+        .notify_mention(third, channel, "USTEVEN", newest, Some(&root));
+    wait_for_failed_context(&db, second);
+    wait_for_failed_context(&db, third);
+    set_context_clock(&clock, at + CONTEXT_LIMIT);
+    wait_for_message_state(&db, second, "pending");
+    wait_for_message_state(&db, third, "pending");
+    c.finish_turn(&session, 0, "NOOP");
+    for (i, text) in [(1, nearer), (2, newest)] {
+        wait("a newer reply takes its own turn", || {
+            c.runtime.message_count(&session) == i + 1
+        });
+        assert!(c.input(&session, i).contains(text));
+        assert!(!c.input(&session, i).contains(older));
+        c.finish_turn(&session, i, "NOOP");
+    }
+    wait("the question is delivered after expiry", || {
+        c.runtime.message_count(&session) == 4
+    });
+    let input = c.input(&session, 3);
+    assert!(input.contains(older), "{input}");
+    assert!(!input.contains(nearer), "{input}");
+    assert!(!input.contains(newest), "{input}");
 }
 
 fn a_stalled_history_page_keeps_the_first_page(first_page_is_enough: bool) {

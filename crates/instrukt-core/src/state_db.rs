@@ -534,7 +534,8 @@ mod tests {
     fn delivery_receipts_upgrade_the_previous_schema_and_can_be_reapplied() {
         let path = Path::new(":memory:");
         let mut conn = Connection::open_in_memory().unwrap();
-        let before = schema_version() - 1;
+        // Use main's real version 24, even if later migrations are added.
+        let before = 24;
         for migration in _schema::MIGRATIONS
             .iter()
             .take(usize::try_from(before).unwrap())
@@ -566,7 +567,7 @@ mod tests {
         conn.pragma_update(None, "user_version", before).unwrap();
         migrate(&mut conn, path).unwrap();
 
-        assert_eq!(user_version(&conn, path).unwrap(), before + 1);
+        assert_eq!(user_version(&conn, path).unwrap(), schema_version());
         let receipts: Vec<(String, Option<String>)> = conn
             .prepare(
                 "SELECT message,retired_at FROM conversation_context_receipts
