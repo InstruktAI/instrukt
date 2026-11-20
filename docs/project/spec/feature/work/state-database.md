@@ -688,9 +688,9 @@ is `(company, connector, conversation)`.
 | --- | --- |
 | `semantic_key` | The key its one session is started and woken by. |
 | `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
-| `session` | The bound session; `NULL` until a start is bound. |
+| `session` | The bound session; `NULL` until a start is bound. An operator-confirmed replacement can rebind the conversation and reset its source position. |
 | `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
-| `failure` | Cause of the last failed read of that source; `NULL` once a read succeeds. |
+| `failure` | Cause of a source read failure or a blocked bound session, with its recovery door where applicable. Cleared when work can resume. |
 
 **`conversation_messages`** — one row per addressed message. Key: the address
 and `message`, the connector's identity of that message.

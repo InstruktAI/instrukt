@@ -211,8 +211,8 @@ elif command=='send':
 elif command=='show':
     if (root/'show-failure').exists():
         print('native show unavailable', file=sys.stderr); sys.exit(1)
-    sync_inputs()
     t=find(operands[0]); limit=int(flags.get('--messages',100))
+    if limit or not os.environ.get('INSTRUKT_TEST_T3_WAKES'): sync_inputs()
     if limit==0 and (root/'busy-before-entry').exists():
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=3:

@@ -733,6 +733,155 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     });
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV8
+#[test]
+fn a_member_gets_the_answer_after_the_assistants_work_failed() {
+    std::thread::scope(|scope| {
+        scope.spawn(archived_conversation_waits_for_unarchive);
+        deleted_conversation_waits_for_confirmed_replacement();
+    });
+}
+
+fn answered_conversation() -> (Company, std::path::PathBuf, String) {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    c.runtime.flag("separate-completion", true);
+    projected(&c);
+    c.slack.direct("D30", "USTEVEN", "Is the old report ready?");
+    let session = started(&c, &[]);
+    c.finish_turn(&session, 0, "The old report is ready.");
+    wait("the earlier answer recorded", || {
+        c.slack.posts_beginning("The old report is ready.") == 1 && answers_recorded(&c)
+    });
+    (c, clock, session)
+}
+
+fn wait_for_presence_notice(c: &Company, message: &str, clock: &std::path::Path, door: &str) {
+    wait("the operator sees the recovery door", || {
+        retained_conversations(c).conversations.iter().any(|row| {
+            row.conversation == "D30" && row.failures.iter().any(|cause| cause.contains(door))
+        })
+    });
+    assert!(c.conversations().conversations.iter().any(|row| {
+        row.conversation == "D30" && row.failures.iter().any(|cause| cause.contains(door))
+    }));
+    wait("the member sees only the unavailable text", || {
+        c.slack.status("D30", message).as_deref() == Some(UNAVAILABLE)
+    });
+    let opened = interval_at(c, message);
+    set_clock(clock, opened + jiff::SignedDuration::from_secs(59));
+    assert_eq!(notices(c, "USTEVEN"), 0);
+    set_clock(clock, opened + minute());
+    wait("the member receives the fixed notice", || {
+        notices(c, "USTEVEN") == 1
+    });
+    assert_eq!(c.slack.posts().len(), 2);
+}
+
+fn archived_conversation_waits_for_unarchive() {
+    let (mut c, clock, session) = answered_conversation();
+    c.runtime.archive(&session);
+    let pending = c.slack.direct("D30", "USTEVEN", "What changed today?");
+    wait_for_presence_notice(&c, &pending, &clock, "unarchive it or delete it");
+    assert_eq!(c.sessions().as_slice(), std::slice::from_ref(&session));
+    assert_eq!(c.runtime.message_count(&session), 1);
+
+    c.runtime.change(&session, "archived", false.into());
+    c.runtime.change(&session, "title", "Renamed in T3".into());
+    wait("the renamed session receives the waiting question", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "Today’s changes are in the report.");
+    wait("the waiting question gets its answer", || {
+        c.slack
+            .posts_beginning("Today’s changes are in the report.")
+            == 1
+            && answers_recorded(&c)
+            && c.slack.status("D30", &pending).is_none()
+    });
+    assert_eq!(c.sessions(), [session]);
+    assert_eq!(notices(&c, "USTEVEN"), 1);
+    assert_eq!(c.slack.posts().len(), 3);
+}
+
+fn deleted_conversation_waits_for_confirmed_replacement() {
+    let (mut c, clock, session) = answered_conversation();
+    let first = c
+        .slack
+        .direct("D30", "USTEVEN", "Who is reviewing the new report?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait("the old session accepted the unfinished question", || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='sent')",
+            [&first],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
+    c.runtime.delete(&session);
+    let second = c.slack.direct("D30", "USTEVEN", "When will it be ready?");
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    let stopped = format!("t3:{session}");
+    let door = format!("instrukt sessions replace-deleted {key} --stopped {stopped}");
+    wait(
+        "the unfinished first question also shows the fixed status",
+        || c.slack.status("D30", &first).as_deref() == Some(UNAVAILABLE),
+    );
+    wait_for_presence_notice(&c, &second, &clock, &door);
+    assert!(c.sessions().is_empty());
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00.000Z");
+    c.env
+        .run(
+            c.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", &stopped],
+        )
+        .success();
+    let successor = started(&c, &[]);
+    assert_ne!(successor, session);
+    assert!(
+        !instrukt_runner::envelopes::segment(&c.runtime.message(&successor, 0))
+            .iter()
+            .any(|span| matches!(span, instrukt_runner::envelopes::Span::Member { .. }))
+    );
+    assert!(
+        !c.runtime
+            .message(&successor, 0)
+            .contains("Is the old report ready?")
+    );
+    c.finish_turn(&successor, 0, "The replacement session is initialized.");
+
+    wait(
+        "the successor receives the first unanswered question",
+        || c.runtime.message_count(&successor) == 2,
+    );
+    assert!(
+        c.runtime
+            .message(&successor, 1)
+            .contains("Who is reviewing the new report?")
+    );
+    c.finish_turn(&successor, 1, "Ada is reviewing it.");
+    wait("the successor receives the later question in order", || {
+        c.runtime.message_count(&successor) == 3
+    });
+    assert!(
+        c.runtime
+            .message(&successor, 2)
+            .contains("When will it be ready?")
+    );
+    c.finish_turn(&successor, 2, "It will be ready on Friday.");
+    wait("both answers appear and the final status clears", || {
+        c.slack.posts_beginning("Ada is reviewing it.") == 1
+            && c.slack.posts_beginning("It will be ready on Friday.") == 1
+            && answers_recorded(&c)
+            && c.slack.status("D30", &second).is_none()
+    });
+    assert_eq!(notices(&c, "USTEVEN"), 1);
+    assert_eq!(c.slack.posts().len(), 4);
+}
+
 // spec: project/instrukt/spec/feature/company/conversations UC-CV15
 #[test]
 fn a_member_can_follow_the_status_of_an_unanswered_message() {

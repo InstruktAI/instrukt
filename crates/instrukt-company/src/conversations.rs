@@ -30,7 +30,9 @@ use instrukt_runner::keyed::{self, RuntimeInvocation};
 use instrukt_runner::runtime::conversations::{
     AuthorKind, ConversationSource, Scope, SourcePosition,
 };
-use instrukt_runner::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeStart};
+use instrukt_runner::runtime::{
+    CreationPermit, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart,
+};
 use instrukt_runner::sessions::{SessionState, SessionsError};
 use instrukt_runner::state::{self, RunnerState, StateError};
 
@@ -2285,6 +2287,69 @@ enum Dispatch {
 /// dispatch lock before it leaves that work for its next pass.
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Check presence only while there is work for this binding. An uncertain
+/// observation leaves source reading and the ordinary delivery checks in place.
+fn bound_available(
+    home: &Home,
+    state: &RunnerState,
+    adapter: &dyn RuntimeAdapter,
+    source: &dyn ConversationSource,
+    c: &mut Conversation,
+    now: Timestamp,
+) -> Result<bool, ConversationError> {
+    let Some(current) = &c.session else {
+        return Ok(true);
+    };
+    let messages = open_messages(state, c)?
+        .into_iter()
+        .filter(|message| matches!(message.stage, Stage::Pending | Stage::Sent))
+        .map(|message| message.message)
+        .collect::<Vec<_>>();
+    if messages.is_empty() {
+        return Ok(true);
+    }
+    if let Some(successor) = keyed::confirmed_successor(home, adapter, &c.semantic_key, current)? {
+        let position = opening_position(source)?;
+        let serialized = serde_json::to_string(&position)?;
+        state.write::<_, StateError>(|tx| {
+            let path = state::db_path(tx);
+            tx.execute(
+                "UPDATE connected_conversations SET session=?4,source_identity=?5,position_json=?6 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                params![c.company.as_str(), c.connector, c.conversation, successor.to_string(), source.identity(), serialized],
+            ).map_err(state::sql(&path))?;
+            tx.execute(
+                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5)",
+                params![c.company.as_str(), c.connector, c.conversation, Stage::Pending.as_str(), Stage::Sent.as_str()],
+            ).map_err(state::sql(&path))?;
+            Ok(())
+        })?;
+        c.session = Some(successor);
+        c.source_identity = Some(source.identity().to_owned());
+        c.position = Some(position);
+    }
+    let Some(session) = &c.session else {
+        return Ok(true);
+    };
+    let Ok(thread) = adapter.read_state(session) else {
+        return Ok(true);
+    };
+    let key = c.semantic_key.clone();
+    let cause = match thread.presence {
+        Presence::Present => return Ok(true),
+        Presence::Archived => SessionsError::ArchivedBound {
+            key,
+            session: session.clone(),
+        },
+        Presence::Absent => SessionsError::DeletedBound {
+            key,
+            session: session.clone(),
+        },
+    };
+    set_failure(state, c, Some(&cause.to_string()))?;
+    unavailable(state, c, &messages, now)?;
+    Ok(false)
+}
+
 /// The connector destination of the finished-turn relay `instrukt run`
 /// already hosts: for every conversation, read its finished turns into
 /// answers, post what is retained, observe the turn its session runs, then
@@ -2326,9 +2391,12 @@ pub fn relay(
                 continue;
             }
         };
-        let Some(c) = reread(&state, &initial)? else {
+        let Some(mut c) = reread(&state, &initial)? else {
             continue;
         };
+        if !bound_available(home, &state, adapter, source, &mut c, connectors.now())? {
+            continue;
+        }
         // Attempted sends whose acceptance went unrecorded are reconciled
         // before any answer is read past them.
         if let Some(session) = &c.session {

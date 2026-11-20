@@ -1126,6 +1126,25 @@ pub fn replace_deleted(
         .request
         .as_ref()
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
+    // A conversation successor receives outstanding inputs from its relay.
+    // Reusing the original opening would deliver an already-served message.
+    let conversation_request;
+    let request = if kind(key) == "conversation" {
+        let (assignment, _) = request
+            .brief
+            .strip_prefix("[Instrukt Assignment]\n")
+            .and_then(|brief| brief.split_once("\n[/Instrukt Assignment]"))
+            .ok_or_else(|| {
+                SessionsError::Refused(format!("`{key}` has no retained conversation assignment"))
+            })?;
+        conversation_request = RuntimeStart {
+            brief: crate::envelopes::Control::Assignment.frame(assignment),
+            ..request.clone()
+        };
+        &conversation_request
+    } else {
+        request
+    };
     let original = recorded
         .replacement
         .as_ref()
@@ -1205,6 +1224,19 @@ pub fn replace_deleted(
         session: thread.session,
         warning: reflect_replacement(work, &recorded),
     })
+}
+
+/// The accepted successor authorized through the deleted-session door.
+pub fn confirmed_successor(
+    home: &Home,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    current: &SessionRef,
+) -> Result<Option<SessionRef>, SessionsError> {
+    let recorded = record(&RunnerState::new(home), adapter.runtime().name(), key)?;
+    Ok(recorded.bound.filter(|session| {
+        recorded.accepted && recorded.replaced_session.is_some() && session != current
+    }))
 }
 
 pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {
