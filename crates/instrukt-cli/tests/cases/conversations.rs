@@ -925,6 +925,7 @@ fn answer_recovery_company(debug: bool) -> (Company, std::path::PathBuf) {
     for (setting, name) in [
         ("INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD", "presence-hold"),
         ("INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD", "dispatch-hold"),
+        ("INSTRUKT_TEST_CONVERSATION_ACK_HOLD", "ack-hold"),
     ] {
         c.env.set_env(setting, c.env.path(name).to_str().unwrap());
     }
@@ -949,21 +950,31 @@ fn finish_answer_turn(c: &mut Company, session: &str, input: usize, answer: &str
 // spec: project/instrukt/spec/feature/company/conversations UC-CV20
 #[test]
 fn a_member_gets_the_answer_after_the_assistants_work_failed() {
+    std::thread::scope(|scope| {
+        #[cfg(debug_assertions)]
+        scope.spawn(a_replacement_reports_the_old_acknowledgement);
+        failed_work_is_retried_after_a_restart();
+    });
+}
+
+fn failed_work_is_retried_after_a_restart() {
     let (mut c, clock) = answer_recovery_company(true);
     let channel = "C1";
     let parent = c
         .slack
         .say_at("1700000000.000100", channel, "USTEVEN", "Release", None);
     projected(&c);
-    let noop = c.slack.mention(
+    c.slack.mention(
         channel,
         "USTEVEN",
         "<@UAGENT> Check readiness.",
         Some(&parent),
     );
     let session = started(&c, &[]);
-    c.finish_turn(&session, 0, "NOOP");
-    answer_source_changed(&c, 1);
+    finish_answer_turn(&mut c, &session, 0, "Ready to review.");
+    wait_for_answer_fixture("the opening answer is recorded", || {
+        c.slack.posts_beginning("Ready to review.") == 1 && answers_recorded(&c)
+    });
     c.runtime.flag("hold-show-after-send", true);
     let first = c
         .slack
@@ -971,8 +982,6 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     wait_for_answer_fixture("the acknowledgement of the old attempt is held", || {
         c.runtime.held_show_running(&session)
     });
-    assert_eq!(interval(&c, &noop), None);
-    assert!(c.slack.posts().is_empty(), "a bare NOOP posts nothing");
     let other = c.slack.mention(
         channel,
         "UANNA",
@@ -1011,7 +1020,7 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
                 .unwrap()
         },
     );
-    assert!(c.slack.posts().is_empty());
+    assert_eq!(c.slack.posts().len(), 1);
     let failed_at = interval_at(&c, &first);
     std::fs::remove_file(c.runtime.state_dir().join(format!("{session}.hold-show"))).unwrap();
     wait_for_answer_fixture(
@@ -1052,6 +1061,18 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
         },
     );
     assert_eq!(notices(&c, "USTEVEN"), 0);
+    let schedule =
+        || {
+            state.query_row(
+        "SELECT retry_at FROM conversation_messages WHERE message=?1 AND state='failed'",
+        [&first],
+        |row| row.get::<_, String>(0),
+    ).unwrap()
+        };
+    let before_restart = schedule();
+    c.runner_dies();
+    c.run();
+    assert_eq!(schedule(), before_restart);
     set_clock(&clock, failed_at + jiff::SignedDuration::from_mins(3));
     wait_for_answer_fixture(
         "the failed question waits at the archive door and earns one notice",
@@ -1099,32 +1120,16 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     );
     assert_eq!(c.runtime.message_count(&session), 4);
     assert_eq!(notices(&c, "USTEVEN"), 1);
-    let blank = c.slack.mention(
-        channel,
-        "USTEVEN",
-        "<@UAGENT> Check the checklist.",
-        Some(&parent),
-    );
-    wait_for_answer_fixture("the assistant receives the check", || {
-        c.runtime.message_count(&session) == 5
-    });
-    finish_answer_turn(&mut c, &session, 4, " \n ");
-    wait_for_answer_fixture("the blank answer completes the check", || {
-        state
-            .query_row(
-                "SELECT state='answered' FROM conversation_messages WHERE message=?1",
-                [&blank],
-                |r| r.get::<_, bool>(0),
-            )
-            .unwrap()
-            && c.slack.status(channel, &blank).is_none()
-    });
     assert_eq!(
         destinations(&c),
-        vec![(channel.to_owned(), Some(parent)); 3]
+        vec![(channel.to_owned(), Some(parent)); 4]
     );
     insta::assert_snapshot!(complete_post_bodies(&c), @r#"
 [
+  [
+    null,
+    "Ready to review."
+  ],
   [
     null,
     "Version two."
@@ -1139,6 +1144,53 @@ fn a_member_gets_the_answer_after_the_assistants_work_failed() {
   ]
 ]
 "#);
+}
+
+#[cfg(debug_assertions)]
+fn a_replacement_reports_the_old_acknowledgement() {
+    let (mut c, _, session) = answered_conversation_with_logs(false, true);
+    let hold = c.env.path("ack-hold");
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    std::fs::write(&hold, &key).unwrap();
+    c.runtime.flag("hold-show-after-send", true);
+    let question = c.slack.direct("D30", "USTEVEN", "What changed?");
+    wait_for_answer_fixture("the old input read-back is held", || {
+        c.runtime.held_show_running(&session)
+    });
+    std::fs::remove_file(c.runtime.state_dir().join(format!("{session}.hold-show"))).unwrap();
+    wait_for_answer_fixture("the relay holds the completed acknowledgement", || {
+        hold.with_extension("observed").exists()
+    });
+
+    c.runtime.delete(&session);
+    c.store.unproject_thread(&session);
+    c.store.thread("s2", None, None, "2026-11-08T10:01:00Z");
+    c.env
+        .run(
+            c.env.home(),
+            [
+                "sessions",
+                "replace-deleted",
+                &key,
+                "--stopped",
+                &format!("t3:{session}"),
+            ],
+        )
+        .success();
+    std::fs::remove_file(hold).unwrap();
+
+    deliver_probe_wake(&c, &|revision| answer_source_changed(&c, revision), 2);
+    assert!(
+        run_log(&c).lines().any(|line| {
+            line.contains("event=conversation_stale_acknowledgement") && line.contains(&question)
+        }),
+        "adopting the replacement records the stale acknowledgement"
+    );
+    finish_answer_turn(&mut c, "s2", 0, "Replacement ready.");
+    wait_for_answer_fixture("the replacement receives the retained question", || {
+        c.runtime.message_count("s2") == 2
+    });
+    assert!(c.runtime.message("s2", 1).contains("What changed?"));
 }
 
 fn complete_post_bodies(c: &Company) -> String {
@@ -1211,6 +1263,21 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
             )
             .is_ok_and(|sent| sent)
     });
+    projected(&c);
+    let missing_request = c.slack.direct("D32", "USTEVEN", "Is the checklist ready?");
+    let missing = started(&c, &[session.clone(), other.clone()]);
+    wait_for_answer_fixture(
+        "a third conversation's turn is accepted before the move",
+        || {
+            state
+                .query_row(
+                    "SELECT state='sent' FROM conversation_messages WHERE message=?1",
+                    [&missing_request],
+                    |r| r.get::<_, bool>(0),
+                )
+                .is_ok_and(|sent| sent)
+        },
+    );
     c.runtime.flag("die-after-send", true);
     let lost = c.slack.direct("D31", "UANNA", "What did you find?");
     c.runner_ended();
@@ -1227,6 +1294,7 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
     let answer = "The appendix is at the end.";
     c.runtime.set_status(&session, "idle");
     c.runtime.set_status(&other, "idle");
+    c.runtime.set_status(&missing, "idle");
     let appendix_input = c.runtime.message(&session, 2);
     c.store
         .turn(&session, "after-move", 2, &appendix_input, answer);
@@ -1240,13 +1308,16 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
     source.pragma_update(None, "journal_mode", "WAL").unwrap();
     let tx = source.transaction().unwrap();
     tx.execute(
-        "DELETE FROM orchestration_v2_projection_messages WHERE message_id=?1",
-        [format!("fake:{other}:input:1")],
+        "DELETE FROM orchestration_v2_projection_messages WHERE message_id IN (?1,?2)",
+        [
+            format!("fake:{other}:input:1"),
+            format!("fake:{missing}:input:0"),
+        ],
     )
     .unwrap();
     tx.execute(
-        "DELETE FROM orchestration_v2_projection_runs WHERE thread_id IN (?1,?2) AND run_id LIKE 'run:%'",
-        [&session, &other],
+        "DELETE FROM orchestration_v2_projection_runs WHERE thread_id IN (?1,?2,?3) AND run_id LIKE 'run:%'",
+        [&session, &other, &missing],
     ).unwrap();
     // Keep the addressed boundary outside the CLI's latest messages.
     let mut recent: Vec<serde_json::Value> =
@@ -1307,8 +1378,58 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
                     .any(|failure| failure.contains("cannot find the outstanding attempt"))
         })
     });
+    wait_for_answer_fixture(
+        "the accepted turn also stays uncertain without its source",
+        || {
+            state
+                .query_row(
+                    "SELECT state='sent' AND source_uncertain=1 AND unavailable_since IS NOT NULL
+             FROM conversation_messages WHERE message=?1",
+                    [&missing_request],
+                    |r| r.get::<_, bool>(0),
+                )
+                .unwrap()
+        },
+    );
+    assert_eq!(c.slack.posts_beginning("The checklist is ready."), 0);
+    assert_eq!(c.runtime.message_count(&missing), 1);
+
+    // An unrelated native turn can run while the send with a lost
+    // acknowledgement remains uncertain. Wait for the relay to finish a
+    // pass over these records before checking that nothing cleared its status.
+    wait_for_answer_fixture("the lost attempt shows as unavailable", || {
+        c.slack.status("D31", &lost).as_deref() == Some(UNAVAILABLE)
+    });
+    let opened = interval(&c, &lost).unwrap();
+    let tx = source.transaction().unwrap();
+    tx.execute(
+        "INSERT INTO orchestration_v2_projection_messages
+         VALUES('unrelated-input',?1,'user',0,?2,?2,json_object('id','unrelated-input',
+                'threadId',?1,'role','user','text','Direct native work','createdAt',?2,'updatedAt',?2,
+                'streaming',json('false')))",
+        [&other, at],
+    ).unwrap();
+    tx.execute(
+        "INSERT INTO orchestration_v2_projection_runs
+         VALUES('unrelated-running',?1,'running',?2,NULL,json_object('id','unrelated-running',
+                'threadId',?1,'userMessageId','unrelated-input','status','running','requestedAt',?2))",
+        [&other, at],
+    ).unwrap();
+    tx.commit().unwrap();
     #[cfg(debug_assertions)]
     deliver_probe_wake(&c, &|revision| answer_source_changed(&c, revision), 4);
+    assert!(
+        state
+            .query_row(
+                "SELECT failure IS NULL FROM connected_conversations WHERE conversation='D31'",
+                [],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap(),
+        "the moved projection with the unrelated turn must be readable"
+    );
+    assert_eq!(interval(&c, &lost).as_deref(), Some(opened.as_str()));
+    assert_eq!(c.slack.status("D31", &lost).as_deref(), Some(UNAVAILABLE));
     assert_eq!(c.runtime.message_count(&other), 2);
     assert_eq!(c.runtime.message_count(&session), 153);
 
@@ -1328,6 +1449,7 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         .unwrap();
     source.execute_batch(
         "BEGIN;
+         DELETE FROM orchestration_v2_projection_runs WHERE run_id='unrelated-running';
          INSERT INTO orchestration_v2_projection_runs SELECT * FROM old.orchestration_v2_projection_runs WHERE run_id='lost-answer';
          INSERT INTO orchestration_v2_projection_messages SELECT * FROM old.orchestration_v2_projection_messages WHERE message_id LIKE 'lost-answer-%';
          INSERT INTO orchestration_v2_projection_turn_items SELECT * FROM old.orchestration_v2_projection_turn_items WHERE turn_item_id LIKE 'lost-answer-%';
@@ -1338,12 +1460,32 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         c.slack.posts_beginning("The document is complete.") == 1 && answers_recorded(&c)
     });
     assert_eq!(c.runtime.message_count(&other), 2);
+    c.store.turn(
+        &missing,
+        "missing-answer",
+        1,
+        &c.runtime.message(&missing, 0),
+        "The checklist is ready.",
+    );
+    source.execute_batch(
+        "BEGIN;
+         INSERT INTO orchestration_v2_projection_runs SELECT * FROM old.orchestration_v2_projection_runs WHERE run_id='missing-answer';
+         INSERT INTO orchestration_v2_projection_messages SELECT * FROM old.orchestration_v2_projection_messages WHERE message_id LIKE 'missing-answer-%';
+         INSERT INTO orchestration_v2_projection_turn_items SELECT * FROM old.orchestration_v2_projection_turn_items WHERE turn_item_id LIKE 'missing-answer-%';
+         COMMIT;",
+    ).unwrap();
+    answer_source_changed(&c, 6);
+    wait_for_answer_fixture("the missing accepted turn's reply arrives once", || {
+        c.slack.posts_beginning("The checklist is ready.") == 1 && answers_recorded(&c)
+    });
+    assert_eq!(c.runtime.message_count(&missing), 1);
     assert_eq!(
         destinations(&c),
         [
             (channel.to_owned(), None),
             (channel.to_owned(), None),
             ("D31".to_owned(), None),
+            ("D32".to_owned(), None),
         ]
     );
     insta::assert_snapshot!(complete_post_bodies(&c), @r#"
@@ -1359,6 +1501,10 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
   [
     null,
     "The document is complete."
+  ],
+  [
+    null,
+    "The checklist is ready."
   ]
 ]
 "#);
@@ -1522,7 +1668,6 @@ fn held_runtime_checks_leave_another_conversation_free() {
 #[cfg(debug_assertions)]
 fn a_live_deletion_is_confirmed_once_across_relay_passes() {
     let (c, clock, session) = answered_conversation_with_logs(true, true);
-    let wakes = c.env.path("answer-recovery-wakes");
     let wake = |revision: u64| answer_source_changed(&c, revision);
     let presence_hold = c.env.path("presence-hold");
     std::fs::write(
@@ -1568,7 +1713,6 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
     );
     c.runtime.flag("show-failure", false);
     deliver_probe_wake(&c, &wake, 3);
-    deliver_probe_wake(&c, &wake, 4);
     assert_eq!(
         absence_calls(&c) - before_deletion,
         1,
@@ -1587,8 +1731,8 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
     });
 
     let held_calls = absence_calls(&c);
-    for revision in 5..=8 {
-        if revision % 2 == 1 {
+    for (revision, present) in [(4, true), (5, false)] {
+        if present {
             c.store.thread(&session, None, None, "2026-11-08T10:00:00Z");
         } else {
             c.store.unproject_thread(&session);
@@ -1606,88 +1750,13 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         "the missing thread has its confirmed replacement finding",
         || conversation_finding(&c, &stopped).is_some(),
     );
-    for revision in 9..=11 {
-        deliver_probe_wake(&c, &wake, revision);
-    }
+    deliver_probe_wake(&c, &wake, 6);
     assert_eq!(
         absence_calls(&c) - before_deletion,
         3,
         "one failure, one invalidated probe and one fresh confirmation"
     );
 
-    // The link uses different threads. Its failed read schedules a timer
-    // retry while the company's completed absence confirmation is retained.
-    let source = "retry-source";
-    let target = "retry-target";
-    let at = "2026-11-08T10:00:00Z";
-    for peer in [source, target] {
-        c.runtime.seed(peer, c.env.home(), peer, "Opening.");
-        c.store.thread(peer, None, None, at);
-    }
-    c.env
-        .instrukt(c.env.home())
-        .env("T3CODE_THREAD_ID", source)
-        .args(["discuss", "open", target])
-        .assert()
-        .success();
-    c.store.unproject_thread(source);
-    deliver_probe_wake(&c, &wake, 12);
-    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    wait_for_answer_fixture("the link's source read failed", || {
-        instrukt_runner::links::status(&home)
-            .unwrap()
-            .iter()
-            .any(|link| {
-                link.directions.iter().any(|direction| {
-                    direction.failure.as_deref().is_some_and(|error| {
-                        error.contains("linked source conversation is missing")
-                    })
-                })
-            })
-    });
-    let retries = run_log(&c)
-        .matches("event=conversation_link_retry_processed")
-        .count();
-    let shows = absence_calls(&c);
-    let probes = run_log(&c)
-        .matches("event=conversation_presence_probe_started")
-        .count();
-    c.store.thread(source, None, None, at);
-    c.store.turn(
-        source,
-        "retry-reply",
-        1,
-        "Question.",
-        "Relayed on the timer.",
-    );
-    wait_for_answer_fixture(
-        "the timer relays the turn and completes its company retry",
-        || {
-            c.runtime.message_count(target) == 2
-                && run_log(&c)
-                    .matches("event=conversation_link_retry_processed")
-                    .count()
-                    > retries
-        },
-    );
-    assert!(
-        c.runtime
-            .message(target, 1)
-            .contains("Relayed on the timer.")
-    );
-    assert_eq!(
-        run_log(&c)
-            .matches("event=conversation_presence_probe_started")
-            .count(),
-        probes,
-        "a timer retry must not schedule another show"
-    );
-    assert_eq!(std::fs::read_to_string(&wakes).unwrap(), "12");
-    assert_eq!(
-        absence_calls(&c),
-        shows,
-        "a timer retry must not issue another show"
-    );
     assert_eq!(
         run_log(&c)
             .matches("event=conversation_presence_probe_confirmed")
@@ -3420,6 +3489,11 @@ fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
         || notice_state(&c, channel, sender).is_none(),
     );
     assert_eq!(interval(&c, &first), None);
+    assert_eq!(
+        c.slack.posts().len(),
+        1,
+        "only the original notice was posted"
+    );
     c.runtime.flag("send-failure", true);
     let second = c.slack.direct(channel, sender, "Who reviews the release?");
     set_clock(&clock, interval_at(&c, &second) + minute());

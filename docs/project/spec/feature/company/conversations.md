@@ -224,7 +224,8 @@ connector gives.
   source position with any newly recovered turns. Any outstanding attempt,
   including a send whose acknowledgement was lost, stays uncertain if the
   moved source cannot identify its turn. The relay retains that attempt and
-  shows the cause in status. It reconciles by boundary. A miss in the moved
+  shows the cause in status. Only reconciliation of that attempt by its
+  boundary ends its no-work interval. A miss in the moved
   source supplies no proof of absence and permits no repeat send.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
@@ -409,7 +410,8 @@ Then the member gets one message, beginning with their mention, that the assista
 And writing again before they are answered brings no second one
 And another member waiting in the same conversation gets their own
 And the member's answer follows once the agent has done the work
-And a healthy wait or a turn completed without output does not earn an unavailable notice
+And a healthy wait does not earn an unavailable notice
+And a request completed successfully without a reply is complete without a post or an unavailable notice
 ```
 
 ### UC-CV19: Get an answer while another conversation is still opening
@@ -536,10 +538,6 @@ Scenario: The member receives the answer after a retry
   And another member can be answered while the failed question waits
   And if the wait earns an unavailable notice, only one is posted before the answer
 
-Scenario: The assistant completes a request without a reply
-  Given a member has a request waiting in the conversation
-  When the assistant completes it successfully without a reply
-  Then the request is complete and nothing is posted
 ```
 
 ### UC-CV21: Keep an answer through an interruption at its source

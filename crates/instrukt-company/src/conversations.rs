@@ -1299,7 +1299,7 @@ fn available(state: &RunnerState, c: &Conversation, messages: &[String]) -> Resu
     state.write(|tx| {
         for message in messages {
             tx.execute(
-                "UPDATE conversation_messages SET unavailable_since=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND unavailable_since IS NOT NULL",
+                "UPDATE conversation_messages SET unavailable_since=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND unavailable_since IS NOT NULL AND source_uncertain=0",
                 params![c.company.as_str(), c.connector, c.conversation, message],
             )
             .map_err(state::sql(&state::db_path(tx)))?;
@@ -3088,10 +3088,32 @@ fn relay(
         {
             workers.source_present(session);
         }
+        #[cfg(debug_assertions)]
+        if matches!(
+            check,
+            CheckedDelivery::Checked {
+                result: Ok(DeliveryCheck::Accepted),
+                ..
+            }
+        ) {
+            hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_ACK_HOLD");
+        }
+
         let original_binding = c.session.clone();
-        if !open_messages(&state, &c)?.is_empty()
-            && let Some(pending) = adopt_replacement(home, &state, adapter, source, &mut c)?
+        let replacement = if open_messages(&state, &c)?.is_empty() {
+            None
+        } else {
+            adopt_replacement(home, &state, adapter, source, &mut c)?
+        };
+        if (replacement.is_some() || c.session != original_binding)
+            && let CheckedDelivery::Checked {
+                candidate,
+                result: Ok(DeliveryCheck::Accepted),
+            } = &check
         {
+            stale_acknowledgement(&c, &candidate.message);
+        }
+        if let Some(pending) = replacement {
             let observed = source
                 .changed_since(None, Scope::Only(std::slice::from_ref(&pending.id)))
                 .ok()
