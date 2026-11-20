@@ -410,6 +410,14 @@ retrying. Replacement checks the work record again before committing the
 runtime binding, work binding, claim, opening receipt and execution tracking
 together.
 
+If a pending successor is deleted before acceptance, both forms of
+`sessions resolve-start` report the exact pending session's replacement command.
+After confirming that provider stopped, the operator runs that command with
+the pending ID. Instrukt checks its absence before retiring it. The original
+work binding and claim remain in force while the next successor is pending.
+The command bearing the latest stopped ID resumes the same intent after an
+interruption. The next verified successor commits against the original claim.
+
 The command reports success once the local acceptance commits. Deferred
 reflection appears as a warning, and the same command can retry reflection
 and report the already-committed session.
@@ -853,6 +861,7 @@ When the operator replaces it
 Then the runtime binding, work binding and claim move to the same successor
 But if the work record cannot accept the binding
 Then the command reports failure and reconciliation can recover the same successor
+And if that pending successor is deleted, the operator can confirm its stop and replace it under the original claim
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

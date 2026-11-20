@@ -610,6 +610,10 @@ One pending row per key keeps the exact returned ID and opening acceptance
 from the native start result, before thread inspection or placement verification,
 until the start commits. Retry reads that ID directly. The pending row becomes
 accepted when the owning records commit, or is retired by explicit recovery.
+During a todo or task replacement, the start marker retains the original claim's
+session and the latest confirmed stopped session. Retiring a pending successor
+updates that marker and retires its binding in one write. The work claim moves
+only when a verified replacement commits.
 An accepted replacement retains its most recent stopped ID so the same
 operator command can finish pending reflection and return its result.
 Discovery can recover a missing accepted binding. Removing a row proves no

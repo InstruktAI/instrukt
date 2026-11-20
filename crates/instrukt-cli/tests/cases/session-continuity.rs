@@ -244,43 +244,127 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     db.execute_batch("DROP TRIGGER fail_opening_receipt;")
         .unwrap();
 
+    assert_eq!(fake.message_count("lookalike"), 1);
+    fake.delete("lookalike");
+    fake.change("s2", "projectId", "another-native-project".into());
+
+    let moved = command().failure();
+    let guidance = String::from_utf8_lossy(&moved.get_output().stderr);
+    assert!(guidance.contains("native project changed"), "{guidance}");
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions resolve-start {key} --session t3:s2"
+        )),
+        "{guidance}"
+    );
+    let resolve_pending = || {
+        p.env.run(
+            p.repo.path(),
+            ["sessions", "resolve-start", &key, "--session", "t3:s2"],
+        )
+    };
+    let refused = resolve_pending().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains("native project changed"), "{guidance}");
+    let replace_pending = || {
+        p.env.run(
+            p.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s2"],
+        )
+    };
+    let still_live = replace_pending().failure();
+    let refusal = String::from_utf8_lossy(&still_live.get_output().stderr);
+    assert!(
+        refusal.contains("thread t3:s2 must be deleted"),
+        "{refusal}"
+    );
+    assert_eq!(fake.threads(), ["s2"]);
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+
+    fake.set_status("s2", "stopped");
+    fake.delete("s2");
+    let door = format!("instrukt sessions replace-deleted {key} --stopped t3:s2");
+    for refused in [
+        resolve_pending().failure(),
+        p.env
+            .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
+            .failure(),
+        command().failure(),
+    ] {
+        let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+        assert!(guidance.contains(&door), "{guidance}");
+    }
+    let status = p
+        .env
+        .run(p.repo.path(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    assert!(
+        status["start_anomalies"][0]["failure"]
+            .as_str()
+            .unwrap()
+            .contains(&door)
+    );
+    assert!(fake.threads().is_empty());
+
+    db.execute_batch(
+        "CREATE TRIGGER fail_next_receipt BEFORE INSERT ON runtime_inputs
+         WHEN NEW.session='s3' BEGIN SELECT RAISE(ABORT, 'next opening receipt write failed'); END;",
+    ).unwrap();
+    let failed = replace_pending().failure();
+    let guidance = String::from_utf8_lossy(&failed.get_output().stderr);
+    assert!(
+        guidance.contains("next opening receipt write failed"),
+        "{guidance}"
+    );
+    assert!(guidance.contains(&door), "{guidance}");
+    assert_eq!(fake.threads(), ["s3"]);
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s3".into(), false)
+    );
+    assert_eq!(execution(), ("t3:s1".into(), true, true));
+    db.execute_batch("DROP TRIGGER fail_next_receipt;").unwrap();
+
     db.execute_batch(
         "CREATE TRIGGER fail_replacement_reflection BEFORE INSERT ON reflections
-        WHEN NEW.pending=0 AND (SELECT claim_session FROM todos WHERE id=NEW.todo_id)='t3:s2'
+        WHEN NEW.pending=0 AND (SELECT claim_session FROM todos WHERE id=NEW.todo_id)='t3:s3'
         BEGIN SELECT RAISE(ABORT, 'reflection save failed'); END;",
     )
     .unwrap();
-    let replaced = command().success();
+    let replaced = replace_pending().success();
     let text = String::from_utf8_lossy(&replaced.get_output().stdout);
     assert!(
         text.contains("warning:") && text.contains("reflection save failed"),
         "{text}"
     );
-    let repeated = command().success();
+    let repeated = replace_pending().success();
     assert!(
         String::from_utf8_lossy(&repeated.get_output().stdout)
-            .contains("replaced t3:s1 with t3:s2")
+            .contains("replaced t3:s2 with t3:s3")
     );
     db.execute_batch("DROP TRIGGER fail_replacement_reflection;")
         .unwrap();
-    command().success();
+    replace_pending().success();
     let pending: bool = db
         .query_row("SELECT pending FROM reflections", [], |row| row.get(0))
         .unwrap();
     assert!(!pending);
     assert_eq!(
         sessions(),
-        ("t3:s2".into(), "t3:s2".into(), "t3:s2".into(), true)
+        ("t3:s3".into(), "t3:s3".into(), "t3:s3".into(), true)
     );
-    assert_eq!(execution(), ("t3:s2".into(), false, false));
+    assert_eq!(execution(), ("t3:s3".into(), false, false));
     let opening_accepted: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s2' AND input_id=?1 AND state='accepted')",
+        "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s3' AND input_id=?1 AND state='accepted')",
         [format!("assignment:{key}")], |row| row.get(0),
     ).unwrap();
     assert!(opening_accepted);
-    assert_eq!(fake.threads(), ["lookalike", "s2"]);
-    assert_eq!(fake.message_count("lookalike"), 1);
-    assert_eq!(fake.message_count("s2"), 1);
+    assert_eq!(fake.threads(), ["s3"]);
+    assert_eq!(fake.message_count("s3"), 1);
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
