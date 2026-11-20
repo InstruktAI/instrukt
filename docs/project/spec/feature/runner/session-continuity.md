@@ -372,7 +372,7 @@ the native project if it was retained. The refusal directs the operator to
 restore project evidence and retry the same explicit ID. `--none` records the
 operator's confirmation that no thread was created and no start remains in
 flight, permitting retry under the same key. The resolved request retains its input and retry permission until retried.
-For a task's first, unaccepted start, a confirmed absent native ID directs
+For a first start with a pending binding, a confirmed absent native ID directs
 the operator to `sessions resolve-start <key> --none`. That command checks
 absence by ID and atomically clears the pending binding and permits a fresh
 start under the same key. A live thread or failed observation leaves the
@@ -390,7 +390,10 @@ never on how long anyone has waited:
 | --- | --- | --- |
 | Nothing started | Listing failed, the runtime not ready, no permitted model, rejection proven before creation | Retried every pass until it succeeds. |
 | Lost acknowledgement | An unresolved marker | Recorded; discovery reconciles every pass; `instrukt sessions resolve-start` is the operator's door. No fresh start. |
-| Deleted thread | The runtime reports the bound thread absent | Work stays pending. The door is `instrukt sessions replace-deleted <key> --stopped <runtime:id>` once the operator knows the old provider session stopped. |
+| First start pending, thread absent | A pending binding with no replacement intent and native confirmation of absence | `instrukt sessions resolve-start <key> --none` clears the pending ID and permits a fresh start under the same key. |
+| First start pending, thread present | A pending binding with no replacement intent and a present native thread | `instrukt sessions resolve-start <key> --session <runtime:id>` verifies the exact thread for acceptance. |
+| Committed binding, thread absent | Native confirmation that the committed thread is absent | Work stays pending. Once the operator knows the provider stopped, `instrukt sessions replace-deleted <key> --stopped <runtime:id>` retires the committed binding. |
+| Pending successor, thread absent | A pending binding under a replacement intent and native confirmation of absence | Once the operator knows the pending provider stopped, `instrukt sessions replace-deleted <key> --stopped <runtime:id>` retires that pending successor. |
 | Live conflict | Two or more threads under one key | Nothing chosen, nothing started; the door is to archive or delete the extra thread. |
 | Archived | The bound thread is shown archived | Nothing started; its completed answers are read; the door is to unarchive or delete it. |
 | Renamed, alive | The bound thread reads, its key no longer lists | Used by its id. |
@@ -760,8 +763,6 @@ But when a successful listing cannot find it
 Then pickup remains pending under its unresolved key until explicit resolution or proof of rejection
 And status gives the operator the resolve-start door
 And the operator receives one notification for the key in the running process after the bound
-But when a first task start returns an ID and the thread is proven absent before acceptance
-Then the operator can clear that ID with resolve-start --none and the next wake starts the task
 ```
 
 ### UC-SS14: A builder's ending wakes its idle orchestrator natively
@@ -847,7 +848,6 @@ When the developer deletes its thread in the runtime and a later event for that 
 Then no successor starts, the event stays pending and status gives the replacement command
 When the operator confirms the old provider stopped through that command
 Then the successor uses the same key and receives the pending and later events
-And the same command works for a deleted pending thread whose opening receipt did not commit
 But when the developer archived the thread instead
 Then no successor starts, the event stays pending and status shows the developer the archived thread
 ```
@@ -870,6 +870,18 @@ Then the runtime binding, work binding and claim move to the same successor
 But if the work record cannot accept the binding
 Then the command reports failure and reconciliation can recover the same successor
 And if that pending successor is deleted, the operator can confirm its stop and replace it under the original claim
+```
+
+### UC-SS25: Recover a keyed assignment through the command for its binding state
+
+```gherkin
+Given a developer has a retained keyed assignment with an interrupted start or a deleted thread
+When the first start is pending and its thread is present
+Then the exact session resolution verifies the original thread for acceptance
+But if that first thread is confirmed absent
+Then no-start resolution clears the pending ID and permits a fresh start
+When a committed binding or pending successor is confirmed absent
+Then the printed replacement command retires the named ID after the operator confirms its provider stopped
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

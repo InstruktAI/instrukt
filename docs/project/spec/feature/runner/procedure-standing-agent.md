@@ -162,9 +162,15 @@ by its exact ID. With `--stopped <id>`, confirmed absence of the previously
 observed ID can settle the reservation when the listing is unavailable.
 Any remaining same-key thread found by either check blocks retry. Instrukt retains its identity and prints the
 `sessions replace-deleted <key> --stopped <id>` command for use after the
-operator stops and deletes it. That command also accepts an exact pending
-standing ID whose opening receipt did not commit. Automatic activation waits
-for the reservation's resolution before it can start a generation.
+operator stops and deletes it. Automatic activation waits for the reservation's
+resolution before it can start a generation.
+
+For a runner-started standing agent, the
+`project/instrukt/spec/feature/runner/session-continuity` recovery table applies.
+A deleted first pending start uses `sessions resolve-start <key> --none`.
+A deleted committed binding or pending successor uses
+`sessions replace-deleted <key> --stopped <id>` after the operator knows the
+provider stopped.
 Subject-bound manual entry remains unavailable; module and runtime gates apply
 before reservation. Both automatic activation and manual entry reservation use
 the declared role or, for an otherwise valid subscription that omits it,

@@ -142,9 +142,13 @@ pub enum SessionsError {
     )]
     DeletedBound { key: String, session: SessionRef },
     #[error(
-        "first task thread {session} for `{key}` is absent before acceptance. Run `instrukt sessions resolve-start {key} --none` to allow a fresh start"
+        "first thread {session} for `{key}` is absent before acceptance. Run `instrukt sessions resolve-start {key} --none` to allow a fresh start"
     )]
-    FirstTaskAbsent { key: String, session: SessionRef },
+    FirstStartAbsent { key: String, session: SessionRef },
+    #[error(
+        "delivery target {session} for `{key}` is already retained. Run `instrukt sessions resolve-start {key} --session {session}`"
+    )]
+    PendingStartPresent { key: String, session: SessionRef },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]

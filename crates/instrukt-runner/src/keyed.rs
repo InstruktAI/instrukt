@@ -155,22 +155,50 @@ struct Recorded {
     replaced_session: Option<SessionRef>,
     opening_acknowledged: bool,
 }
-impl Recorded {
-    fn first_task_pending(&self, key: &str) -> bool {
-        kind(key) == "task" && self.unresolved && !self.accepted && self.replacement.is_none()
-    }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Recovery {
+    ResolveNone,
+    ResolveSession,
+    ReplaceDeleted,
+}
 
-    fn absent(&self, key: &str, session: &SessionRef) -> SessionsError {
-        if self.first_task_pending(key) {
-            return SessionsError::FirstTaskAbsent {
+impl Recovery {
+    fn refusal(self, key: &str, session: &SessionRef) -> SessionsError {
+        match self {
+            Self::ResolveNone => SessionsError::FirstStartAbsent {
                 key: key.into(),
                 session: session.clone(),
-            };
+            },
+            Self::ResolveSession => SessionsError::PendingStartPresent {
+                key: key.into(),
+                session: session.clone(),
+            },
+            Self::ReplaceDeleted => deleted(key, session),
         }
-        deleted(key, session)
     }
 }
 
+impl Recorded {
+    fn absent_recovery(&self) -> Recovery {
+        if self.accepted || self.replacement.is_some() {
+            Recovery::ReplaceDeleted
+        } else {
+            Recovery::ResolveNone
+        }
+    }
+
+    fn recovery(&self, presence: Presence) -> Option<Recovery> {
+        match presence {
+            Presence::Absent => Some(self.absent_recovery()),
+            Presence::Present if !self.accepted => Some(Recovery::ResolveSession),
+            Presence::Present | Presence::Archived => None,
+        }
+    }
+
+    fn absent(&self, key: &str, session: &SessionRef) -> SessionsError {
+        self.absent_recovery().refusal(key, session)
+    }
+}
 struct ReplacementIntent {
     original: SessionRef,
     stopped: SessionRef,
@@ -548,7 +576,7 @@ fn start_claimed(
         match thread.presence {
             Presence::Archived => return Err(archived(&input.key, session)),
             Presence::Absent if recorded.bound.is_some() => {
-                return Err(deleted(&input.key, session));
+                return Err(recorded.absent(&input.key, session));
             }
             Presence::Absent => return Err(SessionsError::Gone(session.clone())),
             Presence::Present => {
@@ -884,30 +912,36 @@ pub fn resolve(
         .request
         .as_ref()
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no recorded start")))?;
-    if !recorded.unresolved {
-        return Err(SessionsError::Refused(format!(
-            "`{key}` has no unresolved start"
-        )));
-    }
-    let pending = if let Some(bound) = &recorded.bound
-        && !recorded.accepted
-        && (recorded.replacement.is_some() || recorded.first_task_pending(key))
+    let observed = if let Some(bound) = &recorded.bound
         && session.is_none_or(|requested| requested == bound)
     {
         let thread = adapter.read_state(bound)?;
-        match thread.presence {
-            Presence::Absent if !(session.is_none() && recorded.first_task_pending(key)) => {
-                let error = recorded.absent(key, bound);
-                note(&guard.state, adapter.runtime(), key, now, Err(&error));
+        if thread.presence == Presence::Archived {
+            return Err(archived(key, bound));
+        }
+        if let Some(recovery) = recorded.recovery(thread.presence) {
+            let requested = if session.is_none() {
+                Recovery::ResolveNone
+            } else {
+                Recovery::ResolveSession
+            };
+            if recovery != requested {
+                let error = recovery.refusal(key, bound);
+                if thread.presence == Presence::Absent {
+                    note(&guard.state, adapter.runtime(), key, now, Err(&error));
+                }
                 return Err(error);
             }
-            Presence::Archived => return Err(archived(key, bound)),
-            Presence::Absent | Presence::Present => {}
         }
         Some(thread)
     } else {
         None
     };
+    if !recorded.unresolved {
+        return Err(SessionsError::Refused(format!(
+            "`{key}` has no unresolved start"
+        )));
+    }
     if let Some(session) = session {
         if recorded
             .bound
@@ -916,7 +950,7 @@ pub fn resolve(
         {
             return Err(SessionsError::KeyConflict(key.into()));
         }
-        let thread = match pending {
+        let thread = match observed {
             Some(thread) => thread,
             None => adapter.read_state(session)?,
         };
@@ -972,13 +1006,9 @@ pub fn resolve(
         )?;
         // Retain the marker until the original input is accepted.
     } else {
-        let absent = pending.filter(|thread| thread.presence == Presence::Absent);
-        if let Some(bound) = &recorded.bound
-            && absent.is_none()
-        {
-            return Err(SessionsError::Refused(format!(
-                "delivery target {bound} is already retained. Run `instrukt sessions resolve-start {key} --session {bound}`"
-            )));
+        let absent = observed.filter(|thread| thread.presence == Presence::Absent);
+        if recorded.bound.is_some() && absent.is_none() {
+            return Err(SessionsError::KeyConflict(key.into()));
         }
         guard.state.write::<_,StateError>(|tx| {
             let path = state::db_path(tx);
@@ -1062,6 +1092,16 @@ pub fn replace_deleted(
             warning: reflect_replacement(work, &recorded),
         });
     }
+    if recorded.bound.as_ref() == Some(stopped)
+        && recorded.absent_recovery() == Recovery::ResolveNone
+    {
+        let thread = adapter.read_state(stopped)?;
+        let error = recorded
+            .recovery(thread.presence)
+            .map_or_else(|| archived(key, stopped), |door| door.refusal(key, stopped));
+        note(&state, adapter.runtime(), key, now, Err(&error));
+        return Err(error);
+    }
     if standing {
         let thread = crate::standing::replace_deleted(invocation, adapter, key, stopped, now)?;
         return Ok(ReplacementResult {
@@ -1077,12 +1117,6 @@ pub fn replace_deleted(
     let pending_successor = recorded.replacement.is_some() && !recorded.accepted;
     if !resuming && recorded.bound.as_ref() != Some(stopped) {
         return Err(stopped_mismatch(key, stopped));
-    }
-    if recorded.first_task_pending(key) {
-        confirm_deleted(adapter, stopped)?;
-        let error = recorded.absent(key, stopped);
-        note(&guard.state, adapter.runtime(), key, now, Err(&error));
-        return Err(error);
     }
     if !resuming && !pending_successor && (recorded.unresolved || recorded.retry_allowed) {
         return Err(SessionsError::Unresolved { key: key.into() });
@@ -1335,7 +1369,7 @@ fn followup_inner(
             let Some(request) = recorded.request.as_ref().filter(|_| {
                 recorded.bound.is_none() && (recorded.unresolved || recorded.retry_allowed)
             }) else {
-                return Err(deleted(&input.key, assignment.session));
+                return Err(recorded.absent(&input.key, assignment.session));
             };
             return start_claimed(
                 adapter,

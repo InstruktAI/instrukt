@@ -465,48 +465,37 @@ fn subject_successors_require_absence_and_leave_archived_work_pending() {
     assert_eq!(deleted.delivered_to("later-event").to_string(), "t3:s2");
     assert!(deleted.runtime.input_log("s2").contains("later-event"));
     assert!(start_anomalies(&deleted).is_empty());
-    let pending = Responsibility::new("subscription_identity: subject\n");
-    pending
-        .computer
-        .db()
-        .execute_batch(
-            "CREATE TRIGGER fail_initial_receipt BEFORE INSERT ON runtime_inputs
-         WHEN NEW.session='s1' BEGIN SELECT RAISE(ABORT, 'standing opening receipt failed'); END;",
-        )
-        .unwrap();
-    pending.append("initial");
-    pending.tick();
-    let key = pending.runtime.key("s1");
-    pending
-        .computer
-        .env
-        .run(
-            pending.computer.env.home(),
-            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
-        )
-        .failure();
-    assert_eq!(pending.runtime.threads(), ["s1"]);
-    pending.runtime.set_status("s1", "stopped");
-    pending.runtime.delete("s1");
-    pending.tick();
-    assert!(pending.runtime.threads().is_empty());
-    let finding = start_anomalies(&pending);
-    assert!(
-        finding[0]["failure"].as_str().unwrap().contains(&format!(
-            "instrukt sessions replace-deleted {key} --stopped t3:s1"
-        )),
-        "{finding:?}"
+}
+
+pub(super) fn check_standing_recovery_doors() {
+    let r = Responsibility::new("subscription_identity: subject\n");
+    let db = r.computer.db();
+    crate::session_continuity::fail_recovery_receipt(&db, "s1");
+    r.append("initial");
+    r.tick();
+    crate::session_continuity::check_recovery_doors(
+        &r.computer.env,
+        r.computer.project.path(),
+        &r.runtime,
+        &db,
+        None,
+        || {
+            r.tick();
+            assert_eq!(r.delivered_to("initial").to_string(), "t3:s2");
+            let generation: u32 = db
+                .query_row(
+                    "SELECT generation FROM procedure_responsibilities",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(generation, 1);
+        },
     );
-    pending.replace_deleted(&key);
-    assert_eq!(pending.delivered_to("initial").to_string(), "t3:s2");
-    pending.append("after-pending-replacement");
-    pending.tick();
-    assert_eq!(
-        pending
-            .delivered_to("after-pending-replacement")
-            .to_string(),
-        "t3:s2"
-    );
+    r.runtime.consume("s4");
+    r.append("after-recovery");
+    r.tick();
+    assert_eq!(r.delivered_to("after-recovery").to_string(), "t3:s4");
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS23
