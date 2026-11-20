@@ -949,7 +949,6 @@ dependencies = [
 name = "instrukt-core"
 version = "0.1.0"
 dependencies = [
- "darwin-libproc",
  "dotenvy",
  "hex",
  "indexmap",

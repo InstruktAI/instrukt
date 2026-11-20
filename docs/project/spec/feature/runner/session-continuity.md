@@ -566,14 +566,15 @@ fallback. Capacity evidence never proves that startup created no thread.
 
 ### Owned child-command cleanup
 
-Every child command instrukt launches has a process group whose descendants
-are cleaned up on every outcome: success, failure, timeout and interruption.
-Completion is not reported while instrukt-owned descendants remain orphaned.
-An absent process group is already stopped. On macOS, after instrukt reaps
-the direct child, a signal can report a permission error as the group
-disappears. Instrukt treats that error as already stopped only when the
-operating system confirms no live member of the group remains. A permission
-error for a live group is reported.
+Every child command instrukt launches has a process group. Instrukt attempts
+to stop that group on every outcome: success, failure, timeout and interruption.
+It stops the descendants it can signal before reporting completion.
+An absent process group is already stopped. On macOS, once instrukt reaps
+the direct child, `EPERM` from a group signal means it can signal no member
+of the group. Instrukt logs a warning with the group ID, completes cleanup
+without retrying the signal, and preserves the outcome from the command wait.
+Before instrukt reaps the direct child, a group signal's `EPERM` remains an
+error.
 This concerns instrukt's own commands, not a machine-wide process janitor or
 the runtime's standing agent lifecycle, which T3 owns.
 
@@ -914,9 +915,15 @@ And a command given an internal input-lock key tells the operator to use the ass
 And an unreadable recovery lock reports the path problem and its operating system cause
 ```
 
-### UC-SS21: Leave no instrukt-owned child processes behind (retired)
+### UC-SS21: Leave no instrukt-owned child processes behind
 
-Retired: owned child-command cleanup is part of the prose contract above.
+```gherkin
+Given instrukt runs a child command in its own process group on macOS
+When the command wait reaps the child and group cleanup cannot signal any remaining member
+Then cleanup completes and the command reports the child's exit result
+But if group signalling is refused before the child is reaped
+Then cleanup reports the permission error
+```
 
 ### UC-SS4: Conversation archive lookup (retired)
 
