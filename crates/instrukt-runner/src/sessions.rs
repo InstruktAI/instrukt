@@ -124,12 +124,13 @@ pub enum SessionsError {
         observed: String,
     },
     #[error(
-        "pending thread {session} for `{key}`: {detail}. Restore its recorded key and placement, then run `instrukt sessions resolve-start {key} --session {session}`"
+        "pending thread {session} for `{key}`: {detail}. Restore its recorded key and placement, then run `{retry}`"
     )]
     PendingPlacement {
         key: String,
         session: SessionRef,
         detail: String,
+        retry: Box<str>,
     },
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
@@ -149,6 +150,14 @@ pub enum SessionsError {
         "delivery target {session} for `{key}` is already retained. Run `instrukt sessions resolve-start {key} --session {session}`"
     )]
     PendingStartPresent { key: String, session: SessionRef },
+    #[error(
+        "replacement thread {session} for `{key}` is pending acceptance; use `instrukt sessions replace-deleted {key} --stopped {stopped}`"
+    )]
+    PendingReplacement {
+        key: String,
+        session: SessionRef,
+        stopped: Box<SessionRef>,
+    },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]

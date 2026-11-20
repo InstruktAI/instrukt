@@ -86,6 +86,8 @@ pub struct ConversationChanges {
     pub position: SourcePosition,
     pub has_more: bool,
     pub completed_turns: Vec<CompletedTurn>,
+    /// Presence in the source for a scope of exactly one conversation.
+    pub scoped_presence: Option<super::Presence>,
     pub conversations: Vec<SessionId>,
     pub turn_failures: Vec<TurnEvidenceFailure>,
     /// Previously observed native conversations absent from this source pass.

@@ -12,7 +12,10 @@
 //! turn), failed (its turn failed without a reply), and answered (its turn
 //! finished with an answer or successfully produced nothing). Each answer piece stays pending
 //! until the connector accepted its post.
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use instrukt_connector::{Accompanying, Incoming, Sender};
 use instrukt_core::config::{Admitted, COMPANY_AGENT_ROLE, ConfigError, DeclaredConnector};
@@ -30,7 +33,9 @@ use instrukt_runner::keyed::{self, RuntimeInvocation};
 use instrukt_runner::runtime::conversations::{
     AuthorKind, ConversationSource, Scope, SourcePosition,
 };
-use instrukt_runner::runtime::{CreationPermit, RuntimeAdapter, RuntimeAssignment, RuntimeStart};
+use instrukt_runner::runtime::{
+    CreationPermit, InputState, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart,
+};
 use instrukt_runner::sessions::{SessionState, SessionsError};
 use instrukt_runner::state::{self, RunnerState, StateError};
 
@@ -1345,20 +1350,30 @@ fn deliver_one(
     invocation: &RuntimeInvocation,
     admitted: &Admitted,
     adapter: &dyn RuntimeAdapter,
-    source: &dyn ConversationSource,
-    state: &RunnerState,
+    opening_source: Result<Option<OpeningSource>, ConversationError>,
     c: &Conversation,
+    next: &Message,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
+    let state = &RunnerState::new(invocation.home());
     let now = clock();
-    let open = open_messages(state, c)?;
-    let Some(next) = next_message(&open, c) else {
-        return Ok(());
-    };
     let result = match &c.session {
-        None => start(invocation, admitted, adapter, source, c, next, now),
+        None => opening_source
+            .and_then(|source| start(invocation, admitted, adapter, source, c, next, now)),
         Some(session) => send(adapter, state, c, session, next, now),
     };
+    record_delivery_failure(adapter, state, c, next, clock, &result)?;
+    result
+}
+
+fn record_delivery_failure(
+    adapter: &dyn RuntimeAdapter,
+    state: &RunnerState,
+    c: &Conversation,
+    next: &Message,
+    clock: &dyn Fn() -> Timestamp,
+    result: &Result<(), ConversationError>,
+) -> Result<(), ConversationError> {
     // A runtime failure is retained through the adapter's safe diagnostic,
     // never its raw native output. An unresolved start says so, with its key
     // and the command that resolves it.
@@ -1372,7 +1387,7 @@ fn deliver_one(
             .to_string(),
         other => other.to_string(),
     });
-    if let (Err(error), Some(cause)) = (&result, &failure)
+    if let (Err(error), Some(cause)) = (result, &failure)
         && reports(error, next.failure.as_deref(), cause)
     {
         tracing::warn!(target: LOG_TARGET, event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
@@ -1384,14 +1399,19 @@ fn deliver_one(
     if result.is_err() {
         unavailable(state, c, std::slice::from_ref(&next.message), clock())?;
     }
-    result
+    Ok(())
+}
+
+struct OpeningSource {
+    identity: String,
+    position: SourcePosition,
 }
 
 fn start(
     invocation: &RuntimeInvocation,
     admitted: &Admitted,
     adapter: &dyn RuntimeAdapter,
-    source: &dyn ConversationSource,
+    opening_source: Option<OpeningSource>,
     c: &Conversation,
     next: &Message,
     now: Timestamp,
@@ -1447,7 +1467,9 @@ fn start(
                 worktree: None,
                 profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
             };
-            let position = opening_position(source)?;
+            let source = opening_source.ok_or_else(|| {
+                ConversationError::Refused("the opening source is unavailable".into())
+            })?;
             state.write::<_, StateError>(|tx| {
                 let path = state::db_path(tx);
                 tx.execute(
@@ -1458,8 +1480,8 @@ fn start(
                         c.conversation,
                         next.message,
                         serde_json::to_string(&request).map_err(|e| state::invalid(&path, e))?,
-                        source.identity(),
-                        serde_json::to_string(&position).map_err(|e| state::invalid(&path, e))?
+                        source.identity,
+                        serde_json::to_string(&source.position).map_err(|e| state::invalid(&path, e))?
                     ],
                 )
                 .map_err(state::sql(&path))?;
@@ -1492,17 +1514,6 @@ fn send(
         .content
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
-    // A send whose acceptance was lost is observed before sending again.
-    if next.attempted && reconcile(adapter, state, c, session, next, now)? {
-        return Ok(());
-    }
-    let thread = adapter.read_state(session)?;
-    if !matches!(
-        thread.state,
-        SessionState::InputReady | SessionState::EndedFailed
-    ) {
-        return Ok(());
-    }
     // The attempt is recorded before the runtime can accept it, so a lost
     // acceptance is reconciled before any answer is read past it.
     state.write::<_, StateError>(|tx| {
@@ -1516,28 +1527,6 @@ fn send(
     adapter.send(session, content)?;
     accepted(state, c, &next.message, None)?;
     Ok(())
-}
-
-/// Whether an attempted send was accepted by the runtime after all; if so,
-/// its acceptance is recorded.
-fn reconcile(
-    adapter: &dyn RuntimeAdapter,
-    state: &RunnerState,
-    c: &Conversation,
-    session: &SessionRef,
-    message: &Message,
-    now: Timestamp,
-) -> Result<bool, ConversationError> {
-    let Some(content) = message.content.as_deref() else {
-        return Ok(false);
-    };
-    if adapter.observe_input(session, content, now)?.state
-        == instrukt_runner::runtime::InputState::Unknown
-    {
-        return Ok(false);
-    }
-    accepted(state, c, &message.message, None)?;
-    Ok(true)
 }
 
 /// Split `text` into parts of at most `limit` characters, changing nothing
@@ -1579,9 +1568,9 @@ fn harvest(
     c: &Conversation,
     message_chars: usize,
     clock: &dyn Fn() -> Timestamp,
-) -> Result<(), ConversationError> {
+) -> Result<Presence, ConversationError> {
     let (Some(session), Some(mut position)) = (c.session.clone(), c.position.clone()) else {
-        return Ok(());
+        return Ok(Presence::Present);
     };
     if c.source_identity.as_deref() != Some(source.identity()) {
         return Err(ConversationError::Refused(
@@ -1593,10 +1582,9 @@ fn harvest(
     let own = std::slice::from_ref(&session.id);
     loop {
         let batch = source.changed_since(Some(&position), Scope::Only(own))?;
+        let presence = batch.scoped_presence.unwrap_or(Presence::Present);
         if batch.missing.iter().any(|id| id == &session.id) {
-            return Err(ConversationError::Refused(
-                "the session's native conversation content is missing; restore it".into(),
-            ));
+            return Ok(Presence::Absent);
         }
         // Its answers stay unread, with this cause, until a read is coherent.
         if batch.unsettled.iter().any(|id| id == &session.id) {
@@ -1708,26 +1696,413 @@ fn harvest(
             Ok(())
         })?;
         if !batch.has_more {
-            break;
+            return Ok(presence);
         }
     }
-    Ok(())
 }
 
 /// The answer pieces this process saw the connector accept whose acceptance
 /// it has not yet recorded. Such a piece is never posted again: only its
 /// record is retried, on every pass, until it is written.
 #[derive(Debug, Default)]
-pub struct Accepted(std::sync::Mutex<std::collections::BTreeMap<AcceptedPiece, Timestamp>>);
+pub struct Accepted {
+    receipts: std::sync::Mutex<std::collections::BTreeMap<AcceptedPiece, Timestamp>>,
+}
 
-/// One accepted piece: its conversation's address, its turn and its index.
+/// Per-conversation native work. A check takes no dispatch or conversation
+/// lock. Once cleared to dispatch, only that conversation's worker can send
+/// or start a turn until it returns.
+struct RelayWorkers {
+    connectors: Arc<dyn Connectors>,
+    wake: SyncSender<()>,
+    probes: Mutex<BTreeMap<String, MissingProbe>>,
+    absence_reads: Mutex<BTreeMap<String, AbsenceRead>>,
+    work: Mutex<BTreeMap<String, DeliveryWork>>,
+}
+
+#[derive(Clone)]
+struct DeliveryCandidate {
+    session: SessionRef,
+    message: String,
+    head: Option<String>,
+    source_presence: Presence,
+    invalidated: bool,
+}
+
+enum DeliveryWork {
+    Checking {
+        candidate: DeliveryCandidate,
+        reply: Receiver<Result<DeliveryCheck, SessionsError>>,
+    },
+    Dispatching(Receiver<Result<(), ConversationError>>),
+}
+
+enum DeliveryCheck {
+    Accepted,
+    Presence(Presence),
+    Ready,
+    Busy,
+}
+
+enum CheckedDelivery {
+    Idle,
+    Checking,
+    Checked {
+        candidate: DeliveryCandidate,
+        result: Result<DeliveryCheck, Box<SessionsError>>,
+    },
+    Dispatching,
+    DispatchFailed,
+}
+
+impl RelayWorkers {
+    fn poll(&self, c: &Conversation) -> CheckedDelivery {
+        let mut work = self.work.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = &c.semantic_key;
+        match work.get(key) {
+            Some(DeliveryWork::Checking { candidate, reply }) => {
+                let result = match reply.try_recv() {
+                    Ok(result) => result,
+                    Err(TryRecvError::Empty) => return CheckedDelivery::Checking,
+                    Err(TryRecvError::Disconnected) => {
+                        work.remove(key);
+                        return CheckedDelivery::Idle;
+                    }
+                };
+                let check = CheckedDelivery::Checked {
+                    candidate: candidate.clone(),
+                    result: result.map_err(Box::new),
+                };
+                work.remove(key);
+                check
+            }
+            Some(DeliveryWork::Dispatching(reply)) => {
+                let result = match reply.try_recv() {
+                    Err(TryRecvError::Empty) => return CheckedDelivery::Dispatching,
+                    Ok(Ok(())) => CheckedDelivery::Idle,
+                    _ => CheckedDelivery::DispatchFailed,
+                };
+                work.remove(key);
+                result
+            }
+            None => CheckedDelivery::Idle,
+        }
+    }
+
+    fn update_check_source(&self, c: &Conversation, observed: Option<Presence>) {
+        if let Some(DeliveryWork::Checking { candidate, .. }) = self
+            .work
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&c.semantic_key)
+        {
+            candidate.invalidated |= c.session.as_ref() != Some(&candidate.session)
+                || observed != Some(candidate.source_presence);
+        }
+    }
+
+    fn check(
+        &self,
+        adapter: &dyn RuntimeAdapter,
+        c: &Conversation,
+        session: &SessionRef,
+        next: &Message,
+        head: Option<&Message>,
+        source_presence: Presence,
+    ) {
+        let runtime = adapter.runtime();
+        let target = session.clone();
+        let attempted = next.content.clone().filter(|_| next.attempted);
+        let now = self.connectors.now();
+        let reply = self.spawn(move || {
+            let adapter = instrukt_runner::runtime::adapter(runtime);
+            if let Some(text) = attempted {
+                match adapter.observe_input(&target, &text, now) {
+                    Ok(observation) if observation.state != InputState::Unknown => {
+                        return Ok(DeliveryCheck::Accepted);
+                    }
+                    Ok(_) => {}
+                    Err(SessionsError::Gone(_)) => {
+                        return Ok(DeliveryCheck::Presence(Presence::Absent));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            let thread = adapter.read_state(&target)?;
+            Ok(if thread.presence != Presence::Present {
+                DeliveryCheck::Presence(thread.presence)
+            } else if matches!(
+                thread.state,
+                SessionState::InputReady | SessionState::EndedFailed
+            ) {
+                DeliveryCheck::Ready
+            } else {
+                DeliveryCheck::Busy
+            })
+        });
+        self.work
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                c.semantic_key.clone(),
+                DeliveryWork::Checking {
+                    candidate: DeliveryCandidate {
+                        session: session.clone(),
+                        message: next.message.clone(),
+                        head: head.map(|head| head.message.clone()),
+                        source_presence,
+                        invalidated: false,
+                    },
+                    reply,
+                },
+            );
+    }
+
+    fn dispatch(
+        &self,
+        home: &Home,
+        admitted: &Admitted,
+        adapter: &dyn RuntimeAdapter,
+        source: &dyn ConversationSource,
+        c: Conversation,
+        message: String,
+    ) {
+        let opening = if c.session.is_none() && c.request.is_none() {
+            opening_position(source).map(|position| {
+                Some(OpeningSource {
+                    identity: source.identity().to_owned(),
+                    position,
+                })
+            })
+        } else {
+            Ok(None)
+        };
+        let key = c.semantic_key.clone();
+        let home = home.clone();
+        let admitted = admitted.clone();
+        let runtime = adapter.runtime();
+        let connectors = Arc::clone(&self.connectors);
+        let reply = self.spawn(move || {
+            let state = RunnerState::new(&home);
+            #[cfg(debug_assertions)]
+            if c.session.is_some() {
+                hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD");
+            }
+            let ready = if c.session.is_some() {
+                RuntimeInvocation::try_acquire(&home)
+            } else {
+                Ok(None)
+            };
+            let invocation = match ready.and_then(|ready| match ready {
+                Some(invocation) => Ok(Some(invocation)),
+                None => RuntimeInvocation::acquire(&home, LOCK_WAIT).map(|invocation| {
+                    // A bound thread needs a fresh readiness check after
+                    // waiting for dispatch. Do not hold this lock across it.
+                    c.session.is_none().then_some(invocation)
+                }),
+            }) {
+                Ok(Some(invocation)) => invocation,
+                Ok(None) => return Ok(()),
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, event = "conversation_dispatch_unavailable", error = %error);
+                    unavailable(&state, &c, std::slice::from_ref(&message), connectors.now())?;
+                    return Err(error.into());
+                }
+            };
+            let _lock = match lock(&home, &c) {
+                Ok(lock) => lock,
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, event = "conversation_lock_unavailable", company = %c.company, connector = %c.connector, key = %c.semantic_key, %error);
+                    unavailable(&state, &c, std::slice::from_ref(&message), connectors.now())?;
+                    return Err(error);
+                }
+            };
+            let Some(current) = reread(&state, &c)?.filter(|current| current.session == c.session)
+            else {
+                return Ok(());
+            };
+            let adapter = instrukt_runner::runtime::adapter(runtime);
+            if let Some(session) = &current.session
+                && keyed::replacement_binding(&home, adapter.as_ref(), &current.semantic_key, session)?
+                    .is_some()
+            {
+                return Ok(());
+            }
+            // Intake can change the head while delivery waits for the lock.
+            let open = open_messages(&state, &current)?;
+            let Some(next) = next_message(&open, &current).filter(|next| next.message == message)
+            else {
+                return Ok(());
+            };
+            deliver_one(
+                &invocation,
+                &admitted,
+                adapter.as_ref(),
+                opening,
+                &current,
+                next,
+                &|| connectors.now(),
+            )
+        });
+        self.work
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, DeliveryWork::Dispatching(reply));
+    }
+
+    fn spawn<T: Send + 'static>(&self, run: impl FnOnce() -> T + Send + 'static) -> Receiver<T> {
+        let (send, reply) = mpsc::channel();
+        let wake = self.wake.clone();
+        let _ = std::thread::Builder::new().spawn(move || {
+            let _ = send.send(run());
+            let _ = wake.try_send(());
+        });
+        reply
+    }
+}
+
+struct AbsenceRead {
+    session: SessionRef,
+    reply: Receiver<Option<Presence>>,
+    delay_secs: i64,
+    invalidated: bool,
+}
+
+enum MissingProbe {
+    Backoff {
+        retry_at: Timestamp,
+        delay_secs: i64,
+    },
+    Confirmed(Presence),
+    LiveUntil(Timestamp),
+}
+
+impl RelayWorkers {
+    // A projection change can invalidate the result, but only the worker's
+    // completion releases the conversation's slot for another native read.
+    fn absence_in_flight(
+        &self,
+        c: &Conversation,
+        missing: Option<&SessionRef>,
+        now: Timestamp,
+    ) -> bool {
+        let mut reads = self
+            .absence_reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(read) = reads.get_mut(&c.semantic_key) else {
+            return false;
+        };
+        read.invalidated |= Some(&read.session) != missing;
+        let observation = match read.reply.try_recv() {
+            Ok(observation) => observation,
+            Err(TryRecvError::Disconnected) => None,
+            Err(TryRecvError::Empty) => return true,
+        };
+        if !read.invalidated {
+            let state = if let Some(presence) = observation {
+                Self::observation(presence, now)
+            } else {
+                let session = &read.session;
+                let retry_at = now + jiff::SignedDuration::from_secs(read.delay_secs);
+                tracing::debug!(target: LOG_TARGET, event = "conversation_presence_probe_retry", %session, %retry_at);
+                MissingProbe::Backoff {
+                    retry_at,
+                    delay_secs: (read.delay_secs * 2).min(30),
+                }
+            };
+            self.probes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(read.session.to_string(), state);
+        }
+        reads.remove(&c.semantic_key);
+        false
+    }
+
+    fn confirm_missing(
+        &self,
+        adapter: &dyn RuntimeAdapter,
+        c: &Conversation,
+        session: &SessionRef,
+        now: Timestamp,
+    ) -> Option<Presence> {
+        if self.absence_in_flight(c, Some(session), now) {
+            return None;
+        }
+        let id = session.to_string();
+        let delay_secs = match self
+            .probes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&id)
+        {
+            Some(MissingProbe::Confirmed(presence)) => return Some(*presence),
+            Some(MissingProbe::LiveUntil(retry_at)) if now < *retry_at => {
+                return Some(Presence::Present);
+            }
+            Some(MissingProbe::Backoff {
+                retry_at,
+                delay_secs,
+            }) if now >= *retry_at => *delay_secs,
+            Some(MissingProbe::Backoff { .. }) => return None,
+            _ => 2,
+        };
+        let runtime = adapter.runtime();
+        let session = session.clone();
+        let target = session.clone();
+        let reply = self.spawn(move || {
+            instrukt_runner::runtime::adapter(runtime)
+                .read_state(&target)
+                .ok()
+                .map(|thread| thread.presence)
+        });
+        self.absence_reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                c.semantic_key.clone(),
+                AbsenceRead {
+                    session,
+                    reply,
+                    delay_secs,
+                    invalidated: false,
+                },
+            );
+        None
+    }
+
+    fn observation(presence: Presence, now: Timestamp) -> MissingProbe {
+        match presence {
+            // A live CLI thread can disappear while the projection is
+            // still missing. Refresh this result if no delivery checks it.
+            Presence::Present => MissingProbe::LiveUntil(now + jiff::SignedDuration::from_secs(2)),
+            _ => MissingProbe::Confirmed(presence),
+        }
+    }
+
+    fn confirmed_presence(&self, session: &SessionRef, presence: Presence, now: Timestamp) {
+        self.probes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(session.to_string(), Self::observation(presence, now));
+    }
+
+    fn source_present(&self, session: &SessionRef) {
+        self.probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&session.to_string());
+    }
+}
+
 type AcceptedPiece = (String, String, String, String, i64);
 
 impl Accepted {
     /// Once the provider confirmed a post, its recipient cannot be owed a
     /// notice while the acceptance still waits to be recorded.
     fn turns(&self, company: &ProjectSlug, connector: &str, conversation: &str) -> Vec<String> {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .keys()
@@ -1752,14 +2127,14 @@ impl Accepted {
     }
 
     fn receipt(&self, key: &AcceptedPiece) -> Option<Timestamp> {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(key)
             .copied()
     }
     fn keep(&self, c: &Conversation, turn: &str, piece: i64, at: Timestamp) {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(Self::key(c, turn, piece), at);
@@ -1769,14 +2144,14 @@ impl Accepted {
     }
 
     fn release_receipt(&self, key: &AcceptedPiece) {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(key);
     }
 
     fn has_receipts(&self, company: &ProjectSlug, connector: &str) -> bool {
-        self.0
+        self.receipts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .keys()
@@ -2273,17 +2648,100 @@ fn piece_failed(
     Ok(())
 }
 
-/// How this relay pass stands with the runtime's dispatch lock: not asked
-/// for yet, held, or not had within its wait.
-enum Dispatch {
-    Untried,
-    Held(RuntimeInvocation),
-    TimedOut,
-}
-
 /// How long the relay waits for a conversation's lock or the runtime's
 /// dispatch lock before it leaves that work for its next pass.
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+fn adopt_replacement(
+    home: &Home,
+    state: &RunnerState,
+    adapter: &dyn RuntimeAdapter,
+    source: &dyn ConversationSource,
+    c: &mut Conversation,
+) -> Result<Option<SessionRef>, ConversationError> {
+    let Some(current) = &c.session else {
+        return Ok(None);
+    };
+    if let Some((successor, ready)) =
+        keyed::replacement_binding(home, adapter, &c.semantic_key, current)?
+    {
+        if !ready {
+            return Ok(Some(successor));
+        }
+        let position = opening_position(source)?;
+        let serialized = serde_json::to_string(&position)?;
+        state.write::<_, StateError>(|tx| {
+            let path = state::db_path(tx);
+            tx.execute(
+                "UPDATE connected_conversations SET session=?4,source_identity=?5,position_json=?6 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                params![c.company.as_str(), c.connector, c.conversation, successor.to_string(), source.identity(), serialized],
+            ).map_err(state::sql(&path))?;
+            tx.execute(
+                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5)",
+                params![c.company.as_str(), c.connector, c.conversation, Stage::Pending.as_str(), Stage::Sent.as_str()],
+            ).map_err(state::sql(&path))?;
+            Ok(())
+        })?;
+        c.session = Some(successor);
+        c.source_identity = Some(source.identity().to_owned());
+        c.position = Some(position);
+    }
+    Ok(None)
+}
+
+fn blocked(
+    home: &Home,
+    adapter: &dyn RuntimeAdapter,
+    state: &RunnerState,
+    c: &Conversation,
+    session: &SessionRef,
+    presence: Option<Presence>,
+    now: Timestamp,
+) -> Result<(), ConversationError> {
+    let finding = match presence {
+        Some(presence) => {
+            keyed::presence_finding(home, adapter, &c.semantic_key, session, presence)?
+        }
+        None => None,
+    };
+    let failure = finding.map_or_else(
+        || {
+            format!(
+                "the source cannot establish presence for thread {session} under `{}`",
+                c.semantic_key
+            )
+        },
+        |finding| finding.to_string(),
+    );
+    set_failure(state, c, Some(&failure))?;
+    let waiting = open_messages(state, c)?
+        .into_iter()
+        .map(|message| message.message)
+        .collect::<Vec<_>>();
+    unavailable(state, c, &waiting, now)?;
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn hold_conversation_for_fixture(c: &Conversation, setting: &str) {
+    if !instrukt_core::fsx::fence_active() {
+        return;
+    }
+    let Some(path) = std::env::var_os(setting) else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(c.semantic_key.as_str()) {
+        return;
+    }
+    if instrukt_core::fsx::write(path.with_extension("observed"), "").is_err() {
+        return;
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while path.exists() && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
 
 /// The connector destination of the finished-turn relay `instrukt run`
 /// already hosts: for every conversation, read its finished turns into
@@ -2292,18 +2750,19 @@ const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
 /// within its wait is left for the next pass, as is delivery while the
 /// runtime's dispatch lock is not had; the messages that waited on either
 /// have their no-work interval opened.
-pub fn relay(
+fn relay(
     home: &Home,
     admitted: &Admitted,
     source: &dyn ConversationSource,
     adapter: &dyn RuntimeAdapter,
-    connectors: &dyn Connectors,
-    accepted: &Accepted,
+    workers: &RelayWorkers,
+    receipts: &Accepted,
     pass: CompanyRelayPass,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
-    prune_superseded_failures(&state, connectors.now())?;
-    let mut dispatch = Dispatch::Untried;
+    let connectors = workers.connectors.as_ref();
+    let clock = || connectors.now();
+    prune_superseded_failures(&state, clock())?;
     let work = match pass {
         CompanyRelayPass::CatchUp => conversations(&state, "", [])?,
         CompanyRelayPass::Retry => conversations(
@@ -2313,6 +2772,17 @@ pub fn relay(
         )?,
     };
     for initial in work {
+        let check = workers.poll(&initial);
+        if matches!(check, CheckedDelivery::Dispatching) {
+            // The delivery owns the conversation record until it returns.
+            // Posting answers already retained needs only the post lock.
+            unconfirmed(&state, &initial, clock())?;
+            if let Err(error) = post(admitted, &state, connectors, receipts, &initial) {
+                tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %initial.company, connector = %initial.connector, key = %initial.semantic_key, %error);
+            }
+            unconfirmed(&state, &initial, clock())?;
+            continue;
+        }
         let _lock = match lock(home, &initial) {
             Ok(lock) => lock,
             Err(error) => {
@@ -2326,77 +2796,182 @@ pub fn relay(
                 continue;
             }
         };
-        let Some(c) = reread(&state, &initial)? else {
+        let Some(mut c) = reread(&state, &initial)? else {
             continue;
         };
-        // Attempted sends whose acceptance went unrecorded are reconciled
-        // before any answer is read past them.
-        if let Some(session) = &c.session {
-            for message in open_messages(&state, &c)?
-                .into_iter()
-                .filter(|m| m.stage == Stage::Pending && m.attempted)
+        // Intake runs alongside source reads. Only work already captured
+        // when the read began may use the presence it observed.
+        let before_read = open_messages(&state, &c)?;
+        let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
+        #[cfg(debug_assertions)]
+        if observed == Some(Presence::Present) {
+            hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD");
+        }
+        if let Some(session) = &c.session
+            && matches!(observed, Some(Presence::Present | Presence::Archived))
+        {
+            workers.source_present(session);
+        }
+        let original_binding = c.session.clone();
+        if !open_messages(&state, &c)?.is_empty()
+            && let Some(pending) = adopt_replacement(home, &state, adapter, source, &mut c)?
+        {
+            let observed = source
+                .changed_since(None, Scope::Only(std::slice::from_ref(&pending.id)))
+                .ok()
+                .and_then(|batch| batch.scoped_presence);
+            workers.update_check_source(&c, None);
+            let presence = match observed {
+                Some(Presence::Absent) if !matches!(check, CheckedDelivery::Checking) => {
+                    workers.confirm_missing(adapter, &c, &pending, clock())
+                }
+                Some(Presence::Absent) => None,
+                Some(presence) => {
+                    workers.source_present(&pending);
+                    workers.absence_in_flight(&c, None, clock());
+                    Some(presence)
+                }
+                None => None,
+            };
+            blocked(home, adapter, &state, &c, &pending, presence, clock())?;
+            continue;
+        }
+        // The batch belonged to the old binding. Read the successor on
+        // the next pass before using its presence for dispatch.
+        if c.session != original_binding {
+            if let Some(original) = &original_binding {
+                workers.source_present(original);
+            }
+            workers.update_check_source(&c, None);
+            workers.absence_in_flight(&c, None, clock());
+            continue;
+        }
+        let Some(observed) = observed else {
+            continue;
+        };
+        let check = match check {
+            CheckedDelivery::Checked { candidate, result }
+                if c.session.as_ref() == Some(&candidate.session) =>
             {
-                if let Err(error) =
-                    reconcile(adapter, &state, &c, session, &message, connectors.now())
+                // A changed projection invalidates a conflicting result
+                // from a check begun against the older projection.
+                let checked_presence = match result {
+                    Ok(DeliveryCheck::Presence(presence)) => Some(presence),
+                    Ok(DeliveryCheck::Ready | DeliveryCheck::Busy) => Some(Presence::Present),
+                    _ => None,
+                };
+                if candidate.invalidated
+                    || (observed != candidate.source_presence && checked_presence != Some(observed))
                 {
-                    let cause = match &error {
-                        ConversationError::Sessions(native) => adapter
-                            .diagnostic("conversation delivery", native)
-                            .to_string(),
-                        other => other.to_string(),
-                    };
-                    set_message_failure(&state, &c, &message.message, Some(&cause))?;
+                    None
+                } else {
+                    if let Some(presence) = checked_presence
+                        && presence != Presence::Present
+                    {
+                        workers.confirmed_presence(&candidate.session, presence, clock());
+                        blocked(
+                            home,
+                            adapter,
+                            &state,
+                            &c,
+                            &candidate.session,
+                            Some(presence),
+                            clock(),
+                        )?;
+                        continue;
+                    }
+                    if observed == Presence::Absent && checked_presence == Some(Presence::Present) {
+                        workers.confirmed_presence(&candidate.session, Presence::Present, clock());
+                    }
+                    Some((candidate.message, candidate.head, result))
                 }
             }
-        }
-        if !answers(admitted, &state, source, connectors, accepted, &c)? {
-            continue;
-        }
-        let Some(c) = reread(&state, &c)? else {
-            continue;
-        };
-        observe(adapter, source, &state, &c, &|| connectors.now())?;
-        let ready = next_message(&open_messages(&state, &c)?, &c).map(|m| m.message.clone());
-        let Some(ready) = ready else {
-            continue;
-        };
-        if matches!(dispatch, Dispatch::Untried) {
-            dispatch = match RuntimeInvocation::acquire(home, LOCK_WAIT) {
-                Ok(invocation) => Dispatch::Held(invocation),
-                Err(error) => {
-                    tracing::warn!(target: LOG_TARGET, event = "conversation_dispatch_unavailable", error = %error);
-                    Dispatch::TimedOut
+            CheckedDelivery::Checking => {
+                workers.update_check_source(&c, Some(observed));
+                if let Some(session) = &c.session
+                    && observed == Presence::Archived
+                {
+                    blocked(home, adapter, &state, &c, session, Some(observed), clock())?;
                 }
-            };
-        }
-        let invocation = match &dispatch {
-            Dispatch::Held(invocation) => invocation,
-            // The message waited on the dispatch lock it did not get.
-            Dispatch::TimedOut | Dispatch::Untried => {
-                unavailable(&state, &c, std::slice::from_ref(&ready), connectors.now())?;
                 continue;
             }
+            CheckedDelivery::DispatchFailed => continue,
+            _ => None,
         };
-        // Its failure stays with the message it concerns.
-        let _ = deliver_one(
-            invocation,
-            admitted,
-            adapter,
-            source,
-            &state,
-            &c,
-            // Restrictions are judged on the runner's clock, as dispatch
-            // and `agents availability` judge them.
-            &|| connectors.now(),
-        );
-        // A session bound just now may be one a recovery found with its
-        // opening turn already finished while the runner was down: its answer
-        // is read now, not left for an unrelated native change.
-        if c.session.is_none()
-            && let Some(bound) = reread(&state, &c)?
-            && bound.session.is_some()
+        if let Some(session) = &c.session {
+            let presence = if observed == Presence::Absent {
+                if open_messages(&state, &c)?.is_empty() {
+                    workers.absence_in_flight(&c, None, clock());
+                    continue;
+                }
+                let confirmed = workers.confirm_missing(adapter, &c, session, clock());
+                if confirmed == Some(Presence::Present) {
+                    set_failure(&state, &c, None)?;
+                }
+                confirmed
+            } else {
+                if workers.absence_in_flight(&c, None, clock()) && observed == Presence::Present {
+                    continue;
+                }
+                Some(observed)
+            };
+            if presence != Some(Presence::Present) {
+                if !open_messages(&state, &c)?.is_empty() {
+                    blocked(home, adapter, &state, &c, session, presence, clock())?;
+                }
+                continue;
+            }
+        }
+        let open = open_messages(&state, &c)?;
+        let mut checked_head = None;
+        if let Some((message, head, result)) = check
+            && let Some(next) = open
+                .iter()
+                .find(|m| m.stage == Stage::Pending && m.message == message)
         {
-            answers(admitted, &state, source, connectors, accepted, &bound)?;
+            match result {
+                Ok(DeliveryCheck::Accepted) => {
+                    accepted(&state, &c, &message, None)?;
+                    continue;
+                }
+                Ok(DeliveryCheck::Ready) => checked_head = head,
+                Ok(_) => continue,
+                Err(error) => {
+                    record_delivery_failure(
+                        adapter,
+                        &state,
+                        &c,
+                        next,
+                        &clock,
+                        &Err((*error).into()),
+                    )?;
+                    continue;
+                }
+            }
+        }
+        observe(adapter, source, &state, &c, &clock)?;
+        let open = open_messages(&state, &c)?;
+        let before_read = |candidate: &Message| {
+            before_read.iter().any(|message| {
+                message.stage == Stage::Pending && message.message == candidate.message
+            })
+        };
+        let next = next_message(&open, &c).filter(|candidate| before_read(candidate));
+        if let Some(session) = &c.session {
+            // Accept any lost acknowledgment before trying to serve a
+            // different queue head that arrived meanwhile.
+            let unconfirmed = open
+                .iter()
+                .find(|m| m.stage == Stage::Pending && m.attempted && before_read(m));
+            if next.map(|m| &m.message) != checked_head.as_ref() || checked_head.is_none() {
+                if let Some(candidate) = unconfirmed.or(next) {
+                    workers.check(adapter, &c, session, candidate, next, observed);
+                }
+                continue;
+            }
+        }
+        if let Some(next) = next {
+            workers.dispatch(home, admitted, adapter, source, c, next.message.clone());
         }
     }
     clear_idle_answer_failures(&state)?;
@@ -2535,7 +3110,7 @@ fn answers(
     connectors: &dyn Connectors,
     accepted: &Accepted,
     c: &Conversation,
-) -> Result<bool, ConversationError> {
+) -> Result<Option<Presence>, ConversationError> {
     // An answer tried earlier and not confirmed is kept from the person
     // whatever this pass manages: its interval opens before anything here
     // can fail.
@@ -2550,26 +3125,33 @@ fn answers(
                 connectors.now()
             })
         });
-    set_failure(
-        state,
-        c,
-        read.as_ref().err().map(ToString::to_string).as_deref(),
-    )?;
-    if let Err(error) = read {
-        tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
-        let sent = open_messages(state, c)?
-            .into_iter()
-            .filter(|m| m.stage == Stage::Sent)
-            .map(|m| m.message)
-            .collect::<Vec<_>>();
-        unavailable(state, c, &sent, connectors.now())?;
-        return Ok(false);
+    if !matches!(read, Ok(Presence::Archived | Presence::Absent)) {
+        set_failure(
+            state,
+            c,
+            read.as_ref().err().map(ToString::to_string).as_deref(),
+        )?;
     }
+    let presence = match read {
+        Ok(presence) => presence,
+        Err(error) => {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unread", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
+            let sent = open_messages(state, c)?
+                .into_iter()
+                .filter(|m| m.stage == Stage::Sent)
+                .map(|m| m.message)
+                .collect::<Vec<_>>();
+            unavailable(state, c, &sent, connectors.now())?;
+            return Ok(None);
+        }
+    };
+    // Existing answers can post even when reading the next turn failed
+    // or dispatch is waiting on session recovery.
     if let Err(error) = post(admitted, state, connectors, accepted, c) {
         tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
     unconfirmed(state, c, connectors.now())?;
-    Ok(true)
+    Ok(Some(presence))
 }
 
 const UNPOSTED: &str = "SELECT 1 FROM conversation_answers x WHERE x.company=conversation_messages.company AND x.connector=conversation_messages.connector AND x.conversation=conversation_messages.conversation AND x.turn=conversation_messages.turn AND x.posted_at IS NULL AND x.delivery_unknown_at IS NULL";
@@ -2910,7 +3492,7 @@ pub fn speaker(
 /// but not yet recorded, for its own relay.
 pub struct Ports {
     builders: Vec<crate::BuildKind>,
-    hosted: std::sync::Mutex<Option<std::sync::Arc<dyn Connectors>>>,
+    hosted: Mutex<Option<Arc<RelayWorkers>>>,
     accepted: std::sync::Arc<Accepted>,
 }
 
@@ -2923,7 +3505,7 @@ impl Ports {
         }
     }
 
-    fn hosted(&self) -> Option<std::sync::Arc<dyn Connectors>> {
+    fn hosted(&self) -> Option<Arc<RelayWorkers>> {
         self.hosted
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2961,8 +3543,13 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
         *self
             .hosted
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some(std::sync::Arc::clone(&directory));
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(RelayWorkers {
+            connectors: Arc::clone(&directory),
+            wake: start.wake.clone(),
+            probes: Mutex::default(),
+            absence_reads: Mutex::default(),
+            work: Mutex::default(),
+        }));
         crate::connector_host::Connections::start(
             start.home,
             start.current,
@@ -2985,7 +3572,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
         adapter: &dyn RuntimeAdapter,
         pass: CompanyRelayPass,
     ) -> Result<(), instrukt_runner::interfaces::CompanyError> {
-        let Some(connectors) = self.hosted() else {
+        let Some(workers) = self.hosted() else {
             return Ok(());
         };
         relay(
@@ -2993,7 +3580,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
             admitted,
             source,
             adapter,
-            connectors.as_ref(),
+            &workers,
             &self.accepted,
             pass,
         )
@@ -3009,7 +3596,7 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
     fn relay_state(&self, home: &Home, failure: Option<&str>) {
         let now = self
             .hosted()
-            .map_or_else(Timestamp::now, |connectors| connectors.now());
+            .map_or_else(Timestamp::now, |workers| workers.connectors.now());
         relay_state(home, failure, now);
     }
 

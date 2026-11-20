@@ -156,13 +156,29 @@ struct Recorded {
     opening_acknowledged: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Recovery {
+enum Recovery<'a> {
     ResolveNone,
     ResolveSession,
     ReplaceDeleted,
+    ResumeReplacement(&'a SessionRef),
 }
 
-impl Recovery {
+impl Recovery<'_> {
+    fn command(self, key: &str, session: &SessionRef) -> String {
+        match self {
+            Self::ResolveNone => format!("instrukt sessions resolve-start {key} --none"),
+            Self::ResolveSession => {
+                format!("instrukt sessions resolve-start {key} --session {session}")
+            }
+            Self::ReplaceDeleted => {
+                format!("instrukt sessions replace-deleted {key} --stopped {session}")
+            }
+            Self::ResumeReplacement(stopped) => {
+                format!("instrukt sessions replace-deleted {key} --stopped {stopped}")
+            }
+        }
+    }
+
     fn refusal(self, key: &str, session: &SessionRef) -> SessionsError {
         match self {
             Self::ResolveNone => SessionsError::FirstStartAbsent {
@@ -174,12 +190,17 @@ impl Recovery {
                 session: session.clone(),
             },
             Self::ReplaceDeleted => deleted(key, session),
+            Self::ResumeReplacement(stopped) => SessionsError::PendingReplacement {
+                key: key.into(),
+                session: session.clone(),
+                stopped: Box::new(stopped.clone()),
+            },
         }
     }
 }
 
 impl Recorded {
-    fn absent_recovery(&self) -> Recovery {
+    fn absent_recovery(&self) -> Recovery<'_> {
         if self.accepted || self.replacement.is_some() {
             Recovery::ReplaceDeleted
         } else {
@@ -187,10 +208,13 @@ impl Recorded {
         }
     }
 
-    fn recovery(&self, presence: Presence) -> Option<Recovery> {
+    fn recovery(&self, presence: Presence) -> Option<Recovery<'_>> {
         match presence {
             Presence::Absent => Some(self.absent_recovery()),
-            Presence::Present if !self.accepted => Some(Recovery::ResolveSession),
+            Presence::Present if !self.accepted => Some(match &self.replacement {
+                Some(intent) => Recovery::ResumeReplacement(&intent.stopped),
+                None => Recovery::ResolveSession,
+            }),
             Presence::Present | Presence::Archived => None,
         }
     }
@@ -442,9 +466,14 @@ fn start_claimed(
     {
         if let Some(pending) = &recorded.bound
             && !recorded.accepted
-            && adapter.read_state(pending)?.presence == Presence::Absent
         {
-            return Err(deleted(&input.key, pending));
+            let presence = adapter.read_state(pending)?.presence;
+            if presence == Presence::Archived {
+                return Err(archived(&input.key, pending));
+            }
+            if let Some(door) = recorded.recovery(presence) {
+                return Err(door.refusal(&input.key, pending));
+            }
         }
         return Err(deleted(&input.key, &intent.stopped));
     }
@@ -469,7 +498,7 @@ fn start_claimed(
             Presence::Present => {}
         }
         if recorded.opening_acknowledged && !recorded.accepted {
-            verify_pending_start(adapter, &resolved, &thread, recorded.project_id.as_deref())?;
+            verify_pending_start(adapter, &resolved, &thread, &recorded)?;
         } else {
             if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id) {
                 return Err(conflict(&input.key, [session]));
@@ -675,7 +704,7 @@ fn start_claimed(
         }
         Presence::Present => {}
     }
-    verify_pending_start(adapter, input, &thread, None)?;
+    verify_pending_start(adapter, input, &thread, &recorded)?;
     remember(
         &guard.state,
         adapter,
@@ -792,12 +821,17 @@ fn verify_pending_start(
     adapter: &dyn RuntimeAdapter,
     request: &RuntimeStart,
     thread: &Thread,
-    retained_project: Option<&str>,
+    recorded: &Recorded,
 ) -> Result<(), SessionsError> {
     let refusal = |detail: String| SessionsError::PendingPlacement {
         key: request.key.clone(),
         session: thread.session.clone(),
         detail,
+        retry: recorded
+            .recovery(Presence::Present)
+            .unwrap_or(Recovery::ResolveSession)
+            .command(&request.key, &thread.session)
+            .into_boxed_str(),
     };
     if thread.semantic_key.as_deref() != Some(&request.key) {
         return Err(refusal(format!(
@@ -812,7 +846,7 @@ fn verify_pending_start(
     else {
         return Err(refusal("native project ID is missing".into()));
     };
-    if let Some(retained) = retained_project {
+    if let Some(retained) = recorded.project_id.as_deref() {
         if project != retained {
             return Err(refusal(format!(
                 "native project changed from {retained} to {project}"
@@ -927,7 +961,9 @@ pub fn resolve(
             };
             if recovery != requested {
                 let error = recovery.refusal(key, bound);
-                if thread.presence == Presence::Absent {
+                if thread.presence == Presence::Absent
+                    || matches!(recovery, Recovery::ResumeReplacement(_))
+                {
                     note(&guard.state, adapter.runtime(), key, now, Err(&error));
                 }
                 return Err(error);
@@ -955,7 +991,7 @@ pub fn resolve(
             None => adapter.read_state(session)?,
         };
         if recorded.opening_acknowledged {
-            verify_pending_start(adapter, input, &thread, recorded.project_id.as_deref())?;
+            verify_pending_start(adapter, input, &thread, &recorded)?;
         }
         let listed = adapter.list(&input.checkout)?;
         let Some(listed) = listed
@@ -1126,6 +1162,25 @@ pub fn replace_deleted(
         .request
         .as_ref()
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
+    // A conversation successor receives outstanding inputs from its relay.
+    // Reusing the original opening would deliver an already-served message.
+    let conversation_request;
+    let request = if kind(key) == "conversation" {
+        let (assignment, _) = request
+            .brief
+            .strip_prefix("[Instrukt Assignment]\n")
+            .and_then(|brief| brief.split_once("\n[/Instrukt Assignment]"))
+            .ok_or_else(|| {
+                SessionsError::Refused(format!("`{key}` has no retained conversation assignment"))
+            })?;
+        conversation_request = RuntimeStart {
+            brief: crate::envelopes::Control::Assignment.frame(assignment),
+            ..request.clone()
+        };
+        &conversation_request
+    } else {
+        request
+    };
     let original = recorded
         .replacement
         .as_ref()
@@ -1205,6 +1260,40 @@ pub fn replace_deleted(
         session: thread.session,
         warning: reflect_replacement(work, &recorded),
     })
+}
+
+/// A replacement binding, with its acceptance still gated by the keyed protocol.
+pub fn replacement_binding(
+    home: &Home,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    current: &SessionRef,
+) -> Result<Option<(SessionRef, bool)>, SessionsError> {
+    let recorded = record(&RunnerState::new(home), adapter.runtime().name(), key)?;
+    Ok(recorded
+        .bound
+        .filter(|session| {
+            (recorded.replacement.is_some() || recorded.replaced_session.is_some())
+                && session != current
+        })
+        .map(|session| (session, recorded.accepted)))
+}
+
+/// Report the same recovery door as the keyed commands for the observed binding.
+pub fn presence_finding(
+    home: &Home,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    session: &SessionRef,
+    presence: Presence,
+) -> Result<Option<SessionsError>, SessionsError> {
+    let recorded = record(&RunnerState::new(home), adapter.runtime().name(), key)?;
+    if presence == Presence::Archived {
+        return Ok(Some(archived(key, session)));
+    }
+    Ok(recorded
+        .recovery(presence)
+        .map(|door| door.refusal(key, session)))
 }
 
 pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {

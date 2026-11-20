@@ -357,9 +357,9 @@ positive native project match. If the native project ID was not yet captured,
 the exact ID must appear in the retained checkout's scoped listing with the
 same opaque project ID as the inspection. The requested worktree is verified against
 the observed placement. A mismatch keeps the input pending and status directs
-the operator to restore the expected key and placement, then run the exact
-`instrukt sessions resolve-start <key> --session <id>` command. Native
-acceptance evidence reconciles transport acceptance without another send.
+the operator to restore the expected key and placement, then run the command
+for the binding state in the **Recovery by case** table below. Native acceptance
+evidence reconciles transport acceptance without another send.
 Without that evidence, instrukt may resend the unconfirmed input there.
 An empty listing alone never clears a marker. Keep the assignment pending and
 show its key and the `instrukt sessions resolve-start <key>` door in status.
@@ -394,6 +394,7 @@ never on how long anyone has waited:
 | First start pending, thread absent | A pending binding with no replacement intent and native confirmation of absence | `instrukt sessions resolve-start <key> --none` clears the pending ID and permits a fresh start under the same key. |
 | First start pending, thread present | A pending binding with no replacement intent and a present native thread | `instrukt sessions resolve-start <key> --session <runtime:id>` verifies the exact thread for acceptance. |
 | Committed binding, thread absent | Native confirmation that the committed thread is absent | Work stays pending. Once the operator knows the provider stopped, `instrukt sessions replace-deleted <key> --stopped <runtime:id>` retires the committed binding. |
+| Pending successor, thread present | An unaccepted successor is present under a retained replacement intent | `instrukt sessions replace-deleted <key> --stopped <runtime:id>` resumes acceptance using the stopped ID already authorized for that intent. Both forms of `resolve-start` direct the operator to this command. |
 | Pending successor, thread absent | A pending binding under a replacement intent and native confirmation of absence | Once the operator knows the pending provider stopped, `instrukt sessions replace-deleted <key> --stopped <runtime:id>` retires that pending successor. |
 | Live conflict | Two or more threads under one key | Nothing chosen, nothing started; the door is to archive or delete the extra thread. |
 | Archived | The bound thread is shown archived | Nothing started; its completed answers are read; the door is to unarchive or delete it. |

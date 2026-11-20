@@ -733,6 +733,619 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
     });
 }
 
+// spec: project/instrukt/spec/feature/company/conversations UC-CV8
+#[test]
+fn a_member_gets_the_answer_after_the_assistants_work_failed() {
+    std::thread::scope(|scope| {
+        scope.spawn(archived_conversation_waits_for_unarchive);
+        scope.spawn(held_runtime_checks_leave_another_conversation_free);
+        #[cfg(debug_assertions)]
+        scope.spawn(a_live_deletion_is_confirmed_once_across_relay_passes);
+        #[cfg(debug_assertions)]
+        scope.spawn(a_send_refused_after_readiness_is_delivered_once_after_replacement);
+        scope.spawn(a_live_pending_successor_leaves_retained_answers_free_to_post);
+        deleted_conversation_waits_for_confirmed_replacement();
+    });
+}
+
+fn answered_conversation(settle_opening: bool) -> (Company, std::path::PathBuf, String) {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    c.runtime.flag("separate-completion", true);
+    projected(&c);
+    c.slack.direct("D30", "USTEVEN", "Is the old report ready?");
+    let session = started(&c, &[]);
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let opening_settled = |watching: bool| {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session=?1 AND state='entered' AND watch_run=?2)",
+            instrukt_core::state_db::rusqlite::params![session, watching],
+            |row| row.get::<_, bool>(0),
+        ).unwrap()
+    };
+    if settle_opening {
+        wait("the opening assignment has been recorded", || {
+            db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session=?1)",
+                [&session],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap()
+        });
+        set_clock(
+            &clock,
+            interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
+        );
+        wait(
+            "the keyed worker records native entry of the opening assignment",
+            || opening_settled(true),
+        );
+    }
+    c.finish_turn(&session, 0, "The old report is ready.");
+    wait("the earlier answer recorded", || {
+        c.slack.posts_beginning("The old report is ready.") == 1 && answers_recorded(&c)
+    });
+    if settle_opening {
+        set_clock(
+            &clock,
+            interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
+        );
+        wait(
+            "the keyed worker finishes watching the opening assignment",
+            || opening_settled(false),
+        );
+    }
+    (c, clock, session)
+}
+
+fn wait_for_presence_notice(c: &Company, message: &str, clock: &std::path::Path, door: &str) {
+    wait("the operator sees the recovery door", || {
+        retained_conversations(c).conversations.iter().any(|row| {
+            row.conversation == "D30" && row.failures.iter().any(|cause| cause.contains(door))
+        })
+    });
+    assert!(c.conversations().conversations.iter().any(|row| {
+        row.conversation == "D30" && row.failures.iter().any(|cause| cause.contains(door))
+    }));
+    wait("the member sees only the unavailable text", || {
+        c.slack.status("D30", message).as_deref() == Some(UNAVAILABLE)
+    });
+    let opened = interval_at(c, message);
+    set_clock(clock, opened + jiff::SignedDuration::from_secs(59));
+    assert_eq!(notices(c, "USTEVEN"), 0);
+    set_clock(clock, opened + minute());
+    wait("the member receives the fixed notice", || {
+        notices(c, "USTEVEN") == 1
+    });
+}
+
+fn archived_conversation_waits_for_unarchive() {
+    let (mut c, clock, session) = answered_conversation(false);
+    let completed = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the completed report?");
+    wait("the turn to complete while the runner is stopped", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.runner_dies();
+    c.finish_turn(&session, 1, "The completed report is in the wiki.");
+    c.runtime.archive(&session);
+    c.store.thread(
+        &session,
+        None,
+        Some("2026-11-08T10:01:00Z"),
+        "2026-11-08T10:01:00Z",
+    );
+    c.run();
+    wait(
+        "the completed reply is posted from the archived session",
+        || {
+            c.slack
+                .posts_beginning("The completed report is in the wiki.")
+                == 1
+                && answers_recorded(&c)
+        },
+    );
+    assert_eq!(interval(&c, &completed), None);
+    set_clock(&clock, interval_clock(&clock) + minute());
+    assert_eq!(notices(&c, "USTEVEN"), 0);
+
+    let pending = c.slack.direct("D30", "USTEVEN", "What changed today?");
+    wait_for_presence_notice(&c, &pending, &clock, "unarchive it or delete it");
+    assert_eq!(c.slack.posts().len(), 3);
+    assert_eq!(c.sessions().as_slice(), std::slice::from_ref(&session));
+    assert_eq!(c.runtime.message_count(&session), 2);
+
+    c.runtime.change(&session, "archived", false.into());
+    c.runtime.change(&session, "title", "Renamed in T3".into());
+    c.store.thread(&session, None, None, "2026-11-08T10:02:00Z");
+    wait("the renamed session receives the waiting question", || {
+        c.runtime.message_count(&session) == 3
+    });
+    c.finish_turn(&session, 2, "Today’s changes are in the report.");
+    wait("the waiting question gets its answer", || {
+        c.slack
+            .posts_beginning("Today’s changes are in the report.")
+            == 1
+            && answers_recorded(&c)
+            && c.slack.status("D30", &pending).is_none()
+    });
+    assert_eq!(c.sessions(), [session]);
+    assert_eq!(notices(&c, "USTEVEN"), 1);
+    assert_eq!(c.slack.posts().len(), 4);
+}
+
+fn held_runtime_checks_leave_another_conversation_free() {
+    let (mut c, _, session) = answered_conversation(true);
+    let held = c.runtime.state_dir().join(format!("{session}.hold-show"));
+    let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
+    std::fs::write(&held, "").unwrap();
+    c.slack.direct("D30", "USTEVEN", "What changed?");
+    wait("the bound session's dispatch check is held", || {
+        c.runtime.held_show_running(&session)
+    });
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
+    c.slack.direct("D31", "UANNA", "Where is the meeting?");
+    wait(
+        "the other conversation starts during the dispatch check",
+        || c.sessions().iter().any(|id| id != &session),
+    );
+    let other = started(&c, std::slice::from_ref(&session));
+    c.finish_turn(&other, 0, "In the main office.");
+    wait(
+        "the second conversation is answered during the dispatch check",
+        || c.slack.posts_beginning("In the main office.") == 1,
+    );
+    assert!(c.runtime.held_show_running(&session));
+    assert_eq!(c.runtime.message_count(&session), 1);
+
+    c.runtime.flag("hold-show-after-send", true);
+    std::fs::remove_file(&marker).unwrap();
+    std::fs::remove_file(&held).unwrap();
+    wait("the lost acknowledgment's read-back check is held", || {
+        c.runtime.held_show_running(&session)
+    });
+    c.slack.direct("D31", "UANNA", "When does it start?");
+    wait("the other conversation dispatches during read-back", || {
+        c.runtime.message_count(&other) == 2
+    });
+    assert!(c.runtime.held_show_running(&session));
+    c.finish_turn(&other, 1, "At noon.");
+    std::fs::remove_file(&held).unwrap();
+
+    c.finish_turn(&session, 1, "The changes are in the appendix.");
+    wait(
+        "the lost acknowledgment reconciles without another send",
+        || c.slack.posts_beginning("The changes are in the appendix.") == 1 && answers_recorded(&c),
+    );
+    assert_eq!(c.runtime.message_count(&session), 2);
+
+    // T3's projection remains absent throughout. The failed send proves
+    // the runtime already confirmed that the thread was live.
+    let sends = || {
+        let send = format!("thread send -- {session} -");
+        c.runtime
+            .calls()
+            .iter()
+            .filter(|call| **call == send)
+            .count()
+    };
+    let before = sends();
+    c.store.unproject_thread(&session);
+    c.runtime.flag("send-failure", true);
+    let question = c.slack.direct("D30", "USTEVEN", "Who wrote it?");
+    wait(
+        "a send is attempted after T3 confirms the thread is present",
+        || sends() > before,
+    );
+    c.runtime.delete(&session);
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    let door = format!("instrukt sessions replace-deleted {key} --stopped t3:{session}");
+    wait("the later deletion replaces the live confirmation", || {
+        conversation_finding(&c, &door).is_some()
+            && c.slack.status("D30", &question).as_deref() == Some(UNAVAILABLE)
+    });
+}
+
+#[cfg(debug_assertions)]
+fn a_live_deletion_is_confirmed_once_across_relay_passes() {
+    let (mut c, clock, session) = answered_conversation(true);
+    let wakes = c.env.path("probe-wakes");
+    let wake = |revision: u64| {
+        let next = wakes.with_extension("next");
+        std::fs::write(&next, revision.to_string()).unwrap();
+        std::fs::rename(next, &wakes).unwrap();
+    };
+    let presence_hold = c.env.path("presence-hold");
+    std::fs::write(
+        &presence_hold,
+        conversations::key(&c.company(), SLACK, "D30"),
+    )
+    .unwrap();
+    if cfg!(debug_assertions) {
+        c.runner_dies();
+        wake(0);
+        c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
+        c.env
+            .set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
+        c.env.set_env(
+            "INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD",
+            presence_hold.to_str().unwrap(),
+        );
+        c.run();
+    }
+    wait("the relay has read the old presence", || {
+        presence_hold.with_extension("observed").exists()
+    });
+    let absence_calls = |c: &Company| {
+        let show = format!("thread show --json --messages 0 -- {session}");
+        c.runtime
+            .calls()
+            .into_iter()
+            .filter(|call| call == &show)
+            .count()
+    };
+    let before_deletion = absence_calls(&c);
+    c.runtime.flag("show-failure", true);
+    c.runtime.delete(&session);
+    c.store.unproject_thread(&session);
+    let question = c.slack.direct("D30", "USTEVEN", "What changed?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait(
+        "intake captures the question after the thread disappears",
+        || {
+            db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='pending')", [&question], |row| row.get::<_, bool>(0)).unwrap()
+        },
+    );
+    std::fs::remove_file(&presence_hold).unwrap();
+    wait("the failed confirmation is scheduled for retry", || {
+        run_log(&c).contains("event=conversation_presence_probe_retry")
+    });
+    assert_eq!(
+        absence_calls(&c) - before_deletion,
+        1,
+        "only the absence worker may check the thread"
+    );
+    c.runtime.flag("show-failure", false);
+    deliver_probe_wake(&c, &wake, 1);
+    deliver_probe_wake(&c, &wake, 2);
+    assert_eq!(
+        absence_calls(&c) - before_deletion,
+        1,
+        "the failed probe backs off"
+    );
+
+    let held = c.runtime.state_dir().join(format!("{session}.hold-show"));
+    std::fs::write(&held, "").unwrap();
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_secs(2),
+    );
+    let marker = c.runtime.state_dir().join(format!("{session}.show-held"));
+    wait("T3 recovers and the next confirmation is held", || {
+        marker.exists()
+    });
+
+    let held_calls = absence_calls(&c);
+    for revision in 3..=6 {
+        if revision % 2 == 1 {
+            c.store.thread(&session, None, None, "2026-11-08T10:00:00Z");
+        } else {
+            c.store.unproject_thread(&session);
+        }
+        deliver_probe_wake(&c, &wake, revision);
+    }
+    assert_eq!(
+        absence_calls(&c),
+        held_calls,
+        "only one probe while the projection flips"
+    );
+    std::fs::remove_file(held).unwrap();
+    let stopped = format!("--stopped t3:{session}");
+    wait(
+        "the missing thread has its confirmed replacement finding",
+        || conversation_finding(&c, &stopped).is_some(),
+    );
+    for revision in 7..=9 {
+        deliver_probe_wake(&c, &wake, revision);
+    }
+    assert_eq!(
+        absence_calls(&c) - before_deletion,
+        3,
+        "one failure, one invalidated probe and one fresh confirmation"
+    );
+}
+
+#[cfg(debug_assertions)]
+fn a_send_refused_after_readiness_is_delivered_once_after_replacement() {
+    let (mut c, _, session) = answered_conversation(false);
+    let hold = c.env.path("dispatch-hold");
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    c.runner_dies();
+    c.env.set_env(
+        "INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD",
+        hold.to_str().unwrap(),
+    );
+    std::fs::write(&hold, &key).unwrap();
+    c.run();
+    let question = c
+        .slack
+        .direct("D30", "USTEVEN", "Where is the revised report?");
+    wait(
+        "the follow-up has passed readiness but not revalidated dispatch",
+        || hold.with_extension("observed").exists(),
+    );
+    c.runtime.delete(&session);
+    std::fs::remove_file(&hold).unwrap();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait("T3 refuses the send and the question stays pending", || {
+        db.query_row(
+            "SELECT state='pending' AND attempted_at IS NOT NULL AND unavailable_since IS NOT NULL AND failure LIKE '%native target is no longer available%' FROM conversation_messages WHERE message=?1",
+            [&question],
+            |row| row.get::<_, bool>(0),
+        ).unwrap()
+    });
+    c.store.unproject_thread(&session);
+    let door = format!("instrukt sessions replace-deleted {key} --stopped t3:{session}");
+    wait(
+        "the refused question is unavailable and has a recovery command",
+        || {
+            conversation_finding(&c, &door).is_some()
+                && c.slack.status("D30", &question).as_deref() == Some(UNAVAILABLE)
+        },
+    );
+    assert_eq!(c.slack.posts().len(), 1);
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
+    run_printed_replacement(&c, &door);
+    let successor = started(&c, &[]);
+    c.finish_turn(&successor, 0, "The replacement session is initialized.");
+    wait("the saved question reaches the successor", || {
+        c.runtime.message_count(&successor) == 2
+    });
+    assert!(
+        c.runtime
+            .message(&successor, 1)
+            .contains("Where is the revised report?")
+    );
+    c.finish_turn(&successor, 1, "The revised report is in the wiki.");
+    wait("the answer is posted and the status clears", || {
+        c.slack
+            .posts_beginning("The revised report is in the wiki.")
+            == 1
+            && answers_recorded(&c)
+            && c.slack.status("D30", &question).is_none()
+    });
+    assert_eq!(c.runtime.message_count(&successor), 2);
+    assert_eq!(c.slack.posts().len(), 2);
+}
+
+#[cfg(debug_assertions)]
+fn deliver_probe_wake(c: &Company, wake: &impl Fn(u64), revision: u64) {
+    wake(revision);
+    let marker = format!("event=t3_fixture_wake revision={revision}");
+    wait("the relay processes the queued source wake", || {
+        run_log(c)
+            .split_once(&marker)
+            .is_some_and(|(_, after)| after.contains("event=conversation_relay_source_processed"))
+    });
+}
+
+fn conversation_finding(c: &Company, expected: &str) -> Option<String> {
+    retained_conversations(c)
+        .conversations
+        .into_iter()
+        .filter(|row| row.conversation == "D30")
+        .flat_map(|row| row.failures)
+        .find(|failure| failure.contains(expected))
+}
+
+fn run_printed_replacement(c: &Company, expected: &str) {
+    wait(
+        "the operator finding contains the replacement command",
+        || conversation_finding(c, expected).is_some(),
+    );
+    let finding = conversation_finding(c, expected).unwrap();
+    let (_, command) = finding.split_once("use ").unwrap();
+    let mut words = command.trim_matches('`').split_whitespace();
+    assert_eq!(words.next(), Some("instrukt"));
+    c.env.run(c.env.home(), words.collect::<Vec<_>>()).success();
+}
+
+fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
+    let (mut c, _, session) = answered_conversation(false);
+    let waiting = c.slack.direct("D30", "USTEVEN", "Who kept the notes?");
+    wait("the old session receives the question", || {
+        c.runtime.message_count(&session) == 2
+    });
+    let answer = "Ada kept the notes.";
+    c.slack.fate(answer, Fate::Refused, usize::MAX);
+    c.finish_turn(&session, 1, answer);
+    interval_at(&c, &waiting);
+    assert_eq!(c.slack.posts_beginning(answer), 0);
+
+    c.runtime.delete(&session);
+    c.store.unproject_thread(&session);
+    let next = c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    let stopped = format!("t3:{session}");
+    let command = format!("instrukt sessions replace-deleted {key} --stopped {stopped}");
+    wait("the first deletion is confirmed", || {
+        conversation_finding(&c, &command).is_some()
+    });
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00Z");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER hold_live_replacement BEFORE UPDATE OF accepted ON runtime_bindings
+         WHEN NEW.session='t3:s2' AND NEW.accepted=1
+         BEGIN SELECT RAISE(ABORT, 'held live replacement acceptance'); END",
+    )
+    .unwrap();
+    let refused = c
+        .env
+        .run(
+            c.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", &stopped],
+        )
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&refused.get_output().stderr)
+            .contains("held live replacement acceptance")
+    );
+    wait("the finding names the live pending replacement", || {
+        conversation_finding(&c, &command)
+            .is_some_and(|failure| failure.contains("replacement thread t3:s2"))
+    });
+
+    c.slack.clear_fates();
+    wait(
+        "the retained reply posts before replacement acceptance",
+        || c.slack.posts_beginning(answer) == 1 && answers_recorded(&c),
+    );
+    assert_eq!(c.runtime.message_count("s2"), 1);
+    assert!(
+        !db.query_row(
+            "SELECT accepted FROM runtime_bindings WHERE semantic_key=?1",
+            [&key],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    );
+    assert_eq!(interval(&c, &waiting), None);
+    db.execute_batch("DROP TRIGGER hold_live_replacement")
+        .unwrap();
+    run_printed_replacement(&c, &command);
+    c.finish_turn("s2", 0, "The replacement is ready.");
+    wait("the live successor receives the waiting question", || {
+        c.runtime.message_count("s2") == 2
+    });
+    assert!(
+        c.runtime
+            .message("s2", 1)
+            .contains("Where is the attachment?")
+    );
+    c.finish_turn("s2", 1, "It is in the report.");
+    wait("the member receives the successor's reply", || {
+        c.slack.posts_beginning("It is in the report.") == 1
+            && answers_recorded(&c)
+            && c.slack.status("D30", &next).is_none()
+    });
+    assert_eq!(c.sessions(), ["s2"]);
+    assert_eq!(c.slack.posts().len(), 3);
+}
+
+fn deleted_conversation_waits_for_confirmed_replacement() {
+    let (mut c, clock, session) = answered_conversation(false);
+    let first = c
+        .slack
+        .direct("D30", "USTEVEN", "Who is reviewing the new report?");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait("the old session accepted the unfinished question", || {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND state='sent')",
+            [&first],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
+    c.runtime.delete(&session);
+    c.store.unproject_thread(&session);
+    let second = c.slack.direct("D30", "USTEVEN", "When will it be ready?");
+    let key = conversations::key(&c.company(), SLACK, "D30");
+    let stopped = format!("t3:{session}");
+    let door = format!("instrukt sessions replace-deleted {key} --stopped {stopped}");
+    wait(
+        "the unfinished first question also shows the fixed status",
+        || c.slack.status("D30", &first).as_deref() == Some(UNAVAILABLE),
+    );
+    wait_for_presence_notice(&c, &second, &clock, &door);
+    assert!(c.sessions().is_empty());
+
+    c.store.thread("s2", None, None, "2026-11-08T10:00:00.000Z");
+    db.execute_batch(
+        "CREATE TRIGGER hold_replacement BEFORE UPDATE OF accepted ON runtime_bindings
+         WHEN NEW.session='t3:s2' AND NEW.accepted=1
+         BEGIN SELECT RAISE(ABORT, 'held replacement acceptance'); END",
+    )
+    .unwrap();
+    let interrupted = c
+        .env
+        .run(
+            c.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", &stopped],
+        )
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&interrupted.get_output().stderr)
+            .contains("held replacement acceptance")
+    );
+    assert_eq!(c.sessions(), ["s2"]);
+    c.runtime.delete("s2");
+    c.store.unproject_thread("s2");
+    db.execute_batch("DROP TRIGGER hold_replacement").unwrap();
+
+    let pending_door = format!("instrukt sessions replace-deleted {key} --stopped t3:s2");
+    c.store.thread("s3", None, None, "2026-11-08T10:00:00Z");
+    run_printed_replacement(&c, &pending_door);
+    let successor = started(&c, &[]);
+    assert_ne!(successor, session);
+    assert!(
+        !instrukt_runner::envelopes::segment(&c.runtime.message(&successor, 0))
+            .iter()
+            .any(|span| matches!(span, instrukt_runner::envelopes::Span::Member { .. }))
+    );
+    assert!(
+        !c.runtime
+            .message(&successor, 0)
+            .contains("Is the old report ready?")
+    );
+    c.finish_turn(&successor, 0, "The replacement session is initialized.");
+
+    wait(
+        "the successor receives the first unanswered question",
+        || c.runtime.message_count(&successor) == 2,
+    );
+    assert!(
+        c.runtime
+            .message(&successor, 1)
+            .contains("Who is reviewing the new report?")
+    );
+    c.finish_turn(&successor, 1, "Ada is reviewing it.");
+    wait("the successor receives the later question in order", || {
+        c.runtime.message_count(&successor) == 3
+    });
+    assert!(
+        c.runtime
+            .message(&successor, 2)
+            .contains("When will it be ready?")
+    );
+    c.finish_turn(&successor, 2, "It will be ready on Friday.");
+    wait("both answers appear and the final status clears", || {
+        c.slack.posts_beginning("Ada is reviewing it.") == 1
+            && c.slack.posts_beginning("It will be ready on Friday.") == 1
+            && answers_recorded(&c)
+            && c.slack.status("D30", &second).is_none()
+    });
+    assert_eq!(notices(&c, "USTEVEN"), 1);
+    assert_eq!(c.slack.posts().len(), 4);
+}
+
 // spec: project/instrukt/spec/feature/company/conversations UC-CV15
 #[test]
 fn a_member_can_follow_the_status_of_an_unanswered_message() {
@@ -2646,7 +3259,6 @@ fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
         std::time::Duration::from_secs(60),
         || c.sessions().len() > before.len(),
     );
-    running.stop();
     let session = started(&c, &before);
     c.finish_turn(&session, 0, "Linus is on call.");
     wait("the answer beside the held lock", || {
@@ -2656,6 +3268,7 @@ fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
         c.slack.posts().last().unwrap().thread.as_deref(),
         Some(apart.as_str())
     );
+    running.stop();
     drop(other_lock);
 }
 

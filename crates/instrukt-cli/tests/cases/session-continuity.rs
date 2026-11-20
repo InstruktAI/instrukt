@@ -410,16 +410,42 @@ pub(super) fn check_recovery_doors(
     );
     assert_eq!(binding().unwrap(), ("t3:s4".into(), false), "{key}");
 
-    let pending_phase = delete("s4");
-    let replace_pending = ["sessions", "replace-deleted", &key, "--stopped", "t3:s4"];
-    expect_door(&none, &replace_pending);
     let s4_exact = ["sessions", "resolve-start", &key, "--session", "t3:s4"];
-    expect_door(&s4_exact, &replace_pending);
+    expect_door(&none, &next_replace);
+    expect_door(&s4_exact, &next_replace);
+    db.execute_batch("DROP TRIGGER fail_recovery_receipt")
+        .unwrap();
+    let guidance = env.run(root, none).failure();
+    let guidance = String::from_utf8_lossy(&guidance.get_output().stderr);
+    let command = guidance
+        .split_once("`instrukt sessions replace-deleted ")
+        .unwrap()
+        .1;
+    let command = command.split_once('`').unwrap().0;
+    let mut args = vec!["sessions", "replace-deleted"];
+    args.extend(command.split_whitespace());
+    env.run(root, args).success();
+    assert_eq!(binding().unwrap(), ("t3:s4".into(), true), "{key}");
+    assert_eq!(fake.threads(), ["s4"], "{key}");
+    assert_eq!(fake.message_count("s4"), 1, "{key}");
+
+    let retired_phase = delete("s4");
+    let replace_accepted = ["sessions", "replace-deleted", &key, "--stopped", "t3:s4"];
+    fail_recovery_receipt(db, "s5");
+    clear_phase(retired_phase);
+    env.run(root, replace_accepted).failure();
+    assert_eq!(binding().unwrap(), ("t3:s5".into(), false), "{key}");
+
+    let pending_phase = delete("s5");
+    let replace_pending = ["sessions", "replace-deleted", &key, "--stopped", "t3:s5"];
+    expect_door(&none, &replace_pending);
+    let s5_exact = ["sessions", "resolve-start", &key, "--session", "t3:s5"];
+    expect_door(&s5_exact, &replace_pending);
     clear_phase(pending_phase);
     env.run(root, replace_pending).success();
-    assert_eq!(binding().unwrap(), ("t3:s5".into(), true), "{key}");
-    assert_eq!(fake.threads(), ["s5"], "{key}");
-    assert_eq!(fake.message_count("s5"), 1, "{key}");
+    assert_eq!(binding().unwrap(), ("t3:s6".into(), true), "{key}");
+    assert_eq!(fake.threads(), ["s6"], "{key}");
+    assert_eq!(fake.message_count("s6"), 1, "{key}");
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS24
@@ -523,29 +549,27 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     fake.change("s2", "title", "Renamed replacement".into());
     let refused = command().failure();
     let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    assert!(
-        guidance.contains(&format!(
-            "instrukt sessions resolve-start {key} --session t3:s2"
-        )),
-        "{guidance}"
-    );
+    let live_door = format!("instrukt sessions replace-deleted {key} --stopped t3:s1");
+    assert!(guidance.contains(&live_door), "{guidance}");
+    let printed = guidance
+        .split_once("then run `")
+        .unwrap()
+        .1
+        .split_once('`')
+        .unwrap()
+        .0;
+    let live_retry = || p.env.run(p.repo.path(), printed.split_whitespace().skip(1));
     assert_eq!(
         sessions(),
         ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
     );
     fake.change("s2", "title", format!("Renamed replacement · {key}").into());
-    p.env
-        .run(
-            p.repo.path(),
-            ["sessions", "resolve-start", &key, "--session", "t3:s2"],
-        )
-        .success();
     db.execute_batch(
         "CREATE TRIGGER fail_opening_receipt BEFORE INSERT ON runtime_inputs
         WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'opening receipt write failed'); END;",
     )
     .unwrap();
-    let failed = command().failure();
+    let failed = live_retry().failure();
     let error = String::from_utf8_lossy(&failed.get_output().stderr);
     assert!(error.contains("opening receipt write failed"), "{error}");
     assert_eq!(
@@ -563,12 +587,7 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     let moved = command().failure();
     let guidance = String::from_utf8_lossy(&moved.get_output().stderr);
     assert!(guidance.contains("native project changed"), "{guidance}");
-    assert!(
-        guidance.contains(&format!(
-            "instrukt sessions resolve-start {key} --session t3:s2"
-        )),
-        "{guidance}"
-    );
+    assert!(guidance.contains(&live_door), "{guidance}");
     let resolve_pending = || {
         p.env.run(
             p.repo.path(),
@@ -577,7 +596,7 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     };
     let refused = resolve_pending().failure();
     let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    assert!(guidance.contains("native project changed"), "{guidance}");
+    assert!(guidance.contains(&live_door), "{guidance}");
     let replace_pending = || {
         p.env.run(
             p.env.home(),

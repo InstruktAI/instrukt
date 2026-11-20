@@ -57,12 +57,34 @@ path is the same for every connector, whichever channel it speaks to
   woken by key through the runtime adapter. Key discovery, ambiguous starts and
   settled threads follow session-continuity, case by case: a failed listing,
   start or send leaves the message pending for that same conversation and is
-  retried; a lost acknowledgement, a live key conflict and an archived thread
-  start no second session and go to the operator; a thread the runtime reports
-  absent is replaced under the same key, and the conversation's messages that
-  have no posted answer are delivered to the new session in order
-  (`project/instrukt/spec/feature/runner/session-continuity`: a new actor starts
-  only where the earlier one is proven gone).
+  retried. A lost acknowledgement or a live key conflict goes to the operator.
+- When work is waiting, the relay checks the bound session. A rename preserves
+  delivery to that session. An archived session is left in place and the operator
+  is told to unarchive or delete it. Archiving blocks new turns while replies
+  already completed are still read and posted. Deletion is not evidence that the old
+  provider stopped. Once the operator knows it has stopped, the finding directs
+  them to `instrukt sessions replace-deleted <key> --stopped <runtime:id>`
+  (`project/instrukt/spec/feature/runner/session-continuity`). Neither an archive
+  nor a deletion starts a successor automatically. While work is blocked the member
+  sees the fixed unavailable status and can receive the usual notice, with the
+  cause and recovery command visible only to the operator. An interrupted
+  replacement reports the recovery door for the current keyed state, including
+  any pending successor. The relay reads presence from the conversation source.
+  It confirms a missing thread with the runtime once per observed absence,
+  without blocking other conversations. Runtime checks before sending and
+  when reconciling a lost acknowledgment also run independently for each
+  conversation. At most one presence probe runs per conversation. A projection
+  change during a probe defers the next check until that probe returns.
+  A newer native observation supersedes a cached confirmation.
+  Failed absence observations retry with a bounded backoff. A notification
+  alone does not reset a completed confirmation. If an operator has a live
+  replacement awaiting acceptance, the finding directs them to resume the
+  authorized replacement.
+  Posting retained answers continues while a thread or replacement is blocked.
+- An operator-confirmed successor starts with the assignment alone. The relay
+  binds it to the same conversation and hands over the questions still awaiting
+  turns in written order, including work handed to the stopped session whose
+  answer has not yet been retained. Retained answers keep their posting state.
 - The session works in the company's home
   (`project/instrukt/spec/feature/configuration/company-homes`), where it
   starts with the company's own knowledge
@@ -373,8 +395,9 @@ And a healthy wait or a turn completed without output does not earn an unavailab
 
 ```gherkin
 Scenario Outline: Recover the answer
-  Given a member's message reached the agent
+  Given a member has a message waiting for an answer in a connected conversation
   When <failure>
+  And the conversation recovers
   Then the member gets the answer to that message
   And nothing else is posted in the conversation, except the one notice that the assistant is temporarily unavailable when the recovery leaves the message without work for a minute
 
@@ -383,8 +406,8 @@ Scenario Outline: Recover the answer
     | the agent's turn failed |
     | the turn's content was not yet readable |
     | the runtime moved its conversation store |
-    | the agent's conversation was deleted in the runtime |
-    | the agent's conversation was archived in the runtime after it answered |
+    | the conversation is deleted and the operator confirms the old session stopped before replacing it |
+    | the conversation is archived and the operator unarchives it |
 ```
 
 ### UC-CV11: Onboard a company while the runner runs
@@ -472,6 +495,11 @@ And a subsequent outage can earn its own notice
 ```
 
 ## Known caveats
+
+- If a thread is deleted after the relay checks readiness and before it
+  revalidates dispatch under lock, T3 can refuse the send, and the saved
+  question waits for the operator to run `instrukt sessions replace-deleted`
+  before delivery resumes.
 
 - Read-back reads what the provider still serves; its retention, the app's
   access and rate limits are its only limits.
