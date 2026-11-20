@@ -715,11 +715,7 @@ fn started(c: &Company, before: &[String]) -> String {
 #[test]
 fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() {
     std::thread::scope(|scope| {
-        scope.spawn(the_status_holds_through_locks_held_past_their_wait_and_slow_failures);
         scope.spawn(the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed);
-        scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
-        scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
-        scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
         scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Found));
         scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Missing));
         scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Late));
@@ -729,19 +725,31 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(|| {
             legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice)
         });
-        scope.spawn(a_successful_answer_without_timestamp_needs_no_read_back);
-        scope.spawn(failed_metadata_reads_expire_without_sending_again);
         scope.spawn(a_mixed_notice_epoch_waits_for_the_final_answer_piece);
-        scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice(" \n "));
         scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
         scope.spawn(pruning_keeps_the_context_boundary_after_out_of_order_delivery);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
-        scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
         scope.spawn(an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text);
+        scope.spawn(an_answer_to_one_member_does_not_restart_anothers_minute);
         notice_and_status_for_one_member();
+    });
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn slack_metadata_read_back_preserves_one_answer_and_one_notice() {
+    std::thread::scope(|scope| {
+        scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
+        scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
+        scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
+        scope.spawn(a_successful_answer_without_timestamp_needs_no_read_back);
+        scope.spawn(failed_metadata_reads_expire_without_sending_again);
+        scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
+        scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
+        scope.spawn(the_status_tracks_a_slow_answer_and_its_receipt);
     });
 }
 
@@ -874,6 +882,13 @@ fn notice_and_status_for_one_member() {
         shown(&c, channel, &locked),
         [WORKING, UNAVAILABLE, WORKING, ""]
     );
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_members_status_follows_recovery_and_queued_turns() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
 
     // The relay cannot read the conversation source after the message was
     // handed over: the unavailable text; once it reads again, the answer.
@@ -895,7 +910,7 @@ fn notice_and_status_for_one_member() {
         c.slack.status(channel, &outage).as_deref() == Some(WORKING)
     });
     c.finish_turn(&session, 0, "In the wiki.");
-    wait("the answer after the outage", || answers(&c) == 4);
+    wait("the answer after the outage", || answers(&c) == 1);
     wait("the status cleared", || {
         shown(&c, channel, &outage).last().map(String::as_str) == Some("")
     });
@@ -924,11 +939,11 @@ fn notice_and_status_for_one_member() {
     set_clock(&clock, interval_at(&c, &unposted) + minute());
     wait(
         "the notice while the completed answer cannot be posted",
-        || notices(&c, "USTEVEN") == 2,
+        || notices(&c, "USTEVEN") == 1,
     );
-    assert_eq!(answers(&c), 4);
+    assert_eq!(answers(&c), 1);
     c.slack.clear_fates();
-    wait("the answer once posts are taken", || answers(&c) == 5);
+    wait("the answer once posts are taken", || answers(&c) == 2);
     wait("the status cleared", || {
         shown(&c, channel, &unposted).last().map(String::as_str) == Some("")
     });
@@ -955,8 +970,8 @@ fn notice_and_status_for_one_member() {
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_secs(90),
     );
-    assert_eq!(answers(&c), 5);
-    assert_eq!(notices(&c, "USTEVEN"), 2);
+    assert_eq!(answers(&c), 2);
+    assert_eq!(notices(&c, "USTEVEN"), 1);
 
     // A second message waits behind the conversation's running turn: the
     // status shows that turn's work, never the unavailable text, and both
@@ -989,18 +1004,18 @@ fn notice_and_status_for_one_member() {
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_secs(90),
     );
-    assert_eq!(notices(&c, "USTEVEN"), 2);
+    assert_eq!(notices(&c, "USTEVEN"), 1);
     c.finish_turn(&session, 0, "The release.");
     wait("the second message handed over", || {
         c.runtime.message_count(&session) == 2
     });
     c.finish_turn(&session, 1, "The roadmap.");
-    wait("both answers", || answers(&c) == 7);
+    wait("both answers", || answers(&c) == 4);
     wait("the status cleared", || {
         shown(&c, channel, &first).last().map(String::as_str) == Some("")
     });
     assert!(!shown(&c, channel, &first).contains(&UNAVAILABLE.to_owned()));
-    assert_eq!(notices(&c, "USTEVEN"), 2);
+    assert_eq!(notices(&c, "USTEVEN"), 1);
 }
 
 fn interval_clock(clock: &std::path::Path) -> jiff::Timestamp {
@@ -1822,6 +1837,9 @@ fn an_unconfirmed_post_waits_after_a_metadata_miss() {
     c.slack.fate(answer, Fate::Lost, 1);
     c.slack.miss_metadata_read_before_holding(&asked);
     c.finish_turn(&session, 0, answer);
+    wait("the first metadata read misses the posted answer", || {
+        c.slack.metadata_reads() > 0
+    });
     common::wait_until(
         "the second metadata read after the first one misses",
         std::time::Duration::from_secs(12),
@@ -2337,7 +2355,9 @@ fn status_company(at: jiff::Timestamp) -> (Company, std::path::PathBuf) {
     (c, clock)
 }
 
-fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
+// spec: project/instrukt/spec/feature/company/conversations UC-CV7
+#[test]
+fn a_members_status_recovers_after_lock_waits_and_a_refused_start() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let now: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
     let channel = "C1";
@@ -2425,13 +2445,69 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
     c.finish_turn(&session, 0, "Margaret signs it off.");
     wait("the late start's answer", || answers(&c) == posts + 1);
 
+    // In a direct message each message has a status of its own. A message
+    // queued behind the running turn and that turn's own message both have
+    // their interval opened while the conversation's lock is held past its
+    // wait; once the running turn is observed again, both close.
+    let posts = c.slack.posts().len();
+    let direct = "D7";
+    let before = c.sessions();
+    projected(&c);
+    let own = c.slack.direct(direct, "USTEVEN", "What is on today?");
+    let session = started(&c, &before);
+    wait("the working text", || {
+        c.slack.status(direct, &own).as_deref() == Some(WORKING)
+    });
+    let queued = c.slack.direct(direct, "USTEVEN", "And tomorrow?");
+    wait("the queued message's working text", || {
+        c.slack.status(direct, &queued).as_deref() == Some(WORKING)
+    });
+    let key = conversations::key(&c.company(), SLACK, direct);
+    let held = instrukt_core::fsx::LockGuard::acquire(
+        &home.locks_dir().join(format!(
+            "conversation-{}.lock",
+            hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
+        )),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    let running = RunningClock::start(
+        clock.clone(),
+        refused_at + jiff::SignedDuration::from_mins(20),
+        30,
+    );
+    halt_at_intervals(&c, running, &clock, &[&own, &queued]);
+    wait("both statuses unavailable", || {
+        c.slack.status(direct, &own).as_deref() == Some(UNAVAILABLE)
+            && c.slack.status(direct, &queued).as_deref() == Some(UNAVAILABLE)
+    });
+    drop(held);
+    wait(
+        "both statuses working once the turn is seen running",
+        || {
+            c.slack.status(direct, &own).as_deref() == Some(WORKING)
+                && c.slack.status(direct, &queued).as_deref() == Some(WORKING)
+        },
+    );
+    assert_eq!((interval(&c, &own), interval(&c, &queued)), (None, None));
+    c.finish_turn(&session, 0, "The standup.");
+    wait("the queued message handed over", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "The retro.");
+    wait("both direct answers", || c.slack.posts().len() == posts + 2);
+}
+
+fn the_status_tracks_a_slow_answer_and_its_receipt() {
+    let done_at = "2026-11-19T10:00:00Z".parse().unwrap();
+    let (mut c, clock) = status_company(done_at);
+    let channel = "C1";
+
     // A turn completes while its answer's post is slow and then fails. While
     // the post is under way nothing keeps the answer from the member: the
     // working text shows and no interval is open. Once the post fails, the
     // status says the assistant is unavailable, counted from the turn's end.
     let posts = c.slack.posts().len();
-    let done_at = refused_at + jiff::SignedDuration::from_mins(10);
-    set_clock(&clock, done_at);
     let before = c.sessions();
     projected(&c);
     let slowly = c
@@ -2549,59 +2625,6 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
     });
     assert_eq!(shown(&c, channel, &patient), [WORKING, ""]);
     assert_eq!(interval(&c, &patient), None);
-
-    // In a direct message each message has a status of its own. A message
-    // queued behind the running turn and that turn's own message both have
-    // their interval opened while the conversation's lock is held past its
-    // wait; once the running turn is observed again, both close.
-    let posts = c.slack.posts().len();
-    let direct = "D7";
-    let before = c.sessions();
-    projected(&c);
-    let own = c.slack.direct(direct, "USTEVEN", "What is on today?");
-    let session = started(&c, &before);
-    wait("the working text", || {
-        c.slack.status(direct, &own).as_deref() == Some(WORKING)
-    });
-    let queued = c.slack.direct(direct, "USTEVEN", "And tomorrow?");
-    wait("the queued message's working text", || {
-        c.slack.status(direct, &queued).as_deref() == Some(WORKING)
-    });
-    let key = conversations::key(&c.company(), SLACK, direct);
-    let held = instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!(
-            "conversation-{}.lock",
-            hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
-        )),
-        std::time::Duration::from_secs(5),
-    )
-    .unwrap();
-    let running = RunningClock::start(
-        clock.clone(),
-        done_at + jiff::SignedDuration::from_mins(10),
-        30,
-    );
-    halt_at_intervals(&c, running, &clock, &[&own, &queued]);
-    wait("both statuses unavailable", || {
-        c.slack.status(direct, &own).as_deref() == Some(UNAVAILABLE)
-            && c.slack.status(direct, &queued).as_deref() == Some(UNAVAILABLE)
-    });
-    drop(held);
-    wait(
-        "both statuses working once the turn is seen running",
-        || {
-            c.slack.status(direct, &own).as_deref() == Some(WORKING)
-                && c.slack.status(direct, &queued).as_deref() == Some(WORKING)
-        },
-    );
-    assert_eq!((interval(&c, &own), interval(&c, &queued)), (None, None));
-    c.finish_turn(&session, 0, "The standup.");
-    wait("the queued message handed over", || {
-        c.runtime.message_count(&session) == 2
-    });
-    c.finish_turn(&session, 1, "The retro.");
-    wait("both direct answers", || c.slack.posts().len() == posts + 2);
-    an_answer_to_one_member_does_not_restart_anothers_minute();
 }
 
 fn an_answer_to_one_member_does_not_restart_anothers_minute() {
