@@ -713,11 +713,11 @@ pub struct CompanyError(pub String);
 
 /// What caused a pass of the company conversation relay.
 #[derive(Clone, Copy)]
-pub struct CompanyRelayPass {
-    /// Startup, intake or native change serve every conversation.
-    pub catch_up: bool,
-    /// Changes on acquisition or native notification, never on the retry timer.
-    pub source_revision: u64,
+pub enum CompanyRelayPass {
+    /// Startup, intake or a native source change.
+    CatchUp,
+    /// The retry timer, which serves only conversations with work remaining.
+    Retry,
 }
 
 /// The company as the runner hosts it: its connections, the conversation

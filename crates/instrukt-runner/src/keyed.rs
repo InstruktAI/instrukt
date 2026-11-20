@@ -1255,6 +1255,18 @@ pub fn presence_finding(
     if presence == Presence::Archived {
         return Ok(Some(archived(key, session)));
     }
+    // The replacement command owns the acceptance transaction for a
+    // live pending successor. Resume the original operator authorization.
+    if presence == Presence::Present
+        && !recorded.accepted
+        && recorded.bound.as_ref() == Some(session)
+        && let Some(intent) = &recorded.replacement
+    {
+        return Ok(Some(SessionsError::Refused(format!(
+            "replacement thread {session} for `{key}` is pending acceptance; use `instrukt sessions replace-deleted {key} --stopped {}`",
+            intent.stopped
+        ))));
+    }
     Ok(recorded
         .recovery(presence)
         .map(|door| door.refusal(key, session)))

@@ -70,8 +70,11 @@ path is the same for every connector, whichever channel it speaks to
   cause and recovery command visible only to the operator. An interrupted
   replacement reports the recovery door for the current keyed state, including
   any pending successor. The relay reads presence from the conversation source.
-  It confirms a missing thread with the runtime once per source change, without
-  blocking other conversations.
+  It confirms a missing thread with the runtime once per observed absence,
+  without blocking other conversations. A notification alone does not reset
+  that confirmation. If an operator has a live replacement awaiting
+  acceptance, the finding directs them to resume the authorized replacement.
+  Posting retained answers continues while a thread or replacement is blocked.
 - An operator-confirmed successor starts with the assignment alone. The relay
   binds it to the same conversation and hands over the questions still awaiting
   turns in written order, including work handed to the stopped session whose

@@ -30,4 +30,4 @@ threads-required = 5
 
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_gets_the_answer_after_the_assistants_work_failed)'
-threads-required = 3
+threads-required = 5

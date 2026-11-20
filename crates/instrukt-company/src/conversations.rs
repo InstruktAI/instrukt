@@ -1728,7 +1728,6 @@ pub struct Accepted {
 
 #[derive(Debug)]
 struct MissingProbe {
-    revision: u64,
     reply: std::sync::mpsc::Receiver<Option<Presence>>,
     result: Option<Option<Presence>>,
 }
@@ -1738,7 +1737,6 @@ impl Accepted {
         &self,
         adapter: &dyn RuntimeAdapter,
         session: &SessionRef,
-        revision: u64,
     ) -> Option<Presence> {
         let mut probes = self
             .probes
@@ -1753,9 +1751,7 @@ impl Accepted {
                     Err(std::sync::mpsc::TryRecvError::Empty) => return None,
                 };
             }
-            if probe.revision == revision {
-                return probe.result.flatten();
-            }
+            return probe.result.flatten();
         }
         let (send, reply) = std::sync::mpsc::channel();
         let runtime = adapter.runtime();
@@ -1769,7 +1765,6 @@ impl Accepted {
         probes.insert(
             id,
             MissingProbe {
-                revision,
                 reply,
                 result: None,
             },
@@ -2438,14 +2433,13 @@ pub fn relay(
     let state = RunnerState::new(home);
     prune_superseded_failures(&state, connectors.now())?;
     let mut dispatch = Dispatch::Untried;
-    let work = if pass.catch_up {
-        conversations(&state, "", [])?
-    } else {
-        conversations(
+    let work = match pass {
+        CompanyRelayPass::CatchUp => conversations(&state, "", [])?,
+        CompanyRelayPass::Retry => conversations(
             &state,
             &format!("WHERE (company,connector,conversation) IN ({RELAY_WORK})"),
             relay_stages(),
-        )?
+        )?,
     };
     for initial in work {
         let _lock = match lock(home, &initial) {
@@ -2464,6 +2458,13 @@ pub fn relay(
         let Some(mut c) = reread(&state, &initial)? else {
             continue;
         };
+        let observed = answers(admitted, &state, source, connectors, accepted, &c)?;
+        if let Some(session) = &c.session
+            && matches!(observed, Some(Presence::Present | Presence::Archived))
+        {
+            accepted.source_present(session);
+        }
+        let original_binding = c.session.clone();
         if !open_messages(&state, &c)?.is_empty()
             && let Some(pending) = adopt_replacement(home, &state, adapter, source, &mut c)?
         {
@@ -2472,10 +2473,12 @@ pub fn relay(
                 .ok()
                 .and_then(|batch| batch.scoped_presence);
             let presence = match observed {
-                Some(Presence::Absent) => {
-                    accepted.confirm_missing(adapter, &pending, pass.source_revision)
+                Some(Presence::Absent) => accepted.confirm_missing(adapter, &pending),
+                Some(presence) => {
+                    accepted.source_present(&pending);
+                    Some(presence)
                 }
-                presence => presence,
+                None => None,
             };
             blocked(
                 home,
@@ -2488,7 +2491,15 @@ pub fn relay(
             )?;
             continue;
         }
-        let Some(presence) = answers(admitted, &state, source, connectors, accepted, &c)? else {
+        // The batch belonged to the old binding. Read the successor on
+        // the next pass before using its presence for dispatch.
+        if c.session != original_binding {
+            if let Some(original) = &original_binding {
+                accepted.source_present(original);
+            }
+            continue;
+        }
+        let Some(presence) = observed else {
             continue;
         };
         if let Some(session) = &c.session {
@@ -2496,13 +2507,12 @@ pub fn relay(
                 if open_messages(&state, &c)?.is_empty() {
                     continue;
                 }
-                let confirmed = accepted.confirm_missing(adapter, session, pass.source_revision);
+                let confirmed = accepted.confirm_missing(adapter, session);
                 if confirmed == Some(Presence::Present) {
                     set_failure(&state, &c, None)?;
                 }
                 confirmed
             } else {
-                accepted.source_present(session);
                 Some(presence)
             };
             if presence != Some(Presence::Present) {
@@ -2758,6 +2768,8 @@ fn answers(
             return Ok(None);
         }
     };
+    // Existing answers can post even when reading the next turn failed
+    // or dispatch is waiting on session recovery.
     if let Err(error) = post(admitted, state, connectors, accepted, c) {
         tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %error);
     }
