@@ -1716,6 +1716,18 @@ fn starts_issue_no_token() {
     assert_eq!(c.runtime.issued(), 1);
 }
 
+fn answer_in_member_thread(c: &mut Company) -> String {
+    let thread = c
+        .slack
+        .mention("C1", "USTEVEN", "<@UAGENT> When do we ship?", None);
+    let session = c.session();
+    c.finish_turn(&session, 0, "On Friday.");
+    wait("the member's Slack answer", || !c.slack.posts().is_empty());
+    assert_eq!(destinations(c), [("C1".to_owned(), Some(thread))]);
+    assert_eq!(c.slack.posts()[0].markdown.as_deref(), Some("On Friday."));
+    session
+}
+
 // spec: project/instrukt/spec/feature/company/conversations UC-CV1
 #[test]
 fn a_renewed_token_keeps_the_snapshot_fresh() {
@@ -1756,7 +1768,7 @@ fn a_renewed_token_keeps_the_snapshot_fresh() {
     wait("the renewed snapshot's quota mark", || {
         !restricted_until(&c, "antigravity").is_empty()
     });
-    let started = c.asked_and_answered("When do we ship?", "On Friday.");
+    let started = answer_in_member_thread(&mut c);
     assert_eq!(c.runtime.provider(&started), instance("codex"));
 }
 
@@ -1869,6 +1881,7 @@ fn a_snapshot_is_observed_when_its_read_returns() {
         until.iter().all(|at| at == "2030-01-01T01:30:00Z"),
         "{until:?}"
     );
+    answer_in_member_thread(&mut c);
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV1
