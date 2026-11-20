@@ -719,7 +719,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed);
         scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
         scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
-        scope.spawn(a_rejected_retry_keeps_reconciling_the_earlier_answer);
+        scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
         scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Found));
         scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Missing));
         scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Late));
@@ -730,6 +730,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
             legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice)
         });
         scope.spawn(an_answer_response_without_a_timestamp_is_reconciled);
+        scope.spawn(a_noop_lets_the_next_question_receive_its_own_notice);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
@@ -1160,23 +1161,20 @@ fn notice_epochs_and_reconciliation() {
             .iter()
             .all(|row| row.pending_messages == 0)
     });
-    // NOOP completes one message and leaves the person's epoch and its
-    // reconciliation range in place for the next message.
-    c.runtime.flag("send-failure", true);
-    let after_quiet = c
-        .slack
-        .mention(channel, sender, "<@UAGENT> And the contract?", Some(&first));
-    interval_at(&c, &after_quiet);
+    // The NOOP settles this question. Its in-flight notice keeps its
+    // identity until the eventual post is reconciled without a duplicate.
     c.slack.commit_late();
-    wait("the new epoch's notice visible", || {
+    wait("the in-flight notice becomes visible", || {
         notices(&c, sender) == 3
     });
     set_clock(&clock, next_at + jiff::SignedDuration::from_mins(3));
-    wait("the late notice reconciled", || {
-        notice_state(&c, &conversation, sender).as_deref() == Some("posted")
-    });
+    wait(
+        "the late notice reconciled and its settled epoch removed",
+        || notice_state(&c, &conversation, sender).is_none(),
+    );
     assert_eq!(notices(&c, sender), 3);
-    c.runtime.flag("send-failure", false);
+    c.slack
+        .mention(channel, sender, "<@UAGENT> And the contract?", Some(&first));
     wait("the next input accepted", || {
         c.runtime.message_count(&session) == 5
     });
@@ -1286,7 +1284,7 @@ fn a_lost_answer_response_defers_notices_until_read_back() {
     assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
-fn a_rejected_retry_keeps_reconciling_the_earlier_answer() {
+fn an_unconfirmed_answer_is_reconciled_before_retry() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
     let asked = c.slack.direct("D16", "USTEVEN", "Is the release ready?");
@@ -1304,13 +1302,10 @@ fn a_rejected_retry_keeps_reconciling_the_earlier_answer() {
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_secs(5),
     );
+    let reads = c.slack.reads();
     c.slack.release_reads();
-    wait("the retry rejected after an empty read-back", || {
-        c.conversations().conversations.iter().any(|row| {
-            row.failures
-                .iter()
-                .any(|cause| cause.contains("not_in_channel"))
-        })
+    wait("an empty read-back inside the post timeout window", || {
+        c.slack.reads() > reads
     });
     assert!(c.slack.posts().is_empty());
     let opened = interval_at(&c, &asked);
@@ -1331,7 +1326,7 @@ fn a_rejected_retry_keeps_reconciling_the_earlier_answer() {
     }
     c.slack.release_reads();
     wait(
-        "the earlier answer reconciled after a rejected retry",
+        "the earlier answer reconciled without an early retry",
         || answers_recorded(&c),
     );
     assert_eq!(c.slack.posts_beginning(answer), 1);
@@ -1679,11 +1674,18 @@ fn an_answer_response_without_a_timestamp_is_reconciled() {
     let session = started(&c, &[]);
     let answer = "Ready.";
     c.slack.fate(answer, Fate::MissingTimestamp, 1);
-    c.slack.hold_reads_from(&asked);
+    c.slack.miss_metadata_read_before_holding(&asked);
     c.finish_turn(&session, 0, answer);
-    wait(
-        "metadata read-back after Slack accepts without a timestamp",
-        || c.slack.held() > 0,
+    common::wait_until(
+        "the second metadata read after the first one misses",
+        std::time::Duration::from_secs(12),
+        || {
+            assert!(
+                c.slack.posts_beginning(answer) <= 1,
+                "an empty read inside the post timeout must not repost"
+            );
+            c.slack.held() > 0
+        },
     );
     assert_eq!(c.slack.posts_beginning(answer), 1);
     assert!(!answers_recorded(&c));
@@ -1693,6 +1695,34 @@ fn an_answer_response_without_a_timestamp_is_reconciled() {
     });
     assert_eq!(c.slack.posts_beginning(answer), 1);
     assert_eq!(notices(&c, "USTEVEN"), 0);
+}
+
+fn a_noop_lets_the_next_question_receive_its_own_notice() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "D21";
+    let sender = "USTEVEN";
+    c.runtime.flag("separate-completion", true);
+    c.runtime.flag("list-failure", true);
+    projected(&c);
+    let first = c.slack.direct(channel, sender, "Any changes?");
+    set_clock(&clock, interval_at(&c, &first) + minute());
+    wait("the first question's notice posted", || {
+        notices(&c, sender) == 1 && notice_state(&c, channel, sender).as_deref() == Some("posted")
+    });
+    c.runtime.flag("list-failure", false);
+    let session = started(&c, &[]);
+    c.finish_turn(&session, 0, "NOOP");
+    wait("the first notice epoch settled by NOOP", || {
+        notice_state(&c, channel, sender).is_none()
+    });
+    assert_eq!(interval(&c, &first), None);
+    c.runtime.flag("send-failure", true);
+    let second = c.slack.direct(channel, sender, "Who reviews the release?");
+    set_clock(&clock, interval_at(&c, &second) + minute());
+    wait("the second question's notice posted", || {
+        notices(&c, sender) == 2
+    });
+    assert_eq!(c.slack.posts().len(), 2);
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {
@@ -1749,12 +1779,11 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
     });
     c.runtime.flag("send-failure", true);
     let later = c.slack.direct(channel, sender, "And tomorrow?");
-    let later_at = interval_at(&c, &later);
-    set_clock(&clock, later_at + jiff::SignedDuration::from_mins(3));
+    interval_at(&c, &later);
     c.slack.release_reads();
     wait(
-        "the original notice reconciled after its legacy trigger completes",
-        || notice_state(&c, channel, sender).as_deref() == Some("posted"),
+        "the original notice reconciled and retired after its legacy trigger completes",
+        || notice_state(&c, channel, sender).is_none(),
     );
     assert_eq!(notices(&c, sender), 1);
     c.runtime.flag("send-failure", false);

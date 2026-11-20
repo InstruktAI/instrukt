@@ -167,7 +167,9 @@ connector gives.
   within the window still confirms delivery if it arrives after expiry.
   It replaces the unknown result. Expiry leaves a confirmed delivery intact.
   A successful post response without a provider timestamp leaves the post
-  unconfirmed until metadata read-back returns a receipt.
+  unconfirmed. An unconfirmed post is read back by metadata throughout its
+  timeout window. Another attempt waits for a read begun after the window
+  that finds no post.
 - Completion comes only from the conversation source. A turn running however
   long is left to run. A turn that ended failed has its message delivered again
   to the session after a growing delay, at the end of the conversation's queue,
@@ -264,8 +266,9 @@ admission positions of the person's messages that made the notice due.
 - The decision is recorded before the post (owed, posting with the attempt's time,
   posted); the record is never taken as proof of delivery.
 - Each answer piece carries the admission position of the message it answers.
-  An epoch closes when every covered position has a confirmed answer. Provider
-  timestamps and the runner clock do not order answer receipts against notices.
+  An epoch closes when every covered position has a confirmed answer or a
+  completed bare `NOOP`. Provider timestamps and the runner clock do not order
+  answer receipts against notices.
 - When the delivery of an attempted answer is uncertain, the relay reconciles
   it before a notice can post to that person. A confirmed rejection leaves the
   person's notice eligible once the no-work interval reaches a minute and

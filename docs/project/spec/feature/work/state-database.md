@@ -746,8 +746,8 @@ until the epoch ends; `covered_positions`, the admission positions that
 made the notice due; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
 records the decision, never proof of delivery. An `unavailable` row is retired
-only when all its covered positions have confirmed answers and any attempted
-notice is reconciled. `not_own` rows stay.
+only when all its covered positions have confirmed answers or completed bare
+`NOOP` turns and any attempted notice is reconciled. `not_own` rows stay.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,

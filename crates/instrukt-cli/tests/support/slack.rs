@@ -154,6 +154,7 @@ struct Workspace {
     refuse: bool,
     hold_reads: bool,
     hold_reads_from: std::collections::BTreeSet<String>,
+    metadata_miss_before_hold: Option<String>,
     /// A post Slack accepted is answered only once released.
     hold_posts: bool,
     /// Every post fails, accepting nothing.
@@ -453,7 +454,15 @@ impl FakeSlack {
                     .min(PAGE);
                 let from: usize = arg("cursor").map_or(0, |c| c.parse().unwrap());
                 let mut page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
-                if arg("include_all_metadata") != Some("true") {
+                let include_metadata = arg("include_all_metadata") == Some("true");
+                let miss = include_metadata
+                    && w.metadata_miss_before_hold
+                        .as_deref()
+                        .is_some_and(|oldest| Some(oldest) == arg("oldest"));
+                if miss && let Some(oldest) = w.metadata_miss_before_hold.take() {
+                    w.hold_reads_from.insert(oldest);
+                }
+                if !include_metadata || miss {
                     for message in &mut page {
                         if let Some(metadata) = message.get_mut("metadata") {
                             *metadata = json!({"event_type": metadata["event_type"]});
@@ -871,6 +880,12 @@ impl FakeSlack {
 
     pub fn hold_reads(&self) {
         self.workspace.lock().unwrap().hold_reads = true;
+    }
+
+    /// Omit the receipt on the first metadata read and hold later reads
+    /// of the same range until the test releases them.
+    pub fn miss_metadata_read_before_holding(&self, oldest: &str) {
+        self.workspace.lock().unwrap().metadata_miss_before_hold = Some(oldest.into());
     }
 
     pub fn hold_reads_from(&self, oldest: &str) {
