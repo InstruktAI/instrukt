@@ -382,7 +382,8 @@ And a healthy wait or a turn completed without output does not earn an unavailab
 ```gherkin
 Scenario Outline: Recover the answer
   Given a member has a message waiting for an answer in a connected conversation
-  When <failure> interrupts the work and the conversation recovers
+  When <failure>
+  And the conversation recovers
   Then the member gets the answer to that message
   And nothing else is posted in the conversation, except the one notice that the assistant is temporarily unavailable when the recovery leaves the message without work for a minute
 
@@ -391,8 +392,8 @@ Scenario Outline: Recover the answer
     | the agent's turn failed |
     | the turn's content was not yet readable |
     | the runtime moved its conversation store |
-    | the operator replaces the deleted conversation after confirming its session has stopped |
-    | the operator unarchives the conversation |
+    | the conversation is deleted and the operator confirms the old session stopped before replacing it |
+    | the conversation is archived and the operator unarchives it |
 ```
 
 ### UC-CV11: Onboard a company while the runner runs
