@@ -720,8 +720,10 @@ before the provider can accept a post. A single attempt kept by an earlier
 version supplies both bounds. `post_id` is the piece's opaque identity,
 allocated before its first post and kept across retries. An attempted piece
 from before migration 23 has no id. `legacy_read_at` records when its one
-read-back began and `delivery_unknown_at` records terminal resolution after
-the settle window without confirmation. `posted_at`, when the connector
+read-back began and `delivery_unknown_at` records resolution after
+the settle window without confirmation. The piece leaves the retry queue,
+and a matching read-back that returns later replaces the unknown result.
+`posted_at`, when the connector
 accepted its post, `NULL` while outstanding; `failure`, the cause of its last
 failed post, `NULL` once posted. A piece with `attempted_at` and no `posted_at`
 may have been accepted. A piece resolved with unknown delivery keeps its

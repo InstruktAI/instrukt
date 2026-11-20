@@ -720,8 +720,9 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
         scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
         scope.spawn(a_rejected_retry_keeps_reconciling_the_earlier_answer);
-        scope.spawn(|| legacy_answer_attempt_releases_conversation(true));
-        scope.spawn(|| legacy_answer_attempt_releases_conversation(false));
+        scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Found));
+        scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Missing));
+        scope.spawn(|| legacy_answer_attempt_releases_conversation(LegacyReceipt::Late));
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
@@ -1344,7 +1345,14 @@ fn a_rejected_retry_keeps_reconciling_the_earlier_answer() {
     assert_eq!(c.slack.posts_beginning("Ben."), 0);
 }
 
-fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LegacyReceipt {
+    Found,
+    Missing,
+    Late,
+}
+
+fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
     let at = jiff::Timestamp::from_second(1_700_000_010).unwrap();
     let (mut c, clock) = status_company(at);
     c.runtime.flag("separate-completion", true);
@@ -1374,7 +1382,7 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
         "UPDATE conversation_answers SET post_id=NULL,latest_attempted_at=NULL WHERE conversation=?1 AND attempted_at IS NOT NULL",
         [&conversation],
     ).unwrap(), 1);
-    if posted_before_upgrade {
+    if receipt != LegacyReceipt::Missing {
         c.slack.say_at(
             "1700000011.000100",
             channel,
@@ -1402,17 +1410,71 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).unwrap()
     };
+    if receipt == LegacyReceipt::Late {
+        // Keep an already delivered notice from this epoch in both systems.
+        state.execute(
+            "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,replied_at) VALUES (?1,'slack',?2,?3,'unavailable',?4,'posted',?4)",
+            instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string()],
+        ).unwrap();
+        c.slack.say_at(
+            "1700000010.500000",
+            channel,
+            crate::fixtures::slack::BOT_USER,
+            &notice_text(member),
+            Some(&asked),
+        );
+        set_clock(&clock, at + jiff::SignedDuration::from_secs(119));
+        c.slack.hold_reads_from("1700000010.000000");
+    }
     c.run();
     wait("the id-less attempt read back once", || {
         legacy_state().1.is_some()
     });
+    if receipt == LegacyReceipt::Late {
+        wait("the legacy read-back held inside the window", || {
+            c.slack.held() > 0
+        });
+        assert_eq!(
+            legacy_state().1,
+            Some((at + jiff::SignedDuration::from_secs(119)).to_string())
+        );
+        set_clock(&clock, at + jiff::SignedDuration::from_secs(121));
+        common::wait_until(
+            "expiry while the matching read-back is held",
+            std::time::Duration::from_secs(12),
+            || legacy_state().2.is_some(),
+        );
+        assert!(legacy_state().0.is_none());
+        assert_eq!(
+            notice_state(&c, &conversation, member).as_deref(),
+            Some("posted")
+        );
+        state.execute_batch(
+            "CREATE TRIGGER hold_late_receipt BEFORE UPDATE OF posted_at ON conversation_answers
+             WHEN OLD.delivery_unknown_at IS NOT NULL AND NEW.posted_at IS NOT NULL
+             BEGIN SELECT RAISE(ABORT, 'forced late receipt failure'); END",
+        ).unwrap();
+        c.slack.release_reads();
+        wait("the late receipt attempts to write", || {
+            run_log(&c).contains("forced late receipt failure")
+        });
+        assert!(legacy_state().2.is_some());
+        assert_eq!(
+            notice_state(&c, &conversation, member).as_deref(),
+            Some("posted")
+        );
+        state
+            .execute_batch("DROP TRIGGER hold_late_receipt")
+            .unwrap();
+    }
     let database = c.store.file.clone();
     let hidden_database = database.with_extension("away");
-    if posted_before_upgrade {
+    if receipt != LegacyReceipt::Missing {
         wait("the legacy answer receipt recovered", || {
             legacy_state().0.is_some()
         });
         assert!(legacy_state().2.is_none());
+        assert!(notice_state(&c, &conversation, member).is_none());
     } else {
         assert!(legacy_state().0.is_none());
         assert!(legacy_state().2.is_none());
@@ -1442,10 +1504,13 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
     assert_eq!(interval(&c, &asked), None);
     assert!(c.slack.posts().is_empty());
 
+    if receipt == LegacyReceipt::Late {
+        c.runtime.flag("send-failure", true);
+    }
     let later = c
         .slack
         .mention(channel, member, "<@UAGENT> And the contract?", Some(&asked));
-    if !posted_before_upgrade {
+    if receipt == LegacyReceipt::Missing {
         wait("the later message admitted while T3 is unreadable", || {
             state.query_row(
                 "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND admitted_at IS NOT NULL)",
@@ -1463,6 +1528,15 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
         std::fs::remove_dir(&database).unwrap();
         std::fs::rename(&hidden_database, &database).unwrap();
     }
+    if receipt == LegacyReceipt::Late {
+        let since = interval_at(&c, &later);
+        set_clock(&clock, since + minute());
+        wait(
+            "a later notice posts after the recovered receipt closes the old epoch",
+            || notices(&c, member) == 1,
+        );
+        c.runtime.flag("send-failure", false);
+    }
     wait("the next message goes to the same conversation", || {
         c.runtime.message_count(&session) == 2
     });
@@ -1470,7 +1544,7 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
     wait("the next answer posted and recorded", || {
         c.slack.posts_beginning("In the shared drive.") == 1 && answers_recorded(&c)
     });
-    let expected_notices = usize::from(!posted_before_upgrade);
+    let expected_notices = usize::from(receipt != LegacyReceipt::Found);
     assert_eq!(c.slack.posts().len(), 1 + expected_notices);
     assert_eq!(notices(&c, member), expected_notices);
 }

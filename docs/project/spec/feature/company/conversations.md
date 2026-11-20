@@ -163,7 +163,10 @@ connector gives.
   delivery unknown using the retained record. Expiry proceeds during a
   source or provider outage. The piece produces neither a retry nor a
   notice, and later work proceeds. Status keeps the cause with the
-  conversation, turn and piece.
+  conversation, turn and piece. A matching receipt from a read started
+  within the window still confirms delivery if it arrives after expiry.
+  It replaces the unknown result and closes the notice epoch. Expiry
+  leaves a confirmed delivery intact.
 - Completion comes only from the conversation source. A turn running however
   long is left to run. A turn that ended failed has its message delivered again
   to the session after a growing delay, at the end of the conversation's queue,
