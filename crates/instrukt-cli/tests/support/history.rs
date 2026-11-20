@@ -203,17 +203,6 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             .unwrap();
     }
 
-    /// Emit a metadata event after the WAL writes, on the same watched
-    /// inode, without committing more projection data.
-    #[allow(dead_code, reason = "used by the conversation scenarios")]
-    pub fn mark_wal(&self) {
-        use std::os::unix::fs::PermissionsExt as _;
-        let wal = PathBuf::from(format!("{}-wal", self.file.display()));
-        let mut mode = std::fs::metadata(&wal).unwrap().permissions();
-        mode.set_mode(mode.mode() ^ 0o100);
-        std::fs::set_permissions(wal, mode).unwrap();
-    }
-
     /// The agent writes `text` in the running turn `run` of `thread`: an
     /// assistant message T3 records in that turn, `ordinal` among its items.
     #[allow(dead_code, reason = "used by the conversation scenarios")]

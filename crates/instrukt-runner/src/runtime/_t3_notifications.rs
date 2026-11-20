@@ -4,6 +4,12 @@ use std::path::Path;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(super) fn subscribe(path: &Path) -> Result<Box<dyn ConversationNotifications>, SourceError> {
+    #[cfg(debug_assertions)]
+    if instrukt_core::fsx::fence_active()
+        && let Some(path) = std::env::var_os("INSTRUKT_TEST_T3_WAKES")
+    {
+        return fixture::subscribe(path.into());
+    }
     native::subscribe(path)
 }
 
@@ -15,15 +21,59 @@ pub(super) fn subscribe(_path: &Path) -> Result<Box<dyn ConversationNotification
     ))
 }
 
+/// A notification source supplied by the out-of-process T3 fixture. Each
+/// revision is consumed once, independently of SQLite's filesystem activity.
+#[cfg(all(debug_assertions, any(target_os = "macos", target_os = "linux")))]
+mod fixture {
+    use super::{ConversationNotifications, SourceError};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    struct Fixture {
+        path: PathBuf,
+        revision: u64,
+    }
+
+    pub(super) fn subscribe(
+        path: PathBuf,
+    ) -> Result<Box<dyn ConversationNotifications>, SourceError> {
+        Ok(Box::new(Fixture {
+            revision: revision(&path)?,
+            path,
+        }))
+    }
+
+    fn revision(path: &Path) -> Result<u64, SourceError> {
+        std::fs::read_to_string(path)
+            .map_err(|source| SourceError::Io {
+                path: path.to_owned(),
+                source,
+            })?
+            .trim()
+            .parse()
+            .map_err(|_| SourceError::Shape("invalid fixture notification revision"))
+    }
+
+    impl ConversationNotifications for Fixture {
+        fn wait(&mut self, timeout: Duration) -> Result<bool, SourceError> {
+            std::thread::sleep(timeout);
+            let revision = revision(&self.path)?;
+            if revision <= self.revision {
+                return Ok(false);
+            }
+            self.revision = revision;
+            tracing::debug!(event = "t3_fixture_wake", revision);
+            Ok(true)
+        }
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native {
     use super::{ConversationNotifications, SourceError};
-    use notify::event::ModifyKind;
     use notify::{EventKind, RecursiveMode, Watcher};
     use std::{
         path::{Path, PathBuf},
-        sync::Arc,
-        sync::atomic::{AtomicBool, Ordering},
         sync::mpsc::{self, Receiver, TrySendError},
         time::{Duration, Instant},
     };
@@ -55,15 +105,15 @@ mod native {
     }
 
     struct Notifications {
-        receive: Receiver<Result<u64, SourceError>>,
+        receive: Receiver<Result<(), SourceError>>,
         watcher: SourceWatcher,
         files: [Watched; 2],
-        invalidated: Arc<AtomicBool>,
         /// When the files not registered are tried again; none while both are.
         next_attempt: Option<Instant>,
     }
     impl Notifications {
-        /// Refresh the registrations after a file is moved or removed.
+        /// Registers each file again: one replaced under its name is followed,
+        /// and one gone is tried again later.
         fn register_all(&mut self) -> Result<(), SourceError> {
             for file in &mut self.files {
                 register(&mut self.watcher, file)?;
@@ -102,14 +152,8 @@ mod native {
             });
             match self.receive.recv_timeout(bound) {
                 Ok(result) => {
-                    let wake = result?;
-                    // Data and metadata events keep their watches in place.
-                    // Moving or removing a file can invalidate a watch even
-                    // if that event coalesced with an already queued wake.
-                    if self.invalidated.swap(false, Ordering::AcqRel) {
-                        self.register_all()?;
-                    }
-                    tracing::debug!(event = "t3_source_wake_consumed", wake);
+                    result?;
+                    self.register_all()?;
                     Ok(true)
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => self.attempt_due(),
@@ -126,13 +170,9 @@ mod native {
         let target = path.to_path_buf();
         let wal = PathBuf::from(format!("{}-wal", path.display()));
         let (matched_target, matched_wal) = (target.clone(), wal.clone());
-        let invalidated = Arc::new(AtomicBool::new(false));
-        let watch_invalidated = Arc::clone(&invalidated);
-        let mut sequence = 0;
-        let mut queued = None;
         let watcher = SourceWatcher::new(
             move |event: notify::Result<notify::Event>| {
-                let (change, wal_metadata) = match event {
+                let change = match event {
                     Ok(event)
                         if !matches!(event.kind, EventKind::Access(_))
                             && event
@@ -140,41 +180,24 @@ mod native {
                                 .iter()
                                 .any(|p| p == &matched_target || p == &matched_wal) =>
                     {
-                        sequence += 1;
-                        if matches!(
-                            event.kind,
-                            EventKind::Remove(_)
-                                | EventKind::Modify(ModifyKind::Name(_) | ModifyKind::Any)
-                        ) {
-                            watch_invalidated.store(true, Ordering::Release);
-                        }
-                        let wal_metadata =
-                            matches!(event.kind, EventKind::Modify(ModifyKind::Metadata(_)))
-                                && event.paths.contains(&matched_wal);
-                        (Ok(sequence), wal_metadata)
+                        Some(Ok(()))
                     }
-                    Ok(_) => return,
-                    Err(error) => (Err(SourceError::Watch(error)), false),
+                    Ok(_) => None,
+                    Err(error) => Some(Err(SourceError::Watch(error))),
                 };
-                let wake = change.as_ref().ok().copied();
-                match send.try_send(change) {
-                    Ok(()) => queued = wake,
-                    Err(TrySendError::Full(result)) => {
-                        // An already queued change catches up all durable rows; errors remain logged.
-                        if let Err(error) = result {
-                            tracing::error!(event="t3_source_watch_failed",error=%error);
+                if let Some(change) = change {
+                    match send.try_send(change) {
+                        Ok(()) => {}
+                        Err(TrySendError::Full(result)) => {
+                            // An already queued change catches up all durable rows; errors remain logged.
+                            if let Err(error) = result {
+                                tracing::error!(event="t3_source_watch_failed",error=%error);
+                            }
+                        }
+                        Err(TrySendError::Disconnected(_)) => {
+                            tracing::debug!(event = "t3_source_notifications_closed")
                         }
                     }
-                    Err(TrySendError::Disconnected(_)) => {
-                        tracing::debug!(event = "t3_source_notifications_closed");
-                        return;
-                    }
-                }
-                // A WAL metadata event follows the earlier writes on that
-                // file. Attribute it to the wake that will read those writes,
-                // even when the event coalesced into a queued wake.
-                if wal_metadata && let Some(wake) = queued {
-                    tracing::debug!(event = "t3_wal_metadata_queued", wake);
                 }
             },
             notify::Config::default(),
@@ -188,7 +211,6 @@ mod native {
             receive,
             watcher,
             files: [file(target), file(wal)],
-            invalidated,
             next_attempt: None,
         };
         notifications.register_all()?;

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use crate::common::TestEnv;
 
 const SCRIPT: &str = r###"#!/usr/bin/env python3
-import fcntl, json, os, pathlib, sqlite3, subprocess, sys, time
+import json, os, pathlib, sqlite3, subprocess, sys, time
 root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
@@ -101,13 +101,6 @@ if (root/'down').exists() or (command=='list' and (root/'list-failure').exists()
 def all_threads():
     return [json.loads(p.read_text()) for p in sorted(root.glob('*.json'))]
 def sync_inputs():
-    if not (root/'projection-gate').exists():
-        return project_inputs()
-    with (root/'projection.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if not (root/'pause-projection').exists():
-            project_inputs()
-def project_inputs():
     db=pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite'
     db.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(db) as connection:
@@ -338,16 +331,6 @@ impl FakeT3 {
         } else if p.exists() {
             std::fs::remove_file(p).unwrap();
         }
-    }
-    /// Drain any projection already in progress, then leave further writes
-    /// to the fixture. The scenario enables the projection gate at startup.
-    pub fn pause_projection(&self) {
-        let _guard = instrukt_core::fsx::LockGuard::acquire(
-            &self.state.join("projection.lock"),
-            std::time::Duration::from_secs(5),
-        )
-        .unwrap();
-        self.flag("pause-projection", true);
     }
     /// Whether a start has been held by the `hold-start` flag.
     pub fn start_held(&self) -> bool {
