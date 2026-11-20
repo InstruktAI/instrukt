@@ -293,6 +293,75 @@ impl Company {
         }
     }
 
+    /// A company with its configuration and published procedure already in
+    /// place. The recovery scenarios start after configuration and publication.
+    pub fn prepared_for_recovery(env: TestEnv) -> Self {
+        use instrukt_core::config::{CURRENT_SCHEMA_VERSION, SecretSource, set_secret_in};
+        use instrukt_core::home::Home;
+        use instrukt_core::index::GlobalIndex;
+
+        let company = Self::with_fakes(env);
+        let home = Home::at_user_home(company.env.home().into());
+        let slug = ProjectSlug::parse(COMPANY).unwrap();
+        std::fs::write(
+            home.root().join("instrukt.yaml"),
+            format!("schema_version: {CURRENT_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false}}\n"),
+        ).unwrap();
+        let company_path = home.company_dir(&slug);
+        std::fs::create_dir_all(&company_path).unwrap();
+        let config = company_path.join("instrukt.yaml");
+        let identity = format!("schema_version: {CURRENT_SCHEMA_VERSION}\ncompany: {COMPANY}\n");
+        std::fs::write(&config, &identity).unwrap();
+        let source = SecretSource::Company(slug);
+        set_secret_in(&home, &source, "SLACK_APP_TOKEN", APP_TOKEN).unwrap();
+        set_secret_in(&home, &source, "SLACK_BOT_TOKEN", BOT_TOKEN).unwrap();
+        std::fs::write(
+            config,
+            format!(
+                "{identity}members: {MEMBERS}\nconnectors: {{slack: {{app_token: '${{SLACK_APP_TOKEN}}', bot_token: '${{SLACK_BOT_TOKEN}}'}}}}\n",
+            ),
+        ).unwrap();
+
+        let procedure = "assistance/procedure/company-assistance.md";
+        let description = "Assist a company's people in their conversations.";
+        let snippet = home.root().join("docs").join(procedure);
+        std::fs::create_dir_all(snippet.parent().unwrap()).unwrap();
+        std::fs::write(
+            snippet,
+            documented::snippet(
+                "procedure",
+                "Company Assistance",
+                description,
+                "role: company-agent\n",
+                &[],
+                "Carry out the message that addresses you.\n",
+            ),
+        )
+        .unwrap();
+        let mut index = GlobalIndex::default();
+        index.snippets.push(
+            serde_yaml_ng::from_str(concat!(
+                "id: assistance/procedure/company-assistance\n",
+                "description: Assist a company's people in their conversations.\n",
+                "type: procedure\n",
+                "scope: global\n",
+                "domain: assistance\n",
+                "path: assistance/procedure/company-assistance.md\n",
+                "source_project: assistance-docs\n",
+                "role: company-agent\n",
+            ))
+            .unwrap(),
+        );
+        let state = home.root().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(
+            state.join("index.yaml"),
+            serde_yaml_ng::to_string(&index).unwrap(),
+        )
+        .unwrap();
+        company
+    }
+
     /// Starts the long-lived runner and waits for its outward connection.
     pub fn run(&mut self) {
         let before = self.slack.connections();

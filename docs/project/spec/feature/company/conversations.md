@@ -423,28 +423,21 @@ And if replacement later times out waiting for the stopped thread's input, the o
 And a recovery command for a session with shell metacharacters can be retried in a shell with the original output format
 ```
 
-### UC-CV8: Get the answer after the assistant's work failed
+### UC-CV8: Keep a question when the conversation thread is archived or deleted
 
 ```gherkin
-Scenario Outline: Recover the answer
-  Given a member has a message waiting for an answer in a connected conversation
-  When <failure>
-  And the conversation recovers
-  Then the member gets the answer to that message
-  And nothing else is posted in the conversation, except the one notice that the assistant is temporarily unavailable when the recovery leaves the message without work for a minute
+Scenario Outline: Restore a conversation with work waiting
+  Given a member has a question waiting and the assistant's thread for that conversation is <state>
+  When the operator <recovery>
+  Then the member gets one answer to their saved question in the same conversation
+  And the operator sees how to recover the work that is waiting
+  And their question waits for the operator's recovery action
+  And answers already saved for posting can still reach their members while the question waits
 
   Examples:
-    | failure |
-    | the agent's turn failed |
-    | the turn's content was not yet readable |
-    | the runtime moved its conversation store |
-    | the conversation is deleted and the operator confirms the old session stopped before replacing it |
-    | the conversation is archived and the operator unarchives it |
-
-Scenario: A completed request has nothing to post
-  Given a member has a message waiting for an answer in a connected conversation
-  When the turn completes with a bare NOOP
-  Then the request is complete and nothing is posted
+    | state    | recovery                                             |
+    | archived | unarchives the thread                                |
+    | deleted  | confirms the stopped session and replaces the thread |
 ```
 
 ### UC-CV11: Onboard a company while the runner runs
@@ -530,6 +523,39 @@ When they ask another question and the assistant completes it
 Then the later question is served even while the earlier one remains unserved
 And its completion clears the earlier failure from the member's status
 And a subsequent outage can earn its own notice
+```
+
+### UC-CV20: Get an answer after the assistant's work failed
+
+```gherkin
+Scenario: The member receives the answer after a retry
+  Given the assistant's work on a member's question ends in failure
+  When the assistant can work on the question again
+  Then the member receives one answer without sending the question again
+  And progress from the unsuccessful work is never posted as the answer
+  And another member can be answered while the failed question waits
+  And if the wait earns an unavailable notice, only one is posted before the answer
+
+Scenario: The assistant completes a request without a reply
+  Given a member has a request waiting in the conversation
+  When the assistant completes it successfully without a reply
+  Then the request is complete and nothing is posted
+```
+
+### UC-CV21: Keep an answer through an interruption at its source
+
+```gherkin
+Scenario Outline: Receive the complete answer when it can be read
+  Given a member has a question waiting for an answer
+  When <interruption>
+  Then the member receives the complete answer once it can be read
+  And no partial answer is posted
+  And earlier answers are never repeated and the member does not need to ask again
+
+  Examples:
+    | interruption                                                  |
+    | the source temporarily holds only part of the completed answer |
+    | the runtime moves its records while an answer is due           |
 ```
 
 ## Known caveats

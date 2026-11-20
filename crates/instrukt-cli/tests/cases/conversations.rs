@@ -886,27 +886,13 @@ fn retry_as_printed_in_shell(c: &Company, clock: &std::path::Path) {
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV8
 #[test]
-fn a_member_gets_the_answer_after_the_assistants_work_failed() {
-    let scenarios: &[fn()] = &[
-        held_runtime_checks_leave_another_conversation_free,
-        #[cfg(debug_assertions)]
-        a_live_deletion_is_confirmed_once_across_relay_passes,
-        unstable_and_moved_answers_are_recovered_from_the_source,
-        a_failed_turn_retries_after_new_work_and_unarchive,
-        a_live_pending_successor_leaves_retained_answers_free_to_post,
-        deleted_conversation_waits_for_confirmed_replacement,
-    ];
-    let remaining = std::sync::Mutex::new(scenarios.iter());
+fn a_member_keeps_their_question_when_the_conversation_thread_is_archived_or_deleted() {
     std::thread::scope(|scope| {
-        for _ in 0..4 {
-            scope.spawn(|| {
-                loop {
-                    let next = remaining.lock().unwrap().next();
-                    let Some(run) = next else { break };
-                    run();
-                }
-            });
-        }
+        scope.spawn(held_runtime_checks_leave_another_conversation_free);
+        #[cfg(debug_assertions)]
+        scope.spawn(a_live_deletion_is_confirmed_once_across_relay_passes);
+        scope.spawn(deleted_conversation_waits_for_confirmed_replacement);
+        archived_and_deleted_conversations_keep_saved_work();
     });
 }
 
@@ -923,7 +909,7 @@ fn wait_for_answer_fixture(what: &str, condition: impl FnMut() -> bool) {
 }
 
 fn answer_recovery_company(debug: bool) -> (Company, std::path::PathBuf) {
-    let mut c = prepared_status_company();
+    let mut c = Company::prepared_for_recovery(status_env());
     // The fixture controls native notifications independently of its writes.
     let wakes = c.env.path("answer-recovery-wakes");
     answer_source_changed(&c, 0);
@@ -960,14 +946,16 @@ fn finish_answer_turn(c: &mut Company, session: &str, input: usize, answer: &str
     answer_source_changed(c, revision.trim().parse::<u64>().unwrap() + 1);
 }
 
-fn a_failed_turn_retries_after_new_work_and_unarchive() {
+// spec: project/instrukt/spec/feature/company/conversations UC-CV20
+#[test]
+fn a_member_gets_the_answer_after_the_assistants_work_failed() {
     let (mut c, clock) = answer_recovery_company(true);
     let channel = "C1";
     let parent = c
         .slack
         .say_at("1700000000.000100", channel, "USTEVEN", "Release", None);
     projected(&c);
-    c.slack.mention(
+    let noop = c.slack.mention(
         channel,
         "USTEVEN",
         "<@UAGENT> Check readiness.",
@@ -983,6 +971,8 @@ fn a_failed_turn_retries_after_new_work_and_unarchive() {
     wait_for_answer_fixture("the acknowledgement of the old attempt is held", || {
         c.runtime.held_show_running(&session)
     });
+    assert_eq!(interval(&c, &noop), None);
+    assert!(c.slack.posts().is_empty(), "a bare NOOP posts nothing");
     let other = c.slack.mention(
         channel,
         "UANNA",
@@ -1109,6 +1099,26 @@ fn a_failed_turn_retries_after_new_work_and_unarchive() {
     );
     assert_eq!(c.runtime.message_count(&session), 4);
     assert_eq!(notices(&c, "USTEVEN"), 1);
+    let blank = c.slack.mention(
+        channel,
+        "USTEVEN",
+        "<@UAGENT> Check the checklist.",
+        Some(&parent),
+    );
+    wait_for_answer_fixture("the assistant receives the check", || {
+        c.runtime.message_count(&session) == 5
+    });
+    finish_answer_turn(&mut c, &session, 4, " \n ");
+    wait_for_answer_fixture("the blank answer completes the check", || {
+        state
+            .query_row(
+                "SELECT state='answered' FROM conversation_messages WHERE message=?1",
+                [&blank],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap()
+            && c.slack.status(channel, &blank).is_none()
+    });
     assert_eq!(
         destinations(&c),
         vec![(channel.to_owned(), Some(parent)); 3]
@@ -1140,45 +1150,25 @@ fn complete_post_bodies(c: &Company) -> String {
     serde_json::to_string_pretty(&bodies).unwrap()
 }
 
-fn unstable_and_moved_answers_are_recovered_from_the_source() {
+// spec: project/instrukt/spec/feature/company/conversations UC-CV21
+#[test]
+fn a_member_keeps_their_answer_through_a_source_interruption() {
     use instrukt_core::state_db::rusqlite::Connection;
 
     let (mut c, _clock) = answer_recovery_company(true);
     let channel = "D30";
     projected(&c);
-    c.slack
-        .direct(channel, "USTEVEN", "Is the old report ready?");
-    let session = started(&c, &[]);
-    c.finish_turn(&session, 0, "The old report is ready.");
-    answer_source_changed(&c, 1);
-    wait_for_answer_fixture("the earlier answer is recorded", || {
-        c.slack.posts_beginning("The old report is ready.") == 1 && answers_recorded(&c)
-    });
-    let noop = c
-        .slack
-        .direct(channel, "USTEVEN", "Just check the attachment.");
-    wait_for_answer_fixture("the no-op question reaches the agent", || {
-        c.runtime.message_count(&session) == 2
-    });
-    c.finish_turn(&session, 1, "NOOP");
-    answer_source_changed(&c, 2);
-
     let request = c
         .slack
         .direct(channel, "USTEVEN", "Which page has the summary?");
-    wait_for_answer_fixture("the summary question follows the completed no-op", || {
-        c.runtime.message_count(&session) == 3
-    });
-    assert_eq!(c.slack.posts().len(), 1, "NOOP posts nothing");
-    assert_eq!(interval(&c, &noop), None);
-
-    let input = c.runtime.message(&session, 2);
+    let session = started(&c, &[]);
+    let input = c.runtime.message(&session, 0);
     let partial = "The summary is on";
     c.runtime.finish(&session, "idle", partial);
     c.runtime.project(&c.env, &session);
     c.store
-        .streaming_turn(&session, "moved-answer", 3, &input, partial);
-    answer_source_changed(&c, 3);
+        .streaming_turn(&session, "incomplete-summary", 1, &input, partial);
+    answer_source_changed(&c, 1);
     wait_for_answer_fixture("the relay sees completed but unstable content", || {
         interval(&c, &request).is_some()
             && retained_conversations(&c).conversations.iter().any(|row| {
@@ -1187,20 +1177,20 @@ fn unstable_and_moved_answers_are_recovered_from_the_source() {
                     .any(|failure| failure.contains("content is unstable"))
             })
     });
-    assert_eq!(c.slack.posts().len(), 1);
+    assert!(c.slack.posts().is_empty());
 
     let original = Connection::open(&c.store.file).unwrap();
     let finish = |db: &Connection, answer: &str| {
         db.execute(
             "UPDATE orchestration_v2_projection_messages SET streaming=0,
                  payload_json=json_set(payload_json, '$.streaming', json('false'), '$.text', ?1)
-             WHERE message_id='moved-answer-reply'",
+             WHERE message_id='incomplete-summary-reply'",
             [answer],
         )
         .unwrap();
     };
     finish(&original, "The summary is on page two.");
-    answer_source_changed(&c, 4);
+    answer_source_changed(&c, 2);
     wait_for_answer_fixture("the turn finishes in the original store", || {
         c.slack.posts_beginning("The summary is on page two.") == 1 && answers_recorded(&c)
     });
@@ -1209,7 +1199,7 @@ fn unstable_and_moved_answers_are_recovered_from_the_source() {
     c.slack.direct("D31", "UANNA", "Check the document.");
     let other = started(&c, std::slice::from_ref(&session));
     c.finish_turn(&other, 0, "NOOP");
-    answer_source_changed(&c, 5);
+    answer_source_changed(&c, 3);
     let moved_request = c.slack.direct(channel, "USTEVEN", "Where is the appendix?");
     let state = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
     wait_for_answer_fixture("the appendix question is accepted", || {
@@ -1237,9 +1227,9 @@ fn unstable_and_moved_answers_are_recovered_from_the_source() {
     let answer = "The appendix is at the end.";
     c.runtime.set_status(&session, "idle");
     c.runtime.set_status(&other, "idle");
-    let appendix_input = c.runtime.message(&session, 4);
+    let appendix_input = c.runtime.message(&session, 2);
     c.store
-        .turn(&session, "after-move", 4, &appendix_input, answer);
+        .turn(&session, "after-move", 2, &appendix_input, answer);
     let moved = c.env.path("moved-t3");
     std::fs::create_dir_all(moved.join("userdata")).unwrap();
     let destination = moved.join("userdata/statev2.sqlite");
@@ -1318,15 +1308,15 @@ fn unstable_and_moved_answers_are_recovered_from_the_source() {
         })
     });
     #[cfg(debug_assertions)]
-    deliver_probe_wake(&c, &|revision| answer_source_changed(&c, revision), 6);
+    deliver_probe_wake(&c, &|revision| answer_source_changed(&c, revision), 4);
     assert_eq!(c.runtime.message_count(&other), 2);
-    assert_eq!(c.runtime.message_count(&session), 155);
+    assert_eq!(c.runtime.message_count(&session), 153);
 
     // The original input and its completion become visible in the new store.
     c.store.turn(
         &other,
         "lost-answer",
-        5,
+        2,
         &c.runtime.message(&other, 1),
         "The document is complete.",
     );
@@ -1343,7 +1333,7 @@ fn unstable_and_moved_answers_are_recovered_from_the_source() {
          INSERT INTO orchestration_v2_projection_turn_items SELECT * FROM old.orchestration_v2_projection_turn_items WHERE turn_item_id LIKE 'lost-answer-%';
          COMMIT;",
     ).unwrap();
-    answer_source_changed(&c, 7);
+    answer_source_changed(&c, 5);
     wait_for_answer_fixture("the original send's reply arrives once", || {
         c.slack.posts_beginning("The document is complete.") == 1 && answers_recorded(&c)
     });
@@ -1353,16 +1343,11 @@ fn unstable_and_moved_answers_are_recovered_from_the_source() {
         [
             (channel.to_owned(), None),
             (channel.to_owned(), None),
-            (channel.to_owned(), None),
             ("D31".to_owned(), None),
         ]
     );
     insta::assert_snapshot!(complete_post_bodies(&c), @r#"
 [
-  [
-    null,
-    "The old report is ready."
-  ],
   [
     null,
     "The summary is on page two."
@@ -1755,9 +1740,29 @@ fn replay_replacement(c: &Company, finding: &str) {
     assert!(result.status.success(), "{result:?}");
 }
 
-fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
+fn archived_and_deleted_conversations_keep_saved_work() {
     let (mut c, _, session) = answered_conversation(false);
+    c.runtime.archive(&session);
+    c.store.thread(
+        &session,
+        None,
+        Some("2026-11-19T10:01:00Z"),
+        "2026-11-19T10:01:00Z",
+    );
+    answer_source_changed(&c, 2);
     let waiting = c.slack.direct("D30", "USTEVEN", "Who kept the notes?");
+    wait_for_answer_fixture(
+        "the archived thread waits for the operator to unarchive it",
+        || {
+            conversation_finding(&c, "unarchive it or delete it").is_some()
+                && c.slack.status("D30", &waiting).as_deref() == Some(UNAVAILABLE)
+        },
+    );
+    assert_eq!(c.runtime.message_count(&session), 1);
+    assert_eq!(c.sessions().as_slice(), std::slice::from_ref(&session));
+    c.runtime.change(&session, "archived", false.into());
+    c.store.thread(&session, None, None, "2026-11-19T10:02:00Z");
+    answer_source_changed(&c, 3);
     wait_for_answer_fixture("the old session receives the question", || {
         c.runtime.message_count(&session) == 2
     });
@@ -3909,6 +3914,17 @@ fn prepared_status_company() -> Company {
         })
         .collect()
     });
+    let company = Company::with_fakes(status_env());
+    for file in files {
+        let path = company.env.instrukt_home().join(file.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &file.content).unwrap();
+        std::fs::set_permissions(path, file.permissions.clone()).unwrap();
+    }
+    company
+}
+
+fn status_env() -> common::TestEnv {
     let mut env = common::TestEnv::new();
     let wake = env.path("clock.notice-wake");
     std::fs::write(&wake, "").unwrap();
@@ -3918,14 +3934,7 @@ fn prepared_status_company() -> Company {
         "INSTRUKT_TEST_NOTICE_DECISIONS",
         env.path("notice-decisions").to_str().unwrap(),
     );
-    let company = Company::with_fakes(env);
-    for file in files {
-        let path = company.env.instrukt_home().join(file.path);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, &file.content).unwrap();
-        std::fs::set_permissions(path, file.permissions.clone()).unwrap();
-    }
-    company
+    env
 }
 
 /// A company whose conversations run on a runner under the operator's clock
