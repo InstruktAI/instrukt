@@ -59,7 +59,7 @@ pub(crate) fn note(
                             "SELECT begun_at FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",
                             params![runtime.name(), key], |row| row.get(0),
                         ).optional().map_err(state::sql(&path))?;
-                        (format!("start `{key}` remains unresolved; use `instrukt sessions resolve-start {key} --session <runtime:id> | --none`"), begun.unwrap_or_else(|| now.to_string()))
+                        (format!("start `{key}` remains unresolved; use {}", super::resolve_choices(key)), begun.unwrap_or_else(|| now.to_string()))
                     }
                     SessionsError::ArchivedBound { .. } | SessionsError::PendingPlacement { .. } | SessionsError::ProjectChanged { .. } | SessionsError::ProjectUnverified { .. } | SessionsError::DeletedBound { .. } | SessionsError::FirstStartAbsent { .. } | SessionsError::PendingReplacement { .. } | SessionsError::ConflictingThreads { .. } => (error.to_string(), now.to_string()),
                     SessionsError::KeyConflict(_) => (format!("{error}; archive or delete the extra thread"), now.to_string()),

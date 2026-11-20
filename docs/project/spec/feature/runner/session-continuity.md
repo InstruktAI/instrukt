@@ -261,7 +261,9 @@ usual bound for the exact key, and replacement also waits for any input
 already being handled for the stopped thread. Other keys keep dispatching.
 If the wait expires, the command names the semantic key and the exact command
 to retry after dispatch releases it, with POSIX shell quoting and the requested
-output format. If the lock cannot be opened, the command reports the directory
+output format. Recovery commands in diagnostics and status use the same
+quoting, including standing reservation recovery through `instrukt events bind`.
+If the lock cannot be opened, the command reports the directory
 and the operating system's cause. An internal `input:<runtime:id>` lock
 key is refused before lock acquisition. The recovery commands take the
 assignment's `instrukt:…` semantic key.

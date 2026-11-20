@@ -874,15 +874,9 @@ fn retry_as_printed_in_shell(c: &Company, clock: &std::path::Path) {
     for name in ["instrukt:run:demo:retry1", "t3:s1"] {
         std::fs::write(c.env.home().join(name), "").unwrap();
     }
-    std::os::unix::fs::symlink(
-        env!("CARGO_BIN_EXE_instrukt"),
-        c.env.path("runtime-bin/instrukt"),
-    )
-    .unwrap();
     let result = c
         .env
-        .command(&common::tool_executable("sh"), c.env.home())
-        .args(["-c", printed])
+        .recovery_shell(c.env.home(), printed)
         .output()
         .unwrap();
     assert!(result.status.success(), "{result:?}");
@@ -1393,10 +1387,21 @@ fn run_printed_replacement(c: &Company, expected: &str) {
         || conversation_finding(c, expected).is_some(),
     );
     let finding = conversation_finding(c, expected).unwrap();
-    let (_, command) = finding.split_once("use ").unwrap();
-    let mut words = command.trim_matches('`').split_whitespace();
-    assert_eq!(words.next(), Some("instrukt"));
-    c.env.run(c.env.home(), words.collect::<Vec<_>>()).success();
+    replay_replacement(c, &finding);
+}
+
+fn replay_replacement(c: &Company, finding: &str) {
+    let (_, command) = finding
+        .split_once("`instrukt sessions replace-deleted ")
+        .unwrap();
+    let (arguments, _) = command.split_once('`').unwrap();
+    let command = format!("instrukt sessions replace-deleted {arguments}");
+    let result = c
+        .env
+        .recovery_shell(c.env.home(), &command)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
 }
 
 fn a_live_pending_successor_leaves_retained_answers_free_to_post() {
@@ -1515,10 +1520,13 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     wait_for_presence_notice(&c, &second, &clock, &door);
     assert!(c.sessions().is_empty());
 
-    c.store.thread("s2", None, None, "2026-11-08T10:00:00.000Z");
+    let pending = "s[2]";
+    c.runtime.next_thread_id(pending);
+    c.store
+        .thread(pending, None, None, "2026-11-08T10:00:00.000Z");
     db.execute_batch(
         "CREATE TRIGGER hold_replacement BEFORE UPDATE OF accepted ON runtime_bindings
-         WHEN NEW.session='t3:s2' AND NEW.accepted=1
+         WHEN NEW.session='t3:s[2]' AND NEW.accepted=1
          BEGIN SELECT RAISE(ABORT, 'held replacement acceptance'); END",
     )
     .unwrap();
@@ -1543,14 +1551,53 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         !interrupted.status.success() && stderr.contains("held replacement acceptance"),
         "{stderr}"
     );
-    assert_eq!(c.sessions(), ["s2"]);
-    c.runtime.delete("s2");
-    c.store.unproject_thread("s2");
+    assert_eq!(c.sessions(), [pending]);
+    c.runtime.delete(pending);
+    c.store.unproject_thread(pending);
     db.execute_batch("DROP TRIGGER hold_replacement").unwrap();
 
-    let pending_door = format!("instrukt sessions replace-deleted {key} --stopped t3:s2");
+    let pending_door = format!("instrukt sessions replace-deleted {key} --stopped t3:{pending}");
+    wait(
+        "conversation status names the deleted successor's ID",
+        || {
+            retained_conversations(&c)
+                .conversations
+                .iter()
+                .flat_map(|row| &row.failures)
+                .any(|failure| failure.replace('\'', "").contains(&pending_door))
+        },
+    );
+    let conversation = c
+        .conversations()
+        .conversations
+        .into_iter()
+        .flat_map(|row| row.failures)
+        .find(|failure| failure.replace('\'', "").contains(&pending_door))
+        .unwrap();
+
+    // The refusal records the keyed finding surfaced by plain events status.
+    let refusal = c
+        .env
+        .run(c.env.home(), ["sessions", "resolve-start", &key, "--none"])
+        .failure();
+    let stderr = String::from_utf8_lossy(&refusal.get_output().stderr);
+    let status = c.env.run(c.env.home(), ["events", "status"]).success();
+    let events: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    let finding = events["start_anomalies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["key"].as_str() == Some(&key))
+        .and_then(|row| row["failure"].as_str())
+        .unwrap();
+
     c.store.thread("s3", None, None, "2026-11-08T10:00:00Z");
-    run_printed_replacement(&c, &pending_door);
+    c.runtime.next_thread_id("s3");
+    // A POSIX shell expands unquoted t3:s[2] to this filename.
+    std::fs::write(c.env.home().join("t3:s2"), "").unwrap();
+    for hint in [stderr.as_ref(), &conversation, finding] {
+        replay_replacement(&c, hint);
+    }
     let successor = started(&c, &[]);
     assert_ne!(successor, session);
     assert!(

@@ -1134,14 +1134,14 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     assert_eq!(repeated["start_allowed"].as_bool(), Some(false));
     assert_eq!(r.runtime.calls().len(), before);
     r.runtime.seed(
-        "unverified",
+        "unverified[1]",
         root,
         request["key"].as_str().unwrap(),
         request["brief"].as_str().unwrap(),
     );
     r.runtime
-        .change("unverified", "projectId", serde_json::Value::Null);
-    let unverified = serde_json::json!({"session":"t3:unverified","title":request["title"],"assignment":request["brief"]});
+        .change("unverified[1]", "projectId", serde_json::Value::Null);
+    let unverified = serde_json::json!({"session":"t3:unverified[1]","title":request["title"],"assignment":request["brief"]});
     let token = request["reservation"].as_str().unwrap();
     let refused = r
         .computer
@@ -1155,7 +1155,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
             "--reservation",
             token,
             "--session",
-            "t3:unverified",
+            "t3:unverified[1]",
             "--evidence",
             "-",
         ])
@@ -1163,31 +1163,24 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         .assert()
         .failure();
     let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    let confirmation = format!(
-        "instrukt events bind reactions/procedure/respond --reservation {token} --not-started --stopped t3:unverified --reason 'provider stopped and thread deleted'"
+    let (_, line) = guidance.split_once("reservation with `").unwrap();
+    let (confirmation, _) = line.split_once('`').unwrap();
+    assert!(
+        confirmation.starts_with("instrukt events bind "),
+        "{confirmation}"
     );
-    assert!(guidance.contains(&confirmation), "{guidance}");
-    r.runtime.set_status("unverified", "stopped");
-    r.runtime.delete("unverified");
+    r.runtime.set_status("unverified[1]", "stopped");
+    r.runtime.delete("unverified[1]");
+    std::fs::write(root.join("t3:unverified1"), "").unwrap();
     r.runtime.flag("list-failure", true);
-    r.computer
+    let confirmed = r
+        .computer
         .env
-        .instrukt(root)
+        .recovery_shell(root, confirmation)
         .env("T3CODE_THREAD_ID", "manual-parent")
-        .args([
-            "events",
-            "bind",
-            "reactions/procedure/respond",
-            "--reservation",
-            token,
-            "--not-started",
-            "--stopped",
-            "t3:unverified",
-            "--reason",
-            "provider stopped and thread deleted",
-        ])
-        .assert()
-        .success();
+        .output()
+        .unwrap();
+    assert!(confirmed.status.success(), "{confirmed:?}");
     r.runtime.flag("list-failure", false);
     let retry = reserve().success();
     let retry: serde_json::Value = serde_json::from_slice(&retry.get_output().stdout).unwrap();

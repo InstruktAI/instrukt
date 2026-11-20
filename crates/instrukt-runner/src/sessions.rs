@@ -98,11 +98,11 @@ pub enum SessionsError {
         column: usize,
     },
     #[error(
-        "start `{key}` remains unresolved; use `instrukt sessions resolve-start {key} --session <runtime:id> | --none`"
+        "start `{key}` remains unresolved; use {commands}", commands = keyed::resolve_choices(.key)
     )]
     Unresolved { key: String },
     #[error(
-        "start `{key}` has an unconfirmed result: {detail}; use `instrukt sessions resolve-start {key} --session <runtime:id> | --none`"
+        "start `{key}` has an unconfirmed result: {detail}; use {commands}", commands = keyed::resolve_choices(.key)
     )]
     Uncertain { key: String, detail: String },
     #[error("runtime key conflict for `{0}`; no thread was selected or started")]
@@ -135,23 +135,23 @@ pub enum SessionsError {
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
     #[error(
-        "native project for {session} under `{key}` is unverified. Restore the retained key in its original native project if it can be verified. Otherwise stop the session, delete the thread, then run `instrukt sessions replace-deleted {key} --stopped {session}`"
+        "native project for {session} under `{key}` is unverified. Restore the retained key in its original native project if it can be verified. Otherwise stop the session, delete the thread, then run `{command}`", command = keyed::replace_command(.key, .session)
     )]
     ProjectUnverified { key: String, session: SessionRef },
     #[error(
-        "thread {session} for `{key}` is deleted. Deletion does not prove the old session stopped. Once it has stopped, use `instrukt sessions replace-deleted {key} --stopped {session}`"
+        "thread {session} for `{key}` is deleted. Deletion does not prove the old session stopped. Once it has stopped, use `{command}`", command = keyed::replace_command(.key, .session)
     )]
     DeletedBound { key: String, session: SessionRef },
     #[error(
-        "first thread {session} for `{key}` is absent before acceptance. Run `instrukt sessions resolve-start {key} --none` to allow a fresh start"
+        "first thread {session} for `{key}` is absent before acceptance. Run `{command}` to allow a fresh start", command = keyed::resolve_command(.key, None, false)
     )]
     FirstStartAbsent { key: String, session: SessionRef },
     #[error(
-        "delivery target {session} for `{key}` is already retained. Run `instrukt sessions resolve-start {key} --session {session}`"
+        "delivery target {session} for `{key}` is already retained. Run `{command}`", command = keyed::resolve_command(.key, Some(.session), false)
     )]
     PendingStartPresent { key: String, session: SessionRef },
     #[error(
-        "replacement thread {session} for `{key}` is pending acceptance; use `instrukt sessions replace-deleted {key} --stopped {stopped}`"
+        "replacement thread {session} for `{key}` is pending acceptance; use `{command}`", command = keyed::replace_command(.key, .stopped)
     )]
     PendingReplacement {
         key: String,
@@ -293,7 +293,8 @@ impl<'c> Sessions<'c> {
             && let Some(key) = keyed::pending_run(self.home, project.as_str())?
         {
             return Err(SessionsError::Refused(format!(
-                "recorded request `{key}` is still pending; use `instrukt sessions resolve-start {key}`"
+                "recorded request `{key}` is still pending; use {}",
+                keyed::resolve_choices(&key)
             )));
         }
         let key = match request.key {

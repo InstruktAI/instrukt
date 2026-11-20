@@ -393,6 +393,17 @@ impl TestEnv {
         command
     }
 
+    /// Run a command copied from an instrukt diagnostic using the test binary.
+    pub fn recovery_shell(&self, cwd: &Path, command: &str) -> StdCommand {
+        let binary = self.path("runtime-bin/instrukt");
+        if !binary.exists() {
+            std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_instrukt"), binary).unwrap();
+        }
+        let mut shell = self.command(&tool_executable("sh"), cwd);
+        shell.args(["-c", command]);
+        shell
+    }
+
     /// The built `instrukt` binary, ready to run in `cwd` with this test's
     /// environment.
     pub fn instrukt(&self, cwd: &Path) -> Command {

@@ -179,6 +179,11 @@ elif command=='start':
     while (root/(id+'.json')).exists() or (root/(id+'.deleted')).exists():
         n+=1
         id='s'+str(n)
+    named=root/'next-thread-id'
+    if named.exists():
+        id=named.read_text()
+        named.unlink()
+        assert not (root/(id+'.json')).exists() and not (root/(id+'.deleted')).exists()
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
     t={'threadId':id,'projectId':project_for(checkout),'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
@@ -281,6 +286,10 @@ impl FakeT3 {
             "project-{}",
             hex::encode(Sha256::digest(root.to_string_lossy().as_bytes()))
         )
+    }
+
+    pub fn next_thread_id(&self, id: &str) {
+        std::fs::write(self.state.join("next-thread-id"), id).unwrap();
     }
 
     pub fn register_project(&self, checkout: &std::path::Path, project: &str) {

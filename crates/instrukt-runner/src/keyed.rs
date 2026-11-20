@@ -129,7 +129,8 @@ impl OperatorRecovery<'_> {
 pub fn validate_recovery_key(key: &str) -> Result<(), SessionsError> {
     if key.starts_with("input:") {
         return Err(SessionsError::Refused(format!(
-            "`{key}` is an internal input-lock key. Use the assignment's `instrukt:…` semantic key from `instrukt events status`"
+            "`{key}` is an internal input-lock key. Use the assignment's `instrukt:…` semantic key from `{}`",
+            recovery_command(["instrukt", "events", "status"])
         )));
     }
     Ok(())
@@ -242,7 +243,7 @@ enum Recovery<'a> {
     ResumeReplacement(&'a SessionRef),
 }
 
-fn recovery_command<'a>(arguments: impl IntoIterator<Item = &'a str>) -> String {
+pub(crate) fn recovery_command<'a>(arguments: impl IntoIterator<Item = &'a str>) -> String {
     arguments
         .into_iter()
         .map(|arg| {
@@ -260,7 +261,7 @@ fn recovery_command<'a>(arguments: impl IntoIterator<Item = &'a str>) -> String 
         .join(" ")
 }
 
-fn resolve_command(key: &str, session: Option<&SessionRef>, json: bool) -> String {
+pub(crate) fn resolve_command(key: &str, session: Option<&SessionRef>, json: bool) -> String {
     let target = session.map(ToString::to_string);
     recovery_command(
         [
@@ -280,26 +281,43 @@ fn resolve_command(key: &str, session: Option<&SessionRef>, json: bool) -> Strin
     )
 }
 
+pub(crate) fn replace_command(key: &str, stopped: &SessionRef) -> String {
+    recovery_command([
+        "instrukt",
+        "sessions",
+        "replace-deleted",
+        key,
+        "--stopped",
+        &stopped.to_string(),
+    ])
+}
+
+fn resolve_session_template(key: &str) -> String {
+    recovery_command([
+        "instrukt",
+        "sessions",
+        "resolve-start",
+        key,
+        "--session",
+        "<runtime:id>",
+    ])
+}
+
+pub(crate) fn resolve_choices(key: &str) -> String {
+    format!(
+        "`{}` or `{}`",
+        resolve_session_template(key),
+        resolve_command(key, None, false)
+    )
+}
+
 impl Recovery<'_> {
     fn command(self, key: &str, session: &SessionRef) -> String {
         match self {
             Self::ResolveNone => resolve_command(key, None, false),
             Self::ResolveSession => resolve_command(key, Some(session), false),
-            Self::ReplaceDeleted | Self::ResumeReplacement(_) => {
-                let stopped = match self {
-                    Self::ResumeReplacement(stopped) => stopped,
-                    _ => session,
-                }
-                .to_string();
-                recovery_command([
-                    "instrukt",
-                    "sessions",
-                    "replace-deleted",
-                    key,
-                    "--stopped",
-                    &stopped,
-                ])
-            }
+            Self::ReplaceDeleted => replace_command(key, session),
+            Self::ResumeReplacement(stopped) => replace_command(key, stopped),
         }
     }
 
@@ -537,11 +555,16 @@ fn accept_started(
         session: thread.session.clone(),
         worktree: thread.worktree.clone(),
     };
-    replacement.work.replace_dispatch(&project, &binding, replacement.original, &mut accept)
-        .map_err(|error| SessionsError::Refused(format!(
-            "replacement for `{}` was not confirmed in the todo record: {error}. Retry `instrukt sessions replace-deleted {} --stopped {}`",
-            binding.key, binding.key, replacement.stopped,
-        )))
+    replacement
+        .work
+        .replace_dispatch(&project, &binding, replacement.original, &mut accept)
+        .map_err(|error| {
+            SessionsError::Refused(format!(
+                "replacement for `{}` was not confirmed in the todo record: {error}. Retry `{}`",
+                binding.key,
+                replace_command(&binding.key, replacement.stopped),
+            ))
+        })
 }
 
 /// Discover before every start. Empty discovery cannot clear an ambiguous marker.
@@ -1144,7 +1167,8 @@ pub fn resolve(
             && listed.project_id.is_none()
         {
             return Err(SessionsError::Refused(format!(
-                "native project for {session} cannot be verified against the retained project. Restore native project visibility and retry `instrukt sessions resolve-start {key} --session {session}`"
+                "native project for {session} cannot be verified against the retained project. Restore native project visibility and retry `{}`",
+                recovery.command
             )));
         }
         if !recorded.opening_acknowledged {
@@ -1168,7 +1192,8 @@ pub fn resolve(
             ).map_err(state::sql(&path))?;
             if owned_elsewhere {
                 return Err(SessionsError::Refused(format!(
-                    "thread {session} already belongs to another runtime key; choose a different session with `instrukt sessions resolve-start {key} --session <runtime:id>`"
+                    "thread {session} already belongs to another runtime key; choose a different session with `{}`",
+                    resolve_session_template(key)
                 )));
             }
             remember_in(
@@ -1467,7 +1492,8 @@ pub fn presence_finding(
 
 pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {
     SessionsError::Refused(format!(
-        "`{key}` is not bound to {stopped}; run `instrukt events status` for the current key and stopped-session ID"
+        "`{key}` is not bound to {stopped}; run `{}` for the current key and stopped-session ID",
+        recovery_command(["instrukt", "events", "status"])
     ))
 }
 

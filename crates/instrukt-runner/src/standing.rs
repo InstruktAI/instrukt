@@ -912,7 +912,8 @@ pub fn reserve_manual(
 }
 fn manual_thread_exists(key: &str, session: &SessionRef) -> SessionsError {
     SessionsError::Refused(format!(
-        "same-key thread {session} still exists. Stop and delete it, then run `instrukt sessions replace-deleted {key} --stopped {session}`"
+        "same-key thread {session} still exists. Stop and delete it, then run `{}`",
+        keyed::replace_command(key, session)
     ))
 }
 
@@ -1011,8 +1012,9 @@ pub fn bind_manual(
             && id != evidence.session.to_string()
         {
             return Err(SessionsError::Refused(format!(
-                "reservation for {} records {id}. Retry with that ID and its evidence. Inspect `instrukt events status`",
-                reserved.key
+                "reservation for {} records {id}. Retry with that ID and its evidence. Inspect `{}`",
+                reserved.key,
+                keyed::recovery_command(["instrukt", "events", "status"])
             )));
         }
         if evidence.session.runtime.as_str() != runtime.name()
@@ -1044,17 +1046,31 @@ pub fn bind_manual(
                         && entry.semantic_key.as_deref() == Some(&request.key)
                 }) {
                     return Err(SessionsError::Refused(format!(
-                        "thread {} cannot be verified for reservation {}. Inspect `instrukt events status`",
-                        evidence.session, request.key
+                        "thread {} cannot be verified for reservation {}. Inspect `{}`",
+                        evidence.session,
+                        request.key,
+                        keyed::recovery_command(["instrukt", "events", "status"])
                     )));
                 }
                 remember_observation(&evidence.session)?;
-                let company = home
-                    .strip_prefix("company:")
-                    .map_or_else(String::new, |slug| format!(" --company {slug}"));
+                let company = home.strip_prefix("company:");
+                let stopped = evidence.session.to_string();
+                let command = keyed::recovery_command(
+                    ["instrukt", "events", "bind", procedure]
+                        .into_iter()
+                        .chain(company.into_iter().flat_map(|slug| ["--company", slug]))
+                        .chain([
+                            "--reservation",
+                            token,
+                            "--not-started",
+                            "--stopped",
+                            &stopped,
+                            "--reason",
+                            "provider stopped and thread deleted",
+                        ]),
+                );
                 return Err(SessionsError::Refused(format!(
-                    "native project for unbound thread {} is unverified. Stop and delete the thread before confirming the reservation with `instrukt events bind {procedure}{company} --reservation {token} --not-started --stopped {} --reason 'provider stopped and thread deleted'`",
-                    evidence.session, evidence.session
+                    "native project for unbound thread {stopped} is unverified. Stop and delete the thread before confirming the reservation with `{command}`"
                 )));
             }
             return Err(keyed::unverified_project(&request.key, &evidence.session));

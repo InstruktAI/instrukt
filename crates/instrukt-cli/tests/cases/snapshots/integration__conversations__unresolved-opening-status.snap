@@ -12,7 +12,7 @@ expression: "serde_json::to_string_pretty(&c.status()[\"conversations\"][\"conve
     "pending_answers": 0,
     "pending_refusals": 0,
     "failures": [
-      "start `instrukt:conversation:acme:slack:C1%2F1700000001.000100` remains unresolved; use `instrukt sessions resolve-start instrukt:conversation:acme:slack:C1%2F1700000001.000100 --session <runtime:id> | --none`"
+      "start `instrukt:conversation:acme:slack:C1%2F1700000001.000100` remains unresolved; use `instrukt sessions resolve-start instrukt:conversation:acme:slack:C1%2F1700000001.000100 --session '<runtime:id>'` or `instrukt sessions resolve-start instrukt:conversation:acme:slack:C1%2F1700000001.000100 --none`"
     ]
   }
 ]

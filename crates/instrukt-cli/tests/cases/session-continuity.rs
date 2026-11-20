@@ -325,7 +325,7 @@ fn concurrent_resolutions_bind_the_native_thread_to_only_one_key() {
     let fake = FakeT3::create(&p.env);
     let db = recovery_db(&p.env);
     let keys = ["instrukt:run:demo:first", "instrukt:run:demo:second"];
-    fake.seed("s1", p.repo.path(), "An unbound thread", "Opening");
+    fake.seed("s[1]", p.repo.path(), "An unbound thread", "Opening");
     let resolve = |key: &str, marker: &str| {
         let input = serde_json::json!({
             "checkout": p.repo.path(), "key": key, "title": key,
@@ -342,7 +342,7 @@ fn concurrent_resolutions_bind_the_native_thread_to_only_one_key() {
             .env
             .instrukt_process(p.repo.path())
             .env("INSTRUKT_TEST_RESOLVE_BINDING_HOLD", &hold)
-            .args(["sessions", "resolve-start", key, "--session", "t3:s1"])
+            .args(["sessions", "resolve-start", key, "--session", "t3:s[1]"])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -376,14 +376,14 @@ fn concurrent_resolutions_bind_the_native_thread_to_only_one_key() {
     );
     assert!(
         error.contains(&format!(
-            "instrukt sessions resolve-start {} --session <runtime:id>",
+            "instrukt sessions resolve-start {} --session '<runtime:id>'",
             keys[loser]
         )),
         "{error}"
     );
     let bound: String = db
         .query_row(
-            "SELECT semantic_key FROM runtime_bindings WHERE session='t3:s1'",
+            "SELECT semantic_key FROM runtime_bindings WHERE session='t3:s[1]'",
             [],
             |row| row.get(0),
         )
@@ -397,6 +397,25 @@ fn concurrent_resolutions_bind_the_native_thread_to_only_one_key() {
         )
         .unwrap();
     assert_eq!(state, "unresolved");
+
+    let existing = p
+        .env
+        .run(
+            p.repo.path(),
+            ["sessions", "resolve-start", keys[winner], "--none"],
+        )
+        .failure();
+    let stderr = String::from_utf8_lossy(&existing.get_output().stderr);
+    let (_, hint) = stderr.split_once("Run `").unwrap();
+    let (command, _) = hint.split_once('`').unwrap();
+    std::fs::write(p.repo.path().join("t3:s1"), "").unwrap();
+    let resolved = p
+        .env
+        .recovery_shell(p.repo.path(), command)
+        .output()
+        .unwrap();
+    assert!(resolved.status.success(), "{resolved:?}");
+    assert!(String::from_utf8_lossy(&resolved.stdout).contains("t3:s[1]"));
 }
 
 fn run_recovery_worker(
