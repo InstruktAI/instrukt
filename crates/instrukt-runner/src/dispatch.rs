@@ -306,6 +306,7 @@ fn dispatch_one(
     };
     let started = match existing {
         Some(binding) => sessions.followup(
+            &order,
             &binding.session,
             binding.worktree.as_deref(),
             binding.title.as_deref(),

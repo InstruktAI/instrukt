@@ -136,9 +136,9 @@ An invalid supplied timestamp is an observation error. T3 uses the later of
 
 `instrukt sessions resolve-start <key> --session <runtime:id> | --none` resolves
 instrukt's own ambiguous keyed starts under the key lock. It verifies and binds
-the named keyed thread, or records confirmation that no thread was created and
-no start remains in flight. It cannot resolve native delegated-child attempts;
-those use the work record's `todo attempt`/`todo bind` contract. Standing home
+the named keyed thread, or allows a fresh start when no thread or creation
+remains. A retained first thread must be proven absent. Native delegated-child
+attempts use the work record's `todo attempt`/`todo bind` contract. Standing home
 shorthand `<procedure>@<project>` remains available; subjects and successors use
 the full key.
 
@@ -219,8 +219,9 @@ For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>` or `platform`; a person token retains its kind but cannot execute.
 A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
-subject identity requires it. The first generation omits the generation suffix;
-a confirmed successor appends its positive generation number starting at 2.
+subject identity requires it. New standing keys omit the generation suffix. A confirmed successor keeps
+the exact retained key, including a suffix on keys recorded by earlier builds.
+The generation number is kept separately.
 T3 standing threads remain unsettled under automation. A human may settle
 one; it remains findable, wakes on a message and can be unsettled, for either
 home or subject identity and either attendance. Settling never permits succession.
@@ -275,8 +276,9 @@ from CLI listing/show only: the whole legacy key-only title or the suffix after
 the last ` · ` must be an instrukt start key with a recognized assignment prefix
 and no whitespace. The prefix is opaque;
 nothing interprets its label. Recovery verifies the complete captured display
-title or the whole legacy key; an unexpected relabel is a visible conflict,
-not absence. Exact full-title evidence is retained alongside
+title or the whole legacy key. An unexpected relabel that still claims the key
+is a conflict. A rename that removes the key from its title follows the
+retained-ID case below. Exact full-title evidence is retained alongside
 the decoded key. Both old key-only and new label-first threads participate in
 the same exact-key match set; one is reused, two conflict, neither permits a
 replacement for an unresolved start. Persisted start requests and manual standing reservations carry a required
@@ -335,25 +337,48 @@ The same discovery and start rules govern every key, for both `start` and
 4. Listing failure, malformed output, an unknown listing shape or multiple
    exact matches leaves the assignment pending and starts nothing. Multiple
    matches report a key conflict. Failed sends retain the same target for
-   retry. A bound id the runtime reports absent (an explicit unknown-thread
-   answer) is retired with its key's binding, and the start proceeds under the
-   same key. A bound id that is archived is no replacement: nothing is started,
+   retry. An explicit unknown-thread answer means the thread record is absent.
+   The binding and pending work stay in place until the operator confirms that
+   the deleted thread's provider session stopped. A bound id that is archived is no replacement: nothing is started,
    its completed answers are still read, and the operator is told. A bound id
    that is alive but no longer lists under its key (renamed) keeps being used by
-   its id. An inaccessible id is an observation error, retried
+   its id after verifying the retained project and worktree. Another live
+   match still makes the key conflicted. An inaccessible id is an observation error, retried
    (`project/instrukt/policy/checks-and-guards`: a new actor starts only where the
-   earlier one is proven gone).
+   earlier one is proven unable to act).
 
 A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
-One match recovers the same session. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
-otherwise unconfirmed input may be resent there.
-An empty listing alone never clears a marker. Report the key and
-`instrukt sessions resolve-start <key>` once and keep the assignment pending.
-`--session` verifies the exact key, project and any recorded worktree request
-before binding; `--none` records the operator's confirmation that no thread
-was created and no start remains in flight, permitting retry under the same
-key. The resolved request retains its input and retry permission until retried.
+One match recovers a start whose native ID was never returned. A returned ID
+is retained as a pending intent before reading the thread or verifying placement.
+Verification and subsequent attempts use that exact ID. A native creation that
+remains pending requires a fresh inspection of its actual semantic key and a
+positive native project match. If the native project ID was not yet captured,
+the exact ID must appear in the retained checkout's scoped listing with the
+same opaque project ID as the inspection. The requested worktree is verified against
+the observed placement. A mismatch keeps the input pending and status directs
+the operator to restore the expected key and placement, then run the exact
+`instrukt sessions resolve-start <key> --session <id>` command. Native
+acceptance evidence reconciles transport acceptance without another send.
+Without that evidence, instrukt may resend the unconfirmed input there.
+An empty listing alone never clears a marker. Keep the assignment pending and
+show its key and the `instrukt sessions resolve-start <key>` door in status.
+`--session` uses the operator's explicit ID. It requires a present thread
+in the retained native project and any requested worktree, and refuses a
+thread already bound to another assignment. An ID already returned by native
+creation must pass the inspection described above. For an ID supplied by the
+operator after a lost start result, the listing or thread state must identify
+the native project if it was retained. The refusal directs the operator to
+restore project evidence and retry the same explicit ID. With no retained ID,
+`--none` records the operator's confirmation that no thread was created and no
+start remains in flight. The resolved request retains its input and retry
+permission under the same key until retried.
+For a first start with a pending binding, a confirmed absent native ID directs
+the operator to `sessions resolve-start <key> --none`. That command checks
+absence by ID and atomically clears the pending binding and permits a fresh
+start under the same key. A live thread or failed observation leaves the
+binding in place. The dispatch reservation remains, and no replacement or
+execution claim is created by this command.
 A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
@@ -366,15 +391,46 @@ never on how long anyone has waited:
 | --- | --- | --- |
 | Nothing started | Listing failed, the runtime not ready, no permitted model, rejection proven before creation | Retried every pass until it succeeds. |
 | Lost acknowledgement | An unresolved marker | Recorded; discovery reconciles every pass; `instrukt sessions resolve-start` is the operator's door. No fresh start. |
-| Proven absence | The runtime reports the bound thread absent | The binding is retired; a fresh start under the same key. |
+| First start pending, thread absent | A pending binding with no replacement intent and native confirmation of absence | `instrukt sessions resolve-start <key> --none` clears the pending ID and permits a fresh start under the same key. |
+| First start pending, thread present | A pending binding with no replacement intent and a present native thread | `instrukt sessions resolve-start <key> --session <runtime:id>` verifies the exact thread for acceptance. |
+| Committed binding, thread absent | Native confirmation that the committed thread is absent | Work stays pending. Once the operator knows the provider stopped, `instrukt sessions replace-deleted <key> --stopped <runtime:id>` retires the committed binding. |
+| Pending successor, thread absent | A pending binding under a replacement intent and native confirmation of absence | Once the operator knows the pending provider stopped, `instrukt sessions replace-deleted <key> --stopped <runtime:id>` retires that pending successor. |
 | Live conflict | Two or more threads under one key | Nothing chosen, nothing started; the door is to archive or delete the extra thread. |
 | Archived | The bound thread is shown archived | Nothing started; its completed answers are read; the door is to unarchive or delete it. |
 | Renamed, alive | The bound thread reads, its key no longer lists | Used by its id. |
 
-An unresolved start, a live conflict and an archived thread that persist past the
-runner's operator bound raise one anomaly each (`runner.notify`) and are listed in
-`instrukt events status` with their door, whether or not a notification command
-is configured (`project/instrukt/spec/feature/runner/anomaly-notification`).
+An unresolved start, a live conflict, an archived thread and a deleted thread awaiting confirmation that persist past the
+runner's `START_OPERATOR_BOUND` on the operator clock raise one anomaly per
+process per runtime key (`runner.notify`). `instrukt events status` shows the
+current condition and its door as soon as it is observed. A conflict lists the
+known competing threads. Reconciliation clears the status finding when the
+condition ends, whether or not a notification command is configured (`project/instrukt/spec/feature/runner/anomaly-notification`).
+
+`instrukt sessions replace-deleted <key> --stopped <runtime:id>` is the operator's
+confirmation that the named provider session has stopped. It requires the retained
+binding to match the given key and session and the adapter to report the thread
+absent. It retires the binding and uses the ordinary recorded start path under
+the same key. A standing replacement increments the retained generation number.
+For a todo or task, the work record must still hold the stopped session's
+assignment and execution claim before the start is attempted. The returned
+native ID is recorded before applying the replacement. Retry reads that ID
+directly. If the start reply is lost before an ID is recorded, the operator
+can supply the actual session with `sessions resolve-start --session` before
+retrying. Replacement checks the work record again before committing the
+runtime binding, work binding, claim, opening receipt and execution tracking
+together.
+
+If a pending successor is deleted before acceptance, both forms of
+`sessions resolve-start` report the exact pending session's replacement command.
+After confirming that provider stopped, the operator runs that command with
+the pending ID. Instrukt checks its absence before retiring it. The original
+work binding and claim remain in force while the next successor is pending.
+The command bearing the latest stopped ID resumes the same intent after an
+interruption. The next verified successor commits against the original claim.
+
+The command reports success once the local acceptance commits. Deferred
+reflection appears as a warning, and the same command can retry reflection
+and report the already-committed session.
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains
@@ -528,7 +584,10 @@ surface reports only the threads the runtime exposes.
 
 ### One worktree per todo team
 
-Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists. This also applies
+to replacement after proven thread absence. A native follow-up never starts
+a replacement in the project root when it needs a retained phase worktree.
+Retry or wake uses the retained native assignment and its phase worktree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
 Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer releases its claim before cleanup; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 
@@ -555,7 +614,7 @@ GitHub command creates no second attention item.
 | `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
-| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Only absence retires a binding. |
+| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. For an absent thread, the binding state determines the command in the recovery table above. |
 
 An unrecognised status or response shape, command failure or unreachable runtime
 is an observation error, never `gone` or success. Status spellings and optional
@@ -607,6 +666,9 @@ When the developer confirms that no thread was created and no start remains in f
 Then the next wake-up may start that standing agent
 But when the developer identifies the keyed thread that was created
 Then instrukt verifies and binds that thread without starting another
+And when the returned ID was recorded before a failed first inspection, the retry uses that same ID
+And a different key or project keeps the work pending until the developer restores placement and resolves the exact ID
+And when explicit resolution lacks evidence of a retained native project, it refuses until the evidence is restored
 ```
 
 ### UC-SS3: A developer has runner pickup after choosing T3
@@ -688,6 +750,8 @@ Given the runtime lists two conversations with one standing-agent key
 When an event needs that agent
 Then instrukt reports the identity conflict and leaves the event pending
 And neither conversation is chosen arbitrarily and no third conversation is started
+And status identifies the conflicting threads and how to resolve the conflict
+And the operator receives one notification for the key in the running process after the bound
 ```
 
 ### UC-SS13: Recover todo orchestrator pickup after its start reply was lost
@@ -698,6 +762,8 @@ When the runner resumes pickup after a restart
 Then it recovers that orchestrator's keyed thread without starting another
 But when a successful listing cannot find it
 Then pickup remains pending under its unresolved key until explicit resolution or proof of rejection
+And status gives the operator the resolve-start door
+And the operator receives one notification for the key in the running process after the bound
 ```
 
 ### UC-SS14: A builder's ending wakes its idle orchestrator natively
@@ -780,9 +846,44 @@ And the listing window has no part in that decision
 ```gherkin
 Given a developer's procedure keeps a standing agent for a subject
 When the developer deletes its thread in the runtime and a later event for that subject arrives
-Then a successor conversation for that subject handles the event
+Then no successor starts, the event stays pending and status gives the replacement command
+When the operator confirms the old provider stopped through that command
+Then the successor uses the same key and receives the pending and later events
 But when the developer archived the thread instead
 Then no successor starts, the event stays pending and status shows the developer the archived thread
+```
+
+### UC-SS23: A developer keeps using a renamed standing agent
+
+```gherkin
+Given a developer renames the bound thread of a standing agent
+When a later event needs that agent and no other live thread claims its key
+Then the event reaches the same thread by its retained ID within the retained native project
+But if the native project changed, the event stays pending and status reports the conflict
+```
+
+### UC-SS24: A developer replaces a deleted task session consistently
+
+```gherkin
+Given a task's bound thread is deleted and the operator confirms the old provider stopped
+When the operator replaces it
+Then the runtime binding, work binding and claim move to the same successor
+But if the work record cannot accept the binding
+Then the command reports failure and reconciliation can recover the same successor
+And if that pending successor is deleted, the operator can confirm its stop and replace it under the original claim
+```
+
+### UC-SS25: Recover a keyed assignment through the command for its binding state
+
+```gherkin
+Given a developer has a retained keyed assignment with an interrupted start or a deleted thread
+When the first start is pending and its thread is present
+Then the exact session resolution verifies the original thread for acceptance
+But if that first thread is confirmed absent
+Then no-start resolution clears the pending ID and permits a fresh start
+When a committed binding or pending successor is confirmed absent
+Then the printed replacement command retires the named ID after the operator confirms its provider stopped
+And a successful replacement of a committed binding receives later work
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

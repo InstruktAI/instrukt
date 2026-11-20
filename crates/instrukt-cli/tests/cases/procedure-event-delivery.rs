@@ -50,6 +50,15 @@ impl Responsibility {
             .query::<String>(&mut self.redis.connection())
             .unwrap();
     }
+    fn replace_deleted(&self, key: &str) {
+        self.computer
+            .env
+            .run(
+                self.computer.env.home(),
+                ["sessions", "replace-deleted", key, "--stopped", "t3:s1"],
+            )
+            .success();
+    }
     fn tick(&self) {
         self.computer.tick();
     }
@@ -187,38 +196,374 @@ fn a_failed_send_retries_the_same_target_and_concurrent_ticks_never_create_a_rep
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
 #[test]
 fn two_exact_keyed_threads_leave_the_next_event_pending() {
+    let mut r = Responsibility::new("");
+    let notices = r.computer.env.path("start-notifications");
+    let path = r.computer.env.instrukt_home().join("instrukt.yaml");
+    let mut config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["runner"]["notify"] = format!("printf '%s\\n' >> '{}'", notices.display()).into();
+    std::fs::write(&path, serde_yaml_ng::to_string(&config).unwrap()).unwrap();
+
+    r.computer
+        .env
+        .set_env("INSTRUKT_NOW", "2030-01-01T00:00:00Z");
+    r.append("initial");
+    r.tick();
+    let key = r.runtime.key("s1");
+    r.runtime
+        .seed("extra", r.computer.project.path(), &key, "Duplicate actor.");
+    r.append("next");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 2);
+    assert_eq!(r.runtime.message_count("s1"), 1);
+    let finding = start_anomalies(&r)[0].clone();
+    assert_eq!(finding["key"], key);
+    let cause = finding["failure"].as_str().unwrap();
+    assert!(
+        cause.contains("t3:s1") && cause.contains("t3:extra"),
+        "{cause}"
+    );
+    assert!(cause.contains("archive or delete"), "{cause}");
+    assert!(!notices.exists());
+
+    let clock = r.computer.env.path("operator-clock");
+    let set_time = |at: &str| {
+        let staged = clock.with_extension("next");
+        std::fs::write(&staged, at).unwrap();
+        std::fs::rename(staged, &clock).unwrap();
+    };
+    set_time("2030-01-01T00:06:00Z");
+    r.computer
+        .env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    let mut runner = transport::Running::start(&r.computer);
+    transport::until(|| notices.exists());
+    for at in ["2030-01-01T00:07:00Z", "2030-01-01T00:08:00Z"] {
+        set_time(at);
+        transport::until(|| {
+            r.computer
+                .db()
+                .query_row("SELECT last_at FROM wakeups", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .is_ok_and(|last| last == at)
+        });
+    }
+    runner.kill();
+    assert_eq!(std::fs::read_to_string(&notices).unwrap().trim(), key);
+    r.runtime.archive("extra");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert!(start_anomalies(&r).is_empty());
+
+    // Older standing records have a generation suffix. A conflict on that
+    // runtime key has one owner even though delivery groups by responsibility.
+    let generation_key = format!("{key}:generation:2");
+    let title = format!("respond · {generation_key}");
+    r.computer
+        .db()
+        .execute(
+            "UPDATE procedure_responsibilities SET generation=2, semantic_key=?1, session=NULL,
+         request=json_set(request, '$.key', ?1, '$.title', ?2) WHERE responsibility=?3",
+            (&generation_key, &title, &key),
+        )
+        .unwrap();
+    r.runtime.seed(
+        "legacy-a",
+        r.computer.project.path(),
+        &generation_key,
+        "First contender.",
+    );
+    r.runtime.seed(
+        "legacy-b",
+        r.computer.project.path(),
+        &generation_key,
+        "Second contender.",
+    );
+    set_time("2030-01-01T00:09:00Z");
+    r.append("generation-conflict");
+    r.tick();
+    let findings = start_anomalies(&r);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["key"], generation_key);
+    set_time("2030-01-01T00:15:00Z");
+    r.tick();
+    let observed = std::fs::read_to_string(&notices).unwrap();
+    assert_eq!(
+        observed.lines().collect::<Vec<_>>(),
+        [key.as_str(), generation_key.as_str()]
+    );
+}
+fn start_anomalies(r: &Responsibility) -> Vec<serde_json::Value> {
+    let shown = r
+        .computer
+        .env
+        .run(r.computer.env.home(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&shown.get_output().stdout).unwrap();
+    status["start_anomalies"].as_array().unwrap().clone()
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS22
+#[test]
+fn subject_successors_require_absence_and_leave_archived_work_pending() {
+    let archived = Responsibility::new("subscription_identity: subject\ninterruptible: false\n");
+    archived.append("initial");
+    archived.tick();
+    archived.append("after-archive");
+    archived.tick();
+    archived.runtime.archive("s1");
+    archived.tick();
+    assert_eq!(archived.runtime.threads(), ["s1"]);
+    assert_eq!(archived.runtime.message_count("s1"), 1);
+    let state: String = archived
+        .computer
+        .db()
+        .query_row(
+            "SELECT state FROM procedure_activations WHERE event_id='after-archive'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "pending");
+    let finding = start_anomalies(&archived)[0].clone();
+    let cause = finding["failure"].as_str().unwrap();
+    assert!(
+        cause.contains("t3:s1") && cause.contains("unarchive it or delete it"),
+        "{cause}"
+    );
+
+    archived
+        .computer
+        .env
+        .run(
+            archived.computer.env.home(),
+            [
+                "sessions",
+                "replace-deleted",
+                &archived.runtime.key("s1"),
+                "--stopped",
+                "t3:s1",
+            ],
+        )
+        .failure();
+    archived.runtime.delete("s1");
+    archived.tick();
+    assert!(archived.runtime.threads().is_empty());
+    let findings = start_anomalies(&archived);
+    assert_eq!(findings.len(), 1);
+    let cause = findings[0]["failure"].as_str().unwrap();
+    assert!(
+        cause.contains("replace-deleted") && !cause.contains("unarchive"),
+        "{cause}"
+    );
+
+    let deleted = Responsibility::new("subscription_identity: subject\n");
+    deleted.append("initial");
+    deleted.tick();
+    let key = deleted.runtime.key("s1");
+    // Simulate interruption after keyed acceptance and before standing
+    // accepted the same assignment. Status and the door must use the same ID.
+    deleted
+        .computer
+        .db()
+        .execute(
+            "UPDATE procedure_responsibilities SET session=NULL WHERE semantic_key=?1",
+            [&key],
+        )
+        .unwrap();
+    deleted.runtime.delete("s1");
+    deleted.append("after-delete");
+    deleted.tick();
+    assert!(
+        deleted.runtime.threads().is_empty(),
+        "deletion alone cannot admit a successor"
+    );
+    let finding = start_anomalies(&deleted)[0].clone();
+    let cause = finding["failure"].as_str().unwrap();
+    assert!(
+        cause.contains("Deletion does not prove the old session stopped"),
+        "{cause}"
+    );
+    assert!(
+        cause.contains(&format!(
+            "instrukt sessions replace-deleted {key} --stopped t3:s1"
+        )),
+        "{cause}"
+    );
+    let wrong = deleted
+        .computer
+        .env
+        .run(
+            deleted.computer.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:typo"],
+        )
+        .failure();
+    let error = String::from_utf8_lossy(&wrong.get_output().stderr);
+    assert!(error.contains("instrukt events status"), "{error}");
+    let db = deleted.computer.db();
+    db.execute_batch(
+        "CREATE TRIGGER fail_standing_receipt BEFORE INSERT ON runtime_inputs
+        WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'standing opening receipt failed'); END;",
+    )
+    .unwrap();
+    deleted
+        .computer
+        .env
+        .run(
+            deleted.computer.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        )
+        .failure();
+    let pending_id: (String, bool) = db
+        .query_row(
+            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
+            [&key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(pending_id, ("t3:s2".into(), false));
+    deleted.runtime.seed(
+        "lookalike",
+        deleted.computer.project.path(),
+        &key,
+        "Unrelated opening.",
+    );
+    deleted
+        .runtime
+        .change("s2", "title", format!("Renamed replacement · {key}").into());
+    db.execute_batch("DROP TRIGGER fail_standing_receipt;")
+        .unwrap();
+    db.execute_batch("CREATE TRIGGER fail_standing_binding BEFORE UPDATE OF session ON procedure_responsibilities
+        WHEN NEW.session='t3:s2' BEGIN SELECT RAISE(ABORT, 'standing binding write failed'); END;").unwrap();
+    let failed = deleted
+        .computer
+        .env
+        .run(
+            deleted.computer.env.home(),
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+        )
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&failed.get_output().stderr)
+            .contains("standing binding write failed")
+    );
+    db.execute_batch("DROP TRIGGER fail_standing_binding;")
+        .unwrap();
+    deleted.replace_deleted(&key);
+    deleted.replace_deleted(&key);
+    deleted
+        .runtime
+        .change("s2", "title", "Renamed replacement".into());
+    assert_eq!(deleted.runtime.message_count("s2"), 1);
+    assert_eq!(deleted.runtime.message_count("lookalike"), 1);
+    deleted.runtime.delete("lookalike");
+    assert_eq!(deleted.delivered_to("after-delete").to_string(), "t3:s2");
+    deleted.append("later-event");
+    deleted.tick();
+    assert_eq!(deleted.runtime.threads(), ["s2"]);
+    assert_eq!(deleted.delivered_to("later-event").to_string(), "t3:s2");
+    assert!(deleted.runtime.input_log("s2").contains("later-event"));
+    assert!(start_anomalies(&deleted).is_empty());
+}
+
+pub(super) fn check_standing_recovery_doors() {
+    let r = Responsibility::new("subscription_identity: subject\n");
+    let db = r.computer.db();
+    crate::session_continuity::fail_recovery_receipt(&db, "s1");
+    r.append("initial");
+    r.tick();
+    crate::session_continuity::check_recovery_doors(
+        &r.computer.env,
+        r.computer.project.path(),
+        &r.runtime,
+        &db,
+        None,
+        || {
+            r.tick();
+            assert_eq!(r.delivered_to("initial").to_string(), "t3:s2");
+            let generation: u32 = db
+                .query_row(
+                    "SELECT generation FROM procedure_responsibilities",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(generation, 1);
+        },
+        |_, native| {
+            r.runtime.set_status(native, "idle");
+            r.append("after-committed-replacement");
+            r.tick();
+            assert_eq!(
+                r.delivered_to("after-committed-replacement").to_string(),
+                format!("t3:{native}")
+            );
+        },
+    );
+    r.runtime.consume("s5");
+    r.append("after-recovery");
+    r.tick();
+    assert_eq!(r.delivered_to("after-recovery").to_string(), "t3:s5");
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS23
+#[test]
+fn a_renamed_standing_thread_keeps_receiving_events_by_id() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    r.runtime.flag("duplicate", true);
-    r.append("next");
+    r.runtime
+        .change("s1", "title", "Named by the developer".into());
+    r.append("after-rename");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 1);
-    assert_eq!(r.runtime.message_count("s1"), 1);
-    r.runtime.flag("duplicate", false);
+    assert_eq!(r.runtime.threads(), ["s1"]);
+    assert_eq!(r.delivered_to("after-rename").to_string(), "t3:s1");
+    assert!(r.runtime.input_log("s1").contains("after-rename"));
+    assert!(start_anomalies(&r).is_empty());
+    r.runtime.consume("s1");
+    let original_project = r.runtime.project_id("s1");
+    r.runtime
+        .change("s1", "projectId", "different-project".into());
+    r.append("after-project-change");
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
+    assert!(!r.runtime.input_log("s1").contains("after-project-change"));
+    let finding = start_anomalies(&r)[0].clone();
+    assert!(
+        finding["failure"]
+            .as_str()
+            .unwrap()
+            .contains("changed native project")
+    );
+    r.runtime.change("s1", "projectId", original_project.into());
+    r.runtime.consume("s1");
+    r.tick();
+    assert_eq!(r.delivered_to("after-project-change").to_string(), "t3:s1");
+    assert!(start_anomalies(&r).is_empty());
 }
+
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED8
 #[test]
-fn confirmed_closure_suspends_work_until_a_new_activation_and_the_successor_gets_older_input_first()
-{
+fn operator_replacement_keeps_older_input_first() {
     let r = Responsibility::new("interruptible: false\n");
     r.append("initial");
     r.tick();
     r.append("older-pending");
     r.tick();
-    r.runtime.archive("s1");
+    let key = r.runtime.key("s1");
+    r.runtime.delete("s1");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 1);
+    assert!(r.runtime.threads().is_empty());
     r.publish("interruptible: true\n");
     r.append("later-activation");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    r.replace_deleted(&key);
+    assert_eq!(r.runtime.threads().len(), 1);
     let shown = r.runtime.input_log("s2");
     insta::assert_snapshot!("closed-home-successor", work::redact(&shown));
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    assert_eq!(r.runtime.threads().len(), 1);
 }
 
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED13
@@ -430,24 +775,116 @@ fn an_operator_can_resolve_an_uncertain_standing_start_to_its_exact_created_thre
     r.append("initial");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
-    r.computer
-        .env
-        .run(
+    let title = r.runtime.title("s1");
+    let key = title.rsplit(" · ").next().unwrap();
+    r.runtime
+        .change("s1", "title", "Renamed before resolution".into());
+    let resolve = || {
+        r.computer.env.run(
             r.computer.project.path(),
-            [
-                "sessions",
-                "resolve-start",
-                "reactions/procedure/respond@fork",
-                "--session",
-                "t3:s1",
-            ],
+            ["sessions", "resolve-start", key, "--session", "t3:s1"],
         )
-        .success();
+    };
+    resolve().success();
+    r.runtime.flag("hide-project-id", true);
+    let refused = resolve().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(
+        guidance.contains("cannot be verified against the retained project"),
+        "{guidance}"
+    );
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions resolve-start {key} --session t3:s1"
+        )),
+        "{guidance}"
+    );
+    r.runtime.flag("hide-project-id", false);
+    resolve().success();
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), 1);
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 1);
+    for (field, changed, expected_finding) in [
+        (
+            "title",
+            "instrukt:standing:other",
+            "native semantic key is instrukt:standing:other",
+        ),
+        (
+            "projectId",
+            "another-native-project",
+            "native project placement cannot be verified",
+        ),
+    ] {
+        let interrupted = Responsibility::new("");
+        interrupted.runtime.flag("show-failure", true);
+        interrupted.append("initial");
+        interrupted.tick();
+        let original = if field == "title" {
+            interrupted.runtime.title("s1")
+        } else {
+            interrupted.runtime.project_id("s1")
+        };
+        let db = interrupted.computer.db();
+        let binding = || {
+            db.query_row(
+                "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
+                [key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(binding(), ("t3:s1".into(), false));
+        interrupted.runtime.change("s1", field, changed.into());
+        interrupted.runtime.flag("show-failure", false);
+        interrupted.tick();
+        interrupted.append("later-event");
+        interrupted.tick();
+        assert_eq!(binding(), ("t3:s1".into(), false), "{field}");
+        let delivered: u32 = db
+            .query_row(
+                "SELECT count(*) FROM procedure_activations WHERE state='delivered'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(delivered, 0, "{field}");
+        assert_eq!(interrupted.runtime.message_count("s1"), 1, "{field}");
+        let findings = start_anomalies(&interrupted);
+        let guidance = findings[0]["failure"].as_str().unwrap();
+        assert!(guidance.contains(expected_finding), "{guidance}");
+        assert!(
+            guidance.contains(&format!(
+                "instrukt sessions resolve-start {key} --session t3:s1"
+            )),
+            "{guidance}"
+        );
+        let resolve = || {
+            interrupted.computer.env.run(
+                interrupted.computer.project.path(),
+                ["sessions", "resolve-start", key, "--session", "t3:s1"],
+            )
+        };
+        resolve().failure();
+        interrupted.runtime.change("s1", field, original.into());
+        interrupted.runtime.seed(
+            "lookalike",
+            interrupted.computer.project.path(),
+            key,
+            "Unrelated opening.",
+        );
+        resolve().success();
+        interrupted.tick();
+        assert_eq!(interrupted.delivered_to("initial").to_string(), "t3:s1");
+        assert_eq!(interrupted.runtime.message_count("s1"), 1);
+        assert_eq!(interrupted.runtime.message_count("lookalike"), 1);
+        interrupted.runtime.delete("lookalike");
+        interrupted.tick();
+        assert_eq!(interrupted.delivered_to("later-event").to_string(), "t3:s1");
+        assert!(start_anomalies(&interrupted).is_empty());
+    }
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
 #[test]
@@ -506,6 +943,66 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     assert_eq!(repeated["start_allowed"].as_bool(), Some(false));
     assert_eq!(r.runtime.calls().len(), before);
     r.runtime.seed(
+        "unverified",
+        root,
+        request["key"].as_str().unwrap(),
+        request["brief"].as_str().unwrap(),
+    );
+    r.runtime
+        .change("unverified", "projectId", serde_json::Value::Null);
+    let unverified = serde_json::json!({"session":"t3:unverified","title":request["title"],"assignment":request["brief"]});
+    let token = request["reservation"].as_str().unwrap();
+    let refused = r
+        .computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            token,
+            "--session",
+            "t3:unverified",
+            "--evidence",
+            "-",
+        ])
+        .write_stdin(unverified.to_string())
+        .assert()
+        .failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    let confirmation = format!(
+        "instrukt events bind reactions/procedure/respond --reservation {token} --not-started --stopped t3:unverified --reason 'provider stopped and thread deleted'"
+    );
+    assert!(guidance.contains(&confirmation), "{guidance}");
+    r.runtime.set_status("unverified", "stopped");
+    r.runtime.delete("unverified");
+    r.runtime.flag("list-failure", true);
+    r.computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            token,
+            "--not-started",
+            "--stopped",
+            "t3:unverified",
+            "--reason",
+            "provider stopped and thread deleted",
+        ])
+        .assert()
+        .success();
+    r.runtime.flag("list-failure", false);
+    let retry = reserve().success();
+    let retry: serde_json::Value = serde_json::from_slice(&retry.get_output().stdout).unwrap();
+    assert_eq!(retry["reservation"], request["reservation"]);
+    assert_eq!(retry["start_allowed"], true);
+    r.runtime.seed(
         "s1",
         root,
         request["key"].as_str().unwrap(),
@@ -533,7 +1030,45 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     };
     bind().success();
     bind().success();
-    assert_eq!(r.runtime.calls().len(), before);
+    let wrong = serde_json::json!({"session":"t3:wrong","title":request["title"],"assignment":request["brief"]});
+    let calls_before = r.runtime.calls().len();
+    let refused = r
+        .computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reservation",
+            token,
+            "--session",
+            "t3:wrong",
+            "--evidence",
+            "-",
+        ])
+        .write_stdin(wrong.to_string())
+        .assert()
+        .failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains("records t3:s1"), "{guidance}");
+    assert!(guidance.contains("instrukt events status"), "{guidance}");
+    assert!(!guidance.contains("replace-deleted"), "{guidance}");
+    assert_eq!(r.runtime.calls().len(), calls_before);
+    start_anomalies(&r);
+    bind().success();
+    let retained_project: String = r
+        .computer
+        .db()
+        .query_row(
+            "SELECT project_id FROM runtime_bindings WHERE semantic_key=?1",
+            [request["key"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained_project, r.runtime.project_id("s1"));
+    assert_ne!(retained_project, root.to_string_lossy());
     let refused = reserve().failure();
     insta::assert_snapshot!(
         "manual-standing-already-bound",
@@ -544,6 +1079,136 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), 2);
     insta::assert_snapshot!("manual-standing-attended", r.conversation());
+
+    r.runtime.consume("s1");
+    r.runtime
+        .change("s1", "title", "Renamed by the developer".into());
+    r.runtime
+        .change("s1", "projectId", "another-native-project".into());
+    r.append("after-project-move");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert!(
+        start_anomalies(&r)[0]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("changed native project")
+    );
+
+    // Historical manual bindings may have no retained native project.
+    r.computer
+        .db()
+        .execute("UPDATE runtime_bindings SET project_id=NULL", [])
+        .unwrap();
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert!(
+        start_anomalies(&r)[0]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("unverified")
+    );
+    let finding = start_anomalies(&r)[0].clone();
+    let guidance = finding["failure"].as_str().unwrap();
+    assert!(
+        guidance.contains("stop the session, delete the thread"),
+        "{guidance}"
+    );
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions replace-deleted {} --stopped t3:s1",
+            request["key"].as_str().unwrap()
+        )),
+        "{guidance}"
+    );
+    r.runtime.change("s1", "projectId", retained_project.into());
+    r.runtime.change("s1", "title", request["title"].clone());
+    r.tick();
+    assert_eq!(r.delivered_to("after-project-move").to_string(), "t3:s1");
+    r.computer
+        .db()
+        .execute("UPDATE runtime_bindings SET project_id=NULL", [])
+        .unwrap();
+    r.runtime.consume("s1");
+    r.runtime
+        .change("s1", "title", "No verifiable project".into());
+    r.append("recover-unverified-binding");
+    r.tick();
+    let key = request["key"].as_str().unwrap();
+    let status = start_anomalies(&r);
+    assert!(status[0]["failure"].as_str().unwrap().contains(&format!(
+        "instrukt sessions replace-deleted {key} --stopped t3:s1"
+    )));
+    r.runtime.set_status("s1", "stopped");
+    r.runtime.delete("s1");
+    r.replace_deleted(key);
+    assert_eq!(
+        r.delivered_to("recover-unverified-binding").to_string(),
+        "t3:s2"
+    );
+    let obsolete = bind().failure();
+    let guidance = String::from_utf8_lossy(&obsolete.get_output().stderr);
+    assert!(guidance.contains("records t3:s2"), "{guidance}");
+    assert!(!guidance.contains("replace-deleted"), "{guidance}");
+    start_anomalies(&r);
+    let live = Responsibility::new("");
+    let root = live.computer.project.path();
+    let out = live
+        .computer
+        .env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", "manual-parent")
+        .args([
+            "events",
+            "bind",
+            "reactions/procedure/respond",
+            "--reserve",
+            "--json",
+        ])
+        .assert()
+        .success();
+    let request: instrukt_runner::standing::ManualReservation =
+        serde_json::from_slice(&out.get_output().stdout).unwrap();
+    live.runtime.seed("s1", root, &request.key, &request.brief);
+    let no_start = || {
+        live.computer
+            .env
+            .instrukt(root)
+            .env("T3CODE_THREAD_ID", "manual-parent")
+            .args([
+                "events",
+                "bind",
+                "reactions/procedure/respond",
+                "--reservation",
+                &request.reservation,
+                "--not-started",
+                "--reason",
+                "no start observed",
+            ])
+            .assert()
+    };
+    let refused = no_start().failure();
+    let expected = format!(
+        "instrukt sessions replace-deleted {} --stopped t3:s1",
+        request.key
+    );
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains(&expected), "{guidance}");
+    live.runtime
+        .change("s1", "title", "Renamed after refusal".into());
+    let refused = no_start().failure();
+    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
+    assert!(guidance.contains(&expected), "{guidance}");
+    live.append("pending-on-manual-entry");
+    live.tick();
+    assert_eq!(live.runtime.threads(), ["s1"]);
+    live.runtime.set_status("s1", "stopped");
+    live.runtime.delete("s1");
+    live.replace_deleted(&request.key);
+    assert_eq!(
+        live.delivered_to("pending-on-manual-entry").to_string(),
+        "t3:s2"
+    );
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA11
 #[test]
@@ -655,7 +1320,7 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
             .replace(&original.reservation, "[RESERVATION]")
             .replace(root.to_str().unwrap(), "[PROJECT]")
     );
-    assert_eq!(r.runtime.calls().len(), calls_before);
+    assert_eq!(r.runtime.calls().len(), calls_before + 1);
 
     r.runtime.seed("s1", root, &retried.key, &retried.brief);
     let evidence =
@@ -697,10 +1362,12 @@ fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    r.runtime.archive("s1");
+    let key = r.runtime.key("s1");
+    r.runtime.delete("s1");
     r.append("next-generation");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    r.replace_deleted(&key);
+    assert_eq!(r.runtime.threads().len(), 1);
     insta::assert_snapshot!(
         "closed-home-next-generation",
         work::redact(&r.runtime.input_log("s2"))
@@ -712,7 +1379,8 @@ fn an_unrelated_broken_entry_leaves_the_successor_and_its_reading_available() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    r.runtime.archive("s1");
+    let key = r.runtime.key("s1");
+    r.runtime.delete("s1");
     let path = r.computer.env.instrukt_home().join("state/index.yaml");
     let mut index: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -723,7 +1391,8 @@ fn an_unrelated_broken_entry_leaves_the_successor_and_its_reading_available() {
 
     r.append("next-generation");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    r.replace_deleted(&key);
+    assert_eq!(r.runtime.threads().len(), 1);
     assert!(r.runtime.input_log("s2").contains("next-generation"));
     let shown = r
         .computer

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use crate::common::TestEnv;
 
 const SCRIPT: &str = r###"#!/usr/bin/env python3
-import json, os, pathlib, sqlite3, subprocess, sys, time
+import hashlib, json, os, pathlib, sqlite3, subprocess, sys, time
 root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
@@ -146,9 +146,16 @@ def find(id):
     file=root/(id+'.json')
     if not file.exists(): print('Thread '+id+' is no longer available.',file=sys.stderr); sys.exit(1)
     return json.loads(file.read_text())
+def project_for(checkout):
+    path=str(pathlib.Path(checkout).resolve())
+    default_id='project-'+hashlib.sha256(path.encode()).hexdigest()
+    registration=root/(default_id+'.id')
+    return registration.read_text() if registration.exists() else default_id
 if command=='list':
     threads=all_threads()
-    if '--project' in flags: threads=[t for t in threads if t['checkout']==flags['--project']]
+    if '--project' in flags:
+        project=project_for(flags['--project'])
+        threads=[t for t in threads if (t.get('projectId') or project_for(t['checkout']))==project]
     if (root/'hide-project-id').exists():
         for t in threads: t.pop('projectId',None)
     if (root/'duplicate').exists() and threads:
@@ -163,9 +170,12 @@ elif command=='start':
         (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
     n=len(all_threads())+1
     id='s'+str(n)
+    while (root/(id+'.json')).exists() or (root/(id+'.deleted')).exists():
+        n+=1
+        id='s'+str(n)
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
-    t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
+    t={'threadId':id,'projectId':project_for(checkout),'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
     # With `queued-start`, the runtime accepts the thread's opening input
     # and keeps it queued: neither entered nor completed.
     if (root/'queued-start').exists(): t['status']='queued'
@@ -193,6 +203,8 @@ elif command=='send':
     if (root/'die-after-send').exists():
         (root/'die-after-send').unlink(); os.kill(os.getppid(),9)
 elif command=='show':
+    if (root/'show-failure').exists():
+        print('native show unavailable', file=sys.stderr); sys.exit(1)
     sync_inputs()
     t=find(operands[0]); limit=int(flags.get('--messages',100))
     if limit==0 and (root/'busy-before-entry').exists():
@@ -239,8 +251,29 @@ impl FakeT3 {
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         Self { script, state }
     }
+    fn default_project_id(checkout: &std::path::Path) -> String {
+        use sha2::{Digest, Sha256};
+        let root = checkout.canonicalize().unwrap();
+        format!(
+            "project-{}",
+            hex::encode(Sha256::digest(root.to_string_lossy().as_bytes()))
+        )
+    }
+
+    pub fn register_project(&self, checkout: &std::path::Path, project: &str) {
+        let id = Self::default_project_id(checkout);
+        std::fs::write(self.state.join(format!("{id}.id")), project).unwrap();
+    }
+
+    pub fn project_id(&self, thread: &str) -> String {
+        self.read(thread)["projectId"].as_str().unwrap().into()
+    }
+
     pub fn seed(&self, id: &str, checkout: &std::path::Path, key: &str, brief: &str) {
-        let thread = serde_json::json!({"threadId":id,"projectId":checkout.to_string_lossy(),"checkout":checkout.to_string_lossy(),"title":key,"status":"running","latestRunId":format!("run:{id}:1"),"activeRunId":format!("run:{id}:1"),"updatedAt":"2026-11-06T10:00:00Z","pendingRequestCount":0,"archived":false,"settled":false,"worktreePath":null,"branch":null,"messages":[{"role":"user","text":brief,"runId":format!("run:{id}:1")}]});
+        let default_id = Self::default_project_id(checkout);
+        let project = std::fs::read_to_string(self.state.join(format!("{default_id}.id")))
+            .unwrap_or(default_id);
+        let thread = serde_json::json!({"threadId":id,"projectId":project,"checkout":checkout.to_string_lossy(),"title":key,"status":"running","latestRunId":format!("run:{id}:1"),"activeRunId":format!("run:{id}:1"),"updatedAt":"2026-11-06T10:00:00Z","pendingRequestCount":0,"archived":false,"settled":false,"worktreePath":null,"branch":null,"messages":[{"role":"user","text":brief,"runId":format!("run:{id}:1")}]});
         std::fs::write(
             self.state.join(format!("{id}.fixture")),
             serde_json::to_vec(&thread).unwrap(),
@@ -406,6 +439,13 @@ impl FakeT3 {
     }
     pub fn set_pending(&self, id: &str, count: u32) {
         self.change(id, "pendingRequestCount", count.into());
+    }
+    pub fn delete(&self, id: &str) {
+        std::fs::rename(
+            self.state.join(format!("{id}.json")),
+            self.state.join(format!("{id}.deleted")),
+        )
+        .unwrap();
     }
     pub fn archive(&self, id: &str) {
         self.change(id, "archived", true.into());

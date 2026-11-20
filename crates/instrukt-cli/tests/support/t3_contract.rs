@@ -306,9 +306,18 @@ pub fn observe(id: &str) -> Result<Value> {
         "allocation must not prove input entry"
     );
     let listed = adapter.list(&std::env::current_dir()?.join("project"))?;
+    let listed_thread = listed
+        .iter()
+        .find(|thread| thread.session == session)
+        .context("project listing omitted the fixture thread")?;
+    let project_id = state
+        .project_id
+        .as_deref()
+        .context("show omitted the native project ID")?;
     ensure!(
-        listed.iter().any(|thread| thread.session == session),
-        "project listing omitted the fixture thread"
+        listed_thread.project_id.as_deref() == Some(project_id)
+            && project_id != std::env::current_dir()?.join("project").to_string_lossy(),
+        "scoped listing and show must agree on an opaque project ID"
     );
     ensure!(
         adapter
