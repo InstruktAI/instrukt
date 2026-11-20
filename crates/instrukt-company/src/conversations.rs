@@ -1699,10 +1699,14 @@ impl Accepted {
         )
     }
     fn at(&self, c: &Conversation, turn: &str, piece: i64) -> Option<Timestamp> {
+        self.receipt(&Self::key(c, turn, piece))
+    }
+
+    fn receipt(&self, key: &AcceptedPiece) -> Option<Timestamp> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&Self::key(c, turn, piece))
+            .get(key)
             .copied()
     }
     fn keep(&self, c: &Conversation, turn: &str, piece: i64, at: Timestamp) {
@@ -1791,11 +1795,6 @@ fn post(
                     "unreadable legacy answer attempt time: {error}"
                 ))
             })?;
-        if accepted_at.is_none() && legacy_at.is_some_and(|at| read_at >= at + SETTLE) {
-            let _held = held();
-            resolve_unknown(state, c, piece, read_at)?;
-            continue;
-        }
         let connector = match &connector {
             Ok(connector) => connector.as_ref(),
             Err(error) => {
@@ -1805,7 +1804,7 @@ fn post(
         };
         let receipt = match (accepted_at, legacy_at, piece.post_id.as_deref()) {
             (None, Some(attempted_at), None) => {
-                let receipt = if piece.legacy_read {
+                let receipt = if piece.legacy_read || read_at >= attempted_at + SETTLE {
                     None
                 } else {
                     legacy_receipt(state, connector, c, piece, attempted_at, read_at)?
@@ -1914,13 +1913,15 @@ fn legacy_receipt(
     attempted_at: Timestamp,
     read_at: Timestamp,
 ) -> Result<Option<Timestamp>, ConversationError> {
-    state.write::<_, StateError>(|tx| {
+    let claimed = state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_answers SET legacy_read_at=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+            "UPDATE conversation_answers SET legacy_read_at=?6 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5 AND legacy_read_at IS NULL AND delivery_unknown_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, read_at.to_string()],
-        ).map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
+        ).map_err(state::sql(&state::db_path(tx)))
     })?;
+    if claimed == 0 {
+        return Ok(None);
+    }
     match connector.legacy_answer_receipt(&c.conversation, attempted_at, &piece.text) {
         Ok(receipt) => Ok(receipt),
         Err(error) => {
@@ -1930,33 +1931,103 @@ fn legacy_receipt(
     }
 }
 
-fn resolve_unknown(
-    state: &RunnerState,
-    c: &Conversation,
-    piece: &Pending,
+/// Close expired legacy attempts using only retained state. Run beside
+/// notice eligibility so a missing runtime source cannot keep notices held.
+pub(crate) fn expire_legacy_answers(
+    home: &Home,
+    company: &ProjectSlug,
+    connector: &str,
+    accepted: &Accepted,
     now: Timestamp,
-) -> Result<(), StateError> {
-    let cause = format!(
-        "delivery unknown for legacy answer in conversation {} (turn {}, piece {})",
-        c.conversation, piece.turn, piece.piece
-    );
-    state.write(|tx| {
-        tx.execute(
-            "UPDATE conversation_answers SET delivery_unknown_at=?6,failure=?7 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
-            params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, now.to_string(), cause],
-        ).map_err(state::sql(&state::db_path(tx)))?;
-        close_completed_interval(tx, c, piece)
-    })
+) -> Result<(), ConversationError> {
+    let state = RunnerState::new(home);
+    let pieces = state
+        .read(|conn, path| {
+            let mut query = conn
+                .prepare(
+                    "SELECT conversation,turn,piece,attempted_at FROM conversation_answers
+             WHERE company=?1 AND connector=?2 AND post_id IS NULL AND attempted_at IS NOT NULL
+               AND posted_at IS NULL AND delivery_unknown_at IS NULL",
+                )
+                .map_err(state::sql(path))?;
+            query
+                .query_map(params![company.as_str(), connector], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .map_err(state::sql(path))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(state::sql(path))
+        })?
+        .unwrap_or_default();
+    for (conversation, turn, piece, attempted) in pieces {
+        let attempted_at = attempted.parse::<Timestamp>().map_err(|error| {
+            ConversationError::Refused(format!("unreadable legacy answer attempt time: {error}"))
+        })?;
+        if now < attempted_at + SETTLE {
+            continue;
+        }
+        let lock = post_lock(company, connector, &conversation);
+        let _held = match lock.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => continue,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+        };
+        let identity = (
+            company.to_string(),
+            connector.to_owned(),
+            conversation,
+            turn,
+            piece,
+        );
+        if accepted.receipt(&identity).is_some() {
+            continue;
+        }
+        let (company, connector, conversation, turn, piece) = identity;
+        let cause = format!(
+            "delivery unknown for legacy answer in conversation {conversation} (turn {turn}, piece {piece})"
+        );
+        state.write::<_, StateError>(|tx| {
+            let changed = tx
+                .execute(
+                    "UPDATE conversation_answers SET delivery_unknown_at=?6,failure=?7
+                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5
+                   AND posted_at IS NULL AND delivery_unknown_at IS NULL AND post_id IS NULL AND attempted_at=?8",
+                    params![
+                        company,
+                        connector,
+                        conversation,
+                        turn,
+                        piece,
+                        now.to_string(),
+                        cause,
+                        attempted
+                    ],
+                )
+                .map_err(state::sql(&state::db_path(tx)))?;
+            if changed > 0 {
+                close_completed_interval(tx, &company, &connector, &conversation, &turn)?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 
 fn close_completed_interval(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
-    c: &Conversation,
-    piece: &Pending,
+    company: &str,
+    connector: &str,
+    conversation: &str,
+    turn: &str,
 ) -> Result<(), StateError> {
     tx.execute(
         &format!("UPDATE conversation_messages SET unavailable_since=NULL,turn_update=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND state=?5 AND (unavailable_since IS NOT NULL OR turn_update IS NOT NULL) AND NOT EXISTS({UNPOSTED})"),
-        params![c.company.as_str(), c.connector, c.conversation, piece.turn, Stage::Answered.as_str()],
+        params![company, connector, conversation, turn, Stage::Answered.as_str()],
     ).map_err(state::sql(&state::db_path(tx)))?;
     Ok(())
 }
@@ -1973,12 +2044,17 @@ fn posted(
 ) -> Result<(), ConversationError> {
     state.write::<_, StateError>(|tx| {
         let path = state::db_path(tx);
-        tx.execute(
-            "UPDATE conversation_answers SET posted_at=?6,failure=NULL,attempted_at=NULL,latest_attempted_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+        let changed = tx.execute(
+            "UPDATE conversation_answers SET posted_at=?6,failure=NULL,attempted_at=NULL,latest_attempted_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5 AND delivery_unknown_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, now.to_string()],
         )
         .map_err(state::sql(&path))?;
-        close_completed_interval(tx, c, piece)?;
+        if changed == 0 {
+            // A legacy provider read can finish after expiry. Its receipt
+            // must not supersede notices for later work.
+            return Ok(());
+        }
+        close_completed_interval(tx, c.company.as_str(), &c.connector, &c.conversation, &piece.turn)?;
         tx.execute(
             "DELETE FROM conversation_refusals WHERE company=?1 AND connector=?2 AND conversation=?3 AND reason='unavailable' AND sender IN (SELECT sender FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4)",
             params![c.company.as_str(), c.connector, c.conversation, piece.turn],
@@ -2000,7 +2076,7 @@ fn piece_failed(
     let (earliest, latest) = rejected.unwrap_or_default();
     state.write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_answers SET failure=?6,attempted_at=CASE WHEN ?7 THEN ?8 ELSE attempted_at END,latest_attempted_at=CASE WHEN ?7 THEN ?9 ELSE latest_attempted_at END WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5",
+            "UPDATE conversation_answers SET failure=?6,attempted_at=CASE WHEN ?7 THEN ?8 ELSE attempted_at END,latest_attempted_at=CASE WHEN ?7 THEN ?9 ELSE latest_attempted_at END WHERE company=?1 AND connector=?2 AND conversation=?3 AND turn=?4 AND piece=?5 AND delivery_unknown_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, piece.turn, piece.piece, cause, rejected.is_some(), earliest, latest],
         )
         .map_err(state::sql(&state::db_path(tx)))?;

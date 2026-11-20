@@ -1406,6 +1406,8 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
     wait("the id-less attempt read back once", || {
         legacy_state().1.is_some()
     });
+    let database = c.store.file.clone();
+    let hidden_database = database.with_extension("away");
     if posted_before_upgrade {
         wait("the legacy answer receipt recovered", || {
             legacy_state().0.is_some()
@@ -1415,9 +1417,14 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
         assert!(legacy_state().0.is_none());
         assert!(legacy_state().2.is_none());
         c.runner_dies();
+        std::fs::rename(&database, &hidden_database).unwrap();
+        std::fs::create_dir(&database).unwrap();
         set_clock(&clock, at + jiff::SignedDuration::from_mins(3));
         c.run();
-        wait("the legacy answer resolved with delivery unknown", || {
+        wait("T3's source unavailable", || {
+            c.conversations().relay_failure.is_some()
+        });
+        wait("the legacy answer expired while T3 is unreadable", || {
             legacy_state().2.is_some()
         });
         assert!(legacy_state().0.is_none());
@@ -1435,8 +1442,27 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
     assert_eq!(interval(&c, &asked), None);
     assert!(c.slack.posts().is_empty());
 
-    c.slack
+    let later = c
+        .slack
         .mention(channel, member, "<@UAGENT> And the contract?", Some(&asked));
+    if !posted_before_upgrade {
+        wait("the later message admitted while T3 is unreadable", || {
+            state.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND admitted_at IS NOT NULL)",
+                [&later],
+                |row| row.get::<_, bool>(0),
+            ).unwrap()
+        });
+        set_clock(&clock, at + jiff::SignedDuration::from_mins(5));
+        wait(
+            "the later failure produces a notice before T3 recovers",
+            || notices(&c, member) == 1,
+        );
+        assert!(c.conversations().relay_failure.is_some());
+        assert_eq!(c.slack.posts().len(), 1);
+        std::fs::remove_dir(&database).unwrap();
+        std::fs::rename(&hidden_database, &database).unwrap();
+    }
     wait("the next message goes to the same conversation", || {
         c.runtime.message_count(&session) == 2
     });
@@ -1444,20 +1470,9 @@ fn legacy_answer_attempt_releases_conversation(posted_before_upgrade: bool) {
     wait("the next answer posted and recorded", || {
         c.slack.posts_beginning("In the shared drive.") == 1 && answers_recorded(&c)
     });
-    assert_eq!(c.slack.posts().len(), 1);
-    assert_eq!(notices(&c, member), 0);
-    if !posted_before_upgrade {
-        c.runtime.flag("send-failure", true);
-        let later = c
-            .slack
-            .mention(channel, member, "<@UAGENT> Who reviews it?", Some(&asked));
-        let since = interval_at(&c, &later);
-        set_clock(&clock, since + minute());
-        wait("a later failure can still produce a notice", || {
-            notices(&c, member) == 1
-        });
-        assert_eq!(c.slack.posts().len(), 2);
-    }
+    let expected_notices = usize::from(!posted_before_upgrade);
+    assert_eq!(c.slack.posts().len(), 1 + expected_notices);
+    assert_eq!(notices(&c, member), expected_notices);
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {

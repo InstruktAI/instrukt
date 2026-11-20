@@ -513,7 +513,13 @@ fn notice_worker(
         while !stop() {
             pending
                 .retain(|_, task: &mut std::thread::ScopedJoinHandle<'_, ()>| !task.is_finished());
-            match conversations::notices(home, company, key, reach.connectors.now()) {
+            let now = reach.connectors.now();
+            if let Err(error) =
+                conversations::expire_legacy_answers(home, company, key, reach.accepted, now)
+            {
+                tracing::warn!(target: LOG_TARGET, event = "legacy_answer_expiry_failed", company = %company, connector = key, %error);
+            }
+            match conversations::notices(home, company, key, now) {
                 Ok(notices) => {
                     for notice in notices {
                         let member = (notice.conversation.clone(), notice.sender.clone());
