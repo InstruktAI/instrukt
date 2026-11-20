@@ -604,7 +604,10 @@ and `procedure_generations`, joined by `semantic_key`. The native project id is 
 identity and runtime endpoint/placement scope remain separate. Display-title
 changes do not change the semantic key or authorize a new start. Work's `session_bindings`
 retains todo/role/attempt facts, and task occurrence stamps own completion.
-Discovery repairs the cache before a start. Removing it proves no absence.
+Discovery repairs the cache before a start. Removing it proves no absence. After
+a todo replacement returns its native ID, its pending runtime binding
+retains that ID with `accepted` false. The replacement cannot adopt a
+different ID through discovery.
 
 **`runtime_key_locks`** — one starter/deliverer per runtime and exact key.
 Key: `(runtime, semantic_key)`.
@@ -630,7 +633,7 @@ completely bound. Key: `(runtime, semantic_key)`.
 | `runtime`, `semantic_key`, `project`, `kind`, `subject`, execution checkout | Same assignment address as the binding. Owning work/standing records retain the orchestrator attempt, occurrence or generation before instrukt starts it. Native worker reservations use `session_bindings`, not this table. |
 | `brief`, `request` | Opening input and structured start request, including requested branch, captured base SHA and worktree requirement. Persisted before the external start. |
 | `begun_at`, `reported` | Start time and whether the unresolved-start finding was reported. |
-| `resolved_at`, `resolved_by`, `resolution` | Resolution time, actor and no-thread confirmation or proof of rejection; `NULL` until resolved. |
+| `resolved_at`, `resolved_by`, `resolution` | Resolution time, actor and evidence. A todo replacement retains the operator-confirmed stopped ID until the replacement commits. |
 | `state` | `unresolved` while creation may be in flight; `retry_allowed` after `resolve-start --none` or proof of rejection before creation. The request and key are retained for retry. |
 
 One design covers every instrukt-owned start kind under

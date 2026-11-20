@@ -386,9 +386,14 @@ confirmation that the named provider session has stopped. It requires the retain
 binding to match the given key and session and the adapter to report the thread
 absent. It retires the binding and uses the ordinary recorded start path under
 the same key. A standing replacement increments the retained generation number.
-A lost start reply is reconciled under that key without another start. For a
-todo or task, success requires the runtime binding, current work binding and
-claim to name the replacement in the same local transaction.
+For a todo or task, the work record must still hold the stopped session's
+assignment and execution claim before the start is attempted. The returned
+native ID is recorded before applying the replacement. Retry reads that ID
+directly. If the start reply is lost before an ID is recorded, the operator
+can supply the actual session with `sessions resolve-start --session` before
+retrying. Replacement checks the work record again before committing the
+runtime binding, work binding, claim, opening receipt and execution tracking
+together.
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains

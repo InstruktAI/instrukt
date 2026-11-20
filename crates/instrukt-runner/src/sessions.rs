@@ -126,7 +126,7 @@ pub enum SessionsError {
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
     #[error(
-        "native project for {session} under `{key}` is unverified; restore the retained key in its original native project and see `instrukt events status`"
+        "native project for {session} under `{key}` is unverified. Restore the retained key in its original native project if it can be verified. Otherwise stop the session, delete the thread, then run `instrukt sessions replace-deleted {key} --stopped {session}`"
     )]
     ProjectUnverified { key: String, session: SessionRef },
     #[error(

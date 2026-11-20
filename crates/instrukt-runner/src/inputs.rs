@@ -401,11 +401,31 @@ pub(crate) fn record_initial(
     content: &str,
     now: Timestamp,
 ) -> Result<(), StateError> {
-    state.write(|tx| {
-        retain(tx,target,&Entry{id,kind:InputKind::Recovery, assignment:None,source_at:Some(&now.to_string()),arrived_at:now,intent:Intent::Asap,content})?;
-        tx.execute("UPDATE runtime_inputs SET state='accepted',waiting=1,group_id=input_id,selected_content=content,accepted_at=?4,evidence_source=?5,evidence_at=?4 WHERE runtime=?1 AND session=?2 AND input_id=?3 AND state='pending'",params![target.runtime.as_str(),target.id.as_str(),id,now.to_string(),format!("{} adapter acceptance",target.runtime)]).map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
-    })
+    state.write(|tx| record_initial_in(tx, target, id, content, now))
+}
+
+pub(crate) fn record_initial_in(
+    tx: &Transaction<'_>,
+    target: &SessionRef,
+    id: &str,
+    content: &str,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    retain(
+        tx,
+        target,
+        &Entry {
+            id,
+            kind: InputKind::Recovery,
+            assignment: None,
+            source_at: Some(&now.to_string()),
+            arrived_at: now,
+            intent: Intent::Asap,
+            content,
+        },
+    )?;
+    tx.execute("UPDATE runtime_inputs SET state='accepted',waiting=1,group_id=input_id,selected_content=content,accepted_at=?4,evidence_source=?5,evidence_at=?4 WHERE runtime=?1 AND session=?2 AND input_id=?3 AND state='pending'",params![target.runtime.as_str(),target.id.as_str(),id,now.to_string(),format!("{} adapter acceptance",target.runtime)]).map_err(state::sql(&state::db_path(tx)))?;
+    Ok(())
 }
 
 #[cfg(test)]

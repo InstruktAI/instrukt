@@ -111,14 +111,57 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
         p.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    db.execute_batch("CREATE TRIGGER fail_work_replacement BEFORE UPDATE OF claim_session ON todos
-        WHEN NEW.claim_session='t3:s2' BEGIN SELECT RAISE(ABORT, 'work binding write failed'); END;").unwrap();
     let command = || {
         p.env.run(
             p.env.home(),
             ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
         )
     };
+    let (machine, claimed_at): (String, String) = db
+        .query_row(
+            "SELECT claim_machine,claim_at FROM todos WHERE slug='weekly-status'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE todos SET claim_machine=NULL,claim_session=NULL,claim_at=NULL WHERE slug='weekly-status'",
+        [],
+    ).unwrap();
+    let ineligible = command().failure();
+    assert!(
+        fake.threads().is_empty(),
+        "an ineligible replacement must start nothing"
+    );
+    let error = String::from_utf8_lossy(&ineligible.get_output().stderr);
+    assert!(error.contains("todo replacement is ineligible"), "{error}");
+    db.execute(
+        "UPDATE todos SET claim_machine=?1,claim_session='t3:s1',claim_at=?2 WHERE slug='weekly-status'",
+        (&machine, &claimed_at),
+    ).unwrap();
+
+    db.execute(
+        "INSERT OR REPLACE INTO executions(project,todo_id,role,session,workflow_state,recovery_sent,anomaly_raised)
+         SELECT t.project,t.id,b.role,'t3:s1','task-executing',1,1
+         FROM todos t JOIN session_bindings b ON t.id=b.todo_id WHERE b.semantic_key=?1",
+        [&key],
+    ).unwrap();
+    let execution = || {
+        db.query_row(
+            "SELECT session,recovery_sent,anomaly_raised FROM executions",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            },
+        )
+        .unwrap()
+    };
+    db.execute_batch("CREATE TRIGGER fail_work_replacement BEFORE UPDATE OF claim_session ON todos
+        WHEN NEW.claim_session='t3:s2' BEGIN SELECT RAISE(ABORT, 'work binding write failed'); END;").unwrap();
     let failed = command().failure();
     let error = String::from_utf8_lossy(&failed.get_output().stderr);
     assert!(
@@ -127,25 +170,63 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     );
     let sessions = || {
         db.query_row(
-        "SELECT b.session,t.claim_session,(SELECT session FROM runtime_bindings WHERE semantic_key=?1)
-         FROM session_bindings b JOIN todos t ON b.todo_id=t.id WHERE b.semantic_key=?1",
-        [&key], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<String>>(2)?)),
-    ).unwrap()
+            "SELECT b.session,t.claim_session,r.session,r.accepted FROM session_bindings b
+             JOIN todos t ON b.todo_id=t.id JOIN runtime_bindings r ON r.semantic_key=b.semantic_key
+             WHERE b.semantic_key=?1",
+            [&key],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            },
+        )
+        .unwrap()
     };
-    assert_eq!(sessions(), ("t3:s1".into(), "t3:s1".into(), None));
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+    assert_eq!(execution(), ("t3:s1".into(), true, true));
     assert_eq!(fake.threads(), ["s2"]);
     db.execute_batch("DROP TRIGGER fail_work_replacement;")
         .unwrap();
+
+    // An unrelated exact-title match must not displace the returned ID.
+    fake.seed("lookalike", p.repo.path(), &key, "Unrelated opening.");
+    fake.change("s2", "title", "Renamed replacement".into());
+    db.execute_batch(
+        "CREATE TRIGGER fail_opening_receipt BEFORE INSERT ON runtime_inputs
+        WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'opening receipt write failed'); END;",
+    )
+    .unwrap();
+    let failed = command().failure();
+    let error = String::from_utf8_lossy(&failed.get_output().stderr);
+    assert!(error.contains("opening receipt write failed"), "{error}");
+    assert_eq!(
+        sessions(),
+        ("t3:s1".into(), "t3:s1".into(), "t3:s2".into(), false)
+    );
+    assert_eq!(execution(), ("t3:s1".into(), true, true));
+    db.execute_batch("DROP TRIGGER fail_opening_receipt;")
+        .unwrap();
+
     command().success();
     assert_eq!(
         sessions(),
-        ("t3:s2".into(), "t3:s2".into(), Some("t3:s2".into()))
+        ("t3:s2".into(), "t3:s2".into(), "t3:s2".into(), true)
     );
-    assert_eq!(
-        fake.threads(),
-        ["s2"],
-        "reconciliation must reuse the accepted native replacement"
-    );
+    assert_eq!(execution(), ("t3:s2".into(), false, false));
+    let opening_accepted: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s2' AND input_id=?1 AND state='accepted')",
+        [format!("assignment:{key}")], |row| row.get(0),
+    ).unwrap();
+    assert!(opening_accepted);
+    assert_eq!(fake.threads(), ["lookalike", "s2"]);
+    assert_eq!(fake.message_count("lookalike"), 1);
+    assert_eq!(fake.message_count("s2"), 1);
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12

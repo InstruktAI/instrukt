@@ -300,6 +300,14 @@ pub trait SessionBindings: Send + Sync {
         role: &RoleName,
     ) -> Result<Option<SessionBinding>, WorkInterfaceError>;
 
+    /// Check that work still owns the stopped assignment before starting a replacement.
+    fn check_dispatch_replacement(
+        &self,
+        project: &ProjectRef,
+        key: &str,
+        stopped: &SessionRef,
+    ) -> Result<(), WorkInterfaceError>;
+
     /// Commit an operator-confirmed replacement and its runtime acceptance
     /// together with the current work binding and claim.
     fn replace_dispatch(

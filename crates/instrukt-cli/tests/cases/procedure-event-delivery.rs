@@ -832,6 +832,19 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
             .unwrap()
             .contains("unverified")
     );
+    let finding = start_anomalies(&r)[0].clone();
+    let guidance = finding["failure"].as_str().unwrap();
+    assert!(
+        guidance.contains("stop the session, delete the thread"),
+        "{guidance}"
+    );
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions replace-deleted {} --stopped t3:s1",
+            request["key"].as_str().unwrap()
+        )),
+        "{guidance}"
+    );
     r.runtime.change("s1", "projectId", retained_project.into());
     r.runtime.change("s1", "title", request["title"].clone());
     r.tick();

@@ -257,6 +257,20 @@ struct TodoReplacement<'a> {
     stopped: &'a SessionRef,
 }
 
+fn replacement_project(
+    project: Option<&str>,
+    request: &RuntimeStart,
+) -> Result<crate::interfaces::ProjectRef, SessionsError> {
+    let slug = project
+        .ok_or_else(|| SessionsError::Refused("todo replacement has no retained project".into()))?;
+    let slug = instrukt_core::ids::ProjectSlug::parse(slug)
+        .map_err(|error| SessionsError::Refused(error.to_string()))?;
+    Ok(crate::interfaces::ProjectRef {
+        slug,
+        root: request.checkout.clone(),
+    })
+}
+
 fn accept_started(
     guard: &KeyGuard,
     adapter: &dyn RuntimeAdapter,
@@ -264,37 +278,39 @@ fn accept_started(
     thread: &Thread,
     replacement: Option<&TodoReplacement<'_>>,
 ) -> Result<(), SessionsError> {
-    let Some(replacement) = replacement else {
-        return Ok(remember(
-            &guard.state,
-            adapter,
+    let mut accept = |tx: &instrukt_core::state_db::rusqlite::Transaction<'_>| {
+        remember_in(
+            tx,
+            adapter.runtime(),
             assignment.request,
             thread,
             assignment.project,
             true,
             RequestEvidence::Retained,
-        )?);
+        )?;
+        crate::inputs::record_initial_in(
+            tx,
+            &thread.session,
+            &format!("assignment:{}", assignment.request.key),
+            &assignment.request.brief,
+            assignment.now,
+        )
     };
-    let project = assignment
-        .project
-        .ok_or_else(|| SessionsError::Refused("todo replacement has no retained project".into()))?;
-    let project = crate::interfaces::ProjectRef {
-        slug: instrukt_core::ids::ProjectSlug::parse(project)
-            .map_err(|error| SessionsError::Refused(error.to_string()))?,
-        root: assignment.request.checkout.clone(),
+    let Some(replacement) = replacement else {
+        return Ok(guard.state.write(accept)?);
     };
+    let project = replacement_project(assignment.project, assignment.request)?;
     let binding = crate::interfaces::SessionBinding {
         title: thread.title.clone(),
         key: assignment.request.key.clone(),
         session: thread.session.clone(),
         worktree: thread.worktree.clone(),
     };
-    replacement.work.replace_dispatch(&project, &binding, replacement.stopped, &mut |tx| {
-        remember_in(tx, adapter.runtime(), assignment.request, thread, assignment.project, true, RequestEvidence::Retained)
-    }).map_err(|error| SessionsError::Refused(format!(
-        "replacement for `{}` was not confirmed in the todo record: {error}; retry `instrukt sessions replace-deleted {} --stopped {}`",
-        binding.key, binding.key, replacement.stopped,
-    )))
+    replacement.work.replace_dispatch(&project, &binding, replacement.stopped, &mut accept)
+        .map_err(|error| SessionsError::Refused(format!(
+            "replacement for `{}` was not confirmed in the todo record: {error}. Retry `instrukt sessions replace-deleted {} --stopped {}`",
+            binding.key, binding.key, replacement.stopped,
+        )))
 }
 
 /// Discover before every start. Empty discovery cannot clear an ambiguous marker.
@@ -353,6 +369,37 @@ fn start_claimed(
             return Err(SessionsError::ChangedRequest(input.key.clone()));
         }
     }
+    if replacement.is_some() {
+        if let Some(session) = &recorded.bound {
+            let thread = adapter.read_state(session)?;
+            if thread.presence != Presence::Present {
+                return Err(SessionsError::Refused(format!(
+                    "recorded replacement {session} is not present. Its intent is retained under `{}`",
+                    input.key
+                )));
+            }
+            if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id) {
+                return Err(conflict(&input.key, [session]));
+            }
+            verify_bound(adapter, &resolved, session, &thread)?;
+            accept_started(
+                guard,
+                adapter,
+                &RuntimeAssignment {
+                    request: &resolved,
+                    ..*assignment
+                },
+                &thread,
+                replacement,
+            )?;
+            return Ok(thread);
+        }
+        if !recorded.retry_allowed {
+            return Err(SessionsError::Unresolved {
+                key: input.key.clone(),
+            });
+        }
+    }
     if recorded.retry_allowed && recorded.bound.is_none() && !resolved.preferences.is_empty() {
         let config =
             instrukt_core::config::Configuration::load_at(invocation.home(), &resolved.checkout)?;
@@ -396,7 +443,7 @@ fn start_claimed(
             thread.presence == Presence::Present || recorded.bound.as_ref() == Some(&thread.session)
         })
         .collect();
-    if matches.len() > 1 {
+    if matches.len() > 1 || (replacement.is_some() && !matches.is_empty()) {
         return Err(conflict(
             &input.key,
             matches.iter().map(|thread| &thread.session),
@@ -447,17 +494,15 @@ fn start_claimed(
                 } else {
                     adapter.verify_start(input, &thread)?;
                 }
-                if replacement.is_none() {
-                    remember(
-                        &guard.state,
-                        adapter,
-                        input,
-                        &thread,
-                        project,
-                        recorded.accepted,
-                        RequestEvidence::Retained,
-                    )?;
-                }
+                remember(
+                    &guard.state,
+                    adapter,
+                    input,
+                    &thread,
+                    project,
+                    recorded.accepted,
+                    RequestEvidence::Retained,
+                )?;
                 if !recorded.accepted {
                     let supplied = adapter
                         .observe_input(&thread.session, &input.brief, now)?
@@ -475,13 +520,6 @@ fn start_claimed(
                         },
                         &thread,
                         replacement,
-                    )?;
-                    crate::inputs::record_initial(
-                        &guard.state,
-                        &thread.session,
-                        &format!("assignment:{}", input.key),
-                        &input.brief,
-                        now,
                     )?;
                 }
                 return Ok(thread);
@@ -513,6 +551,19 @@ fn start_claimed(
             key: input.key.clone(),
             detail: e.to_string(),
         })?;
+    if replacement.is_some() {
+        // A returned native ID is evidence independent of Work accepting
+        // it. Keep it on a pending binding until their shared commit.
+        remember(
+            &guard.state,
+            adapter,
+            input,
+            &thread,
+            project,
+            false,
+            RequestEvidence::Retained,
+        )?;
+    }
     accept_started(
         guard,
         adapter,
@@ -522,13 +573,6 @@ fn start_claimed(
         },
         &thread,
         replacement,
-    )?;
-    crate::inputs::record_initial(
-        &guard.state,
-        &thread.session,
-        &format!("assignment:{}", input.key),
-        &input.brief,
-        now,
     )?;
     Ok(thread)
 }
@@ -702,11 +746,6 @@ pub fn resolve(
             "`{key}` has no unresolved start"
         )));
     }
-    if let Some(stopped) = &recorded.replacement_from
-        && session.is_some()
-    {
-        return Err(deleted(key, stopped));
-    }
     if let Some(session) = session {
         if recorded
             .bound
@@ -728,6 +767,14 @@ pub fn resolve(
             return Err(SessionsError::KeyConflict(key.into()));
         }
         adapter.verify_start(&input, &thread)?;
+        if recorded.replacement_from.is_some()
+            && adapter.observe_input(session, &input.brief, now)?.state
+                == crate::runtime::InputState::Unknown
+        {
+            return Err(SessionsError::Refused(format!(
+                "opening input for replacement {session} is unconfirmed. Keep the intent under `{key}`"
+            )));
+        }
         remember(
             &guard.state,
             adapter,
@@ -787,6 +834,15 @@ pub fn replace_deleted(
         .request
         .as_ref()
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
+    if let Some(replacement) = &replacement {
+        let project = replacement_project(recorded.project.as_deref(), request)?;
+        replacement
+            .work
+            .check_dispatch_replacement(&project, key, stopped)
+            .map_err(|error| {
+                SessionsError::Refused(format!("todo replacement is ineligible: {error}"))
+            })?;
+    }
     if !resuming {
         check_replacement_key(adapter, request, stopped, None)?;
         if let Some(worktree) = &request.worktree

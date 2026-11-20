@@ -78,6 +78,30 @@ pub fn step(execution: &Execution, progressed: bool, observed: &Observation) -> 
     }
 }
 
+/// Move observation to the confirmed successor in the replacement transaction.
+pub fn replace_session(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    project: &instrukt_core::ids::ProjectSlug,
+    todo_id: &str,
+    role: &instrukt_core::ids::RoleName,
+    stopped: &instrukt_core::ids::SessionRef,
+    successor: &instrukt_core::ids::SessionRef,
+) -> Result<(), StateError> {
+    tx.execute(
+        "UPDATE executions SET session=?5,recovery_sent=0,anomaly_raised=0
+         WHERE project=?1 AND todo_id=?2 AND role=?3 AND session=?4",
+        instrukt_core::state_db::rusqlite::params![
+            project.as_str(),
+            todo_id,
+            role.as_str(),
+            stopped.to_string(),
+            successor.to_string()
+        ],
+    )
+    .map_err(crate::state::sql(&crate::state::db_path(tx)))?;
+    Ok(())
+}
+
 /// The runner's watched executions.
 pub struct Executions<'a> {
     state: &'a RunnerState,

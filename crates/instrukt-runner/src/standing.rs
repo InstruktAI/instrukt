@@ -587,13 +587,6 @@ fn start_and_bind(
     assignment: &RuntimeAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
     let thread = adapter.start_or_wake(assignment)?;
-    inputs::record_initial(
-        state,
-        &thread.session,
-        &format!("assignment:{}", assignment.request.key),
-        &assignment.request.brief,
-        assignment.now,
-    )?;
     state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET session=?2 WHERE responsibility=?1",params![responsibility,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;for p in selected{tx.execute("UPDATE standing_deliveries SET target=?4,state='delivered' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
     keyed::note(
         state,
