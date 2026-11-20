@@ -155,6 +155,22 @@ struct Recorded {
     replaced_session: Option<SessionRef>,
     opening_acknowledged: bool,
 }
+impl Recorded {
+    fn first_task_pending(&self, key: &str) -> bool {
+        kind(key) == "task" && self.unresolved && !self.accepted && self.replacement.is_none()
+    }
+
+    fn absent(&self, key: &str, session: &SessionRef) -> SessionsError {
+        if self.first_task_pending(key) {
+            return SessionsError::FirstTaskAbsent {
+                key: key.into(),
+                session: session.clone(),
+            };
+        }
+        deleted(key, session)
+    }
+}
+
 struct ReplacementIntent {
     original: SessionRef,
     stopped: SessionRef,
@@ -421,7 +437,7 @@ fn start_claimed(
         let thread = adapter.read_state(session)?;
         match thread.presence {
             Presence::Archived => return Err(archived(&input.key, session)),
-            Presence::Absent => return Err(deleted(&input.key, session)),
+            Presence::Absent => return Err(recorded.absent(&input.key, session)),
             Presence::Present => {}
         }
         if recorded.opening_acknowledged && !recorded.accepted {
@@ -624,7 +640,11 @@ fn start_claimed(
     let thread = adapter.read_state(&session)?;
     match thread.presence {
         Presence::Archived => return Err(archived(&input.key, &session)),
-        Presence::Absent => return Err(deleted(&input.key, &session)),
+        Presence::Absent => {
+            return Err(
+                record(&guard.state, &guard.runtime, &input.key)?.absent(&input.key, &session)
+            );
+        }
         Presence::Present => {}
     }
     verify_pending_start(adapter, input, &thread, None)?;
@@ -771,6 +791,7 @@ fn verify_pending_start(
             )));
         }
     } else {
+        // The scoped listing resolves the checkout. Its project IDs are opaque.
         let listed = adapter
             .list(&request.checkout)
             .map_err(|error| refusal(error.to_string()))?;
@@ -861,6 +882,7 @@ pub fn resolve(
     let recorded = record(&guard.state, &guard.runtime, key)?;
     let input = recorded
         .request
+        .as_ref()
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no recorded start")))?;
     if !recorded.unresolved {
         return Err(SessionsError::Refused(format!(
@@ -869,18 +891,18 @@ pub fn resolve(
     }
     let pending = if let Some(bound) = &recorded.bound
         && !recorded.accepted
-        && recorded.replacement.is_some()
+        && (recorded.replacement.is_some() || recorded.first_task_pending(key))
         && session.is_none_or(|requested| requested == bound)
     {
         let thread = adapter.read_state(bound)?;
         match thread.presence {
-            Presence::Absent => {
-                let error = deleted(key, bound);
+            Presence::Absent if !(session.is_none() && recorded.first_task_pending(key)) => {
+                let error = recorded.absent(key, bound);
                 note(&guard.state, adapter.runtime(), key, now, Err(&error));
                 return Err(error);
             }
             Presence::Archived => return Err(archived(key, bound)),
-            Presence::Present => {}
+            Presence::Absent | Presence::Present => {}
         }
         Some(thread)
     } else {
@@ -899,7 +921,7 @@ pub fn resolve(
             None => adapter.read_state(session)?,
         };
         if recorded.opening_acknowledged {
-            verify_pending_start(adapter, &input, &thread, recorded.project_id.as_deref())?;
+            verify_pending_start(adapter, input, &thread, recorded.project_id.as_deref())?;
         }
         let listed = adapter.list(&input.checkout)?;
         let Some(listed) = listed
@@ -937,12 +959,12 @@ pub fn resolve(
             return Err(SessionsError::KeyConflict(key.into()));
         }
         if !recorded.opening_acknowledged {
-            adapter.verify_placement(&input, &thread)?;
+            adapter.verify_placement(input, &thread)?;
         }
         remember(
             &guard.state,
             adapter,
-            &input,
+            input,
             &thread,
             recorded.project.as_deref(),
             false,
@@ -950,12 +972,24 @@ pub fn resolve(
         )?;
         // Retain the marker until the original input is accepted.
     } else {
-        if let Some(bound) = &recorded.bound {
+        let absent = pending.filter(|thread| thread.presence == Presence::Absent);
+        if let Some(bound) = &recorded.bound
+            && absent.is_none()
+        {
             return Err(SessionsError::Refused(format!(
                 "delivery target {bound} is already retained. Run `instrukt sessions resolve-start {key} --session {bound}`"
             )));
         }
-        guard.state.write::<_,StateError>(|tx| { tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution=CASE WHEN resolution GLOB 'operator_confirmed_*replacement:*' THEN resolution ELSE 'none' END WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?; Ok(()) })?;
+        guard.state.write::<_,StateError>(|tx| {
+            let path = state::db_path(tx);
+            if let Some(absent) = &absent {
+                tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3 AND accepted=0",
+                    params![guard.runtime,key,absent.session.to_string()]).map_err(state::sql(&path))?;
+            }
+            tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution=CASE WHEN resolution GLOB 'operator_confirmed_*replacement:*' THEN resolution ELSE 'none' END WHERE runtime=?1 AND semantic_key=?2",
+                params![guard.runtime,key,now.to_string()]).map_err(state::sql(&path))?;
+            Ok(())
+        })?;
     }
     note(&guard.state, adapter.runtime(), key, now, Ok(()));
     Ok(())
@@ -1036,6 +1070,28 @@ pub fn replace_deleted(
         });
     }
     let guard = KeyGuard::claim(invocation, adapter, key, None, now)?;
+    let resuming = recorded
+        .replacement
+        .as_ref()
+        .is_some_and(|intent| &intent.stopped == stopped);
+    let pending_successor = recorded.replacement.is_some() && !recorded.accepted;
+    if !resuming && recorded.bound.as_ref() != Some(stopped) {
+        return Err(stopped_mismatch(key, stopped));
+    }
+    if recorded.first_task_pending(key) {
+        confirm_deleted(adapter, stopped)?;
+        let error = recorded.absent(key, stopped);
+        note(&guard.state, adapter.runtime(), key, now, Err(&error));
+        return Err(error);
+    }
+    if !resuming && !pending_successor && (recorded.unresolved || recorded.retry_allowed) {
+        return Err(SessionsError::Unresolved { key: key.into() });
+    }
+    confirm_deleted(adapter, stopped)?;
+    let request = recorded
+        .request
+        .as_ref()
+        .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
     let original = recorded
         .replacement
         .as_ref()
@@ -1054,22 +1110,6 @@ pub fn replace_deleted(
     } else {
         None
     };
-    let resuming = recorded
-        .replacement
-        .as_ref()
-        .is_some_and(|intent| &intent.stopped == stopped);
-    let pending_successor = recorded.replacement.is_some() && !recorded.accepted;
-    if !resuming && recorded.bound.as_ref() != Some(stopped) {
-        return Err(stopped_mismatch(key, stopped));
-    }
-    if !resuming && !pending_successor && (recorded.unresolved || recorded.retry_allowed) {
-        return Err(SessionsError::Unresolved { key: key.into() });
-    }
-    confirm_deleted(adapter, stopped)?;
-    let request = recorded
-        .request
-        .as_ref()
-        .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no retained start request")))?;
     if let Some(replacement) = &replacement {
         let project = replacement_project(recorded.project.as_deref(), request)?;
         replacement

@@ -117,6 +117,10 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         });
         let project = fake_env.git_repo("project");
         project.commit("feat: fake boundary project");
+        fake.register_project(
+            project.path(),
+            real["fixture"]["thread"]["projectId"].as_str().unwrap(),
+        );
         fake.seed(
             "contract-thread",
             project.path(),

@@ -355,7 +355,7 @@ Verification and subsequent attempts use that exact ID. A native creation that
 remains pending requires a fresh inspection of its actual semantic key and a
 positive native project match. If the native project ID was not yet captured,
 the exact ID must appear in the retained checkout's scoped listing with the
-same project ID as the inspection. The requested worktree is verified against
+same opaque project ID as the inspection. The requested worktree is verified against
 the observed placement. A mismatch keeps the input pending and status directs
 the operator to restore the expected key and placement, then run the exact
 `instrukt sessions resolve-start <key> --session <id>` command. Native
@@ -372,6 +372,12 @@ the native project if it was retained. The refusal directs the operator to
 restore project evidence and retry the same explicit ID. `--none` records the
 operator's confirmation that no thread was created and no start remains in
 flight, permitting retry under the same key. The resolved request retains its input and retry permission until retried.
+For a task's first, unaccepted start, a confirmed absent native ID directs
+the operator to `sessions resolve-start <key> --none`. That command checks
+absence by ID and atomically clears the pending binding and permits a fresh
+start under the same key. A live thread or failed observation leaves the
+binding in place. The dispatch reservation remains, and no replacement or
+execution claim is created by this command.
 A rejection proven to precede creation also permits that retry. Failure to
 recover a requested worktree path leaves the result incomplete and preserves
 the marker.
@@ -754,6 +760,8 @@ But when a successful listing cannot find it
 Then pickup remains pending under its unresolved key until explicit resolution or proof of rejection
 And status gives the operator the resolve-start door
 And the operator receives one notification for the key in the running process after the bound
+But when a first task start returns an ID and the thread is proven absent before acceptance
+Then the operator can clear that ID with resolve-start --none and the next wake starts the task
 ```
 
 ### UC-SS14: A builder's ending wakes its idle orchestrator natively

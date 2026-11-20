@@ -109,6 +109,109 @@ fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
     fake.flag("list-failure", true);
     p.tick();
     assert_eq!(fake.threads().len(), 1);
+    let mut task = Tracked::new(true);
+    task.authorized_task("first-task-start", "2030-01-06T09:00:00Z", &[]);
+    let fake = FakeT3::create(&task.env);
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        task.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_first_receipt BEFORE INSERT ON runtime_inputs
+         WHEN NEW.session='s1' BEGIN SELECT RAISE(ABORT, 'first opening receipt write failed'); END;",
+    ).unwrap();
+    task.tick_at("2030-01-06T09:00:20Z");
+    let key = fake.key("s1");
+    let binding = || {
+        db.query_row(
+            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
+            [&key],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+        )
+    };
+    let claim = || {
+        db.query_row(
+            "SELECT claim_session FROM todos WHERE slug='first-task-start'",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(binding().unwrap(), ("t3:s1".into(), false));
+    assert_eq!(claim(), None);
+    let resolve_none = || {
+        task.env.run(
+            task.repo.path(),
+            ["sessions", "resolve-start", &key, "--none"],
+        )
+    };
+    let resolve_id = || {
+        task.env.run(
+            task.repo.path(),
+            ["sessions", "resolve-start", &key, "--session", "t3:s1"],
+        )
+    };
+    let live = resolve_none().failure();
+    let guidance = String::from_utf8_lossy(&live.get_output().stderr);
+    assert!(
+        guidance.contains(&format!(
+            "instrukt sessions resolve-start {key} --session t3:s1"
+        )),
+        "{guidance}"
+    );
+    resolve_id().success();
+    assert_eq!(binding().unwrap(), ("t3:s1".into(), false));
+
+    fake.delete("s1");
+    let door = format!("instrukt sessions resolve-start {key} --none");
+    for result in [
+        resolve_id().failure(),
+        task.env
+            .run(
+                task.repo.path(),
+                ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+            )
+            .failure(),
+    ] {
+        let guidance = String::from_utf8_lossy(&result.get_output().stderr);
+        assert!(guidance.contains(&door), "{guidance}");
+        assert!(!guidance.contains("--session"), "{guidance}");
+    }
+    let out = task
+        .env
+        .run(task.repo.path(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        status["start_anomalies"][0]["failure"]
+            .as_str()
+            .unwrap()
+            .contains(&door)
+    );
+    fake.flag("show-failure", true);
+    resolve_none().failure();
+    assert_eq!(binding().unwrap(), ("t3:s1".into(), false));
+    fake.flag("show-failure", false);
+    resolve_none().success();
+    assert!(matches!(
+        binding(),
+        Err(instrukt_core::state_db::rusqlite::Error::QueryReturnedNoRows)
+    ));
+    let (state, reason): (String, String) = db
+        .query_row(
+            "SELECT state,resolution FROM runtime_starts WHERE semantic_key=?1",
+            [&key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((state.as_str(), reason.as_str()), ("retry_allowed", "none"));
+    assert_eq!(claim(), None);
+    assert!(fake.threads().is_empty());
+    task.tick_at("2030-01-06T09:00:21Z");
+    assert_eq!(binding().unwrap(), ("t3:s2".into(), true));
+    assert_eq!(claim().as_deref(), Some("t3:s2"));
+    assert_eq!(fake.threads(), ["s2"]);
+    assert_eq!(fake.message_count("s2"), 1);
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS24
 #[test]

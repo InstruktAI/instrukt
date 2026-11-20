@@ -141,6 +141,10 @@ pub enum SessionsError {
         "thread {session} for `{key}` is deleted. Deletion does not prove the old session stopped. Once it has stopped, use `instrukt sessions replace-deleted {key} --stopped {session}`"
     )]
     DeletedBound { key: String, session: SessionRef },
+    #[error(
+        "first task thread {session} for `{key}` is absent before acceptance. Run `instrukt sessions resolve-start {key} --none` to allow a fresh start"
+    )]
+    FirstTaskAbsent { key: String, session: SessionRef },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]

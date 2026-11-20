@@ -31,6 +31,7 @@ pub(crate) fn note(
         Err(
             SessionsError::ArchivedBound { key, .. }
             | SessionsError::DeletedBound { key, .. }
+            | SessionsError::FirstTaskAbsent { key, .. }
             | SessionsError::PendingPlacement { key, .. }
             | SessionsError::ProjectChanged { key, .. }
             | SessionsError::ProjectUnverified { key, .. }
@@ -59,7 +60,7 @@ pub(crate) fn note(
                         ).optional().map_err(state::sql(&path))?;
                         (format!("start `{key}` remains unresolved; use `instrukt sessions resolve-start {key} --session <runtime:id> | --none`"), begun.unwrap_or_else(|| now.to_string()))
                     }
-                    SessionsError::ArchivedBound { .. } | SessionsError::PendingPlacement { .. } | SessionsError::ProjectChanged { .. } | SessionsError::ProjectUnverified { .. } | SessionsError::DeletedBound { .. } | SessionsError::ConflictingThreads { .. } => (error.to_string(), now.to_string()),
+                    SessionsError::ArchivedBound { .. } | SessionsError::PendingPlacement { .. } | SessionsError::ProjectChanged { .. } | SessionsError::ProjectUnverified { .. } | SessionsError::DeletedBound { .. } | SessionsError::FirstTaskAbsent { .. } | SessionsError::ConflictingThreads { .. } => (error.to_string(), now.to_string()),
                     SessionsError::KeyConflict(_) => (format!("{error}; archive or delete the extra thread"), now.to_string()),
                     _ => return Ok(()),
                 };

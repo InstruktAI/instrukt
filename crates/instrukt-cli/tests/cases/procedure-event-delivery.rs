@@ -524,7 +524,7 @@ fn a_renamed_standing_thread_keeps_receiving_events_by_id() {
     assert!(r.runtime.input_log("s1").contains("after-rename"));
     assert!(start_anomalies(&r).is_empty());
     r.runtime.consume("s1");
-    let original_project = r.computer.project.path().to_string_lossy().into_owned();
+    let original_project = r.runtime.project_id("s1");
     r.runtime
         .change("s1", "projectId", "different-project".into());
     r.append("after-project-change");
@@ -827,14 +827,7 @@ fn an_operator_can_resolve_an_uncertain_standing_start_to_its_exact_created_thre
         let original = if field == "title" {
             interrupted.runtime.title("s1")
         } else {
-            interrupted
-                .computer
-                .project
-                .path()
-                .canonicalize()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
+            interrupted.runtime.project_id("s1")
         };
         let db = interrupted.computer.db();
         let binding = || {
@@ -1076,7 +1069,8 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(retained_project, root.to_string_lossy());
+    assert_eq!(retained_project, r.runtime.project_id("s1"));
+    assert_ne!(retained_project, root.to_string_lossy());
     let refused = reserve().failure();
     insta::assert_snapshot!(
         "manual-standing-already-bound",
