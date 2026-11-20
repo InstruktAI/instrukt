@@ -213,8 +213,8 @@ exactly its own range.
 
 | Addressed message | Accompanied by |
 | --- | --- |
-| The first in a conversation | The messages before it: of the thread, or of the channel when the tag starts the thread. |
-| A later one | The messages written in that conversation after the previous addressed message and before this one. |
+| No previous delivery in the conversation | The messages before it: of the thread, or of the channel when the tag starts the thread. |
+| A previous delivery in the conversation | The messages after the greatest Slack timestamp already delivered as an addressed message, and before this one. A message at or before that boundary has no accompanying messages. |
 
 An addressed message is accompanied by at most `context_messages` messages.
 When its range holds more, the most recent ones accompany it and the
@@ -233,10 +233,9 @@ and `unarchive`, `channel_convert_to_private`, `channel_convert_to_public`,
 `channel_posting_permissions`, `pinned_item`, `unpinned_item` and
 `reminder_add`. Everything else is a message, in whatever form Slack records
 it: what a person or an integration wrote, and a form the connector does not
-know. The range is bounded by the previous addressed message whether or not
-that one was answered, and does not depend on whether the agent posted an
-answer. Messages the agent was sent before stay in its session and are not
-sent again.
+know. Delivery advances the boundary even if the turn later fails. The
+boundary survives pruning and stays in place when an older question is
+delivered after a newer one.
 
 When the accompanying messages cannot be read within the context bound the
 conversation core declares, counted from the message's arrival, the message

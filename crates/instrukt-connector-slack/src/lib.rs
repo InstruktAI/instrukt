@@ -910,7 +910,7 @@ impl Connector for Slack {
         &self,
         conversation: &str,
         message: &str,
-        previous: Option<&str>,
+        delivered_through: Option<&str>,
         text: &str,
     ) -> Result<Captured, ConnectorError> {
         let me = self.me().map_err(failed)?;
@@ -923,7 +923,7 @@ impl Connector for Slack {
             &mut names,
             conversation,
             message,
-            previous,
+            delivered_through,
         )
         .map_err(failed)?;
         Ok(Captured { text, accompanying })
@@ -1158,7 +1158,7 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
 
 /// What accompanies a received message: of the messages before the first
 /// in a conversation — of the thread, or of the channel when it starts the
-/// thread — or of those since the previous one, at most `context_messages`
+/// thread — or of those after the delivered-through boundary, at most `context_messages`
 /// of the most recent, and whether earlier ones were left out. Speakers are
 /// named and mentions written as names, as for the addressed message.
 fn accompanying(
@@ -1168,13 +1168,20 @@ fn accompanying(
     names: &mut Names<'_>,
     conversation: &str,
     message: &str,
-    previous: Option<&str>,
+    delivered_through: Option<&str>,
 ) -> Result<Accompanying, SlackError> {
     let (channel, thread) = split_conversation(conversation);
     let ts = message;
     let cap = usize::try_from(context_messages).unwrap_or(usize::MAX);
-    let (earlier, left_out) = match previous {
-        Some(previous) => api.read(channel, thread, Some(previous), ts, cap, false)?,
+    let (earlier, left_out) = match delivered_through {
+        Some(boundary)
+            if ts_micros(boundary)
+                .zip(ts_micros(ts))
+                .is_some_and(|(from, to)| from >= to) =>
+        {
+            (Vec::new(), false)
+        }
+        Some(boundary) => api.read(channel, thread, Some(boundary), ts, cap, false)?,
         None => {
             let within = thread.filter(|thread| *thread != ts);
             api.read(channel, within, None, ts, cap, false)?

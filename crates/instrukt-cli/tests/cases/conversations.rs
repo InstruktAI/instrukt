@@ -291,6 +291,18 @@ fn two_members_in_one_conversation_each_have_their_own_turn_in_order() {
         .slack
         .mention("C1", "USTEVEN", "<@UAGENT> Is the build green?", None);
     let session = c.session();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    wait("the first question's handover is recorded", || {
+        db.query_row(
+            "SELECT state='sent' FROM conversation_messages WHERE message=?1",
+            [&root],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
     // While the first turn runs, two more arrive out of the order they were
     // written in, within one second. The later-written one is taken in
     // before the earlier one arrives: its lookup waits until then.
@@ -736,6 +748,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
         scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice(" \n "));
         scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
+        scope.spawn(pruning_keeps_the_context_boundary_after_out_of_order_delivery);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
@@ -2065,6 +2078,89 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     );
     assert_eq!(retained(&sixth), Some(("failed".into(), None)));
     assert_eq!(retained(&third), Some(("answered".into(), None)));
+}
+
+fn pruning_keeps_the_context_boundary_after_out_of_order_delivery() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "C1";
+    let sender = "USTEVEN";
+    c.runtime.flag("separate-completion", true);
+    projected(&c);
+    let thread = c
+        .slack
+        .say_at("1700000000.000100", channel, sender, "Release thread", None);
+    let failed_text = "Was the original release blocked?";
+    let failed = c.slack.mention_at(
+        "1700000005.000100",
+        channel,
+        sender,
+        &format!("<@UAGENT> {failed_text}"),
+        Some(&thread),
+    );
+    let session = started(&c, &[]);
+    let input = c.runtime.message(&session, 0);
+    assert!(input.contains(failed_text));
+    c.runtime.set_status(&session, "idle");
+    c.runtime.project(&c.env, &session);
+    c.store.failed_turn(&session, "failed-turn", 1, &input);
+    interval_at(&c, &failed);
+
+    // Slack delivers the older question only after the later-written turn
+    // failed. The older question still gets its own turn and supersedes it.
+    c.slack.mention_at(
+        "1700000004.000100",
+        channel,
+        sender,
+        "<@UAGENT> Has the changelog been written?",
+        Some(&thread),
+    );
+    wait("the older question reaches the session", || {
+        c.runtime.message_count(&session) == 2
+    });
+    let settled = interval_clock(&clock);
+    c.finish_turn(&session, 1, "NOOP");
+    wait(
+        "the older question's successful turn supersedes the failure",
+        || c.conversations().conversations.is_empty() && interval(&c, &failed).is_none(),
+    );
+
+    use instrukt_core::state_db::rusqlite::Connection;
+    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    c.runner_dies();
+    set_clock(
+        &clock,
+        settled + jiff::SignedDuration::from_hours(7 * 24) + jiff::SignedDuration::from_secs(1),
+    );
+    c.run();
+    wait("the later-written failed question is pruned", || {
+        !db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1)",
+            [&failed],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap()
+    });
+    let new_context = "The release checklist is ready.";
+    c.slack.say_at(
+        "1700000006.000100",
+        channel,
+        sender,
+        new_context,
+        Some(&thread),
+    );
+    c.slack.mention_at(
+        "1700000007.000100",
+        channel,
+        sender,
+        "<@UAGENT> When do we ship?",
+        Some(&thread),
+    );
+    wait("the new question reaches the session", || {
+        c.runtime.message_count(&session) == 3
+    });
+    let input = c.runtime.message(&session, 2);
+    assert!(input.contains(new_context), "{input}");
+    assert!(!input.contains(failed_text), "{input}");
 }
 
 fn legacy_messages_keep_status_and_the_notice_anchor() {

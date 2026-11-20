@@ -29,13 +29,13 @@ pub trait Connector: Send + Sync {
     /// Whether `sender`, a provider identity, is one of the company's own.
     fn admit(&self, sender: &str) -> Admission;
     /// The addressed message `message` of `conversation` as the agent reads
-    /// it, with what accompanies it: since `previous`, the conversation's
-    /// previous addressed message, or from the conversation's start.
+    /// it, with what accompanies it after the conversation's delivered-through
+    /// boundary, or from the conversation's start.
     fn capture(
         &self,
         conversation: &str,
         message: &str,
-        previous: Option<&str>,
+        delivered_through: Option<&str>,
         text: &str,
     ) -> Result<Captured, ConnectorError>;
     /// Post an answer piece or notice with its durable identity, returning

@@ -689,6 +689,7 @@ is `(company, connector, conversation)`.
 | `semantic_key` | The key its one session is started and woken by. |
 | `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. |
+| `delivered_through_us`, `delivered_through_message` | The greatest written time already delivered as an addressed message, in the microsecond order used for context, and the provider identifier used as the exclusive context boundary. Both are `NULL` until a delivery is known. Migration 23 seeds them from the greatest retained delivered message. A later delivery can only advance the boundary. Pruning leaves it intact. |
 | `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. |
 | `failure` | Cause of the last failed read of that source; `NULL` once a read succeeds. |
 

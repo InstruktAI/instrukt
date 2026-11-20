@@ -708,7 +708,7 @@ fn intake(
             let captured = connector.capture(
                 &unread.conversation,
                 &unread.message,
-                unread.previous.as_deref(),
+                unread.delivered_through.as_deref(),
                 &unread.text,
             );
             readable |= captured.is_ok();

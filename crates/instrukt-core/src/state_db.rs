@@ -546,6 +546,10 @@ mod tests {
         }
         conn.pragma_update(None, "user_version", u32::try_from(before).unwrap())
             .unwrap();
+        conn.execute(
+            "INSERT INTO connected_conversations(company,connector,conversation,semantic_key) VALUES ('acme','slack','C1/1','conversation')",
+            [],
+        ).unwrap();
         conn.execute("INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,attempted_at) VALUES('acme','slack','C1/1','turn-1',0,'Kept answer','2026-11-18T10:00:00Z')", []).unwrap();
         conn.execute_batch(
             "INSERT INTO conversation_messages(company,connector,conversation,message,written_us,written_at,arrived_at,state,text,turn,unavailable_since,turn_update)
@@ -556,6 +560,27 @@ mod tests {
         ).unwrap();
         conn.execute_batch("INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,replied_at) VALUES('acme','slack','C1/1','UOTHER','2026-11-18T10:00:00Z','2026-11-18T10:00:02Z');INSERT INTO conversation_refusals(company,connector,conversation,sender,received_at,failure) VALUES('acme','slack','D1/2','UGUEST','2026-11-18T10:01:00Z','Slack chat.postMessage: timeout');").unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let context_boundary: (i64, String) = conn.query_row(
+            "SELECT delivered_through_us,delivered_through_message FROM connected_conversations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(context_boundary, (2, "posted-piece".to_owned()));
+        // Even if version 23 runs again with the columns already present,
+        // the greatest delivery may no longer have a retained message row.
+        conn.execute(
+            "UPDATE connected_conversations SET delivered_through_us=3,delivered_through_message='pruned'",
+            [],
+        ).unwrap();
+        conn.pragma_update(None, "user_version", u32::try_from(before).unwrap())
+            .unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let context_boundary: (i64, String) = conn.query_row(
+            "SELECT delivered_through_us,delivered_through_message FROM connected_conversations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(context_boundary, (3, "pruned".to_owned()));
         let attempt = conn
             .query_row(
                 "SELECT attempted_at,latest_attempted_at,post_id,legacy_read_at,delivery_unknown_at FROM conversation_answers WHERE turn='turn-1'",
