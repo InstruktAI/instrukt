@@ -21,9 +21,7 @@ fn dispatched_task() -> Tracked {
     project
 }
 
-// spec: project/instrukt/spec/feature/runner/anomaly-notification UC-AN1
-#[test]
-fn a_failed_task_is_reported_once_by_reference_to_the_session_holding_it() {
+fn check_configured_notification() {
     let mut project = dispatched_task();
     project.todo_in_session(
         "s1",
@@ -53,21 +51,52 @@ fn a_failed_task_is_reported_once_by_reference_to_the_session_holding_it() {
 
 // spec: project/instrukt/spec/feature/runner/anomaly-notification UC-AN1
 #[test]
-fn a_run_that_ended_without_its_outcome_is_asked_once_then_reported() {
+fn a_stopped_execution_is_visible_without_a_notification_command() {
     let mut project = dispatched_task();
+    let path = project.env.instrukt_home().join("instrukt.yaml");
+    let mut settings: serde_yaml_ng::Value =
+        serde_yaml_ng::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    settings["runner"]
+        .as_mapping_mut()
+        .unwrap()
+        .remove("notify");
+    std::fs::write(path, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
+    let status = |p: &Tracked| {
+        let out = p
+            .env
+            .run(p.repo.path(), ["events", "status", "--json"])
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+    };
     project.rt.set_status("s1", "ended ok");
-
-    project.tick_at("2030-01-06T09:01:20Z");
-    insta::assert_snapshot!("recovery-message", project.rt.sent("s1", 1));
+    // The pump accepted the recovery before the execution observer recorded it.
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        project.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO runtime_inputs(runtime,session,input_id,intent,content,state,kind,arrived_at,accepted_at,waiting,group_id,selected_content)
+        SELECT 't3','s1','recovery:' || session || ':' || workflow_state,'asap','interrupted recovery','accepted','recovery',
+        '2030-01-06T09:01:00Z','2030-01-06T09:01:00Z',1,'recovery:' || session || ':' || workflow_state,'interrupted recovery'
+        FROM executions WHERE session='t3:s1'",
+        [],
+    ).unwrap();
+    project.tick_at("2030-01-06T09:04:20Z");
+    let report = status(&project);
+    assert_eq!(report["notification_configured"], false);
+    assert_eq!(report["stopped_executions"][0]["session"], "t3:s1");
+    assert_eq!(report["stopped_executions"][0]["todo"], "weekly-status");
     assert!(project.rt.notifications().is_empty());
-
-    // The session ran again and ended, still without an outcome.
-    project.rt.set_status("s1", "ended ok");
-    project.tick_at("2030-01-06T09:02:20Z");
-    project.tick_at("2030-01-06T09:03:20Z");
-
-    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"t3:s1");
-    assert_eq!(project.rt.sent_count("s1"), 1, "one recovery message");
+    project.todo_in_session(
+        "s1",
+        ["stamp", "weekly-status", "--task-outcome", "success"],
+    );
+    project.tick_at("2030-01-06T09:05:20Z");
+    assert_eq!(
+        status(&project)["stopped_executions"],
+        serde_json::json!([])
+    );
+    check_configured_notification();
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3

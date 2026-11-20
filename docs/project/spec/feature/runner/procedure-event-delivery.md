@@ -76,10 +76,9 @@ rows retain their identity and disposition. Selection freezes message content:
 state already selected or accepted by the runtime is never replaced.
 
 One session-wide slot covers every producer. A selected or uncertain send also
-reserves it. New entries remain pending while it waits. Only adapter evidence
-that the message entered a native run clears the slot; acceptance alone clears
-nothing. Missing consumption evidence retains the slot and reports its gap until
-the input bound (`runner/inputs.rs`) passes; then the input is recorded as
+reserves it. New entries remain pending while it waits. Evidence that the message entered a native run normally clears the slot.
+Acceptance alone leaves it waiting. Missing consumption evidence retains the slot and reports its gap until
+`INPUT_WAIT_BOUND` passes; then the input is recorded as
 unconfirmed, the slot is released and later entries proceed. An unconfirmed input
 is never sent again.
 A native turn reported as interrupted receives its same immutable batch again;
@@ -270,6 +269,8 @@ When several more distinct events arrive
 Then no second instrukt message is queued while that message waits
 And after observed consumption the next message combines the pending events in order
 And every event retains its identity and payload
+But when consumption is never reported before the input bound
+Then the next event can be delivered and status lists the earlier input as unconfirmed without resending it
 ```
 
 ### UC-PED13: Receive the latest pending state for each subject
@@ -293,6 +294,8 @@ When an eligible handover composes its log
 Then its entry count and encoded size are bounded
 And its final entry states how many more are pending
 And observed consumption permits the remaining ordered entries in the next delivery
+But if the head entry cannot fit alone
+Then status lists it as set aside and the next eligible entry is delivered
 ```
 
 ### UC-PED15: Reconcile an interrupted batch idempotently

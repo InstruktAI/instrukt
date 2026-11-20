@@ -52,8 +52,13 @@ pub(crate) fn approvals(
                 inputs::retain(tx,&target,&Entry{id:&id,kind:InputKind::Approval, assignment:None,source_at:notice.get("source_at").or_else(||notice.get("at")).and_then(|v|v.as_str()),arrived_at,intent:Intent::Asap,content:&content})?;
                 tx.execute("UPDATE approval_attention SET target=?3,input_id=?4,failure=NULL WHERE todo_id=?1 AND decision_sequence=?2",params![todo,seq,claim,id]).map_err(state::sql(&state::db_path(tx)))?;Ok(())
             })?;
-            if inputs::outcome(&state, &target, &id)? != inputs::InputOutcome::Pending {
-                finish_approval(&state, &todo, seq, "accepted", None)?;
+            match inputs::outcome(&state, &target, &id)? {
+                inputs::InputOutcome::Accepted | inputs::InputOutcome::Entered => {
+                    finish_approval(&state, &todo, seq, "accepted", None)?;
+                }
+                inputs::InputOutcome::Pending
+                | inputs::InputOutcome::Unconfirmed
+                | inputs::InputOutcome::SetAside => {}
             }
             Ok(())
         })();
@@ -90,8 +95,16 @@ pub fn deliver_approval_attention(
     Ok(())
 }
 
+pub(crate) fn settle_terminal_approvals(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+) -> Result<(), StateError> {
+    tx.execute("UPDATE approval_attention AS a SET (state,failure,content)=(SELECT i.state,i.failure,CASE WHEN i.state='set_aside' THEN i.content ELSE a.content END FROM runtime_inputs i WHERE i.input_id=a.input_id AND (i.runtime || ':' || i.session)=a.target) WHERE a.state IN ('pending','accepted') AND EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=a.input_id AND (i.runtime || ':' || i.session)=a.target AND i.state IN ('unconfirmed','set_aside'))",[]).map_err(state::sql(&state::db_path(tx)))?;
+    Ok(())
+}
+
 pub(crate) fn settle_approvals(state: &RunnerState) -> Result<(), StateError> {
     state.write(|tx|{
+        settle_terminal_approvals(tx)?;
         tx.execute("UPDATE approval_attention SET failure=(SELECT i.failure FROM runtime_inputs i WHERE i.input_id=approval_attention.input_id AND (i.runtime || ':' || i.session)=approval_attention.target), state=CASE WHEN EXISTS (SELECT 1 FROM runtime_inputs i WHERE i.input_id=approval_attention.input_id AND (i.runtime || ':' || i.session)=approval_attention.target AND i.state IN ('accepted','entered')) THEN 'accepted' ELSE state END WHERE state='pending'",[]).map_err(state::sql(&state::db_path(tx)))?;Ok(())
     })
 }

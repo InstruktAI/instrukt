@@ -54,6 +54,11 @@ configured, so the operator sees it when the runtime offers no notification
 (`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
 the operator).
 
+For a stopped execution, `instrukt events status` lists its work item,
+session, workflow state and whether a notification command is configured.
+A recovery input that ends unconfirmed raises the stopped-execution anomaly.
+The finding persists until the workflow advances or the execution is released.
+
 ## Use cases
 
 ### UC-AN1: Notice a failed task that is not waiting in a conversation
@@ -63,13 +68,14 @@ the operator).
   And has left anomaly reporting at its default
   When a task fails with no conversation waiting for the developer
   Then the developer receives a reference to the session holding the failure
+  But when a stopped execution has no notification command
+  Then events status lists it as stopped with notification unconfigured until the work advances
 ```
 
 ## Known caveats
 
-- When the runtime offers no notification, or delivering one fails, nothing
-  else happens: the anomaly stays where it lives, and nothing is copied or
-  retried elsewhere.
+- When a notification command is unavailable or delivery fails, the anomaly
+  remains visible in status. Its content stays where it was recorded.
 - When no session could start (the dispatch order is exhausted), the runner
   releases its own claim and sets no hold; the notification references the
   work item instead of a session.

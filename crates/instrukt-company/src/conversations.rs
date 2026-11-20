@@ -2001,6 +2001,9 @@ impl RelayWorkers {
         };
         if !read.invalidated {
             let state = if let Some(presence) = observation {
+                if presence != Presence::Present {
+                    tracing::debug!(target: LOG_TARGET, event = "conversation_presence_probe_confirmed", session = %read.session, ?presence);
+                }
                 Self::observation(presence, now)
             } else {
                 let session = &read.session;
@@ -2051,6 +2054,7 @@ impl RelayWorkers {
         let runtime = adapter.runtime();
         let session = session.clone();
         let target = session.clone();
+        tracing::debug!(target: LOG_TARGET, event = "conversation_presence_probe_started", %session);
         let reply = self.spawn(move || {
             instrukt_runner::runtime::adapter(runtime)
                 .read_state(&target)

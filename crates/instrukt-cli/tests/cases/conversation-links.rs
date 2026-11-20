@@ -65,7 +65,6 @@ fn wait_for(condition: impl FnMut() -> bool) {
     common::wait_until("native relay progress", Duration::from_secs(15), condition);
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
 #[test]
@@ -217,7 +216,6 @@ fn the_real_runner_relays_native_completed_turns_and_keeps_restart_positions() {
     drop(runner);
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn an_interrupted_send_recovers_native_acceptance_without_duplicate_input() {
     let env = common::TestEnv::new();
@@ -321,7 +319,6 @@ fn admission_fixture() -> AdmissionFixture {
     }
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn a_focused_recorded_assignment_reports_through_its_own_output() {
     let f = admission_fixture();
@@ -340,7 +337,6 @@ fn a_focused_recorded_assignment_reports_through_its_own_output() {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn a_workers_recorded_dispatcher_relationship_survives_a_later_claim_change() {
     let f = admission_fixture();
@@ -366,7 +362,6 @@ fn a_workers_recorded_dispatcher_relationship_survives_a_later_claim_change() {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
 #[test]
 fn a_migrated_nonfocused_worker_keeps_scoped_commands_but_cannot_link_to_its_dispatcher() {
@@ -445,7 +440,6 @@ fn a_migrated_nonfocused_worker_keeps_scoped_commands_but_cannot_link_to_its_dis
     assert_eq!(current.get("dispatcher"), Some(&serde_json::Value::Null));
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn a_third_peer_is_refused_without_changing_the_active_conversation() {
     let f = admission_fixture();
@@ -468,7 +462,6 @@ fn a_third_peer_is_refused_without_changing_the_active_conversation() {
     assert_eq!(links::status(&f.home).unwrap().len(), 1);
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn opening_an_existing_pair_reuses_its_link_and_positions() {
     let f = admission_fixture();
@@ -489,7 +482,6 @@ fn opening_an_existing_pair_reuses_its_link_and_positions() {
     assert_eq!(links::status(&f.home).unwrap().len(), 1);
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn an_agent_opens_the_requested_discussion_and_reuses_its_one_opening_contribution() {
     let env = common::TestEnv::new();
@@ -575,7 +567,6 @@ fn either_agent_sends_a_final_contribution_then_closes_the_discussion_for_everyo
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn opening_requires_a_native_caller_before_creating_a_link() {
     let env = common::TestEnv::new();
@@ -593,7 +584,6 @@ fn opening_requires_a_native_caller_before_creating_a_link() {
     assert!(links::status(&home).unwrap().is_empty());
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn retrying_an_interrupted_open_observes_its_original_contribution_without_resending() {
     let env = common::TestEnv::new();
@@ -707,7 +697,6 @@ fn changing_the_runtime_source_does_not_reidentify_a_links_members() {
     assert!(links::status(&home).unwrap()[0].active);
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
 #[test]
 fn native_completed_turns_suppress_inherited_echoes_but_preserve_other_human_spans() {
@@ -947,7 +936,6 @@ fn native_send_failure_keeps_a_safe_actionable_cause_and_pending_handover() {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn native_observation_failure_keeps_its_transport_cause_without_resending() {
     let env = common::TestEnv::new();
@@ -1018,7 +1006,6 @@ fn discussion_log(env: &common::TestEnv, command: &str, link: &str) -> String {
         .join("\n")
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 // spec: project/instrukt/spec/feature/runner/conversation-links UC-CL2
 #[test]
 fn membership_and_automatic_delivery_have_body_free_boundary_summaries() {
@@ -1079,7 +1066,6 @@ fn membership_and_automatic_delivery_have_body_free_boundary_summaries() {
     drop(runner);
 }
 
-// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
 #[test]
 fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_position() {
     let env = common::TestEnv::new();
@@ -1143,4 +1129,74 @@ fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_posi
                 .all(|d| d["failure"].is_string())
     );
     drop(runner);
+}
+
+// spec: project/instrukt/spec/feature/runner/conversation-links UC-CL1
+#[test]
+#[cfg(debug_assertions)]
+fn a_failed_link_pass_retries_without_another_native_change() {
+    let mut env = common::TestEnv::new();
+    env.set_env("INSTRUKT_LOG_LEVEL", "debug");
+    let wakes = env.path("native-wakes");
+    std::fs::write(&wakes, "0").unwrap();
+    env.set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
+    let store = history::T3Store::new(&env);
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 1\nrunner: {runtime: t3}\nmodules: {history: false}\n",
+    )
+    .unwrap();
+    let fake = runtime::FakeT3::create(&env);
+    fake.seed("parent", env.home(), "peer-a", "Opening A.");
+    fake.seed("child", env.home(), "peer-b", "Opening B.");
+    env.instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "parent")
+        .args(["discuss", "open", "child"])
+        .assert()
+        .success();
+    let home = instrukt_core::home::Home::at_user_home(env.home().into());
+    let _runner = crate::fixtures::conversing::Running::spawn(
+        env.instrukt_process(env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
+    let log = env.home().join(".local/state/instrukt-ai/instrukt/run.log");
+    wait_for(|| {
+        std::fs::read_to_string(&log)
+            .is_ok_and(|log| log.contains("conversation_relay_source_processed"))
+    });
+    let wake = |revision: &str| {
+        let next = wakes.with_extension("next");
+        std::fs::write(&next, revision).unwrap();
+        std::fs::rename(next, &wakes).unwrap();
+    };
+    store.turn("parent", "first-reply", 1, "Shared topic.", "Parent reply.");
+    wake("1");
+    wait_for(|| fake.message_count("child") == 2);
+    assert!(fake.message("child", 1).contains("Parent reply."));
+    assert_eq!(fake.message_count("parent"), 1);
+    store.exclude_readers();
+    store.turn(
+        "child",
+        "after-lock",
+        1,
+        "Question.",
+        "Reply after recovery.",
+    );
+    wake("2");
+    wait_for(|| {
+        links::status(&home).unwrap().iter().any(|link| {
+            link.directions.iter().any(|direction| {
+                direction
+                    .failure
+                    .as_deref()
+                    .is_some_and(|cause| cause.contains("database is locked"))
+            })
+        })
+    });
+    store.let_readers_in();
+    wait_for(|| fake.message_count("parent") == 2);
+    assert!(fake.message("parent", 1).contains("Reply after recovery."));
+    assert_eq!(fake.message_count("child"), 2);
 }

@@ -1,5 +1,5 @@
 //! Native database notifications drive the runner's independent relay reader.
-use super::{LinkError, failure, relay, status};
+use super::{LinkError, failure, relay_pass, status};
 use crate::interfaces::CompanyRelayPass;
 use instrukt_core::{
     config::{Current, Env},
@@ -30,6 +30,7 @@ impl Drop for ExitNotice {
     }
 }
 /// The longest wait before T3's conversation source is acquired again.
+const LINK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const MOST_RETRY: Duration = Duration::from_secs(60);
 
 impl Worker {
@@ -129,15 +130,26 @@ fn serve(
     if let Some(destinations) = destinations {
         destinations.company.relay_state(home, None);
     }
-    // Links catch up at startup and on source changes only (native
-    // notifications, and a missing source file that is now watched);
-    // connector arrivals and the retry bound drive conversation work alone.
     let mut links_due = true;
+    let mut link_retry = None;
+    let mut link_delay = LINK_RETRY_DELAY;
     let mut pass = CompanyRelayPass::CatchUp;
     loop {
         let source_pass = std::mem::take(&mut links_due);
-        if source_pass && let Err(error) = relay(home, source.as_ref(), adapter.as_ref()) {
-            record(home, &error);
+        if source_pass {
+            let failed = match relay_pass(home, source.as_ref(), adapter.as_ref()) {
+                Ok(failed) => failed,
+                Err(error) => {
+                    record(home, &error);
+                    true
+                }
+            };
+            link_retry = failed.then(|| std::time::Instant::now() + link_delay);
+            link_delay = if failed {
+                (link_delay * 2).min(MOST_RETRY)
+            } else {
+                LINK_RETRY_DELAY
+            };
         }
         if let Some(destinations) = destinations
             && let Err(error) = destinations.company.relay(
@@ -151,7 +163,14 @@ fn serve(
             tracing::warn!(event = "conversation_relay_failed", error = %error);
         }
         if source_pass {
-            tracing::debug!(event = "conversation_relay_source_processed");
+            match pass {
+                CompanyRelayPass::CatchUp => {
+                    tracing::debug!(event = "conversation_relay_source_processed")
+                }
+                CompanyRelayPass::Retry => {
+                    tracing::debug!(event = "conversation_link_retry_processed")
+                }
+            }
         }
         // Retained connector work that is not yet done is retried within a
         // bound; otherwise only a native change or new intake wakes the relay.
@@ -161,6 +180,11 @@ fn serve(
         pass = loop {
             if stopping.try_recv().is_ok() {
                 return Ok(());
+            }
+            if link_retry.is_some_and(|at| std::time::Instant::now() >= at) {
+                // Retry link work without treating the timer as a native source change.
+                links_due = true;
+                break CompanyRelayPass::Retry;
             }
             if destinations.is_some_and(|d| {
                 d.arrivals

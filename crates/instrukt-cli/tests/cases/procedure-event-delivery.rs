@@ -108,12 +108,82 @@ fn a_busy_runtime_accepts_one_message_and_combines_more_events_after_observed_co
     r.append("third");
     r.append("fourth");
     r.tick();
-    r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
     r.runtime.consume("s1");
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 3);
     insta::assert_snapshot!("bounded-busy-log", r.conversation());
+    r.runtime.hide_inputs("s1");
+    r.tick();
+    let out = r
+        .computer
+        .env
+        .run(r.computer.project.path(), ["events", "status", "--json"])
+        .success();
+    let gap: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        gap["input_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["state"] == "accepted"
+                && entry["failure"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("consumption unknown"))
+    );
+    assert_eq!(r.runtime.message_count("s1"), 3);
+    r.append("after-unconfirmed");
+    r.computer
+        .env
+        .instrukt(r.computer.project.path())
+        .env("INSTRUKT_NOW", "2090-01-01T00:00:00Z")
+        .arg("tick")
+        .assert()
+        .success();
+    assert_eq!(r.runtime.message_count("s1"), 4);
+    let next = r.runtime.message("s1", 3);
+    assert!(next.contains("after-unconfirmed"));
+    assert!(!next.contains("Entry: event:third:"));
+    let status = r
+        .computer
+        .env
+        .run(r.computer.project.path(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    assert!(
+        status["input_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["state"] == "unconfirmed")
+    );
+    // Recreate an interruption before the event disposition was settled.
+    let db = r.computer.db();
+    db.execute(
+        "UPDATE procedure_activations SET state='accepted' WHERE event_id IN ('third','fourth')",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE standing_deliveries SET state='pending_input' WHERE event_id IN ('third','fourth')",
+        [],
+    )
+    .unwrap();
+    let key = r.runtime.key("s1");
+    r.runtime.delete("s1");
+    r.replace_deleted(&key);
+    let opening = r.runtime.message("s2", 0);
+    assert!(!opening.contains("Entry: event:third:"), "{opening}");
+    assert!(!opening.contains("Entry: event:fourth:"), "{opening}");
+    let outcome: String = db
+        .query_row(
+            "SELECT state FROM procedure_activations WHERE event_id='third'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(outcome, "unconfirmed");
 }
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED2
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED4
@@ -620,6 +690,7 @@ fn a_burst_replaces_only_undelivered_state_and_keeps_distinct_occurrences() {
 #[test]
 fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     let r = Responsibility::new("");
+    append_oversized(&r);
     for i in 0..40 {
         r.append(&format!("event-{i:02}"));
     }
@@ -645,9 +716,85 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     assert_eq!(r.runtime.message_count("s1"), 2);
     assert!(r.runtime.message("s1", 1).len() <= 64 * 1024);
     r.runtime.consume("s1");
+    append_oversized(&r);
+    r.append("after-oversized");
     r.tick();
-    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert_eq!(r.delivered_to("after-oversized").to_string(), "t3:s1");
+    assert!(r.runtime.input_log("s1").contains("after-oversized"));
+    let db = r.computer.db();
+    for (table, payload) in [
+        ("runtime_inputs", "content"),
+        ("standing_deliveries", "envelope"),
+        ("procedure_activations", "envelope"),
+    ] {
+        let (count, smallest, largest): (u32, u32, u32) = db.query_row(
+            &format!("SELECT count(*),min(length({payload})),max(length({payload})) FROM {table} WHERE state='set_aside'"),
+            [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        ).unwrap();
+        assert!(count > 0);
+        assert_eq!((smallest, largest), (71, 71), "{table}");
+    }
+    for n in 0..12 {
+        db.execute("INSERT INTO runtime_inputs(runtime,session,input_id,intent,content,state,kind,arrived_at,failure)
+            VALUES('t3','test',?1,'asap','digest','set_aside','event','2026-11-05T00:00:00Z','too big')", [format!("retained-{n}")]).unwrap();
+    }
+    let status = || {
+        let out = r
+            .computer
+            .env
+            .run(r.computer.project.path(), ["events", "status", "--json"])
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+    };
+    let report = status();
+    assert_eq!(report["set_aside"]["count"], 14);
+    assert_eq!(report["set_aside"]["recent"].as_array().unwrap().len(), 10);
+    // The runner stopped after compacting the input, before the approval
+    // settlement recorded its terminal disposition.
+    let digest = format!("sha256:{}", "a".repeat(64));
+    db.execute(
+        "UPDATE runtime_inputs SET kind='approval',content=?1 WHERE input_id='retained-0'",
+        [&digest],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO approval_attention(todo_id,decision_sequence,content,target,input_id,state)
+        VALUES('interrupted-approval',1,?1,'t3:test','retained-0','pending')",
+        ["x".repeat(71_757)],
+    )
+    .unwrap();
+    db.execute_batch("CREATE TRIGGER require_approval_settlement BEFORE DELETE ON approval_attention
+        WHEN OLD.todo_id='interrupted-approval' AND (OLD.state!='set_aside' OR length(OLD.content)!=71)
+        BEGIN SELECT RAISE(ABORT, 'approval must settle and compact before retirement'); END;").unwrap();
+    r.computer
+        .env
+        .instrukt(r.computer.project.path())
+        .env("INSTRUKT_NOW", "2090-01-01T00:00:00Z")
+        .arg("tick")
+        .assert()
+        .success();
+    assert_eq!(status()["set_aside"]["count"], 0);
+    let approvals: u32 = db
+        .query_row(
+            "SELECT count(*) FROM approval_attention WHERE todo_id='interrupted-approval'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(approvals, 0, "expired approval settled before retirement");
 }
+fn append_oversized(r: &Responsibility) {
+    let id = format!("oversized-{}", r.runtime.threads().len());
+    let event = serde_json::json!({"id":id,"type":"example.changed","source":r.computer.computer(),"subject":"todo:demo","home":"project:fork","home_owner":"unresolved","time":"2026-11-05T00:00:00Z","data":{"message":"x".repeat(70*1024)}});
+    redis::cmd("XADD")
+        .arg(EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg(event.to_string())
+        .query::<String>(&mut r.redis.connection())
+        .unwrap();
+}
+
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED15
 #[test]
 fn an_interrupted_native_turn_gets_its_same_batch_again() {
@@ -720,7 +867,6 @@ fn an_only_at_entry_wake_rechecks_idleness_at_the_handover() {
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
 }
-// spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED14
 #[test]
 fn payload_size_bounds_a_batch_before_the_entry_count_limit() {
     let r = Responsibility::new("");
@@ -1622,7 +1768,6 @@ fn unresolved_start_reporting_is_once_and_absence_alone_never_authorizes_another
     assert!(r.runtime.threads().is_empty());
 }
 
-// spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED12
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS10
 #[test]
 fn lost_send_acknowledgement_reconciles_visible_waiting_input_without_a_second_copy() {
