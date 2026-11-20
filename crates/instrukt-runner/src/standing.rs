@@ -267,7 +267,7 @@ pub(crate) fn deliver_pending(
             result.as_ref().map(|_| ()),
         );
         if let Err(error) = result {
-            state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3 AND state NOT IN ('set_aside','unconfirmed')",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
+            state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3 AND state IN ('accepted','pending')",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
             if keyed::report_start_finding(&state, selected, &error) {
                 tracing::warn!(event="standing_delivery_failed",key=%responsibility,error=%error);
             }
@@ -291,6 +291,8 @@ fn deliver_group(
     }
     let selected_runtime = config.runner_runtime()?;
     let adapter = crate::runtime::adapter(selected_runtime);
+    #[cfg(debug_assertions)]
+    keyed::hold_for_fixture("INSTRUKT_TEST_STANDING_CLAIM_HOLD", responsibility);
     let guard = keyed::KeyGuard::claim(
         invocation,
         adapter.as_ref(),
@@ -298,6 +300,23 @@ fn deliver_group(
         project.as_deref(),
         now,
     )?;
+    let pending = state.read(|conn, path| {
+        let mut query = conn.prepare(
+            "SELECT EXISTS(SELECT 1 FROM procedure_activations WHERE rowid=?1
+             AND event_id=?2 AND procedure=?3 AND exact_home=?4 AND state IN ('accepted','pending'))",
+        ).map_err(state::sql(path))?;
+        items.iter().filter_map(|item| {
+            match query.query_row(params![item.position, item.event, item.procedure, item.home], |row| row.get::<_, bool>(0)) {
+                Ok(true) => Some(Ok(item.clone())),
+                Ok(false) => None,
+                Err(error) => Some(Err(state::sql(path)(error))),
+            }
+        }).collect::<Result<Vec<_>, StateError>>()
+    })?.unwrap_or_default();
+    let items = pending.as_slice();
+    let Some(first) = items.first() else {
+        return Ok(());
+    };
     let manual=state.read(|conn,path|conn.query_row("SELECT token FROM manual_standing_reservations WHERE responsibility=?1 AND session IS NULL",[responsibility],|r|r.get::<_,String>(0)).optional().map_err(state::sql(path)))?.flatten();
     if manual.is_some() {
         return Err(SessionsError::Unresolved {

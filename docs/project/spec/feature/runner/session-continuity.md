@@ -259,6 +259,10 @@ before any runtime command. Each owner holds an OS lock for its exact key
 through the operation, including `resolve-start`. An owner taking that key's
 lock can recover the prior owner's row while retaining unresolved markers.
 Elapsed time alone permits no new start.
+Exact-session resolution checks native thread ownership and writes the binding
+in one transaction, so concurrent commands for different keys cannot claim
+the same thread. The losing command leaves its start unresolved.
+
 
 ### Human-facing thread titles
 
@@ -852,6 +856,7 @@ When the developer deletes its thread in the runtime and a later event for that 
 Then no successor starts, the event stays pending and status gives the replacement command
 When the operator confirms the old provider stopped through that command
 Then the successor uses the same key and receives the pending and later events
+And a wake already waiting on that key hands over only events still pending after replacement
 But when the developer archived the thread instead
 Then no successor starts, the event stays pending and status shows the developer the archived thread
 ```
@@ -887,6 +892,8 @@ Then no-start resolution clears the pending ID and permits a fresh start
 When a committed binding or pending successor is confirmed absent
 Then the printed replacement command retires the named ID after the operator confirms its provider stopped
 And a successful replacement of a committed binding receives later work
+But if two keys concurrently resolve to the same available thread
+Then only one resolution binds it and the other start stays unresolved
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

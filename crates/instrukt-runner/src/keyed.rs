@@ -1019,31 +1019,36 @@ pub fn resolve(
                 "native project for {session} cannot be verified against the retained project. Restore native project visibility and retry `instrukt sessions resolve-start {key} --session {session}`"
             )));
         }
-        let owned_elsewhere = guard.state.read(|conn, path| conn.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM runtime_bindings WHERE session=?1 AND semantic_key!=?2
-                UNION ALL SELECT 1 FROM session_bindings WHERE session=?1 AND semantic_key!=?2 AND released_at IS NULL
-                UNION ALL SELECT 1 FROM procedure_responsibilities WHERE session=?1 AND semantic_key!=?2
-                UNION ALL SELECT 1 FROM connected_conversations WHERE session=?1 AND semantic_key!=?2
-             )",
-            params![session.to_string(), key],
-            |row| row.get::<_, bool>(0),
-        ).map_err(state::sql(path)))?.unwrap_or(false);
-        if owned_elsewhere {
-            return Err(SessionsError::KeyConflict(key.into()));
-        }
         if !recorded.opening_acknowledged {
             adapter.verify_placement(input, &thread)?;
         }
-        remember(
-            &guard.state,
-            adapter,
-            input,
-            &thread,
-            recorded.project.as_deref(),
-            false,
-            RequestEvidence::Retained,
-        )?;
+        #[cfg(debug_assertions)]
+        hold_for_fixture("INSTRUKT_TEST_RESOLVE_BINDING_HOLD", key);
+        // Different keys can resolve concurrently. The writer transaction
+        // orders the ownership check with the binding change.
+        guard.state.write::<_, SessionsError>(|tx| {
+            let path = state::db_path(tx);
+            let owned_elsewhere = tx.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM runtime_bindings WHERE session=?1 AND semantic_key!=?2
+                    UNION ALL SELECT 1 FROM session_bindings WHERE session=?1 AND semantic_key!=?2 AND released_at IS NULL
+                    UNION ALL SELECT 1 FROM procedure_responsibilities WHERE session=?1 AND semantic_key!=?2
+                    UNION ALL SELECT 1 FROM connected_conversations WHERE session=?1 AND semantic_key!=?2
+                 )",
+                params![session.to_string(), key],
+                |row| row.get::<_, bool>(0),
+            ).map_err(state::sql(&path))?;
+            if owned_elsewhere {
+                return Err(SessionsError::Refused(format!(
+                    "thread {session} already belongs to another runtime key; choose a different session with `instrukt sessions resolve-start {key} --session <runtime:id>`"
+                )));
+            }
+            remember_in(
+                tx, adapter.runtime(), input, &thread, recorded.project.as_deref(), false,
+                RequestEvidence::Retained,
+            )?;
+            Ok(())
+        })?;
         // Retain the marker until the original input is accepted.
     } else {
         let absent = observed.filter(|thread| thread.presence == Presence::Absent);
@@ -1063,6 +1068,25 @@ pub fn resolve(
     }
     note(&guard.state, adapter.runtime(), key, now, Ok(()));
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn hold_for_fixture(setting: &str, key: &str) {
+    if !instrukt_core::fsx::fence_active() {
+        return;
+    }
+    let Some(path) = std::env::var_os(setting).map(std::path::PathBuf::from) else {
+        return;
+    };
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(key)
+        || instrukt_core::fsx::write(path.with_extension("observed"), "").is_err()
+    {
+        return;
+    }
+    let until = std::time::Instant::now() + Duration::from_secs(30);
+    while path.exists() && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 pub(crate) fn recorded_session(

@@ -34,4 +34,4 @@ threads-required = 6
 
 [[profile.default.overrides]]
 filter = 'test(=session_continuity::keyed_recovery_doors_follow_binding_state)'
-threads-required = 5
+threads-required = 6

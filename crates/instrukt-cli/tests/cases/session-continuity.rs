@@ -151,6 +151,8 @@ fn keyed_recovery_doors_follow_binding_state() {
             scope.spawn(move || check_todo_recovery_doors(phase));
         }
         scope.spawn(check_run_recovery_doors);
+        #[cfg(debug_assertions)]
+        scope.spawn(concurrent_resolutions_bind_the_native_thread_to_only_one_key);
         crate::procedure_event_delivery::check_standing_recovery_doors();
     });
 }
@@ -263,6 +265,86 @@ fn check_run_recovery_doors() {
             assert!(fake.input_log(native).contains(RECOVERY_FOLLOWUP));
         },
     );
+}
+
+#[cfg(debug_assertions)]
+fn concurrent_resolutions_bind_the_native_thread_to_only_one_key() {
+    let p = Tracked::new(false);
+    let fake = FakeT3::create(&p.env);
+    let db = recovery_db(&p.env);
+    let keys = ["instrukt:run:demo:first", "instrukt:run:demo:second"];
+    fake.seed("s1", p.repo.path(), "An unbound thread", "Opening");
+    let resolve = |key: &str, marker: &str| {
+        let input = serde_json::json!({
+            "checkout": p.repo.path(), "key": key, "title": key,
+            "brief": "Retained opening", "worktree": null
+        });
+        db.execute(
+            "INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state)
+             VALUES('t3',?1,'demo','run',?1,?2,'Retained opening',?3,'2030-01-06T09:00:20Z',0,'unresolved')",
+            instrukt_core::state_db::rusqlite::params![key,p.repo.path().to_string_lossy(),input.to_string()],
+        ).unwrap();
+        let hold = p.env.path(marker);
+        std::fs::write(&hold, key).unwrap();
+        let child = p
+            .env
+            .instrukt_process(p.repo.path())
+            .env("INSTRUKT_TEST_RESOLVE_BINDING_HOLD", &hold)
+            .args(["sessions", "resolve-start", key, "--session", "t3:s1"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        (hold, child)
+    };
+    let (first, first_child) = resolve(keys[0], "first-binding");
+    let (second, second_child) = resolve(keys[1], "second-binding");
+    common::wait_until(
+        "both different keys reach the binding transaction",
+        std::time::Duration::from_secs(15),
+        || first.with_extension("observed").exists() && second.with_extension("observed").exists(),
+    );
+    std::fs::remove_file(first).unwrap();
+    std::fs::remove_file(second).unwrap();
+    let outputs = [
+        first_child.wait_with_output().unwrap(),
+        second_child.wait_with_output().unwrap(),
+    ];
+    assert_eq!(
+        outputs.iter().filter(|o| o.status.success()).count(),
+        1,
+        "{outputs:?}"
+    );
+    let winner = usize::from(!outputs[0].status.success());
+    let loser = 1 - winner;
+    let error = String::from_utf8_lossy(&outputs[loser].stderr);
+    assert!(
+        error.contains("already belongs to another runtime key"),
+        "{error}"
+    );
+    assert!(
+        error.contains(&format!(
+            "instrukt sessions resolve-start {} --session <runtime:id>",
+            keys[loser]
+        )),
+        "{error}"
+    );
+    let bound: String = db
+        .query_row(
+            "SELECT semantic_key FROM runtime_bindings WHERE session='t3:s1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(bound, keys[winner]);
+    let state: String = db
+        .query_row(
+            "SELECT state FROM runtime_starts WHERE semantic_key=?1",
+            [keys[loser]],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "unresolved");
 }
 
 fn run_recovery_worker(
