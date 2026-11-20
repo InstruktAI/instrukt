@@ -1309,8 +1309,9 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
         "the answer without another projection write",
         std::time::Duration::from_secs(20),
         || {
+            let answered = c.slack.posts().len() == 2;
             assert_eq!(last_wake(), Some(terminal_wake));
-            c.slack.posts().len() == 2
+            answered
         },
     );
     assert_eq!(c.slack.posts()[1].thread.as_deref(), Some(asked.as_str()));
