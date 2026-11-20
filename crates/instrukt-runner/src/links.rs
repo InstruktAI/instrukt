@@ -1,6 +1,7 @@
 //! Admit two-thread conversations and relay finished turns with durable handover evidence.
 mod _diagnostics;
 mod _management;
+mod _targets;
 mod _turns;
 mod _watch;
 use crate::runtime::{
@@ -386,12 +387,28 @@ pub fn status(home: &Home) -> Result<Vec<Status>, LinkError> {
     Ok(result)
 }
 fn directions(home: &Home) -> Result<Vec<Direction>, LinkError> {
+    directions_for(home, None)
+}
+
+fn active_link_ids(home: &Home) -> Result<Vec<String>, LinkError> {
     let Some(db) = StateRead::open(home)? else {
         return Ok(Vec::new());
     };
-    let mut q=db.conn().prepare("SELECT p.link,p.source,p.target,p.position_json,p.seen_json,p.pending_json,p.delivered_turn,p.receipts_json FROM conversation_relay_positions p JOIN conversation_links l ON l.id=p.link WHERE l.active=1 ORDER BY l.rowid,p.source")?;
+    let mut query = db
+        .conn()
+        .prepare("SELECT id FROM conversation_links WHERE active=1 ORDER BY rowid")?;
+    Ok(query
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+fn directions_for(home: &Home, link: Option<&str>) -> Result<Vec<Direction>, LinkError> {
+    let Some(db) = StateRead::open(home)? else {
+        return Ok(Vec::new());
+    };
+    let mut q=db.conn().prepare("SELECT p.link,p.source,p.target,p.position_json,p.seen_json,p.pending_json,p.delivered_turn,p.receipts_json FROM conversation_relay_positions p JOIN conversation_links l ON l.id=p.link WHERE l.active=1 AND (?1 IS NULL OR l.id=?1) ORDER BY l.rowid,p.source")?;
     let rows = q
-        .query_map([], |r| {
+        .query_map([link], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -465,23 +482,21 @@ pub fn relay(
     source: &dyn ConversationSource,
     adapter: &dyn RuntimeAdapter,
 ) -> Result<(), LinkError> {
-    relay_pass(home, source, adapter).map(|_| ())
+    for link in active_link_ids(home)? {
+        relay_link(home, source, adapter, &link)?;
+    }
+    Ok(())
 }
 
-pub(crate) fn relay_pass(
+fn relay_link(
     home: &Home,
     source: &dyn ConversationSource,
     adapter: &dyn RuntimeAdapter,
+    link: &str,
 ) -> Result<bool, LinkError> {
+    let _lock = link_lock(home, link)?;
     let mut retry = false;
-    for initial in directions(home)? {
-        let _lock = link_lock(home, &initial.link)?;
-        let Some(mut d) = directions(home)?
-            .into_iter()
-            .find(|d| d.link == initial.link && d.source == initial.source)
-        else {
-            continue;
-        };
+    for mut d in directions_for(home, Some(link))? {
         let result = relay_direction(home, source, adapter, &mut d);
         if result.is_ok() {
             let mut db = StateDb::open(home)?;

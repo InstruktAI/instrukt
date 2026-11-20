@@ -195,6 +195,10 @@ elif command=='start':
         (root/'die-after-start').unlink(); os.kill(os.getppid(),9)
     elif not (root/'silent-start').exists(): print(id)
 elif command=='send':
+    held=root/(operands[0]+'.hold-send')
+    if held.exists():
+        (root/(operands[0]+'.send-held')).write_text(str(os.getpid()))
+    while held.exists(): time.sleep(0.02)
     t=find(operands[0])
     if (root/'send-failure').exists(): print('send failed',file=sys.stderr); sys.exit(1)
     if (root/'send-unreachable').exists():
@@ -509,6 +513,9 @@ impl FakeT3 {
             .status()
             .unwrap()
             .success()
+    }
+    pub fn held_send_running(&self, session: &str) -> bool {
+        self.running(&format!("{session}.send-held"))
     }
     /// The original held show is still running, even if another was launched.
     pub fn held_show_running(&self, session: &str) -> bool {

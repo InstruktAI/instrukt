@@ -1,5 +1,5 @@
 //! Native database notifications drive the runner's independent relay reader.
-use super::{LinkError, failure, relay_pass, status};
+use super::{_targets::Targets, LinkError, failure, status};
 use crate::interfaces::CompanyRelayPass;
 use instrukt_core::{
     config::{Current, Env},
@@ -30,8 +30,13 @@ impl Drop for ExitNotice {
     }
 }
 /// The longest wait before T3's conversation source is acquired again.
-const LINK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const MOST_RETRY: Duration = Duration::from_secs(60);
+
+struct RelayState {
+    failing: Option<String>,
+    delay: Duration,
+    targets: Targets,
+}
 
 impl Worker {
     /// The relay serving links and, when given, the connector destination.
@@ -53,8 +58,11 @@ impl Worker {
             .name("conversation-relay".into())
             .spawn(move || {
                 let _notice = ExitNotice(supervise);
-                let mut failing: Option<String> = None;
-                let mut delay = Duration::from_secs(1);
+                let mut state = RelayState {
+                    failing: None,
+                    delay: Duration::from_secs(1),
+                    targets: Targets::default(),
+                };
                 loop {
                     let error = match serve(
                         &home,
@@ -62,24 +70,23 @@ impl Worker {
                         &current,
                         destinations.as_ref(),
                         &stopping,
-                        &mut failing,
-                        &mut delay,
+                        &mut state,
                     ) {
                         Ok(()) => return Ok(()),
                         Err(error) => error,
                     };
                     let cause = error.to_string();
-                    if failing.as_deref() != Some(cause.as_str()) {
+                    if state.failing.as_deref() != Some(cause.as_str()) {
                         record(&home, &error);
                         if let Some(destinations) = &destinations {
                             destinations.company.relay_state(&home, Some(&cause));
                         }
-                        failing = Some(cause);
+                        state.failing = Some(cause);
                     }
-                    if stopping.recv_timeout(delay).is_ok() {
+                    if stopping.recv_timeout(state.delay).is_ok() {
                         return Ok(());
                     }
-                    delay = (delay * 2).min(MOST_RETRY);
+                    state.delay = (state.delay * 2).min(MOST_RETRY);
                 }
             })
             .map_err(|e| LinkError::Refused(format!("relay worker could not start: {e}")))?;
@@ -115,14 +122,14 @@ fn serve(
     current: &Current,
     destinations: Option<&Destinations>,
     stopping: &mpsc::Receiver<()>,
-    failing: &mut Option<String>,
-    delay: &mut Duration,
+    state: &mut RelayState,
 ) -> Result<(), LinkError> {
-    let adapter = crate::runtime::adapter(current.get().global().runner_runtime()?);
+    let runtime = current.get().global().runner_runtime()?;
+    let adapter = crate::runtime::adapter(runtime);
     let source = adapter.conversation_source(home, env)?;
     let mut notifications = source.subscribe()?;
-    *delay = Duration::from_secs(1);
-    if let Some(cause) = failing.take() {
+    state.delay = Duration::from_secs(1);
+    if let Some(cause) = state.failing.take() {
         tracing::info!(event = "conversation_relay_recovered", cause = %cause);
     }
     // The source is acquired: a failure recorded for the relay ends, whether
@@ -131,26 +138,13 @@ fn serve(
         destinations.company.relay_state(home, None);
     }
     let mut links_due = true;
-    let mut link_retry = None;
-    let mut link_delay = LINK_RETRY_DELAY;
     let mut pass = CompanyRelayPass::CatchUp;
     loop {
         let source_pass = std::mem::take(&mut links_due);
         if source_pass {
-            let failed = match relay_pass(home, source.as_ref(), adapter.as_ref()) {
-                Ok(failed) => failed,
-                Err(error) => {
-                    record(home, &error);
-                    true
-                }
-            };
-            link_retry = failed.then(|| std::time::Instant::now() + link_delay);
-            link_delay = if failed {
-                (link_delay * 2).min(MOST_RETRY)
-            } else {
-                LINK_RETRY_DELAY
-            };
+            state.targets.source_changed(home);
         }
+        let link_retried = state.targets.advance(home, env, runtime);
         if let Some(destinations) = destinations
             && let Err(error) = destinations.company.relay(
                 home,
@@ -163,14 +157,9 @@ fn serve(
             tracing::warn!(event = "conversation_relay_failed", error = %error);
         }
         if source_pass {
-            match pass {
-                CompanyRelayPass::CatchUp => {
-                    tracing::debug!(event = "conversation_relay_source_processed")
-                }
-                CompanyRelayPass::Retry => {
-                    tracing::debug!(event = "conversation_link_retry_processed")
-                }
-            }
+            tracing::debug!(event = "conversation_relay_source_processed");
+        } else if link_retried {
+            tracing::debug!(event = "conversation_link_retry_processed");
         }
         // Retained connector work that is not yet done is retried within a
         // bound; otherwise only a native change or new intake wakes the relay.
@@ -181,9 +170,8 @@ fn serve(
             if stopping.try_recv().is_ok() {
                 return Ok(());
             }
-            if link_retry.is_some_and(|at| std::time::Instant::now() >= at) {
-                // Retry link work without treating the timer as a native source change.
-                links_due = true;
+            if state.targets.ready() {
+                // Link completions and retries leave the native source unchanged.
                 break CompanyRelayPass::Retry;
             }
             if destinations.is_some_and(|d| {
@@ -212,12 +200,20 @@ fn observe_stopped(failure: &mut Option<LinkError>) -> Result<(), LinkError> {
 }
 
 pub(crate) fn record(home: &Home, error: &LinkError) {
+    record_affected(home, error, None);
+}
+
+pub(super) fn record_link(home: &Home, link: &str, error: &LinkError) {
+    record_affected(home, error, Some(link));
+}
+
+fn record_affected(home: &Home, error: &LinkError, affected: Option<&str>) {
     let message = error.to_string();
     match status(home) {
         Ok(links) => {
             let active = links
                 .into_iter()
-                .filter(|link| link.active)
+                .filter(|link| link.active && affected.is_none_or(|id| link.id == id))
                 .collect::<Vec<_>>();
             if active.is_empty() {
                 tracing::error!(event="conversation_source_failed",error=%error);
