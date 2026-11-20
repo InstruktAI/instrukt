@@ -1,7 +1,7 @@
 //! Resolve durably accepted procedure responsibilities and hand over retained events.
 use crate::inputs::{self, Entry, InputKind, InputOutcome, Intent};
 use crate::keyed::{self, RuntimeInvocation};
-use crate::runtime::{CreationPermit, RuntimeAssignment, RuntimeStart};
+use crate::runtime::{CreationPermit, Presence, RuntimeAssignment, RuntimeStart};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::{self, RunnerState, StateError};
 use instrukt_core::config::Configuration;
@@ -248,14 +248,29 @@ pub(crate) fn deliver_pending(
             .push(item);
     }
     for (responsibility, (subject, group)) in groups {
-        if let Err(error) = deliver_group(
+        let result = deliver_group(
             invocation,
             &state,
             &responsibility,
             subject.as_deref(),
             &group,
             now,
+        );
+        // A standing group can report a conflict before it has a keyed
+        // request. Keyed start reports its own generation's result.
+        if !matches!(
+            result,
+            Err(SessionsError::Unresolved { .. } | SessionsError::Uncertain { .. })
         ) {
+            keyed::note(
+                &state,
+                selected,
+                &responsibility,
+                now,
+                result.as_ref().map(|_| ()),
+            );
+        }
+        if let Err(error) = result {
             state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
             if keyed::report_start_finding(&state, selected, &error) {
                 tracing::warn!(event="standing_delivery_failed",key=%responsibility,error=%error);
@@ -298,10 +313,23 @@ fn deliver_group(
         }
         let found = family
             .iter()
-            .filter(|t| t.semantic_key.as_deref() == Some(responsibility))
+            .filter(|t| {
+                t.semantic_key.as_deref() == Some(responsibility) && t.presence == Presence::Present
+            })
             .collect::<Vec<_>>();
         if found.len() > 1 {
-            return Err(SessionsError::KeyConflict(responsibility.into()));
+            return Err(keyed::conflict(
+                responsibility,
+                found.iter().map(|thread| &thread.session),
+            ));
+        }
+        if found.is_empty()
+            && let Some(thread) = family.iter().find(|thread| {
+                thread.presence == Presence::Archived
+                    && thread.semantic_key.as_deref() == Some(responsibility)
+            })
+        {
+            return Err(keyed::archived(responsibility, &thread.session));
         }
         if let Some(found) = found.first() {
             let thread = adapter.read_state(&found.session)?;
@@ -400,19 +428,28 @@ fn deliver_group(
         let thread = adapter.read_state(target)?;
         let found = listed
             .iter()
-            .filter(|t| t.semantic_key.as_deref() == Some(&original.key))
+            .filter(|t| {
+                t.presence == Presence::Present && t.semantic_key.as_deref() == Some(&original.key)
+            })
             .collect::<Vec<_>>();
-        if thread.state == SessionState::Gone {
+        if thread.presence == Presence::Archived {
+            return Err(keyed::archived(&original.key, target));
+        }
+        if found.len() > 1
+            || found
+                .first()
+                .is_some_and(|thread| thread.session != *target)
+        {
+            return Err(keyed::conflict(
+                &original.key,
+                found.iter().map(|thread| &thread.session).chain([target]),
+            ));
+        }
+        if thread.presence == Presence::Absent {
             let newest = items.iter().map(|p| p.position).max().unwrap_or(0);
             if newest <= recorded.3 {
                 return Err(SessionsError::Refused(format!(
                     "standing session {target} closed; retained work is suspended until a later activation"
-                )));
-            }
-            if subject.is_some() {
-                return Err(SessionsError::Refused(format!(
-                    "runtime `{}` cannot prove subject continuation for closed session {target}; pending work retained",
-                    selected_runtime.name()
                 )));
             }
             let current = GlobalIndex::load_readable(state.home())
@@ -466,15 +503,13 @@ fn deliver_group(
             session = None;
             planned_successor = true;
         } else {
-            if found.len() != 1
-                || found[0].session != *target
-                || thread.semantic_key.as_deref() != Some(&original.key)
-            {
-                return Err(SessionsError::KeyConflict(original.key));
+            if found.first().is_some_and(|found| {
+                crate::runtime::project_conflict(&thread.project_id, &found.project_id)
+            }) {
+                return Err(keyed::conflict(&original.key, [target]));
             }
-            adapter
-                .verify_start(&original, &thread)
-                .map_err(|_| SessionsError::KeyConflict(original.key.clone()))?;
+            keyed::verify_bound(adapter.as_ref(), &original, target, &thread)
+                .map_err(|_| keyed::conflict(&original.key, [target]))?;
             inputs::observe(invocation, adapter.as_ref(), target, now)?;
             let newest = items.iter().map(|p| p.position).max().unwrap_or(0);
             state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET seen_position=?2 WHERE responsibility=?1",params![responsibility,newest]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
@@ -903,6 +938,7 @@ fn prepare_successor(
         if unresolved{return Err(SessionsError::Unresolved{key:old_key});}
         let next=generation.checked_add(1).ok_or_else(||SessionsError::Refused("standing generation counter exhausted".into()))?;
         let next_key=format!("{}:generation:{next}",cx.responsibility);
+        tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()]).map_err(state::sql(&path))?;
         tx.execute("INSERT INTO procedure_generations(responsibility,generation,semantic_key,session,declaration,request,terminal) SELECT responsibility,generation,semantic_key,session,declaration,request,?2 FROM procedure_responsibilities WHERE responsibility=?1",params![cx.responsibility,cx.now.to_string()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE procedure_activations SET state='pending',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND d.responsibility=?1 AND d.target=?2 AND i.state IN ('pending','selected','accepted'))",params![cx.responsibility,cx.old_session.to_string()]).map_err(state::sql(&path))?;
         tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure='target closed before observed consumption; standing events retained for successor, other input retains terminal failure' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![cx.old_session.runtime.as_str(),cx.old_session.id.as_str()]).map_err(state::sql(&path))?;

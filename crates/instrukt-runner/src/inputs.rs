@@ -262,9 +262,13 @@ fn pump_inner(
                 return Ok(());
             }
             let entry_only=state.read(|conn,path|conn.query_row("SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE runtime=?1 AND session=?2 AND group_id=?3 AND intent='entry')",params![target.runtime.as_str(),target.id.as_str(),id],|r|r.get::<_,bool>(0)).map_err(state::sql(path)))?.unwrap_or(false);
+            let thread = adapter.read_state(target)?;
+            if thread.state == SessionState::Gone {
+                return Err(SessionsError::Gone(target.clone()));
+            }
             if entry_only
                 && !matches!(
-                    adapter.read_state(target)?.state,
+                    thread.state,
                     SessionState::InputReady | SessionState::EndedFailed
                 )
             {

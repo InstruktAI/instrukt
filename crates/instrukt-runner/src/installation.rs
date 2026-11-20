@@ -677,6 +677,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     })?.unwrap_or_default();
     // What the retained consumers hold whatever the files say now.
     let consumers = crate::consumers::status(request.home, &state)?;
+    let start_anomalies = crate::keyed::status(&state)?;
     // This computer's own machine ID, as it reads it, for comparison with the
     // other computers; reading creates no ID.
     let computer = instrukt_core::machine::existing_machine_id(request.home)
@@ -684,7 +685,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         .map(|id| id.as_str().to_owned());
     // The history workers' current failures, while they last.
     let workers = state.read(|conn, path| {
-        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
+        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers WHERE worker NOT GLOB 'keyed-start:*' ORDER BY worker").map_err(crate::state::sql(path))?;
         let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
@@ -732,7 +733,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         // Nothing read from the configuration can be shown: what depends on
         // it is absent, and the admission error says why.
         return Ok(
-            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"links":links,"conversations":conversations,"runner_service":null}),
+            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"links":links,"conversations":conversations,"runner_service":null}),
         );
     }
     let mut report = Report::default();
@@ -766,7 +767,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             .map(str::to_owned)
     };
     Ok(
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"links":links,"conversations":conversations,"runner_service":runner_service}),
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"links":links,"conversations":conversations,"runner_service":runner_service}),
     )
 }
 

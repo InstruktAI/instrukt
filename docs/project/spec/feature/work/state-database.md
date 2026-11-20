@@ -374,8 +374,10 @@ The receipt expires seven days after the append or the most recent retry that
 finds it. A destination that is no longer configured retires the intent as
 abandoned and keeps that fact on the outcome for status.
 
-**`runner_workers`** — current worker failures and deferred consumer source
-transitions. Each deferred transition retains its first reported time across
+**`runner_workers`** — current worker failures, deferred consumer source
+transitions and keyed-start findings. A keyed-start finding keeps its first
+observation on the operator clock and is cleared when reconciliation ends it.
+The process remembers which runtime keys it has notified during its lifetime. Each deferred transition retains its first reported time across
 retries. Completing the transition removes the row.
 
 Redis itself owns stream payloads, group pending entries, transport progress,

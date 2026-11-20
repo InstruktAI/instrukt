@@ -187,18 +187,131 @@ fn a_failed_send_retries_the_same_target_and_concurrent_ticks_never_create_a_rep
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
 #[test]
 fn two_exact_keyed_threads_leave_the_next_event_pending() {
+    let mut r = Responsibility::new("");
+    let notices = r.computer.env.path("start-notifications");
+    let path = r.computer.env.instrukt_home().join("instrukt.yaml");
+    let mut config: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["runner"]["notify"] = format!("printf '%s\\n' >> '{}'", notices.display()).into();
+    std::fs::write(&path, serde_yaml_ng::to_string(&config).unwrap()).unwrap();
+
+    r.computer
+        .env
+        .set_env("INSTRUKT_NOW", "2030-01-01T00:00:00Z");
+    r.append("initial");
+    r.tick();
+    let key = r.runtime.key("s1");
+    r.runtime
+        .seed("extra", r.computer.project.path(), &key, "Duplicate actor.");
+    r.append("next");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 2);
+    assert_eq!(r.runtime.message_count("s1"), 1);
+    let finding = start_anomalies(&r)[0].clone();
+    assert_eq!(finding["key"], key);
+    let cause = finding["failure"].as_str().unwrap();
+    assert!(
+        cause.contains("t3:s1") && cause.contains("t3:extra"),
+        "{cause}"
+    );
+    assert!(cause.contains("archive or delete"), "{cause}");
+    assert!(!notices.exists());
+
+    let clock = r.computer.env.path("operator-clock");
+    let set_time = |at: &str| {
+        let staged = clock.with_extension("next");
+        std::fs::write(&staged, at).unwrap();
+        std::fs::rename(staged, &clock).unwrap();
+    };
+    set_time("2030-01-01T00:06:00Z");
+    r.computer
+        .env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    let mut runner = transport::Running::start(&r.computer);
+    transport::until(|| notices.exists());
+    for at in ["2030-01-01T00:07:00Z", "2030-01-01T00:08:00Z"] {
+        set_time(at);
+        transport::until(|| {
+            r.computer
+                .db()
+                .query_row("SELECT last_at FROM wakeups", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .is_ok_and(|last| last == at)
+        });
+    }
+    runner.kill();
+    assert_eq!(std::fs::read_to_string(&notices).unwrap().trim(), key);
+    r.runtime.archive("extra");
+    r.tick();
+    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert!(start_anomalies(&r).is_empty());
+}
+fn start_anomalies(r: &Responsibility) -> Vec<serde_json::Value> {
+    let shown = r
+        .computer
+        .env
+        .run(r.computer.env.home(), ["events", "status", "--json"])
+        .success();
+    let status: serde_json::Value = serde_json::from_slice(&shown.get_output().stdout).unwrap();
+    status["start_anomalies"].as_array().unwrap().clone()
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS22
+#[test]
+fn subject_successors_require_absence_and_leave_archived_work_pending() {
+    let archived = Responsibility::new("subscription_identity: subject\n");
+    archived.append("initial");
+    archived.tick();
+    archived.runtime.archive("s1");
+    archived.append("after-archive");
+    archived.tick();
+    assert_eq!(archived.runtime.threads(), ["s1"]);
+    assert_eq!(archived.runtime.message_count("s1"), 1);
+    let state: String = archived
+        .computer
+        .db()
+        .query_row(
+            "SELECT state FROM procedure_activations WHERE event_id='after-archive'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "pending");
+    let finding = start_anomalies(&archived)[0].clone();
+    let cause = finding["failure"].as_str().unwrap();
+    assert!(
+        cause.contains("t3:s1") && cause.contains("unarchive it or delete it"),
+        "{cause}"
+    );
+
+    let deleted = Responsibility::new("subscription_identity: subject\n");
+    deleted.append("initial");
+    deleted.tick();
+    deleted.runtime.delete("s1");
+    deleted.append("after-delete");
+    deleted.tick();
+    assert_eq!(deleted.runtime.threads(), ["s2"]);
+    assert_eq!(deleted.delivered_to("after-delete").to_string(), "t3:s2");
+    assert!(deleted.runtime.input_log("s2").contains("after-delete"));
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS23
+#[test]
+fn a_renamed_standing_thread_keeps_receiving_events_by_id() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    r.runtime.flag("duplicate", true);
-    r.append("next");
+    r.runtime
+        .change("s1", "title", "Named by the developer".into());
+    r.append("after-rename");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 1);
-    assert_eq!(r.runtime.message_count("s1"), 1);
-    r.runtime.flag("duplicate", false);
-    r.tick();
-    assert_eq!(r.runtime.message_count("s1"), 2);
+    assert_eq!(r.runtime.threads(), ["s1"]);
+    assert_eq!(r.delivered_to("after-rename").to_string(), "t3:s1");
+    assert!(r.runtime.input_log("s1").contains("after-rename"));
+    assert!(start_anomalies(&r).is_empty());
 }
+
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED8
 #[test]
 fn confirmed_closure_suspends_work_until_a_new_activation_and_the_successor_gets_older_input_first()
@@ -208,17 +321,17 @@ fn confirmed_closure_suspends_work_until_a_new_activation_and_the_successor_gets
     r.tick();
     r.append("older-pending");
     r.tick();
-    r.runtime.archive("s1");
+    r.runtime.delete("s1");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 1);
+    assert!(r.runtime.threads().is_empty());
     r.publish("interruptible: true\n");
     r.append("later-activation");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    assert_eq!(r.runtime.threads().len(), 1);
     let shown = r.runtime.input_log("s2");
     insta::assert_snapshot!("closed-home-successor", work::redact(&shown));
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    assert_eq!(r.runtime.threads().len(), 1);
 }
 
 // spec: project/instrukt/spec/feature/runner/procedure-event-delivery UC-PED13
@@ -697,10 +810,10 @@ fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    r.runtime.archive("s1");
+    r.runtime.delete("s1");
     r.append("next-generation");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    assert_eq!(r.runtime.threads().len(), 1);
     insta::assert_snapshot!(
         "closed-home-next-generation",
         work::redact(&r.runtime.input_log("s2"))
@@ -712,7 +825,7 @@ fn an_unrelated_broken_entry_leaves_the_successor_and_its_reading_available() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    r.runtime.archive("s1");
+    r.runtime.delete("s1");
     let path = r.computer.env.instrukt_home().join("state/index.yaml");
     let mut index: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -723,7 +836,7 @@ fn an_unrelated_broken_entry_leaves_the_successor_and_its_reading_available() {
 
     r.append("next-generation");
     r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
+    assert_eq!(r.runtime.threads().len(), 1);
     assert!(r.runtime.input_log("s2").contains("next-generation"));
     let shown = r
         .computer

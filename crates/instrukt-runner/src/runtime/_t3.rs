@@ -242,15 +242,7 @@ impl RuntimeAdapter for T3 {
         &self,
         assignment: &super::RuntimeAssignment<'_>,
     ) -> Result<Thread, SessionsError> {
-        crate::keyed::start(
-            assignment.invocation,
-            self,
-            assignment.request,
-            assignment.project,
-            true,
-            assignment.now,
-            assignment.creation,
-        )
+        crate::keyed::start(self, assignment)
     }
     fn delivery_realization(&self) -> super::DeliveryRealization {
         super::DeliveryRealization::Queued
@@ -353,15 +345,7 @@ impl RuntimeAdapter for T3 {
         threads.into_iter().map(NativeThread::decode).collect()
     }
     fn start(&self, assignment: &super::RuntimeAssignment<'_>) -> Result<Thread, SessionsError> {
-        crate::keyed::start(
-            assignment.invocation,
-            self,
-            assignment.request,
-            assignment.project,
-            false,
-            assignment.now,
-            assignment.creation,
-        )
+        crate::keyed::start(self, assignment)
     }
     fn send(&self, session: &SessionRef, text: &str) -> Result<(), SessionsError> {
         if session.runtime.as_str() != "t3" {
@@ -375,13 +359,23 @@ impl RuntimeAdapter for T3 {
     }
     fn read_state(&self, session: &SessionRef) -> Result<Thread, SessionsError> {
         match self.show(session, 0) {
-            Ok(shown) => shown.thread.decode(),
+            Ok(shown) => {
+                let thread = shown.thread.decode()?;
+                if &thread.session != session {
+                    return Err(failure(
+                        "show",
+                        "thread response does not match the requested identity",
+                    ));
+                }
+                Ok(thread)
+            }
             Err(SessionsError::Gone(_)) => Ok(Thread {
                 session: session.clone(),
                 project_id: None,
                 title: None,
                 semantic_key: None,
                 state: SessionState::Gone,
+                presence: super::Presence::Absent,
                 branch: None,
                 worktree: None,
                 provider: None,
@@ -419,6 +413,9 @@ impl RuntimeAdapter for T3 {
 }
 
 pub(crate) fn verify_request(request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
+    if thread.presence != super::Presence::Present {
+        return Err(failure("start recovery", "thread is not present for work"));
+    }
     if thread.semantic_key.as_deref() != Some(request.key.as_str())
         || ![request.title.as_str(), request.key.as_str()]
             .into_iter()
@@ -509,7 +506,12 @@ impl NativeThread {
             "failed" | "interrupted" | "cancelled" | "rolled_back" => SessionState::EndedFailed,
             _ => SessionState::Unknown,
         };
-        let state = if self.archived == Some(true) {
+        let presence = if self.archived == Some(true) {
+            super::Presence::Archived
+        } else {
+            super::Presence::Present
+        };
+        let state = if presence == super::Presence::Archived {
             SessionState::Gone
         } else if self.pending_request_count.unwrap_or(0) > 0 {
             SessionState::NeedsInput
@@ -538,6 +540,7 @@ impl NativeThread {
             semantic_key: semantic_key(&self.title).map(str::to_owned),
             title: Some(self.title),
             state,
+            presence,
             branch: self.branch,
             worktree: self.worktree_path.filter(|p| !p.as_os_str().is_empty()),
             provider: self.provider_instance_id,

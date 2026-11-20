@@ -233,6 +233,14 @@ pub fn tick(
     if readiness.take().is_some() {
         _readiness::ended(cx.home);
     }
+    drop(invocation);
+    crate::keyed::notify_due(
+        &state,
+        admitted.global(),
+        cx.env,
+        clock(),
+        &mut Default::default(),
+    );
     woke?;
     Ok(TickOutcome::Done)
 }
@@ -385,6 +393,7 @@ pub fn run(
     // A skipped wake stays in status until the next wake that is not skipped;
     // one left by an earlier runner is cleared by this runner's first.
     let mut skipped = true;
+    let mut notified_starts = std::collections::HashSet::new();
     loop {
         // The interval on the operator's clock runs from when this wake
         // began, however long its work takes.
@@ -490,6 +499,13 @@ pub fn run(
                 skipped = true;
             }
         }
+        crate::keyed::notify_due(
+            &state,
+            admitted.global(),
+            cx.env,
+            clock(),
+            &mut notified_starts,
+        );
         // Wait for the interval, an activation wake-up, or a supervised
         // worker's end, which is observed within a second.
         // The interval passes in real time, or on the operator's clock when

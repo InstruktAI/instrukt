@@ -275,8 +275,9 @@ from CLI listing/show only: the whole legacy key-only title or the suffix after
 the last ` · ` must be an instrukt start key with a recognized assignment prefix
 and no whitespace. The prefix is opaque;
 nothing interprets its label. Recovery verifies the complete captured display
-title or the whole legacy key; an unexpected relabel is a visible conflict,
-not absence. Exact full-title evidence is retained alongside
+title or the whole legacy key. An unexpected relabel that still claims the key
+is a conflict. A rename that removes the key from its title follows the
+retained-ID case below. Exact full-title evidence is retained alongside
 the decoded key. Both old key-only and new label-first threads participate in
 the same exact-key match set; one is reused, two conflict, neither permits a
 replacement for an unresolved start. Persisted start requests and manual standing reservations carry a required
@@ -340,7 +341,8 @@ The same discovery and start rules govern every key, for both `start` and
    same key. A bound id that is archived is no replacement: nothing is started,
    its completed answers are still read, and the operator is told. A bound id
    that is alive but no longer lists under its key (renamed) keeps being used by
-   its id. An inaccessible id is an observation error, retried
+   its id after verifying the retained project and worktree. Another live
+   match still makes the key conflicted. An inaccessible id is an observation error, retried
    (`project/instrukt/policy/checks-and-guards`: a new actor starts only where the
    earlier one is proven gone).
 
@@ -348,8 +350,8 @@ A lost, timed-out or incomplete start result keeps its marker. On restart,
 reconcile that marker by keyed discovery before any new start for its key.
 One match recovers the same session. The selected adapter's verified acceptance evidence reconciles transport acceptance without another send;
 otherwise unconfirmed input may be resent there.
-An empty listing alone never clears a marker. Report the key and
-`instrukt sessions resolve-start <key>` once and keep the assignment pending.
+An empty listing alone never clears a marker. Keep the assignment pending and
+show its key and the `instrukt sessions resolve-start <key>` door in status.
 `--session` verifies the exact key, project and any recorded worktree request
 before binding; `--none` records the operator's confirmation that no thread
 was created and no start remains in flight, permitting retry under the same
@@ -372,9 +374,11 @@ never on how long anyone has waited:
 | Renamed, alive | The bound thread reads, its key no longer lists | Used by its id. |
 
 An unresolved start, a live conflict and an archived thread that persist past the
-runner's operator bound raise one anomaly each (`runner.notify`) and are listed in
-`instrukt events status` with their door, whether or not a notification command
-is configured (`project/instrukt/spec/feature/runner/anomaly-notification`).
+runner's `START_OPERATOR_BOUND` on the operator clock raise one anomaly per
+process per runtime key (`runner.notify`). `instrukt events status` shows the
+current condition and its door as soon as it is observed. A conflict lists the
+known competing threads. Reconciliation clears the status finding when the
+condition ends, whether or not a notification command is configured (`project/instrukt/spec/feature/runner/anomaly-notification`).
 
 Runtime acceptance commits with its dispatch result and binding. Selected event
 handover commits with that acceptance, while queued entry consumption remains
@@ -528,7 +532,10 @@ surface reports only the threads the runtime exposes.
 
 ### One worktree per todo team
 
-Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
+Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical main with `t3 thread start <project> - --worktree origin/main --branch <slug>/prepare --title <display-title>`. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists. This also applies
+to replacement after proven thread absence. A native follow-up never starts
+a replacement in the project root when it needs a retained phase worktree.
+Retry or wake uses the retained native assignment and its phase worktree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
 Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer releases its claim before cleanup; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
 
@@ -688,6 +695,8 @@ Given the runtime lists two conversations with one standing-agent key
 When an event needs that agent
 Then instrukt reports the identity conflict and leaves the event pending
 And neither conversation is chosen arbitrarily and no third conversation is started
+And status identifies the conflicting threads and how to resolve the conflict
+And the operator receives one notification for the key in the running process after the bound
 ```
 
 ### UC-SS13: Recover todo orchestrator pickup after its start reply was lost
@@ -698,6 +707,8 @@ When the runner resumes pickup after a restart
 Then it recovers that orchestrator's keyed thread without starting another
 But when a successful listing cannot find it
 Then pickup remains pending under its unresolved key until explicit resolution or proof of rejection
+And status gives the operator the resolve-start door
+And the operator receives one notification for the key in the running process after the bound
 ```
 
 ### UC-SS14: A builder's ending wakes its idle orchestrator natively
@@ -783,6 +794,14 @@ When the developer deletes its thread in the runtime and a later event for that 
 Then a successor conversation for that subject handles the event
 But when the developer archived the thread instead
 Then no successor starts, the event stays pending and status shows the developer the archived thread
+```
+
+### UC-SS23: A developer keeps using a renamed standing agent
+
+```gherkin
+Given a developer renames the bound thread of a standing agent
+When a later event needs that agent and no other live thread claims its key
+Then the event reaches the same thread by its retained ID
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)

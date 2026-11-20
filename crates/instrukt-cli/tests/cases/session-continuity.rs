@@ -56,11 +56,11 @@ fn lost_start_result_recovers_the_same_orchestrator_and_its_phase_worktree() {
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
 #[test]
 fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
-    let p = Tracked::new(true);
+    let mut p = Tracked::new(true);
     change(&p, "parser");
     let fake = FakeT3::create(&p.env);
     fake.flag("empty-start", true);
-    p.tick();
+    p.tick_at("2030-01-01T00:00:00Z");
     let record = p.todo(["show", "parser"]);
     let key = record
         .lines()
@@ -68,8 +68,27 @@ fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
         .unwrap()
         .to_owned();
     fake.flag("empty-start", false);
-    p.tick();
+    p.tick_at("2030-01-01T00:01:00Z");
     assert_eq!(fake.threads().len(), 0);
+    let status = || {
+        let out = p
+            .env
+            .run(p.env.home(), ["events", "status", "--json"])
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+            ["start_anomalies"].clone()
+    };
+    let finding = status()[0].clone();
+    assert_eq!(finding["key"], key);
+    assert!(
+        finding["failure"]
+            .as_str()
+            .unwrap()
+            .contains("instrukt sessions resolve-start")
+    );
+    assert!(p.rt.notifications().is_empty());
+    p.tick_at("2030-01-01T00:06:00Z");
+    assert_eq!(p.rt.notifications(), std::slice::from_ref(&key));
     p.env
         .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
         .success();
@@ -1120,6 +1139,13 @@ fn deliberately_bound_driver_refuses_an_actual_native_relabel() {
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     assert_eq!(fake.message_count(&id), 1);
+
+    // Deleting the thread leaves its phase worktree in place. A replacement
+    // must not hand the assignment to a thread in the project root.
+    fake.delete(&id);
+    p.tick();
+    assert!(fake.threads().is_empty());
+    assert!(tree.is_dir());
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3

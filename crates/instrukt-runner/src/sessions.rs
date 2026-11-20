@@ -107,9 +107,18 @@ pub enum SessionsError {
     Uncertain { key: String, detail: String },
     #[error("runtime key conflict for `{0}`; no thread was selected or started")]
     KeyConflict(String),
+    #[error("runtime key conflict for `{key}` among {}; archive or delete the extra thread", threads.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))]
+    ConflictingThreads {
+        key: String,
+        threads: Vec<SessionRef>,
+    },
+    #[error("bound thread {session} for `{key}` is archived; unarchive it or delete it")]
+    ArchivedBound { key: String, session: SessionRef },
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
-    #[error("bound thread {session} is absent or renamed for `{key}`; no replacement was started")]
+    #[error(
+        "thread {session} for `{key}` is absent; recover its retained phase worktree through native placement before resuming"
+    )]
     MissingBound { key: String, session: SessionRef },
     #[error("{0}")]
     Refused(String),
@@ -320,6 +329,7 @@ impl<'c> Sessions<'c> {
     }
     pub fn followup(
         &self,
+        order: &[AgentChoice],
         session: &SessionRef,
         path: Option<&Path>,
         title: Option<&str>,
@@ -331,6 +341,7 @@ impl<'c> Sessions<'c> {
             ));
         }
         let (mut input, project) = self.input(request)?;
+        input.preferences = order.to_vec();
         if let Some(title) = title {
             input.title = title.to_owned();
         }

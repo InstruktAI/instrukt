@@ -7,9 +7,14 @@ use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
 use std::time::Duration;
 
-use crate::runtime::{RuntimeAdapter, RuntimeStart, Thread};
+use crate::runtime::{
+    CreationPermit, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread,
+};
+
+mod _findings;
 use crate::sessions::SessionsError;
 use crate::state::{self, RunnerState, StateError};
+pub(crate) use _findings::{note, notify_due, status};
 
 pub fn encode(value: &str) -> String {
     let mut out = String::new();
@@ -194,15 +199,40 @@ fn remember(
 
 /// Discover before every start. Empty discovery cannot clear an ambiguous marker.
 pub(crate) fn start(
-    invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
-    input: &RuntimeStart,
-    project: Option<&str>,
-    _wake: bool,
-    now: Timestamp,
-    creation: crate::runtime::CreationPermit,
+    assignment: &RuntimeAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
-    let guard = KeyGuard::claim(invocation, adapter, &input.key, project, now)?;
+    let RuntimeAssignment {
+        invocation,
+        project,
+        request,
+        now,
+        ..
+    } = *assignment;
+    let guard = KeyGuard::claim(invocation, adapter, &request.key, project, now)?;
+    let result = start_claimed(adapter, assignment, &guard);
+    note(
+        &guard.state,
+        adapter.runtime(),
+        &request.key,
+        now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
+
+fn start_claimed(
+    adapter: &dyn RuntimeAdapter,
+    assignment: &RuntimeAssignment<'_>,
+    guard: &KeyGuard,
+) -> Result<Thread, SessionsError> {
+    let RuntimeAssignment {
+        invocation,
+        project,
+        request: input,
+        now,
+        creation,
+    } = *assignment;
     let mut recorded = record(&guard.state, &guard.runtime, &input.key)?;
     let mut resolved = input.clone();
     if let Some(retained) = &recorded.request {
@@ -228,9 +258,9 @@ pub(crate) fn start(
         recorded.request = Some(resolved.clone());
     }
     let input = &resolved;
-    let fresh = recorded.request.is_none()
+    let mut fresh = recorded.request.is_none()
         && recorded.bound.is_none()
-        && creation == crate::runtime::CreationPermit::Initial;
+        && creation == CreationPermit::Initial;
     if recorded.request.is_none() && recorded.bound.is_none() {
         guard.state.write::<_,StateError>(|tx| {
             let path=state::db_path(tx); let request=serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?;
@@ -251,67 +281,104 @@ pub(crate) fn start(
         }
     };
 
-    let mut matches = listed
-        .into_iter()
-        .filter(|t| t.semantic_key.as_deref() == Some(input.key.as_str()));
-    let found = matches.next();
-    if matches.next().is_some() {
-        return Err(SessionsError::KeyConflict(input.key.clone()));
+    let matches: Vec<_> = listed
+        .iter()
+        .filter(|thread| thread.semantic_key.as_deref() == Some(input.key.as_str()))
+        .filter(|thread| {
+            thread.presence == Presence::Present || recorded.bound.as_ref() == Some(&thread.session)
+        })
+        .collect();
+    if matches.len() > 1 {
+        return Err(conflict(
+            &input.key,
+            matches.iter().map(|thread| &thread.session),
+        ));
     }
-    if let Some(found) = found {
-        if recorded.bound.as_ref().is_some_and(|s| s != &found.session) {
-            return Err(SessionsError::KeyConflict(input.key.clone()));
-        }
-        let thread = adapter.read_state(&found.session)?;
-        if crate::runtime::project_conflict(&thread.project_id, &found.project_id)
-            || crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
-            || crate::runtime::project_conflict(&recorded.project_id, &found.project_id)
-            || thread.semantic_key.as_deref() != Some(input.key.as_str())
-        {
-            return Err(SessionsError::KeyConflict(input.key.clone()));
-        }
-        adapter.verify_start(input, &thread)?;
-        remember(
-            &guard.state,
-            adapter,
-            input,
-            &thread,
-            project,
-            recorded.accepted,
-            RequestEvidence::Retained,
-        )?;
-        if !recorded.accepted {
-            let supplied = adapter
-                .observe_input(&thread.session, &input.brief, now)?
-                .state
-                != crate::runtime::InputState::Unknown;
-            if !supplied {
-                adapter.send(&thread.session, &input.brief)?;
+    let found = matches.first().copied();
+    if let Some(bound) = &recorded.bound
+        && let Some(found) = found
+        && bound != &found.session
+    {
+        return Err(conflict(&input.key, [bound, &found.session]));
+    }
+    if found.is_none()
+        && recorded.bound.is_none()
+        && let Some(thread) = listed.iter().find(|thread| {
+            thread.presence == Presence::Archived
+                && thread.semantic_key.as_deref() == Some(input.key.as_str())
+        })
+    {
+        return Err(archived(&input.key, &thread.session));
+    }
+    let observed = recorded
+        .bound
+        .as_ref()
+        .or_else(|| found.map(|thread| &thread.session));
+    if let Some(session) = observed {
+        let thread = adapter.read_state(session)?;
+        match thread.presence {
+            Presence::Archived => return Err(archived(&input.key, session)),
+            Presence::Absent if recorded.bound.is_some() => {
+                retire_gone(guard, session, input, project, now)?;
+                recorded.bound = None;
+                recorded.accepted = false;
+                fresh = true;
             }
-            remember(
-                &guard.state,
-                adapter,
-                input,
-                &thread,
-                project,
-                true,
-                RequestEvidence::Retained,
-            )?;
-            crate::inputs::record_initial(
-                &guard.state,
-                &thread.session,
-                &format!("assignment:{}", input.key),
-                &input.brief,
-                now,
-            )?;
+            Presence::Absent => return Err(SessionsError::Gone(session.clone())),
+            Presence::Present => {
+                if crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
+                    || found.is_some_and(|found| {
+                        crate::runtime::project_conflict(&thread.project_id, &found.project_id)
+                            || crate::runtime::project_conflict(
+                                &recorded.project_id,
+                                &found.project_id,
+                            )
+                    })
+                {
+                    return Err(conflict(&input.key, [&thread.session]));
+                }
+                if recorded.bound.is_some() {
+                    verify_bound(adapter, input, session, &thread)?;
+                } else {
+                    adapter.verify_start(input, &thread)?;
+                }
+                remember(
+                    &guard.state,
+                    adapter,
+                    input,
+                    &thread,
+                    project,
+                    recorded.accepted,
+                    RequestEvidence::Retained,
+                )?;
+                if !recorded.accepted {
+                    let supplied = adapter
+                        .observe_input(&thread.session, &input.brief, now)?
+                        .state
+                        != crate::runtime::InputState::Unknown;
+                    if !supplied {
+                        adapter.send(&thread.session, &input.brief)?;
+                    }
+                    remember(
+                        &guard.state,
+                        adapter,
+                        input,
+                        &thread,
+                        project,
+                        true,
+                        RequestEvidence::Retained,
+                    )?;
+                    crate::inputs::record_initial(
+                        &guard.state,
+                        &thread.session,
+                        &format!("assignment:{}", input.key),
+                        &input.brief,
+                        now,
+                    )?;
+                }
+                return Ok(thread);
+            }
         }
-        return Ok(thread);
-    }
-    if let Some(session) = recorded.bound {
-        return Err(SessionsError::MissingBound {
-            key: input.key.clone(),
-            session,
-        });
     }
     if recorded.unresolved && !fresh {
         return Err(SessionsError::Unresolved {
@@ -329,7 +396,7 @@ pub(crate) fn start(
     guard.state.write::<_,StateError>(|tx| {
         let path=state::db_path(tx);
         let request=serde_json::to_string(input).map_err(|e|state::invalid(&path,e))?;
-        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=NULL",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
+        tx.execute("INSERT INTO runtime_starts (runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES (?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'unresolved') ON CONFLICT(runtime,semantic_key) DO UPDATE SET state='unresolved',request=excluded.request,begun_at=excluded.begun_at,reported=0,resolved_at=NULL,resolved_by=NULL,resolution=NULL",params![guard.runtime,input.key,project,kind(&input.key),input.checkout.to_string_lossy(),input.brief,request,now.to_string()]).map_err(state::sql(&path))?;
         Ok(())
     })?;
     let thread = adapter
@@ -355,6 +422,77 @@ pub(crate) fn start(
         now,
     )?;
     Ok(thread)
+}
+
+pub(crate) fn conflict<'a>(
+    key: &str,
+    threads: impl IntoIterator<Item = &'a SessionRef>,
+) -> SessionsError {
+    let mut threads: Vec<_> = threads.into_iter().cloned().collect();
+    threads.sort_by_key(ToString::to_string);
+    threads.dedup();
+    SessionsError::ConflictingThreads {
+        key: key.into(),
+        threads,
+    }
+}
+
+pub(crate) fn archived(key: &str, session: &SessionRef) -> SessionsError {
+    SessionsError::ArchivedBound {
+        key: key.into(),
+        session: session.clone(),
+    }
+}
+
+/// A bound ID survives a rename. Validate other assignment facts using the
+/// retained title, after ruling out any different semantic key.
+pub(crate) fn verify_bound(
+    adapter: &dyn RuntimeAdapter,
+    request: &RuntimeStart,
+    session: &SessionRef,
+    thread: &Thread,
+) -> Result<(), SessionsError> {
+    if &thread.session != session
+        || thread
+            .semantic_key
+            .as_ref()
+            .is_some_and(|key| key != &request.key)
+    {
+        return Err(conflict(&request.key, [session, &thread.session]));
+    }
+    if thread.semantic_key.is_some() {
+        return adapter.verify_start(request, thread);
+    }
+    let mut retained = thread.clone();
+    retained.semantic_key = Some(request.key.clone());
+    retained.title = Some(request.title.clone());
+    adapter.verify_start(request, &retained)
+}
+
+fn retire_gone(
+    guard: &KeyGuard,
+    session: &SessionRef,
+    input: &RuntimeStart,
+    project: Option<&str>,
+    now: Timestamp,
+) -> Result<(), SessionsError> {
+    let request =
+        serde_json::to_string(input).map_err(|error| SessionsError::Refused(error.to_string()))?;
+    guard.state.write::<_, StateError>(|tx| {
+        let path = state::db_path(tx);
+        tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",
+            params![guard.runtime, guard.key, session.to_string()]).map_err(state::sql(&path))?;
+        // Store permission before releasing the old binding. An interrupted
+        // replacement can then continue without treating absence as a lost reply.
+        tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at)
+            VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,0,'retry_allowed','bound_thread_absent','instrukt',?8)
+            ON CONFLICT(runtime,semantic_key) DO UPDATE SET request=excluded.request,state='retry_allowed',resolution=excluded.resolution,resolved_by=excluded.resolved_by,resolved_at=excluded.resolved_at",
+            params![guard.runtime, guard.key, project, kind(&guard.key), input.checkout.to_string_lossy(), input.brief, request, now.to_string()]).map_err(state::sql(&path))?;
+        tx.execute("UPDATE runtime_inputs SET state='failed', waiting=0, failure='target absent before observed consumption' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",
+            params![session.runtime.as_str(), session.id.as_str()]).map_err(state::sql(&path))?;
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// Repair a lost cache only after the caller recovered the assignment's original facts.
@@ -413,7 +551,7 @@ pub fn resolve(
         let matches: Vec<_> = adapter
             .list(&input.checkout)?
             .into_iter()
-            .filter(|t| t.semantic_key.as_deref() == Some(key))
+            .filter(|t| t.presence == Presence::Present && t.semantic_key.as_deref() == Some(key))
             .collect();
         if matches.len() != 1 || matches[0].session != *session {
             return Err(SessionsError::KeyConflict(key.into()));
@@ -441,6 +579,7 @@ pub fn resolve(
         }
         guard.state.write::<_,StateError>(|tx| { tx.execute("UPDATE runtime_starts SET state='retry_allowed',resolved_at=?3,resolved_by='operator',resolution='none' WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,key,now.to_string()]).map_err(state::sql(&state::db_path(tx)))?; Ok(()) })?;
     }
+    note(&guard.state, adapter.runtime(), key, now, Ok(()));
     Ok(())
 }
 
@@ -459,17 +598,33 @@ pub fn retry(
         .request
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no recorded request")))?;
     start(
-        invocation,
         adapter,
-        &input,
-        recorded.project.as_deref(),
-        false,
-        now,
-        crate::runtime::CreationPermit::Reconcile,
+        &RuntimeAssignment {
+            invocation,
+            request: &input,
+            project: recorded.project.as_deref(),
+            now,
+            creation: CreationPermit::Reconcile,
+        },
     )
 }
 
 pub fn followup(
+    adapter: &dyn RuntimeAdapter,
+    assignment: &crate::runtime::FollowupAssignment<'_>,
+) -> Result<Thread, SessionsError> {
+    let result = followup_inner(adapter, assignment);
+    note(
+        &RunnerState::new(assignment.invocation.home()),
+        adapter.runtime(),
+        &assignment.request.key,
+        assignment.now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
+
+fn followup_inner(
     adapter: &dyn RuntimeAdapter,
     assignment: &crate::runtime::FollowupAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
@@ -482,31 +637,104 @@ pub fn followup(
         assignment.now,
     )?;
     let recorded = record(&guard.state, &guard.runtime, &input.key)?;
-    if recorded
-        .bound
-        .as_ref()
-        .is_some_and(|bound| bound != assignment.session)
+    if let Some(bound) = &recorded.bound
+        && bound != assignment.session
     {
-        return Err(SessionsError::KeyConflict(input.key.clone()));
+        // The caller can still hold the former ID if it stopped before it
+        // recorded the replacement. Accept only the already journaled result.
+        if adapter.read_state(assignment.session)?.presence != Presence::Absent {
+            return Err(conflict(&input.key, [assignment.session, bound]));
+        }
+        let request = recorded
+            .request
+            .as_ref()
+            .ok_or_else(|| conflict(&input.key, [assignment.session, bound]))?;
+        if request.checkout != input.checkout
+            || request.brief != input.brief
+            || request.worktree != input.worktree
+        {
+            return Err(conflict(&input.key, [assignment.session, bound]));
+        }
+        return start_claimed(
+            adapter,
+            &RuntimeAssignment {
+                invocation: assignment.invocation,
+                project: assignment.project,
+                request,
+                now: assignment.now,
+                creation: CreationPermit::Reconcile,
+            },
+            &guard,
+        );
     }
     let found: Vec<_> = adapter
         .list(&input.checkout)?
         .into_iter()
-        .filter(|t| t.semantic_key.as_deref() == Some(input.key.as_str()))
+        .filter(|t| {
+            t.semantic_key.as_deref() == Some(input.key.as_str())
+                && (t.presence == Presence::Present || &t.session == assignment.session)
+        })
         .collect();
-    if found.is_empty() {
-        return Err(SessionsError::MissingBound {
-            key: input.key.clone(),
-            session: assignment.session.clone(),
-        });
-    }
-    if found.len() != 1 || &found[0].session != assignment.session {
-        return Err(SessionsError::KeyConflict(input.key.clone()));
+    if found.len() > 1
+        || found
+            .first()
+            .is_some_and(|thread| &thread.session != assignment.session)
+    {
+        return Err(conflict(
+            &input.key,
+            found
+                .iter()
+                .map(|thread| &thread.session)
+                .chain([assignment.session]),
+        ));
     }
     let thread = adapter.read_state(assignment.session)?;
-    if crate::runtime::project_conflict(&thread.project_id, &found[0].project_id)
-        || crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
-        || crate::runtime::project_conflict(&recorded.project_id, &found[0].project_id)
+    match thread.presence {
+        Presence::Archived => return Err(archived(&input.key, assignment.session)),
+        Presence::Absent => {
+            if assignment.worktree_path.is_some() {
+                return Err(SessionsError::MissingBound {
+                    key: input.key.clone(),
+                    session: assignment.session.clone(),
+                });
+            }
+            let request =
+                if recorded.bound.is_none() && (recorded.unresolved || recorded.retry_allowed) {
+                    // An earlier replacement may already be in flight.
+                    recorded
+                        .request
+                        .as_ref()
+                        .ok_or_else(|| SessionsError::Unresolved {
+                            key: input.key.clone(),
+                        })?
+                } else {
+                    retire_gone(
+                        &guard,
+                        assignment.session,
+                        input,
+                        assignment.project,
+                        assignment.now,
+                    )?;
+                    input
+                };
+            return start_claimed(
+                adapter,
+                &RuntimeAssignment {
+                    invocation: assignment.invocation,
+                    project: assignment.project,
+                    request,
+                    now: assignment.now,
+                    creation: CreationPermit::Reconcile,
+                },
+                &guard,
+            );
+        }
+        Presence::Present => {}
+    }
+    if found.first().is_some_and(|found| {
+        crate::runtime::project_conflict(&thread.project_id, &found.project_id)
+            || crate::runtime::project_conflict(&recorded.project_id, &found.project_id)
+    }) || crate::runtime::project_conflict(&recorded.project_id, &thread.project_id)
         || assignment
             .worktree_path
             .is_some_and(|path| thread.worktree.as_deref() != Some(path))
@@ -517,7 +745,7 @@ pub fn followup(
     if let Some(original) = &recorded.request {
         verification.title = original.title.clone();
     }
-    adapter.verify_start(&verification, &thread)?;
+    verify_bound(adapter, &verification, assignment.session, &thread)?;
     if recorded.bound.is_none() {
         remember(
             &guard.state,

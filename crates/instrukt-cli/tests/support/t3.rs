@@ -163,6 +163,9 @@ elif command=='start':
         (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
     n=len(all_threads())+1
     id='s'+str(n)
+    while (root/(id+'.json')).exists() or (root/(id+'.deleted')).exists():
+        n+=1
+        id='s'+str(n)
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
     t={'threadId':id,'projectId':checkout,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
@@ -406,6 +409,13 @@ impl FakeT3 {
     }
     pub fn set_pending(&self, id: &str, count: u32) {
         self.change(id, "pendingRequestCount", count.into());
+    }
+    pub fn delete(&self, id: &str) {
+        std::fs::rename(
+            self.state.join(format!("{id}.json")),
+            self.state.join(format!("{id}.deleted")),
+        )
+        .unwrap();
     }
     pub fn archive(&self, id: &str) {
         self.change(id, "archived", true.into());
