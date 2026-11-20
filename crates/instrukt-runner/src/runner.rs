@@ -320,7 +320,8 @@ pub fn run(
     let mut platform: Option<EventPlatform> = None;
     // The transport settings the event platform was prepared on.
     let mut platform_transport: Option<serde_yaml_ng::Value> = None;
-    let mut _readers = None;
+    let mut readers: Option<consumers::ConsumerWorkers> = None;
+    let mut handover_pending = false;
     let mut history = crate::history::Readers::default();
     // The relay serves links and, while a company declares a connector and
     // conversations are on, the connector destination; the connections take
@@ -416,13 +417,31 @@ pub fn run(
         // An event platform holds the transport it was prepared on: a
         // generation admitting other transport settings prepares it again.
         let transport_settings = admitted.global().get(Some("redis"), cx.env).ok();
-        if platform.is_some() && platform_transport != transport_settings {
-            tracing::info!(
-                event = "event_platform_replaced",
-                cause = "transport settings changed"
-            );
-            _readers = None;
-            platform = None;
+        if platform.is_some() && (handover_pending || platform_transport != transport_settings) {
+            handover_pending = true;
+            if readers
+                .as_ref()
+                .is_none_or(consumers::ConsumerWorkers::stop_for_handover)
+            {
+                tracing::info!(
+                    event = "event_platform_replaced",
+                    cause = "transport settings changed"
+                );
+                readers = None;
+                platform = None;
+                handover_pending = false;
+                crate::state::worker_state(cx.home, consumers::RUNNER_TRANSITION, None);
+            } else {
+                tracing::warn!(
+                    event = "consumer_source_transition_deferred",
+                    "previous readers are still stopping"
+                );
+                crate::state::worker_state(
+                    cx.home,
+                    consumers::RUNNER_TRANSITION,
+                    Some("waiting for previous readers to stop"),
+                );
+            }
         }
         history.refresh(cx.home, cx.env, &current);
         let considered = considered(&admitted);
@@ -430,10 +449,12 @@ pub fn run(
         if platform.is_none() && events_enabled {
             match event_platform(cx, &state, &admitted) {
                 Ok(Some(prepared)) => match prepared.runtime.start(Arc::clone(&clock)) {
-                    Ok(readers) => {
-                        _readers = Some(readers);
+                    Ok(started) => {
+                        crate::state::worker_state(cx.home, consumers::RUNNER_TRANSITION, None);
+                        readers = Some(started);
                         platform = Some(prepared);
-                        platform_transport = transport_settings;
+                        platform_transport = transport_settings.clone();
+                        handover_pending = false;
                     }
                     Err(error) => tracing::error!(event = "event_readers_unstarted", %error),
                 },
@@ -441,7 +462,9 @@ pub fn run(
                 Err(error) => tracing::error!(event = "event_platform_unprepared", %error),
             }
         }
-        let enabled_platform = platform.as_ref().filter(|_| events_enabled);
+        let enabled_platform = platform.as_ref().filter(|_| {
+            events_enabled && !handover_pending && platform_transport == transport_settings
+        });
         // A dispatch lock held past its wait skips this wake; the relay,
         // connections, readers and history go on in their own threads.
         match crate::keyed::RuntimeInvocation::acquire(cx.home, RUN_LOCK_WAIT) {

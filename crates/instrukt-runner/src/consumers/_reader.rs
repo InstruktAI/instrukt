@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use jiff::Timestamp;
 
-use super::_sources::{self, BoundSource};
+use super::_sources::{self, BoundSource, ReaderLease};
 use super::_store::{self, Settlement};
 use super::{
     Consumer, ConsumerError, ConsumerRuntime, MAX_HANDLING_ATTEMPTS, STALE_PENDING_MS,
@@ -31,6 +31,7 @@ pub(super) struct Reader<'a> {
     pub identity: String,
     gate: &'a Mutex<()>,
     retiring: bool,
+    pub announcements: Option<&'a super::_parking::Announcements>,
 }
 
 impl<'a> Reader<'a> {
@@ -48,10 +49,27 @@ impl<'a> Reader<'a> {
             group: format!("consumer-{}-{}", consumer.name, runtime.computer),
             identity: format!("reader-{}", runtime.computer),
             gate,
+            announcements: None,
         }
     }
 
-    pub fn prepare(&self) -> Result<(), ConsumerError> {
+    pub fn prepare_bound(&self) -> Result<(), ConsumerError> {
+        let ReaderLease::Held(_lease) = self.lease()? else {
+            return Err(ConsumerError::NotPrepared);
+        };
+        self.prepare()
+    }
+
+    fn lease(&self) -> Result<ReaderLease, ConsumerError> {
+        Ok(_sources::reader_lock(
+            &self.runtime.state,
+            &self.consumer.name,
+            &self.endpoint.identity,
+            self.retiring,
+        )?)
+    }
+
+    fn prepare(&self) -> Result<(), ConsumerError> {
         let created = self.endpoint.run(|conn| {
             match redis::cmd("XGROUP")
                 .arg("CREATE")
@@ -87,6 +105,11 @@ impl<'a> Reader<'a> {
     }
 
     pub fn drain(&self, now: Timestamp, budget: usize) -> Result<DrainState, ConsumerError> {
+        let _lease = match self.lease()? {
+            ReaderLease::Held(lease) => lease,
+            ReaderLease::Busy => return Ok(DrainState::Waiting),
+            ReaderLease::Ended => return Ok(DrainState::Retired),
+        };
         if !self.retiring {
             self.prepare()?;
         }

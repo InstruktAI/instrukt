@@ -35,6 +35,10 @@ general and domain content. Source checkout paths remain authoring provenance,
 not retrieval locations. Working-tree validation is a separate surface
 (`project/instrukt/spec/feature/docs/snippet-validation`).
 
+When a requested published entry cannot be decoded, `docs get` names the
+entry and its decode error. A request containing multiple unreadable or unknown
+IDs reports each of them.
+
 ## Canonical fields
 
 ### Index

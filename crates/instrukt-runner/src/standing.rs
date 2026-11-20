@@ -415,7 +415,7 @@ fn deliver_group(
                     selected_runtime.name()
                 )));
             }
-            let current = GlobalIndex::load(state.home())
+            let current = GlobalIndex::load_readable(state.home())
                 .map_err(|e| SessionsError::Refused(e.to_string()))?
                 .and_then(|index| {
                     index

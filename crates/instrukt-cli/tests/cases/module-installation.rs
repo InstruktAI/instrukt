@@ -2983,3 +2983,67 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
         String::from_utf8_lossy(&unmet.get_output().stdout)
     );
 }
+
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC8
+#[test]
+fn generated_redis_acl_admits_recovery_of_a_published_announcement() {
+    use instrukt_runner::transport::EVENT_STREAM;
+
+    let mut fixture = owned_redis_fixture();
+    let receipt = "instrukt:events:parking:already-published:announced";
+    let connection = &mut fixture.connection;
+    for command in [
+        vec!["GET", receipt],
+        vec!["SET", receipt, "1-0", "EX", "604800"],
+        vec!["DEL", receipt],
+        vec!["XADD", EVENT_STREAM, "MAXLEN", "~", "1", "*", "event", "{}"],
+        vec!["XINFO", "GROUPS", EVENT_STREAM],
+        vec!["SCRIPT", "LOAD", "return 1"],
+        vec!["EVALSHA", "digest", "2", EVENT_STREAM, receipt],
+    ] {
+        assert_eq!(
+            redis::cmd("ACL")
+                .arg("DRYRUN")
+                .arg("instrukt")
+                .arg(&command)
+                .query::<String>(connection)
+                .unwrap(),
+            "OK",
+            "{command:?}"
+        );
+    }
+    assert!(
+        redis::cmd("MGET")
+            .arg(receipt)
+            .query::<Vec<Option<String>>>(connection)
+            .is_err()
+    );
+    redis::cmd("SET")
+        .arg(receipt)
+        .arg("1-0")
+        .query::<()>(connection)
+        .unwrap();
+    let socket = fixture.dir.canonicalize().unwrap().join("redis.sock");
+    let endpoint =
+        instrukt_runner::events::occurrence_id(&[&format!("unix:{}", socket.display()), "0"]);
+    let outcome = serde_json::json!({"parked":{
+        "destination": "instrukt:events:dlq", "entry_id": "1-0", "announced": false,
+        "announcement_source": endpoint, "announcement_receipt": receipt,
+        "announcement_payload": "{}",
+    }});
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        fixture.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute("INSERT INTO consumer_outcomes VALUES ('procedure-activation', 'origin', ?1, '1-0', ?2, '2026-11-05T00:00:00Z')",
+        (EVENT_STREAM, outcome.to_string())).unwrap();
+    fixture.env.run(fixture.env.home(), ["tick"]).success();
+    let recovered: bool = db.query_row(
+        "SELECT json_extract(outcome, '$.parked.announced') FROM consumer_outcomes WHERE source = 'origin'",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert!(
+        recovered,
+        "the generated ACL must let recovery confirm the original append"
+    );
+}

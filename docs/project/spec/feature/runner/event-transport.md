@@ -63,7 +63,21 @@ A former source no longer in the configuration cannot be drained: it is marked
 abandoned when the change is admitted, the new source runs at once, and
 `instrukt events status` names the abandoned source and that its pending events
 stay unread in that Redis. Configured again, it is drained like any retiring
-source from its own group.
+source from its own group. A source transition waits for the reader's in-flight
+drain to finish, within a one-second handover budget. If the reader still
+holds the source, the transition is reported as deferred and left for the
+next runner attempt or installation retry. A hosted runner uses the same
+budget while waiting for its old readers to stop. Other wake-up work proceeds
+while it waits for a later attempt. `instrukt events status` shows pending
+source transitions, their cause and age. After a transition, a reader with the
+previous binding can no longer read or acknowledge entries on that source.
+
+A dead-letter announcement receipt expires seven days after it is written or
+last found by a retry. The worker refreshes the expiry atomically when it
+finds an existing receipt. After SQLite confirms the append, the worker tries
+to delete the receipt early. Expiry also removes receipts left on a removed
+destination or restored by Redis after a deletion. Replay can append again
+if recovery has been unable to refresh the receipt for seven days.
 
 ### Local committed facts and publication recovery
 

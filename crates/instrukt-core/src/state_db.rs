@@ -395,6 +395,105 @@ mod tests {
     }
 
     #[test]
+    fn an_earlier_schema_with_a_retained_announcement_index_can_upgrade_again() {
+        let path = Path::new(":memory:");
+        for version in [9, 11, 12] {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.pragma_update(None, "foreign_keys", true).unwrap();
+            migrate(&mut conn, path).unwrap();
+
+            // The historical reservation fixture restores the pre-link schema.
+            // All three fixture versions restore poll deferrals without a cause.
+            if version == 9 {
+                conn.execute_batch(
+                    "DROP TABLE conversation_relay_positions; DROP TABLE conversation_links;",
+                )
+                .unwrap();
+            }
+            conn.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
+                .unwrap();
+            conn.pragma_update(None, "user_version", version).unwrap();
+            conn.execute(
+                "INSERT INTO consumer_sources VALUES ('consumer', 'former', 'abandoned', 1)",
+                [],
+            )
+            .unwrap();
+
+            migrate(&mut conn, path).unwrap_or_else(|error| panic!("schema {version}: {error}"));
+            assert_eq!(user_version(&conn, path).unwrap(), schema_version());
+            let retained: bool = conn.query_row(
+                "SELECT prepared FROM consumer_sources WHERE consumer = 'consumer' AND source = 'former' AND state = 'abandoned'",
+                [],
+                |row| row.get(0),
+            ).unwrap();
+            assert!(retained);
+            let indexes: u32 = conn.query_row(
+                "SELECT count(*) FROM pragma_index_list('consumer_outcomes') WHERE name = 'consumer_open_announcements' AND partial = 1",
+                [],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(indexes, 1);
+        }
+    }
+
+    #[test]
+    fn version_22_admits_an_abandoned_source_and_keeps_every_stored_source() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(21) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 21).unwrap();
+        // The shape before version 22 refuses the new state.
+        assert!(conn.execute("INSERT INTO consumer_sources(consumer,source,state,prepared) VALUES('c','gone','abandoned',1)", []).is_err());
+        conn.execute_batch("INSERT INTO consumer_sources(consumer,source,state,prepared) VALUES('procedure-activation','cluster','retiring',1);INSERT INTO consumer_sources(consumer,source,state,prepared) VALUES('procedure-activation','local','active',0);INSERT INTO consumer_sources(consumer,source,state,prepared) VALUES('procedure-activation','old','retired',1);").unwrap();
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        conn.execute(
+            "UPDATE consumer_sources SET state='abandoned' WHERE source='cluster'",
+            [],
+        )
+        .unwrap();
+        let kept: Vec<(String, String, bool)> = conn
+            .prepare("SELECT source,state,prepared FROM consumer_sources ORDER BY source")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        insta::assert_debug_snapshot!(kept, @r#"
+        [
+            (
+                "cluster",
+                "abandoned",
+                true,
+            ),
+            (
+                "local",
+                "active",
+                false,
+            ),
+            (
+                "old",
+                "retired",
+                true,
+            ),
+        ]
+        "#);
+        assert!(
+            conn.execute(
+                "UPDATE consumer_sources SET state='unknown' WHERE source='local'",
+                []
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn version_20_records_when_an_answer_piece_was_posted_and_keeps_stored_pieces() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(19) {

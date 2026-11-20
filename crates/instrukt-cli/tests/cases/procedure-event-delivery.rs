@@ -706,6 +706,41 @@ fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
         work::redact(&r.runtime.input_log("s2"))
     );
 }
+// spec: project/instrukt/spec/feature/runner/event-consumers UC-EC13
+#[test]
+fn an_unrelated_broken_entry_leaves_the_successor_and_its_reading_available() {
+    let r = Responsibility::new("");
+    r.append("initial");
+    r.tick();
+    r.runtime.archive("s1");
+    let path = r.computer.env.instrukt_home().join("state/index.yaml");
+    let mut index: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    index["snippets"].as_sequence_mut().unwrap().push(serde_yaml_ng::from_str(
+        "{id: reactions/procedure/broken, type: procedure, scope: global, domain: reactions, path: reactions/procedure/broken.md, source_project: fork, role: broken, subscription_home: project, subscriptions: ['example.changed']}",
+    ).unwrap());
+    std::fs::write(&path, serde_yaml_ng::to_string(&index).unwrap()).unwrap();
+
+    r.append("next-generation");
+    r.tick();
+    assert_eq!(r.runtime.threads().len(), 2);
+    assert!(r.runtime.input_log("s2").contains("next-generation"));
+    let shown = r
+        .computer
+        .env
+        .run(
+            r.computer.project.path(),
+            ["docs", "get", "reactions/procedure/respond", "--closure"],
+        )
+        .success();
+    let text = String::from_utf8_lossy(&shown.get_output().stdout);
+    assert!(text.contains("Inspect current subject state"), "{text}");
+    assert!(
+        text.contains("dropped published entry reactions/procedure/broken"),
+        "{text}"
+    );
+}
+
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA16
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA17
 #[test]
@@ -1022,7 +1057,21 @@ fn a_missing_retained_role_refuses_manual_and_automatic_entry_before_creation() 
     r.append("missing-role");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 0);
+    // The automatic entry is refused by dropping the subscription, named
+    // with its unusable role; the event settles for every other one.
+    insta::assert_json_snapshot!(r.computer.consumers_status()["subscriptions"], @r#"
+        {
+          "dropped": [
+            {
+              "id": "reactions/procedure/respond",
+              "reason": "a subscribing procedure must declare a role"
+            }
+          ]
+        }
+        "#);
+    // Repaired, the procedure takes up the events that arrive after it.
     std::fs::write(file, original).unwrap();
+    r.append("role-restored");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
 }
