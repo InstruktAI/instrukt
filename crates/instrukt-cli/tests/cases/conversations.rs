@@ -744,7 +744,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV19
 #[test]
 fn one_conversation_opens_while_another_start_is_being_verified() {
-    let (mut c, _) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
     let held = c.runtime.state_dir().join("s1.hold-show");
     std::fs::write(&held, "").unwrap();
@@ -788,6 +788,37 @@ fn one_conversation_opens_while_another_start_is_being_verified() {
     assert_eq!(c.runtime.message_count("s1"), 1);
     assert_eq!(c.runtime.message_count("s2"), 1);
     assert_eq!(c.slack.posts().len(), 2);
+
+    #[cfg(debug_assertions)]
+    {
+        c.runtime.delete("s1");
+        c.store.unproject_thread("s1");
+        let _input = hold_recovery_key(&c, "input:t3:s1");
+        std::fs::remove_file(c.env.path("recovery-lock-wait")).unwrap();
+        let mut replacement = recovery_waiting(
+            &c,
+            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
+            "input:t3:s1",
+        )
+        .unwrap();
+        let clock = RunningClock::start(_clock.clone(), interval_clock(&_clock), 60);
+        wait(
+            "operator recovery gives up waiting for the held input",
+            || replacement.try_wait().unwrap().is_some(),
+        );
+        clock.stop();
+        let result = replacement.wait_with_output().unwrap();
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let diagnostic = format!(
+            "instrukt: dispatch is still busy after the recovery wait for semantic key `{key}`. Retry `instrukt sessions replace-deleted {key} --stopped t3:s1` once dispatch releases it"
+        );
+        let errors = stderr
+            .lines()
+            .filter(|line| !line.starts_with("instrukt: clock overridden"))
+            .collect::<Vec<_>>();
+        assert_eq!(errors, [diagnostic.as_str()]);
+    }
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV8

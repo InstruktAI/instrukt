@@ -398,6 +398,7 @@ Given the assistant is waiting for its new thread to be verified in one conversa
 When a member asks a question in another conversation
 Then the assistant starts there and answers while the first verification is still waiting
 And the first conversation gets its own answer once verification resumes
+And if replacement later times out waiting for the stopped thread's input, the operator sees the conversation key and the command to retry
 ```
 
 ### UC-CV8: Get the answer after the assistant's work failed

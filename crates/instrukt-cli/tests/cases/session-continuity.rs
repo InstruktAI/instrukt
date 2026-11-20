@@ -265,6 +265,29 @@ fn check_run_recovery_doors() {
             assert!(fake.input_log(native).contains(RECOVERY_FOLLOWUP));
         },
     );
+
+    let home = instrukt_core::home::Home::at_user_home(p.env.home().into());
+    let _dispatch = instrukt_core::fsx::LockGuard::acquire(
+        &home.state_dir().join("runtime-dispatch.lock"),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+    for (command, option, session) in [
+        ("replace-deleted", "--stopped", "t3:s1"),
+        ("resolve-start", "--session", "t3:s1"),
+    ] {
+        let result = p
+            .env
+            .instrukt(p.repo.path())
+            .args(["sessions", command, "input:t3:s1", option, session])
+            .timeout(std::time::Duration::from_secs(10))
+            .assert()
+            .failure();
+        let stderr = String::from_utf8_lossy(&result.get_output().stderr);
+        assert!(stderr.lines().any(|line| line ==
+            "instrukt: `input:t3:s1` is an internal input-lock key. Use the assignment's `instrukt:…` semantic key from `instrukt events status`"
+        ), "{stderr}");
+    }
 }
 
 #[cfg(debug_assertions)]

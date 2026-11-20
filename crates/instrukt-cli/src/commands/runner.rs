@@ -239,6 +239,7 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
             Ok(ExitCode::SUCCESS)
         }
         SessionsCommand::ReplaceDeleted { key, stopped } => {
+            keyed::validate_recovery_key(&key)?;
             let adapter = sessions.adapter()?;
             let invocation =
                 keyed::RuntimeInvocation::acquire(&ctx.home, Duration::from_secs(120))?;
@@ -261,6 +262,7 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
             Ok(ExitCode::SUCCESS)
         }
         SessionsCommand::ResolveStart(args) => {
+            keyed::validate_recovery_key(&args.key)?;
             sessions.runner_runtime()?;
             let key = match args.key.rsplit_once('@') {
                 Some((procedure, project)) if !args.key.starts_with("instrukt:") => {

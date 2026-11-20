@@ -259,6 +259,10 @@ before any runtime command. Each owner holds an OS lock for its exact key
 through the operation. Operator recovery waits within the dispatch lock's
 usual bound for the exact key, and replacement also waits for any input
 already being handled for the stopped thread. Other keys keep dispatching.
+If the wait expires, the command names the semantic key and the exact command
+to retry after dispatch releases it. An internal `input:<runtime:id>` lock
+key is refused before lock acquisition. The recovery commands take the
+assignment's `instrukt:…` semantic key.
 An owner taking that key's
 lock can recover the prior owner's row while retaining unresolved markers.
 Elapsed time alone permits no new start.
@@ -897,6 +901,7 @@ Then the printed replacement command retires the named ID after the operator con
 And a successful replacement of a committed binding receives later work
 But if two keys concurrently resolve to the same available thread
 Then only one resolution binds it and the other start stays unresolved
+And a command given an internal input-lock key tells the operator to use the assignment's semantic key
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)
