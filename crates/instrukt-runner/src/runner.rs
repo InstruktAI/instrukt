@@ -102,6 +102,13 @@ pub enum RunnerError {
     )]
     ServiceRunning,
     #[error(
+        "the runner service timed out waiting {waited:?} for the runner lock; holder: {holder}"
+    )]
+    ServiceLockTimeout {
+        waited: Duration,
+        holder: &'static str,
+    },
+    #[error(
         "cannot publish the runner lock's holder in {}: {source}; restore write access to the state directory",
         path.display()
     )]

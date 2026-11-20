@@ -37,6 +37,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 tracing.workspace = true
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "tracing-log"] }
 
 [dev-dependencies]
 base64.workspace = true

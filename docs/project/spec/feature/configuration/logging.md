@@ -48,8 +48,10 @@ diagnostics would otherwise be gone with them.
   (`project/instrukt/spec/feature/runner/mcp-access`,
   `sdlc/policy/security-awareness`).
 - The logging crate owns open and write failures. instrukt initialises it
-  before any other work. When initialisation fails, records go to standard
-  error and the command continues; the failure is the first record.
+  before the command runs. When the file writer cannot open its destination,
+  the command continues and standard error carries the failure followed by
+  fallback diagnostics. The fallback writes INFO and above for instrukt and
+  WARNING and above for third-party loggers.
 
 ## Use cases
 
@@ -59,6 +61,15 @@ diagnostics would otherwise be gone with them.
 Given a developer commits to their project's main and the hook publishes its documentation
 When they later want to know what that publication did
 Then the published documentation is retrievable and the publication's record sits in instrukt's log under their own state directory, in the file of the command that wrote it, where the InstruktAI log reader finds it
+```
+
+### UC-LG2: A developer can run a command when its log directory is unwritable
+
+```gherkin
+Given instrukt cannot open the developer's log directory
+When the developer runs a command
+Then the command produces its usual output and exit status
+And standard error reports the file logging failure and carries the command's diagnostics
 ```
 
 ## Known caveats

@@ -305,3 +305,133 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);
 }
+
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL7
+#[test]
+fn a_runner_keeps_dispatching_after_its_clock_file_disappears() {
+    use crate::fixtures::{conversing::Running, documented, flavor::Tracked, t3::FakeT3};
+    use std::{process::Stdio, time::Duration};
+
+    let p = Tracked::new(true);
+    let redis = common::redis::RedisServer::new(&p.env);
+    let config = p.env.instrukt_home().join("instrukt.yaml");
+    let mut settings: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+    settings["modules"]["events"] = true.into();
+    settings["redis"] =
+        serde_yaml_ng::from_str(&format!("cluster: {{url: '{}'}}", redis.url)).unwrap();
+    std::fs::write(&config, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
+    p.repo.write(
+        "docs/domain/clockwake/procedure/observe.md",
+        &documented::snippet(
+            "procedure", "Observe", "Accept the wake event.",
+            "role: event-handler\nsubscription_home: project\nsubscriptions: [example.clock_wake]\n",
+            &[], "Observe the change.",
+        ),
+    );
+    p.repo.commit("docs: publish clock wake procedure");
+    p.repo.git(["push", "--quiet", "origin", "main"]);
+    documented::sync(&p.env, &p.repo);
+    let runtime = FakeT3::create(&p.env);
+    let machine = instrukt_core::machine::machine_id(&instrukt_core::home::Home::at_user_home(
+        p.env.home().into(),
+    ))
+    .unwrap();
+    let at = "2030-01-06T00:00:00Z";
+    let clock = p.env.path("runner-clock");
+    std::fs::write(&clock, at).unwrap();
+    let stderr = p.env.path("runner.stderr");
+    let mut command = p.env.instrukt_process(p.env.home());
+    // The independent GitHub fixture can validate tokens even after the
+    // runner's clock file disappears.
+    common::github::sync_auth_clock(p.env.home(), Some(at));
+    let mut runner = Running::spawn(
+        command
+            .arg("run")
+            .env("INSTRUKT_NOW", format!("@{}", clock.display()))
+            .env("INSTRUKT_LOG_LEVEL", "DEBUG")
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(&stderr).unwrap()),
+    );
+    let log = p
+        .env
+        .home()
+        .join(".local/state/instrukt-ai/instrukt/run.log");
+    common::wait_until(
+        "the first runner wake finishes",
+        Duration::from_secs(20),
+        || std::fs::read_to_string(&log).is_ok_and(|text| text.contains("runner_wakeup_done")),
+    );
+    p.todo([
+        "create",
+        "clock-fallback",
+        "Keep dispatching.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    assert!(runtime.threads().is_empty());
+    common::github::sync_auth_clock(p.env.home(), Some(at));
+
+    std::fs::rename(&clock, clock.with_extension("removed")).unwrap();
+    let event = serde_json::json!({
+        "id":"clock-removed","type":"example.clock_wake","source":machine.to_string(),
+        "subject":"todo:clock-fallback","home":"project:demo","home_owner":"unresolved",
+        "time":at,"data":{}
+    });
+    redis::cmd("XADD")
+        .arg(instrukt_runner::transport::EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg(event.to_string())
+        .query::<String>(&mut redis.connection())
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(25);
+    common::wait_until(
+        "the next wake dispatches a todo with the clock absent",
+        Duration::from_secs(30),
+        || {
+            assert!(
+                runner.exited().is_none(),
+                "{}",
+                std::fs::read_to_string(&stderr).unwrap_or_default()
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "runner did not dispatch after clock loss
+{}
+{}",
+                std::fs::read_to_string(&stderr).unwrap_or_default(),
+                std::fs::read_to_string(&log)
+                    .unwrap_or_default()
+                    .lines()
+                    .rev()
+                    .take(24)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            runtime
+                .threads()
+                .iter()
+                .any(|id| runtime.key(id).starts_with("instrukt:todo:"))
+        },
+    );
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let wake: String = db
+        .query_row("SELECT last_at FROM wakeups", [], |row| row.get(0))
+        .unwrap();
+    let wake = wake.parse::<jiff::Timestamp>().unwrap();
+    assert!(wake > at.parse::<jiff::Timestamp>().unwrap());
+    assert!(!clock.exists());
+    let diagnostics = std::fs::read_to_string(&stderr).unwrap();
+    assert_eq!(
+        diagnostics
+            .matches("continuing from the last clock reading")
+            .count(),
+        1,
+        "{diagnostics}"
+    );
+}

@@ -6,12 +6,13 @@
 //! clock. It is never silent: while it is set, every command says so on
 //! stderr. An unparseable value refuses the command rather than falling back
 //! to the system clock. A file is read again on each request for the time,
-//! and the limits on the programs instrukt starts are measured on it; a file
-//! that is missing or holds no RFC 3339 time refuses the command at that
-//! moment.
+//! and the limits on the programs instrukt starts are measured on it. The
+//! first reading must succeed. After that, a failed reading advances the
+//! last valid value by elapsed monotonic time.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::Context as _;
 use jiff::Timestamp;
@@ -19,12 +20,65 @@ use jiff::Timestamp;
 /// The environment variable that overrides the clock.
 pub const OVERRIDE_VAR: &str = "INSTRUKT_NOW";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Clock {
     System,
     Fixed(Timestamp),
     /// The time in this file, read on each request.
-    File(Arc<Path>),
+    File(Arc<FileClock>),
+}
+
+#[derive(Debug)]
+pub struct FileClock {
+    path: PathBuf,
+    last: Mutex<LastReading>,
+}
+
+#[derive(Debug)]
+struct LastReading {
+    time: Timestamp,
+    read_at: Instant,
+    warned: bool,
+}
+
+impl FileClock {
+    fn open(path: &Path) -> anyhow::Result<Self> {
+        let time = read_file(path)?;
+        Ok(Self {
+            path: path.into(),
+            last: Mutex::new(LastReading {
+                time,
+                read_at: Instant::now(),
+                warned: false,
+            }),
+        })
+    }
+
+    fn now(&self) -> Timestamp {
+        let mut last = self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match read_file(&self.path) {
+            Ok(time) => {
+                last.time = time;
+                last.read_at = Instant::now();
+                time
+            }
+            Err(error) => {
+                if !last.warned {
+                    last.warned = true;
+                    eprintln!(
+                        "instrukt: {}; continuing from the last clock reading",
+                        crate::output::error_line(&error)
+                    );
+                }
+                last.time
+                    .saturating_add(last.read_at.elapsed())
+                    .unwrap_or(Timestamp::MAX)
+            }
+        }
+    }
 }
 
 impl Clock {
@@ -37,17 +91,14 @@ impl Clock {
                     .to_str()
                     .with_context(|| format!("{OVERRIDE_VAR} is not valid UTF-8"))?;
                 if let Some(path) = text.strip_prefix('@') {
-                    let path: Arc<Path> = Arc::from(Path::new(path));
-                    read_file(&path)?;
+                    let clock = Arc::new(FileClock::open(Path::new(path))?);
                     eprintln!(
                         "instrukt: clock overridden to the time in {}",
-                        path.display()
+                        clock.path.display()
                     );
-                    let limits = Arc::clone(&path);
-                    instrukt_core::process::measure_limits_on(Box::new(move || {
-                        read_file(&limits).map_err(|error| crate::output::error_line(&error))
-                    }));
-                    return Ok(Clock::File(path));
+                    let limits = Arc::clone(&clock);
+                    instrukt_core::process::measure_limits_on(Box::new(move || Ok(limits.now())));
+                    return Ok(Clock::File(clock));
                 }
                 let at = parse_rfc3339(text).with_context(|| {
                     format!("{OVERRIDE_VAR}=`{text}` is not an RFC 3339 time; unset it or give one")
@@ -58,16 +109,13 @@ impl Clock {
         }
     }
 
-    /// The time now; a clock file without a time ends the command here,
-    /// stopping the commands it started.
+    /// The time now, including elapsed time since the last valid file reading
+    /// if the file cannot be read.
     pub fn now(&self) -> Timestamp {
         match self {
             Clock::System => Timestamp::now(),
             Clock::Fixed(at) => *at,
-            Clock::File(path) => read_file(path).unwrap_or_else(|error| {
-                eprintln!("instrukt: {}", crate::output::error_line(&error));
-                instrukt_core::process::exit_stopping_owned(1)
-            }),
+            Clock::File(clock) => clock.now(),
         }
     }
 

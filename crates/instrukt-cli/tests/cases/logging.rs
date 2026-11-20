@@ -72,3 +72,43 @@ fn a_hook_publication_is_retrievable_and_recorded_in_the_sync_log() {
     insta::assert_snapshot!("publication-log", records);
     insta::assert_snapshot!(String::from_utf8_lossy(&read.get_output().stderr), @"");
 }
+
+// spec: project/instrukt/spec/feature/configuration/logging UC-LG2
+#[test]
+fn an_unwritable_log_directory_keeps_publication_output_and_logs_to_stderr() {
+    let mut env = TestEnv::new();
+    let repo = documented::project(
+        &env,
+        "demo",
+        &[(
+            "docs/domain/acme/policy/rules.md",
+            documented::snippet(
+                "policy",
+                "Rules",
+                "The rules.",
+                "",
+                &[],
+                "Follow the rules.\n",
+            ),
+        )],
+    );
+    let blocked = env.path("blocked");
+    std::fs::write(&blocked, "not a directory").unwrap();
+    env.set_env("XDG_STATE_HOME", blocked.to_str().unwrap());
+    let output = env.run(repo.path(), ["sync"]).success();
+    let path = env.path("");
+    let commit = repo.git(["rev-parse", "HEAD"]);
+    let redact = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes)
+            .replace(path.to_str().unwrap().trim_end_matches('/'), "[TMP]")
+            .replace(commit.trim(), "[SHA]")
+    };
+    insta::assert_snapshot!(
+        "publication-output-with-logging-fallback",
+        redact(&output.get_output().stdout)
+    );
+    insta::assert_snapshot!(
+        "publication-diagnostics-on-stderr",
+        redact(&output.get_output().stderr)
+    );
+}

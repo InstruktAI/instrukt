@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/module-installation.rs
+expression: stderr
+---
+instrukt: clock overridden to the time in [CLOCK]
+instrukt: waiting for the runner lock, which another runner invocation holds
+instrukt: the runner service timed out waiting 120s for the runner lock; holder: `instrukt run` started by hand

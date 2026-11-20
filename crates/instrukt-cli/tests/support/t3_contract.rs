@@ -157,15 +157,15 @@ impl Server {
         // The server inherits the worker group owned by the parent test.
         let child = command.spawn()?;
         let mut server = Self { child };
-        common::wait_until("isolated T3 descriptor", BOUND, || {
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        common::wait_until("isolated T3 descriptor and listener", BOUND, || {
             if server.child.try_wait().unwrap().is_some() {
                 panic!(
                     "isolated T3 stopped before readiness; private log retained in its temporary fixture"
                 );
             }
-            Path::new(&base)
-                .join("userdata/server-runtime.json")
-                .exists()
+            descriptor_port(Path::new(&base)).is_ok_and(|advertised| advertised == port)
+                && TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok()
         });
         Ok(server)
     }
@@ -241,11 +241,15 @@ impl Drop for Token {
     }
 }
 
-pub fn connect(token: &str) -> Result<tungstenite::WebSocket<TcpStream>> {
-    let descriptor: Value = serde_json::from_slice(&fs::read(
-        Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/server-runtime.json"),
-    )?)?;
+fn descriptor_port(base: &Path) -> Result<u16> {
+    let descriptor: Value =
+        serde_json::from_slice(&fs::read(base.join("userdata/server-runtime.json"))?)?;
     let port = descriptor["port"].as_u64().context("descriptor port")?;
+    Ok(u16::try_from(port)?)
+}
+
+pub fn connect(token: &str) -> Result<tungstenite::WebSocket<TcpStream>> {
+    let port = descriptor_port(Path::new(&std::env::var("T3CODE_HOME")?))?;
     let address = format!("127.0.0.1:{port}").parse()?;
     let stream = TcpStream::connect_timeout(&address, BOUND)?;
     stream.set_read_timeout(Some(BOUND))?;
@@ -604,7 +608,9 @@ pub fn overlay_links(root: &Path) -> Result<Value> {
     let shared = root.join("contract-codex-shared");
     let overlay = root.join("contract-codex-overlay");
     fs::create_dir_all(&shared)?;
-    {
+    let base = std::env::var("T3CODE_HOME")?;
+    let descriptor = Path::new(&base).join("userdata/server-runtime.json");
+    let mut stale: Value = {
         let _server = Server::start(root)?;
         let mut token = Token::scoped(&["providers:manage"])?;
         rpc(
@@ -617,7 +623,8 @@ pub fn overlay_links(root: &Path) -> Result<Value> {
             overlay.is_dir()
         });
         sync_docs_owner(root)?;
-    }
+        serde_json::from_slice(&fs::read(&descriptor)?)?
+    };
     let link = overlay.join("AGENTS.md");
     let file = shared.join("AGENTS.md");
     ensure!(file.is_file(), "the sync wrote no file in the shared home");
@@ -625,8 +632,15 @@ pub fn overlay_links(root: &Path) -> Result<Value> {
         fs::symlink_metadata(&link)?.file_type().is_symlink() && fs::read_link(&link)? == file,
         "the sync made no link to the shared file in the overlay home"
     );
+    // Reproduce the prior server's descriptor remaining visible across restart.
+    stale["port"] = json!(1);
+    fs::write(&descriptor, stale.to_string())?;
     {
         let _server = Server::start(root)?;
+        ensure!(
+            descriptor_port(Path::new(&base))? != 1,
+            "restart accepted the stale descriptor"
+        );
         ensure!(
             !overlay_refused()?,
             "T3 refused the overlay instance over instrukt's link"

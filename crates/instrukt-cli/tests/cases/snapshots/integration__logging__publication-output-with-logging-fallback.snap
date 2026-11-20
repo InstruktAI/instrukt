@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/cases/logging.rs
+expression: redact(&output.get_output().stdout)
+---
+published demo at [SHA]
+notice: docs/domain/acme/: domain-without-index: `acme` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain acme`
+.instrukt/schemas/general-index.schema.json: schema written
+.instrukt/schemas/domain-index.schema.json: schema written
+.instrukt/schemas/project-index.schema.json: schema written
+.instrukt/schemas/snippet-schema.schema.json: schema written
+.instrukt/schemas/instrukt.schema.json: schema written

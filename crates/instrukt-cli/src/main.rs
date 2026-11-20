@@ -96,7 +96,12 @@ enum Command {
 
 /// The log source of this run, once tracing writes to it: the panic hook
 /// names its file.
-static LOG_SOURCE: OnceLock<&'static str> = OnceLock::new();
+enum LogDestination {
+    File(&'static str),
+    Stderr,
+}
+
+static LOG_DESTINATION: OnceLock<LogDestination> = OnceLock::new();
 
 fn main() -> ExitCode {
     install_panic_hook();
@@ -363,10 +368,19 @@ fn install_panic_hook() {
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("a panic without a message");
+        if matches!(LOG_DESTINATION.get(), Some(LogDestination::Stderr)) {
+            let _ = writeln!(std::io::stderr(), "instrukt stopped unexpectedly");
+            return;
+        }
         tracing::error!(event = "panic", %location, message);
-        let log = LOG_SOURCE
+        let log = LOG_DESTINATION
             .get()
-            .and_then(|source| instrukt_ai_logging::resolve_log_file("instrukt", Some(source)).ok())
+            .and_then(|destination| match destination {
+                LogDestination::File(source) => {
+                    instrukt_ai_logging::resolve_log_file("instrukt", Some(source)).ok()
+                }
+                LogDestination::Stderr => None,
+            })
             .or_else(|| instrukt_ai_logging::resolve_log_dir("instrukt").ok())
             .map_or_else(
                 || "instrukt's log".to_owned(),
@@ -418,16 +432,21 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
             Some(source),
         )?)?;
     }
-    let mut builder = instrukt_ai_logging::Builder::new("instrukt")
-        .source(source)
-        .app_prefix("instrukt_cli")
-        .app_prefix("instrukt_core")
-        .app_prefix("instrukt_blueprint")
-        .app_prefix("instrukt_runner")
-        .app_prefix("instrukt_todos")
-        .app_prefix("instrukt_company")
-        .app_prefix("instrukt_connector")
-        .app_prefix("instrukt_connector_slack");
+    const APP_TARGETS: &[&str] = &[
+        "instrukt",
+        "instrukt_cli",
+        "instrukt_core",
+        "instrukt_blueprint",
+        "instrukt_runner",
+        "instrukt_todos",
+        "instrukt_company",
+        "instrukt_connector",
+        "instrukt_connector_slack",
+    ];
+    let mut builder = instrukt_ai_logging::Builder::new("instrukt").source(source);
+    for prefix in APP_TARGETS {
+        builder = builder.app_prefix(*prefix);
+    }
     if matches!(command, Command::Mcp(_)) {
         // The HTTP client's records carry what an MCP server sent back, a
         // reflected login among it, before instrukt can remove it: for this
@@ -438,8 +457,36 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
             other => std::env::var_os(other),
         });
     }
-    builder.init()?;
-    let _ = LOG_SOURCE.set(source);
+    let destination = match builder.init() {
+        Ok(_) => LogDestination::File(source),
+        Err(error) => {
+            use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
+            let filter = tracing_subscriber::filter::filter_fn(|metadata| {
+                let target = metadata.target().split([':', '.']).next();
+                let level = if target.is_some_and(|target| APP_TARGETS.contains(&target)) {
+                    tracing::Level::INFO
+                } else {
+                    tracing::Level::WARN
+                };
+                *metadata.level() <= level
+            });
+            let layer = tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(false)
+                .without_time();
+            let stderr = tracing_subscriber::registry().with(filter).with(layer);
+            if stderr.try_init().is_ok() {
+                tracing::warn!(event = "file_logging_unavailable", %error, "logging to stderr");
+            } else {
+                eprintln!(
+                    "instrukt: cannot initialise file logging: {}",
+                    output::error_line(&error.into())
+                );
+            }
+            LogDestination::Stderr
+        }
+    };
+    let _ = LOG_DESTINATION.set(destination);
     Ok(())
 }
 

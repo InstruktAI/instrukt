@@ -904,6 +904,7 @@ dependencies = [
  "tempfile",
  "tiny_http",
  "tracing",
+ "tracing-subscriber",
  "tungstenite",
  "walkdir",
 ]
@@ -2226,6 +2227,7 @@ dependencies = [
  "sharded-slab",
  "thread_local",
  "tracing-core",
+ "tracing-log",
 ]
 
 [[package]]
