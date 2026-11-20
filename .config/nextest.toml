@@ -36,3 +36,14 @@ threads-required = 4
 [[profile.default.overrides]]
 filter = 'test(=session_continuity::keyed_recovery_doors_follow_binding_state)'
 threads-required = 6
+
+# UC-SS2 uses three independent standing fixtures.
+[[profile.default.overrides]]
+filter = 'test(=procedure_event_delivery::an_operator_can_resolve_an_uncertain_standing_start_to_its_exact_created_thread)'
+threads-required = 3
+
+# The held T3 RPCs have a real-time deadline. Give this ordering check
+# the test pool so fixture CPU contention cannot consume that deadline.
+[[profile.default.overrides]]
+filter = 'test(=conversations::a_start_does_not_wait_on_an_outstanding_readiness_acquisition)'
+threads-required = "num-test-threads"

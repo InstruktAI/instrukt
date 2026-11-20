@@ -4948,20 +4948,33 @@ fn a_slow_or_failing_t3_cli_does_not_refuse_a_start() {
 // spec: project/instrukt/spec/feature/company/conversations UC-CV1
 #[test]
 fn a_start_does_not_wait_on_an_outstanding_readiness_acquisition() {
-    let mut c = Company::new("");
+    let mut c = Company::prepared_for_recovery(common::TestEnv::new());
     // The clock only brings the runner's wakes about: no held acquisition
     // is judged on it, and the fake says itself whether each is still open.
     let mut clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
     let read_flag = |name: &str| c.env.path(&format!("t3-readiness/{name}"));
     let (hold_read, release_read) = (read_flag("hold-read"), read_flag("release-read"));
     let release_issue = c.runtime.state_dir().join("release-issue");
+    let watched_read = c.runtime.state_dir().join("watch-read-at-start");
+    let read_at_start = c.runtime.state_dir().join("read-at-start");
+    let stage_at_history = |c: &Company, text: &str| {
+        let before = c.sessions();
+        let held = c.slack.held();
+        c.slack.hold_reads();
+        c.slack.mention("C1", "USTEVEN", text, None);
+        wait("the question's context read", || c.slack.held() > held);
+        before
+    };
     // No snapshot yet, the token's issue held: the first acquisition at the
     // runner's start.
     c.runtime.flag("hold-issue", true);
     c.run();
     wait("the held token issue", || c.runtime.held_issue_running(1));
-    c.asked_and_answered("When do we ship?", "On Friday.");
+    let first = c.ask_and_wait_for_session("When do we ship?");
     assert!(c.runtime.held_issue_running(1), "the issue is still open");
+    // Finish admitting the question up to Slack's context response before
+    // opening a readiness request with a real-time deadline.
+    let before = stage_at_history(&c, "<@UAGENT> Who reviews it?");
     // Still no snapshot, the first snapshot read held.
     std::fs::write(&hold_read, "").unwrap();
     c.runtime.flag("hold-issue", false);
@@ -4969,10 +4982,13 @@ fn a_start_does_not_wait_on_an_outstanding_readiness_acquisition() {
     wait("the held first read", || {
         common::t3_readiness::held_read_open(&c.env, 1)
     });
-    c.asked_and_answered("Who reviews it?", "Ada does.");
-    assert!(
-        common::t3_readiness::held_read_open(&c.env, 1),
-        "the first read is still open"
+    std::fs::write(&watched_read, "1").unwrap();
+    c.slack.release_reads();
+    let second = c.wait_for_new_session(&before);
+    assert_eq!(
+        std::fs::read_to_string(&read_at_start).unwrap(),
+        "arrived",
+        "the first read was still outstanding when T3 received start"
     );
     std::fs::remove_file(&hold_read).unwrap();
     std::fs::write(&release_read, "").unwrap();
@@ -4984,29 +5000,47 @@ fn a_start_does_not_wait_on_an_outstanding_readiness_acquisition() {
     let later = common::t3_readiness::held_reads(&c.env) + 1;
     std::fs::remove_file(&release_read).unwrap();
     std::fs::write(&hold_read, "").unwrap();
+    let before = stage_at_history(&c, "<@UAGENT> And the release notes?");
     clock.advance(2);
     wait("the held later read", || {
         common::t3_readiness::held_read_open(&c.env, later)
     });
-    c.asked_and_answered("And the release notes?", "They are ready.");
-    assert!(
-        common::t3_readiness::held_read_open(&c.env, later),
-        "the later read is still open"
+    std::fs::write(&watched_read, later.to_string()).unwrap();
+    c.slack.release_reads();
+    let third = c.wait_for_new_session(&before);
+    assert_eq!(
+        std::fs::read_to_string(&read_at_start).unwrap(),
+        "arrived",
+        "read {later} was still outstanding when T3 received start"
     );
     std::fs::remove_file(&hold_read).unwrap();
     std::fs::write(&release_read, "").unwrap();
+    std::fs::remove_file(&watched_read).unwrap();
     // A snapshot retained, the renewal's issue held.
     let renewal = c.runtime.held_issues() + 1;
     std::fs::remove_file(&release_issue).unwrap();
     c.runtime.flag("hold-issue", true);
     clock.advance_seconds(270);
     wait("the held renewal", || c.runtime.held_issue_running(renewal));
-    c.asked_and_answered("And the date?", "The 20th.");
+    let fourth = c.ask_and_wait_for_session("And the date?");
     assert!(
         c.runtime.held_issue_running(renewal),
         "the renewal is still open"
     );
     std::fs::write(&release_issue, "").unwrap();
+
+    // Observe native starts while each acquisition is held. Answer delivery
+    // follows after release, outside the acquisition's real-time deadline.
+    for (session, reply) in [
+        (first, "On Friday."),
+        (second, "Ada does."),
+        (third, "They are ready."),
+        (fourth, "The 20th."),
+    ] {
+        let posts = c.slack.posts().len();
+        c.finish_turn(&session, 0, reply);
+        wait("the answer", || c.slack.posts().len() == posts + 1);
+    }
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV1
