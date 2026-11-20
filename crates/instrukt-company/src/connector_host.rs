@@ -564,13 +564,12 @@ fn deliver_notice(
     let text = connector.unavailable_notice(&notice.sender);
     let reconciliation = if notice.posting {
         let read_at = reach.connectors.now();
-        match connector.own_posts(&notice.conversation, &notice.since_message) {
-            Ok(posts) => Some((
-                read_at,
-                posts.iter().any(|post| {
-                    notice.after.is_none_or(|after| post.at > after) && post.text.starts_with(&text)
-                }),
-            )),
+        let Some(post_id) = &notice.post_id else {
+            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_missing_post_identity", company = %company, connector = key);
+            return;
+        };
+        match connector.post_receipt(&notice.conversation, &notice.since_message, post_id) {
+            Ok(receipt) => Some((read_at, receipt.is_some())),
             // Not knowing whether it landed, nothing is posted now.
             Err(error) => {
                 tracing::warn!(target: LOG_TARGET, event = "conversation_notice_unread", company = %company, connector = key, error = %error.cause);
@@ -594,9 +593,9 @@ fn deliver_notice(
         reach.connectors.now(),
     );
     let result = match step {
-        Ok(conversations::NoticeStep::Post) => {
+        Ok(conversations::NoticeStep::Post(post_id)) => {
             let outcome = connector
-                .answer(&notice.conversation, &text)
+                .answer(&notice.conversation, &text, &post_id)
                 .map(drop)
                 .map_err(|error| error.cause);
             tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
@@ -944,15 +943,17 @@ mod test_connector {
             &self,
             _: &str,
             _: &str,
+            _: &str,
         ) -> Result<Option<Timestamp>, instrukt_connector::AnswerError> {
             Ok(None)
         }
-        fn own_posts(
+        fn post_receipt(
             &self,
             _: &str,
             _: &str,
-        ) -> Result<Vec<instrukt_connector::OwnPost>, ConnectorError> {
-            Ok(Vec::new())
+            _: &str,
+        ) -> Result<Option<Timestamp>, ConnectorError> {
+            Ok(None)
         }
         fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
             Ok(())

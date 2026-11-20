@@ -144,6 +144,7 @@ struct Workspace {
     /// `user`, optional `bot_id`, `text`.
     messages: Vec<Value>,
     posts: Vec<Post>,
+    rendered_posts: std::collections::BTreeMap<String, String>,
     outgoing: VecDeque<String>,
     acknowledged: Vec<String>,
     connections: usize,
@@ -449,7 +450,14 @@ impl FakeSlack {
                     .map_or(PAGE, |l| l.parse::<usize>().unwrap())
                     .min(PAGE);
                 let from: usize = arg("cursor").map_or(0, |c| c.parse().unwrap());
-                let page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
+                let mut page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
+                if arg("include_all_metadata") != Some("true") {
+                    for message in &mut page {
+                        if let Some(metadata) = message.get_mut("metadata") {
+                            *metadata = json!({"event_type": metadata["event_type"]});
+                        }
+                    }
+                }
                 let more = from + size < found.len();
                 w.reads += 1;
                 json!({"ok": true, "messages": page, "has_more": more, "response_metadata": {"next_cursor": if more { (from + size).to_string() } else { String::new() }}})
@@ -492,7 +500,11 @@ impl FakeSlack {
                     return json!({"ok": false, "error": "not_in_channel"});
                 }
                 let ts = Self::posted(&mut w);
-                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": shown});
+                let rendered = w.rendered_posts.get(&shown).unwrap_or(&shown);
+                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": rendered});
+                if let Some(metadata) = arg("metadata") {
+                    message["metadata"] = serde_json::from_str(metadata).unwrap();
+                }
                 if let Some(thread) = &post.thread {
                     message["thread_ts"] = json!(thread);
                 }
@@ -883,6 +895,15 @@ impl FakeSlack {
 
     pub fn posts(&self) -> Vec<Post> {
         self.workspace.lock().unwrap().posts.clone()
+    }
+
+    /// What Slack returns as text for the submitted Markdown.
+    pub fn render_post(&self, submitted: &str, returned: &str) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .rendered_posts
+            .insert(submitted.into(), returned.into());
     }
 
     /// The next `times` posts beginning with `beginning` meet `fate`

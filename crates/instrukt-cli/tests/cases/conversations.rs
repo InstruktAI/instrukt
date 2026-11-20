@@ -718,6 +718,7 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(the_status_holds_through_locks_held_past_their_wait_and_slow_failures);
         scope.spawn(the_status_follows_the_relays_failure_and_a_turn_that_cannot_be_observed);
         scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
+        scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
         scope.spawn(a_rejected_retry_keeps_reconciling_the_earlier_answer);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
         scope.spawn(notice_epochs_and_reconciliation);
@@ -1176,6 +1177,70 @@ fn notice_epochs_and_reconciliation() {
     }
 }
 
+fn a_normalized_notice_is_reconciled_after_a_restart() {
+    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    let channel = "D18";
+    let member = "USTEVEN";
+    projected(&c);
+    c.runtime.flag("list-failure", true);
+    let asked = c.slack.direct(channel, member, "When do we ship?");
+    let started_at = interval_at(&c, &asked);
+    let text = notice_text(member);
+    c.slack
+        .render_post(&text, &text.replace("you'll", "you’ll"));
+    let state = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    state.execute_batch(
+        "CREATE TRIGGER hold_notice_receipt BEFORE UPDATE OF replied_at ON conversation_refusals
+         WHEN OLD.reason='unavailable' AND NEW.state='posted'
+         BEGIN SELECT RAISE(ABORT, 'forced notice receipt failure'); END"
+    ).unwrap();
+    set_clock(&clock, started_at + minute());
+    wait("Slack shows the notice and the receipt write fails", || {
+        notices(&c, member) == 1 && run_log(&c).contains("forced notice receipt failure")
+    });
+    assert_eq!(
+        notice_state(&c, channel, member).as_deref(),
+        Some("posting")
+    );
+    c.runner_dies();
+
+    // If read-back misses the rewritten text, the notice can be retried
+    // immediately at this clock setting.
+    set_clock(&clock, started_at + jiff::SignedDuration::from_mins(4));
+    state
+        .execute_batch("DROP TRIGGER hold_notice_receipt")
+        .unwrap();
+    c.run();
+    wait(
+        "the normalized notice receipt reconciled after restart",
+        || notice_state(&c, channel, member).as_deref() == Some("posted"),
+    );
+    assert_eq!(
+        notices(&c, member),
+        1,
+        "the accepted notice must not be posted again"
+    );
+    c.runtime.flag("list-failure", false);
+    let session = started(&c, &[]);
+    c.finish_turn(&session, 0, "Friday.");
+    wait("the member answered after the notice", || {
+        c.slack.posts_beginning("Friday.") == 1
+    });
+    assert_eq!(notices(&c, member), 1);
+}
+
+fn run_log(c: &Company) -> String {
+    std::fs::read_to_string(
+        c.env
+            .home()
+            .join(".local/state/instrukt-ai/instrukt/run.log"),
+    )
+    .unwrap_or_default()
+}
+
 fn a_lost_answer_response_defers_notices_until_read_back() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
@@ -1517,7 +1582,12 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
     });
     c.slack.hold_posts_to_fail();
     let held_before = c.slack.held_failing_posts();
-    c.finish_turn(&session, 0, "In the shared drive.");
+    let answer = "In the [shared drive](https://example.com/contract?review=1&share=2).";
+    c.slack.render_post(
+        answer,
+        "In the <https://example.com/contract?review=1&amp;share=2|shared drive>.",
+    );
+    c.finish_turn(&session, 0, answer);
     wait("the answer's post under way", || {
         c.slack.held_failing_posts() > held_before
     });
@@ -1549,13 +1619,13 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
     wait("the answer once posts are taken", || {
         c.slack.posts().len() == posts + 1
     });
-    let log = c
-        .env
-        .home()
-        .join(".local/state/instrukt-ai/instrukt/run.log");
+    let closure_failed = |c: &Company| {
+        run_log(c)
+            .matches("forced interval closure failure")
+            .count()
+    };
     wait("the interval closure write attempted", || {
-        std::fs::read_to_string(&log)
-            .is_ok_and(|log| log.contains("forced interval closure failure"))
+        closure_failed(&c) > 0
     });
     assert!(
         !answers_recorded(&c),
@@ -1566,6 +1636,21 @@ fn the_status_holds_through_locks_held_past_their_wait_and_slow_failures() {
         shown(&c, channel, &slowly).last().map(String::as_str),
         Some(UNAVAILABLE)
     );
+    c.runner_dies();
+    let previous = closure_failed(&c);
+    let status_calls = c.slack.status_calls(channel, &slowly);
+    set_clock(&clock, done_at + minute());
+    c.run();
+    wait(
+        "the restarted relay reconciles the normalized answer",
+        || closure_failed(&c) > previous && c.slack.status_calls(channel, &slowly) > status_calls,
+    );
+    assert_eq!(
+        c.slack.posts().len(),
+        posts + 1,
+        "the accepted answer must not be posted again"
+    );
+    assert!(!answers_recorded(&c));
     state
         .execute_batch("DROP TRIGGER hold_interval_close")
         .unwrap();

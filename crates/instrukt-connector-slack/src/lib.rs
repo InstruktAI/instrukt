@@ -72,6 +72,9 @@ const NOTICES: [&str; 20] = [
 /// posted in parts, in order.
 pub const SLACK_MESSAGE_LIMIT: usize = 12_000;
 
+/// Slack metadata event type for answer pieces and notices.
+const POST_EVENT_TYPE: &str = "instrukt_post";
+
 /// The upper end of a read that reaches to now: a Slack time no message
 /// carries yet.
 const UNTIL_NOW: &str = "9999999999.999999";
@@ -465,9 +468,19 @@ impl SlackApi {
         &self,
         conversation: &str,
         markdown: &str,
+        post_id: &str,
     ) -> Result<Option<Timestamp>, SlackError> {
         let (channel, thread) = split_conversation(conversation);
-        let mut form = vec![("channel", channel), ("markdown_text", markdown)];
+        let metadata = serde_json::json!({
+            "event_type": POST_EVENT_TYPE,
+            "event_payload": { "id": post_id },
+        })
+        .to_string();
+        let mut form = vec![
+            ("channel", channel),
+            ("markdown_text", markdown),
+            ("metadata", metadata.as_str()),
+        ];
         if let Some(thread) = thread {
             form.push(("thread_ts", thread));
         }
@@ -499,6 +512,7 @@ impl SlackApi {
         oldest: Option<&str>,
         latest: &str,
         cap: usize,
+        include_metadata: bool,
     ) -> Result<(Vec<Value>, bool), SlackError> {
         let method = if thread.is_some() {
             "conversations.replies"
@@ -528,6 +542,9 @@ impl SlackApi {
                 ("inclusive", "false"),
                 ("limit", limit.as_str()),
             ];
+            if include_metadata {
+                form.push(("include_all_metadata", "true"));
+            }
             if let Some(oldest) = oldest {
                 form.push(("oldest", oldest));
             }
@@ -905,9 +922,14 @@ impl Connector for Slack {
         Ok(Captured { text, accompanying })
     }
 
-    fn answer(&self, conversation: &str, part: &str) -> Result<Option<Timestamp>, AnswerError> {
+    fn answer(
+        &self,
+        conversation: &str,
+        part: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, AnswerError> {
         self.api
-            .answer(conversation, part)
+            .answer(conversation, part, post_id)
             .map_err(|error| AnswerError {
                 rejected: matches!(
                     error,
@@ -917,38 +939,34 @@ impl Connector for Slack {
             })
     }
 
-    /// Read as the accompanying messages are: the thread's replies for a
-    /// channel, the direct-message channel's history otherwise.
-    fn own_posts(
+    /// Slack may rewrite Markdown when returning it. Match metadata from
+    /// this app's own bot posts and use only Slack's timestamp as receipt.
+    fn post_receipt(
         &self,
         conversation: &str,
         since: &str,
-    ) -> Result<Vec<instrukt_connector::OwnPost>, ConnectorError> {
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError> {
         let me = self.me().map_err(failed)?;
         let (channel, thread) = split_conversation(conversation);
         let (messages, _) = self
             .api
-            .read(channel, thread, Some(since), UNTIL_NOW, usize::MAX)
+            .read(channel, thread, Some(since), UNTIL_NOW, usize::MAX, true)
             .map_err(failed)?;
-        Ok(messages
-            .iter()
-            .filter(|m| {
-                m.get("bot_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|bot| Some(bot) == me.bot.as_deref())
-                    || m.get("user").and_then(Value::as_str) == Some(me.user.as_str())
-            })
-            .filter_map(|m| {
-                Some(instrukt_connector::OwnPost {
-                    at: m.get("ts").and_then(Value::as_str).and_then(ts_time)?,
-                    text: m
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                })
-            })
-            .collect())
+        Ok(messages.iter().find_map(|message| {
+            let own = message["bot_id"]
+                .as_str()
+                .is_some_and(|bot| Some(bot) == me.bot.as_deref())
+                || message["user"].as_str() == Some(me.user.as_str());
+            let metadata = &message["metadata"];
+            if own
+                && metadata["event_type"].as_str() == Some(POST_EVENT_TYPE)
+                && metadata["event_payload"]["id"].as_str() == Some(post_id)
+            {
+                return message["ts"].as_str().and_then(ts_time);
+            }
+            None
+        }))
     }
 
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError> {
@@ -1123,10 +1141,10 @@ fn accompanying(
     let ts = message;
     let cap = usize::try_from(context_messages).unwrap_or(usize::MAX);
     let (earlier, left_out) = match previous {
-        Some(previous) => api.read(channel, thread, Some(previous), ts, cap)?,
+        Some(previous) => api.read(channel, thread, Some(previous), ts, cap, false)?,
         None => {
             let within = thread.filter(|thread| *thread != ts);
-            api.read(channel, within, None, ts, cap)?
+            api.read(channel, within, None, ts, cap, false)?
         }
     };
     let messages = earlier

@@ -717,7 +717,8 @@ address, `turn` and `piece`. Columns: `text`, the piece's text;
 `attempted_at`, the earliest unconfirmed post attempt, and
 `latest_attempted_at`, the latest unconfirmed attempt. Both are recorded
 before the provider can accept a post. A single attempt kept by an earlier
-version supplies both bounds. `posted_at`, when the connector
+version supplies both bounds. `post_id` is the piece's opaque identity,
+allocated before its first post and kept across retries. `posted_at`, when the connector
 accepted its post, `NULL` while outstanding; `failure`, the cause of its last
 failed post, `NULL` once posted. A piece with `attempted_at` and no `posted_at`
 may have been accepted; the conversation core looks for it at the connector
@@ -730,7 +731,9 @@ conversation (`project/instrukt/spec/feature/company/conversations`). Key: the
 address, `sender` and `reason`: `not_own`, the one fixed reply to a sender the agent
 does not answer, or `unavailable`, the one notice of the sender's current epoch.
 Columns: `received_at`; `state` for `unavailable`: `owed`, `posting` (a post was
-sent, its effect possibly in flight) with `attempted_at`, or `posted`; `replied_at`,
+sent, its effect possibly in flight) with `attempted_at`, or `posted`; `post_id`,
+the notice's opaque identity, allocated before its first post and reused
+until the epoch ends; `replied_at`,
 when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
 records the decision, never proof of delivery. An `unavailable` row is deleted
 when an answer to that sender is posted in the conversation; `not_own` rows stay.

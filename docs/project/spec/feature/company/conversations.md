@@ -155,8 +155,9 @@ connector gives.
   retried. A part left being posted with no acceptance recorded, because its
   post's response was lost or the runner stopped in between, is first looked
   for among the connector's own posts in the conversation since its first
-  addressed message: when more of them carry its text than parts with that
-  text are recorded posted, it is recorded posted; otherwise it is posted.
+  addressed message. The connector matches a durable id reserved for the
+  piece before the post. An unresolved attempt predating these ids stays
+  pending with an operator-visible cause.
 - Completion comes only from the conversation source. A turn running however
   long is left to run. A turn that ended failed has its message delivered again
   to the session after a growing delay, at the end of the conversation's queue,
@@ -268,9 +269,9 @@ the next answer to them is posted.
   notice in the same critical section once the provider accepted it.
 - A notice whose post timed out or lost its response is not posted again before
   the settle bound after the attempt has passed. After it, the connector reads the
-  conversation from the epoch's start for a post of its own that begins with that
-  person's mention and the sentence; finding one records it posted, finding none
-  posts again.
+  conversation from the epoch's start for a post of its own with the notice's
+  durable id. Finding one records it posted, and finding none posts again
+  with the same id.
 
 If a post is committed by the provider later than the settle bound after it was sent,
 the person can see the sentence twice, or once after their answer: the provider's
@@ -416,9 +417,6 @@ Scenario Outline: An answer is posted once
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message. The direct messages instrukt sends about a
   person's sign-ins are instrukt's own, not the agent's.
-- A part whose post lost its response is recognised by its text as the
-  connector's provider returns it; where the provider returns different text,
-  the part is posted again.
 - A conversation session loads its procedure, and its agent program reads
   the company's knowledge from the home's committed `AGENTS.md`, when the
   session starts. A later change to either

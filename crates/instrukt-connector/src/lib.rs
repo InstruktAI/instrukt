@@ -15,7 +15,7 @@ mod _connector;
 mod _declaration;
 mod _values;
 
-pub use _connector::{Connector, Inbox, Kind, OwnPost, SecretResolver};
+pub use _connector::{Connector, Inbox, Kind, SecretResolver};
 pub use _declaration::{Declaration, Declared, Field, Rule};
 pub use _values::{
     Accompanying, Admission, AnswerError, Captured, Clock, ConnectorError, Earlier, Incoming,

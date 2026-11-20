@@ -84,6 +84,16 @@ fn v23(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     if !latest_present {
         tx.execute_batch("ALTER TABLE conversation_answers ADD COLUMN latest_attempted_at TEXT")?;
     }
+    for table in ["conversation_answers", "conversation_refusals"] {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name='post_id')",
+            [table],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN post_id TEXT"))?;
+        }
+    }
     // Before the final receipt and interval closure were atomic, a runner
     // could have stopped between those two writes.
     tx.execute_batch(

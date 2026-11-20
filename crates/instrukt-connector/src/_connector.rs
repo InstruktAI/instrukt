@@ -6,12 +6,6 @@ use crate::_values::{
 };
 use jiff::Timestamp;
 
-/// A post found in the connector's own messages.
-pub struct OwnPost {
-    pub text: String,
-    pub at: Timestamp,
-}
-
 /// The host's side of [`Connector::listen`].
 pub trait Inbox: Sync {
     /// Retain an addressed message; returns once it is durably retained, so
@@ -44,19 +38,28 @@ pub trait Connector: Send + Sync {
         previous: Option<&str>,
         text: &str,
     ) -> Result<Captured, ConnectorError>;
-    /// Post one part of an answer to `conversation`, returning the provider's
-    /// posting time when its receipt has one.
-    fn answer(&self, conversation: &str, part: &str) -> Result<Option<Timestamp>, AnswerError>;
-    /// Each post of this connector's own in `conversation` after
-    /// its provider message `since`, oldest first: how a part whose post lost
-    /// its response, or whose acceptance went unrecorded, is recognised.
-    fn own_posts(&self, conversation: &str, since: &str) -> Result<Vec<OwnPost>, ConnectorError>;
+    /// Post an answer piece or notice with its durable identity, returning
+    /// the provider's posting time when its receipt has one.
+    fn answer(
+        &self,
+        conversation: &str,
+        part: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, AnswerError>;
+    /// Look for this connector's own post by its durable identity after
+    /// the provider message `since`, returning the receipt's posting time.
+    fn post_receipt(
+        &self,
+        conversation: &str,
+        since: &str,
+        post_id: &str,
+    ) -> Result<Option<Timestamp>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
     /// The one notice that the assistant is temporarily unavailable, worded
     /// by the connector and beginning with `member`'s mention; it is posted
-    /// through [`Connector::answer`] and recognised among
-    /// [`Connector::own_posts`] by its beginning.
+    /// through [`Connector::answer`] and reconciled by
+    /// [`Connector::post_receipt`].
     fn unavailable_notice(&self, member: &str) -> String;
     /// Where the status for `message` of `conversation` sits.
     fn place(&self, conversation: &str, message: &str) -> Place;
