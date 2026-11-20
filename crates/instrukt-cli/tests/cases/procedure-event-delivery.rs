@@ -491,11 +491,20 @@ pub(super) fn check_standing_recovery_doors() {
                 .unwrap();
             assert_eq!(generation, 1);
         },
+        |_, native| {
+            r.runtime.set_status(native, "idle");
+            r.append("after-committed-replacement");
+            r.tick();
+            assert_eq!(
+                r.delivered_to("after-committed-replacement").to_string(),
+                format!("t3:{native}")
+            );
+        },
     );
-    r.runtime.consume("s4");
+    r.runtime.consume("s5");
     r.append("after-recovery");
     r.tick();
-    assert_eq!(r.delivered_to("after-recovery").to_string(), "t3:s4");
+    assert_eq!(r.delivered_to("after-recovery").to_string(), "t3:s5");
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS23

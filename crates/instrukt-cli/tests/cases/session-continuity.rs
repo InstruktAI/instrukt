@@ -110,6 +110,8 @@ fn empty_discovery_and_outages_never_resolve_an_uncertain_start() {
     p.tick();
     assert_eq!(fake.threads().len(), 1);
 }
+const RECOVERY_FOLLOWUP: &str = "Later work for the committed successor.";
+
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS25
 #[test]
 fn keyed_recovery_doors_follow_binding_state() {
@@ -120,13 +122,28 @@ fn keyed_recovery_doors_follow_binding_state() {
             std::time::Duration::from_secs(30),
         )
         .unwrap();
-        instrukt_runner::keyed::retry(
-            &invocation,
-            &instrukt_runner::runtime::T3::default(),
-            &key,
-            "2030-01-06T09:00:21Z".parse().unwrap(),
-        )
-        .unwrap();
+        let adapter = instrukt_runner::runtime::T3::default();
+        let now = "2030-01-06T09:00:21Z".parse().unwrap();
+        if let Ok(target) = std::env::var("INSTRUKT_TEST_RECOVERY_TARGET") {
+            let session = instrukt_core::ids::SessionRef::parse(&target).unwrap();
+            let mut request = instrukt_runner::keyed::request(&home, &adapter, &key).unwrap();
+            request.brief = RECOVERY_FOLLOWUP.into();
+            let thread = instrukt_runner::keyed::followup(
+                &adapter,
+                &instrukt_runner::runtime::FollowupAssignment {
+                    invocation: &invocation,
+                    request: &request,
+                    session: &session,
+                    worktree_path: None,
+                    project: Some("demo"),
+                    now,
+                },
+            )
+            .unwrap();
+            assert_eq!(thread.session, session);
+        } else {
+            instrukt_runner::keyed::retry(&invocation, &adapter, &key, now).unwrap();
+        }
         return;
     }
     for phase in ["prepare", "work", "task"] {
@@ -175,6 +192,21 @@ fn keyed_recovery_doors_follow_binding_state() {
             || {
                 p.tick();
             },
+            |key, native| {
+                let (bound, claimed): (String, String) = db.query_row(
+                    "SELECT b.session, t.claim_session FROM session_bindings b
+                     JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?1 AND b.released_at IS NULL",
+                    [key], |row| Ok((row.get(0)?,row.get(1)?)),
+                ).unwrap();
+                assert_eq!(bound, format!("t3:{native}"), "{phase}");
+                assert_eq!(claimed, bound, "{phase}");
+                fake.set_status(native, "idle");
+                run_recovery_worker(&p.env, p.repo.path(), key, Some(&claimed));
+                assert!(
+                    fake.input_log(native).contains(RECOVERY_FOLLOWUP),
+                    "{phase}"
+                );
+            },
         );
     }
 
@@ -200,26 +232,53 @@ fn keyed_recovery_doors_follow_binding_state() {
          VALUES('t3',?1,'run','demo',?1,'t3:s1',?2,0,?3)",
         instrukt_core::state_db::rusqlite::params![key,path,intent.to_string()],
     ).unwrap();
-    check_recovery_doors(&p.env, p.repo.path(), &fake, &db, None, || {
-        let mut worker = p
-            .env
-            .command(&std::env::current_exe().unwrap(), p.repo.path());
-        let output = worker
-            .args([
-                "--exact",
-                "session_continuity::keyed_recovery_doors_follow_binding_state",
-            ])
-            .env("INSTRUKT_TEST_KEYED_RECOVERY", key)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    });
+    check_recovery_doors(
+        &p.env,
+        p.repo.path(),
+        &fake,
+        &db,
+        None,
+        || run_recovery_worker(&p.env, p.repo.path(), key, None),
+        |key, native| {
+            let target: String = db
+                .query_row(
+                    "SELECT session FROM runtime_bindings WHERE semantic_key=?1 AND accepted=1",
+                    [key],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(target, format!("t3:{native}"));
+            fake.set_status(native, "idle");
+            run_recovery_worker(&p.env, p.repo.path(), key, Some(&target));
+            assert!(fake.input_log(native).contains(RECOVERY_FOLLOWUP));
+        },
+    );
     crate::procedure_event_delivery::check_standing_recovery_doors();
+}
+
+fn run_recovery_worker(
+    env: &common::TestEnv,
+    root: &std::path::Path,
+    key: &str,
+    target: Option<&str>,
+) {
+    let mut worker = env.command(&std::env::current_exe().unwrap(), root);
+    worker
+        .args([
+            "--exact",
+            "session_continuity::keyed_recovery_doors_follow_binding_state",
+        ])
+        .env("INSTRUKT_TEST_KEYED_RECOVERY", key);
+    if let Some(target) = target {
+        worker.env("INSTRUKT_TEST_RECOVERY_TARGET", target);
+    }
+    let output = worker.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn recovery_db(env: &common::TestEnv) -> instrukt_core::state_db::rusqlite::Connection {
@@ -249,6 +308,7 @@ pub(super) fn check_recovery_doors(
     db: &instrukt_core::state_db::rusqlite::Connection,
     phase: Option<&str>,
     wake: impl FnOnce(),
+    later: impl FnOnce(&str, &str),
 ) {
     let key = fake.key("s1");
     let none = ["sessions", "resolve-start", &key, "--none"];
@@ -325,26 +385,41 @@ pub(super) fn check_recovery_doors(
     expect_door(&s2_exact, &replace);
     db.execute_batch("DROP TRIGGER IF EXISTS fail_recovery_receipt;")
         .unwrap();
-    fail_recovery_receipt(db, "s3");
     clear_phase(committed_phase);
-    let interrupted = env.run(root, replace).failure();
+    env.run(root, replace).success();
+    assert_eq!(binding().unwrap(), ("t3:s3".into(), true), "{key}");
+    let receipt: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s3' AND input_id=?1 AND state='accepted')",
+        [format!("assignment:{key}")], |row| row.get(0),
+    ).unwrap();
+    assert!(receipt, "{key}");
+    assert_eq!(fake.threads(), ["s3"], "{key}");
+    later(&key, "s3");
+    assert_eq!(fake.message_count("s3"), 2, "{key}");
+
+    let next_phase = delete("s3");
+    let next_replace = ["sessions", "replace-deleted", &key, "--stopped", "t3:s3"];
+    expect_door(&none, &next_replace);
+    fail_recovery_receipt(db, "s4");
+    clear_phase(next_phase);
+    let interrupted = env.run(root, next_replace).failure();
     let failure = String::from_utf8_lossy(&interrupted.get_output().stderr);
     assert!(
         failure.contains("recovery receipt failed"),
         "{key}: {failure}"
     );
-    assert_eq!(binding().unwrap(), ("t3:s3".into(), false), "{key}");
+    assert_eq!(binding().unwrap(), ("t3:s4".into(), false), "{key}");
 
-    let pending_phase = delete("s3");
-    let replace_pending = ["sessions", "replace-deleted", &key, "--stopped", "t3:s3"];
+    let pending_phase = delete("s4");
+    let replace_pending = ["sessions", "replace-deleted", &key, "--stopped", "t3:s4"];
     expect_door(&none, &replace_pending);
-    let s3_exact = ["sessions", "resolve-start", &key, "--session", "t3:s3"];
-    expect_door(&s3_exact, &replace_pending);
+    let s4_exact = ["sessions", "resolve-start", &key, "--session", "t3:s4"];
+    expect_door(&s4_exact, &replace_pending);
     clear_phase(pending_phase);
     env.run(root, replace_pending).success();
-    assert_eq!(binding().unwrap(), ("t3:s4".into(), true), "{key}");
-    assert_eq!(fake.threads(), ["s4"], "{key}");
-    assert_eq!(fake.message_count("s4"), 1, "{key}");
+    assert_eq!(binding().unwrap(), ("t3:s5".into(), true), "{key}");
+    assert_eq!(fake.threads(), ["s5"], "{key}");
+    assert_eq!(fake.message_count("s5"), 1, "{key}");
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS24

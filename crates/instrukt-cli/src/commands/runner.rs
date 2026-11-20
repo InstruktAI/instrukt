@@ -135,8 +135,7 @@ pub struct SessionsArgs {
 enum SessionsCommand {
     /// List this project's active and settled runtime threads, newest activity first.
     List(ListArgs),
-    /// Resolve a standing agent's start whose result never arrived: bind
-    /// the session the runtime did create, or declare that none was.
+    /// Resolve a pending start by verifying a thread or allowing a fresh start.
     ResolveStart(ResolveStartArgs),
     /// Confirm a deleted thread's provider stopped and start its replacement.
     ReplaceDeleted {
@@ -156,9 +155,11 @@ struct ResolveStartArgs {
     /// The session the runtime created, `<runtime>:<id>`.
     #[arg(long)]
     session: Option<SessionRef>,
-    /// Confirm no thread was created and no creation remains in flight; retry the same key.
+    /// Allow a fresh start after confirming no thread or creation remains.
+    /// A retained first thread must be proven absent.
     #[arg(long)]
     none: bool,
+    /// Print the resolution as JSON.
     #[arg(long)]
     json: bool,
 }

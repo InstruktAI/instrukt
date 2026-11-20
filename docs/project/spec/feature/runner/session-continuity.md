@@ -136,9 +136,9 @@ An invalid supplied timestamp is an observation error. T3 uses the later of
 
 `instrukt sessions resolve-start <key> --session <runtime:id> | --none` resolves
 instrukt's own ambiguous keyed starts under the key lock. It verifies and binds
-the named keyed thread, or records confirmation that no thread was created and
-no start remains in flight. It cannot resolve native delegated-child attempts;
-those use the work record's `todo attempt`/`todo bind` contract. Standing home
+the named keyed thread, or allows a fresh start when no thread or creation
+remains. A retained first thread must be proven absent. Native delegated-child
+attempts use the work record's `todo attempt`/`todo bind` contract. Standing home
 shorthand `<procedure>@<project>` remains available; subjects and successors use
 the full key.
 
@@ -369,9 +369,10 @@ thread already bound to another assignment. An ID already returned by native
 creation must pass the inspection described above. For an ID supplied by the
 operator after a lost start result, the listing or thread state must identify
 the native project if it was retained. The refusal directs the operator to
-restore project evidence and retry the same explicit ID. `--none` records the
-operator's confirmation that no thread was created and no start remains in
-flight, permitting retry under the same key. The resolved request retains its input and retry permission until retried.
+restore project evidence and retry the same explicit ID. With no retained ID,
+`--none` records the operator's confirmation that no thread was created and no
+start remains in flight. The resolved request retains its input and retry
+permission under the same key until retried.
 For a first start with a pending binding, a confirmed absent native ID directs
 the operator to `sessions resolve-start <key> --none`. That command checks
 absence by ID and atomically clears the pending binding and permits a fresh
@@ -613,7 +614,7 @@ GitHub command creates no second attention item.
 | `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
-| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Absence requires operator confirmation of provider stoppage before retirement. |
+| `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. For an absent thread, the binding state determines the command in the recovery table above. |
 
 An unrecognised status or response shape, command failure or unreachable runtime
 is an observation error, never `gone` or success. Status spellings and optional
@@ -882,6 +883,7 @@ But if that first thread is confirmed absent
 Then no-start resolution clears the pending ID and permits a fresh start
 When a committed binding or pending successor is confirmed absent
 Then the printed replacement command retires the named ID after the operator confirms its provider stopped
+And a successful replacement of a committed binding receives later work
 ```
 
 ### UC-SS21: Leave no instrukt-owned child processes behind (retired)
