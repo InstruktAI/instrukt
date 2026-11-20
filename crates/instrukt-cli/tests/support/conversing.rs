@@ -365,6 +365,13 @@ impl Company {
     /// Starts the long-lived runner and waits for its outward connection.
     pub fn run(&mut self) {
         let before = self.slack.connections();
+        self.start_runner();
+        wait("the connector's outward connection", || {
+            self.slack.connections() > before
+        });
+    }
+
+    pub fn start_runner(&mut self) {
         self.runner = Some(Running::spawn(
             self.env
                 .instrukt_process(self.env.home())
@@ -377,9 +384,6 @@ impl Company {
             self.runner.as_ref().unwrap().child.id().to_string(),
         )
         .unwrap();
-        wait("the connector's outward connection", || {
-            self.slack.connections() > before
-        });
     }
 
     /// Whether the runner process is still running.

@@ -304,6 +304,24 @@ while it was not connected:
   Slack serves (`conversations.history`, no time filter on parents), the replies
   after the read window's start of each parent whose `latest_reply` is after it
   (`conversations.replies`), and the top-level and direct messages after it.
+  If Slack reports replies without a latest reply time, the connector reads
+  those replies within the window. A connection still delivers live messages
+  while read-back pages through Slack.
+- A thread Slack reports missing ends its listing. An unavailable channel
+  leaves a saved coverage gap and the scan continues with other channels.
+  Later scans retry that channel, even if Slack omits it from the listing.
+  Repeated unavailability extends a gap only when Slack enumerates the
+  channel for the new scan. A changed channel ID leaves the old ID to
+  expire under its saved window. The gap clears after a complete scan of
+  the channel. Operator status
+  names unresolved gaps and reports spans that age out of the 30-day
+  read-back horizon as possibly missed. Other errors retain the current
+  position for retry.
+- A broadcast reply uses its own timestamp and its parent thread, wherever
+  Slack lists it. A limited request waits for Slack's retry time and resumes
+  at the same page after a restart. Operator status shows the wait.
+  If Slack has expired the cursor, only that listing starts over within the
+  saved scan window.
 - The window starts where the last completed read-back started, less a margin;
   with none completed, at the earlier of the time the runner first saw the
   connector declared and the answering bound back

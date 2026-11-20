@@ -164,6 +164,15 @@ struct Workspace {
     hold_later_history_pages: bool,
     refuse_replies: bool,
     refused_reply: Option<String>,
+    read_back_channels: Vec<String>,
+    hold_read_back_channel: Option<String>,
+    refuse_app_connection: bool,
+    refused_app_connections: usize,
+    read_back_limit: Option<(String, u64)>,
+    delete_thread_on_scan: Option<(String, String)>,
+    deleted_thread_scan_calls: usize,
+    unavailable_read_back_channels: std::collections::BTreeSet<String>,
+    history_pages: Vec<(String, Option<String>)>,
     hold_reads_from: std::collections::BTreeSet<String>,
     metadata_miss_before_hold: Option<String>,
     refuse_metadata_reads: bool,
@@ -256,6 +265,12 @@ impl FakeSlack {
                                         && body
                                             .split('&')
                                             .any(|field| field.starts_with("cursor=")))
+                                    || (method == "conversations.history"
+                                        && workspace.hold_read_back_channel.as_ref().is_some_and(
+                                            |channel| {
+                                                body == format!("channel={channel}&limit=200")
+                                            },
+                                        ))
                                     || workspace.hold_reads_from.iter().any(|oldest| {
                                         body.split('&').any(|field| {
                                             field.strip_prefix("oldest=") == Some(oldest)
@@ -296,6 +311,20 @@ impl FakeSlack {
                             if method == "users.info" {
                                 w.lookups += 1;
                                 w.limit_lookup.take()
+                            } else if method == "conversations.history" {
+                                let args = form(&body);
+                                let channel = args.get("channel").unwrap();
+                                let cursor = args.get("cursor").cloned();
+                                w.history_pages.push((channel.clone(), cursor.clone()));
+                                if cursor.is_some()
+                                    && w.read_back_limit
+                                        .as_ref()
+                                        .is_some_and(|(target, _)| target == channel)
+                                {
+                                    w.read_back_limit.take().map(|(_, seconds)| seconds)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
@@ -434,6 +463,10 @@ impl FakeSlack {
         let mut w = workspace.lock().unwrap();
         let app = method == "apps.connections.open";
         let accepted = if app { APP_TOKEN } else { BOT_TOKEN };
+        if app && w.refuse_app_connection {
+            w.refused_app_connections += 1;
+            return json!({"ok": false, "error": "invalid_auth"});
+        }
         if w.refuse || token != accepted {
             return json!({"ok": false, "error": "invalid_auth"});
         }
@@ -441,7 +474,13 @@ impl FakeSlack {
         let bound = |m: &Value, name: &str, below: bool| {
             arg(name).is_none_or(|edge| {
                 let edge: f64 = edge.parse().unwrap();
-                if below { ts(m) < edge } else { ts(m) > edge }
+                if ts(m) == edge && arg("inclusive") == Some("true") {
+                    true
+                } else if below {
+                    ts(m) < edge
+                } else {
+                    ts(m) > edge
+                }
             })
         };
         match method {
@@ -449,6 +488,12 @@ impl FakeSlack {
             "auth.test" => {
                 json!({"ok": true, "user_id": BOT_USER, "bot_id": BOT_ID, "team_id": TEAM})
             }
+            "users.conversations" => json!({
+                "ok": true,
+                "channels": w.read_back_channels.iter()
+                    .map(|id| json!({"id": id, "is_im": id.starts_with('D')}))
+                    .collect::<Vec<_>>(),
+            }),
             "users.info" if w.refuse_lookups => json!({"ok": false, "error": "ratelimited"}),
             "users.info" => match w.people.get(arg("user").unwrap()) {
                 Some(person) => json!({"ok": true, "user": person.record()}),
@@ -466,6 +511,33 @@ impl FakeSlack {
                 json!({"ok": true})
             }
             "conversations.history" | "conversations.replies" => {
+                if method == "conversations.replies"
+                    && arg("latest").is_none()
+                    && w.delete_thread_on_scan
+                        .as_ref()
+                        .is_some_and(|(channel, parent)| {
+                            arg("channel") == Some(channel) && arg("ts") == Some(parent)
+                        })
+                {
+                    w.deleted_thread_scan_calls += 1;
+                    if w.deleted_thread_scan_calls == 1 {
+                        let (channel, parent) = w.delete_thread_on_scan.clone().unwrap();
+                        w.messages.retain(|message| {
+                            message["channel"] != channel
+                                || (message["ts"] != parent && message["thread_ts"] != parent)
+                        });
+                    }
+                    return json!({"ok": false, "error": "thread_not_found"});
+                }
+
+                if method == "conversations.history"
+                    && arg("limit") == Some("200")
+                    && arg("channel")
+                        .is_some_and(|channel| w.unavailable_read_back_channels.contains(channel))
+                {
+                    return json!({"ok": false, "error": "channel_not_found"});
+                }
+
                 if method == "conversations.replies"
                     && (w.refuse_replies
                         || w.refused_reply
@@ -488,7 +560,11 @@ impl FakeSlack {
                     .filter(|m| m["channel"] == channel)
                     .filter(|m| match thread {
                         Some(root) => m["ts"] == root || m["thread_ts"] == root,
-                        None => m["thread_ts"].is_null() || m["thread_ts"] == m["ts"],
+                        None => {
+                            m["thread_ts"].is_null()
+                                || m["thread_ts"] == m["ts"]
+                                || m["subtype"] == "thread_broadcast"
+                        }
                     })
                     .filter(|m| bound(m, "latest", true) && bound(m, "oldest", false))
                     .cloned()
@@ -504,6 +580,22 @@ impl FakeSlack {
                     .min(PAGE);
                 let from: usize = arg("cursor").map_or(0, |c| c.parse().unwrap());
                 let mut page: Vec<Value> = found.iter().skip(from).take(size).cloned().collect();
+                if thread.is_none() && w.read_back_channels.iter().any(|id| id == channel) {
+                    for parent in &mut page {
+                        let latest = w
+                            .messages
+                            .iter()
+                            .filter(|message| {
+                                message["channel"] == channel
+                                    && message["thread_ts"] == parent["ts"]
+                                    && message["ts"] != parent["ts"]
+                            })
+                            .max_by(|a, b| ts(a).total_cmp(&ts(b)));
+                        if let Some(latest) = latest {
+                            parent["latest_reply"] = latest["ts"].clone();
+                        }
+                    }
+                }
                 let include_metadata = arg("include_all_metadata") == Some("true");
                 let miss = include_metadata
                     && w.metadata_miss_before_hold
@@ -616,6 +708,70 @@ impl FakeSlack {
             .unwrap_or(0);
         let at = micros(&stamp).max(latest + 100);
         format!("{}.{:06}", at / 1_000_000, at % 1_000_000)
+    }
+
+    pub fn refuse_app_connection(&self, refuse: bool) {
+        self.workspace.lock().unwrap().refuse_app_connection = refuse;
+    }
+
+    pub fn refused_app_connections(&self) -> usize {
+        self.workspace.lock().unwrap().refused_app_connections
+    }
+
+    pub fn delete_thread_on_scan(&self, channel: &str, parent: &str) {
+        self.workspace.lock().unwrap().delete_thread_on_scan =
+            Some((channel.to_owned(), parent.to_owned()));
+    }
+
+    pub fn deleted_thread_scan_calls(&self) -> usize {
+        self.workspace.lock().unwrap().deleted_thread_scan_calls
+    }
+
+    pub fn unavailable_for_read_back(&self, channel: &str, unavailable: bool) {
+        let mut workspace = self.workspace.lock().unwrap();
+        if unavailable {
+            workspace
+                .unavailable_read_back_channels
+                .insert(channel.to_owned());
+        } else {
+            workspace.unavailable_read_back_channels.remove(channel);
+        }
+    }
+
+    pub fn throttle_later_history_page(&self, channel: &str, seconds: u64) {
+        self.workspace.lock().unwrap().read_back_limit = Some((channel.to_owned(), seconds));
+    }
+
+    pub fn history_pages(&self, channel: &str) -> Vec<Option<String>> {
+        self.workspace
+            .lock()
+            .unwrap()
+            .history_pages
+            .iter()
+            .filter(|(seen, _)| seen == channel)
+            .map(|(_, cursor)| cursor.clone())
+            .collect()
+    }
+
+    pub fn broadcast(&self, channel: &str, ts: &str) {
+        let mut workspace = self.workspace.lock().unwrap();
+        let message = workspace
+            .messages
+            .iter_mut()
+            .find(|message| message["channel"] == channel && message["ts"] == ts)
+            .unwrap();
+        message["subtype"] = json!("thread_broadcast");
+    }
+
+    pub fn hold_read_back_channel(&self, channel: Option<&str>) {
+        self.workspace.lock().unwrap().hold_read_back_channel = channel.map(str::to_owned);
+    }
+
+    pub fn read_back_channels(&self, channels: &[&str]) {
+        self.workspace.lock().unwrap().read_back_channels = channels
+            .iter()
+            .map(|channel| (*channel).to_owned())
+            .collect();
     }
 
     /// A person writes a message nobody addresses to the agent: Slack sends

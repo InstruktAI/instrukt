@@ -174,10 +174,38 @@ pub fn retain(
     now: Timestamp,
 ) -> Result<Intake, ConversationError> {
     let state = RunnerState::new(home);
+    let inserted = state.write(|tx| retain_in(tx, company, incoming, now))?;
+    if inserted == 0 {
+        return Ok(Intake::Repeated);
+    }
+    tracing::info!(target: LOG_TARGET, event = "conversation_message_accepted", company = %company, connector = %incoming.connector, conversation = %incoming.conversation);
+    Ok(Intake::Retained)
+}
+
+pub(crate) mod read_back;
+
+fn retain_in(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    company: &ProjectSlug,
+    incoming: &Incoming,
+    now: Timestamp,
+) -> Result<usize, StateError> {
     let semantic = key(company, &incoming.connector, &incoming.conversation);
-    let inserted = state.write::<_, StateError>(|tx| {
-        let path = state::db_path(tx);
-        tx.execute(
+    let path = state::db_path(tx);
+    let settled: bool = tx.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM conversation_missed_identities
+            WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
+            UNION ALL SELECT 1 FROM conversation_context_receipts
+            WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND delivery=message
+         )",
+        params![company.as_str(), incoming.connector, incoming.conversation, incoming.message],
+        |row| row.get(0),
+    ).map_err(state::sql(&path))?;
+    if settled {
+        return Ok(0);
+    }
+    tx.execute(
             "INSERT INTO connected_conversations(company,connector,conversation,semantic_key) VALUES (?1,?2,?3,?4) ON CONFLICT DO NOTHING",
             params![
                 company.as_str(),
@@ -187,8 +215,9 @@ pub fn retain(
             ],
         )
         .map_err(state::sql(&path))?;
-        tx.execute(
-            "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
+    tx.execute(
+            "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
             params![
                 company.as_str(),
                 incoming.connector,
@@ -203,12 +232,6 @@ pub fn retain(
             ],
         )
         .map_err(state::sql(&path))
-    })?;
-    if inserted == 0 {
-        return Ok(Intake::Repeated);
-    }
-    tracing::info!(target: LOG_TARGET, event = "conversation_message_accepted", company = %company, connector = %incoming.connector, conversation = %incoming.conversation);
-    Ok(Intake::Retained)
 }
 
 /// How long an addressed message waits for its accompanying messages.
@@ -4050,6 +4073,12 @@ pub struct Status {
     pub relay_failure: Option<String>,
     pub connectors: Vec<ConnectorStatus>,
     pub conversations: Vec<ConversationStatus>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missed_messages: Vec<read_back::Missed>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_back_failures: Vec<read_back::Failure>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_back_channel_gaps: Vec<read_back::ChannelGap>,
 }
 
 /// Connection states, conversations with pending messages, answers or
@@ -4058,6 +4087,10 @@ pub struct Status {
 /// host is stopped, whatever an earlier run recorded for it, and a declared
 /// connector no run ever hosted is listed as stopped too.
 pub fn status(home: &Home) -> Result<Status, ConversationError> {
+    status_at(home, Timestamp::now())
+}
+
+fn status_at(home: &Home, now: Timestamp) -> Result<Status, ConversationError> {
     let state = RunnerState::new(home);
     let hosted = instrukt_runner::runner::hosted(home);
     let mut connectors = state
@@ -4165,6 +4198,9 @@ pub fn status(home: &Home) -> Result<Status, ConversationError> {
         relay_failure,
         connectors,
         conversations,
+        missed_messages: read_back::missed(home, now)?,
+        read_back_failures: read_back::failures(home)?,
+        read_back_channel_gaps: read_back::channel_gaps(home, now)?,
     })
 }
 
@@ -4318,6 +4354,15 @@ fn company_error(error: impl std::fmt::Display) -> instrukt_runner::interfaces::
 }
 
 impl instrukt_runner::interfaces::CompanyPorts for Ports {
+    fn maintain_read_back(
+        &self,
+        home: &Home,
+        now: Timestamp,
+    ) -> Result<(), instrukt_runner::interfaces::CompanyError> {
+        read_back::maintain_at_start(home, now)
+            .map_err(|error| instrukt_runner::interfaces::CompanyError(error.cause))
+    }
+
     fn demand(&self, admitted: &Admitted) -> bool {
         !admitted_demand(admitted).is_empty()
     }
@@ -4405,8 +4450,9 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
     fn status(
         &self,
         home: &Home,
+        now: Timestamp,
     ) -> Result<serde_json::Value, instrukt_runner::interfaces::CompanyError> {
-        let status = status(home).map_err(company_error)?;
+        let status = status_at(home, now).map_err(company_error)?;
         serde_json::to_value(status).map_err(company_error)
     }
 }

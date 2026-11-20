@@ -887,7 +887,18 @@ fn own_message(message: &Value, me: &Me) -> bool {
         || message["user"].as_str() == Some(me.user.as_str())
 }
 
+mod read_back;
+
 impl Connector for Slack {
+    fn read_back_page(
+        &self,
+        from: Timestamp,
+        position: Option<String>,
+        gaps: &[instrukt_connector::ReadBackGap],
+    ) -> Result<instrukt_connector::ReadBackPage, instrukt_connector::ReadBackError> {
+        self.history_page(from, position, gaps)
+    }
+
     fn limits(&self) -> instrukt_connector::Limits {
         instrukt_connector::Limits {
             message_chars: SLACK_MESSAGE_LIMIT,

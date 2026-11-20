@@ -342,6 +342,11 @@ pub fn run(
     // conversations are on, the connector destination; the connections take
     // the intake. Both report their unexpected end to this loop at once.
     let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
+    if let Some(company) = &cx.wiring.company
+        && let Err(error) = company.maintain_read_back(cx.home, clock())
+    {
+        tracing::warn!(event = "read_back_maintenance_failed", %error);
+    }
     // The company is hosted when the admitted generation declares a
     // connector: its connections start first, building each connector kind
     // once; a setting a kind refuses stops the runner here. The relay then

@@ -799,17 +799,49 @@ serves conversations is not running or cannot acquire its source, `NULL` while i
 reads; `updated_at`, the start of the current failure, kept while the failure
 persists across retries.
 
-**`connector_read_back`** — one row per declared connector, owned by the
-conversation core. Key: `(company, connector)`. Columns: `retained_until`, where the
-last completed read-back started less a margin, `NULL` until one completes, written
-only by a completed read-back in the transaction of its last retention and never
-from a connection state or a retained message's time; `first_seen`, when the runner
-first saw the connector declared; `missed`, the addressed messages older than the
-answering bound that a read-back found and did not admit (conversation, message,
-time, link), kept for the reporting period and one per message; both are declared
-with the conversation core (`project/instrukt/spec/feature/company/conversations`). The row lives as long as the declaration. On
-migration an existing connector's `first_seen` is its company's earliest retained
-message, or the migration time.
+**`connector_read_back_seed`** — migration 26 records the earliest
+retained message time for each existing connector. It supplies a first
+observation when the scan store has none and establishes no scan coverage.
+
+**`state/connector-read-back.sqlite`** — the company conversation core owns
+this store for one home's connectors. Its saved window is authoritative and
+durable when first learned. Losing it can skip an unread question the window
+would have recovered. Provider positions and seen identities record external
+bookkeeping. The store has its own SQLite writer outside live intake.
+
+Each connector keeps one active window with its start and lower bound, the
+provider position, the current fetched page until processed, and any
+provider retry time. Restarts resume those records. Only completion advances
+coverage to the window's start less the overlap. Page identities are kept by
+provider channel and message ID. A page with new addressed messages writes
+them in one live-intake transaction. This transaction reconciles previously
+received messages and records missed identities in `conversation_missed_identities`.
+Live intake checks those same identities within its write transaction. The
+first committed decision wins. Already seen page identities skip intake.
+Provider reads run outside intake transactions. Unseen missed identity markers
+older than the reporting period retire on a later intake batch.
+
+A completed scan advances overall coverage while keeping each unavailable
+channel's uncovered span separately. These spans are authoritative, owned by
+the conversation core, and persisted as soon as a channel reports unavailable.
+Losing one can skip unread questions even when the overall cursor survives.
+Later scans retry the saved span, including channels absent from enumeration.
+A retry extends a still-unavailable channel's span only when enumeration
+also establishes that the channel belongs to the new scan.
+
+At runner start and each scan start, the store retires expired prefixes and
+prunes old records across connectors. The horizon is measured from each
+span's own lower bound. Recovery records any expired prefix and clears the
+remaining gap in one transaction. A connector no longer declared retires
+its gaps, scan state and seen identities. Each saved gap has one operator
+report for its expired span. As the expired boundary advances, the same
+report is updated. It remains visible for 30 days after its last advance.
+A channel whose ID changed remains pending under the old ID until its saved
+span expires.
+
+Seen identities retire after 30 days. Missed records within that period keep
+the written time and provider link. They carry no message text. The active
+page holds text only until intake and the scan checkpoint commit.
 
 **`runner_workers`** — one row per background worker of the runner: the history
 workers (extraction, query responder) and the readiness refresh (`readiness`,

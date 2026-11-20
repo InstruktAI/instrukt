@@ -3,7 +3,7 @@
 use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
     Accompanying, Admission, AnswerError, Captured, ConnectorError, ContextSnapshot, Incoming,
-    Limits, Place, Status,
+    Limits, Place, ReadBackError, ReadBackGap, ReadBackPage, Status,
 };
 use jiff::Timestamp;
 
@@ -27,6 +27,15 @@ pub trait Connector: Send + Sync {
     /// instrukt rather than received over a connection it holds returns at
     /// once.
     fn listen(&self, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), ConnectorError>;
+    /// Fetch one page, resuming a continuation retained by the host.
+    fn read_back_page(
+        &self,
+        _from: Timestamp,
+        _position: Option<String>,
+        _gaps: &[ReadBackGap],
+    ) -> Result<ReadBackPage, ReadBackError> {
+        Ok(ReadBackPage::default())
+    }
     /// Whether `sender`, a provider identity, is one of the company's own.
     fn admit(&self, sender: &str) -> Admission;
     /// The addressed message `message` of `conversation` as the agent reads
