@@ -194,9 +194,7 @@ fn command_failure(error: crate::process::ProcessError) -> CommandFailure {
     match error {
         crate::process::ProcessError::Spawn { .. } => CommandFailure::Launch,
         crate::process::ProcessError::Timeout { .. } => CommandFailure::Timeout,
-        crate::process::ProcessError::Io { .. } | crate::process::ProcessError::Clock { .. } => {
-            CommandFailure::Io
-        }
+        crate::process::ProcessError::Io { .. } => CommandFailure::Io,
     }
 }
 fn command_output(
@@ -486,7 +484,7 @@ impl super::Readiness for Readiness {
             token.revoked = true;
             let attempt =
                 Invocation::program("t3", &["auth", "session", "revoke", "--", &token.session])
-                    .run_in_real_time(TIMEOUT);
+                    .run(TIMEOUT);
             if let Err(failure) = command_output(attempt) {
                 tracing::error!(
                     event = "readiness_token_cleanup_failed",

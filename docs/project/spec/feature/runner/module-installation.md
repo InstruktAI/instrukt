@@ -156,8 +156,8 @@ The service's run is an ordinary `instrukt run`: it performs every enabled
 module's work, and the runner lock still admits one runner per machine. While
 it runs, the minute tick exits at once and a second `instrukt run` is refused
 naming the service. While a run started by hand holds the lock, the service's
-process waits for the lock for at most `RUN_LOCK_WAIT`, measured on the
-process-limit clock. If the wait expires, it exits nonzero naming the
+process waits for the lock for at most `RUN_LOCK_WAIT`, measured in
+monotonic elapsed time. If the wait expires, it exits nonzero naming the
 holder when known, and its manager starts it again. An acquired lock is kept
 even when the wait bound has elapsed. Installation writes the service's
 definition and restarts the service every time it runs, so the installed

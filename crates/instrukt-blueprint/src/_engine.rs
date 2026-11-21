@@ -93,8 +93,6 @@ pub enum EngineError {
     },
     #[error("the graph engine did not finish within {}s and was ended", .0.as_secs())]
     TimedOut(Duration),
-    #[error("the graph engine's limit cannot be measured: {0}")]
-    Clock(String),
     #[error("the graph engine was not started: its process group could not be recorded ({0})")]
     Untracked(String),
     #[error("the graph engine produced no graph at {0}")]
@@ -387,14 +385,13 @@ fn go_ahead(recorded: Result<(), String>) -> Start {
 const GO_AHEAD: &str = "IFS= read -r _ || exit 125; exec \"$0\" \"$@\" </dev/null";
 
 /// Waits for the engine within `timeout`, measured as every limit on a
-/// started program is ([`Limit`]); past it, or when its clock has no time,
-/// the engine's group is ended.
+/// started program is ([`Limit`]); past it the engine's group is ended.
 fn wait(
     group: &instrukt_core::process::OwnedProcessGroup,
     child: &mut Child,
     timeout: Duration,
 ) -> Result<ExitStatus, EngineError> {
-    let limit = Limit::start(timeout).map_err(EngineError::Clock)?;
+    let limit = Limit::start(timeout);
     loop {
         let ended = group.try_wait(child).map_err(|source| EngineError::Io {
             what: "cannot wait for the engine started in",
@@ -402,13 +399,12 @@ fn wait(
             source,
         })?;
         let stopped = match limit.judge(ended) {
-            Ok(Look::Ended(status)) => return Ok(status),
-            Ok(Look::Running) => {
+            Look::Ended(status) => return Ok(status),
+            Look::Running => {
                 std::thread::sleep(POLL);
                 continue;
             }
-            Ok(Look::Passed) => EngineError::TimedOut(timeout),
-            Err(reason) => EngineError::Clock(reason),
+            Look::Passed => EngineError::TimedOut(timeout),
         };
         kill_group(child.id());
         if let Err(err) = group.wait(child) {
