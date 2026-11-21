@@ -72,12 +72,10 @@ while it waits for a later attempt. `instrukt events status` shows pending
 source transitions, their cause and age. After a transition, a reader with the
 previous binding can no longer read or acknowledge entries on that source.
 
-A dead-letter announcement receipt expires seven days after it is written or
-last found by a retry. The worker refreshes the expiry atomically when it
-finds an existing receipt. After SQLite confirms the append, the worker tries
-to delete the receipt early. Expiry also removes receipts left on a removed
-destination or restored by Redis after a deletion. Replay can append again
-if recovery has been unable to refresh the receipt for seven days.
+Dead-letter announcements use one bounded best-effort XADD after parking is
+settled, as `project/instrukt/spec/feature/runner/event-consumers` owns. They have
+no receipt or replay protocol. Previously written announcement receipts expire
+naturally; the separate durable dead-letter parking receipt remains in use.
 
 ### Local committed facts and publication recovery
 

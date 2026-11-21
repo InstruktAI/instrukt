@@ -18,7 +18,6 @@ pub struct DeliveryGate {
 #[derive(Default)]
 struct Gate {
     version: Option<String>,
-    announcement: bool,
     armed: AtomicBool,
     intercepted: AtomicBool,
     stopping: AtomicBool,
@@ -28,19 +27,12 @@ struct Gate {
 
 impl DeliveryGate {
     pub fn new(server: &super::redis::RedisServer) -> Self {
-        Self::build(server, None, false)
-    }
-    pub fn announcements(server: &super::redis::RedisServer) -> Self {
-        Self::build(server, None, true)
+        Self::build(server, None)
     }
     pub fn reporting_version(server: &super::redis::RedisServer, version: &str) -> Self {
-        Self::build(server, Some(version.into()), false)
+        Self::build(server, Some(version.into()))
     }
-    fn build(
-        server: &super::redis::RedisServer,
-        version: Option<String>,
-        announcement: bool,
-    ) -> Self {
+    fn build(server: &super::redis::RedisServer, version: Option<String>) -> Self {
         let dir = tempfile::Builder::new()
             .prefix("instrukt-gate-")
             .tempdir_in("/tmp")
@@ -52,7 +44,6 @@ impl DeliveryGate {
         let target = server.url.strip_prefix("unix://").unwrap().to_owned();
         let state = Arc::new(Gate {
             version,
-            announcement,
             ..Gate::default()
         });
         let sockets = Arc::new(Mutex::new(Vec::new()));
@@ -109,19 +100,10 @@ impl DeliveryGate {
                                     .is_some_and(|reply| {
                                         reply.keys.iter().any(|stream| !stream.ids.is_empty())
                                     });
-                                let intercept = if state.announcement {
-                                    arguments
-                                        .first()
-                                        .is_some_and(|name| name.eq_ignore_ascii_case(b"EVALSHA"))
-                                        && arguments
-                                            .get(4)
-                                            .is_some_and(|key| key.ends_with(b":announced"))
-                                        && response.starts_with(b"$")
-                                } else {
-                                    arguments.first().is_some_and(|name| {
-                                        name.eq_ignore_ascii_case(b"XREADGROUP")
-                                    }) && has_delivery
-                                };
+                                let intercept = arguments
+                                    .first()
+                                    .is_some_and(|name| name.eq_ignore_ascii_case(b"XREADGROUP"))
+                                    && has_delivery;
                                 if intercept && state.armed.swap(false, Ordering::AcqRel) {
                                     state.intercepted.store(true, Ordering::Release);
                                     let guard = state.released.lock().unwrap();
