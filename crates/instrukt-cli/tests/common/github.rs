@@ -594,7 +594,7 @@ struct State {
     projects: Vec<Project>,
     project_discovery_available: bool,
     auth_clock: std::path::PathBuf,
-    tokens: BTreeMap<String, (u64, jiff::Timestamp)>,
+    tokens: BTreeMap<String, (u64, jiff::Timestamp, bool)>,
     active_token: Option<String>,
 }
 
@@ -1121,8 +1121,8 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         guard
             .tokens
             .get(t)
-            .filter(|(_, expiry)| *expiry > now)
-            .map(|(id, _)| (*id, t.to_owned()))
+            .filter(|(_, expiry, _)| *expiry > now)
+            .map(|(id, _, _)| (*id, t.to_owned()))
     });
     let app_id = jwt.or(token.as_ref().map(|(id, _)| *id));
     let previous_login = guard.login.clone();
@@ -1366,15 +1366,30 @@ fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -
             .checked_add(jiff::SignedDuration::from_secs(3600))
             .unwrap();
         let token = format!("app-token-{id}-{}", state.tokens.len() + 1);
-        state.tokens.insert(token.clone(), (id, expires));
+        let has_repo_access = input["permissions"].as_object().is_some_and(|perms| {
+            perms
+                .keys()
+                .any(|key| key != "organization_projects" && key != "members")
+        });
+        state
+            .tokens
+            .insert(token.clone(), (id, expires, has_repo_access));
         return Reply::created(
             json!({"token":token,"expires_at":expires.to_string(),"permissions":input["permissions"]}),
         );
     }
     if method == "GET" && path == "/installation/repositories" {
-        return Reply::ok(
-            json!({"repositories":state.repos.values().map(Repo::json).collect::<Vec<_>>()}),
-        );
+        let has_repo_access = state
+            .active_token
+            .as_deref()
+            .and_then(|t| state.tokens.get(t))
+            .is_none_or(|(_, _, has_repo)| *has_repo);
+        let repositories: Vec<Value> = if has_repo_access {
+            state.repos.values().map(Repo::json).collect()
+        } else {
+            Vec::new()
+        };
+        return Reply::ok(json!({"repositories": repositories}));
     }
     if method == "POST" && path == "/graphql" {
         let input: Value = serde_json::from_str(body).unwrap_or(Value::Null);
