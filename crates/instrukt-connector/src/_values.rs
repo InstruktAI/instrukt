@@ -110,13 +110,18 @@ pub struct ConnectorError {
     pub cause: String,
 }
 
+/// Evidence returned by one successful provider post; neither field is required.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnswerReceipt {
+    pub message_id: Option<String>,
+    pub posted_at: Option<Timestamp>,
+}
+
 /// The result of an unsuccessful attempt to post.
 #[derive(Debug, thiserror::Error)]
 #[error("{cause}")]
 pub struct AnswerError {
     pub cause: String,
-    /// The provider confirmed that it rejected the post.
-    pub rejected: bool,
 }
 
 /// What the provider says about the sender of an addressed message.
@@ -147,8 +152,6 @@ pub type ContextSnapshot = Box<dyn FnOnce() -> Captured + Send>;
 pub struct Limits {
     /// The most characters one posted part of an answer holds.
     pub message_chars: usize,
-    /// The provider request bound for posting an answer.
-    pub answer_timeout: Duration,
     /// How often the working indicator is set again while it stays; `None`
     /// when the provider has no indicator.
     pub working_refresh: Option<Duration>,

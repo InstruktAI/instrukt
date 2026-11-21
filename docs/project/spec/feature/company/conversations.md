@@ -202,29 +202,17 @@ connector gives.
   that retains the answers it reads. Posting settles each retained piece
   separately through the protocol below. Retained answers can post while
   the conversation source is unreadable.
-- A person receives each part of an answer once. Each part is recorded as
-  being posted before its post is sent. A part the connector accepted is never
-  posted again: when recording that acceptance fails, only the record is
-  retried. A part left being posted with no acceptance recorded, because its
-  post's response was lost or the runner stopped in between, is first looked
-  for among the connector's own posts in the conversation since its first
-  addressed message. The connector matches a durable id reserved for the
-  piece before the post. For a retained attempt that predates those ids, the
-  relay makes one best-effort read within the existing settle window. A
-  matching bot post after the attempt supplies the receipt. If the window
-  ends without a match, the connector's notice pass settles the piece with
-  delivery unknown using the retained record. Expiry proceeds during a
-  source or provider outage. The piece produces neither a retry nor a
-  notice, and later work proceeds. Status keeps the cause with the
-  conversation, turn and piece. A matching receipt from a read started
-  within the window still confirms delivery if it arrives after expiry.
-  It replaces the unknown result. Expiry leaves a confirmed delivery intact.
-  A successful post response confirms delivery even when the provider omits
-  its timestamp. A lost or failed response that leaves delivery uncertain
-  is read back by metadata. Another attempt waits for a read begun after the
-  timeout window that finds no post. When receipt reads keep failing through
-  that window, the piece settles as delivery unknown and later work proceeds.
-  Status retains the cause, and the piece produces neither a retry nor a notice.
+- Answers are retained as ordered pieces until a post call confirms acceptance.
+  The provider's returned message id, when present, is recorded with its posting
+  time or the time the successful response was observed. Success without an id
+  also confirms acceptance; no locally reserved id stands in for a provider id.
+  Confirmed pieces are skipped. Failed or uncertain posts remain pending for the
+  normal retry pass, without a provider receipt search or uncertainty expiry.
+  Later pieces wait for the preceding piece; another conversation proceeds
+  independently. While this process knows a post succeeded but could not record
+  it, only that record is retried. A restart without durable success can repeat
+  an already delivered piece. This accepted duplicate risk preserves delivery
+  of every retained answer, including unconfirmed attempts from older versions.
 - Completion comes only from the conversation source's whole-turn evidence.
   A turn running however long is left to run. A recent-message listing supplies
   neither completion nor missing answer content. If a completed turn's content
@@ -347,9 +335,7 @@ before provider I/O. A failed post, a lost response or a crash after that record
 never schedules another notice attempt in the same outage. A failure remains
 visible to the operator. Notice delivery and ordering against an answer are best
 effort: a post already in flight can arrive after recovery. No provider read-back
-or shared notice/answer post lock establishes notice delivery. Notice eligibility
-still waits for the existing answer-post reconciliation when a prior answer's
-outcome is unresolved.
+or shared notice/answer post lock establishes notice delivery.
 
 The intake interval is declared with the conversation core. The read-back answering bound, reporting period and scan overlap are
 declared in `crates/instrukt-company/src/conversations/read_back.rs`.
@@ -449,7 +435,7 @@ And a recovery command for a session with shell metacharacters can be retried in
 Scenario: The member receives the answer after a retry
   Given the assistant's work on a member's question ends in failure
   When the assistant can work on the question again
-  Then the member receives one answer without sending the question again
+  Then the member receives the retained answer without sending the question again, allowing a repeat after an uncertain post
   And progress from the unsuccessful work is never posted as the answer
   And another member can be answered while the failed question waits
   And each outage that earns an unavailable notice gets at most one best-effort attempt
@@ -489,23 +475,19 @@ not, is `project/instrukt/spec/feature/runner/work-dispatch`.
 ```gherkin
 Given the assistant was offline
 When a member addressed it during that time, in a direct message or in a reply to an existing thread
-Then each addressed message is answered once when the assistant is back
+Then each addressed message gets its retained answer when the assistant is back, with possible repeats after uncertain posting
 And a message that did not address it gets nothing
 But a message older than the answering bound is not answered and is named to the operator
 ```
 
-### UC-CV14: Receive each answer once
+### UC-CV14: Avoid repeating confirmed answers
 
 ```gherkin
-Scenario Outline: An answer is posted once
-  Given a member's message reached the agent and the connector accepted the post of its answer
-  When <interruption>
-  Then the member gets that answer exactly once
-
-  Examples:
-    | interruption |
-    | recording that the connector accepted the post fails |
-    | the runner stops before it records that the connector accepted the post |
+Given a member's answer was accepted by the connector
+When recording acceptance fails or the runner restarts
+Then a recorded acceptance is not posted again
+And a success still known by the running process retries only its record
+And an acceptance lost across a restart may be posted again until delivery is recorded
 ```
 
 ### UC-CV15: Follow the status of a question while waiting
@@ -521,12 +503,12 @@ And the status clears once the answer arrives or the turn completes without a re
 ### UC-CV16: Get a saved answer after its delivery is interrupted
 
 ```gherkin
-Given the assistant has an answer for a member and its delivery is uncertain
+Given the assistant has a retained answer for a member and its delivery is uncertain
 When the assistant recovers from the interruption
-Then an answer that reached the member is neither repeated nor followed by an unavailable notice for that answer
-And an answer confirmed absent can be sent again even while its source remains unreadable
+Then it retries unconfirmed pieces until posting succeeds, even while the native source is unreadable
+And a possibly delivered piece may appear again
 And the member sees the unavailable status while delivery is blocked
-And if delivery cannot be established, the operator sees that outcome and the member can still ask another question
+And the member can continue asking questions after the answer is delivered
 ```
 
 ### UC-CV17: Keep serving conversations after an upgrade
@@ -534,8 +516,8 @@ And if delivery cannot be established, the operator sees that outcome and the me
 ```gherkin
 Given an operator upgrades a runner that stopped while an answer was being delivered
 When the operator resumes serving the conversation
-Then a delivered answer is recognized when the provider can confirm it
-And if delivery cannot be determined, the operator sees that outcome without an extra reply or notice for that question
+Then confirmed pieces remain confirmed
+And retained unconfirmed pieces are retried until posting succeeds, including attempts without a provider id
 And members can continue asking questions and receiving answers
 ```
 
@@ -572,7 +554,7 @@ Scenario Outline: Restore a conversation with work waiting
 Scenario Outline: Receive the complete answer when it can be read
   Given a member has a question waiting for an answer
   When <interruption>
-  Then the member receives the complete answer once it can be read
+  Then the member receives the complete answer once it can be read, allowing a repeat after an uncertain post
   And no partial answer is posted
   And earlier answers are never repeated and the member does not need to ask again
 

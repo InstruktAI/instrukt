@@ -38,7 +38,35 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v25),
     Sql(V26),
     Step(v27),
+    Step(v28),
 ];
+
+/// Version 28: only successful post responses confirm retained answer pieces.
+fn v28(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let has_provider_id: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_answers') WHERE name='provider_post_id')",
+        [], |row| row.get(0),
+    )?;
+    tx.execute_batch(
+        "CREATE TABLE conversation_answers_v28 (
+        company TEXT NOT NULL, connector TEXT NOT NULL, conversation TEXT NOT NULL,
+        turn TEXT NOT NULL, piece INTEGER NOT NULL, text TEXT NOT NULL,
+        posted_at TEXT, failure TEXT, attempted_at TEXT, admission_position INTEGER,
+        provider_post_id TEXT,
+        PRIMARY KEY(company,connector,conversation,turn,piece)
+    )",
+    )?;
+    let provider_id = if has_provider_id {
+        "provider_post_id"
+    } else {
+        "NULL"
+    };
+    tx.execute_batch(&format!("INSERT INTO conversation_answers_v28(rowid,company,connector,conversation,turn,piece,text,posted_at,failure,attempted_at,admission_position,provider_post_id)
+        SELECT rowid,company,connector,conversation,turn,piece,text,posted_at,failure,attempted_at,admission_position,{provider_id}
+        FROM conversation_answers;
+        DROP TABLE conversation_answers;
+        ALTER TABLE conversation_answers_v28 RENAME TO conversation_answers;"))
+}
 
 fn v27(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     let state_present: bool = tx.query_row(

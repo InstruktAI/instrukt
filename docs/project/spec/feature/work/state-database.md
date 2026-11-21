@@ -748,29 +748,22 @@ of pruning. The relay prunes at most 100 expired receipts per pass.
 Migration 25 seeds the IDs of already delivered addressed messages.
 Older accompanying messages have no stored provider IDs to recover.
 
-**`conversation_answers`** — the pieces of an answer, in order. Key: the
-address, `turn` and `piece`. Columns: `text`, the piece's text;
-`admission_position`, the message this piece answers;
-`attempted_at`, the earliest unconfirmed post attempt, and
-`latest_attempted_at`, the latest unconfirmed attempt. Both are recorded
-before the provider can accept a post. A single attempt kept by an earlier
-version supplies both bounds. `post_id` is the piece's opaque identity,
-allocated before its first post and kept across retries. An attempted piece
-from before migration 23 has no id. `legacy_read_at` records when its one
-read-back began. `receipt_failure_deadline` records when a metadata read
-failure can settle the attempt as unknown if receipt reads remain unavailable.
-`delivery_unknown_at` records resolution after
-the settle window without confirmation. The piece leaves the retry queue,
-and a matching read-back that returns later replaces the unknown result.
-`posted_at`, when the connector
-accepted its post, `NULL` while outstanding; `failure`, the cause of its last
-failed post, `NULL` once posted. A piece with `attempted_at` and no `posted_at`
-may have been accepted. A piece resolved with unknown delivery keeps its
-cause and no longer counts as pending. The conversation core looks for
-unresolved attempts at the connector
-before it is posted again. A rejected retry preserves earlier attempts unless
-a read started after their latest request's timeout and found no post
-(`project/instrukt/spec/feature/company/conversations`).
+**`conversation_answers`** — retained ordered answer pieces. Key: the address,
+`turn` and `piece`. Columns: `text`, `admission_position`, `attempted_at`,
+`provider_post_id`, `posted_at` and `failure`. The attempt timestamp records the
+most recent posting attempt for status; it imposes no uncertainty deadline.
+A NULL `posted_at` keeps a piece pending regardless of its age or prior outcome.
+Only a successful post response confirms acceptance, with the provider's optional
+opaque id and its posting time or the observed response time. No local id is
+invented when the response omits one. Failure remains visible until confirmed
+posting. The normal relay retries unconfirmed pieces in order, allowing duplicates
+when a prior successful effect was not recorded before a restart.
+
+Migration preserves text, order, admission associations, failures and confirmed
+posting times, with an unknown provider id for old confirmed pieces. Old reserved
+metadata ids are not provider ids. Unconfirmed pieces, including formerly
+expired uncertain deliveries, become pending; receipt lookup and attempt-window
+fields are retired.
 
 **`conversation_refusals`** — the platform's fixed replies and best-effort
 unavailable-notice attempts (`project/instrukt/spec/feature/company/conversations`).

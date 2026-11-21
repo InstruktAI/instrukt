@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use instrukt_connector::{
-    Accompanying, Admission, AnswerError, Captured, Clock, Connector, ConnectorError, Declaration,
-    Declared, Earlier, Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender, Status,
+    Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Clock, Connector,
+    ConnectorError, Declaration, Declared, Earlier, Field, Inbox, Incoming, Kind, Place, Rule,
+    SecretResolver, Sender, Status,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -71,13 +72,6 @@ const NOTICES: [&str; 20] = [
 /// The most characters Slack takes in one posted message: a longer answer is
 /// posted in parts, in order.
 pub const SLACK_MESSAGE_LIMIT: usize = 12_000;
-
-/// Slack metadata event type for answer pieces and notices.
-const POST_EVENT_TYPE: &str = "instrukt_post";
-
-/// The upper end of a read that reaches to now: a Slack time no message
-/// carries yet.
-const UNTIL_NOW: &str = "9999999999.999999";
 
 /// How many earlier messages accompany an addressed message when the
 /// declaration names none.
@@ -480,28 +474,19 @@ impl SlackApi {
     /// Post an answer into a conversation as the agent wrote it, as Markdown
     /// Slack renders (`markdown_text`): its thread in a channel, or the
     /// direct-message channel.
-    pub fn answer(
-        &self,
-        conversation: &str,
-        markdown: &str,
-        post_id: &str,
-    ) -> Result<Option<Timestamp>, SlackError> {
+    pub fn answer(&self, conversation: &str, markdown: &str) -> Result<AnswerReceipt, SlackError> {
         let (channel, thread) = split_conversation(conversation);
-        let metadata = serde_json::json!({
-            "event_type": POST_EVENT_TYPE,
-            "event_payload": { "id": post_id },
-        })
-        .to_string();
-        let mut form = vec![
-            ("channel", channel),
-            ("markdown_text", markdown),
-            ("metadata", metadata.as_str()),
-        ];
+        let mut form = vec![("channel", channel), ("markdown_text", markdown)];
         if let Some(thread) = thread {
             form.push(("thread_ts", thread));
         }
-        self.call("chat.postMessage", false, &form)
-            .map(|post| post.get("ts").and_then(Value::as_str).and_then(ts_time))
+        self.call("chat.postMessage", false, &form).map(|post| {
+            let id = post.get("ts").and_then(Value::as_str);
+            AnswerReceipt {
+                message_id: id.map(str::to_owned),
+                posted_at: id.and_then(ts_time),
+            }
+        })
     }
 
     /// Post `text` into a conversation: its thread in a channel, or the
@@ -513,113 +498,6 @@ impl SlackApi {
             form.push(("thread_ts", thread));
         }
         self.call("chat.postMessage", false, &form).map(drop)
-    }
-
-    /// The most recent `cap` messages of a channel or thread strictly
-    /// between `oldest` and `latest`, oldest first, and whether the range
-    /// held more. Channel history arrives newest first, so the read stops
-    /// once one message beyond the cap is in hand; a thread's replies arrive
-    /// oldest first, so they are read to the end of the range while only the
-    /// most recent `cap` are held.
-    fn read(
-        &self,
-        channel: &str,
-        thread: Option<&str>,
-        oldest: Option<&str>,
-        latest: &str,
-        cap: usize,
-        include_metadata: bool,
-    ) -> Result<(Vec<Value>, bool), SlackError> {
-        let method = if thread.is_some() {
-            "conversations.replies"
-        } else {
-            "conversations.history"
-        };
-        let latest_us = ts_micros(latest).ok_or_else(|| SlackError::Api {
-            method: method.into(),
-            cause: "invalid message time".into(),
-        })?;
-        let oldest_us = oldest.and_then(ts_micros);
-        // History needs one beyond the cap; replies take the largest page.
-        let limit = if thread.is_none() {
-            cap.saturating_add(1).min(200)
-        } else {
-            200
-        }
-        .to_string();
-        let mut cursor: Option<String> = None;
-        let mut held: std::collections::VecDeque<(i64, Value)> = std::collections::VecDeque::new();
-        let mut seen = std::collections::BTreeSet::new();
-        let mut left_out = false;
-        loop {
-            let mut form = vec![
-                ("channel", channel),
-                ("latest", latest),
-                ("inclusive", "false"),
-                ("limit", limit.as_str()),
-            ];
-            if include_metadata {
-                form.push(("include_all_metadata", "true"));
-            }
-            if let Some(oldest) = oldest {
-                form.push(("oldest", oldest));
-            }
-            if let Some(thread) = thread {
-                form.push(("ts", thread));
-            }
-            if let Some(cursor) = &cursor {
-                form.push(("cursor", cursor));
-            }
-            let body = self.call(method, false, &form)?;
-            let page = body
-                .get("messages")
-                .and_then(Value::as_array)
-                .ok_or_else(|| SlackError::Api {
-                    method: method.into(),
-                    cause: "no messages".into(),
-                })?;
-            for message in page {
-                // Slack's own notices accompany no message and do not
-                // count toward the cap.
-                if notice(message) {
-                    continue;
-                }
-                let Some(at) = message_ts(message)
-                    .filter(|at| *at < latest_us && oldest_us.is_none_or(|o| *at > o))
-                else {
-                    continue;
-                };
-                if !seen.insert(at) {
-                    continue;
-                }
-                held.push_back((at, message.clone()));
-                if thread.is_some() && held.len() > cap {
-                    // Oldest first: the earliest held message is left out.
-                    held.pop_front();
-                    left_out = true;
-                }
-            }
-            // Newest first: one beyond the cap shows earlier ones exist.
-            if thread.is_none() && held.len() > cap {
-                left_out = true;
-                break;
-            }
-            cursor = body
-                .get("response_metadata")
-                .and_then(|m| m.get("next_cursor"))
-                .and_then(Value::as_str)
-                .filter(|c| !c.is_empty())
-                .map(str::to_owned);
-            if cursor.is_none() || body.get("has_more").and_then(Value::as_bool) == Some(false) {
-                break;
-            }
-        }
-        let mut found: Vec<(i64, Value)> = held.into_iter().collect();
-        found.sort_by_key(|(at, _)| *at);
-        if found.len() > cap {
-            found.drain(..found.len() - cap);
-        }
-        Ok((found.into_iter().map(|(_, m)| m).collect(), left_out))
     }
 }
 
@@ -951,7 +829,6 @@ impl Connector for Slack {
     fn limits(&self) -> instrukt_connector::Limits {
         instrukt_connector::Limits {
             message_chars: SLACK_MESSAGE_LIMIT,
-            answer_timeout: WEB_API_TIMEOUT,
             working_refresh: Some(STATUS_INTERVAL),
         }
     }
@@ -1028,77 +905,12 @@ impl Connector for Slack {
         Ok(captured)
     }
 
-    fn answer(
-        &self,
-        conversation: &str,
-        part: &str,
-        post_id: &str,
-    ) -> Result<Option<Timestamp>, AnswerError> {
+    fn answer(&self, conversation: &str, part: &str) -> Result<AnswerReceipt, AnswerError> {
         self.api
-            .answer(conversation, part, post_id)
+            .answer(conversation, part)
             .map_err(|error| AnswerError {
-                rejected: matches!(
-                    error,
-                    SlackError::RejectedPost { .. } | SlackError::Limited { .. }
-                ),
                 cause: error.to_string(),
             })
-    }
-
-    /// Slack may rewrite Markdown when returning it. Match metadata from
-    /// this app's own bot posts and use only Slack's timestamp as receipt.
-    fn post_receipt(
-        &self,
-        conversation: &str,
-        since: &str,
-        post_id: &str,
-    ) -> Result<Option<Timestamp>, ConnectorError> {
-        let me = self.me().map_err(failed)?;
-        let (channel, thread) = split_conversation(conversation);
-        let (messages, _) = self
-            .api
-            .read(channel, thread, Some(since), UNTIL_NOW, usize::MAX, true)
-            .map_err(failed)?;
-        Ok(messages.iter().find_map(|message| {
-            let metadata = &message["metadata"];
-            if own_message(message, &me)
-                && metadata["event_type"].as_str() == Some(POST_EVENT_TYPE)
-                && metadata["event_payload"]["id"].as_str() == Some(post_id)
-            {
-                return message["ts"].as_str().and_then(ts_time);
-            }
-            None
-        }))
-    }
-
-    fn legacy_answer_receipt(
-        &self,
-        conversation: &str,
-        attempted_at: Timestamp,
-        part: &str,
-    ) -> Result<Option<Timestamp>, ConnectorError> {
-        let me = self.me().map_err(failed)?;
-        let (channel, thread) = split_conversation(conversation);
-        let micros = attempted_at.as_microsecond();
-        let since = format!(
-            "{}.{:06}",
-            micros.div_euclid(1_000_000),
-            micros.rem_euclid(1_000_000)
-        );
-        let (messages, _) = self
-            .api
-            .read(channel, thread, Some(&since), UNTIL_NOW, usize::MAX, true)
-            .map_err(failed)?;
-        Ok(messages.iter().find_map(|message| {
-            if own_message(message, &me)
-                && message["metadata"].is_null()
-                && message["text"].as_str() == Some(part)
-            {
-                let at = message["ts"].as_str().and_then(ts_time)?;
-                return (at > attempted_at).then_some(at);
-            }
-            None
-        }))
     }
 
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError> {

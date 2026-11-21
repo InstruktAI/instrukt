@@ -742,11 +742,6 @@ fn notice_worker(
             pending
                 .retain(|_, task: &mut std::thread::ScopedJoinHandle<'_, ()>| !task.is_finished());
             let now = reach.connectors.now();
-            if let Err(error) =
-                conversations::expire_unconfirmed_answers(home, company, key, reach.accepted, now)
-            {
-                tracing::warn!(target: LOG_TARGET, event = "answer_expiry_failed", company = %company, connector = key, %error);
-            }
             match conversations::notices(home, company, key, now) {
                 Ok(notices) => {
                     for notice in notices {
@@ -1260,7 +1255,6 @@ mod test_connector {
     use instrukt_connector::{
         Admission, Captured, Connector, ConnectorError, Inbox, Limits, Place, Status,
     };
-    use jiff::Timestamp;
 
     pub(super) struct TestConnector {
         pub limits: Limits,
@@ -1296,25 +1290,8 @@ mod test_connector {
             &self,
             _: &str,
             _: &str,
-            _: &str,
-        ) -> Result<Option<Timestamp>, instrukt_connector::AnswerError> {
-            Ok(None)
-        }
-        fn post_receipt(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-        ) -> Result<Option<Timestamp>, ConnectorError> {
-            Ok(None)
-        }
-        fn legacy_answer_receipt(
-            &self,
-            _: &str,
-            _: Timestamp,
-            _: &str,
-        ) -> Result<Option<Timestamp>, ConnectorError> {
-            Ok(None)
+        ) -> Result<instrukt_connector::AnswerReceipt, instrukt_connector::AnswerError> {
+            Ok(instrukt_connector::AnswerReceipt::default())
         }
         fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
             Ok(())
@@ -1345,7 +1322,6 @@ mod tests {
         TestConnector {
             limits: Limits {
                 message_chars: 100,
-                answer_timeout: Duration::from_secs(30),
                 working_refresh: Some(Duration::from_secs(30)),
             },
             per_message,
@@ -1361,8 +1337,6 @@ mod tests {
                     message: (*message).to_owned(),
                     sender: Some("USTEVEN".to_owned()),
                     since: None,
-                    notice_eligible: true,
-                    admission_position: None,
                     status: status.clone(),
                 },
             )

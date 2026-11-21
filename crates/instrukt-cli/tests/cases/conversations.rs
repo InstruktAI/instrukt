@@ -2354,15 +2354,7 @@ fn a_member_can_follow_the_status_of_an_unanswered_message() {
 #[test]
 fn an_interrupted_answer_is_reconciled_and_the_member_can_keep_asking() {
     std::thread::scope(|scope| {
-        // These held-receipt scenarios need the runner's debug decision marker.
-        #[cfg(debug_assertions)]
-        {
-            scope.spawn(a_lost_answer_response_defers_notices_until_read_back);
-            scope.spawn(an_unconfirmed_answer_is_reconciled_before_retry);
-        }
         scope.spawn(a_successful_answer_without_timestamp_needs_no_read_back);
-        scope.spawn(failed_metadata_reads_expire_without_sending_again);
-        scope.spawn(an_unconfirmed_post_waits_after_a_metadata_miss);
         scope.spawn(an_answer_can_post_while_its_notice_is_being_reconciled);
         scope.spawn(the_status_tracks_a_slow_answer_and_its_receipt);
         scope.spawn(an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text);
@@ -2373,9 +2365,7 @@ fn an_interrupted_answer_is_reconciled_and_the_member_can_keep_asking() {
 #[test]
 fn an_operator_can_resume_conversations_with_uncertain_answers_after_upgrade() {
     std::thread::scope(|scope| {
-        scope.spawn(found_legacy_answer_is_confirmed);
-        scope.spawn(missing_legacy_answer_expires);
-        scope.spawn(late_legacy_answer_upgrades_unknown_delivery);
+        scope.spawn(legacy_answer_attempt_releases_conversation);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
     });
 }
@@ -2389,18 +2379,6 @@ fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
         scope.spawn(pruning_keeps_younger_and_unsuperseded_failures);
         scope.spawn(one_members_answer_proceeds_after_another_conversations_lock_times_out);
     });
-}
-
-fn found_legacy_answer_is_confirmed() {
-    legacy_answer_attempt_releases_conversation(LegacyReceipt::Found);
-}
-
-fn missing_legacy_answer_expires() {
-    legacy_answer_attempt_releases_conversation(LegacyReceipt::Missing);
-}
-
-fn late_legacy_answer_upgrades_unknown_delivery() {
-    legacy_answer_attempt_releases_conversation(LegacyReceipt::Late);
 }
 
 fn successful_empty_turns_rearm_notices() {
@@ -2884,133 +2862,6 @@ fn observe_notice_pass(c: &Company, clock: &std::path::Path, now: jiff::Timestam
 
 /// Wait for this member's notice task to finish its decision at the new
 /// time. Another member's post does not establish this ordering.
-#[cfg(debug_assertions)]
-fn wait_for_notice_decision(
-    c: &Company,
-    conversation: &str,
-    member: &str,
-    clock: &std::path::Path,
-    at: jiff::Timestamp,
-) {
-    let path = c.env.path("notice-decisions");
-    let decision = format!("{conversation}\t{member}");
-    let decisions = || {
-        std::fs::read_to_string(&path)
-            .unwrap_or_default()
-            .lines()
-            .filter(|line| *line == decision)
-            .count()
-    };
-    let before = decisions();
-    set_clock(clock, at);
-    wait("the held answer's member evaluated for a notice", || {
-        decisions() > before
-    });
-}
-
-#[cfg(debug_assertions)]
-fn a_lost_answer_response_defers_notices_until_read_back() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    projected(&c);
-    let asked = c.slack.direct("D13", "USTEVEN", "Who signed?");
-    let session = started(&c, &[]);
-    c.slack.hold_posts();
-    c.slack.hold_reads_from(&asked);
-    c.finish_turn(&session, 0, "Ada signed.");
-    wait("Slack accepts the answer and holds the response", || {
-        c.slack.held_posts() == 1
-    });
-    assert_eq!(c.slack.posts_beginning("Ada signed."), 1);
-    c.slack.time_out_held_posts();
-    wait("Slack displays the answer before reconciliation", || {
-        c.slack.posts_beginning("Ada signed.") == 1 && c.slack.held() > 0
-    });
-    c.runner_dies();
-    let opened = interval_at(&c, &asked);
-    let held = c.slack.held();
-    c.run();
-    wait("the restarted relay reading back the answer", || {
-        c.slack.held() > held
-    });
-    wait_for_notice_decision(&c, "D13", "USTEVEN", &clock, opened + minute());
-    assert_eq!(notices(&c, "USTEVEN"), 0, "the answer is already visible");
-    assert!(!answers_recorded(&c));
-    c.slack.release_reads();
-    wait("the answer reconciled", || answers_recorded(&c));
-    assert_eq!(c.slack.posts_beginning("Ada signed."), 1);
-    assert_eq!(notices(&c, "USTEVEN"), 0);
-}
-
-#[cfg(debug_assertions)]
-fn an_unconfirmed_answer_is_reconciled_before_retry() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    projected(&c);
-    let asked = c.slack.direct("D16", "USTEVEN", "Is the release ready?");
-    let session = started(&c, &[]);
-    let answer = "The release is ready.";
-    c.slack.fate(answer, Fate::Late, 1);
-    c.slack.fate(answer, Fate::Refused, usize::MAX);
-    c.slack.hold_reads_from(&asked);
-    c.finish_turn(&session, 0, answer);
-    wait("the first answer's read-back before retrying", || {
-        c.slack.held() > 0
-    });
-    assert!(c.slack.posts().is_empty());
-    set_clock(
-        &clock,
-        interval_clock(&clock) + jiff::SignedDuration::from_secs(5),
-    );
-    let reads = c.slack.reads();
-    c.slack.release_reads();
-    wait("an empty read-back inside the post timeout window", || {
-        c.slack.reads() > reads
-    });
-    assert!(c.slack.posts().is_empty());
-    let opened = interval_at(&c, &asked);
-    let held = c.slack.held();
-    c.slack.hold_reads_from(&asked);
-    c.slack.commit_late();
-    wait("the later read-back is held", || c.slack.held() > held);
-    assert_eq!(c.slack.posts_beginning(answer), 1);
-    wait_for_notice_decision(&c, "D16", "USTEVEN", &clock, opened + minute());
-    assert_eq!(
-        notices(&c, "USTEVEN"),
-        0,
-        "the earlier answer already landed"
-    );
-    c.slack.release_reads();
-    wait(
-        "the earlier answer reconciled without an early retry",
-        || answers_recorded(&c),
-    );
-    assert_eq!(c.slack.posts_beginning(answer), 1);
-    assert_eq!(notices(&c, "USTEVEN"), 0);
-
-    // An empty read after the timeout can settle a post that never appears.
-    // A confirmed rejection then permits a notice.
-    let before = c.sessions();
-    projected(&c);
-    let absent = c.slack.direct("D17", "USTEVEN", "Who is on call?");
-    let session = started(&c, &before);
-    c.slack.fate("Ben.", Fate::Late, 1);
-    c.slack.fate("Ben.", Fate::Refused, usize::MAX);
-    c.finish_turn(&session, 0, "Ben.");
-    let opened = interval_at(&c, &absent);
-    set_clock(&clock, opened + minute());
-    wait(
-        "the member notified after read-back establishes absence",
-        || notices(&c, "USTEVEN") == 1,
-    );
-    assert_eq!(c.slack.posts_beginning("Ben."), 0);
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LegacyReceipt {
-    Found,
-    Missing,
-    Late,
-}
-
 /// Seed the interrupted answer and its conversation into the schema shipped
 /// before metadata receipts. The runner opening this file owns its upgrade.
 fn seed_v22_answer_attempt(
@@ -3080,206 +2931,42 @@ fn seed_v22_answer_attempt(
     state
 }
 
-fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
-    let late = receipt == LegacyReceipt::Late;
-    let at = jiff::Timestamp::from_second(1_700_000_010).unwrap();
-    let (mut c, clock) = status_company(at);
-    c.runtime.flag("separate-completion", true);
-    let channel = "C1";
-    let member = "USTEVEN";
+fn legacy_answer_attempt_releases_conversation() {
+    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     projected(&c);
     let asked = c
         .slack
-        .mention(channel, member, "<@UAGENT> Where are the notes?", None);
-    let thread = asked.clone();
-    let conversation = format!("{channel}/{thread}");
+        .mention("C1", "USTEVEN", "<@UAGENT> Where are the notes?", None);
+    let conversation = format!("C1/{asked}");
     let session = started(&c, &[]);
-    let legacy = "The legacy answer.";
     c.slack.hold_posts_to_fail();
-    c.finish_turn(&session, 0, legacy);
-    wait("the original answer attempt is retained", || {
+    c.finish_turn(&session, 0, "The legacy answer.");
+    wait("the old attempt is retained", || {
         c.slack.held_failing_posts() == 1
     });
     c.runner_dies();
     c.slack.fail_held_posts();
     let state = seed_v22_answer_attempt(&c, &conversation);
-    if receipt != LegacyReceipt::Missing {
-        c.slack.say_at(
-            "1700000011.000100",
-            channel,
-            crate::fixtures::slack::BOT_USER,
-            legacy,
-            Some(&thread),
-        );
-    } else {
-        // A same-text post by the bot before the attempt and another person's
-        // message after it cannot establish that this piece was delivered.
-        c.slack.say_at(
-            "1700000009.000100",
-            channel,
-            crate::fixtures::slack::BOT_USER,
-            legacy,
-            Some(&thread),
-        );
-        c.slack
-            .say_at("1700000011.000100", channel, member, legacy, Some(&thread));
-    }
-    let legacy_state = || -> (Option<String>, Option<String>, Option<String>) {
-        state.query_row(
-            "SELECT posted_at,legacy_read_at,delivery_unknown_at FROM conversation_answers WHERE conversation=?1 AND turn='turn-1' AND piece=0",
-            [&conversation],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).unwrap()
-    };
-    if late {
-        set_clock(&clock, at + jiff::SignedDuration::from_secs(119));
-        c.slack.hold_reads_from("1700000010.000000");
-    }
     c.run();
-    wait("the new runner migrates the v22 database", || {
+    wait("the retained legacy piece is posted and recorded", || {
+        c.slack.posts_beginning("The legacy answer.") == 1 && answers_recorded(&c)
+    });
+    assert_eq!(
         state
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
-            .unwrap()
-            == instrukt_core::state_db::schema_version()
-    });
-    wait("the migrated id-less attempt is read back once", || {
-        legacy_state().1.is_some()
-    });
-    if late {
-        wait("the legacy read-back held inside the window", || {
-            c.slack.held() > 0
-        });
-        assert_eq!(
-            legacy_state().1,
-            Some((at + jiff::SignedDuration::from_secs(119)).to_string())
-        );
-        if receipt == LegacyReceipt::Late {
-            // The upgraded runner already read the legacy attempt. Retain a
-            // confirmed notice before the held receipt can settle its epoch.
-            state.execute(
-                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,attempted_at,replied_at) VALUES (?1,'slack',?2,?3,'unavailable',?4,?4,?4)",
-                instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string()],
-            ).unwrap();
-            c.slack.say_at(
-                "1700000010.500000",
-                channel,
-                crate::fixtures::slack::BOT_USER,
-                &notice_text(member),
-                Some(&thread),
-            );
-        }
-        set_clock(&clock, at + jiff::SignedDuration::from_secs(121));
-        common::wait_until(
-            "expiry while the matching read-back is held",
-            std::time::Duration::from_secs(12),
-            || legacy_state().2.is_some(),
-        );
-        assert!(legacy_state().0.is_none());
-    }
-    if receipt == LegacyReceipt::Late {
-        // Expiry settles this position and retires its confirmed notice.
-        assert!(notice_state(&c, &conversation, member).is_none());
-        state.execute_batch(
-            "CREATE TRIGGER hold_late_receipt BEFORE UPDATE OF posted_at ON conversation_answers
-             WHEN OLD.delivery_unknown_at IS NOT NULL AND NEW.posted_at IS NOT NULL
-             BEGIN SELECT RAISE(ABORT, 'forced late receipt failure'); END",
-        ).unwrap();
-        c.slack.release_reads();
-        wait("the late receipt attempts to write", || {
-            run_log(&c).contains("forced late receipt failure")
-        });
-        assert!(legacy_state().2.is_some());
-        assert!(notice_state(&c, &conversation, member).is_none());
-        state
-            .execute_batch("DROP TRIGGER hold_late_receipt")
-            .unwrap();
-    }
-    let database = c.store.file.clone();
-    let hidden_database = database.with_extension("away");
-    if receipt != LegacyReceipt::Missing {
-        wait("the legacy answer receipt recovered", || {
-            legacy_state().0.is_some()
-        });
-        assert!(legacy_state().2.is_none());
-        assert!(notice_state(&c, &conversation, member).is_none());
-    } else {
-        assert!(legacy_state().0.is_none());
-        assert!(legacy_state().2.is_none());
-        c.runner_dies();
-        std::fs::rename(&database, &hidden_database).unwrap();
-        std::fs::create_dir(&database).unwrap();
-        set_clock(&clock, at + jiff::SignedDuration::from_mins(3));
-        c.run();
-        wait("T3's source unavailable", || {
-            retained_conversations(&c).relay_failure.is_some()
-        });
-        wait("the legacy answer expired while T3 is unreadable", || {
-            legacy_state().2.is_some()
-        });
-        assert!(legacy_state().0.is_none());
-        assert_eq!(legacy_state().1, Some(at.to_string()));
-        let status = c.conversations();
-        assert!(status.conversations.iter().any(|row| {
-            row.pending_answers == 0
-                && row.failures.iter().any(|cause| {
-                    cause.contains("delivery unknown")
-                        && cause.contains(&conversation)
-                        && cause.contains("turn-1, piece 0")
-                })
-        }));
-    }
-    assert_eq!(interval(&c, &asked), None);
-    assert_eq!(c.slack.posts().len(), 0);
-
-    {
-        if receipt == LegacyReceipt::Late {
-            c.runtime.flag("send-failure", true);
-        }
-        let later = c.slack.mention(
-            channel,
-            member,
-            "<@UAGENT> And the contract?",
-            Some(&thread),
-        );
-        if receipt == LegacyReceipt::Missing {
-            wait("the later message admitted while T3 is unreadable", || {
-                state.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE message=?1 AND admitted_at IS NOT NULL)",
-                    [&later],
-                    |row| row.get::<_, bool>(0),
-                ).unwrap()
-            });
-            set_clock(&clock, at + jiff::SignedDuration::from_mins(5));
-            wait(
-                "the later failure produces a notice before T3 recovers",
-                || notices(&c, member) == 1,
-            );
-            assert!(c.conversations().relay_failure.is_some());
-            assert_eq!(c.slack.posts().len(), 1);
-            std::fs::remove_dir(&database).unwrap();
-            std::fs::rename(&hidden_database, &database).unwrap();
-        }
-        if receipt == LegacyReceipt::Late {
-            let since = interval_at(&c, &later);
-            set_clock(&clock, since + minute());
-            wait(
-                "a later notice posts after the recovered receipt closes the old epoch",
-                || notices(&c, member) == 1,
-            );
-            c.runtime.flag("send-failure", false);
-        }
-    }
-    wait("the next message goes to the same conversation", || {
+            .unwrap(),
+        instrukt_core::state_db::schema_version()
+    );
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> And the contract?", Some(&asked));
+    wait("the next question reaches the same conversation", || {
         c.runtime.message_count(&session) == 2
     });
     c.finish_turn(&session, 1, "In the shared drive.");
-    wait("the next answer posted and recorded", || {
+    wait("the next answer is recorded", || {
         c.slack.posts_beginning("In the shared drive.") == 1 && answers_recorded(&c)
     });
-    assert!(notice_state(&c, &conversation, member).is_none());
-    let expected_notices = usize::from(receipt != LegacyReceipt::Found);
-    assert_eq!(c.slack.posts().len(), 1 + expected_notices);
-    assert_eq!(notices(&c, member), expected_notices);
+    assert_eq!(c.slack.posts().len(), 2);
 }
 
 fn a_successful_answer_without_timestamp_needs_no_read_back() {
@@ -3296,59 +2983,6 @@ fn a_successful_answer_without_timestamp_needs_no_read_back() {
     );
     assert_eq!(c.slack.metadata_reads(), 0);
     assert_eq!(interval(&c, &event), None);
-}
-
-fn failed_metadata_reads_expire_without_sending_again() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    c.runtime.flag("separate-completion", true);
-    projected(&c);
-    let channel = "D22";
-    let member = "USTEVEN";
-    let first = c.slack.direct(channel, member, "When do we ship?");
-    let session = started(&c, &[]);
-    c.slack.fate("On Friday.", Fate::Lost, 1);
-    c.slack.refuse_metadata_reads();
-    c.finish_turn(&session, 0, "On Friday.");
-    wait("Slack refuses the pending answer's receipt read", || {
-        c.slack.metadata_reads() > 0
-            && retained_conversations(&c).conversations.iter().any(|row| {
-                row.pending_answers == 1
-                    && row
-                        .failures
-                        .iter()
-                        .any(|cause| cause.contains("missing_scope"))
-            })
-    });
-    set_clock(&clock, interval_at(&c, &first) + minute());
-    let delivery_unknown = |status: conversations::Status| {
-        status.conversations.iter().any(|row| {
-            row.pending_answers == 0
-                && row.failures.iter().any(|cause| {
-                    cause.contains("delivery unknown")
-                        && cause.contains("missing_scope")
-                        && cause.contains(channel)
-                        && cause.contains("piece 0")
-                })
-        })
-    };
-    wait(
-        "the answer with an unreadable receipt resolves as unknown",
-        || delivery_unknown(retained_conversations(&c)),
-    );
-    assert!(delivery_unknown(c.conversations()));
-    assert_eq!(interval(&c, &first), None);
-    assert_eq!(c.slack.posts_beginning("On Friday."), 1);
-    assert_eq!(notices(&c, member), 0);
-
-    c.slack.direct(channel, member, "And the contract?");
-    wait("the later question is handed over", || {
-        c.runtime.message_count(&session) == 2
-    });
-    c.finish_turn(&session, 1, "In the wiki.");
-    wait("the later answer confirmed", || {
-        c.slack.posts_beginning("In the wiki.") == 1 && answers_recorded(&c)
-    });
-    assert_eq!(c.slack.posts().len(), 2);
 }
 
 fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
@@ -3419,39 +3053,6 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
         },
     );
     assert_eq!(notices(&c, member), 2);
-}
-
-fn an_unconfirmed_post_waits_after_a_metadata_miss() {
-    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    projected(&c);
-    let asked = c.slack.direct("D17", "USTEVEN", "Is the release ready?");
-    let session = started(&c, &[]);
-    let answer = "Ready.";
-    c.slack.fate(answer, Fate::Lost, 1);
-    c.slack.miss_metadata_read_before_holding(&asked);
-    c.finish_turn(&session, 0, answer);
-    wait("the first metadata read misses the posted answer", || {
-        c.slack.metadata_reads() > 0
-    });
-    common::wait_until(
-        "the second metadata read after the first one misses",
-        std::time::Duration::from_secs(12),
-        || {
-            assert!(
-                c.slack.posts_beginning(answer) <= 1,
-                "an empty read inside the post timeout must not repost"
-            );
-            c.slack.held() > 0
-        },
-    );
-    assert_eq!(c.slack.posts_beginning(answer), 1);
-    assert!(!answers_recorded(&c));
-    c.slack.release_reads();
-    wait("the provider receipt is recorded from read-back", || {
-        answers_recorded(&c)
-    });
-    assert_eq!(c.slack.posts_beginning(answer), 1);
-    assert_eq!(notices(&c, "USTEVEN"), 0);
 }
 
 fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
@@ -3724,7 +3325,6 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
     )
     .unwrap();
     c.slack.fate(&notice_text(sender), Fate::Lost, 1);
-    c.slack.hold_reads_from(&first);
     set_clock(&clock, opened.max(anonymous_at) + minute());
     wait(
         "the member's notice despite a legacy row without sender",
@@ -3735,8 +3335,7 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
         || c.slack.status("D15", &anonymous).as_deref() == Some(UNAVAILABLE),
     );
     assert_eq!(notices(&c, "UANNA"), 0);
-    // Keep the first notice's read-back unresolved until its trigger
-    // completed with NOOP and a second message is waiting.
+    // Completing the legacy message without output clears its outage.
     c.runtime.show_inputs();
     c.finish_turn(&session, 0, "NOOP");
     wait("the legacy trigger finished with no output", || {
@@ -3745,9 +3344,8 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
     c.runtime.flag("send-failure", true);
     let later = c.slack.direct(channel, sender, "And tomorrow?");
     interval_at(&c, &later);
-    c.slack.release_reads();
     wait(
-        "the original notice reconciled and retired after its legacy trigger completes",
+        "the legacy message's notice attempt retired after recovery",
         || notice_state(&c, channel, sender).is_none(),
     );
     assert_eq!(notices(&c, sender), 1);
@@ -4096,14 +3694,13 @@ fn the_status_tracks_a_slow_answer_and_its_receipt() {
     let status_calls = c.slack.status_calls(channel, &slowly);
     set_clock(&clock, done_at + minute());
     c.run();
-    wait(
-        "the restarted relay reconciles the normalized answer",
-        || closure_failed(&c) > previous && c.slack.status_calls(channel, &slowly) > status_calls,
-    );
+    wait("the restarted relay retries the retained answer", || {
+        closure_failed(&c) > previous && c.slack.status_calls(channel, &slowly) > status_calls
+    });
     assert_eq!(
-        c.slack.posts().len(),
-        posts + 1,
-        "the accepted answer must not be posted again"
+        c.slack.posts_beginning(answer),
+        2,
+        "an unrecorded acceptance may be posted again after restart"
     );
     assert!(!answers_recorded(&c));
     state
@@ -4113,7 +3710,7 @@ fn the_status_tracks_a_slow_answer_and_its_receipt() {
         shown(&c, channel, &slowly).last().map(String::as_str) == Some("")
     });
     assert_eq!(interval(&c, &slowly), None);
-    assert_eq!(c.slack.posts().len(), posts + 1);
+    assert_eq!(c.slack.posts_beginning(answer), 2);
     assert_eq!(shown(&c, channel, &slowly), [WORKING, UNAVAILABLE, ""]);
 
     // A slow post that succeeds never shows the unavailable text.
@@ -6067,12 +5664,12 @@ fn an_answer_accepted_as_the_runner_stopped_is_posted_once() {
     wait("the accepted post", || c.slack.held_posts() == 1);
     c.runner_dies();
     c.slack.release_posts();
-    // The runner started again finds the answer among its own posts.
+    // The retained unconfirmed piece is retried after the response was lost.
     c.run();
     wait("the answer's acceptance recorded", || answers_recorded(&c));
     assert_eq!(
         destinations(&c),
-        [("C1".to_owned(), Some("1700000001.000100".to_owned()))]
+        vec![("C1".to_owned(), Some("1700000001.000100".to_owned())); 2]
     );
 }
 
@@ -6129,11 +5726,10 @@ fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() 
     c.runner_dies();
     c.slack.fail_held_posts();
     c.slack.hold_posts();
-    c.slack.hold_reads_from(&lost);
     set_clock(&clock, done_at + jiff::SignedDuration::from_secs(30));
     let status_calls = c.slack.status_calls(channel, &lost);
     c.run();
-    // Hold the provider read until the restarted runner sets status.
+    // The retained failed attempt opens status while the retry is under way.
     // Slack can clear the display when it accepts the retry, even while
     // the response is still held and the receipt remains pending.
     wait(
@@ -6146,7 +5742,6 @@ fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() 
                 .any(|status| status == UNAVAILABLE)
         },
     );
-    c.slack.release_reads();
     wait("the retry under way", || c.slack.held_posts() == 1);
     assert_eq!(interval(&c, &lost), Some(done_at.to_string()));
     // Shown while that first retry is still under way: no post of this
