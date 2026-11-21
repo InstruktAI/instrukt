@@ -1,7 +1,7 @@
 //! Coverage: the inventory reconciled with the binding set, and the ratchet
-//! over orphans and anonymous scenarios (`use-case-coverage`).
+//! over orphan, anonymous and per-use-case binding counts (`use-case-coverage`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use super::SpecsError;
 use crate::docs::Corpus;
 use crate::fsx::atomic_write;
 use crate::home::Home;
-use crate::ids::UseCaseRef;
+use crate::ids::{SnippetId, UseCaseId, UseCaseRef};
 
 /// The committed ratchet baseline, at the repository root.
 pub const BASELINE_FILE: &str = "instrukt-coverage-baseline.json";
@@ -140,12 +140,12 @@ impl Coverage {
         })
     }
 
-    /// Compares the ratcheted counts with the committed baseline (zero for
-    /// both when there is none) and collects the ambiguous claims.
+    /// Compares counts with the committed baseline and collects ambiguous
+    /// claims. Missing allowances permit no orphan/anonymous debt and one binding.
     pub fn check(&self) -> Result<Check, SpecsError> {
         let baseline = Baseline::read(&self.repo_root)?;
         let counts = self.counts();
-        let ratchets = [
+        let mut ratchets = vec![
             Ratchet {
                 debt: Debt::Orphans,
                 count: counts.orphans,
@@ -157,9 +157,32 @@ impl Coverage {
                 baseline: baseline.anonymous,
             },
         ];
+        let mut cases: BTreeSet<UseCaseRef> = self.tests.keys().cloned().collect();
+        for (spec, allowances) in &baseline.bindings {
+            cases.extend(allowances.keys().map(|use_case| UseCaseRef {
+                spec: spec.clone(),
+                use_case: use_case.clone(),
+            }));
+        }
+        for reference in cases {
+            let count = self.tests.get(&reference).copied().unwrap_or_default();
+            let allowance = baseline
+                .bindings
+                .get(&reference.spec)
+                .and_then(|cases| cases.get(&reference.use_case))
+                .copied();
+            // Ordinary single-bound and unbound cases carry no stored debt.
+            if count > 1 || allowance.is_some() {
+                ratchets.push(Ratchet {
+                    debt: Debt::Bindings(reference),
+                    count,
+                    baseline: allowance.unwrap_or(1),
+                });
+            }
+        }
         let check = Check {
             ambiguous: self.ambiguous_claims().to_vec(),
-            ratchets: ratchets.to_vec(),
+            ratchets,
         };
         tracing::debug!(
             event = "specs_coverage_checked",
@@ -170,12 +193,20 @@ impl Coverage {
         Ok(check)
     }
 
-    /// Records the current orphan and anonymous counts as the baseline.
+    /// Records current debt, including only live binding counts above one.
     pub fn update_baseline(&self) -> Result<Baseline, SpecsError> {
         let counts = self.counts();
+        let mut bindings: BTreeMap<SnippetId, BTreeMap<UseCaseId, usize>> = BTreeMap::new();
+        for (reference, count) in self.multi_bound() {
+            bindings
+                .entry(reference.spec.clone())
+                .or_default()
+                .insert(reference.use_case.clone(), count);
+        }
         let baseline = Baseline {
             orphans: counts.orphans,
             anonymous: counts.anonymous,
+            bindings,
         };
         let path = self.repo_root.join(BASELINE_FILE);
         let mut text =
@@ -197,11 +228,12 @@ impl Coverage {
 }
 
 /// The committed counts the check may not exceed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Baseline {
     pub orphans: usize,
     pub anonymous: usize,
+    pub bindings: BTreeMap<SnippetId, BTreeMap<UseCaseId, usize>>,
 }
 
 impl Baseline {
@@ -217,14 +249,15 @@ impl Baseline {
 }
 
 /// A ratcheted kind of debt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Debt {
     Orphans,
     Anonymous,
+    Bindings(UseCaseRef),
 }
 
 /// One ratcheted count against its baseline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ratchet {
     pub debt: Debt,
     pub count: usize,
@@ -250,20 +283,18 @@ impl Check {
     }
 
     /// The counts above their baseline.
-    pub fn regressions(&self) -> Vec<Ratchet> {
+    pub fn regressions(&self) -> Vec<&Ratchet> {
         self.ratchets
             .iter()
             .filter(|r| r.count > r.baseline)
-            .copied()
             .collect()
     }
 
     /// The counts below their baseline: the baseline can be tightened.
-    pub fn tightenable(&self) -> Vec<Ratchet> {
+    pub fn tightenable(&self) -> Vec<&Ratchet> {
         self.ratchets
             .iter()
             .filter(|r| r.count < r.baseline)
-            .copied()
             .collect()
     }
 }

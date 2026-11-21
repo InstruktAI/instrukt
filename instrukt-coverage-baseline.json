@@ -1,4 +1,236 @@
 {
   "orphans": 0,
-  "anonymous": 0
+  "anonymous": 0,
+  "bindings": {
+    "project/instrukt/spec/feature/blueprint/blast-radius": {
+      "UC-BA1": 8
+    },
+    "project/instrukt/spec/feature/blueprint/graph-engine": {
+      "UC-BE1": 2,
+      "UC-BE2": 2
+    },
+    "project/instrukt/spec/feature/blueprint/graph-generation": {
+      "UC-BG1": 9
+    },
+    "project/instrukt/spec/feature/blueprint/graph-navigation": {
+      "UC-BN1": 5,
+      "UC-BN2": 3
+    },
+    "project/instrukt/spec/feature/company/conversations": {
+      "UC-CV1": 11
+    },
+    "project/instrukt/spec/feature/configuration/agent-selection": {
+      "UC-AS3": 2
+    },
+    "project/instrukt/spec/feature/configuration/configuration-editing": {
+      "UC-CE1": 5,
+      "UC-CE2": 7
+    },
+    "project/instrukt/spec/feature/configuration/layered-configuration": {
+      "UC-CL1": 6,
+      "UC-CL2": 2
+    },
+    "project/instrukt/spec/feature/configuration/roles-and-capabilities": {
+      "UC-RCAP1": 8,
+      "UC-RCAP2": 9
+    },
+    "project/instrukt/spec/feature/docs/pending-documentation": {
+      "UC-PD2": 3
+    },
+    "project/instrukt/spec/feature/docs/progressive-retrieval": {
+      "UC-DR1": 8,
+      "UC-DR2": 6,
+      "UC-DR3": 4,
+      "UC-DR4": 3,
+      "UC-DR8": 2,
+      "UC-DR9": 4
+    },
+    "project/instrukt/spec/feature/docs/snippet-schema": {
+      "UC-SH1": 4,
+      "UC-SH2": 2
+    },
+    "project/instrukt/spec/feature/docs/snippet-validation": {
+      "UC-SV1": 15,
+      "UC-SV2": 5,
+      "UC-SV3": 2,
+      "UC-SV5": 6
+    },
+    "project/instrukt/spec/feature/publication/docs-repositories": {
+      "UC-DOR2": 2,
+      "UC-DOR3": 6
+    },
+    "project/instrukt/spec/feature/publication/editor-schemas": {
+      "UC-ES1": 3,
+      "UC-ES2": 2
+    },
+    "project/instrukt/spec/feature/publication/instrukt-status": {
+      "UC-IS1": 3,
+      "UC-IS2": 2
+    },
+    "project/instrukt/spec/feature/publication/project-publication": {
+      "UC-PUB1": 3,
+      "UC-PUB3": 2,
+      "UC-PUB7": 3,
+      "UC-PUB8": 2,
+      "UC-PUB9": 2
+    },
+    "project/instrukt/spec/feature/repository/attributed-commit": {
+      "UC-RC1": 3
+    },
+    "project/instrukt/spec/feature/repository/hook-sections": {
+      "UC-HK1": 7
+    },
+    "project/instrukt/spec/feature/repository/project-initialization": {
+      "UC-IN1": 2,
+      "UC-IN2": 2,
+      "UC-IN4": 2
+    },
+    "project/instrukt/spec/feature/runner/conversation-links": {
+      "UC-CL2": 8
+    },
+    "project/instrukt/spec/feature/runner/event-activation": {
+      "UC-EA2": 3
+    },
+    "project/instrukt/spec/feature/runner/event-consumers": {
+      "UC-EC13": 2,
+      "UC-EC2": 2,
+      "UC-EC3": 2,
+      "UC-EC5": 2,
+      "UC-EC6": 2,
+      "UC-EC8": 8,
+      "UC-EC9": 2
+    },
+    "project/instrukt/spec/feature/runner/event-discovery": {
+      "UC-ED2": 3,
+      "UC-ED3": 2
+    },
+    "project/instrukt/spec/feature/runner/event-envelope": {
+      "UC-EE15": 2,
+      "UC-EE4": 3
+    },
+    "project/instrukt/spec/feature/runner/event-transport": {
+      "UC-ET3": 2,
+      "UC-ET5": 2,
+      "UC-ET7": 5
+    },
+    "project/instrukt/spec/feature/runner/github-webhook-normalization": {
+      "UC-GH4": 2,
+      "UC-GH8": 2
+    },
+    "project/instrukt/spec/feature/runner/history": {
+      "UC-HI1": 16
+    },
+    "project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework": {
+      "UC-IF19": 14,
+      "UC-IF22": 4,
+      "UC-IF23": 2,
+      "UC-IF24": 2,
+      "UC-IF26": 7,
+      "UC-IF28": 3,
+      "UC-IF29": 4,
+      "UC-IF30": 2,
+      "UC-IF31": 7,
+      "UC-IF32": 9,
+      "UC-IF8": 5
+    },
+    "project/instrukt/spec/feature/runner/module-installation": {
+      "UC-MI1": 3,
+      "UC-MI11": 3,
+      "UC-MI12": 3,
+      "UC-MI2": 14,
+      "UC-MI3": 8,
+      "UC-MI5": 9,
+      "UC-MI6": 2,
+      "UC-MI7": 2,
+      "UC-MI8": 4
+    },
+    "project/instrukt/spec/feature/runner/procedure-event-delivery": {
+      "UC-PED10": 2,
+      "UC-PED3": 3,
+      "UC-PED6": 2,
+      "UC-PED8": 2,
+      "UC-PED9": 2
+    },
+    "project/instrukt/spec/feature/runner/procedure-standing-agent": {
+      "UC-PSA1": 2,
+      "UC-PSA11": 2
+    },
+    "project/instrukt/spec/feature/runner/procedure-subscription-routing": {
+      "UC-PSR1": 3,
+      "UC-PSR12": 2,
+      "UC-PSR16": 2,
+      "UC-PSR2": 2,
+      "UC-PSR3": 3,
+      "UC-PSR7": 2
+    },
+    "project/instrukt/spec/feature/runner/session-continuity": {
+      "UC-SS1": 3,
+      "UC-SS10": 3,
+      "UC-SS13": 5,
+      "UC-SS17": 8,
+      "UC-SS18": 2,
+      "UC-SS20": 2,
+      "UC-SS3": 20,
+      "UC-SS5": 2
+    },
+    "project/instrukt/spec/feature/runner/single-ingress-webhook-termination": {
+      "UC-SIT-4": 2
+    },
+    "project/instrukt/spec/feature/runner/task-timing": {
+      "UC-TT2": 2,
+      "UC-TT4": 4
+    },
+    "project/instrukt/spec/feature/runner/work-dispatch": {
+      "UC-RD1": 28,
+      "UC-RD2": 2
+    },
+    "project/instrukt/spec/feature/specs/binding-reservation": {
+      "UC-SR1": 7
+    },
+    "project/instrukt/spec/feature/specs/use-case-coverage": {
+      "UC-SC1": 10,
+      "UC-SC2": 2
+    },
+    "project/instrukt/spec/feature/work/approvals": {
+      "UC-AP1": 2,
+      "UC-AP3": 2
+    },
+    "project/instrukt/spec/feature/work/dependencies-and-holds": {
+      "UC-DH1": 6,
+      "UC-DH3": 5
+    },
+    "project/instrukt/spec/feature/work/eval-report": {
+      "UC-ER1": 4
+    },
+    "project/instrukt/spec/feature/work/github-apps": {
+      "UC-GA1": 8
+    },
+    "project/instrukt/spec/feature/work/github-record": {
+      "UC-GR1": 4,
+      "UC-GR10": 3,
+      "UC-GR3": 2,
+      "UC-GR5": 9,
+      "UC-GR6": 2,
+      "UC-GR7": 3,
+      "UC-GR8": 6,
+      "UC-GR9": 3
+    },
+    "project/instrukt/spec/feature/work/todos": {
+      "UC-TD2": 4,
+      "UC-TD7": 2,
+      "UC-TD8": 2
+    },
+    "project/instrukt/spec/feature/workflow/delivery-cycle": {
+      "UC-DC1": 2
+    },
+    "project/instrukt/spec/feature/workflow/integration-gate": {
+      "UC-IG1": 7,
+      "UC-IG2": 5,
+      "UC-IG4": 4
+    },
+    "project/instrukt/spec/feature/workflow/preparation": {
+      "UC-PR1": 5,
+      "UC-PR2": 3
+    }
+  }
 }
