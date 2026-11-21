@@ -219,6 +219,14 @@ never blesses a diff its own change produced.
     races (a flake) or pads the suite for no assertion value. The concrete waiting idiom is
     per-language (see the per-language testing policy). A controlled clock drives only the timing
     behavior under test; lock and I/O waits always run on monotonic real time.
+17. **Isolation moves only what it isolates.** A test, check or script that keeps a run away from
+    live locations sets the narrowest variable that names exactly that location: the tool's own
+    variable first (`INSTRUKT_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `T3CODE_HOME`), otherwise
+    one variable named for that one location, defaulting to its normal place. A variable every
+    other tool also reads (`HOME`, the XDG base directories, `TMPDIR`) is never overridden to
+    isolate, because it silently relocates git, signing keys, SSH, caches and every other tool's
+    state. Production code resolves each location the same way, never by constructing it from a
+    broad base.
 
 ## Rationale
 
