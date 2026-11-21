@@ -54,11 +54,16 @@ are included independently of event-log retention or a recent UI window.
 The adapter owns source discovery and conversation change accounting. Catch-up
 recognizes newly durable identities and in-place changes independently of native
 timestamps, including later hydration of older records and equal-time updates.
-It fully reads changed conversations in bounded read scopes. Streaming content
-remains deferred until complete. A conversation's loaded-source fingerprint and
-its retained normalized records, searchable body and index commit atomically;
-failed or inconsistent reads do not mark that source state as loaded. Source
-reads never retain a read transaction across local history writes.
+Each scoped read obtains presence, fingerprints and all changed records in one
+finite read-only SQLite transaction. An all-conversation pass discovers its
+inventory in one finite transaction, then reads each selected conversation in a
+fresh transaction; the returned records determine its loaded fingerprint.
+Streaming content remains deferred until complete. A conversation's loaded-source
+fingerprint and its retained normalized records, searchable body and index commit
+atomically;
+failed reads do not mark that source state as loaded. Snapshot consistency
+covers committed SQL state; it does not establish semantic turn completion.
+Source reads never retain a read transaction across local history writes.
 
 History stores the source position opaquely. The T3 adapter is the authoritative
 owner of vendor-table selection, fingerprint inputs and read mechanics; its

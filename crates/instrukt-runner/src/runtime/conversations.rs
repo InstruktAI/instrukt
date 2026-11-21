@@ -92,9 +92,6 @@ pub struct ConversationChanges {
     pub turn_failures: Vec<TurnEvidenceFailure>,
     /// Previously observed native conversations absent from this source pass.
     pub missing: Vec<SessionId>,
-    /// Native conversations that changed while being read: none of their
-    /// records are in this batch, and a later read takes them up again.
-    pub unsettled: Vec<SessionId>,
 }
 
 /// The native conversations one read covers.
