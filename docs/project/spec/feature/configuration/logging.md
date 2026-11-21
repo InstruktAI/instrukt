@@ -18,6 +18,11 @@ diagnostics would otherwise be gone with them.
 instrukt logs through the shared InstruktAI logging library, following its
 [logging contract](https://github.com/InstruktAI/logging/blob/main/docs/contract.md).
 
+- The source is the top-level command that wrote it (`sync`, `docs`,
+  `tick`, `blueprint`, `todo`, `repo`, …), so `instrukt-ai-logs instrukt
+  --logs tick` reads only the runner's ticks and `instrukt-ai-logs
+  instrukt` reads them all.
+
 ### What is logged and where it goes
 
 - Diagnostics — the structured `event` records the observability policy asks
