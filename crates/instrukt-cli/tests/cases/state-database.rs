@@ -15,6 +15,7 @@ use workflow::Crew;
 // spec: project/instrukt/spec/feature/work/state-database UC-SD2
 #[test]
 fn a_documentation_transfer_failure_leaves_the_last_completed_state() {
+    an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_introduced();
     let crew = Crew::new();
     let project = &crew.project;
     project.repo.write(
@@ -75,8 +76,6 @@ fn a_documentation_transfer_failure_leaves_the_last_completed_state() {
     );
 }
 
-// spec: project/instrukt/spec/feature/work/state-database UC-SD2
-#[test]
 fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_introduced() {
     let project = support::Project::new();
     let file = project.env.instrukt_home().join("state/instrukt.db");
@@ -174,5 +173,200 @@ fn assert_retained_starts(env: &common::TestEnv, old: &serde_json::Value) {
     assert_eq!(
         cursor.options,
         [("fastMode".into(), serde_json::json!(true))].into()
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD3
+#[test]
+fn linked_state_shares_one_writer_and_refuses_database_file_links() {
+    use std::os::unix::fs::symlink;
+    use std::time::Duration;
+    let project = support::Project::new();
+    let env = &project.env;
+    let state = env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let a = env.path("state-home-a");
+    let b = env.path("state-home-b");
+    symlink(env.instrukt_home(), &a).unwrap();
+    std::fs::create_dir(&b).unwrap();
+    symlink(&state, b.join("state")).unwrap();
+    for name in ["instrukt.yaml", "agents.yaml"] {
+        if env.instrukt_home().join(name).exists() {
+            std::fs::copy(env.instrukt_home().join(name), b.join(name)).unwrap();
+        }
+    }
+    let launch = |home: &std::path::Path, slug: &str| {
+        env.instrukt_process(project.repo.path())
+            .env("INSTRUKT_HOME", home)
+            .args([
+                "todo",
+                "create",
+                slug,
+                "Retain the work.",
+                "--kind",
+                "change",
+                "--approved",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let first = launch(&a, "linked-home").wait_with_output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    let status = env
+        .instrukt_process(project.repo.path())
+        .env("INSTRUKT_HOME", &a)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "{status:?}");
+
+    let events = env
+        .instrukt_process(project.repo.path())
+        .env("INSTRUKT_HOME", &a)
+        .args(["events", "status", "--json"])
+        .output()
+        .unwrap();
+    assert!(events.status.success(), "{events:?}");
+    assert!(!state.join("connector-read-back.sqlite").exists());
+
+    let lock = instrukt_core::fsx::LockGuard::acquire(
+        &a.join("state/writer.lock"),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let mut writer = launch(&b, "linked-state");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(writer.try_wait().unwrap().is_none());
+    drop(lock);
+    let written = writer.wait_with_output().unwrap();
+    assert!(written.status.success(), "{written:?}");
+    let sidecar = state.join("instrukt.db-shm");
+    let outside = env.path("sidecar-target");
+    std::fs::write(&outside, "unchanged").unwrap();
+    symlink(&outside, &sidecar).unwrap();
+    let refused = launch(&b, "linked-sidecar").wait_with_output().unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("link the instrukt home or state/ directory instead")
+    );
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), "unchanged");
+    std::fs::rename(sidecar, state.join("rejected-sidecar")).unwrap();
+
+    let db = state.join("instrukt.db");
+    let original = state.join("original.db");
+    std::fs::rename(&db, &original).unwrap();
+    symlink(original, &db).unwrap();
+    let refused = launch(&b, "linked-file").wait_with_output().unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains(
+            db.canonicalize()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("instrukt.db")
+                .to_str()
+                .unwrap()
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("link the instrukt home or state/ directory instead"),
+        "{stderr}"
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD4
+#[test]
+fn status_reports_older_and_newer_state_without_writing_it() {
+    let project = support::Project::new();
+    let env = &project.env;
+    let state = env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let file = state.join("instrukt.db");
+    let db = Connection::open(&file).unwrap();
+    db.execute_batch(include_str!("../fixtures/state-v1.sql"))
+        .unwrap();
+    db.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA wal_autocheckpoint=0;
+         INSERT INTO events(seq,id,name,payload,envelope,logged_at)
+             VALUES(1,'retained-event','fixture','{}','{}','2026-01-01T00:00:00Z');
+         INSERT INTO procedure_activations(event_id,procedure,exact_home,envelope,declaration,accepted_at,state,failure)
+             VALUES('retained-event','fixture','fixture','{}','{}','2026-01-01T00:00:00Z','failed','retained activation failure');"
+    ).unwrap();
+    let bytes = || {
+        ["instrukt.db", "instrukt.db-wal", "instrukt.db-shm"]
+            .map(|name| std::fs::read(state.join(name)).unwrap())
+    };
+    let status = |args: &[&str]| {
+        let out = env.run(project.repo.path(), args).success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+    };
+    let scan_store = state.join("connector-read-back.sqlite");
+    {
+        let scans = Connection::open(&scan_store).unwrap();
+        scans.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             CREATE TABLE scans(company TEXT, connector TEXT, failure TEXT, retry_at INTEGER);
+             CREATE TABLE seen(company TEXT, connector TEXT, conversation TEXT, message TEXT, written_us INTEGER, missed_link TEXT);
+             INSERT INTO scans VALUES('fixture','slack','retained scan failure',NULL);"
+        ).unwrap();
+    }
+    let scan_bytes = std::fs::read(&scan_store).unwrap();
+    let scan_sidecars =
+        ["sqlite-wal", "sqlite-shm"].map(|suffix| scan_store.with_extension(suffix));
+    assert!(scan_sidecars.iter().all(|path| !path.exists()));
+    let older = bytes();
+    assert!(status(&["status", "--json"])["machine"]["state_database"].is_null());
+    let events = status(&["events", "status", "--json"]);
+    assert!(events["state_database"].is_null());
+    assert_eq!(
+        events["activation_failures"][0]["failure"],
+        "retained activation failure"
+    );
+    assert_eq!(
+        events["conversations"]["read_back_failures"][0]["cause"],
+        "retained scan failure"
+    );
+    assert_eq!(std::fs::read(scan_store).unwrap(), scan_bytes);
+    assert!(scan_sidecars.iter().all(|path| !path.exists()));
+    assert_eq!(bytes(), older);
+    let current = instrukt_core::state_db::schema_version();
+    db.pragma_update(None, "user_version", current + 1).unwrap();
+    let newer = bytes();
+    let machine = status(&["status", "--json"])["machine"].clone();
+    let reason = machine["state_database"]["reason"].as_str().unwrap();
+    assert!(reason.contains(instrukt_core::INSTALLER_COMMAND));
+    insta::assert_snapshot!(format!("configured: {}\nstate: {}", machine["configured"], reason.replace(file.to_str().unwrap(), "[DB]").replace(&(current + 1).to_string(), "[NEWER]").replace(&current.to_string(), "[CURRENT]")), @r"
+    configured: true
+    state: the state database at [DB] is at schema version [NEWER], newer than the [CURRENT] this instrukt knows; upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
+    ");
+    let events = status(&["events", "status", "--json"]);
+    assert_eq!(events["state_database"]["reason"], reason);
+    assert!(events["admission"].is_object());
+    assert_eq!(bytes(), newer);
+    let refused = project
+        .todo([
+            "create",
+            "newer-state",
+            "Write work.",
+            "--kind",
+            "change",
+            "--approved",
+        ])
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&refused.get_output().stderr)
+            .contains(instrukt_core::INSTALLER_COMMAND)
+    );
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .unwrap(),
+        current + 1
     );
 }

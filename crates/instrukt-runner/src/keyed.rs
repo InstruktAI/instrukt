@@ -172,7 +172,7 @@ impl KeyGuard {
         let name = Sha256::digest(format!("{runtime}:{key}").as_bytes());
         let path = invocation
             .home()
-            .locks_dir()
+            .state_dir()
             .join(format!("runtime-key-{name:x}.lock"));
         let lock_error = |error| match recovery {
             Some(recovery) => recovery.lock_error(error),

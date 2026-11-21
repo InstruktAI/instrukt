@@ -1199,7 +1199,7 @@ fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, 
     use sha2::{Digest, Sha256};
     let digest = hex::encode(&Sha256::digest(c.semantic_key.as_bytes())[..8]);
     Ok(instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!("conversation-{digest}.lock")),
+        &home.state_dir().join(format!("conversation-{digest}.lock")),
         std::time::Duration::from_secs(120),
     )?)
 }
@@ -3396,6 +3396,9 @@ fn relay(
         )?,
     };
     for initial in work {
+        if !connectors.ready(admitted, &initial.company, &initial.connector) {
+            continue;
+        }
         let check = workers.poll(&initial);
         if matches!(check, CheckedDelivery::Dispatching) {
             // The delivery owns the conversation record until it returns.
@@ -4087,15 +4090,21 @@ fn status_at(home: &Home, now: Timestamp) -> Result<Status, ConversationError> {
         })
         .collect::<Result<Vec<_>, ConversationError>>()?;
     for (company, DeclaredConnector { key, .. }) in demand(home)? {
-        let listed = connectors
-            .iter()
-            .any(|known| known.company == company.as_str() && known.connector == key);
-        if !listed {
+        let failure = instrukt_core::config::connector_procedure_finding(home, &company)
+            .map(|finding| finding.message);
+        if let Some(known) = connectors
+            .iter_mut()
+            .find(|known| known.company == company.as_str() && known.connector == key)
+        {
+            if failure.is_some() && known.state == ConnectionState::Stopped {
+                known.failure = failure;
+            }
+        } else {
             connectors.push(ConnectorStatus {
                 company: company.to_string(),
                 connector: key,
                 state: ConnectionState::Stopped,
-                failure: None,
+                failure,
             });
         }
     }

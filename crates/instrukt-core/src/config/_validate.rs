@@ -342,6 +342,42 @@ fn code_on_github(
     }
 }
 
+pub(super) fn company_procedure_available(home: &Home) -> bool {
+    use crate::index::{GlobalIndex, RoleProcedure};
+    crate::ids::RoleName::parse("company-agent")
+        .ok()
+        .is_some_and(|role| {
+            GlobalIndex::load_readable(&home.for_inspection())
+                .ok()
+                .flatten()
+                .is_some_and(|index| {
+                    index
+                        .procedures_declaring(&role)
+                        .iter()
+                        .any(|entry| matches!(entry, RoleProcedure::Delivered(_)))
+                })
+        })
+}
+
+pub(super) fn missing_company_procedure(home: &Home, company: &crate::ids::ProjectSlug) -> Finding {
+    Finding {
+        document: Layer::Company(company.clone()).path(home),
+        key: "connectors".into(),
+        kind: FindingKind::InvalidValue,
+        message: format!(
+            "company `{company}` needs a published procedure declaring the company-agent role"
+        ),
+    }
+}
+
+/// Local publication prerequisite for starting a company's connectors.
+pub fn connector_procedure_finding(
+    home: &Home,
+    company: &crate::ids::ProjectSlug,
+) -> Option<Finding> {
+    (!company_procedure_available(home)).then(|| missing_company_procedure(home, company))
+}
+
 /// `instrukt config validate`: the findings of `layer`. A missing layer,
 /// or one of a newer schema version, is refused rather than judged. A
 /// project layer is judged as converted in memory, and one committed at an
@@ -370,6 +406,13 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
     }
     if let Layer::Company(name) = layer {
         findings.extend(local_material(home, name)?);
+        if value
+            .get("connectors")
+            .and_then(Value::as_mapping)
+            .is_some_and(|entries| !entries.is_empty())
+        {
+            findings.extend(connector_procedure_finding(home, name));
+        }
     }
     if layer.kind() == LayerKind::Global
         && let Err(error) = super::Agents::load(home)

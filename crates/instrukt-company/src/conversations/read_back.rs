@@ -7,7 +7,10 @@ use instrukt_core::{
     fsx::{self, FsError},
     home::Home,
     ids::ProjectSlug,
-    state_db::rusqlite::{Connection, OpenFlags, OptionalExtension, params},
+    state_db::{
+        self,
+        rusqlite::{Connection, OpenFlags, OptionalExtension, params},
+    },
 };
 use instrukt_runner::state::{self, RunnerState, StateError};
 use jiff::{SignedDuration, Timestamp};
@@ -50,36 +53,23 @@ fn store_path(home: &Home) -> PathBuf {
 fn open(home: &Home, write: bool) -> Result<Option<Connection>, StateError> {
     use std::os::unix::fs::PermissionsExt as _;
     let path = store_path(home);
-    for file in [
-        home.root().to_path_buf(),
-        home.state_dir(),
-        path.clone(),
-        path.with_extension("sqlite-journal"),
-        path.with_extension("sqlite-wal"),
-        path.with_extension("sqlite-shm"),
-    ] {
-        if std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            return Err(StateError::Symlink { path: file });
+    let conn = if write {
+        for file in [
+            path.clone(),
+            path.with_extension("sqlite-journal"),
+            path.with_extension("sqlite-wal"),
+            path.with_extension("sqlite-shm"),
+        ] {
+            if std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                return Err(StateError::Symlink { path: file });
+            }
         }
-    }
-    let exists = path.exists();
-    if !write && !exists {
-        return Ok(None);
-    }
-    let flags = if write {
-        OpenFlags::default()
-    } else {
-        OpenFlags::SQLITE_OPEN_READ_ONLY
-    };
-    let sql = state::sql(&path);
-    if write {
+        let exists = path.exists();
         let dir = home.state_dir();
         fsx::create_dir_all(&dir).map_err(|source| FsError::Write { path: dir, source })?;
-    }
-    let conn = fsx::open_database(&path, flags).map_err(sql)?;
-    conn.busy_timeout(Duration::from_secs(2))
-        .map_err(state::sql(&path))?;
-    if write {
+        let conn = fsx::open_database(&path, OpenFlags::default()).map_err(state::sql(&path))?;
+        conn.busy_timeout(Duration::from_secs(2))
+            .map_err(state::sql(&path))?;
         fsx::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(|source| {
             FsError::Write {
                 path: path.clone(),
@@ -91,7 +81,13 @@ fn open(home: &Home, write: bool) -> Result<Option<Connection>, StateError> {
                 .map_err(state::sql(&path))?;
         }
         initialize(&conn).map_err(state::sql(&path))?;
-    }
+        conn
+    } else {
+        let Some(conn) = state_db::inspect_file(&path)? else {
+            return Ok(None);
+        };
+        conn
+    };
     if !write
         && !conn
             .query_row(

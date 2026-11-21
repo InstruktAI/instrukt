@@ -270,7 +270,7 @@ fn check_run_recovery_doors() {
     let broken_key = "instrukt:run:demo:broken-lock";
     use sha2::{Digest, Sha256};
     let name = Sha256::digest(format!("t3:{broken_key}").as_bytes());
-    let broken_lock = home.locks_dir().join(format!("runtime-key-{name:x}.lock"));
+    let broken_lock = home.state_dir().join(format!("runtime-key-{name:x}.lock"));
     // An exact lock file path that is a directory fails even as root.
     std::fs::create_dir_all(&broken_lock).unwrap();
     let os_error = std::fs::OpenOptions::new()
@@ -288,7 +288,7 @@ fn check_run_recovery_doors() {
     let stderr = String::from_utf8_lossy(&broken.get_output().stderr);
     let diagnostic = format!(
         "instrukt: cannot use the recovery lock in {} for semantic key `{broken_key}` ({os_error})",
-        home.locks_dir().display()
+        home.state_dir().display()
     );
     let errors = stderr
         .lines()

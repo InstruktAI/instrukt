@@ -51,24 +51,15 @@ pub enum StateDbError {
         source: rusqlite::Error,
     },
     #[error(
-        "the state database at {} is at schema version {found}, newer than the {known} this instrukt knows; install the newer instrukt",
-        path.display()
+        "the state database at {} is at schema version {found}, newer than the {known} this instrukt knows; upgrade with `{}`",
+        path.display(), crate::INSTALLER_COMMAND
     )]
     Newer {
         path: PathBuf,
         found: u32,
         known: u32,
     },
-    #[error(
-        "the state database at {} is at schema version {found}, older than {known}; a command that writes the work record migrates it",
-        path.display()
-    )]
-    Older {
-        path: PathBuf,
-        found: u32,
-        known: u32,
-    },
-    #[error("{} is a symbolic link; instrukt does not keep its state through links", path.display())]
+    #[error("{} is a symbolic link; link the instrukt home or state/ directory instead", path.display())]
     Symlink { path: PathBuf },
     #[error(transparent)]
     Lock(#[from] FsError),
@@ -113,7 +104,7 @@ impl WriterLock {
     /// process holding it.
     pub fn acquire(home: &Home) -> Result<Self, StateDbError> {
         let path = home.writer_lock_file();
-        refuse_links(home, &path)?;
+        refuse_link(&path)?;
         let mut held = HELD
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -142,7 +133,7 @@ impl StateDb {
     pub fn open(home: &Home) -> Result<Self, StateDbError> {
         let lock = WriterLock::acquire(home)?;
         let path = home.state_db_file();
-        refuse_links(home, &path)?;
+        refuse_database_links(&path)?;
         if let Some(parent) = path.parent() {
             crate::fsx::create_dir_all(parent).map_err(|source| FsError::Write {
                 path: parent.to_path_buf(),
@@ -151,6 +142,11 @@ impl StateDb {
         }
         let mut conn = crate::fsx::open_database(&path, OpenFlags::default())
             .map_err(StateDbError::sqlite(&path))?;
+        let found = user_version(&conn, &path)?;
+        let known = schema_version();
+        if found > known {
+            return Err(StateDbError::Newer { path, found, known });
+        }
         // SQLite gives the files it keeps beside the database the database's
         // own permissions; protecting the database first protects them too.
         protect(&path)?;
@@ -208,12 +204,12 @@ impl StateRead {
     /// schema) exists yet, which is empty state.
     pub fn open(home: &Home) -> Result<Option<Self>, StateDbError> {
         let path = home.state_db_file();
-        refuse_links(home, &path)?;
+        refuse_database_links(&path)?;
         if !path.exists() {
             return Ok(None);
         }
-        let conn = if home.is_state_read_only() {
-            _snapshot::read(home, &path)?
+        let mut conn = if home.is_state_read_only() {
+            _snapshot::read(&path)?
         } else {
             crate::fsx::open_database(
                 &path,
@@ -230,10 +226,11 @@ impl StateRead {
         if found > known {
             return Err(StateDbError::Newer { path, found, known });
         }
-        if found < known {
-            if home.is_state_read_only() {
-                return Err(StateDbError::Older { path, found, known });
-            }
+        if home.is_state_read_only() {
+            migrate(&mut conn, &path)?;
+            conn.pragma_update(None, "query_only", true)
+                .map_err(StateDbError::sqlite(&path))?;
+        } else if found < known {
             drop(conn);
             drop(StateDb::open(home)?);
             return Self::open(home);
@@ -320,25 +317,36 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
     Ok(())
 }
 
-/// Refuses a symbolic link at `path` or any of its ancestors inside the
-/// home (the home itself included).
-fn refuse_links(home: &Home, path: &Path) -> Result<(), StateDbError> {
-    let mut current = Some(path);
-    while let Some(at) = current {
-        match std::fs::symlink_metadata(at) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(StateDbError::Symlink {
-                    path: at.to_path_buf(),
-                });
-            }
-            _ => {}
-        }
-        if at == home.root() {
-            break;
-        }
-        current = at.parent().filter(|parent| parent.starts_with(home.root()));
+/// Inspect an existing SQLite store without opening a disk connection or
+/// creating sidecars. The in-memory connection permits queries only.
+pub fn inspect_file(path: &Path) -> Result<Option<Connection>, StateDbError> {
+    refuse_database_links(path)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let conn = _snapshot::read(path)?;
+    conn.pragma_update(None, "query_only", true)
+        .map_err(StateDbError::sqlite(path))?;
+    Ok(Some(conn))
+}
+
+fn refuse_database_links(path: &Path) -> Result<(), StateDbError> {
+    refuse_link(path)?;
+    for suffix in ["-wal", "-shm", "-journal"] {
+        refuse_link(&_snapshot::sidecar(path, suffix))?;
     }
     Ok(())
+}
+
+fn refuse_link(path: &Path) -> Result<(), StateDbError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err(StateDbError::Symlink { path: path.into() })
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(StateDbError::invalid(path, error.to_string())),
+    }
 }
 
 #[cfg(test)]

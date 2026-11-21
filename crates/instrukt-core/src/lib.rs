@@ -33,3 +33,7 @@ pub mod subscription;
 pub mod process;
 
 pub mod capabilities;
+
+/// The installer command printed when stored state requires a newer release.
+pub const INSTALLER_COMMAND: &str =
+    "curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh";

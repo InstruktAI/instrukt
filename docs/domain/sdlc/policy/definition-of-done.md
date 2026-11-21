@@ -130,7 +130,7 @@ Work is NOT done if ANY of these are true:
 - ❌ "Lint errors but they're minor"
 - ❌ "Works on my machine"
 - ❌ "I'll add tests in a follow-up"
-- ❌ "Missing edge case but it's unlikely"
+- ❌ "An unhandled reachable condition (`sdlc/concept/defect-evidence`), left for later"
 - ❌ "Hardcoded for now, will parameterize later"
 - ❌ "Bypassed hooks to commit faster"
 - ❌ "Commented out broken code"

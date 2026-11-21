@@ -76,7 +76,14 @@ pub fn inspect(request: &Request<'_>) -> Report {
             None
         }
     };
-    let machine = json!({"configured":configured,"path":home.global_config(),"schema_version":global.as_ref().and_then(|v|v.schema_version),"migration":global.as_ref().and_then(|v|v.migration.clone()),"findings":findings,"selection_migration":selection_migration,"errors":machine_errors});
+    let mut machine = json!({"configured":configured,"path":home.global_config(),"schema_version":global.as_ref().and_then(|v|v.schema_version),"migration":global.as_ref().and_then(|v|v.migration.clone()),"findings":findings,"selection_migration":selection_migration,"errors":machine_errors});
+    if let Err(failure) = crate::state_db::StateRead::open(&home) {
+        machine["state_database"] = error(&home.state_db_file(), &failure);
+        if !matches!(failure, crate::state_db::StateDbError::Newer { .. }) {
+            machine_errors.push(error(&home.state_db_file(), failure));
+            machine["errors"] = json!(machine_errors);
+        }
+    }
     let mut runtime_errors = Vec::new();
     if let Some(reason) = &request.caller_error {
         runtime_errors.push(error(home.root(), reason));

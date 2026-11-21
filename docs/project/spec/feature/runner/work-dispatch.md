@@ -46,6 +46,11 @@ of the runner reads those files on its own
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters; nothing running handles a missing one).
 
+Company connections and the conversation relay follow the admitted generation
+as it changes. Adding a connector starts it, changing its settings or tokens
+renews its connection, and withdrawing it ends that connection. The
+connector checks its provider permissions before taking member questions.
+
 **Parts that depend on a service outside instrukt.** The conversation relay (on
 T3's conversation source), the connectors (on the provider), the event readers (on
 Redis) and history's extraction (on T3's database) and query responder (on cluster

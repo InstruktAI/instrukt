@@ -286,7 +286,7 @@ pub fn close(home: &Home, member: &SessionRef) -> Result<(), LinkError> {
 }
 fn link_lock(home: &Home, id: &str) -> Result<instrukt_core::fsx::LockGuard, LinkError> {
     Ok(instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!("conversation-{id}.lock")),
+        &home.state_dir().join(format!("conversation-{id}.lock")),
         std::time::Duration::from_secs(120),
     )?)
 }

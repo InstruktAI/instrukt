@@ -47,4 +47,4 @@ agents:
   codex:
     - general/policy/agents/codex
   antigravity:
-    - general/policy/agents/gemini
+    - general/policy/agents/antigravity
