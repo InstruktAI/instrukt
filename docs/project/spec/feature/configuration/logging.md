@@ -15,21 +15,8 @@ diagnostics would otherwise be gone with them.
 
 ### Location and reader
 
-- By default, the log of the app `instrukt` lives under
-  `$XDG_STATE_HOME/instrukt-ai/instrukt/` (fallback `~/.local/state`, per the
-  XDG Base Directory specification), one file per source:
-  `<source>.log`.
-- The source is the top-level command that wrote it (`sync`, `docs`,
-  `tick`, `blueprint`, `todo`, `repo`, …), so `instrukt-ai-logs instrukt
-  --logs tick` reads only the runner's ticks and `instrukt-ai-logs
-  instrukt` reads them all.
-- A nonempty `INSTRUKT_LOG_DIR` selects the complete app directory through
-  the logging library: `/work/logs` places source `sync` at `/work/logs/sync.log`.
-  Unset or empty keeps the XDG/default-home location above. The library's path
-  normalization and tilde expansion apply. All sources share that directory;
-  the reader must receive the same variable as the writer.
-- Tests set `INSTRUKT_LOG_DIR` to a per-test directory, without relocating logs
-  through `HOME` or an XDG base. instrukt adds no location parser of its own.
+instrukt logs through the shared InstruktAI logging library, following its
+[logging contract](https://github.com/InstruktAI/logging/blob/main/docs/contract.md).
 
 ### What is logged and where it goes
 
