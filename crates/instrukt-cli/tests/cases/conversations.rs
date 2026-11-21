@@ -1758,6 +1758,7 @@ fn conversation_finding(c: &Company, expected: &str) -> Option<String> {
 fn archived_and_deleted_conversations_keep_saved_work() {
     let (mut c, _, old) = answered_conversation(false);
     let before = c.sessions();
+    c.runtime.flag("silent-start", true);
     c.runtime.archive(&old);
     c.store.thread(
         &old,
@@ -1801,11 +1802,33 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
             |row| row.get(0),
         )
         .unwrap();
+    c.runtime.flag("start-failure", true);
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
     answer_source_changed(&c, 2);
+    let pending = || {
+        db.query_row(
+        "SELECT b.session,b.start_key FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE c.session=?1 AND b.accepted=0 AND c.failure IS NOT NULL",
+        [format!("t3:{old}")], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)),
+    ).ok()
+    };
+    wait_for_answer_fixture(
+        "the failed successor retains its native launch identity",
+        || pending().is_some(),
+    );
+    let captured = pending().unwrap();
+    c.runtime.flag("start-failure", false);
     let successor = started(&c, &before);
+    assert_eq!(captured.0, format!("t3:{successor}"));
+    wait_for_answer_fixture("the same successor launch is accepted", || {
+        db.query_row(
+            "SELECT accepted AND start_key=?2 FROM runtime_bindings WHERE session=?1",
+            [&captured.0, &captured.1],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap_or(false)
+    });
     assert_ne!(old, successor);
     c.finish_turn(&successor, 0, "NOOP");
     answer_source_changed(&c, 3);

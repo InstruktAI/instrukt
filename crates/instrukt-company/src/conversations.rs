@@ -3056,25 +3056,9 @@ fn relay(
         {
             stale_acknowledgement(&c, &candidate.message);
         }
-        if let Some(pending) = replacement {
-            let observed = source
-                .changed_since(None, Scope::Only(std::slice::from_ref(&pending.id)))
-                .ok()
-                .and_then(|batch| batch.scoped_presence);
+        if replacement.is_some() {
             workers.update_check_source(&c, None);
-            let presence = match observed {
-                Some(Presence::Absent) if !matches!(check, CheckedDelivery::Checking(_)) => {
-                    workers.confirm_missing(adapter, &c, &pending, clock())
-                }
-                Some(Presence::Absent) => None,
-                Some(presence) => {
-                    workers.source_present(&pending);
-                    workers.absence_in_flight(&c, None, clock());
-                    Some(presence)
-                }
-                None => None,
-            };
-            blocked(home, adapter, &state, &c, &pending, presence, clock())?;
+            workers.succeed(home, adapter, c.clone());
             continue;
         }
         // The batch belonged to the old binding. Read the successor on
