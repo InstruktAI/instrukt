@@ -665,7 +665,7 @@ pub fn ticks_status(
     })
 }
 /// Read retained transport/activation facts without enabling events or creating groups.
-pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
+fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
     use instrukt_core::state_db::rusqlite::OptionalExtension as _;
     let state = crate::state::RunnerState::new(request.home);
     // What the runner keeps in its state is reported whatever the files say
@@ -700,11 +700,6 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)?;
         Ok(serde_json::json!({"count":count,"recent":recent}))
     })?.unwrap_or_else(|| serde_json::json!({"count":0,"recent":[]}));
-    // This computer's own machine ID, as it reads it, for comparison with the
-    // other computers; reading creates no ID.
-    let computer = instrukt_core::machine::existing_machine_id(request.home)
-        .map_err(|e| inspection_error("machine ID", e))?
-        .map(|id| id.as_str().to_owned());
     // The history workers' current failures, while they last.
     let workers = state.read(|conn, path| {
         let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers WHERE worker NOT GLOB 'keyed-start:*' ORDER BY worker").map_err(crate::state::sql(path))?;
@@ -728,6 +723,38 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         .transpose()
         .map_err(|e| inspection_error("conversations", e))?
         .unwrap_or(serde_json::Value::Null);
+    Ok(serde_json::json!({
+        "runner": runner, "workers": workers, "skipped_wake": skipped_wake,
+        "activation_failures": failures, "consumers": consumers, "start_anomalies": start_anomalies,
+        "stopped_executions": stopped_executions, "input_findings": input_findings,
+        "set_aside": set_aside, "links": links, "conversations": conversations
+    }))
+}
+
+pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
+    let home = request.home.for_inspection();
+    let request = &Request {
+        home: &home,
+        ..request.clone()
+    };
+    let mut status = match retained_event_status(request) {
+        Ok(status) => status,
+        Err(InstallationError::State(crate::state::StateError::Db(
+            error @ instrukt_core::state_db::StateDbError::Newer { .. },
+        ))) => {
+            serde_json::json!({"state_database": {"path": home.state_db_file(), "reason": error.to_string()}})
+        }
+        Err(error) => return Err(error),
+    };
+    let runner = status["runner"].take();
+    if let Some(fields) = status.as_object_mut() {
+        fields.remove("runner");
+    }
+    // This computer's own machine ID, as it reads it, for comparison with the
+    // other computers; reading creates no ID.
+    let computer = instrukt_core::machine::existing_machine_id(request.home)
+        .map_err(|e| inspection_error("machine ID", e))?
+        .map(|id| id.as_str().to_owned());
     // What the files admit now: each project's admitted modules, the findings
     // of what is left out, or why no generation can be admitted at all.
     let candidate = instrukt_core::config::Admitted::load(request.home);
@@ -762,9 +789,10 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     if candidate.is_err() {
         // Nothing read from the configuration can be shown: what depends on
         // it is absent, and the admission error says why.
-        return Ok(
-            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"set_aside":set_aside,"links":links,"conversations":conversations,"runner_service":null}),
-        );
+        return Ok(merge_status(
+            status,
+            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"notification_configured":notification_configured,"runner_service":null}),
+        ));
     }
     let mut report = Report::default();
     let demand = _demand::read(request.home, request.cwd, &mut report)
@@ -796,9 +824,22 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             .and_then(serde_yaml_ng::Value::as_str)
             .map(str::to_owned)
     };
-    Ok(
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"workers":workers,"skipped_wake":skipped_wake,"activation_failures":failures,"consumers":consumers,"start_anomalies":start_anomalies,"stopped_executions":stopped_executions,"notification_configured":notification_configured,"input_findings":input_findings,"set_aside":set_aside,"links":links,"conversations":conversations,"runner_service":runner_service}),
-    )
+    Ok(merge_status(
+        status,
+        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"notification_configured":notification_configured,"runner_service":runner_service}),
+    ))
+}
+
+fn merge_status(
+    mut retained: serde_json::Value,
+    mut configured: serde_json::Value,
+) -> serde_json::Value {
+    if let (Some(retained), Some(configured)) =
+        (retained.as_object_mut(), configured.as_object_mut())
+    {
+        retained.append(configured);
+    }
+    retained
 }
 
 /// Inspect retained failure identities and coordinates without exposing payloads.

@@ -61,7 +61,7 @@ meaning and the writes of the conversation tables.
   reflection → writer; a local writer releases the writer lock before acquiring
   the reflection lock. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
-  before consuming it.
+  before consuming it, except during status inspection.
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
@@ -104,7 +104,9 @@ adapter; an actor as JSON text, one of
   refused for writing; the refusal names both versions and prints the command
   that installs the current instrukt. A status command reads an older database
   through a migrated in-memory image and changes nothing on disk, and reports a
-  newer one as a finding while still reporting everything else.
+  newer one as a finding while still reporting independently readable sections.
+  Neither `instrukt status` nor `instrukt events status` takes the writer lock
+  or changes the database, WAL or shared-memory files.
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
@@ -807,7 +809,9 @@ observation when the scan store has none and establishes no scan coverage.
 this store for one home's connectors. Its saved window is authoritative and
 durable when first learned. Losing it can skip an unread question the window
 would have recovered. Provider positions and seen identities record external
-bookkeeping. The store has its own SQLite writer outside live intake.
+bookkeeping. The store has its own SQLite writer outside live intake. It uses the
+canonical state directory. Status reads existing records without creating
+the store or touching its sidecars.
 
 Each connector keeps one active window with its start and lower bound, the
 provider position, the current fetched page until processed, and any
@@ -925,6 +929,25 @@ agents use `instrukt agents availability|status`, never direct database queries.
   When instrukt stops part-way through that write
   Then the next command finds the work as the last completed change left it
   And nothing of the interrupted change is present
+```
+
+### UC-SD3: Use a linked state directory without splitting write ownership
+
+```gherkin
+Given the operator reaches the state directory through a linked home or linked state directory
+Then writes and status work through the link
+And writes from different homes that share the state directory wait for the same writer
+But a link to an individual database file or sidecar is refused with the directory-link recovery
+```
+
+### UC-SD4: Inspect the computer when its database schema differs
+
+```gherkin
+Given the computer has a state database from another release
+When the operator inspects status
+Then older state is read with its retained records and no disk changes
+And newer state is reported with the installer command while configuration is still shown
+And a write against newer state is refused with the installer command
 ```
 
 ## Known caveats

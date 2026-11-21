@@ -121,7 +121,8 @@ pub enum ConfigError {
     #[error("{path}: `project` {source}")]
     Slug { path: PathBuf, source: IdError },
     #[error(
-        "{path} has schema_version {found}, newer than this instrukt supports ({current}); upgrade instrukt"
+        "{path} has schema_version {found}, newer than this instrukt supports ({current}); upgrade with `{}`",
+        crate::INSTALLER_COMMAND
     )]
     NewerSchema {
         path: PathBuf,

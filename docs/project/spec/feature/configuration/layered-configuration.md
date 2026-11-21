@@ -466,7 +466,7 @@ And the runner continues even if standard error is unavailable
   command that installs the current instrukt,
   `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`.
   A machine layer of a newer schema cannot be loaded: every command names
-  `instrukt config validate --global`, which says to upgrade instrukt.
+  `instrukt config validate --global`, which prints the same installer command.
 - Unresolved and cyclic references are validation findings.
 - With `INSTRUKT_NOW=@<path>` real time bounds no started program's process
   limit while the file is readable (lock and I/O waits stay on monotonic time): its limit runs out only when the time in the file moves past

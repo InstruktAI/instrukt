@@ -2428,7 +2428,7 @@ fn hold_recovery_key(c: &Company, key: &str) -> instrukt_core::fsx::LockGuard {
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
     let name = Sha256::digest(format!("t3:{key}").as_bytes());
     instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!("runtime-key-{name:x}.lock")),
+        &home.state_dir().join(format!("runtime-key-{name:x}.lock")),
         std::time::Duration::from_secs(5),
     )
     .unwrap()
@@ -4148,7 +4148,7 @@ fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
     });
     let other = conversations::key(&c.company(), SLACK, &format!("{channel}/{first}"));
     let other_lock = instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!(
+        &home.state_dir().join(format!(
             "conversation-{}.lock",
             hex::encode(&sha2::Sha256::digest(other.as_bytes())[..8])
         )),
@@ -4245,7 +4245,7 @@ fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
     c.runner_dies();
     let key = conversations::key(&c.company(), SLACK, direct);
     let held = instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!(
+        &home.state_dir().join(format!(
             "conversation-{}.lock",
             hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
         )),
@@ -4692,7 +4692,7 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
     let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{initial}"));
     let _settled = instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!(
+        &home.state_dir().join(format!(
             "conversation-{}.lock",
             hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
         )),
