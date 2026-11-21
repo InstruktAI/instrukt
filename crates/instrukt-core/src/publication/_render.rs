@@ -35,9 +35,9 @@ use super::_source::{Committed, MASTER_FILE_NAME};
 use super::PublicationError;
 use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
 use crate::docs::{
-    self, AgentCli, Corpus, DocsError, Entry, INDEX_FILE, InFull, Lens, Listing, Named, Notice,
-    NoticeCode, Position, PositionIndex, RefTarget, Reference, RenderContext, Rendered, Selection,
-    SourceFile, Taxonomy, Values, View,
+    self, Corpus, DocsError, Entry, INDEX_FILE, InFull, Lens, Listing, Named, Notice, NoticeCode,
+    Position, PositionIndex, RefTarget, Reference, RenderContext, Rendered, Selection, SourceFile,
+    Taxonomy, Values, View,
 };
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug, SnippetId};
@@ -116,7 +116,7 @@ impl Renderer<'_> {
     /// The global file of `cli`, with the references it keeps for an agent
     /// program to resolve: a global file is written as rendered and each
     /// such reference is a finding of the sync, never a refusal.
-    pub(super) fn global_file(&self, cli: AgentCli) -> Result<GlobalFile, PublicationError> {
+    pub(super) fn global_file(&self, cli: &str) -> Result<GlobalFile, PublicationError> {
         let source = self.source();
         let rendering = self.rendering(&source);
         let file = "docs/general/index.yaml";
@@ -176,9 +176,7 @@ impl Renderer<'_> {
         ) {
             blocks.push(configured);
         }
-        if let Some(PositionIndex::General(general_index)) = index
-            && let Some(ids) = general_index.agents.get(&cli)
-        {
+        if let Some(PositionIndex::General(general_index)) = index {
             // What the general section holds in full is not repeated.
             let mut own = Expansion {
                 order: Vec::new(),
@@ -186,7 +184,16 @@ impl Renderer<'_> {
                 domains: expansion.domains.clone(),
                 references: Vec::new(),
             };
-            rendering.expand(ids, file, &mut own)?;
+            let names: &[&str] = if matches!(cli, "claude" | "claudeAgent") {
+                &["claude", "claudeAgent"]
+            } else {
+                &[cli]
+            };
+            for name in names {
+                if let Some(ids) = general_index.agents.get(*name) {
+                    rendering.expand(ids, file, &mut own)?;
+                }
+            }
             if let Some(first) = own.order.first() {
                 blocks.push(
                     Selection {

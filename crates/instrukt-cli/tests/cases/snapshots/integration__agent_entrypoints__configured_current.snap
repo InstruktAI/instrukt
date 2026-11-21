@@ -7,11 +7,18 @@ published platform at [SHA], nothing to change
 [TMP]/codex-home/AGENTS.md (codex: codex): current
 [TMP]/home/.claude/CLAUDE.md (claude: claudeAgent, claude-work): current
 [TMP]/pi-home/AGENTS.md (pi: pi-work): current
+[TMP]/home/.config/opencode/AGENTS.md (opencode: opencode): current
+[TMP]/home/.kiro/steering/instrukt.md (kiro: kiro): current
 [TMP]/codex-shared/AGENTS.md (codex: codex-overlay): current
 [TMP]/codex-second/AGENTS.md (codex: codex-second): current
 [TMP]/codex-third/AGENTS.md (codex: codex-third): current
+[TMP]/home/.fx/AGENTS.md (fx: fx-work): current
 [TMP]/codex-overlay/AGENTS.md: link to [TMP]/codex-shared/AGENTS.md ensured: already in place
 [TMP]/codex-second-overlay/AGENTS.md: link to [TMP]/codex-second/AGENTS.md ensured: already in place
 [TMP]/codex-third-overlay/AGENTS.md: link to [TMP]/codex-third/AGENTS.md ensured: already in place
-notice: instance `claudeAgent` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
-notice: instance `claude-work` (claude) reported no home; its file is written in the default home [TMP]/home/.claude
+notice: instance `claudeAgent` (claude): home source: native_variable; instruction_relocation_unverified
+notice: instance `claude-work` (claude): home source: native_variable; instruction_relocation_unverified
+notice: instance `muse` (muse): mechanism_unestablished; nothing delivered
+notice: instance `acp-gemini` (acpRegistry): mechanism_unestablished; nothing delivered; registry agent: gemini
+notice: instance `future` (FutureProvider): mechanism_unestablished; nothing delivered
+notice: instance `fx-work` (fx): home source: native_variable; instruction_relocation_unverified

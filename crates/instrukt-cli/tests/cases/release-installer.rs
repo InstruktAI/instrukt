@@ -15,6 +15,10 @@ struct Release {
 impl Release {
     fn new() -> Self {
         let mut env = TestEnv::new();
+        env.set_env(
+            "INSTRUKT_INSTALL_DIR",
+            env.home().join(".local/bin").to_str().unwrap(),
+        );
         // Publication uses sha256sum on both platforms; macOS ships shasum.
         script(
             &env.path("runtime-bin/sha256sum"),
@@ -68,6 +72,15 @@ impl Release {
         .unwrap();
     }
     fn install(&self, args: &[&str]) -> std::process::Output {
+        let selected = Path::new(
+            self.env
+                .injected("INSTRUKT_INSTALL_DIR")
+                .expect("installer fixture requires its native install-directory variable"),
+        );
+        assert!(
+            selected.starts_with(self.env.path("")),
+            "installer fixture destination must stay inside its owned directory"
+        );
         self.env
             .command(Path::new("/bin/sh"), self.env.home())
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/install.sh"))

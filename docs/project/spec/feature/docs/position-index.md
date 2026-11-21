@@ -34,10 +34,12 @@ states what an index may say and what validation reports about it.
   description and the command that reads it.
 - **`description`** — one line saying what the domain is about; the line that
   stands for the domain in every agent's global file.
-- **`agents`** — a map from an agent runtime instrukt deploys global files to
-  (`project/instrukt/spec/feature/publication/agent-entrypoints`) to snippet
-  ids. Those snippets are rendered into that one runtime's global file only,
-  after everything else.
+- **`agents`** — a map from a provider name to snippet ids. A name has 1–64 ASCII
+  characters, starts with a letter and otherwise contains letters, digits,
+  underscores or hyphens (`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`). Case is preserved;
+  surrounding whitespace is invalid. Names are accepted independently of
+  installed or configured providers and native instruction-loading support. Those snippets are rendered into that
+  runtime's global file only, after everything else.
 
 `general`'s `expanded` and `listed` may name ids from any domain: always-on
 content from several domains is chosen in this one place. A domain's index and
@@ -60,7 +62,7 @@ names the `index.yaml`, the key and the offending value.
 | a domain's `index.yaml` has no `description` (the line the global agent files show for the domain) |
 | an id names no snippet, or names a pending snippet |
 | a domain's or the project's index names an id of another position |
-| an `agents` key names no agent runtime instrukt deploys to; the finding names the ones it does |
+| an `agents` key has invalid provider-name syntax; `index-agent-invalid` explains the syntax |
 | a `listed` id is already in the closure of `expanded`; the finding names the `expanded` id whose closure carries it |
 | an `index.yaml` sits anywhere but a position's root |
 
@@ -80,7 +82,7 @@ A notice is reported with its file and code and never fails the run.
 ```gherkin
 Given a developer has written the index of a position they publish
 When they validate the project's documentation
-Then every key the position does not allow, every id that names no delivered snippet, and every agent name instrukt does not deploy to is reported with the index and the offending value
+Then every key the position does not allow, every id that names no delivered snippet, and every malformed provider name is reported with the index and the offending value
 And a domain's index without a description is reported
 And a listed snippet that the expanded snippets already bring in is reported, naming the expanded snippet that brings it
 And the run reports failure while any of these remains

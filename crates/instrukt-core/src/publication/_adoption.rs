@@ -38,6 +38,7 @@ pub enum GlobalFiles {
     Rendered {
         /// Each file, with its runtime and the instances it serves.
         files: Vec<PlannedGlobalFile>,
+        targets: Vec<super::InstructionTarget>,
     },
     /// The selected runtime cannot be asked: the sync would write no global
     /// file until it can.
@@ -47,7 +48,7 @@ pub enum GlobalFiles {
 /// One global agent file the first sync will write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedGlobalFile {
-    pub runtime: &'static str,
+    pub runtime: String,
     pub path: PathBuf,
     pub instances: Vec<String>,
 }
@@ -129,7 +130,7 @@ pub fn preview_claims(
     let global_files = match positions.iter().find(|(p, _)| *p == Position::General) {
         None => GlobalFiles::NotHeld,
         Some((_, ClaimStatus::OwnedBy(owner))) => GlobalFiles::OwnedElsewhere(owner.clone()),
-        Some(_) => rendered_global_files(home, runtimes),
+        Some(_) => rendered_global_files(home, runtimes)?,
     };
     Ok(ClaimsPreview {
         positions,
@@ -143,24 +144,33 @@ pub fn preview_claims(
 fn rendered_global_files(
     home: &Home,
     runtimes: Option<&dyn ConfiguredAgentRuntimes>,
-) -> GlobalFiles {
+) -> Result<GlobalFiles, PublicationError> {
     let Some(runtimes) = runtimes else {
-        return GlobalFiles::Rendered { files: Vec::new() };
+        return Ok(GlobalFiles::Rendered {
+            files: Vec::new(),
+            targets: Vec::new(),
+        });
     };
-    match runtimes.configured(home, &crate::config::Env::from_process()) {
-        Answer::Unreachable { runtime, cause } => GlobalFiles::Unreachable { runtime, cause },
-        Answer::Reported(instances) => GlobalFiles::Rendered {
-            files: targets(home.user_home(), &instances)
-                .files
-                .into_iter()
-                .map(|file| PlannedGlobalFile {
-                    runtime: file.destination.cli.name(),
-                    path: file.path(),
-                    instances: file.instances,
-                })
-                .collect(),
+    Ok(
+        match runtimes.configured(home, &crate::config::Env::from_process()) {
+            Answer::Unreachable { runtime, cause } => GlobalFiles::Unreachable { runtime, cause },
+            Answer::Reported(instances) => {
+                let targets = targets(&instances)?;
+                GlobalFiles::Rendered {
+                    files: targets
+                        .files
+                        .into_iter()
+                        .map(|file| PlannedGlobalFile {
+                            runtime: file.runtime.clone(),
+                            path: file.path(),
+                            instances: file.instances,
+                        })
+                        .collect(),
+                    targets: targets.instances,
+                }
+            }
         },
-    }
+    )
 }
 
 /// Whether `dir` holds at least one file, at any depth.

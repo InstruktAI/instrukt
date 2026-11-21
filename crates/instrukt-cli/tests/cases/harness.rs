@@ -68,7 +68,10 @@ fn git_children_see_only_the_injected_environment() {
         .filter_map(|line| line.split_once('='))
         .collect();
     insta::assert_snapshot!(seen.get(INJECTED).copied().unwrap_or_default(), @"s-1");
-    assert_eq!(seen.get("HOME").map(std::path::Path::new), Some(env.home()));
+    assert_eq!(
+        seen.get("HOME").copied(),
+        std::env::var("HOME").ok().as_deref()
+    );
     assert!(!seen.contains_key(AMBIENT));
 }
 

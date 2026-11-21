@@ -3,7 +3,7 @@
 //!
 //! Every path into the home is named here, so no context spells a home path
 //! of its own. `INSTRUKT_HOME` selects an isolated root; otherwise the root
-//! sits below `HOME`. Machine secrets remain below `HOME` in either case.
+//! sits below `HOME`. Secrets belong to the selected Instrukt root.
 
 use std::path::{Path, PathBuf};
 
@@ -119,9 +119,7 @@ impl Home {
     }
 
     pub fn secrets_file(&self) -> PathBuf {
-        self.machine_user_home
-            .join(HOME_DIR_NAME)
-            .join("secrets.env")
+        self.root.join("secrets.env")
     }
 
     pub fn agents_file(&self) -> PathBuf {

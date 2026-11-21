@@ -14,7 +14,8 @@ is the project's purpose and the selection in `docs/project/index.yaml`; a
 company home's `AGENTS.md` is the company's own knowledge. The project that
 owns `docs/general/` also renders a user-scope global file for each agent
 runtime the user has configured, found by asking the selected runtime: the
-always-on `general` content, one line per on-demand domain with the command
+always-on `general` content where a native loader is established, one line
+per on-demand domain with the command
 that loads it, and that runtime's own `agents` snippets. It sets the one
 settings key that makes a runtime load `AGENTS.md` files. Every file instrukt
 renders is its own: it is written whole each time, whatever it held, and no
@@ -254,8 +255,10 @@ publishes. They are the computer's own, never committed anywhere.
      domain's `expanded` and `listed` are not rendered here; they are what
      `instrukt docs get --domain <x>` renders.
   3. That runtime's `agents` snippets: the ids `docs/general/index.yaml`
-     maps to the runtime's name, in full with their closure, appended to
-     that runtime's file only.
+     maps to the driver's exact, case-sensitive name, in full with their
+     closure, appended to that runtime's file only. Claude appends `claude`
+     then `claudeAgent`, sharing the shown-id set so closures appear once.
+     An ACP registry agent id is diagnostic identity, never a selection alias.
 - **Rendering.** Required reads resolve from the documentation published on
   the computer and are inlined; nothing is left for an agent program to
   resolve. `@config` directives resolve against the publishing project's
@@ -276,15 +279,18 @@ publishes. They are the computer's own, never committed anywhere.
   (`project/instrukt/spec/feature/configuration/layered-configuration`),
   through its adapter, which enabled instances of which agent runtimes are
   configured and which home each reports, and writes a file for each of
-  those runtimes instrukt deploys to; for T3 the adapter reports its enabled
+  those runtimes with an established native loader; every other enabled
+  instance receives an explicit non-delivery outcome. For T3 the adapter
+  reports its enabled
   provider instances (`project/instrukt/spec/feature/runner/session-continuity`).
 - **Each instance's own home.** A destination is taken only from what the
   runtime reports. A runtime's file is written in the home an enabled
   instance reports. An enabled instance that reports no home receives its
   file in the runtime vendor's default home, and the sync's output names
-  that instance and says its home was not reported. Instances that share a
-  home share one file; an instance with a home of its own receives its file
-  there. An instance whose home the runtime names relative to its own working
+  that instance and says its home was not reported. Instances with compatible
+  selections that share a target share one file; different selections reaching
+  one physical file are reported as a target conflict and that target receives
+  nothing. An instance with a home of its own receives its file there. An instance whose home the runtime names relative to its own working
   directory, which it does not report, has no known home: the sync names it
   and writes no file and no link for it, never resolving such a path against
   its own working directory.
@@ -292,7 +298,8 @@ publishes. They are the computer's own, never committed anywhere.
   its output each destination it wrote or found current, with the runtime
   and the instances it serves, and each link it ensured, beside the notices
   this section names. That output is where the destinations show:
-  `instrukt status` keeps no record of them and asks no runtime
+  `instrukt status` keeps no record of them and reads current configured
+  instances and target availability
   (`project/instrukt/spec/feature/publication/instrukt-status`), and
   `instrukt init` reports the ones a first sync will write
   (`project/instrukt/spec/feature/repository/project-initialization`).
@@ -322,11 +329,47 @@ publishes. They are the computer's own, never committed anywhere.
   implementation, one per runtime instrukt deploys to, each taken from that
   runtime vendor's own documentation (See Also); they are not configuration
   keys.
-- **A configured runtime without a user-scope file** — one that keeps user
-  rules in its own settings, one whose vendor documents no location for
-  them, or one instrukt has no destination for —
-  receives no global file. Its agents read the repository's committed
-  `AGENTS.md`.
+- **Native loading at T3 v0.1.8.** The adapter resolves `H` from the selected
+  runtime's home facts. The native destinations are:
+
+  | Driver | Destination | Home and format |
+  | --- | --- | --- |
+  | `codex` | `H/AGENTS.md` | Reported shared home or `.codex`; plain Markdown; retain shadow links |
+  | `claudeAgent` (`claude`) | `H/CLAUDE.md` | `homePath`, `CLAUDE_CONFIG_DIR`, otherwise `.claude`; plain Markdown |
+  | `cursor` | `H/rules/instrukt.mdc` | T3 host user's `.cursor`; fixed frontmatter `description: Instrukt doctrine`, `globs: ""`, `alwaysApply: true`, followed by the full rendering |
+  | `grok` | `H/AGENTS.md` | Default `.grok`; no selected relocation variable; plain Markdown |
+  | `fx` | `H/AGENTS.md` | Instance `FX_HOME`, otherwise `.fx`; plain Markdown |
+  | `opencode` | `H/AGENTS.md` | `OPENCODE_CONFIG_DIR`, otherwise `.config/opencode`; plain Markdown |
+  | `antigravity` | `H/AGENTS.md` | Default `.gemini`; no selected relocation variable; plain Markdown |
+  | `kiro` | `H/steering/instrukt.md` | Instance `KIRO_HOME`, otherwise `.kiro`; plain Markdown |
+  | `pi` | `H/AGENTS.md` | Instance `PI_CODING_AGENT_DIR`, otherwise `.pi/agent`; plain Markdown |
+
+  Defaults use the inherited machine user home, never Instrukt's private output
+  directory. The only selected relocation variables are `CODEX_HOME`,
+  `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`, `FX_HOME`, `KIRO_HOME` and
+  `PI_CODING_AGENT_DIR`. Effective T3 translations into Codex/Claude native
+  variables are retained. Nonsecret instance values precede inherited values
+  where T3 passes them. Relative or redacted selected overrides are
+  `home_unknown`; no default is guessed. Instance `HOME`/`USERPROFILE`, OpenCode
+  XDG, Grok variables and private Antigravity profiles do not select targets.
+  Relocated Claude/fx output carries `instruction_relocation_unverified`: the
+  chosen directory is relocated, but instruction loading is not proven. Cursor's SDK does not take an instance home override. Antigravity
+  forces `GEMINI_HOME` to its private profile, but Instrukt does not follow it: its
+  default output carries `runtime_home_differs` and does not establish receipt.
+  Claude retains the narrowly merged `settings.json` key
+  `pluginConfigs.agents-md@builtin.options.instructionFiles` with value
+  `claude-md-and-agents-md`. No other row requires a loading setting.
+- **Explicit non-delivery.** Muse, generic `acpRegistry` (including a registry
+  agent named `gemini`) and unfamiliar drivers have no established generic
+  global loader: report `not_delivered`, `mechanism_unestablished`, runtime,
+  instance and available registry identity. Unknown homes report `home_unknown`.
+  A nonempty native `AGENTS.override.md` shadowing Codex or Pi doctrine reports
+  `native_override`; overrides are never changed or deleted. No file, link or
+  settings are written for a skipped instance. Previously written files stay.
+  Sync and init name each skipped instance and say nothing was delivered;
+  a configured instance with no target is distinct from no configured runtime.
+  No start-time injection, guessed file, settings database edit or user-message
+  prepend substitutes for a missing native mechanism.
 - **No runtime, no files.** An unset `runner.runtime` selects the runtime
   compiled into this instrukt
   (`project/instrukt/spec/feature/configuration/layered-configuration`), and
@@ -335,8 +378,8 @@ publishes. They are the computer's own, never committed anywhere.
   runtime cannot be asked, no global file is written in that sync: it
   reports a notice naming the runtime and the cause, publishes the rest, and
   the next sync of that project writes them, whether or not main has moved.
-- **`agents` names** are validated against the runtimes instrukt deploys to,
-  whatever is configured on the computer.
+- **`agents` names** use the open syntax in the position-index contract,
+  independently of configuration or native-loader knowledge.
 - **Written whole, every time.** Each destination is written whole by every
   sync that publishes, whatever it holds: a file another tool or a person
   wrote there is overwritten. Nothing is refused because of what a file holds
@@ -372,15 +415,16 @@ When an agent checks the repository out on a computer without instrukt
 Then it starts with that instruction file
 ```
 
-### UC-AE2: Every agent runtime the developer configured starts with the always-on doctrine and a map of the rest
+### UC-AE2: A developer sees native instruction delivery and explicit non-delivery for configured agent runtimes
 
 ```gherkin
-Given a developer's runtime has two agent runtimes configured, one of them with a home of its own, and a third agent program is installed but not configured
+Given a developer's runtime has several agent runtimes configured, some with homes of their own, and another agent program is installed but not configured
 And the computer publishes always-on doctrine and an on-demand domain with a description and a triggered procedure
 And the agent runtimes' settings hold the developer's own preferences
 And one configured agent runtime's global instruction file holds text another tool wrote
 When publication runs for the project that owns the always-on doctrine
-Then each configured agent runtime starts with the always-on doctrine in full, read from the home it runs with
+Then each configured agent runtime with an established native loader receives the always-on doctrine in full in its native format and home
+And every configured instance without an established loader or home is named with its non-delivery reason
 And the text the other tool wrote is gone
 And always-on doctrine taken from another domain sits under that domain's heading, in the order the doctrine requires it, even where the domains interleave
 And it reads one line naming the on-demand domain, its description and the command that loads it
@@ -392,7 +436,7 @@ But when the always-on doctrine changes and publication runs while the runtime c
 Then the rest of the documentation is published
 And no global instruction file is written, and the developer is told which runtime could not be asked and why
 When publication runs again while the runtime can be asked
-Then every configured agent runtime starts with the changed doctrine
+Then every configured agent runtime with an established native loader receives the changed doctrine
 ```
 
 ### UC-AE3: A developer gives one agent runtime rules of its own
@@ -403,8 +447,10 @@ And the always-on doctrine maps a policy to one of them
 When publication runs for the project that owns the always-on doctrine
 Then that runtime's global instructions end with the policy
 And the other runtime's global instructions do not contain it
-When the developer maps a policy to an agent runtime instrukt does not deploy to
-Then publication is refused and names that runtime and the ones instrukt deploys to
+When the developer maps a policy to another syntactically valid provider name
+Then the index remains valid independently of configured instances
+But when the provider name is malformed
+Then publication is refused and explains the name syntax
 ```
 
 ### UC-AE4: Publication never overwrites global agent instructions the developer wrote (retired)
@@ -496,6 +542,8 @@ Then the rendering reports the snippet and says to list it instead, and the inst
   global files stay as they were until the next sync of the project that owns
   `docs/general/`: a hook trigger there, or `instrukt sync` run in it
   (`project/instrukt/spec/feature/publication/project-publication`).
+- Native disable switches, size limits and overrides retain their own behavior.
+  A file being present does not establish that a session loaded its current bytes.
 - How a runtime combines the rendering with other instruction files in a
   home, and whether it reads it again during a session or when it resumes
   one, is that runtime's.
@@ -512,5 +560,5 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 - [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync the global files are part of.
 - [project/instrukt/spec/feature/repository/hook-sections](../repository/hook-sections.md) — the `pre-commit` section that stages the renderings.
 - [project/instrukt/spec/domain/docs](../../domain/docs.md) — the `index.yaml` model these renderings follow.
-- Each runtime's user-scope location, from its vendor: Claude Code https://code.claude.com/docs/en/memory; Codex https://learn.chatgpt.com/docs/agent-configuration/agents-md; pi https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/configuration.md; OpenCode https://github.com/anomalyco/opencode/blob/dev/services/site/src/docs/content/instructions.mdx; Kiro https://kiro.dev/docs/steering/; Antigravity https://antigravity.google/docs/rules; fx https://fx.sh/docs/configure-fx/project-instructions; Grok Build https://docs.x.ai/build/features/project-rules. Cursor keeps user rules in its settings (https://cursor.com/docs/context/rules); Muse Code documents user rules without a location (https://dev.meta.ai/docs/muse-code/configuration).
+- Each runtime's user-scope location, from its vendor: Claude Code https://code.claude.com/docs/en/memory; Codex https://learn.chatgpt.com/docs/agent-configuration/agents-md; pi https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/configuration.md; OpenCode https://github.com/anomalyco/opencode/blob/dev/services/site/src/docs/content/instructions.mdx; Kiro https://kiro.dev/docs/steering/; Antigravity https://antigravity.google/docs/rules; fx https://fx.sh/docs/configure-fx/project-instructions; Grok Build https://docs.x.ai/build/features/project-rules. Cursor local user rules https://prod.cursor.com/help/customization/rules#where-are-rules-stored and native rule format https://cursor.com/docs/rules#rule-file-structure; Muse Code documents user rules without a location (https://dev.meta.ai/docs/muse-code/configuration).
 - T3's configured provider instances and their settings: `packages/contracts/src/settings.ts` and `packages/contracts/src/providerInstance.ts` in `pingdotgg/t3code`.

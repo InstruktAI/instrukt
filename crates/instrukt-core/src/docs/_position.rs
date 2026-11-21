@@ -87,52 +87,64 @@ impl fmt::Display for Position {
     }
 }
 
-/// An agent runtime instrukt deploys to: one with a user-scope instruction
-/// file, a destination of the global agent files
-/// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "Global
-/// agent files").
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentCli {
-    Claude,
-    Codex,
-    Pi,
-    Opencode,
-    Kiro,
-    Antigravity,
-    Fx,
-}
+/// A syntactically valid provider name, independent of local configuration or
+/// native instruction-loading support.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct AgentCli(String);
 
 impl AgentCli {
-    /// Every runtime instrukt deploys to.
-    pub const ALL: [AgentCli; 7] = [
-        AgentCli::Claude,
-        AgentCli::Codex,
-        AgentCli::Pi,
-        AgentCli::Opencode,
-        AgentCli::Kiro,
-        AgentCli::Antigravity,
-        AgentCli::Fx,
-    ];
+    // JSON Schema uses ECMA regexes, whose `$` also matches before a final newline.
+    pub const PATTERN: &str = r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$(?![\s\S])";
 
-    /// The runtime's name, as `agents` and a runtime's adapter name it.
-    pub fn name(self) -> &'static str {
-        match self {
-            AgentCli::Claude => "claude",
-            AgentCli::Codex => "codex",
-            AgentCli::Pi => "pi",
-            AgentCli::Opencode => "opencode",
-            AgentCli::Kiro => "kiro",
-            AgentCli::Antigravity => "antigravity",
-            AgentCli::Fx => "fx",
-        }
+    /// Preserve the exact spelling; surrounding whitespace is invalid.
+    pub fn named(name: &str) -> Option<Self> {
+        let bytes = name.as_bytes();
+        (matches!(bytes.len(), 1..=64)
+            && bytes[0].is_ascii_alphabetic()
+            && bytes
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-')))
+        .then(|| Self(name.to_owned()))
     }
 
-    /// The runtime named `name`; `None` for one instrukt does not deploy to.
-    pub fn named(name: &str) -> Option<AgentCli> {
-        AgentCli::ALL.into_iter().find(|cli| cli.name() == name)
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for AgentCli {
+    fn borrow(&self) -> &str {
+        self.name()
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentCli {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ProviderName;
+        impl serde::de::Visitor<'_> for ProviderName {
+            type Value = AgentCli;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a provider name with 1–64 ASCII characters: a leading letter, then letters, digits, underscores or hyphens")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                AgentCli::named(value)
+                    .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Str(value), &self))
+            }
+        }
+        deserializer.deserialize_any(ProviderName)
+    }
+}
+
+impl JsonSchema for AgentCli {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "AgentCli".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({"type": "string", "pattern": Self::PATTERN, "minLength": 1, "maxLength": 64})
     }
 }
 
@@ -206,8 +218,8 @@ pub enum PositionIndex {
 
 impl PositionIndex {
     /// Parses the `index.yaml` of `position`. A key the position does not
-    /// allow, a value of the wrong shape, a malformed id or an agent CLI
-    /// instrukt does not deploy to is an error. A file holding no document
+    /// allow, a value of the wrong shape, a malformed id or a malformed
+    /// provider name is an error. A file holding no document
     /// (empty, or comments only) is an index that selects nothing.
     pub fn parse(position: &Position, text: &str) -> Result<Self, serde_yaml_ng::Error> {
         Ok(match position {
@@ -322,7 +334,10 @@ mod tests {
         assert_eq!(index.listed, [id("sdlc/policy/b")]);
         assert_eq!(
             index.agents,
-            BTreeMap::from([(AgentCli::Claude, vec![id("general/policy/agents/claude")])])
+            BTreeMap::from([(
+                AgentCli::named("claude").unwrap(),
+                vec![id("general/policy/agents/claude")]
+            )])
         );
     }
 
@@ -357,8 +372,37 @@ mod tests {
     }
 
     #[test]
-    fn an_agent_instrukt_does_not_deploy_to_is_refused() {
-        assert!(PositionIndex::parse(&Position::General, "agents:\n  cursor: []\n").is_err());
+    fn provider_names_are_validated_without_a_membership_list() {
+        for name in [
+            "cursor",
+            "claudeAgent",
+            "acpRegistry",
+            "gemini",
+            "Future_42",
+            "a",
+        ] {
+            let text = format!("agents:\n  {name}: []\n");
+            let index = PositionIndex::parse(&Position::General, &text).unwrap();
+            let PositionIndex::General(index) = index else {
+                panic!("general")
+            };
+            let round_trip = serde_yaml_ng::to_string(&index).unwrap();
+            assert_eq!(
+                PositionIndex::parse(&Position::General, &round_trip).unwrap(),
+                PositionIndex::General(index)
+            );
+        }
+        for name in ["", " cursor", "cursor ", "1agent", "a.b", "a/b", "a\n", "é"] {
+            assert!(AgentCli::named(name).is_none(), "{name}");
+        }
+        assert!(AgentCli::named(&"a".repeat(64)).is_some());
+        assert!(AgentCli::named(&"a".repeat(65)).is_none());
+        for key in ["true", "null", "[a]", "' cursor'", "'cursor '"] {
+            assert!(
+                PositionIndex::parse(&Position::General, &format!("agents:\n  {key}: []\n"))
+                    .is_err()
+            );
+        }
     }
 
     #[test]
@@ -400,23 +444,14 @@ mod tests {
     }
 
     #[test]
-    fn the_general_index_schema_admits_only_the_runtimes_instrukt_deploys_to() {
+    fn the_general_index_schema_constrains_open_provider_names() {
         let schema = GeneralIndex::editor_schema();
-        let (mut names, open) = keys(&schema["properties"]["agents"]);
-        names.sort();
+        let agents = &schema["properties"]["agents"];
+        assert_eq!(agents["additionalProperties"], false);
         assert_eq!(
-            names,
-            [
-                "antigravity",
-                "claude",
-                "codex",
-                "fx",
-                "kiro",
-                "opencode",
-                "pi"
-            ]
+            agents["patternProperties"][AgentCli::PATTERN]["type"],
+            "array"
         );
-        assert!(!open);
     }
 
     #[test]

@@ -212,6 +212,9 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
 }
 
 #[derive(Debug, clap::Args)]
+#[command(
+    after_help = "Scheduler locations: SYSTEMD_UNIT_PATH selects the native systemd search path (the running manager must include the first explicit absolute directory). INSTRUKT_LAUNCH_AGENTS_DIR selects an absolute plist directory, default ~/Library/LaunchAgents; alternate directories are loaded explicitly and are not login-scanned automatically. INSTRUKT_CRONTAB_FILE selects an absolute file-only table, never account registration; unset uses the executing user's native crontab."
+)]
 pub struct InstallArgs {
     /// Compare desired and actual infrastructure without changing packages, services or data.
     #[arg(long)]
@@ -288,9 +291,6 @@ where
     E: Into<anyhow::Error>,
 {
     let path_env = std::env::var("PATH").unwrap_or_default();
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from);
     let executable = executable()?;
     let company = crate::wiring::company();
     // An inspection reports what it can read: a machine layer that cannot
@@ -311,7 +311,7 @@ where
         scheduler: Scheduler::detect(Some(&path_env)),
         wake: WakeUp {
             home: &ctx.home,
-            config_home: config_home.as_deref(),
+            locations: instrukt_runner::install::SchedulerLocations::resolve(&ctx.home, &env)?,
             executable: &executable,
             path_env: &path_env,
         },

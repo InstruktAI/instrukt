@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/harness.rs
-assertion_line: 35
 expression: help
 ---
 Converge/check module infrastructure across adopted projects; repair with the same command
@@ -16,3 +15,9 @@ Options:
       --json             Render per-resource results and findings as JSON
   -h, --help             Print help
   -V, --version          Print version
+
+Scheduler locations: SYSTEMD_UNIT_PATH selects the native systemd search path (the running manager
+must include the first explicit absolute directory). INSTRUKT_LAUNCH_AGENTS_DIR selects an absolute
+plist directory, default ~/Library/LaunchAgents; alternate directories are loaded explicitly and are
+not login-scanned automatically. INSTRUKT_CRONTAB_FILE selects an absolute file-only table, never
+account registration; unset uses the executing user's native crontab.

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/module-installation.rs
+expression: report
+---
+unmet: wake-up | [TABLE] | projects: cron-work | file_only: not registered
+unmet: wake-up: file_only: cron table is materialized but not registered; configure native scheduling for wake-up

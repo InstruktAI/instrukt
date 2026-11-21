@@ -59,11 +59,13 @@ the owners of the required behavior.
 
 ### Isolation and real evidence
 
-Each check uses a temporary home, T3 base directory, instrukt home and Git
+Each check uses a temporary fixture directory, T3 base directory, instrukt home and Git
 project. Server startup uses an explicit base directory, loopback address and
 `--no-browser`; every client resolves that same base. Inherited T3 caller,
 connection, development-server and credential settings are removed. The check
-uses no person's credentials, user home, running T3 or model execution. All
+uses no person's application data or credentials, running T3 or model execution;
+HOME remains inherited for ordinary tool configuration, with app state
+isolated through its native variables. All
 issued sessions and all processes owned by the check are cleaned up on success,
 failure and interruption, within bounded operation deadlines. Synchronization
 uses observable readiness and changes under `sdlc/policy/testing`.
@@ -181,6 +183,22 @@ and warranted, deduplicated bug filing under
 `project/instrukt/spec/feature/workflow/integration-gate`. A nightly failure
 belongs to the dependency branch and does not report a broken canonical
 delivery. Successful checks wake no T3 watcher.
+
+### Inherited home and isolated application roots
+
+Checks inherit `HOME`, broad XDG bases and `TMPDIR` unchanged for signing,
+SSH and caches. `INSTRUKT_LOG_DIR` selects the isolated app log directory
+under `project/instrukt/spec/feature/configuration/logging`. They isolate
+Instrukt, T3 and the six native runtime roots named by
+`project/instrukt/spec/feature/publication/agent-entrypoints`. The shared check
+launcher owns temporary roots and scheduler-command rejection stubs; CLI
+fixtures retain their existing recording scheduler stubs and write fence.
+Systemd uses an explicit `SYSTEMD_UNIT_PATH`, launchd uses
+`INSTRUKT_LAUNCH_AGENTS_DIR`, and file-only cron uses `INSTRUKT_CRONTAB_FILE`.
+Native-account cron checks unset the latter only behind a recording stub.
+Cursor/Grok/Antigravity default-only outputs are not filesystem-delivery
+fixtures against a real home. Existing pure/source evidence covers their
+planning/format; relocated Claude/fx file checks do not prove context receipt.
 
 ## Use cases
 

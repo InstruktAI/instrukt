@@ -38,6 +38,7 @@ pub use _adoption::{
     ClaimStatus, ClaimsPreview, GlobalFiles, PlannedGlobalFile, PublishedSchema, preview_claims,
     published_schema,
 };
+pub use _agents::{InstructionOutcome, InstructionTarget, NonDelivery};
 pub use _company::CompanyReadProblem;
 pub use _editor::{
     EditorChange, EditorChangeKind, SCHEMAS_DIR, committed_modeline, editor_schema_describes,

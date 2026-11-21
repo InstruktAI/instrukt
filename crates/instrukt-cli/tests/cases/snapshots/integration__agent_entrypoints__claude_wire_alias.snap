@@ -1,0 +1,76 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "read(\".claude/CLAUDE.md\")"
+---
+# General
+
+## Attention — Principle
+
+### Principle
+
+Attention: Principle.
+
+### Rationale
+
+Attention: Rationale.
+
+### Implications
+
+Attention: Implications.
+
+### Tensions
+
+Attention: Tensions.
+
+## Care — Policy
+
+### Rules
+
+Care: Rules.
+
+### Rationale
+
+Care: Rationale.
+
+### Scope
+
+Care: Scope.
+
+### Enforcement
+
+Care: Enforcement.
+
+### Exceptions
+
+Care: Exceptions.
+
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+
+# Sdlc
+
+Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
+- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`
+
+# General
+
+## Claude — Policy
+
+### Rules
+
+Claude: Rules.
+
+### Rationale
+
+Claude: Rationale.
+
+### Scope
+
+Claude: Scope.
+
+### Enforcement
+
+Claude: Enforcement.
+
+### Exceptions
+
+Claude: Exceptions.

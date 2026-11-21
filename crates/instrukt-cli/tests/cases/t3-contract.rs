@@ -22,9 +22,9 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         let root = std::env::var("T3_CONTRACT_ROOT").unwrap();
         let root = Path::new(&root);
         assert_eq!(
-            Home::from_env().unwrap().machine_user_home(),
-            root.join("home"),
-            "contract worker requires its disposable home"
+            Home::from_env().unwrap().root(),
+            root.join("home/.instrukt"),
+            "contract worker requires its disposable Instrukt root"
         );
         assert_eq!(
             std::env::var_os("T3CODE_HOME").map(std::path::PathBuf::from),

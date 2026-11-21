@@ -1,5 +1,5 @@
 //! Protocol- and shape-validated translation of T3's internal read-scoped provider snapshot.
-//! Wire source: https://github.com/pingdotgg/t3code/tree/6417151c09/apps/server/src
+//! Wire source: https://github.com/pingdotgg/t3code/tree/bf469bb19669671d0df2efda74ed73867a7137c0/apps/server/src
 //!
 //! Readiness is off the start path. A runner keeps one read-scoped token,
 //! issued when it starts and renewed before it expires, and refreshes the
@@ -19,7 +19,7 @@ use instrukt_core::{
     config::{Env, HarnessKind},
     home::Home,
     ids::ProviderInstanceId,
-    interfaces::ConfiguredInstance,
+    interfaces::{ConfiguredInstance, InstructionAssurance, InstructionHomeSource},
 };
 use jiff::Timestamp;
 use serde::Deserialize;
@@ -82,7 +82,7 @@ fn enabled_by_default() -> bool {
     true
 }
 /// An instance-environment variable. T3 sends a sensitive variable's value
-/// redacted (empty, or a secret reference), so it counts as absent.
+/// redacted (empty, or a secret reference), so a selected home stays unknown.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Variable {
@@ -793,6 +793,7 @@ pub(super) fn configured(home: &Home, env: &Env) -> Result<Vec<ConfiguredInstanc
     Ok(configured_instances(
         acquire(home, env)?,
         home.machine_user_home(),
+        env,
     ))
 }
 
@@ -802,7 +803,7 @@ pub(super) fn configured(home: &Home, env: &Env) -> Result<Vec<ConfiguredInstanc
 /// The snapshot's flag decides only for a default instance (`codex`,
 /// `claudeAgent`) that T3 runs without a settings entry. Homes are
 /// interpreted here and only here, at T3 `v0.1.8`'s semantics.
-fn configured_instances(source: Snapshot, user_home: &Path) -> Vec<ConfiguredInstance> {
+fn configured_instances(source: Snapshot, user_home: &Path, env: &Env) -> Vec<ConfiguredInstance> {
     let mut settings = source.settings.provider_instances;
     source
         .providers
@@ -815,47 +816,108 @@ fn configured_instances(source: Snapshot, user_home: &Path) -> Vec<ConfiguredIns
             if !enabled {
                 return None;
             }
-            let runtime = runtime_name(kind(&provider.driver)?)?;
+            let driver = instrukt_core::docs::AgentCli::named(&provider.driver)?;
+            let runtime = if driver.name() == "claudeAgent" {
+                "claude".to_owned()
+            } else {
+                driver.name().to_owned()
+            };
             let read = Instance {
                 settings: instance.as_ref(),
                 user_home,
             };
+            let (variable, default) = match provider.driver.as_str() {
+                "codex" => (Some("CODEX_HOME"), Some(".codex")),
+                "claudeAgent" => (Some("CLAUDE_CONFIG_DIR"), Some(".claude")),
+                "opencode" => (Some("OPENCODE_CONFIG_DIR"), Some(".config/opencode")),
+                "fx" => (Some("FX_HOME"), Some(".fx")),
+                "kiro" => (Some("KIRO_HOME"), Some(".kiro")),
+                "pi" => (Some("PI_CODING_AGENT_DIR"), Some(".pi/agent")),
+                "cursor" => (None, Some(".cursor")),
+                "grok" => (None, Some(".grok")),
+                "antigravity" => (None, Some(".gemini")),
+                _ => (None, None),
+            };
+            let native_runtime = default.map(|_| runtime.clone());
             let mut home = None;
+            let mut opaque = match provider.driver.as_str() {
+                "codex" if provider.runtime_paths.is_none() => {
+                    read.opaque_config("homePath") || read.opaque_config("shadowHomePath")
+                }
+                "claudeAgent" => read.opaque_config("homePath"),
+                _ => false,
+            };
             let mut link_folders = Vec::new();
-            let mut registry_agent = None;
-            match provider.driver.as_str() {
-                "claudeAgent" => {
-                    home = read
-                        .config("homePath")
-                        .or_else(|| read.variable("CLAUDE_CONFIG_DIR"));
+            let registry_agent = (runtime == "acpRegistry")
+                .then(|| read.text("agentId").map(str::to_owned))
+                .flatten();
+            if runtime == "codex" {
+                if let Some(paths) = &provider.runtime_paths {
+                    home = read.path(&paths.home_path);
+                    link_folders
+                        .extend(paths.shadow_home_path.as_deref().and_then(|p| read.path(p)));
+                } else {
+                    home = read.config("homePath");
+                    link_folders.extend(read.config("shadowHomePath"));
                 }
-                "codex" => {
-                    if let Some(paths) = &provider.runtime_paths {
-                        home = read.path(&paths.home_path);
-                        link_folders
-                            .extend(paths.shadow_home_path.as_deref().and_then(|p| read.path(p)));
-                    } else if let Some(shadow) = read.config("shadowHomePath") {
-                        // At v0.1.8 an instance-environment `CODEX_HOME` is
-                        // ignored once a shadow home is set.
-                        home = read.config("homePath");
-                        link_folders.push(shadow);
-                    } else {
-                        home = read
-                            .config("homePath")
-                            .or_else(|| read.variable("CODEX_HOME"));
+            } else if provider.driver == "claudeAgent" {
+                home = read.config("homePath");
+            }
+            if home.is_none()
+                && !opaque
+                && let Some(name) = variable
+            {
+                // v0.1.8 ignores instance CODEX_HOME when shadowHomePath is set.
+                let instance_allowed = runtime != "codex" || link_folders.is_empty();
+                let selected = instance_allowed
+                    .then(|| {
+                        read.settings
+                            .and_then(|s| s.environment.iter().rev().find(|v| v.name == name))
+                    })
+                    .flatten();
+                if let Some(value) = selected {
+                    opaque = value.sensitive || value.value_redacted || !value.value.is_string();
+                    if !opaque {
+                        home = value.value.as_str().and_then(|v| read.path(v));
                     }
-                }
-                "pi" => home = read.variable("PI_CODING_AGENT_DIR"),
-                "opencode" => {
-                    home = read.variable("OPENCODE_CONFIG_DIR").or_else(|| {
-                        read.variable("XDG_CONFIG_HOME")
-                            .map(|config| config.join("opencode"))
+                } else {
+                    // A supplied empty instance value replaces the inherited value too.
+                    // Inherited Codex/Claude values are not shell-expanded by pinned T3.
+                    home = env.get(name).and_then(|value| {
+                        if matches!(runtime.as_str(), "codex" | "claude") {
+                            let value = value.trim();
+                            (!value.is_empty()).then(|| PathBuf::from(value))
+                        } else {
+                            read.path(value)
+                        }
                     });
                 }
-                "kiro" => home = read.variable("KIRO_HOME"),
-                "fx" => home = read.variable("FX_HOME"),
-                "acpRegistry" => registry_agent = read.text("agentId").map(str::to_owned),
-                _ => {}
+            }
+            let home_source = if opaque || default.is_none() {
+                InstructionHomeSource::Unknown
+            } else if home.is_some() {
+                InstructionHomeSource::NativeVariable
+            } else {
+                InstructionHomeSource::Default
+            };
+            if home.is_none() && !opaque {
+                home = default.map(|p| user_home.join(p));
+            }
+            let mut assurance = Vec::new();
+            if matches!(runtime.as_str(), "claude" | "fx")
+                && home_source == InstructionHomeSource::NativeVariable
+            {
+                assurance.push(InstructionAssurance::InstructionRelocationUnverified);
+            }
+            if runtime == "antigravity"
+                || (runtime == "grok"
+                    && read
+                        .variable("GROK_HOME")
+                        .as_ref()
+                        .zip(home.as_ref())
+                        .is_some_and(|(actual, target)| actual != target))
+            {
+                assurance.push(InstructionAssurance::RuntimeHomeDiffers);
             }
             // T3 resolves a relative home against its own process working
             // directory, which it does not report (`ServerConfig.cwd` is its
@@ -872,16 +934,16 @@ fn configured_instances(source: Snapshot, user_home: &Path) -> Vec<ConfiguredIns
             Some(ConfiguredInstance {
                 instance: provider.instance_id,
                 runtime,
+                native_runtime,
                 registry_agent,
                 home,
                 link_folders,
                 unknown_home,
+                home_source,
+                assurance,
             })
         })
         .collect()
-}
-fn runtime_name(kind: HarnessKind) -> Option<String> {
-    serde_json::to_value(kind).ok()?.as_str().map(str::to_owned)
 }
 /// One instance's settings, read for its home.
 struct Instance<'a> {
@@ -891,6 +953,11 @@ struct Instance<'a> {
 impl Instance<'_> {
     fn text(&self, key: &str) -> Option<&str> {
         self.settings?.config.get(key)?.as_str()
+    }
+    fn opaque_config(&self, key: &str) -> bool {
+        self.settings
+            .and_then(|settings| settings.config.get(key))
+            .is_some_and(|value| !value.is_string())
     }
     fn config(&self, key: &str) -> Option<PathBuf> {
         self.path(self.text(key)?)
@@ -1232,6 +1299,13 @@ mod tests {
                 provider("codex-overlay", "codex", true),
                 provider("codex-overlay-env", "codex", true),
                 managed,
+                provider("cursor", "cursor", true),
+                provider("grok", "grok", true),
+                provider("antigravity", "antigravity", true),
+                provider("future", "FutureHarness", true),
+                provider("opencode-xdg", "opencode", true),
+                provider("pi-empty", "pi", true),
+                provider("unrecognised-claude", "claude", true),
             ],
             "settings": {"providerInstances": {
                 "pi-work": {"driver":"pi","enabled":true,
@@ -1250,10 +1324,23 @@ mod tests {
                     "environment":[variable("CODEX_HOME","/srv/env-codex")],
                     "config":{"homePath":"","shadowHomePath":"/srv/codex-work"}},
                 "codex-managed": {"driver":"codex","config":{"setupMode":"managed"}},
+                "grok": {"driver":"grok","environment":[variable("HOME","/must-not-use"), variable("GROK_HOME","/srv/grok")]},
+                "opencode-xdg": {"driver":"opencode","environment":[variable("XDG_CONFIG_HOME","/must-not-use")]},
+                "pi-empty": {"driver":"pi","environment":[variable("PI_CODING_AGENT_DIR", "")]},
             }},
         });
         let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
-        let instances = configured_instances(snapshot, Path::new("/home/user"));
+        let instances = configured_instances(
+            snapshot,
+            Path::new("/home/user"),
+            &instrukt_core::config::Env::from_pairs([
+                ("CODEX_HOME", "/srv/inherited-codex"),
+                ("CLAUDE_CONFIG_DIR", "/srv/inherited-claude"),
+                ("OPENCODE_CONFIG_DIR", "/srv/inherited-opencode"),
+                ("HOME", "/must-not-use"),
+                ("PI_CODING_AGENT_DIR", "/srv/inherited-pi"),
+            ]),
+        );
         let instance = |id: &str,
                         runtime: &str,
                         registry_agent: Option<&str>,
@@ -1261,16 +1348,53 @@ mod tests {
                         link_folders: &[&str]| ConfiguredInstance {
             instance: ProviderInstanceId::parse(id).expect("instance id"),
             runtime: runtime.into(),
+            native_runtime: if id == "unrecognised-claude"
+                || matches!(runtime, "acpRegistry" | "FutureHarness")
+            {
+                None
+            } else {
+                Some(runtime.into())
+            },
             registry_agent: registry_agent.map(str::to_owned),
-            home: home.map(PathBuf::from),
+            home: home.map(PathBuf::from).or_else(|| match runtime {
+                "codex" => Some(PathBuf::from("/home/user/.codex")),
+                "claude" if !matches!(id, "claude-secret" | "unrecognised-claude") => {
+                    Some(PathBuf::from("/home/user/.claude"))
+                }
+                _ => None,
+            }),
             link_folders: link_folders.iter().map(PathBuf::from).collect(),
             unknown_home: None,
+            home_source: if matches!(id, "claude-secret" | "unrecognised-claude")
+                || matches!(runtime, "acpRegistry" | "FutureHarness")
+            {
+                instrukt_core::interfaces::InstructionHomeSource::Unknown
+            } else if id == "pi-empty" || matches!(runtime, "cursor" | "grok" | "antigravity") {
+                instrukt_core::interfaces::InstructionHomeSource::Default
+            } else if home.is_some() {
+                instrukt_core::interfaces::InstructionHomeSource::NativeVariable
+            } else {
+                instrukt_core::interfaces::InstructionHomeSource::Default
+            },
+            assurance: if matches!(runtime, "grok" | "antigravity") {
+                vec![instrukt_core::interfaces::InstructionAssurance::RuntimeHomeDiffers]
+            } else if runtime == "claude" && home.is_some() {
+                vec![instrukt_core::interfaces::InstructionAssurance::InstructionRelocationUnverified]
+            } else {
+                vec![]
+            },
         };
         assert_eq!(
             instances,
             vec![
-                instance("codex", "codex", None, None, &[]),
-                instance("claudeAgent", "claude", None, None, &[]),
+                instance("codex", "codex", None, Some("/srv/inherited-codex"), &[]),
+                instance(
+                    "claudeAgent",
+                    "claude",
+                    None,
+                    Some("/srv/inherited-claude"),
+                    &[]
+                ),
                 instance("pi-work", "pi", None, Some("/home/user/agents/pi"), &[]),
                 instance("opencode", "opencode", None, Some("/srv/opencode"), &[]),
                 instance("acp-gemini", "acpRegistry", Some("gemini"), None, &[]),
@@ -1286,7 +1410,7 @@ mod tests {
                     "codex-overlay-env",
                     "codex",
                     None,
-                    None,
+                    Some("/srv/inherited-codex"),
                     &["/srv/codex-work"]
                 ),
                 instance(
@@ -1296,6 +1420,25 @@ mod tests {
                     Some("/srv/t3/codex"),
                     &["/srv/t3/codex-auth"],
                 ),
+                instance("cursor", "cursor", None, Some("/home/user/.cursor"), &[]),
+                instance("grok", "grok", None, Some("/home/user/.grok"), &[]),
+                instance(
+                    "antigravity",
+                    "antigravity",
+                    None,
+                    Some("/home/user/.gemini"),
+                    &[]
+                ),
+                instance("future", "FutureHarness", None, None, &[]),
+                instance(
+                    "opencode-xdg",
+                    "opencode",
+                    None,
+                    Some("/srv/inherited-opencode"),
+                    &[]
+                ),
+                instance("pi-empty", "pi", None, Some("/home/user/.pi/agent"), &[]),
+                instance("unrecognised-claude", "claude", None, None, &[]),
             ]
         );
     }
@@ -1322,13 +1465,20 @@ mod tests {
         let unknown = |id: &str, path: &str| ConfiguredInstance {
             instance: ProviderInstanceId::parse(id).expect("instance id"),
             runtime: "codex".into(),
+            native_runtime: Some("codex".into()),
             registry_agent: None,
             home: None,
             link_folders: Vec::new(),
             unknown_home: Some(PathBuf::from(path)),
+            home_source: instrukt_core::interfaces::InstructionHomeSource::NativeVariable,
+            assurance: vec![],
         };
         assert_eq!(
-            configured_instances(snapshot, Path::new("/home/user")),
+            configured_instances(
+                snapshot,
+                Path::new("/home/user"),
+                &instrukt_core::config::Env::default()
+            ),
             vec![
                 unknown("codex-relative", "contract-codex-shared"),
                 unknown("codex-dot", "."),
@@ -1362,14 +1512,21 @@ mod tests {
         });
         let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
         assert_eq!(
-            configured_instances(snapshot, Path::new("/home/user")),
+            configured_instances(
+                snapshot,
+                Path::new("/home/user"),
+                &instrukt_core::config::Env::default()
+            ),
             vec![ConfiguredInstance {
                 instance: ProviderInstanceId::parse("codex-overlay").expect("instance id"),
                 runtime: "codex".into(),
+                native_runtime: Some("codex".into()),
                 registry_agent: None,
                 home: Some(PathBuf::from("/srv/codex")),
                 link_folders: vec![PathBuf::from("/srv/codex-personal")],
                 unknown_home: None,
+                home_source: instrukt_core::interfaces::InstructionHomeSource::NativeVariable,
+                assurance: vec![],
             }]
         );
     }

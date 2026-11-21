@@ -94,6 +94,22 @@ reach them; they introduce no separate use cases. Session reuse, availability
 selection, direct-main integration and conflict refresh are exercised within
 the dispatch, integration and record-recovery goals.
 
+### Inherited home and isolated application roots
+
+Checks inherit `HOME`, broad XDG bases and `TMPDIR` unchanged for signing,
+SSH and caches. `INSTRUKT_LOG_DIR` selects the isolated app log directory
+under `project/instrukt/spec/feature/configuration/logging`. They isolate
+Instrukt, T3 and the six native runtime roots named by
+`project/instrukt/spec/feature/publication/agent-entrypoints`. The shared check
+launcher owns temporary roots and scheduler-command rejection stubs; CLI
+fixtures retain their existing recording scheduler stubs and write fence.
+Systemd uses an explicit `SYSTEMD_UNIT_PATH`, launchd uses
+`INSTRUKT_LAUNCH_AGENTS_DIR`, and file-only cron uses `INSTRUKT_CRONTAB_FILE`.
+Native-account cron checks unset the latter only behind a recording stub.
+Cursor/Grok/Antigravity default-only outputs are not filesystem-delivery
+fixtures against a real home. Existing pure/source evidence covers their
+planning/format; relocated Claude/fx file checks do not prove context receipt.
+
 ## Rationale
 
 The live T3 boundary supplies independent evidence for the adapter and its fake;

@@ -331,6 +331,26 @@ or foreign services, and never uninstalls a shared Redis executable. Re-enable
 reuses retained resources and progress within transport retention. Pending
 delivery is suspended while disabled, not silently settled.
 
+### Scheduler locations and generated environments
+
+One runner-owned `SchedulerLocations` resolves all scheduler writes, reads,
+inspection and withdrawal. Systemd unit files use the first explicitly supplied
+absolute entry of native `SYSTEMD_UNIT_PATH`; remaining entries and trailing
+colon retain native search semantics. Malformed explicit paths fail rather than
+falling back. Without an override, use normal XDG user configuration. Before
+registration, the running manager's decoded `UnitPath` must include the selected
+directory; installer environment alone does not reconfigure the manager.
+`INSTRUKT_LAUNCH_AGENTS_DIR` selects an absolute plist directory, defaulting to
+inherited HOME's `Library/LaunchAgents`. Alternate files are loaded explicitly
+and are not automatically scanned at login.
+`INSTRUKT_CRONTAB_FILE` selects an absolute, atomically written table file;
+missing means empty, other errors fail. File mode preserves unrelated lines,
+never invokes crontab and reports `file_only`, not active scheduling. Unset uses
+the native executing-account table through crontab, never a guessed spool path.
+Generated tick/runner/receiver environments retain inherited HOME and propagate
+INSTRUKT_HOME, T3CODE_HOME, selected native runtime variables and all three
+scheduler-location inputs when present. Optional values stay absent when unset.
+
 ## Use cases
 
 ### UC-MI1: Adopt core without background infrastructure

@@ -4,8 +4,7 @@
 # INSTRUKT_CHECK_BIN when set (scripts/commit-checks.sh --all-files sets it to
 # a build of the revision under check), else this checkout's development build
 # when no file a crate is built from is newer than it, else the installed
-# instrukt. It runs under a
-# throwaway HOME, so no live home is read or written.
+# instrukt. Native application roots isolate outputs; HOME is inherited.
 #   scripts/instrukt-for-checks <instrukt arguments>
 #   scripts/instrukt-for-checks --script <script> [arguments]
 #     runs the script with INSTRUKT_CHECK_BIN set to that program.
@@ -26,9 +25,6 @@ if [ "${1:-}" = "--script" ]; then
     shift
     INSTRUKT_CHECK_BIN=$bin
     export INSTRUKT_CHECK_BIN
-    exec "$@"
+    exec python3 "$root/scripts/with-runtime-homes.py" "$@"
 fi
-home=$(mktemp -d)
-trap 'rm -rf "$home"' EXIT
-unset XDG_STATE_HOME INSTRUKT_HOME INSTRUKT_DEVELOPMENT
-HOME="$home" "$bin" "$@"
+exec python3 "$root/scripts/with-runtime-homes.py" "$bin" "$@"

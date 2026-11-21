@@ -23,44 +23,8 @@ expression: "String::from_utf8(bytes).unwrap()"
     "agents": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "antigravity": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SnippetId"
-          }
-        },
-        "claude": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SnippetId"
-          }
-        },
-        "codex": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SnippetId"
-          }
-        },
-        "fx": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SnippetId"
-          }
-        },
-        "kiro": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SnippetId"
-          }
-        },
-        "opencode": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SnippetId"
-          }
-        },
-        "pi": {
+      "patternProperties": {
+        "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$(?![\\s\\S])": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/SnippetId"

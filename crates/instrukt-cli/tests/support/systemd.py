@@ -170,7 +170,9 @@ def handle(args: list[str], folder: str, units: dict[str, Unit], state: dict[str
         result["stdout"] = "" if quiet else ("enabled" if result["ok"] else "disabled")
     elif operation == "show":
         prop = next(a for a in rest if a.startswith("--property=")).split("=", 1)[1]
-        if prop == "LoadState":
+        if prop == "UnitPath":
+            result["stdout"] = shell_maybe_quote(folder)
+        elif prop == "LoadState":
             result["stdout"] = "loaded" if unit is not None else "not-found"
         elif prop == "Environment":
             result["stdout"] = " ".join(

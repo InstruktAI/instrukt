@@ -9,8 +9,11 @@ description: "`instrukt status` reports in one read where this computer and this
 asks before changing anything about instrukt on a computer: is it configured,
 which runtime does it call and what can that runtime carry, which modules are
 on, is this repository adopted, which domains are published and by whom, and
-which other projects publish here. The command only reads: it writes no file,
-takes no lock, reaches no network and starts no session.
+which other projects publish here. The command inspects current state: it
+takes no publication lock and starts no agent session. When general doctrine
+is published, it makes one bounded configured-instance read through the
+selected adapter. T3 may issue and revoke its existing short-lived read-scoped
+credential for that read; no Instrukt file or persistent inventory is written.
 
 The instrukt cockpit skill
 (`project/instrukt/spec/feature/distribution/agent-skill`) opens
@@ -35,7 +38,7 @@ every visit with it.
 | --- | --- |
 | `instrukt` | the running binary's version and the path it runs from |
 | `machine` | whether the global layer `~/.instrukt/instrukt.yaml` exists, its `schema_version`, and its validation findings (`project/instrukt/spec/feature/configuration/layered-configuration`) |
-| `runtime` | the selected runtime and whether `runner.runtime` chose it or it is the compiled default; the compiled adapter's capabilities and recognised caller identity when available; no verb templates or entry list |
+| `runtime` | the selected runtime and whether `runner.runtime` chose it or it is the compiled default; the compiled adapter's capabilities and recognised caller identity when available; no verb templates or entry list; `agent_instructions` reports current per-instance native instruction targets and limitations |
 | `modules` | each module (`blueprint`, `todos`, `events`, `history`; history defaults on) on or off in the effective configuration and in which layer that was decided; per runtime-dependent feature, whether the selected adapter supports its required capabilities, naming each missing one or the unknown runtime name |
 | `repository` | outside a repository: none. Inside one: the project layer's presence and `project` slug, whether instrukt's hook sections are installed (`instrukt hooks status`), whether its code is on GitHub (the GitHub repository it resolves to, or the remote that is not one; `project/instrukt/spec/feature/work/github-record`), the positions the working tree holds (`docs/general/`, each `docs/domain/<x>/`, `docs/project/`), the commit last published for it and whether its main is ahead of that commit |
 | `published` | each published position on the computer (`general` and each domain): its owner project, the owner's checkout path, the commit published, and for a domain its `index.yaml` description or that it has none |
@@ -52,10 +55,25 @@ every visit with it.
   (`project/instrukt/spec/feature/runner/session-continuity`); status
   reports that judgment and adds none of its own.
 
+### Current instruction targets
+
+`runtime.agent_instructions` reuses publication's target resolver. Without a
+published general position it is `not_applicable`, with no provider query.
+Otherwise it reports each enabled instance's runtime, instance, optional
+registry identity, native mechanism and target where established. Outcomes are
+`file_present`, `file_missing`, or `not_delivered` with
+`mechanism_unestablished`, `home_unknown`, `native_override` or target conflict.
+Defaulted homes carry their default-home limitation. Relocated Claude/fx output
+reports `instruction_relocation_unverified`; the default Antigravity output
+reports `runtime_home_differs`, separately from file availability. A present file establishes
+only current path availability, never running-session receipt or current bytes.
+An unavailable adapter reports `runtime_unreachable` and its cause rather than
+an empty configured list. These answers do not fail status or unrelated sections.
+
 ### Reading and failure
 
-- Every section is computed from what instrukt already records: the
-  configuration layers, publication state, the repository's hook sections
+- Except for the bounded instruction-target query, sections use what instrukt
+  already records: the configuration layers, publication state, the repository's hook sections
   and its git remotes. Nothing is re-derived from other repositories, and
   GitHub is not contacted.
 - A part that cannot be read (an unparsable project layer, unreadable
@@ -73,14 +91,15 @@ every visit with it.
 ### UC-IS1: An agent learns where this computer and repository stand with instrukt in one read
 
 ```gherkin
-Given a developer's computer is configured with a runtime, has the todos module on and publishes domains from two adopted projects
+Given a developer's computer is configured with a runtime, has the todos module on and publishes always-on doctrine and domains from two adopted projects
 And the developer works in one of those projects
 When an agent acting for them reads instrukt's status
 Then it learns in one answer the instrukt version, that the machine is configured, which runtime adapter is selected and which capabilities it supports
 And which modules are on and what the runtime lets them do
 And that this repository is adopted, what it publishes and whether its last commit is published
 And every published domain with its owner, and the other adopted project
-And nothing on the computer has changed
+And it sees current instruction-target availability and explicit non-delivery reasons for enabled instances
+And no Instrukt file has changed
 ```
 
 ### UC-IS2: A developer on a fresh computer sees that nothing is set up yet

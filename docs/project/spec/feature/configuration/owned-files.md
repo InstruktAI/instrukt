@@ -14,7 +14,7 @@ migration rules. A valid older configuration remains usable after an upgrade.
 
 ### Machine-local secrets
 
-`~/.instrukt/secrets.env` is the one machine-local file for every secret
+`<selected INSTRUKT_HOME>/secrets.env` (normally `~/.instrukt/secrets.env`) is the one machine-local file for every secret
 instrukt uses, including webhook signing material, Redis credentials and GitHub
 App private keys. App profiles carry protected references; installation tokens
 are issued in memory under `project/instrukt/spec/feature/work/github-apps`, not
@@ -22,8 +22,8 @@ saved as long-lived secrets.
 Model-provider keys remain with T3. Configuration holds `${NAME}` references,
 never secret values. Every instrukt path resolves such secrets from this file,
 including noninteractive ticks; a process environment or project `.env` cannot
-supply or override them. Names are machine-wide, so projects requiring distinct
-values use distinct reference names.
+supply or override them. Names are shared within the selected home, so projects requiring distinct
+values there use distinct reference names.
 
 A company home has its own secrets file, `~/.instrukt/companies/<name>/secrets.env`,
 under the same protection, write and disclosure rules. References in that
@@ -123,16 +123,29 @@ Worktree isolation serves development of instrukt itself. The repository's
 and runs its private copy with `INSTRUKT_HOME=<worktree>/.instrukt-home`. The home
 is gitignored. Each use repairs what the development home lacks — its global
 layer and its published index — seeded from that worktree's committed HEAD,
-keeping development state and user-scope outputs out of the normal machine home;
+keeping development configuration, publication, state and secrets in the selected root;
 no marker stands in for the state itself. Later development syncs use that same worktree
 source, and first-use initialization does not overwrite later configuration edits.
-Secrets continue resolving from the one normal machine protected file.
+Secrets resolve only from the selected root. Runtime instruction homes and
+scheduler files follow their separate native/location-specific inputs, not
+the development root. The wrapper selects its app log directory through
+`INSTRUKT_LOG_DIR` without moving HOME or XDG bases.
 
 An installed instrukt in ordinary project worktrees retains the machine home;
 claims and todos remain shared there. Merely entering a linked worktree redirects
 nothing. The repository's worktree cleanup integration removes the development
 home where such a hook exists; otherwise its cleanup is documented. The home
 contents are indexed in `project/instrukt/design/architecture/overview`.
+
+### Explicit roots and external locations
+
+An explicit Instrukt root owns its secrets with no fallback, copy or deletion of
+the normal machine secret file. Existing explicit-root installations provision
+required secrets in their selected root through the existing secrets commands.
+Default installations retain their protected path. Runtime defaults use inherited
+HOME independently. External scheduler files use the scheduler-location contract
+in `project/instrukt/spec/feature/runner/module-installation`, not an implicit
+Instrukt-private user directory.
 
 ## Use cases
 
@@ -169,7 +182,7 @@ Given a developer runs scripts/dev-instrukt in two instrukt development worktree
 And each script has seeded its isolated home from that worktree
 When one changes its owned publication or operational state
 Then the other's home and the normal machine home are unchanged
-And both resolve required secrets from the one machine-local protected file
+And each resolves required secrets only from its selected Instrukt root
 ```
 
 ## Known caveats

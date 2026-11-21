@@ -30,6 +30,7 @@ if [ "$operation" = list ] && [ "$#" -eq 1 ]; then
     done
     exit 0
 fi
+if [ "$operation" = show ] && [ "${{2:-}}" = --property=UnitPath ]; then printf '"%s"\n' "$SYSTEMD_UNIT_PATH"; exit 0; fi
 if [ "$operation" = show ] && [ "$3" = --property=MainPID ]; then echo "$SERVICE_PID"; exit 0; fi
 if [ "$operation" = show ]; then unit=$2; if [ -f '{dir}/unit-'"$unit" ]; then echo loaded; else echo not-found; fi; exit 0; fi
 case $operation in daemon-reload|debug|print) exit 0;; esac
@@ -38,8 +39,8 @@ unit=${{unit##*/}}; unit=${{unit%.plist}}
 state='{dir}/unit-'$unit
 case $operation in
     list|is-active) [ -f "$state" ];;
-    unload|disable|stop|remove) rm -f "$state"; case $unit in ai.instrukt.tick|instrukt-tick.timer) rm -f '{dir}/active';; esac;;
-    *) touch "$state"; case $unit in ai.instrukt.tick|instrukt-tick.timer) touch '{dir}/active';; esac;;
+    unload|disable|stop|remove) rm -f "$state"; case $unit in ai.instrukt.tick*|instrukt-tick*.timer) rm -f '{dir}/active';; esac;;
+    *) touch "$state"; case $unit in ai.instrukt.tick*|instrukt-tick*.timer) touch '{dir}/active';; esac;;
 esac
 "#,
             dir = dir.display()
@@ -119,9 +120,12 @@ fn todos_install_one_registration_check_read_only_and_repair_missing_definition(
     env.run(env.home(), ["install", "--check"]).success();
     let file = if cfg!(target_os = "macos") {
         env.home()
-            .join("Library/LaunchAgents/ai.instrukt.tick.plist")
+            .join("Library/LaunchAgents")
+            .join(env.service_name("ai.instrukt.tick.plist"))
     } else {
-        env.home().join(".config/systemd/user/instrukt-tick.timer")
+        env.home()
+            .join(".config/systemd/user")
+            .join(env.service_name("instrukt-tick.timer"))
     };
     let before = std::fs::read(&file).unwrap();
     let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
@@ -264,15 +268,13 @@ fn only_ingress_gets_receiver_and_non_ingress_needs_no_signing_material() {
     );
     env.run(env.home(), ["install"]).success();
     let receiver = if cfg!(target_os = "macos") {
-        env.home().join(format!(
-            "Library/LaunchAgents/ai.instrukt.webhooks-{}.plist",
-            health.port
-        ))
+        env.home()
+            .join("Library/LaunchAgents")
+            .join(env.service_name(&format!("ai.instrukt.webhooks-{}.plist", health.port)))
     } else {
-        env.home().join(format!(
-            ".config/systemd/user/instrukt-webhooks-{}.socket",
-            health.port
-        ))
+        env.home()
+            .join(".config/systemd/user")
+            .join(env.service_name(&format!("instrukt-webhooks-{}.socket", health.port)))
     };
     assert!(!receiver.exists());
     env.run(env.home(), ["webhooks", "serve", "--socket-activation"])
@@ -566,7 +568,7 @@ fn owned_redis_fixture() -> OwnedRedisFixture {
         .unwrap();
     let alias = short.path().join("h");
     std::os::unix::fs::symlink(env.home(), &alias).unwrap();
-    env.set_env("HOME", alias.to_str().unwrap());
+    env.set_env("INSTRUKT_HOME", alias.join(".instrukt").to_str().unwrap());
     let repo = project(&env, "events", "{events: true}");
     let cluster = common::redis::RedisServer::new(&env);
     event_config(&env, None, &cluster.url, None);
@@ -679,10 +681,12 @@ fn owned_redis_requires_secret_authentication_and_withdrawal_retains_its_data() 
     );
     let definition = if cfg!(target_os = "macos") {
         env.home()
-            .join("Library/LaunchAgents/ai.instrukt.redis.plist")
+            .join("Library/LaunchAgents")
+            .join(env.service_name("ai.instrukt.redis.plist"))
     } else {
         env.home()
-            .join(".config/systemd/user/instrukt-redis.service")
+            .join(".config/systemd/user")
+            .join(env.service_name("instrukt-redis.service"))
     };
     let files = [definition, dir.join("redis.conf"), dir.join("users.acl")];
     let written = files
@@ -1016,9 +1020,11 @@ fi
     env.remove_env("FORBID_SOCKET_STOP");
     let next = ReceiverHealth::new(&env);
     let next_unit = if cfg!(target_os = "macos") {
-        format!("ai.instrukt.webhooks-{}", next.port)
+        env.service_name(&format!("ai.instrukt.webhooks-{}.plist", next.port))
+            .trim_end_matches(".plist")
+            .to_owned()
     } else {
-        format!("instrukt-webhooks-{}.socket", next.port)
+        env.service_name(&format!("instrukt-webhooks-{}.socket", next.port))
     };
     env.set_env(
         "REPLACEMENT_UNIT",
@@ -1064,9 +1070,11 @@ fi
     );
     env.run(env.home(), ["install"]).failure();
     let pending = if cfg!(target_os = "macos") {
-        format!("ai.instrukt.webhooks-{}", broken.port)
+        env.service_name(&format!("ai.instrukt.webhooks-{}.plist", broken.port))
+            .trim_end_matches(".plist")
+            .to_owned()
     } else {
-        format!("instrukt-webhooks-{}.socket", broken.port)
+        env.service_name(&format!("instrukt-webhooks-{}.socket", broken.port))
     };
     let pending = env.path(&format!("runtime-bin/unit-{pending}"));
     assert!(pending.is_file());
@@ -1082,13 +1090,19 @@ fi
     assert!(!current.exists());
     // A receiver's service systemd still lists, with no socket and no unit
     // file left, is found by its name and withdrawn.
-    let service = env.path("runtime-bin/unit-instrukt-webhooks-12345.service");
+    let service = env.path(&format!(
+        "runtime-bin/unit-{}",
+        env.service_name("instrukt-webhooks-12345.service")
+    ));
     std::fs::write(&service, "").unwrap();
     env.run(env.home(), ["install"]).success();
     assert!(!service.exists());
     // Its socket and service both listed while systemd reports their unit
     // files not found: both are stopped.
-    let socket = env.path("runtime-bin/unit-instrukt-webhooks-12345.socket");
+    let socket = env.path(&format!(
+        "runtime-bin/unit-{}",
+        env.service_name("instrukt-webhooks-12345.socket")
+    ));
     std::fs::write(&socket, "").unwrap();
     std::fs::write(&service, "").unwrap();
     let systemctl = env.path("runtime-bin/systemctl");
@@ -1142,7 +1156,10 @@ fi
     env.set_env("INSTRUKT_HOME", another.to_str().unwrap());
     env.run(env.home(), ["install"]).success();
     assert!(!registration.exists());
-    env.remove_env("INSTRUKT_HOME");
+    env.set_env(
+        "INSTRUKT_HOME",
+        env.home().join(".instrukt").to_str().unwrap(),
+    );
     // Environment systemd's quoting never prints: a stray quote ending it,
     // or a quote never closed that swallows the home. Whose the registration
     // is cannot be established, so it is left in place and reported once:
@@ -1165,11 +1182,14 @@ fi
         }
         std::fs::write(&registration, "").unwrap();
         let installed = env.run(env.home(), ["install", "--json"]).success();
-        env.remove_env("INSTRUKT_HOME");
+        env.set_env(
+            "INSTRUKT_HOME",
+            env.home().join(".instrukt").to_str().unwrap(),
+        );
         assert!(registration.exists());
         let report: serde_json::Value =
             serde_json::from_slice(&installed.get_output().stdout).unwrap();
-        let notices = report["notices"]
+        let mut notices = report["notices"]
             .as_array()
             .unwrap()
             .iter()
@@ -1181,6 +1201,9 @@ fi
                     .replace(base.to_str().unwrap(), "[base]")
             })
             .collect::<Vec<_>>();
+        if cfg!(target_os = "macos") {
+            insta::assert_snapshot!("alternate_launch_agents_notice", notices.remove(0));
+        }
         assert_eq!(notices.len(), 1);
         reported.push(notices);
     }
@@ -1203,6 +1226,7 @@ fi
 #[test]
 fn cron_withdrawal_removes_only_this_homes_marked_line_even_when_it_has_drifted() {
     let mut env = TestEnv::new();
+    env.remove_env("INSTRUKT_CRONTAB_FILE");
     let repo = project(&env, "cron-work", "{todos: true}");
     let git = env
         .command(std::path::Path::new("/usr/bin/which"), env.home())
@@ -1216,7 +1240,8 @@ fn cron_withdrawal_removes_only_this_homes_marked_line_even_when_it_has_drifted(
     .unwrap();
     let crontab = env.path("runtime-bin/crontab");
     let table = env.path("crontab");
-    std::fs::write(&crontab, format!("#!/bin/sh\ncase $1 in -l) if [ -f '{0}' ]; then /bin/cat '{0}'; else echo 'no crontab for fixture' >&2; exit 1; fi;; -) /bin/cat > '{0}';; esac\n", table.display())).unwrap();
+    let calls = env.path("native-cron.calls");
+    std::fs::write(&crontab, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{1}'\ncase $1 in -l) if [ -f '{0}' ]; then /bin/cat '{0}'; else echo 'no crontab for fixture' >&2; exit 1; fi;; -) /bin/cat > '{0}';; esac\n", table.display(), calls.display())).unwrap();
     std::fs::set_permissions(crontab, std::fs::Permissions::from_mode(0o755)).unwrap();
     env.set_env("PATH", "");
     env.run(env.home(), ["install"]).success();
@@ -1233,6 +1258,34 @@ fn cron_withdrawal_removes_only_this_homes_marked_line_even_when_it_has_drifted(
     // and every other line is kept.
     env.run(env.home(), ["install"]).success();
     assert_eq!(std::fs::read_to_string(&table).unwrap(), operator);
+
+    // File-only materialization preserves unrelated lines and never registers an account table.
+    let calls_before = std::fs::read(&calls).unwrap();
+    let selected = env.path("selected-crontab");
+    std::fs::write(&selected, operator).unwrap();
+    env.set_env("INSTRUKT_CRONTAB_FILE", selected.to_str().unwrap());
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 6\nproject: cron-work\nmodules: {history: false, todos: true}\ngithub: {repository: fixture/project}\n",
+    );
+    let file_only = env.run(env.home(), ["install"]).failure();
+    let report = String::from_utf8_lossy(&file_only.get_output().stdout)
+        .replace(env.home().to_str().unwrap(), "[FIXTURE]")
+        .replace(selected.to_str().unwrap(), "[TABLE]");
+    insta::assert_snapshot!("cron_file_only", report);
+    assert_eq!(
+        std::fs::read_to_string(&selected).unwrap().lines().next(),
+        Some(operator.trim_end())
+    );
+    assert_eq!(std::fs::read_to_string(&table).unwrap(), operator);
+    repo.write(
+        "instrukt.yaml",
+        "schema_version: 6\nproject: cron-work\nmodules: {history: false, todos: false}\n",
+    );
+    env.run(env.home(), ["install"]).success();
+    assert_eq!(std::fs::read_to_string(&selected).unwrap(), operator);
+    assert_eq!(std::fs::read_to_string(&table).unwrap(), operator);
+    assert_eq!(std::fs::read(&calls).unwrap(), calls_before);
 }
 
 #[cfg(target_os = "macos")]
@@ -1346,7 +1399,10 @@ fn launchd_cached_job_applies_the_desired_executable_and_environment_with_socket
         )),
     );
     env.run(env.home(), ["install"]).success();
-    let unit = format!("ai.instrukt.webhooks-{port}");
+    let unit = env
+        .service_name(&format!("ai.instrukt.webhooks-{port}.plist"))
+        .trim_end_matches(".plist")
+        .to_owned();
     let before = fixture.request(&["inspect", &unit]);
     let copied = env.path("replacement-instrukt");
     std::fs::copy(env!("CARGO_BIN_EXE_instrukt"), &copied).unwrap();
@@ -1407,6 +1463,7 @@ fn installation_inspection_reads_retained_foreign_project_facts_without_entering
 #[test]
 fn an_earlier_releases_installation_record_is_left_by_inspection_and_removed_by_install() {
     let mut env = TestEnv::new();
+    env.remove_env("INSTRUKT_CRONTAB_FILE");
     let repo = project(&env, "migrating", "{todos: true}");
     let git = env
         .command(std::path::Path::new("/usr/bin/which"), env.home())
@@ -1423,7 +1480,7 @@ fn an_earlier_releases_installation_record_is_left_by_inspection_and_removed_by_
     std::fs::write(
         &crontab,
         format!(
-            "#!/bin/sh\ncase $1 in -l) /bin/cat '{}';; *) exit 99;; esac\n",
+            "#!/bin/sh\ncase $1 in -l) /bin/cat '{0}';; -) /bin/cat > '{0}';; *) exit 99;; esac\n",
             table.display()
         ),
     )
@@ -1451,6 +1508,8 @@ fn an_earlier_releases_installation_record_is_left_by_inspection_and_removed_by_
         ),
     )
     .unwrap();
+    std::fs::write(&table, "").unwrap();
+    env.run(repo.path(), ["install"]).success();
     let path = env.instrukt_home().join("state/installation/owned.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, original.as_bytes()).unwrap();
@@ -1512,6 +1571,17 @@ fn assert_receiver_execution(
     let rendered = rendered
         .split_whitespace()
         .filter(|field| !field.starts_with("__CF_USER_TEXT_ENCODING="))
+        // General tool context remains inherited and is not this invocation's payload.
+        .filter(|field| {
+            ![
+                "TMPDIR=",
+                "XDG_CONFIG_HOME=",
+                "XDG_CACHE_HOME=",
+                "XDG_STATE_HOME=",
+            ]
+            .iter()
+            .any(|key| field.starts_with(key))
+        })
         .map(|field| {
             if field.starts_with(&fence) {
                 format!("{fence}[LIVE HOME]")
@@ -1570,7 +1640,19 @@ fn pre_invocation_receiver_at_another_path_upgrades_without_releasing_its_socket
         .replace("__HOME__", env.home().to_str().unwrap())
         .replace("__EXE__", original.to_str().unwrap())
         .replace("__PATH__", env.injected("PATH").unwrap())
-        .replace("__PORT__", &port.to_string());
+        .replace("__PORT__", &port.to_string())
+        .replace(
+            &format!("ai.instrukt.webhooks-{port}"),
+            env.service_name(&format!("ai.instrukt.webhooks-{port}.plist"))
+                .trim_end_matches(".plist"),
+        )
+        .replace(
+            &format!("<key>HOME</key><string>{}</string>", env.home().display()),
+            &format!(
+                "<key>HOME</key><string>{}</string>",
+                std::env::var("HOME").unwrap()
+            ),
+        );
     let record: serde_json::Value = serde_json::from_str(&golden).unwrap();
     for (file, contents) in record["resources"]["receiver"]["files"]
         .as_object()
@@ -2384,7 +2466,10 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     assert_eq!(environment["INSTRUKT_HOME"].as_str(), Some(root.as_str()));
     assert_eq!(std::fs::read(&definition).unwrap(), first);
     assert!(!legacy.exists());
-    c.env.remove_env("INSTRUKT_HOME");
+    c.env.set_env(
+        "INSTRUKT_HOME",
+        c.env.home().join(".instrukt").to_str().unwrap(),
+    );
     assert_eq!(runner_definition(&c.env), definition);
 
     // The private Redis's password is gone from `secrets.env`: installing
@@ -2397,7 +2482,7 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
         .unwrap();
     let alias = short.path().join("h");
     std::os::unix::fs::symlink(env.home(), &alias).unwrap();
-    env.set_env("HOME", alias.to_str().unwrap());
+    env.set_env("INSTRUKT_HOME", alias.join(".instrukt").to_str().unwrap());
     let redis_manager = ServiceManager::new(&mut env);
     if !macos {
         redis_manager.linger(true);
@@ -2618,7 +2703,7 @@ struct ServiceManager {
     child: std::process::Child,
     socket: std::path::PathBuf,
     _dir: tempfile::TempDir,
-    unit: &'static str,
+    unit: String,
     agents: std::path::PathBuf,
 }
 impl ServiceManager {
@@ -2646,7 +2731,7 @@ impl ServiceManager {
             .tempdir_in("/tmp")
             .unwrap();
         let socket = dir.path().join("control");
-        let units = env.home().join(".config/systemd/user");
+        let units = std::path::PathBuf::from(env.injected("SYSTEMD_UNIT_PATH").unwrap());
         let child = env
             .command(std::path::Path::new(&python), env.home())
             .arg(&script)
@@ -2679,11 +2764,13 @@ impl ServiceManager {
             socket,
             _dir: dir,
             unit: if cfg!(target_os = "macos") {
-                "ai.instrukt.runner"
+                env.service_name("ai.instrukt.runner.plist")
+                    .trim_end_matches(".plist")
+                    .to_owned()
             } else {
-                unit
+                env.service_name(unit)
             },
-            agents: env.home().join("Library/LaunchAgents"),
+            agents: std::path::PathBuf::from(env.injected("INSTRUKT_LAUNCH_AGENTS_DIR").unwrap()),
         }
     }
     fn request(&self, args: &[&str]) -> serde_json::Value {
@@ -2699,17 +2786,17 @@ impl ServiceManager {
     }
     /// The service's live process id, if it has one.
     fn pid(&self) -> Option<u64> {
-        self.request(&["inspect", self.unit])["pid"].as_u64()
+        self.request(&["inspect", self.unit.as_str()])["pid"].as_u64()
     }
     /// How many times the manager has started the service's process.
     fn starts(&self) -> u64 {
-        self.request(&["inspect", self.unit])["starts"]
+        self.request(&["inspect", self.unit.as_str()])["starts"]
             .as_u64()
             .unwrap()
     }
     /// The service's process dies; the manager's own policy restarts it.
     fn kill(&self) {
-        self.request(&["kill-process", self.unit]);
+        self.request(&["kill-process", self.unit.as_str()]);
     }
     /// The service stays registered with no process.
     fn hold(&self) {
@@ -2718,7 +2805,7 @@ impl ServiceManager {
         } else {
             "stop"
         };
-        self.request(&[operation, self.unit]);
+        self.request(&[operation, self.unit.as_str()]);
     }
     /// The service is started.
     fn start(&self) {
@@ -2727,7 +2814,7 @@ impl ServiceManager {
         } else {
             "start"
         };
-        self.request(&[operation, self.unit]);
+        self.request(&[operation, self.unit.as_str()]);
     }
     /// The computer restarts: every process ends and the manager starts
     /// what is registered to start.
@@ -2741,9 +2828,9 @@ impl ServiceManager {
     /// Whether the manager still has the service registered.
     fn registered(&self) -> bool {
         if cfg!(target_os = "macos") {
-            self.request(&["list", self.unit])["ok"] == true
+            self.request(&["list", self.unit.as_str()])["ok"] == true
         } else {
-            self.request(&["inspect", self.unit])["enabled"] == true
+            self.request(&["inspect", self.unit.as_str()])["enabled"] == true
         }
     }
     /// The user's linger state, on Linux.
@@ -2860,7 +2947,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     if cfg!(target_os = "linux") {
         // Disabled while its process keeps running, it is enabled again and
         // restarted.
-        manager.request(&["disable", manager.unit]);
+        manager.request(&["disable", &manager.unit]);
         assert!(manager.pid().is_some());
         assert!(!manager.registered());
     }

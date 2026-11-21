@@ -1,14 +1,14 @@
 //! The test harness for instrukt's command-line tests.
 //!
-//! Every test runs the real `instrukt` binary against a temporary `HOME`
+//! Every test runs the real `instrukt` binary against temporary application roots
 //! and real git repositories inside a temporary directory
 //! (`docs/project/policy/testing.md`). [`TestEnv`] owns that directory:
 //!
 //! - subprocesses (instrukt and git) run with a cleared environment: `PATH`,
-//!   the temporary `HOME`, an isolated git configuration and whatever the
+//!   the inherited `HOME`, explicit native roots, an isolated git configuration and whatever the
 //!   test sets with [`TestEnv::set_env`] — no live session variable leaks in;
 //! - `INSTRUKT_LOG_DIR` selects a per-test log directory independently of the
-//!   synthetic home; it is created by the logger, never by setup;
+//!   fixture directory; it is created by the logger, never by setup;
 //! - every subprocess carries the write fence
 //!   (`instrukt_core::fsx::FENCE_VARIABLE`) over the live user's home: an
 //!   instrukt process whose own file operation would land there, directly or
@@ -18,7 +18,7 @@
 //!   read. What other processes on the computer do to the live home is not
 //!   the test's concern and is not looked at. The fence is not a sandbox:
 //!   the programs instrukt starts and the test's own fixtures stay inside the
-//!   temporary home by construction.
+//!   fixture directory by construction.
 //!
 //! [`github::FakeGitHub`] (or [`TestEnv::with_fake_github`]) stands in for
 //! GitHub's API at the network line for the work, workflow and runner
@@ -97,6 +97,7 @@ const DEVELOPER_EMAIL: &str = "developer@example.test";
 /// environment every subprocess of the test runs with.
 pub struct TestEnv {
     root: TempDir,
+    _snapshot_settings: insta::internals::SettingsBindDropGuard,
     home: PathBuf,
     vars: BTreeMap<String, String>,
     redis: std::sync::Mutex<Option<redis::RedisServer>>,
@@ -179,16 +180,37 @@ impl TestEnv {
             "PATH".into(),
             format!("{}:{}", base.join("runtime-bin").display(), tools.display()),
         );
-        vars.insert("HOME".into(), home.display().to_string());
+        vars.insert("HOME".into(), std::env::var("HOME").unwrap());
+        for (key, relative) in [
+            ("INSTRUKT_HOME", ".instrukt"),
+            ("T3CODE_HOME", ".t3"),
+            ("CODEX_HOME", ".codex"),
+            ("CLAUDE_CONFIG_DIR", ".claude"),
+            ("OPENCODE_CONFIG_DIR", ".config/opencode"),
+            ("FX_HOME", ".fx"),
+            ("KIRO_HOME", ".kiro"),
+            ("PI_CODING_AGENT_DIR", ".pi/agent"),
+            ("SYSTEMD_UNIT_PATH", ".config/systemd/user"),
+            ("INSTRUKT_LAUNCH_AGENTS_DIR", "Library/LaunchAgents"),
+            ("INSTRUKT_CRONTAB_FILE", ".instrukt-crontab"),
+        ] {
+            vars.insert(key.into(), home.join(relative).display().to_string());
+        }
         vars.insert(
             "INSTRUKT_LOG_DIR".into(),
             base.join("logs").display().to_string(),
         );
-        vars.insert("TMPDIR".into(), tmp.display().to_string());
-        vars.insert(
-            "XDG_CONFIG_HOME".into(),
-            home.join(".config").display().to_string(),
-        );
+
+        for key in [
+            "TMPDIR",
+            "XDG_CONFIG_HOME",
+            "XDG_STATE_HOME",
+            "XDG_CACHE_HOME",
+        ] {
+            if let Ok(value) = std::env::var(key) {
+                vars.insert(key.into(), value);
+            }
+        }
         vars.insert(
             "GIT_CONFIG_GLOBAL".into(),
             home.join(".gitconfig").display().to_string(),
@@ -210,8 +232,28 @@ impl TestEnv {
             instrukt_core::fsx::FENCE_VARIABLE.into(),
             std::env::join_paths(fence).unwrap().into_string().unwrap(),
         );
+        let mut snapshots = insta::Settings::clone_current();
+        snapshots.add_filter(
+            r"(ai\.instrukt\.[a-zA-Z0-9_-]+)\.[0-9a-f]{8}\b",
+            "$1.[HOME]",
+        );
+        snapshots.add_filter(r"(instrukt-[a-zA-Z0-9_-]+)-[0-9a-f]{8}(\b)", "$1-[HOME]$2");
+        let inherited = std::env::var("HOME")
+            .unwrap()
+            .chars()
+            .map(|c| {
+                if ".+*?()|[]{}^$\\".contains(c) {
+                    format!("\\{c}")
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect::<String>();
+        snapshots.add_filter(&inherited, "[INHERITED HOME]");
+        let snapshot_settings = snapshots.bind_to_scope();
         Self {
             root,
+            _snapshot_settings: snapshot_settings,
             home,
             vars,
             redis: std::sync::Mutex::new(None),
@@ -239,7 +281,7 @@ impl TestEnv {
             .clone()
     }
 
-    /// The temporary user home (`HOME` of every subprocess).
+    /// The temporary fixture directory; subprocess HOME stays inherited.
     pub fn home(&self) -> &Path {
         &self.home
     }
@@ -249,9 +291,13 @@ impl TestEnv {
         PathBuf::from(self.injected("INSTRUKT_LOG_DIR").unwrap())
     }
 
-    /// `$HOME/.instrukt` of this test.
+    /// The explicitly selected Instrukt root of this fixture.
     pub fn instrukt_home(&self) -> PathBuf {
-        self.home.join(".instrukt")
+        PathBuf::from(
+            self.vars
+                .get("INSTRUKT_HOME")
+                .expect("fixture selects an Instrukt root"),
+        )
     }
 
     /// Where the last run of `hook` in the repository at `repo` is recorded:
@@ -297,6 +343,20 @@ impl TestEnv {
     }
 
     /// A path inside the test's directory, outside `HOME`.
+    pub fn service_name(&self, name: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let root = self.instrukt_home();
+        let root = root.canonicalize().unwrap_or(root);
+        let digest = hex::encode(Sha256::digest(root.as_os_str().as_encoded_bytes()));
+        let (stem, extension) = name.rsplit_once('.').unwrap();
+        let separator = if name.starts_with("ai.") { "." } else { "-" };
+        format!("{stem}{separator}{}.{extension}", &digest[..8])
+    }
+
+    pub fn environment(&self) -> &BTreeMap<String, String> {
+        &self.vars
+    }
+
     pub fn injected(&self, name: &str) -> Option<&str> {
         self.vars.get(name).map(String::as_str)
     }
@@ -482,7 +542,7 @@ impl Drop for TestEnv {
         let refused = self.refusals();
         assert!(
             refused.is_empty(),
-            "the test tried to write outside its temporary HOME ({}): {refused:#?}",
+            "the test tried to write outside its fixture directory ({}): {refused:#?}",
             self.root.path().display()
         );
     }

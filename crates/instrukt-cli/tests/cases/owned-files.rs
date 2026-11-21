@@ -404,6 +404,13 @@ fn the_development_script_seeds_each_worktrees_own_home_without_changing_the_mac
     );
     assert!(!normal.join("state/index.yaml").exists());
     assert!(normal.join("secrets.env").exists());
+    assert!(private_a.join("secrets.env").exists());
+    assert!(
+        !std::fs::read_to_string(normal.join("secrets.env"))
+            .unwrap()
+            .contains("GENERATED")
+    );
+    assert!(!private_b.join("secrets.env").exists());
 }
 
 fn history_migration_setup(global: &str, project: &str) -> (TestEnv, common::Repo) {

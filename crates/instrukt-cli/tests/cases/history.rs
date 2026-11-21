@@ -104,12 +104,30 @@ fn legacy_import_keeps_aliases_once_without_a_continuing_mirror_dependency() {
     let t3 = fixture::T3Store::new(&env);
     let mirror = fixture::mirror(&env);
     let original = std::fs::read(&mirror).unwrap();
-    env.run(env.home(), ["history", "import-teleclaude", "--json"])
-        .success();
+    env.run(
+        env.home(),
+        [
+            "history",
+            "import-teleclaude",
+            "--source",
+            mirror.to_str().unwrap(),
+            "--json",
+        ],
+    )
+    .success();
     assert_eq!(std::fs::read(&mirror).unwrap(), original);
-    std::fs::remove_file(mirror).unwrap();
-    env.run(env.home(), ["history", "import-teleclaude", "--json"])
-        .success();
+    std::fs::remove_file(&mirror).unwrap();
+    env.run(
+        env.home(),
+        [
+            "history",
+            "import-teleclaude",
+            "--source",
+            mirror.to_str().unwrap(),
+            "--json",
+        ],
+    )
+    .success();
     t3.message(
         "child",
         "after-import",

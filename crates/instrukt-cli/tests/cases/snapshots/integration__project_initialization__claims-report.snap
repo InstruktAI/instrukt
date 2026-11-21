@@ -28,5 +28,6 @@ claims of the first sync (nothing is published until it runs):
   docs/domain/free/: free; the sync claims it
   docs/domain/ops/: owned by project `other`; the sync would be refused
   docs/domain/project/: refused: a reserved name; no domain may be called `general`, `project` or `third-party`
+  instance `claudeAgent` (claude): home source: native_variable; instruction_relocation_unverified
   global agent file of claude (claudeAgent): the sync writes [TMP]/home/.claude/CLAUDE.md
   global agent file of codex (codex): the sync writes [TMP]/home/.codex/AGENTS.md

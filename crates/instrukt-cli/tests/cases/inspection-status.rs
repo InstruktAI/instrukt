@@ -140,6 +140,15 @@ fn status_reports_claim_owner_and_keeps_sections_when_configuration_is_broken() 
 #[test]
 fn status_reports_adoption_publication_modules_and_other_projects_without_changes() {
     let env = TestEnv::new();
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        vec![
+            common::t3_readiness::provider("codex", "codex", true),
+            common::t3_readiness::provider("muse", "muse", true),
+        ],
+        serde_json::json!({}),
+    );
     let first = documented::project(
         &env,
         "first",
@@ -148,6 +157,9 @@ fn status_reports_adoption_publication_modules_and_other_projects_without_change
             documented::snippet("concept", "Idea", "An idea.", "", &[], "A fact."),
         )],
     );
+    first
+        .write("docs/general/index.yaml", "expanded: []\n")
+        .commit("publish general doctrine");
     documented::sync(&env, &first);
     let second = documented::project(
         &env,
@@ -178,7 +190,15 @@ fn status_reports_adoption_publication_modules_and_other_projects_without_change
     insta::assert_json_snapshot!(report["projects"][0]["project"], @r#"
 "second"
 "#);
-    assert_eq!(report["published"].as_array().unwrap().len(), 2);
+    assert_eq!(report["published"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        report["runtime"]["agent_instructions"]["instances"][0]["outcome"],
+        "file_present"
+    );
+    assert_eq!(
+        report["runtime"]["agent_instructions"]["instances"][1]["reason"],
+        "mechanism_unestablished"
+    );
     first.write("new", "new");
     first.commit("feat: another change");
     assert_eq!(status(&env, first.path())["repository"]["main_ahead"], true);

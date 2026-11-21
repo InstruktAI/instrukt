@@ -87,6 +87,16 @@ Task execution records its result with
 `instrukt todo stamp <slug> --task-outcome success|error [--reason <text>]`,
 bound to the particular task execution; the reason records failure evidence.
 
+### Scheduler locations and active wake-up
+
+Wake-up files, registration and generated environments follow the single
+scheduler-location contract in
+`project/instrukt/spec/feature/runner/module-installation`.
+A file-only crontab table remains an unmet wake-up: materializing text does not
+schedule a tick. A native manager must establish the active registration before
+scheduled-work availability is reported. Alternate LaunchAgents directories
+are explicitly loaded, without a promise that login scans them.
+
 ## Use cases
 
 ### UC-TT1: Arrange a prepared task for a future time

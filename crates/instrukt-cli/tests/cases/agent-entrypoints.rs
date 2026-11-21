@@ -260,7 +260,7 @@ fn general_owner(env: &TestEnv, agents: &str) -> Repo {
     repo
 }
 
-const CLAUDE_AGENTS: &str = "agents:\n  claude:\n    - general/policy/agents/claude\n";
+const CLAUDE_AGENTS: &str = "agents:\n  claude:\n    - general/policy/agents/claude\n  claudeAgent:\n    - general/policy/agents/claude\n";
 
 /// T3 reporting one enabled `claudeAgent` instance, reading `~/.claude`.
 fn claude_configured(env: &TestEnv) {
@@ -297,16 +297,26 @@ fn a_policy_mapped_to_one_runtime_reaches_only_that_runtime() {
     insta::assert_snapshot!("claude_global_file", read(".claude/CLAUDE.md"));
     insta::assert_snapshot!("codex_global_file", read(".codex/AGENTS.md"));
 
-    // A policy mapped to a runtime instrukt does not deploy to is refused,
-    // naming the ones it does.
+    // Valid unfamiliar names remain valid even without a configured instance.
+    platform
+        .write(
+            "docs/general/index.yaml",
+            "expanded: [general/policy/care]\nagents:\n  cursor: [general/policy/agents/claude]\n  claudeAgent: [general/policy/agents/claude]\n",
+        )
+        .commit("accept an open provider name");
+    env.run(platform.path(), ["sync"]).success();
+    insta::assert_snapshot!("claude_wire_alias", read(".claude/CLAUDE.md"));
+
+    // Malformed provider names are refused.
     let claude = std::fs::read(home.join(".claude/CLAUDE.md")).unwrap();
     platform
         .write(
             "docs/general/index.yaml",
-            "expanded:\n  - general/policy/care\nagents:\n  cursor:\n    - general/policy/agents/claude\n",
+            "expanded:\n  - general/policy/care\nagents:\n  1invalid:\n    - general/policy/agents/claude\n",
         )
-        .commit("map a policy to cursor");
+        .commit("reject a malformed provider name");
     let refused = env.run(platform.path(), ["sync"]).failure();
+    // Retain this snapshot identity for malformed-name rejection.
     insta::assert_snapshot!("unsupported_agent_cli", stdout(&env, &refused));
     assert_eq!(
         std::fs::read(home.join(".claude/CLAUDE.md")).unwrap(),
@@ -463,11 +473,17 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
         provider("claude-work", "claudeAgent", true),
         provider("pi-work", "pi", true),
         provider("fx", "fx", false),
+        provider("opencode", "opencode", true),
+        provider("kiro", "kiro", true),
+        provider("muse", "muse", true),
+        provider("acp-gemini", "acpRegistry", true),
+        provider("future", "FutureProvider", true),
     ];
     let mut instances = json!({
         "codex": codex_settings(&custom, None),
         "pi-work": {"driver":"pi","environment":[{"name":"PI_CODING_AGENT_DIR","value":custom2}]},
         "fx": {"driver":"fx","enabled":false},
+        "acp-gemini": {"driver":"acpRegistry","config":{"agentId":"gemini"}},
     });
     configure(&env, providers.clone(), instances.clone());
     env.run(engineering(&env).path(), ["sync"]).success();
@@ -489,7 +505,16 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
     let pi = custom2.join("AGENTS.md");
     insta::assert_snapshot!(
         "configured_global_files",
-        files_at(&env, &[&codex, &pi, &claude])
+        files_at(
+            &env,
+            &[
+                &codex,
+                &pi,
+                &claude,
+                &home.join(".config/opencode/AGENTS.md"),
+                &home.join(".kiro/steering/instrukt.md")
+            ]
+        )
     );
     assert!(!home.join(".fx/AGENTS.md").exists());
     insta::assert_snapshot!(
@@ -515,6 +540,7 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
         provider("codex-overlay", "codex", true),
         provider("codex-second", "codex", true),
         provider("codex-third", "codex", true),
+        provider("fx-work", "fx", true),
     ]);
     instances["codex-overlay"] = codex_settings(&a, Some(&b));
     instances["codex-second"] = codex_settings(&c, Some(&d));
@@ -613,6 +639,9 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
     // published, every global file stays as it was, and the sync says why.
     let (second, third) = (c.join("AGENTS.md"), e.join("AGENTS.md"));
     let dotfiles_claude = claude_home.join("CLAUDE.md");
+    let opencode = home.join(".config/opencode/AGENTS.md");
+    let kiro = home.join(".kiro/steering/instrukt.md");
+    let fx = home.join(".fx/AGENTS.md");
     let globals = [
         &codex,
         &pi,
@@ -621,6 +650,9 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
         &second,
         &third,
         &dotfiles_claude,
+        &opencode,
+        &kiro,
+        &fx,
     ]
     .map(|path| path.as_path());
     let held = global_bytes(&globals);
@@ -650,7 +682,17 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
     sync("caught up");
     insta::assert_snapshot!(
         "configured_caught_up",
-        files_at(&env, &[&codex, &pi, &claude])
+        files_at(
+            &env,
+            &[
+                &codex,
+                &pi,
+                &claude,
+                &home.join(".config/opencode/AGENTS.md"),
+                &home.join(".kiro/steering/instrukt.md"),
+                &fx
+            ]
+        )
     );
     // The disabled instance's file still holds the doctrine before the
     // change, and its link still points at it.
@@ -814,7 +856,8 @@ fn an_agent_that_checks_out_the_project_starts_with_what_it_selected() {
         .arg(repo.path())
         .arg(&clone)
         .env_clear()
-        .env("HOME", &empty_home)
+        .env("HOME", std::env::var_os("HOME").unwrap())
+        .env("GIT_CONFIG_GLOBAL", empty_home.join(".gitconfig"))
         .env("PATH", "/usr/bin:/bin")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .status()

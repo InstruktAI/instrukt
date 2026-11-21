@@ -99,15 +99,144 @@ impl Scheduler {
     }
 }
 
+/// Optional native application roots and exact scheduler locations carried to children.
+pub const LOCATION_VARIABLES: [&str; 11] = [
+    "INSTRUKT_LOG_DIR",
+    "T3CODE_HOME",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "OPENCODE_CONFIG_DIR",
+    "FX_HOME",
+    "KIRO_HOME",
+    "PI_CODING_AGENT_DIR",
+    "SYSTEMD_UNIT_PATH",
+    "INSTRUKT_LAUNCH_AGENTS_DIR",
+    "INSTRUKT_CRONTAB_FILE",
+];
+
+/// Resolved once at invocation entry; every scheduler consumer uses these locations.
+#[derive(Debug, Clone)]
+pub struct SchedulerLocations {
+    pub systemd: PathBuf,
+    pub launch_agents: PathBuf,
+    pub crontab_file: Option<PathBuf>,
+    pub environment: std::collections::BTreeMap<String, String>,
+}
+impl SchedulerLocations {
+    pub fn resolve(
+        home: &instrukt_core::home::Home,
+        env: &instrukt_core::config::Env,
+    ) -> Result<Self, InstallError> {
+        let absolute = |setting: &str, value: &str| -> Result<PathBuf, InstallError> {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                Ok(path)
+            } else {
+                Err(InstallError::Location {
+                    setting: setting.into(),
+                    reason: "must be an absolute path".into(),
+                })
+            }
+        };
+        let systemd = if let Some(value) = env.get("SYSTEMD_UNIT_PATH") {
+            let entries: Vec<_> = value.split(':').collect();
+            let mut selected = None;
+            for (n, entry) in entries.iter().enumerate() {
+                if entry.is_empty() && n > 0 && n == entries.len() - 1 {
+                    continue;
+                }
+                let path = absolute("SYSTEMD_UNIT_PATH", entry)?;
+                selected.get_or_insert(path);
+            }
+            selected.ok_or_else(|| InstallError::Location {
+                setting: "SYSTEMD_UNIT_PATH".into(),
+                reason: "no explicit absolute directory".into(),
+            })?
+        } else {
+            // XDG's native default ignores nonabsolute base-directory values.
+            env.get("XDG_CONFIG_HOME")
+                .filter(|value| Path::new(value).is_absolute())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.machine_user_home().join(".config"))
+                .join("systemd/user")
+        };
+        Ok(Self {
+            systemd,
+            launch_agents: env
+                .get("INSTRUKT_LAUNCH_AGENTS_DIR")
+                .map(|v| absolute("INSTRUKT_LAUNCH_AGENTS_DIR", v))
+                .transpose()?
+                .unwrap_or_else(|| home.machine_user_home().join("Library/LaunchAgents")),
+            crontab_file: env
+                .get("INSTRUKT_CRONTAB_FILE")
+                .map(|v| absolute("INSTRUKT_CRONTAB_FILE", v))
+                .transpose()?,
+            environment: LOCATION_VARIABLES
+                .iter()
+                .filter_map(|name| env.get(name).map(|v| ((*name).into(), v.into())))
+                .collect(),
+        })
+    }
+    pub(crate) fn verify_systemd(&self) -> Result<(), InstallError> {
+        let done = Invocation::program(
+            "systemctl",
+            &["--user", "show", "--property=UnitPath", "--value"],
+        )
+        .run(REGISTRAR_TIMEOUT)?;
+        if !done.success {
+            return Err(InstallError::Registrar {
+                command: "systemctl --user show UnitPath".into(),
+                detail: done.stderr,
+            });
+        }
+        let paths =
+            systemd_assignments(done.stdout.trim()).map_err(|reason| InstallError::Location {
+                setting: "manager UnitPath".into(),
+                reason,
+            })?;
+        if !paths.iter().any(|p| Path::new(p) == self.systemd) {
+            return Err(InstallError::Location {
+                setting: "manager UnitPath".into(),
+                reason: format!(
+                    "running manager does not include {}; installer environment does not reconfigure it",
+                    self.systemd.display()
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// What the wake-up runs: this binary's `tick`, in this environment.
 #[derive(Debug, Clone)]
 pub struct WakeUp<'a> {
     pub home: &'a instrukt_core::home::Home,
-    /// `$XDG_CONFIG_HOME`, when set.
-    pub config_home: Option<&'a Path>,
+    pub locations: SchedulerLocations,
     pub executable: &'a Path,
     /// The `PATH` the tick runs with, so it finds the runtime's commands.
     pub path_env: &'a str,
+}
+
+impl WakeUp<'_> {
+    pub(crate) fn environment(&self) -> std::collections::BTreeMap<String, String> {
+        let mut values = self.locations.environment.clone();
+        values.extend([
+            (
+                "HOME".into(),
+                self.home.machine_user_home().display().to_string(),
+            ),
+            (
+                "INSTRUKT_HOME".into(),
+                self.home.root().display().to_string(),
+            ),
+            (
+                "INSTRUKT_DEVELOPMENT".into(),
+                u8::from(self.home.is_development()).to_string(),
+            ),
+            ("PATH".into(), self.path_env.into()),
+        ]);
+        values
+    }
 }
 
 /// A file the registration writes.
@@ -120,6 +249,8 @@ pub struct RegistrationFile {
 /// An installation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
+    #[error("invalid {setting}: {reason}")]
+    Location { setting: String, reason: String },
     #[error("`{command}` failed: {detail}")]
     Registrar { command: String, detail: String },
     #[error(transparent)]
@@ -132,19 +263,21 @@ pub enum InstallError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
     pub scheduler: Scheduler,
+    /// File-only cron materialization is not an active registration.
+    pub registered: bool,
     /// The registration file; `None` for the crontab.
     pub file: Option<PathBuf>,
 }
 
 /// The files a scheduler's registration consists of.
 pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<RegistrationFile> {
-    match scheduler {
+    let mut files = match scheduler {
         Scheduler::Launchd => vec![RegistrationFile {
-            path: launch_agent(wake.home),
+            path: launch_agent(wake),
             contents: plist(wake),
         }],
         Scheduler::SystemdUser => {
-            let dir = systemd_dir(wake);
+            let dir = &wake.locations.systemd;
             let stem = systemd_stem(SYSTEMD_UNIT, wake.home);
             vec![
                 RegistrationFile {
@@ -165,7 +298,37 @@ pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<Regist
             ]
         }
         Scheduler::Crontab => Vec::new(),
+    };
+    for file in &mut files {
+        if scheduler == Scheduler::Launchd {
+            let extra = wake
+                .locations
+                .environment
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "<key>{}</key><string>{}</string>",
+                        xml_escape(k),
+                        xml_escape(v)
+                    )
+                })
+                .collect::<String>();
+            file.contents = file
+                .contents
+                .replacen("</dict>", &format!("{extra}</dict>"), 1);
+        } else if file.path.extension().is_some_and(|e| e == "service") {
+            let extra = wake
+                .locations
+                .environment
+                .iter()
+                .map(|(k, v)| format!("Environment={}\n", systemd_quote(&format!("{k}={v}"))))
+                .collect::<String>();
+            file.contents =
+                file.contents
+                    .replacen("\nExecStart=", &format!("\n{extra}ExecStart="), 1);
+        }
     }
+    files
 }
 
 /// The crontab with this home's line replaced by one for `wake`. Lines
@@ -185,6 +348,16 @@ pub fn crontab_with_wakeup(current: &str, wake: &WakeUp<'_>) -> String {
         u8::from(wake.home.is_development()),
         crate::process::shell_quote(&wake.executable.display().to_string())
     ));
+    if let Some(line) = lines.last_mut() {
+        let extra = wake
+            .locations
+            .environment
+            .iter()
+            .map(|(k, v)| format!("{k}={}", crate::process::shell_quote(v)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        *line = line.replacen("* * * * * ", &format!("* * * * * {extra} "), 1);
+    }
     let mut text = lines.join("\n");
     text.push('\n');
     text
@@ -204,7 +377,7 @@ pub(crate) fn register(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Instal
     let files = registration_files(scheduler, wake);
     match scheduler {
         Scheduler::Launchd => {
-            let plist = launch_agent(wake.home).display().to_string();
+            let plist = launch_agent(wake).display().to_string();
             let unloaded =
                 Invocation::program("launchctl", &["unload", &plist]).run(REGISTRAR_TIMEOUT)?;
             if !unloaded.success {
@@ -213,6 +386,7 @@ pub(crate) fn register(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Instal
             registrar(&["launchctl", "load", "-w", &plist], None)?;
         }
         Scheduler::SystemdUser => {
+            wake.locations.verify_systemd()?;
             registrar(&["systemctl", "--user", "daemon-reload"], None)?;
             registrar(
                 &["systemctl", "--user", "enable", "--now", &timer(wake.home)],
@@ -220,17 +394,45 @@ pub(crate) fn register(scheduler: Scheduler, wake: &WakeUp<'_>) -> Result<Instal
             )?;
         }
         Scheduler::Crontab => {
-            let listed = Invocation::program("crontab", &["-l"]).run(REGISTRAR_TIMEOUT)?;
-            let current = current_crontab(listed.success, &listed.stdout, &listed.stderr)?;
+            let current = read_crontab(wake.locations.crontab_file.as_deref())?;
             let updated = crontab_with_wakeup(&current, wake);
-            registrar(&["crontab", "-"], Some(updated.as_bytes()))?;
+            write_crontab(wake.locations.crontab_file.as_deref(), &updated)?;
         }
     }
     tracing::info!(event = "wakeup_installed", scheduler = scheduler.name());
     Ok(Installed {
         scheduler,
-        file: files.first().map(|file| file.path.clone()),
+        registered: scheduler != Scheduler::Crontab || wake.locations.crontab_file.is_none(),
+        file: wake
+            .locations
+            .crontab_file
+            .clone()
+            .filter(|_| scheduler == Scheduler::Crontab)
+            .or_else(|| files.first().map(|file| file.path.clone())),
     })
+}
+
+pub(crate) fn read_crontab(file: Option<&Path>) -> Result<String, InstallError> {
+    if let Some(path) = file {
+        return match std::fs::read_to_string(path) {
+            Ok(text) => Ok(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(InstallError::Location {
+                setting: "INSTRUKT_CRONTAB_FILE".into(),
+                reason: e.to_string(),
+            }),
+        };
+    }
+    let listed = Invocation::program("crontab", &["-l"]).run(REGISTRAR_TIMEOUT)?;
+    current_crontab(listed.success, &listed.stdout, &listed.stderr)
+}
+pub(crate) fn write_crontab(file: Option<&Path>, text: &str) -> Result<(), InstallError> {
+    if let Some(path) = file {
+        state::write_bytes(path, text.as_bytes())?;
+        Ok(())
+    } else {
+        registrar(&["crontab", "-"], Some(text.as_bytes()))
+    }
 }
 
 /// The user's current crontab from `crontab -l`. Only cron's own answer
@@ -247,6 +449,84 @@ fn current_crontab(success: bool, stdout: &str, stderr: &str) -> Result<String, 
             detail: stderr.trim().to_owned(),
         })
     }
+}
+
+/// The assignments of systemd's `Environment` property as `systemctl show`
+/// prints them: separated by spaces, each one that needs it in double quotes
+/// with `"`, `\\`, `` ` `` and `$` escaped by a backslash and control
+/// characters as C escapes (systemd's `shell_maybe_quote`). Output that form
+/// never takes is refused: a quote that is not closed or not at a word's
+/// edge, a backslash ending the text, or an escape it does not write.
+pub(crate) fn systemd_assignments(line: &str) -> Result<Vec<String>, String> {
+    let mut words = Vec::new();
+    let mut word: Vec<u8> = Vec::new();
+    let mut started = false;
+    let mut quoted = false;
+    let mut bytes = line.bytes().peekable();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'"' if quoted => {
+                quoted = false;
+                if bytes
+                    .peek()
+                    .is_some_and(|next| !matches!(next, b' ' | b'\t'))
+                {
+                    return Err("text follows a closing quote".into());
+                }
+            }
+            b'"' => {
+                if started {
+                    return Err("a quote inside an assignment".into());
+                }
+                quoted = true;
+                started = true;
+            }
+            b'\\' if quoted => {
+                let next = bytes.next().ok_or("a backslash ends the text")?;
+                match next {
+                    b'a' => word.push(0x07),
+                    b'b' => word.push(0x08),
+                    b'f' => word.push(0x0c),
+                    b'n' => word.push(b'\n'),
+                    b'r' => word.push(b'\r'),
+                    b't' => word.push(b'\t'),
+                    b'v' => word.push(0x0b),
+                    b'"' | b'\\' | b'`' | b'$' => word.push(next),
+                    b'0'..=b'3' => {
+                        let mut value = next - b'0';
+                        for _ in 0..2 {
+                            match bytes.next() {
+                                Some(digit @ b'0'..=b'7') => value = value * 8 + (digit - b'0'),
+                                _ => return Err("an octal escape without three digits".into()),
+                            }
+                        }
+                        word.push(value);
+                    }
+                    other => {
+                        return Err(format!("the escape \\{}", char::from(other)));
+                    }
+                }
+            }
+            b' ' | b'\t' if !quoted => {
+                if started {
+                    words.push(String::from_utf8_lossy(&word).into_owned());
+                    word.clear();
+                    started = false;
+                }
+            }
+            other => {
+                word.push(other);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err("a quote is not closed".into());
+    }
+    if started {
+        words.push(String::from_utf8_lossy(&word).into_owned());
+    }
+    Ok(words)
 }
 
 fn registrar(argv: &[&str], input: Option<&[u8]>) -> Result<(), InstallError> {
@@ -269,18 +549,10 @@ fn registrar(argv: &[&str], input: Option<&[u8]>) -> Result<(), InstallError> {
     }
 }
 
-fn launch_agent(home: &instrukt_core::home::Home) -> PathBuf {
-    home.user_home()
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{}.plist", label(home)))
-}
-
-fn systemd_dir(wake: &WakeUp<'_>) -> PathBuf {
-    wake.config_home
-        .map_or_else(|| wake.home.user_home().join(".config"), Path::to_path_buf)
-        .join("systemd")
-        .join("user")
+fn launch_agent(wake: &WakeUp<'_>) -> PathBuf {
+    wake.locations
+        .launch_agents
+        .join(format!("{}.plist", label(wake.home)))
 }
 
 fn plist(wake: &WakeUp<'_>) -> String {
@@ -350,7 +622,8 @@ mod tests {
         let exe = PathBuf::from("/opt/instrukt");
         let wake = WakeUp {
             home: &home,
-            config_home: None,
+            locations: SchedulerLocations::resolve(&home, &instrukt_core::config::Env::default())
+                .unwrap(),
             executable: &exe,
             path_env: "/usr/bin",
         };
@@ -384,7 +657,14 @@ mod tests {
         let exe = PathBuf::from("/opt/instrukt");
         let wake = WakeUp {
             home: &home,
-            config_home: Some(&config),
+            locations: SchedulerLocations::resolve(
+                &home,
+                &instrukt_core::config::Env::from_pairs([(
+                    "XDG_CONFIG_HOME",
+                    config.to_str().unwrap(),
+                )]),
+            )
+            .unwrap(),
             executable: &exe,
             path_env: "/usr/bin",
         };
