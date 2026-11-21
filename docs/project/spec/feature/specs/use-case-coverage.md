@@ -8,7 +8,8 @@ description: Coverage measured against use cases, not source files — the inven
 `instrukt specs coverage` tells a project how its tests stand against its use
 cases. Every use case in the project's feature specs is a coverage unit; every
 binding in its tests claims one. The report reconciles the two. With `--check`
-it is a gate: new orphan bindings or new anonymous scenarios fail it. Coverage
+it is a gate: new orphan bindings, new anonymous scenarios, or a use case
+bound by more tests than its baseline allows fail it. Coverage
 is the scenario inventory bound, never source lines or a file mapping
 (`sdlc/policy/testing`).
 

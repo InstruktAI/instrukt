@@ -76,8 +76,8 @@ the structural graph, or the decision of who may author a use case.
    testing policy.
 
 **Ratchet baseline**
-:  The committed counts of orphans and anonymous scenarios that a coverage
-   check may not exceed.
+:  The committed counts of orphans and anonymous scenarios, and the number of
+   bindings per use case, that a coverage check may not exceed.
 
 **Claim**
 :  A pending marker (`planned:<slug>` or `planned-change:<slug>`) enclosing a
