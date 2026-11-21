@@ -30,9 +30,9 @@ instrukt logs through the shared InstruktAI logging library, following its
   format, from the logging crate the contract ships for Rust
   (`instrukt-ai-logging`), pinned to the released crates.io version
   `=0.10.3`, including its caller-owned stderr writer and path redaction.
-  instrukt does not format log lines itself. The same layer redacts event
-  messages and fields before writing to either destination. The crate also
-  redacts paths in its own write-failure diagnostic.
+  instrukt does not format log lines itself. The dependency owns and tests
+  locations, rotation, redaction and its own diagnostics; instrukt acceptance
+  tests cover command results, selected command sources and emitted events.
 - What a command reports to its caller stays on standard output and standard
   error as each command's spec says; a refusal or failure is still printed
   to the caller, and is also logged.
@@ -46,11 +46,12 @@ instrukt logs through the shared InstruktAI logging library, following its
   third-party logger a spotlight, whatever these variables say
   (`project/instrukt/spec/feature/runner/mcp-access`,
   `sdlc/policy/security-awareness`).
-- The logging crate owns open and write failures. instrukt initialises it
-  before the command runs. When the file writer cannot open its destination,
-  the command continues and standard error carries the failure followed by
-  fallback diagnostics. The fallback writes INFO and above for instrukt and
-  WARNING and above for third-party loggers. Stderr writes are best effort.
+- instrukt initialises logging before the command runs. When the file writer
+  cannot open its destination, instrukt switches diagnostics to standard error,
+  emits its fallback warning and continues the command. The logging crate owns
+  the error description and rendering. The fallback writes INFO and above for
+  instrukt and WARNING and above for third-party loggers. Stderr writes are best
+  effort.
 
 ## Use cases
 
@@ -59,7 +60,7 @@ instrukt logs through the shared InstruktAI logging library, following its
 ```gherkin
 Given a developer commits to their project's main and the hook publishes its documentation
 When they later want to know what that publication did
-Then the published documentation is retrievable and the publication's record sits in instrukt's log under their own state directory, in the file of the command that wrote it, where the InstruktAI log reader finds it
+Then the published documentation is retrievable and its publication record is associated with the command that published it
 ```
 
 ### UC-LG2: A developer can run a command when its log directory is unwritable
@@ -68,9 +69,7 @@ Then the published documentation is retrievable and the publication's record sit
 Given instrukt cannot open the developer's log directory
 When the developer runs a command
 Then the command produces its usual output and exit status
-And standard error reports the file logging failure and carries the command's diagnostics with the same credential redaction as the file
-But if an active log file becomes unwritable during a run
-Then the write-failure diagnostic on standard error redacts credentials in the log path
+And instrukt reports switching diagnostics to standard error and records that publication completed
 ```
 
 ## Known caveats
