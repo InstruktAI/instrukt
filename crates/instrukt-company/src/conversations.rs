@@ -2401,10 +2401,6 @@ impl RelayWorkers {
         let connectors = Arc::clone(&self.connectors);
         let reply = self.spawn(move || {
             let state = RunnerState::new(&home);
-            #[cfg(debug_assertions)]
-            if c.session.is_some() {
-                hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD");
-            }
             let ready = if c.session.is_some() {
                 RuntimeInvocation::try_acquire(&home)
             } else {
@@ -3006,27 +3002,6 @@ fn blocked(
     Ok(())
 }
 
-#[cfg(debug_assertions)]
-fn hold_conversation_for_fixture(c: &Conversation, setting: &str) {
-    if !instrukt_core::fsx::fence_active() {
-        return;
-    }
-    let Some(path) = std::env::var_os(setting) else {
-        return;
-    };
-    let path = PathBuf::from(path);
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(c.semantic_key.as_str()) {
-        return;
-    }
-    if instrukt_core::fsx::write(path.with_extension("observed"), "").is_err() {
-        return;
-    }
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while path.exists() && std::time::Instant::now() < until {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-}
-
 /// The connector destination of the finished-turn relay `instrukt run`
 /// already hosts: for every conversation, read its finished turns into
 /// answers, post what is retained, observe the turn its session runs, then
@@ -3124,26 +3099,11 @@ fn relay(
         if answer_may_need_attention {
             workers.report_answer_failure(admitted, &state, &c, observed.is_none(), clock())?;
         }
-        #[cfg(debug_assertions)]
-        if observed == Some(Presence::Present) {
-            hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD");
-        }
         if let Some(session) = &c.session
             && matches!(observed, Some(Presence::Present | Presence::Archived))
         {
             workers.source_present(session);
         }
-        #[cfg(debug_assertions)]
-        if matches!(
-            check,
-            CheckedDelivery::Checked {
-                result: Ok(DeliveryCheck::Accepted),
-                ..
-            }
-        ) {
-            hold_conversation_for_fixture(&c, "INSTRUKT_TEST_CONVERSATION_ACK_HOLD");
-        }
-
         let original_binding = c.session.clone();
         let replacement = if open_messages(&state, &c)?.is_empty() {
             None
