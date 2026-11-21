@@ -351,11 +351,16 @@ impl Apps {
         let (_, repo) = repository
             .split_once('/')
             .ok_or_else(|| setup("invalid repository"))?;
+        let token_request = if op == Operation::Board {
+            json!({"permissions": permissions})
+        } else {
+            json!({"repositories": [repo], "permissions": permissions})
+        };
         let response = self.request(
             Method::Post,
             &format!("/app/installations/{id}/access_tokens"),
             &jwt,
-            Some(&json!({"repositories":[repo],"permissions":permissions})),
+            Some(&token_request),
             now,
         )?;
         check_permissions(&response["permissions"], &permissions)?;
@@ -368,18 +373,20 @@ impl Apps {
             .as_str()
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| setup("issuance returned no installation credential"))?;
-        let repos = self.request(
-            Method::Get,
-            "/installation/repositories?per_page=100",
-            token,
-            None,
-            now,
-        )?;
-        if !repos["repositories"].as_array().is_some_and(|rs| {
-            rs.iter()
-                .any(|r| r["full_name"].as_str() == Some(repository))
-        }) {
-            return Err(setup("issued credential cannot reach repository"));
+        if op != Operation::Board {
+            let repos = self.request(
+                Method::Get,
+                "/installation/repositories?per_page=100",
+                token,
+                None,
+                now,
+            )?;
+            if !repos["repositories"].as_array().is_some_and(|rs| {
+                rs.iter()
+                    .any(|r| r["full_name"].as_str() == Some(repository))
+            }) {
+                return Err(setup("issued credential cannot reach repository"));
+            }
         }
         let viewer = self.request(
             Method::Post,
