@@ -97,7 +97,7 @@ the structural graph, or the decision of who may author a use case.
 
 - **Owns** — use-case identification in feature specs; the binding forms read
   from tests; the coverage classification (bound, unbound, orphan, anonymous,
-  multi-bound); the ratchet over orphans and anonymous scenarios; the
+  multi-bound); the ratchet over orphans, anonymous scenarios and bindings per use case; the
   reservation check.
 - **Does not own** — the snippet model, spec identity derivation and the
   pending-marker grammar (docs, `project/instrukt/spec/domain/docs`);

@@ -88,13 +88,16 @@ its excess bindings are ratcheted per use case until each is down to one.
 ### The ratchet
 
 - `--check` fails (non-zero exit) on any ambiguous claim, naming each.
-- `--check` compares the orphan and anonymous counts, and each multi-bound
-  use case's number of bindings, with the project's committed ratchet baseline.
-  A use case not in the baseline may have one binding. A count above its baseline fails the check
+- `--check` compares the orphan and anonymous counts, and the number of
+  bindings of each use case keyed by spec id and use-case id, with the
+  project's committed ratchet baseline. A use case the baseline does not name
+  may have one binding. A count above its baseline fails the check
   (non-zero exit) and names each regression with its count and baseline; the
   remedy is to resolve the new debt.
-- A missing baseline counts as zero for both.
-- A count below its baseline passes and says the baseline can be tightened.
+- A missing baseline counts orphans and anonymous scenarios as zero and allows
+  one binding per use case.
+- A count below its baseline passes and says the baseline can be tightened,
+  including a use case reduced to one binding.
 - The check never fails on unbound use cases.
 
 ## Use cases

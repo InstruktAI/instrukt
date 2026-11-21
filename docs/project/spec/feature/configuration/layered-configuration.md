@@ -468,8 +468,8 @@ And the runner continues even if standard error is unavailable
   A machine layer of a newer schema cannot be loaded: every command names
   `instrukt config validate --global`, which says to upgrade instrukt.
 - Unresolved and cyclic references are validation findings.
-- With `INSTRUKT_NOW=@<path>` real time bounds no started program while the
-  file is readable: its limit runs out only when the time in the file moves past
+- With `INSTRUKT_NOW=@<path>` real time bounds no started program's process
+  limit while the file is readable (lock and I/O waits stay on monotonic time): its limit runs out only when the time in the file moves past
   it, so a program that never ends waits until the file's time is moved or the
   command is interrupted. Once the file becomes unreadable mid-run, time runs on
   from the last value read and the limit runs out as elapsed time reaches it.
