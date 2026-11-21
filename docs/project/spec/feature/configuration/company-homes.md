@@ -73,9 +73,10 @@ the same reference name for different values.
 ### What a company's connector needs
 
 A connector a company declares is admitted on a computer only with what it needs
-there; each missing one is a finding that names the company and withholds that
-connector, reported by `instrukt config validate --company <name>`,
-`instrukt install --check` and `instrukt events status`
+there. A missing prerequisite withholds the connector and is reported to the
+operator. `instrukt config validate --company <name>` reports local
+prerequisites. `instrukt events status` reports the runner's
+admission findings, including provider permission checks
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters, never discovered by the running runner):
 

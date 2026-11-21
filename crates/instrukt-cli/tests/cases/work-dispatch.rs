@@ -204,6 +204,7 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
         crate::fixtures::slack::BOT_TOKEN,
         &crate::fixtures::conversing::slack_settings("{}", ""),
     );
+    crate::fixtures::conversing::publish_company_procedure(&env);
     let refused = env.run(repo.path(), ["tick"]).failure();
     insta::assert_snapshot!(
         "refused-tick",
@@ -241,6 +242,7 @@ fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
         crate::fixtures::slack::BOT_TOKEN,
         &crate::fixtures::conversing::slack_settings("{}", ""),
     );
+    crate::fixtures::conversing::publish_company_procedure(&env);
     // Whether it has one is what the runner's admission decides for the
     // same files. A machine layer admission refuses is the command's error,
     // named, as the runner refuses to start on it, even where a module is on

@@ -67,7 +67,7 @@ fn destinations(c: &Company) -> Vec<(String, Option<String>)> {
 fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // History is off, so the conversation relay is the stand-in's only
     // source reader while the runner runs.
-    let mut c = Company::without_procedure(common::TestEnv::new(), ", history: false", "", "");
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     // The operator's clock stands still, so the runner wakes only on its
     // real-time interval.
     c.env.set_env("INSTRUKT_NOW", "2026-11-19T00:00:00Z");
@@ -86,27 +86,11 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     assert_eq!(c.conversations().relay_failure, None);
     assert_eq!(c.runner_files_on(&t3_folder), 0);
     let channel = "C1";
-    // No published procedure declares the role conversations start under:
-    // the question waits, no session starts, and the cause names the role.
+    // The runner dies before the runtime accepts the question's opening.
+    c.runtime.flag("die-before-start", true);
     let question = c
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
-    wait("the waiting question's cause", || {
-        c.conversations()
-            .conversations
-            .iter()
-            .any(|pending| !pending.failures.is_empty())
-    });
-    let waiting = c.status()["conversations"]["conversations"].clone();
-    insta::assert_snapshot!(
-        "no-procedure-status",
-        serde_json::to_string_pretty(&waiting).unwrap()
-    );
-    assert!(c.sessions().is_empty());
-    // Once the procedure is published, the runner starts the session and
-    // dies before the runtime accepted the question's opening.
-    c.runtime.flag("die-before-start", true);
-    c.publish_procedure();
     c.runner_ended();
     assert!(c.sessions().is_empty());
     // Restarted, the question stays pending with its cause: a start that
@@ -118,7 +102,12 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
         c.slack.status(channel, &question).as_deref() == Some(UNAVAILABLE)
     });
     wait("the pending question's new cause", || {
-        c.status()["conversations"]["conversations"] != waiting
+        c.conversations().conversations.iter().any(|conversation| {
+            conversation
+                .failures
+                .iter()
+                .any(|cause| cause.contains("resolve-start"))
+        })
     });
     insta::assert_snapshot!(
         "unresolved-opening-status",
@@ -5402,6 +5391,183 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     assert!(retired.iter().all(|gap| gap["retired_at"].is_string()
         && gap["cause"] == "Messages may have been missed in this span."));
     assert_eq!(c.slack.posts().len(), 4);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV11
+#[test]
+fn an_operator_onboards_a_company_while_the_runner_runs() {
+    use crate::fixtures::conversing::{MEMBERS, company_home, slack_settings};
+    use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN};
+    use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+    use instrukt_core::home::Home;
+
+    let mut c = Company::with_fakes(common::TestEnv::new());
+    let home = Home::at_user_home(c.env.home().into());
+    std::fs::create_dir_all(home.root()).unwrap();
+    std::fs::write(
+        home.root().join("instrukt.yaml"),
+        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false, todos: true}}\n"),
+    ).unwrap();
+    let clock = c.env.path("admission-clock");
+    let now: jiff::Timestamp = "2026-11-20T12:00:00Z".parse().unwrap();
+    set_clock(&clock, now);
+    c.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+    c.start_runner();
+    wait("the runner starts with no company", || {
+        assert!(c.runner_running(), "runner exited before admission");
+        let db = home.state_db_file();
+        db.exists()
+            && instrukt_core::state_db::rusqlite::Connection::open(db).is_ok_and(|db| {
+                db.query_row("SELECT at FROM runner_admission WHERE id=1", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .is_ok()
+            })
+    });
+    assert_eq!(c.slack.connections(), 0);
+    company_home(
+        &c.env,
+        COMPANY,
+        APP_TOKEN,
+        BOT_TOKEN,
+        &slack_settings(MEMBERS, ""),
+    );
+    let dir = home.company_dir(&c.company());
+
+    c.slack.read_back_channels(&["D30"]);
+    let earlier = now - jiff::SignedDuration::from_mins(2);
+    c.slack.say_at(
+        &format!("{}.000000", earlier.as_second()),
+        "D30",
+        "USTEVEN",
+        "Was my question saved?",
+        None,
+    );
+    projected(&c);
+    c.publish_procedure();
+    set_clock(&clock, now + jiff::SignedDuration::from_mins(3));
+    let session = started(&c, &[]);
+    assert!(
+        c.runtime
+            .message(&session, 0)
+            .contains("Was my question saved?")
+    );
+    c.finish_turn(&session, 0, "Yes, it was saved.");
+    wait("the question from before admission is answered", || {
+        c.slack.posts_beginning("Yes, it was saved.") == 1
+    });
+
+    c.slack
+        .direct("D30", "USTEVEN", "Are you receiving new questions?");
+    wait("the established connection delivers a new question", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.finish_turn(&session, 1, "Yes, I am.");
+    wait("the live question is answered", || {
+        c.slack.posts_beginning("Yes, I am.") == 1
+    });
+
+    let connected = c.slack.connections();
+    let rotated = "xapp-fixture-rotated";
+    c.slack.app_token(rotated);
+    c.env
+        .instrukt(c.env.home())
+        .args(["secrets", "set", "SLACK_APP_TOKEN", "--company", COMPANY])
+        .write_stdin(rotated)
+        .assert()
+        .success();
+    set_clock(&clock, now + jiff::SignedDuration::from_mins(6));
+    wait("the admitted token change reconnects the company", || {
+        c.slack.connections() > connected
+    });
+    c.slack.direct("D30", "USTEVEN", "Did the change work?");
+    wait("the renewed connection delivers the question", || {
+        c.runtime.message_count(&session) == 3
+    });
+    c.finish_turn(&session, 2, "The new connection works.");
+    wait("the renewed connection posts the answer", || {
+        c.slack.posts_beginning("The new connection works.") == 1
+    });
+    assert_eq!(destinations(&c), vec![("D30".to_owned(), None); 3]);
+
+    let closed = c.slack.disconnections();
+    std::fs::rename(dir, c.env.path("withdrawn-company")).unwrap();
+    set_clock(&clock, now + jiff::SignedDuration::from_mins(9));
+    wait("withdrawing the company closes its socket", || {
+        c.slack.disconnections() > closed
+    });
+    assert!(c.runner_running());
+    assert_eq!(c.slack.posts().len(), 3);
+}
+
+fn company_validation(c: &Company) -> String {
+    let check = c
+        .env
+        .run(c.env.home(), ["config", "validate", "--company", COMPANY])
+        .failure();
+    let output = check.get_output();
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+#[test]
+fn company_validation_names_the_missing_published_procedure() {
+    let c = Company::without_procedure(common::TestEnv::new(), ", history: false", "", "");
+    let findings = company_validation(&c);
+    assert!(
+        findings.contains("published procedure declaring the company-agent"),
+        "{findings}"
+    );
+}
+
+#[test]
+fn company_validation_names_the_blank_token() {
+    let c = Company::new("");
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let secrets = home.company_dir(&c.company()).join("secrets.env");
+    std::fs::write(
+        secrets,
+        format!(
+            "SLACK_APP_TOKEN={}\nSLACK_BOT_TOKEN=\n",
+            crate::fixtures::slack::APP_TOKEN
+        ),
+    )
+    .unwrap();
+    let findings = company_validation(&c);
+    assert!(
+        findings.contains("SLACK_BOT_TOKEN") && findings.contains("blank"),
+        "{findings}"
+    );
+}
+
+#[test]
+fn events_status_names_the_missing_slack_scope() {
+    let mut c = Company::new("");
+    c.slack.scopes(Some("app_mentions:read,chat:write,channels:history,groups:history,groups:read,im:history,im:read,users:read,users:read.email"));
+    c.start_runner();
+    let state = c.env.instrukt_home().join("state/instrukt.db");
+    wait("the permission finding is recorded", || {
+        state.exists()
+            && instrukt_core::state_db::rusqlite::Connection::open(&state).is_ok_and(|db| {
+                db.query_row(
+                    "SELECT failure FROM connector_states WHERE connector='slack'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .is_ok_and(|cause| cause.contains("channels:read"))
+            })
+    });
+    assert!(c.conversations().connectors.iter().any(|row| {
+        row.failure
+            .as_deref()
+            .is_some_and(|cause| cause.contains("channels:read"))
+    }));
+    assert_eq!(c.slack.connections(), 0);
+    assert!(c.slack.posts().is_empty());
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV12
