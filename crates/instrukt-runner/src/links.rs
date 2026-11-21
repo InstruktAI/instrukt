@@ -228,10 +228,6 @@ fn open_plan(
     Ok(opened)
 }
 
-/// How often opening reads its two threads again when one of them changed
-/// while it was read.
-const OPENING_READS: usize = 3;
-
 /// The native turns each thread had finished, by thread.
 type Finished = std::collections::BTreeMap<String, std::collections::BTreeSet<String>>;
 
@@ -244,48 +240,38 @@ fn opening(
     b: &SessionRef,
 ) -> Result<(SourcePosition, Finished), LinkError> {
     let pair = [a.id.clone(), b.id.clone()];
-    for _ in 0..OPENING_READS {
-        let mut observed = std::collections::BTreeSet::new();
-        let mut unsettled = false;
-        let mut position = None;
-        let mut seen = Finished::new();
-        loop {
-            let batch = source.changed_since(position.as_ref(), Scope::Only(&pair))?;
-            if let Some(failure) = batch
-                .turn_failures
-                .iter()
-                .find(|failure| pair.contains(&failure.conversation))
-            {
-                return Err(LinkError::Refused(format!(
-                    "completed-turn evidence unavailable: {}",
-                    failure.cause
-                )));
-            }
-            unsettled |= !batch.unsettled.is_empty();
-            observed.extend(batch.conversations.into_iter().map(|id| id.to_string()));
-            for turn in batch.completed_turns {
-                seen.entry(turn.conversation.to_string())
-                    .or_default()
-                    .insert(turn.native_turn.to_string());
-            }
-            position = Some(batch.position);
-            if !batch.has_more {
-                break;
-            }
+    let mut observed = std::collections::BTreeSet::new();
+    let mut position = None;
+    let mut seen = Finished::new();
+    loop {
+        let batch = source.changed_since(position.as_ref(), Scope::Only(&pair))?;
+        if let Some(failure) = batch
+            .turn_failures
+            .iter()
+            .find(|failure| pair.contains(&failure.conversation))
+        {
+            return Err(LinkError::Refused(format!(
+                "completed-turn evidence unavailable: {}",
+                failure.cause
+            )));
         }
-        if unsettled {
-            continue;
+        observed.extend(batch.conversations.into_iter().map(|id| id.to_string()));
+        for turn in batch.completed_turns {
+            seen.entry(turn.conversation.to_string())
+                .or_default()
+                .insert(turn.native_turn.to_string());
         }
-        if !observed.contains(a.id.as_str()) || !observed.contains(b.id.as_str()) {
-            return Err(LinkError::Refused("one of the native source conversations is missing; restore or select the native threads before linking".into()));
+        position = Some(batch.position);
+        if !batch.has_more {
+            break;
         }
-        let position = position
-            .ok_or_else(|| LinkError::Refused("source supplied no opening position".into()))?;
-        return Ok((position, seen));
     }
-    Err(LinkError::Refused(
-        "the threads kept changing while they were read; open the link again".into(),
-    ))
+    if !observed.contains(a.id.as_str()) || !observed.contains(b.id.as_str()) {
+        return Err(LinkError::Refused("one of the native source conversations is missing; restore or select the native threads before linking".into()));
+    }
+    let position =
+        position.ok_or_else(|| LinkError::Refused("source supplied no opening position".into()))?;
+    Ok((position, seen))
 }
 
 pub fn close(home: &Home, member: &SessionRef) -> Result<(), LinkError> {
@@ -300,7 +286,7 @@ pub fn close(home: &Home, member: &SessionRef) -> Result<(), LinkError> {
 }
 fn link_lock(home: &Home, id: &str) -> Result<instrukt_core::fsx::LockGuard, LinkError> {
     Ok(instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!("conversation-{id}.lock")),
+        &home.state_dir().join(format!("conversation-{id}.lock")),
         std::time::Duration::from_secs(120),
     )?)
 }
@@ -547,12 +533,6 @@ fn relay_direction(
         if batch.missing.iter().any(|id| id == &d.source.id) {
             return Err(LinkError::Refused(
                 "linked source conversation is missing; restore its native source content".into(),
-            ));
-        }
-        // Its turns stay unread, with this cause, until a read is coherent.
-        if batch.unsettled.iter().any(|id| id == &d.source.id) {
-            return Err(LinkError::Refused(
-                "linked source conversation kept changing while it was read; the next catch-up reads it again".into(),
             ));
         }
         if let Some(failure) = batch

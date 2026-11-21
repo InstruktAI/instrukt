@@ -23,7 +23,7 @@ pub(super) fn ensure(
     // before the settings that reference it are resolved, whichever scope
     // names the private socket: the local endpoint or history's cluster one.
     // The configuration and ACL below are written from it.
-    let socket = request.home.state_dir().join("redis/redis.sock");
+    let socket = request.home.redis_socket();
     let private = [config.local_redis_url()?, config.cluster_redis_url()?]
         .into_iter()
         .flatten()
@@ -60,7 +60,7 @@ pub(super) fn ensure(
     let local_owned = settings
         .local
         .as_ref()
-        .map(|endpoint| super::_demand::owned_server(&endpoint.url, &redis_dir.join("redis.sock")))
+        .map(|endpoint| super::_demand::owned_server(&endpoint.url, &socket))
         .transpose()?
         .unwrap_or(true);
     if local_owned {
@@ -102,7 +102,7 @@ pub(super) fn ensure(
             };
             let expected_conf = format!(
                 "port 0\nunixsocket {}\nunixsocketperm 600\ndir {}\nappendonly yes\naclfile {}\ndaemonize no\n",
-                quote(&redis_dir.join("redis.sock")),
+                quote(&socket),
                 quote(&redis_dir),
                 quote(&acl)
             );
@@ -126,7 +126,7 @@ pub(super) fn ensure(
             )?;
             // Authenticate and check the private socket before recording its endpoint.
             let endpoint = config::RedisEndpoint {
-                url: format!("unix://{}", redis_dir.join("redis.sock").display()),
+                url: format!("unix://{}", socket.display()),
                 username: Some("instrukt".into()),
                 password: Some(password),
                 max_connections: 50,

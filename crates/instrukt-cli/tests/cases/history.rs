@@ -29,9 +29,8 @@ fn extracted_conversations_survive_restart_and_source_deletion() {
     // Other conversations beside the scenario's own, one still streaming.
     let elsewhere = source.elsewhere(40, "Elsewheretoken chatter.");
     let gate = source.gate();
-    // A conversation changes after the catch-up took its inventory and
-    // before its turn to be read: the catch-up reads every other one and
-    // reports itself incomplete beside what it found.
+    // A conversation changes after discovery; its fresh read snapshot
+    // includes the edit without making the catch-up incomplete.
     gate.hold();
     let searching = env
         .instrukt_process(env.home())
@@ -51,22 +50,11 @@ fn extracted_conversations_survive_restart_and_source_deletion() {
     );
     gate.open();
     let searched = searching.wait_with_output().unwrap();
-    let incomplete: Value = serde_json::from_slice(&searched.stdout).unwrap();
-    // Its one line, after the configuration's notice, points at the
-    // failures the JSON holds.
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&searched.stderr).lines().last().unwrap_or_default(),
-        @"instrukt: the search is incomplete: 1 computer could not be searched; each is named in the output's `failures`"
-    );
-    assert_eq!(incomplete["matches"].as_array().unwrap().len(), 39);
-    let failures: Vec<instrukt_runner::history::Failure> =
-        serde_json::from_value(incomplete["failures"].clone()).unwrap();
-    assert_eq!(failures.len(), 1);
-    assert!(matches!(
-        failures[0].operation,
-        instrukt_runner::history::Operation::CatchUp
-    ));
-    // Settled, the next catch-up reads it, and completes.
+    assert!(searched.status.success());
+    let complete: Value = serde_json::from_slice(&searched.stdout).unwrap();
+    assert_eq!(complete["matches"].as_array().unwrap().len(), 40);
+    assert_eq!(complete["failures"].as_array().unwrap().len(), 0);
+    // An unchanged catch-up retains the same conversations.
     let settled = search(&env, "Elsewheretoken");
     assert_eq!(settled["matches"].as_array().unwrap().len(), 40);
     assert_eq!(settled["failures"].as_array().unwrap().len(), 0);

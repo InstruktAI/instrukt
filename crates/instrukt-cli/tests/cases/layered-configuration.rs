@@ -217,6 +217,9 @@ fn unchanged(repo: &Repo, bytes: &[u8]) {
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
 #[test]
 fn reading_configuration_written_by_a_newer_instrukt_is_refused() {
+    reading_the_revision_of_configuration_written_by_a_newer_instrukt_is_refused();
+    changing_configuration_written_by_a_newer_instrukt_is_refused();
+    validating_configuration_written_by_a_newer_instrukt_is_refused();
     let env = TestEnv::new();
     let (repo, bytes) = written_by_a_newer_instrukt(&env);
     let refused = env.run(repo.path(), ["config", "get", "board"]).failure();
@@ -224,8 +227,6 @@ fn reading_configuration_written_by_a_newer_instrukt_is_refused() {
     unchanged(&repo, &bytes);
 }
 
-// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
-#[test]
 fn reading_the_revision_of_configuration_written_by_a_newer_instrukt_is_refused() {
     let env = TestEnv::new();
     let (repo, bytes) = written_by_a_newer_instrukt(&env);
@@ -236,8 +237,6 @@ fn reading_the_revision_of_configuration_written_by_a_newer_instrukt_is_refused(
     unchanged(&repo, &bytes);
 }
 
-// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
-#[test]
 fn changing_configuration_written_by_a_newer_instrukt_is_refused() {
     let env = TestEnv::new();
     let (repo, bytes) = written_by_a_newer_instrukt(&env);
@@ -259,8 +258,6 @@ fn changing_configuration_written_by_a_newer_instrukt_is_refused() {
     unchanged(&repo, &bytes);
 }
 
-// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL4
-#[test]
 fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     let env = TestEnv::new();
     let (repo, bytes) = written_by_a_newer_instrukt(&env);
@@ -300,7 +297,7 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     config validate --global:
     stdout:
     stderr:
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 7, newer than this instrukt supports (6); upgrade instrukt
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 7, newer than this instrukt supports (6); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
     "
     );
     assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);

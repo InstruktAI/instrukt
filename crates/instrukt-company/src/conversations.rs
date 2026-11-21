@@ -1053,7 +1053,7 @@ fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, 
     use sha2::{Digest, Sha256};
     let digest = hex::encode(&Sha256::digest(c.semantic_key.as_bytes())[..8]);
     Ok(instrukt_core::fsx::LockGuard::acquire(
-        &home.locks_dir().join(format!("conversation-{digest}.lock")),
+        &home.state_dir().join(format!("conversation-{digest}.lock")),
         std::time::Duration::from_secs(120),
     )?)
 }
@@ -1924,12 +1924,6 @@ fn harvest(
         let presence = batch.scoped_presence.unwrap_or(Presence::Present);
         if batch.missing.iter().any(|id| id == &session.id) {
             return Ok(Presence::Absent);
-        }
-        // Its answers stay unread, with this cause, until a read is coherent.
-        if batch.unsettled.iter().any(|id| id == &session.id) {
-            return Err(ConversationError::Refused(
-                "the session's native conversation kept changing while it was read; the next catch-up reads it again".into(),
-            ));
         }
         if let Some(failure) = batch
             .turn_failures

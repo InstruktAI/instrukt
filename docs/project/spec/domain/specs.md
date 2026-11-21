@@ -71,13 +71,13 @@ the structural graph, or the decision of who may author a use case.
 :  A use case no binding names. The binding backlog.
 
 **Multi-bound use case**
-:  A use case named by more than one binding. Coverage reports it without
-   failing `--check`; its admissibility is governed by the project's applicable
-   testing policy.
+:  A use case named by more than one binding. `--check` fails when its
+   bindings exceed its ratchet baseline; one binding per use case is the rule
+   (`sdlc/policy/testing`, rule 8).
 
 **Ratchet baseline**
-:  The committed counts of orphans and anonymous scenarios that a coverage
-   check may not exceed.
+:  The committed counts of orphans and anonymous scenarios, and the number of
+   bindings per use case, that a coverage check may not exceed.
 
 **Claim**
 :  A pending marker (`planned:<slug>` or `planned-change:<slug>`) enclosing a
@@ -97,7 +97,7 @@ the structural graph, or the decision of who may author a use case.
 
 - **Owns** — use-case identification in feature specs; the binding forms read
   from tests; the coverage classification (bound, unbound, orphan, anonymous,
-  multi-bound); the ratchet over orphans and anonymous scenarios; the
+  multi-bound); the ratchet over orphans, anonymous scenarios and bindings per use case; the
   reservation check.
 - **Does not own** — the snippet model, spec identity derivation and the
   pending-marker grammar (docs, `project/instrukt/spec/domain/docs`);

@@ -8,7 +8,8 @@ description: Coverage measured against use cases, not source files — the inven
 `instrukt specs coverage` tells a project how its tests stand against its use
 cases. Every use case in the project's feature specs is a coverage unit; every
 binding in its tests claims one. The report reconciles the two. With `--check`
-it is a gate: new orphan bindings or new anonymous scenarios fail it. Coverage
+it is a gate: new orphan bindings, new anonymous scenarios, or a use case
+bound by more tests than its baseline allows fail it. Coverage
 is the scenario inventory bound, never source lines or a file mapping
 (`sdlc/policy/testing`).
 
@@ -67,13 +68,13 @@ is the scenario inventory bound, never source lines or a file mapping
 | unbound | a use case with no binding — the backlog | no |
 | orphan | a binding naming no use case in the inventory | yes, ratcheted |
 | anonymous | Gherkin with no use-case id | yes, ratcheted |
-| multi-bound | a use case with more than one binding | no — a review lead |
+| multi-bound | a use case with more than one binding | yes, ratcheted per use case |
 | ambiguous claim | a whole spec file pending for several delivering slugs with no in-body markers | yes, always (not ratcheted) |
 
 Unbound is not gated: under documentation first, use cases are written before
 their tests and the backlog rises and falls with every delivery. A multi-bound
 use case breaks the one-test-per-use-case rule (`sdlc/policy/testing`, rule 8);
-the report lists it for review and does not fail on it.
+its excess bindings are ratcheted per use case until each is down to one.
 
 ### The report
 
@@ -88,13 +89,17 @@ the report lists it for review and does not fail on it.
 ### The ratchet
 
 - `--check` fails (non-zero exit) on any ambiguous claim, naming each.
-- `--check` compares the orphan and anonymous counts with the project's
-  committed ratchet baseline. A count above its baseline fails the check
+- `--check` compares the orphan and anonymous counts, and the number of
+  bindings of each use case keyed by spec id and use-case id, with the
+  project's committed ratchet baseline. A use case the baseline does not name
+  may have one binding. A count above its baseline fails the check
   (non-zero exit) and names each regression with its count and baseline; the
   remedy is to resolve the new debt.
-- A missing baseline counts as zero for both.
-- A count below its baseline passes and says the baseline can be tightened.
-- The check never fails on unbound or multi-bound use cases.
+- A missing baseline counts orphans and anonymous scenarios as zero and allows
+  one binding per use case.
+- A count below its baseline passes and says the baseline can be tightened,
+  including a use case reduced to one binding.
+- The check never fails on unbound use cases.
 
 ## Use cases
 
