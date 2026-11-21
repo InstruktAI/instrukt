@@ -189,8 +189,10 @@ impl Home {
     }
 
     /// `~/.instrukt/state/index.yaml` — the global index.
+    /// Publication keeps these paths relative to the original home root so
+    /// its confinement check can inspect the original path components.
     pub fn index_file(&self) -> PathBuf {
-        self.state_dir().join("index.yaml")
+        self.root.join("state").join("index.yaml")
     }
 
     /// `~/.instrukt/state/`.
@@ -201,7 +203,7 @@ impl Home {
     /// `~/.instrukt/state/publication/` — per project, the published commit
     /// and checkout path.
     pub fn publication_state_dir(&self) -> PathBuf {
-        self.state_dir().join("publication")
+        self.root.join("state").join("publication")
     }
 
     /// `~/.instrukt/state/publication/claims/` — the ownership record: per
@@ -226,6 +228,12 @@ impl Home {
     /// work record and the runner's state (`state-database`).
     pub fn state_db_file(&self) -> PathBuf {
         self.state_dir().join("instrukt.db")
+    }
+
+    /// The Redis socket address keeps the home spelling. A short home
+    /// alias can fit the Unix socket address limit when the resolved path does not.
+    pub fn redis_socket(&self) -> PathBuf {
+        self.root.join("state/redis/redis.sock")
     }
 
     /// `~/.instrukt/state/writer.lock` — the per-computer writer lock every
@@ -260,7 +268,7 @@ impl Home {
 
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
     pub fn eval_fingerprint_dir(&self) -> PathBuf {
-        self.state_dir().join("eval-fingerprint")
+        self.root.join("state").join("eval-fingerprint")
     }
 
     /// `~/.instrukt/state/blueprint/<project>/` — graphs per SHA.

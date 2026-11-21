@@ -103,7 +103,7 @@ pub(super) fn read(
             if config
                 .project_local_redis()?
                 .as_deref()
-                .map(|url| owned_server(url, &home.state_dir().join("redis/redis.sock")))
+                .map(|url| owned_server(url, &home.redis_socket()))
                 .transpose()?
                 .unwrap_or(false)
             {
@@ -119,7 +119,7 @@ pub(super) fn read(
                 if config
                     .cluster_redis_url()?
                     .as_deref()
-                    .map(|url| owned_server(url, &home.state_dir().join("redis/redis.sock")))
+                    .map(|url| owned_server(url, &home.redis_socket()))
                     .transpose()?
                     .unwrap_or(false)
                 {
