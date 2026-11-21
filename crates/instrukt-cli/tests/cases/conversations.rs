@@ -1805,7 +1805,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     c.runtime.flag("start-failure", true);
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
-    c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
+    let question = c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
     answer_source_changed(&c, 2);
     let pending = || {
         db.query_row(
@@ -1818,6 +1818,10 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         || pending().is_some(),
     );
     let captured = pending().unwrap();
+    wait_for_answer_fixture("the failed successor shows the unavailable status", || {
+        c.slack.status("D30", &question).as_deref() == Some(UNAVAILABLE)
+    });
+    assert!(interval(&c, &question).is_some());
     c.runtime.flag("start-failure", false);
     let successor = started(&c, &before);
     assert_eq!(captured.0, format!("t3:{successor}"));
@@ -1834,6 +1838,10 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     answer_source_changed(&c, 3);
     wait_for_answer_fixture("the saved question is delivered after deletion", || {
         c.runtime.message_count(&successor) == 2
+    });
+    wait_for_answer_fixture("resumed delivery clears the unavailable interval", || {
+        interval(&c, &question).is_none()
+            && c.slack.status("D30", &question).as_deref() == Some(WORKING)
     });
     let still_retained: u64 = db
         .query_row(

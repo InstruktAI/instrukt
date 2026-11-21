@@ -60,7 +60,9 @@ path is the same for every connector, whichever channel it speaks to
   temporarily unavailable status/notice.
 - Saved or new unanswered work after confirmed native archive/deletion starts
   one successor with the assignment alone. A pending successor replays its
-  persisted native launch identity on later relay passes until accepted. Harvest
+  persisted native launch identity on later relay passes until accepted. A failed
+  successor launch opens the normal unavailable interval without resetting an
+  existing timestamp; resumed delivery clears it normally. Harvest
   readable completed old answers
   before adoption. Reset only unanswered work for ordered delivery, including
   questions whose old turn has no retained answer. Retained answers keep their

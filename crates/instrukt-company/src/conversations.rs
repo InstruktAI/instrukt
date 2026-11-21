@@ -2415,6 +2415,11 @@ impl RelayWorkers {
             let session=current.session.as_ref().ok_or_else(||ConversationError::Refused("successor has no owner-retained native ID".into()))?;
             if let Err(error)=keyed::succeed(adapter.as_ref(),&instrukt_runner::runtime::FollowupAssignment{bindings:None,original_request:Some(&original),invocation:&invocation,request:&request,session,worktree_path:None,project:None,now:connectors.now()}) {
                 set_failure(&state, &current, Some(&error.to_string()))?;
+                let waiting = open_messages(&state, &current)?
+                    .into_iter()
+                    .map(|message| message.message)
+                    .collect::<Vec<_>>();
+                unavailable(&state, &current, &waiting, connectors.now())?;
                 return Err(error.into());
             }
             Ok(())
