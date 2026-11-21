@@ -314,9 +314,6 @@ crates, infrastructure crates, and test code.
 ## Enforcement
 
 - `cargo test` and `cargo clippy` run on pre-commit and must pass; flags and scope are owned by the harness.
-- New service crates without colocated unit tests are rejected at review.
-- New service crates without integration tests in `tests/` are rejected at
-  review.
 - PRs that introduce `lazy_static`/`OnceCell` for services, or that widen
   visibility to `pub(crate)` for testing, are rejected at review.
 - PRs that introduce a Container struct without justifying the wiring
