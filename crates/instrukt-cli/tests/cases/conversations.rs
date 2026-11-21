@@ -1710,14 +1710,19 @@ fn held_runtime_checks_leave_another_conversation_free() {
 
 #[cfg(debug_assertions)]
 fn a_live_deletion_is_confirmed_once_across_relay_passes() {
-    let (mut c, clock, old) = answered_conversation(true);
+    let (mut c, clock, old) = answered_conversation_with_logs(true, true);
     c.runtime.flag("show-failure", true);
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     c.slack.direct("D30", "USTEVEN", "What changed?");
     answer_source_changed(&c, 2);
-    wait_for_answer_fixture("the saved work retains its observation failure", || {
-        !c.conversations().conversations.is_empty()
+    // The failed probe must finish before advancing the frozen clock;
+    // otherwise its later completion schedules retry beyond that clock.
+    wait_for_answer_fixture("the failed presence probe schedules its retry", || {
+        run_log(&c).lines().any(|line| {
+            line.contains("event=conversation_presence_probe_retry")
+                && line.contains(&format!("session=t3:{old}"))
+        })
     });
     assert!(c.sessions().is_empty());
     c.runtime.flag("show-failure", false);
