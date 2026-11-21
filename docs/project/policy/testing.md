@@ -8,10 +8,7 @@ description: Instrukt opts into test authorship with isolated real-binary CLI te
 ### Project opt-in and scope
 
 This repository authors new tests under the opt-in doctrine in
-`sdlc/policy/testing`. While the existing corpus is being cleaned up, no new
-test is authored; existing bindings may be repaired or removed. This pause ends
-when each use case has at most one binding and no test relies on a test-only
-hook or a controlled clock driving a wait. It adapts the generic Rust discipline in
+`sdlc/policy/testing`. It adapts the generic Rust discipline in
 `sdlc/policy/rust/testing` to instrukt's CLI and repository boundaries.
 
 - Pure logic has colocated unit tests: frontmatter, interpolation, runtime
