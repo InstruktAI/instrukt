@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Rust testing patterns: DI via constructor injection, test colocation, sqlx::test when a crate owns a database, the real binary against a temporary HOME for a command-line tool, builders for test data, hand-written doubles by default.'
+description: 'Rust testing patterns: DI via constructor injection, test colocation, sqlx::test when a crate owns a database, the real binary against temporary tool-specific locations for a command-line tool, builders for test data, hand-written doubles by default.'
 visibility: 'public'
 ---
 
@@ -154,20 +154,20 @@ visibility: 'public'
 
 ### When the product is a command-line tool
 
-14. **Run the real binary as a subprocess against a temporary `HOME`.** Each test makes a temporary directory, passes it to the subprocess as `HOME`, creates the git repositories it needs with real `git`, and runs the built binary (`env!("CARGO_BIN_EXE_<name>")`). No mocks of the filesystem or git:
+14. **Run the real binary as a subprocess against temporary locations of its own.** Each test makes a temporary directory and passes it to the subprocess through the narrowest variables that name the locations the binary writes (its own home variable first, `sdlc/policy/testing` rule 17), never as `HOME`; creates the git repositories it needs with real `git`, and runs the built binary (`env!("CARGO_BIN_EXE_<name>")`). No mocks of the filesystem or git:
 
     ```rust
     // spec: <spec_id> <UC-id>
     #[test]
     fn init_writes_the_config_into_the_repository() {
-        let env = TestEnv::new();                  // temporary HOME
+        let env = TestEnv::new();                  // temporary tool locations
         let repo = env.git_repo("demo").commit();  // real git repository
-        env.run(&repo, ["init"]).success();        // the built binary, HOME = env
+        env.run(&repo, ["init"]).success();        // the built binary, its own locations = env
         assert!(repo.path().join("config.yaml").exists());
     }
     ```
 
-15. **A shared helper fences the boundary.** The helper that creates the temporary `HOME` makes the binary under test refuse any write of its own outside it before the write lands, and fails the test that attempted one. It does not watch the developer's real home, so what other programs change there never fails a test. The fence is not a sandbox: programs the binary starts and the test's own fixtures stay inside the temporary `HOME` by construction.
+15. **A shared helper fences the boundary.** The helper that creates the temporary locations makes the binary under test refuse any write of its own outside it before the write lands, and fails the test that attempted one. It does not watch the developer's real home, so what other programs change there never fails a test. The fence is not a sandbox: programs the binary starts and the test's own fixtures stay inside the temporary tool locations by construction.
 
 ### Test data — builders, not fixtures
 
@@ -283,7 +283,7 @@ visibility: 'public'
 
 ### Test isolation
 
-33. **No shared mutable state between tests.** Each test gets its own pool (`sqlx::test` provides this), its own mock bus, its own temporary `HOME`, its own builders.
+33. **No shared mutable state between tests.** Each test gets its own pool (`sqlx::test` provides this), its own mock bus, its own temporary tool locations, its own builders.
 
 34. **No `#[ignore]` accumulation.** A test that's `#[ignore]`d for "flakiness" gets fixed or deleted. The standard build runs all tests.
 
