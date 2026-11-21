@@ -490,6 +490,10 @@ Given the runner is running and no company is set up
 When an operator sets up a company with its connector and publishes its procedure
 Then its members' questions are answered without restarting the runner
 And a question written before the company was admitted is answered too
+When the operator updates the connector's tokens
+Then subsequent questions are answered through the renewed connection
+When the operator removes the company home
+Then its connector disconnects
 ```
 
 ### UC-CV12: Be answered while a project's event responses are not admitted

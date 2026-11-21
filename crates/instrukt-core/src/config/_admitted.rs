@@ -71,7 +71,7 @@ pub struct AdmittedCompany {
 
 /// The secrets a company's declared connectors reference, by `${NAME}`
 /// reference: present and nonblank when its generation was admitted.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct AdmittedSecrets(std::collections::BTreeMap<String, String>);
 
 impl AdmittedSecrets {
@@ -198,13 +198,24 @@ impl Admitted {
         let mut findings = Vec::new();
         let mut complete = true;
         let mut companies = Vec::new();
+        let mut procedure_available = None;
         for (name, unreadable_folder) in super::company_folders(home)? {
             let admitted = match unreadable_folder {
                 Some(error) => Err(vec![unreadable(home.company_dir(&name), &error)]),
                 None => admit_company(home, &name, &agents, given),
             };
             match admitted {
-                Ok(Some(company)) => companies.push(company),
+                Ok(Some(mut company)) => {
+                    if !company.connectors.is_empty()
+                        && !*procedure_available.get_or_insert_with(|| {
+                            super::_validate::company_procedure_available(home)
+                        })
+                    {
+                        findings.push(super::_validate::missing_company_procedure(home, &name));
+                        company.connectors.clear();
+                    }
+                    companies.push(company);
+                }
                 Ok(None) => {}
                 Err(found) => {
                     complete = false;

@@ -3402,6 +3402,9 @@ fn relay(
         )?,
     };
     for initial in work {
+        if !connectors.ready(admitted, &initial.company, &initial.connector) {
+            continue;
+        }
         let check = workers.poll(&initial);
         if matches!(check, CheckedDelivery::Dispatching) {
             // The delivery owns the conversation record until it returns.
@@ -4093,15 +4096,21 @@ fn status_at(home: &Home, now: Timestamp) -> Result<Status, ConversationError> {
         })
         .collect::<Result<Vec<_>, ConversationError>>()?;
     for (company, DeclaredConnector { key, .. }) in demand(home)? {
-        let listed = connectors
-            .iter()
-            .any(|known| known.company == company.as_str() && known.connector == key);
-        if !listed {
+        let failure = instrukt_core::config::connector_procedure_finding(home, &company)
+            .map(|finding| finding.message);
+        if let Some(known) = connectors
+            .iter_mut()
+            .find(|known| known.company == company.as_str() && known.connector == key)
+        {
+            if failure.is_some() && known.state == ConnectionState::Stopped {
+                known.failure = failure;
+            }
+        } else {
             connectors.push(ConnectorStatus {
                 company: company.to_string(),
                 connector: key,
                 state: ConnectionState::Stopped,
-                failure: None,
+                failure,
             });
         }
     }
