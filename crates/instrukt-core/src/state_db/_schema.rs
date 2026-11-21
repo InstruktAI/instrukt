@@ -41,7 +41,26 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v28),
     Step(v29),
     Sql(V30),
+    Step(v31),
 ];
+
+/// Version 31: preserve unmatched-input findings while fixing source bindings.
+fn v31(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages') WHERE name='source_uncertain')",
+        [], |row| row.get(0),
+    )?;
+    if present {
+        tx.execute_batch("UPDATE conversation_messages SET failure=coalesce(failure || '; ', '') ||
+                'native input unmatched after an earlier source move; original source identity unavailable'
+            WHERE source_uncertain=1;
+            UPDATE connected_conversations AS c SET source_identity=NULL
+            WHERE EXISTS(SELECT 1 FROM conversation_messages m WHERE m.company=c.company
+                AND m.connector=c.connector AND m.conversation=c.conversation AND m.source_uncertain=1);
+            ALTER TABLE conversation_messages DROP COLUMN source_uncertain;")?;
+    }
+    Ok(())
+}
 
 /// Version 28: only successful post responses confirm retained answer pieces.
 fn v28(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {

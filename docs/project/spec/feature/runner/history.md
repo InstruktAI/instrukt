@@ -89,9 +89,10 @@ An adopted project whose configuration does not validate is not admitted when
 deciding whether history is on (`project/instrukt/spec/feature/runner/work-dispatch`:
 the runner works from its admitted configuration).
 
-The conversation source also reads one session's whole thread from no position;
-conversations use it after the source's identity changed
-(`project/instrukt/spec/feature/company/conversations`).
+The conversation source can read a scoped thread from no position for an initial
+read. Company bindings refuse a changed source identity under
+`project/instrukt/spec/feature/company/conversations`. History extraction remains
+independently keyed by source identity and keeps its retained archives.
 
 Local extraction, import, lookup and search require no Redis. Installation
 counts enabled history independently as demand for cluster Redis for merged
