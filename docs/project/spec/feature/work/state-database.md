@@ -680,7 +680,7 @@ is `(company, connector, conversation)`.
 | `semantic_key` | The key its one session is started and woken by. |
 | `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. An operator-confirmed replacement can rebind the conversation and reset its source position. |
-| `source_identity`, `position_json` | The identity of the session's native conversation source, and the opaque position its finished turns are read to. A change of identity restarts the read of the bound session at the beginning, preserving existing answers. |
+| `source_identity`, `position_json` | The fixed identity of the bound native source and its opaque read position. A mismatch or missing identity on an existing binding is a configuration error; it advances neither the position nor native work. Initial binding and confirmed replacement establish the identity. |
 | `failure` | Cause of a source read failure or a blocked bound session, with its recovery door where applicable. Cleared when work can resume. |
 
 **`conversation_messages`** — one row per addressed message. Key: the address
@@ -700,7 +700,6 @@ and `message`, the connector's identity of that message.
 | `dispatch_command_id` | The durable T3 command ID for the current send attempt, recorded before dispatch. An uncertain retry reuses its ID and framed input. The ID is cleared with the attempt when it settles. A retained CLI attempt without an ID cannot be replayed. Migration 25 adds the column. |
 | `dispatch_write_at` | When writing the first request byte could have begun under the recorded command ID. Recorded before writing and cleared if zero bytes were written and no earlier write made delivery uncertain. The first byte starts the reconciliation bound. Cleared when the attempt settles. Migration 25 adds it. |
 | `send_unknown_at` | When an unresolved send stopped blocking later work at `SEND_RECONCILE_BOUND`. The original frame, attempt boundary and time remain for a late match. The row is not dispatched again and produces no further waiting indication or notice. A match clears this field. Migration 25 adds it. |
-| `source_uncertain` | The current attempt is missing from a moved conversation source. The company relay records this with the new source position. It blocks repeated delivery until the source identifies that attempt or the binding is replaced through the operator door. Migration 24 initializes earlier rows without this finding. |
 | `retry_at`, `failed_turns` | The next eligible redelivery time on the operator clock and the failed-turn count used for its bounded delay. The company relay records them with the failure, updates the attempt boundary before sending, and clears retry eligibility when the message is served or superseded. Migration 24 leaves earlier rows intact. An earlier failed row without a schedule first receives one when the relay reads it. |
 | `turn` | The native turn that answered it; `NULL` until then. |
 | `failure` | Cause of its last failed capture, delivery, or turn. `NULL` once the message is served. A superseded message keeps its cause. |
@@ -715,6 +714,13 @@ Superseded failed rows are retained for at least seven days from
 `superseded_at`, measured on the runner's operator clock. Each conversation
 relay pass prunes at most 100 eligible rows older than that bound, oldest first.
 Only rows in state `failed` with a recorded `superseded_at` are eligible.
+
+Migration retires the former source-uncertainty flag while preserving message
+states, boundaries, command ids, attempts and failures. An old unmatched-input
+finding is retained in the message failure record and its binding identity is
+made unavailable without clearing its session or position. The original source
+identity cannot be reconstructed from that flag; ordinary bindings keep their
+identity and position.
 
 **`conversation_context_receipts`** — the messages the agent has already
 received, with one row per conversation address and provider message ID.

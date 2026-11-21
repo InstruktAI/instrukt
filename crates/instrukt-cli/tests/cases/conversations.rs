@@ -1312,247 +1312,84 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         c.slack.posts_beginning("The summary is on page two.") == 1 && answers_recorded(&c)
     });
 
-    projected(&c);
-    c.slack.direct("D31", "UANNA", "Check the document.");
-    let other = started(&c, std::slice::from_ref(&session));
-    c.finish_turn(&other, 0, "NOOP");
-    answer_source_changed(&c, 3);
-    let moved_request = c.slack.direct(channel, "USTEVEN", "Where is the appendix?");
-    let state = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
-    wait_for_answer_fixture("the appendix question is accepted", || {
-        state
-            .query_row(
-                "SELECT state='sent' FROM conversation_messages WHERE message=?1",
-                [&moved_request],
-                |r| r.get::<_, bool>(0),
-            )
-            .is_ok_and(|sent| sent)
+    let answer = "The appendix is at the end.";
+    let before = c.runtime.message_count(&session);
+    c.slack.fate(answer, Fate::Refused, usize::MAX);
+    c.slack.direct(channel, "USTEVEN", "Where is the appendix?");
+    wait_for_answer_fixture("the appendix question reaches its bound session", || {
+        c.runtime.message_count(&session) == before + 1
     });
-    projected(&c);
-    let missing_request = c.slack.direct("D32", "USTEVEN", "Is the checklist ready?");
-    let missing = started(&c, &[session.clone(), other.clone()]);
+    c.finish_turn(&session, before, answer);
+    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
-        "a third conversation's turn is accepted before the move",
+        "the appendix answer is retained while Slack refuses it",
         || {
-            state
-                .query_row(
-                    "SELECT state='sent' FROM conversation_messages WHERE message=?1",
-                    [&missing_request],
-                    |r| r.get::<_, bool>(0),
-                )
-                .is_ok_and(|sent| sent)
+            retained_conversations(&c).conversations.iter().any(|row| {
+                row.pending_answers == 1
+                    && row
+                        .failures
+                        .iter()
+                        .any(|cause| cause.contains("not_in_channel"))
+            })
         },
     );
-    c.runtime.flag("die-after-send", true);
-    let lost = c.slack.direct("D31", "UANNA", "What did you find?");
-    c.runner_ended();
-    assert_eq!(c.runtime.message_count(&other), 2);
-    let lost_state: String = state
-        .query_row(
-            "SELECT state FROM conversation_messages WHERE message=?1 AND attempted_at IS NOT NULL",
-            [&lost],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(lost_state, "pending");
-
-    let answer = "The appendix is at the end.";
-    c.runtime.set_status(&session, "idle");
-    c.runtime.set_status(&other, "idle");
-    c.runtime.set_status(&missing, "idle");
-    let appendix_input = c.runtime.message(&session, 2);
-    c.store
-        .turn(&session, "after-move", 2, &appendix_input, answer);
+    c.runner_dies();
+    let delivered = c.runtime.message_count(&session);
+    let original_home = c.store.file.parent().unwrap().parent().unwrap().to_owned();
     let moved = c.env.path("moved-t3");
     std::fs::create_dir_all(moved.join("userdata")).unwrap();
-    let destination = moved.join("userdata/statev2.sqlite");
     original
-        .execute("VACUUM INTO ?1", [destination.to_str().unwrap()])
-        .unwrap();
-    let mut source = Connection::open(destination).unwrap();
-    source.pragma_update(None, "journal_mode", "WAL").unwrap();
-    let tx = source.transaction().unwrap();
-    tx.execute(
-        "DELETE FROM orchestration_v2_projection_messages WHERE message_id IN (?1,?2)",
-        [
-            format!("fake:{other}:input:1"),
-            format!("fake:{missing}:input:0"),
-        ],
-    )
-    .unwrap();
-    tx.execute(
-        "DELETE FROM orchestration_v2_projection_runs WHERE thread_id IN (?1,?2,?3) AND run_id LIKE 'run:%'",
-        [&session, &other, &missing],
-    ).unwrap();
-    // Keep the addressed boundary outside the CLI's latest messages.
-    let mut recent: Vec<serde_json::Value> =
-        serde_json::from_str(&c.runtime.messages(&session)).unwrap();
-    let at = "2026-11-19T10:01:00.000Z";
-    for index in 0..150 {
-        let id = format!("later-{index:03}");
-        let record = serde_json::json!({
-            "id": id, "threadId": session, "role": "assistant", "text": "Later commentary.",
-            "createdAt": at, "updatedAt": at, "streaming": false
-        });
-        tx.execute(
-            "INSERT INTO orchestration_v2_projection_messages VALUES(?1,?2,'assistant',0,?3,?3,?4)",
-            instrukt_core::state_db::rusqlite::params![id, session, at, record.to_string()],
-        )
-        .unwrap();
-        recent.push(serde_json::json!({"role": "assistant", "text": "Later commentary."}));
-    }
-    c.runtime.change(&session, "messages", recent.into());
-    tx.commit().unwrap();
-    // Seed a retained position that would skip this exact thread fingerprint
-    // if interpreted against the new source. The identity still names the old
-    // source. Nothing changes in this thread until the answer is posted.
-    use instrukt_runner::runtime::conversations::Scope;
-    let operator = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    let env = instrukt_core::config::Env::from_pairs([("T3CODE_HOME", moved.to_str().unwrap())]);
-    let runtime = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
-    let projection = runtime.conversation_source(&operator, &env).unwrap();
-    let id = instrukt_core::ids::SessionId::parse(&session).unwrap();
-    let scope = Scope::Only(std::slice::from_ref(&id));
-    let cursor = projection.changed_since(None, scope).unwrap().position;
-    assert!(
-        projection
-            .changed_since(Some(&cursor), scope)
-            .unwrap()
-            .completed_turns
-            .is_empty()
-    );
-    state
         .execute(
-            "UPDATE connected_conversations SET position_json=?1 WHERE conversation='D30'",
-            [serde_json::to_string(&cursor).unwrap()],
+            "VACUUM INTO ?1",
+            [moved.join("userdata/statev2.sqlite").to_str().unwrap()],
         )
         .unwrap();
-
     c.env.set_env("T3CODE_HOME", moved.to_str().unwrap());
     c.run();
-    wait_for_answer_fixture(
-        "the moved source supplies the answer despite the matching old cursor",
-        || c.slack.posts_beginning(answer) == 1 && answers_recorded(&c),
-    );
-    wait_for_answer_fixture("the lost acceptance is still uncertain", || {
+    wait_for_answer_fixture("the operator sees the changed source configuration", || {
         retained_conversations(&c).conversations.iter().any(|row| {
-            row.conversation == "D31"
-                && row
-                    .failures
-                    .iter()
-                    .any(|failure| failure.contains("cannot find the outstanding attempt"))
+            row.conversation == channel
+                && row.failures.iter().any(|cause| {
+                    cause.contains("source configuration") && cause.contains("current source")
+                })
         })
     });
+    c.slack.clear_fates();
     wait_for_answer_fixture(
-        "the accepted turn also stays uncertain without its source",
+        "the retained answer can post while native work is fenced",
+        || c.slack.posts_beginning(answer) == 1 && answers_recorded(&c),
+    );
+    c.slack.direct(channel, "USTEVEN", "What follows?");
+    wait_for_answer_fixture(
+        "the follow-up remains saved behind the source error",
         || {
-            state
-                .query_row(
-                    "SELECT state='sent' AND source_uncertain=1 AND unavailable_since IS NOT NULL
-             FROM conversation_messages WHERE message=?1",
-                    [&missing_request],
-                    |r| r.get::<_, bool>(0),
-                )
-                .unwrap()
+            retained_conversations(&c).conversations.iter().any(|row| {
+                row.conversation == channel
+                    && row.pending_messages == 1
+                    && row
+                        .failures
+                        .iter()
+                        .any(|cause| cause.contains("source configuration"))
+            })
         },
     );
-    assert_eq!(c.slack.posts_beginning("The checklist is ready."), 0);
-    assert_eq!(c.runtime.message_count(&missing), 1);
-
-    // An unrelated native turn can run while the send with a lost
-    // acknowledgement remains uncertain. Wait for the relay to finish a
-    // pass over these records before checking that nothing cleared its status.
-    wait_for_answer_fixture("the lost attempt shows as unavailable", || {
-        c.slack.status("D31", &lost).as_deref() == Some(UNAVAILABLE)
+    assert_eq!(c.runtime.message_count(&session), delivered);
+    assert_eq!(c.sessions().len(), 1);
+    assert_eq!(c.slack.posts_beginning("The summary is on page two."), 1);
+    c.runner_dies();
+    c.env
+        .set_env("T3CODE_HOME", original_home.to_str().unwrap());
+    c.run();
+    wait_for_answer_fixture(
+        "restoring the original source releases the saved follow-up",
+        || c.runtime.message_count(&session) == delivered + 1,
+    );
+    c.finish_turn(&session, delivered, "The next section is ready.");
+    answer_source_changed(&c, 4);
+    wait_for_answer_fixture("the original binding answers after restoration", || {
+        c.slack.posts_beginning("The next section is ready.") == 1 && answers_recorded(&c)
     });
-    let opened = interval(&c, &lost).unwrap();
-    let tx = source.transaction().unwrap();
-    tx.execute(
-        "INSERT INTO orchestration_v2_projection_messages
-         VALUES('unrelated-input',?1,'user',0,?2,?2,json_object('id','unrelated-input',
-                'threadId',?1,'role','user','text','Direct native work','createdAt',?2,'updatedAt',?2,
-                'streaming',json('false')))",
-        [&other, at],
-    ).unwrap();
-    tx.execute(
-        "INSERT INTO orchestration_v2_projection_runs
-         VALUES('unrelated-running',?1,'running',?2,NULL,json_object('id','unrelated-running',
-                'threadId',?1,'userMessageId','unrelated-input','status','running','requestedAt',?2))",
-        [&other, at],
-    ).unwrap();
-    tx.commit().unwrap();
-    #[cfg(debug_assertions)]
-    deliver_probe_wake(&c, &|revision| answer_source_changed(&c, revision), 4);
-    assert!(
-        state
-            .query_row(
-                "SELECT failure IS NULL FROM connected_conversations WHERE conversation='D31'",
-                [],
-                |r| r.get::<_, bool>(0),
-            )
-            .unwrap(),
-        "the moved projection with the unrelated turn must be readable"
-    );
-    assert_eq!(interval(&c, &lost).as_deref(), Some(opened.as_str()));
-    assert_eq!(c.slack.status("D31", &lost).as_deref(), Some(UNAVAILABLE));
-    assert_eq!(c.runtime.message_count(&other), 2);
-    assert_eq!(c.runtime.message_count(&session), 153);
-
-    // The original input and its completion become visible in the new store.
-    c.store.turn(
-        &other,
-        "lost-answer",
-        2,
-        &c.runtime.message(&other, 1),
-        "The document is complete.",
-    );
-    source
-        .execute(
-            "ATTACH DATABASE ?1 AS old",
-            [c.store.file.to_str().unwrap()],
-        )
-        .unwrap();
-    source.execute_batch(
-        "BEGIN;
-         DELETE FROM orchestration_v2_projection_runs WHERE run_id='unrelated-running';
-         INSERT INTO orchestration_v2_projection_runs SELECT * FROM old.orchestration_v2_projection_runs WHERE run_id='lost-answer';
-         INSERT INTO orchestration_v2_projection_messages SELECT * FROM old.orchestration_v2_projection_messages WHERE message_id LIKE 'lost-answer-%';
-         INSERT INTO orchestration_v2_projection_turn_items SELECT * FROM old.orchestration_v2_projection_turn_items WHERE turn_item_id LIKE 'lost-answer-%';
-         COMMIT;",
-    ).unwrap();
-    answer_source_changed(&c, 5);
-    wait_for_answer_fixture("the original send's reply arrives once", || {
-        c.slack.posts_beginning("The document is complete.") == 1 && answers_recorded(&c)
-    });
-    assert_eq!(c.runtime.message_count(&other), 2);
-    c.store.turn(
-        &missing,
-        "missing-answer",
-        1,
-        &c.runtime.message(&missing, 0),
-        "The checklist is ready.",
-    );
-    source.execute_batch(
-        "BEGIN;
-         INSERT INTO orchestration_v2_projection_runs SELECT * FROM old.orchestration_v2_projection_runs WHERE run_id='missing-answer';
-         INSERT INTO orchestration_v2_projection_messages SELECT * FROM old.orchestration_v2_projection_messages WHERE message_id LIKE 'missing-answer-%';
-         INSERT INTO orchestration_v2_projection_turn_items SELECT * FROM old.orchestration_v2_projection_turn_items WHERE turn_item_id LIKE 'missing-answer-%';
-         COMMIT;",
-    ).unwrap();
-    answer_source_changed(&c, 6);
-    wait_for_answer_fixture("the missing accepted turn's reply arrives once", || {
-        c.slack.posts_beginning("The checklist is ready.") == 1 && answers_recorded(&c)
-    });
-    assert_eq!(c.runtime.message_count(&missing), 1);
-    assert_eq!(
-        destinations(&c),
-        [
-            (channel.to_owned(), None),
-            (channel.to_owned(), None),
-            ("D31".to_owned(), None),
-            ("D32".to_owned(), None),
-        ]
-    );
+    assert_eq!(destinations(&c), vec![(channel.to_owned(), None); 3]);
     insta::assert_snapshot!(complete_post_bodies(&c), @r#"
 [
   [
@@ -1565,11 +1402,7 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
   ],
   [
     null,
-    "The document is complete."
-  ],
-  [
-    null,
-    "The checklist is ready."
+    "The next section is ready."
   ]
 ]
 "#);
@@ -1738,17 +1571,6 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         c.runtime.message_count(&successor) == 2
     });
     assert_eq!(c.sessions(), [successor]);
-}
-
-#[cfg(debug_assertions)]
-fn deliver_probe_wake(c: &Company, wake: &impl Fn(u64), revision: u64) {
-    wake(revision);
-    let marker = format!("event=t3_fixture_wake revision={revision}");
-    wait_for_answer_fixture("the relay processes the queued source wake", || {
-        run_log(c)
-            .split_once(&marker)
-            .is_some_and(|(_, after)| after.contains("event=conversation_relay_source_processed"))
-    });
 }
 
 fn conversation_finding(c: &Company, expected: &str) -> Option<String> {

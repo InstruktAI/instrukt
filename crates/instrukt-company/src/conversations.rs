@@ -139,6 +139,8 @@ pub enum ConversationError {
     NoProcedure { role: &'static str },
     #[error("conversation: {0}")]
     Refused(String),
+    #[error("conversation source configuration: {0}")]
+    SourceConfiguration(String),
 }
 
 /// What became of an incoming addressed message.
@@ -860,7 +862,6 @@ struct Message {
     failure: Option<String>,
     retry_at: Option<Timestamp>,
     failed_turns: u32,
-    source_uncertain: bool,
     send_unknown: bool,
     dispatch_id: Option<String>,
     dispatch_write_at: Option<Timestamp>,
@@ -959,7 +960,7 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
     let rows = state
         .read(|conn, path| {
             let mut q = conn
-                .prepare("SELECT message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,source_uncertain,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at
+                .prepare("SELECT message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at
                  FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) AND superseded_at IS NULL
                  ORDER BY state='failed', retry_at, written_us, message")
                 .map_err(state::sql(path))?;
@@ -974,9 +975,8 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, u32>(7)?,
                     r.get::<_, bool>(8)?,
-                    r.get::<_, bool>(9)?,
+                    r.get::<_, Option<String>>(9)?,
                     r.get::<_, Option<String>>(10)?,
-                    r.get::<_, Option<String>>(11)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -995,7 +995,6 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                 failure,
                 retry_at,
                 failed_turns,
-                source_uncertain,
                 send_unknown,
                 dispatch_id,
                 dispatch_write_at,
@@ -1015,7 +1014,6 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                         ConversationError::Refused("invalid failed-turn retry time".into())
                     })?,
                     failed_turns,
-                    source_uncertain,
                     send_unknown,
                     dispatch_id,
                     dispatch_write_at: dispatch_write_at.map(|at| at.parse()).transpose().map_err(
@@ -1025,6 +1023,60 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
             },
         )
         .collect()
+}
+
+/// A source is established only by initial binding or confirmed replacement.
+fn require_source(c: &Conversation, current: &str) -> Result<(), ConversationError> {
+    match c.source_identity.as_deref() {
+        Some(recorded) if recorded == current => Ok(()),
+        None if c.session.is_none()
+            && c.position.is_none()
+            && c.request.is_none()
+            && c.opening.is_none() =>
+        {
+            Ok(())
+        }
+        recorded => Err(ConversationError::SourceConfiguration(format!(
+            "conversation `{}` records source `{}` but the current source is `{current}`; restore the recorded binding/source from retained evidence or use existing confirmed session replacement when its presence checks permit it",
+            c.semantic_key,
+            recorded.unwrap_or("<unavailable>"),
+        ))),
+    }
+}
+
+/// The configured source and clock under which this native delivery was prepared.
+struct NativeDelivery<'a> {
+    home: &'a Home,
+    identity: &'a str,
+    env: &'a Env,
+    clock: &'a dyn Fn() -> Timestamp,
+}
+
+impl NativeDelivery<'_> {
+    fn check_source(
+        &self,
+        adapter: &dyn RuntimeAdapter,
+        state: &RunnerState,
+        c: &Conversation,
+    ) -> Result<(), ConversationError> {
+        let source = adapter.conversation_source(self.home, self.env)?;
+        if source.identity() != self.identity {
+            return Err(ConversationError::SourceConfiguration(format!(
+                "conversation `{}` was prepared against source `{}` but the current source is `{}`; restore the configured source before retrying native delivery",
+                c.semantic_key,
+                self.identity,
+                source.identity(),
+            )));
+        }
+        if let Some(current) = reread(state, c)? {
+            require_source(&current, source.identity())
+        } else {
+            Err(ConversationError::SourceConfiguration(format!(
+                "conversation `{}` no longer has its recorded binding",
+                c.semantic_key
+            )))
+        }
+    }
 }
 
 fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, ConversationError> {
@@ -1187,7 +1239,7 @@ fn available(state: &RunnerState, c: &Conversation, messages: &[String]) -> Resu
     state.write(|tx| {
         for message in messages {
             tx.execute(
-                "UPDATE conversation_messages SET unavailable_since=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND unavailable_since IS NOT NULL AND source_uncertain=0",
+                "UPDATE conversation_messages SET unavailable_since=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND unavailable_since IS NOT NULL",
                 params![c.company.as_str(), c.connector, c.conversation, message],
             )
             .map_err(state::sql(&state::db_path(tx)))?;
@@ -1385,15 +1437,17 @@ fn accepted(
     message: &str,
     boundary: Option<&str>,
     session: Option<&SessionRef>,
+    source_identity: &str,
 ) -> Result<bool, StateError> {
     let applied = state.write(|tx| {
         let path = state::db_path(tx);
         let changed = tx.execute(
             "UPDATE conversation_messages SET state='sent',failure=NULL,unavailable_since=NULL,turn_update=NULL,retry_at=NULL,send_unknown_at=NULL
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
-               AND boundary=?5 AND attempted_at IS NOT NULL AND source_uncertain=0
-               AND state IN ('pending','failed') AND superseded_at IS NULL",
-            params![c.company.as_str(), c.connector, c.conversation, message, boundary],
+               AND boundary=?5 AND attempted_at IS NOT NULL
+               AND state IN ('pending','failed') AND superseded_at IS NULL
+               AND EXISTS(SELECT 1 FROM connected_conversations c WHERE c.company=?1 AND c.connector=?2 AND c.conversation=?3 AND c.source_identity=?6)",
+            params![c.company.as_str(), c.connector, c.conversation, message, boundary, source_identity],
         ).map_err(state::sql(&path))?;
         if changed != 0 {
             remember_delivery(tx, c, message)?;
@@ -1429,7 +1483,7 @@ fn retry_delay(previous_failures: u32) -> SignedDuration {
 /// A failed turn with a ready retry still yields to new messages.
 fn next_message<'a>(open: &'a [Message], c: &Conversation, now: Timestamp) -> Option<&'a Message> {
     let available = || open.iter().filter(|message| !message.send_unknown);
-    if available().any(|m| m.stage == Stage::Sent || m.source_uncertain) {
+    if available().any(|m| m.stage == Stage::Sent) {
         return None;
     }
     let next = match (&c.session, &c.opening) {
@@ -1479,20 +1533,26 @@ fn deliver_one(
     opening_source: Result<Option<OpeningSource>, ConversationError>,
     c: &Conversation,
     next: &Message,
-    clock: &dyn Fn() -> Timestamp,
+    delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
     let state = &RunnerState::new(invocation.home());
-    let now = clock();
+    if let Err(error) = delivery.check_source(adapter, state, c) {
+        set_failure(state, c, Some(&error.to_string()))?;
+        return Err(error);
+    }
     let result = match prepare_delivery(state, c, next) {
         Ok(None) => return Ok(()),
         Err(error) => Err(error),
         Ok(Some(prepared)) => match &c.session {
-            None => opening_source
-                .and_then(|source| start(invocation, admitted, adapter, source, c, &prepared, now)),
-            Some(session) => send(adapter, state, c, session, &prepared, clock),
+            None => opening_source.and_then(|source| {
+                start(
+                    invocation, admitted, adapter, source, c, &prepared, delivery,
+                )
+            }),
+            Some(session) => send(adapter, state, c, session, &prepared, delivery),
         },
     };
-    record_delivery_failure(adapter, state, c, next, clock, &result)?;
+    record_delivery_failure(adapter, state, c, next, delivery.clock, &result)?;
     result
 }
 
@@ -1504,6 +1564,10 @@ fn record_delivery_failure(
     clock: &dyn Fn() -> Timestamp,
     result: &Result<(), ConversationError>,
 ) -> Result<(), ConversationError> {
+    if let Err(error @ ConversationError::SourceConfiguration(_)) = result {
+        set_failure(state, c, Some(&error.to_string()))?;
+        return Ok(());
+    }
     // A runtime failure is retained through the adapter's safe diagnostic,
     // never its raw native output.
     let failure = result.as_ref().err().map(|error| match error {
@@ -1545,10 +1609,11 @@ fn start(
     opening_source: Option<OpeningSource>,
     c: &Conversation,
     next: &Message,
-    now: Timestamp,
+    delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
     let home = invocation.home();
     let state = &RunnerState::new(home);
+    let now = (delivery.clock)();
     let request = match &c.request {
         Some(request) => serde_json::from_str::<RuntimeStart>(request)?,
         None => {
@@ -1633,19 +1698,23 @@ fn start(
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     })?;
-    let thread = adapter.start_or_wake(&RuntimeAssignment {
+    delivery.check_source(adapter, state, c)?;
+    let started = adapter.start_or_wake(&RuntimeAssignment {
         bindings: None,
         invocation,
         project: None,
         request: &request,
         now,
-    })?;
+    });
+    delivery.check_source(adapter, state, c)?;
+    let thread = started?;
     accepted(
         state,
         c,
         &next.message,
         next.boundary.as_deref(),
         Some(&thread.session),
+        delivery.identity,
     )?;
     tracing::info!(target: LOG_TARGET, event = "conversation_session_started", company = %c.company, connector = %c.connector, key = %c.semantic_key, session = %thread.session);
     Ok(())
@@ -1657,16 +1726,24 @@ fn send(
     c: &Conversation,
     session: &SessionRef,
     next: &Message,
-    clock: &dyn Fn() -> Timestamp,
+    delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
+    let clock = delivery.clock;
     let now = clock();
     let content = next
         .content
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
     if let Some(id) = &next.dispatch_id {
-        dispatch_frame(adapter, state, c, next, session, (id, content), clock)?;
-        accepted(state, c, &next.message, next.boundary.as_deref(), None)?;
+        dispatch_frame(adapter, state, c, next, session, (id, content), delivery)?;
+        accepted(
+            state,
+            c,
+            &next.message,
+            next.boundary.as_deref(),
+            None,
+            delivery.identity,
+        )?;
         return Ok(());
     }
     let old_boundary = next
@@ -1688,13 +1765,14 @@ fn send(
         tx.execute(
             "UPDATE conversation_messages SET attempted_at=?5,content=?6,boundary=?7,dispatch_command_id=?9
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
-               AND boundary=?8 AND attempted_at IS NULL AND source_uncertain=0 AND superseded_at IS NULL",
+               AND boundary=?8 AND attempted_at IS NULL AND superseded_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, next.message, now.to_string(),
                 content, boundary, old_boundary, id],
         ).map_err(state::sql(&state::db_path(tx)))
     })?;
     if recorded != 0 {
-        if let Err(error) = dispatch_frame(adapter, state, c, next, session, (&id, &content), clock)
+        if let Err(error) =
+            dispatch_frame(adapter, state, c, next, session, (&id, &content), delivery)
         {
             if let ConversationError::Sessions(error) = &error
                 && adapter.send_certainly_rejected(session, error)
@@ -1703,7 +1781,14 @@ fn send(
             }
             return Err(error);
         }
-        accepted(state, c, &next.message, Some(&boundary), None)?;
+        accepted(
+            state,
+            c,
+            &next.message,
+            Some(&boundary),
+            None,
+            delivery.identity,
+        )?;
     }
     Ok(())
 }
@@ -1715,8 +1800,10 @@ fn dispatch_frame(
     next: &Message,
     session: &SessionRef,
     (id, content): (&str, &str),
-    clock: &dyn Fn() -> Timestamp,
+    delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
+    let clock = delivery.clock;
+    delivery.check_source(adapter, state, c)?;
     let mut marked = false;
     let result = adapter.dispatch_send(session, id, content, &mut || {
         if next.dispatch_write_at.is_none() {
@@ -1725,6 +1812,7 @@ fn dispatch_frame(
         }
         Ok(())
     });
+    delivery.check_source(adapter, state, c)?;
     match result {
         Ok(()) => Ok(()),
         Err(DispatchError::BeforeFrame(error)) => {
@@ -1772,13 +1860,15 @@ fn clear_rejected_send(
         tx.execute(
             "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND boundary=?5
-               AND state IN ('pending','failed') AND send_unknown_at IS NULL",
+               AND state IN ('pending','failed') AND send_unknown_at IS NULL
+               AND EXISTS(SELECT 1 FROM connected_conversations c WHERE c.company=?1 AND c.connector=?2 AND c.conversation=?3 AND c.source_identity IS ?6)",
             params![
                 c.company.as_str(),
                 c.connector,
                 c.conversation,
                 message,
-                boundary
+                boundary,
+                c.source_identity
             ],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
@@ -1799,7 +1889,7 @@ fn send_unknown(
             "UPDATE conversation_messages SET send_unknown_at=?6,failure=?7,unavailable_since=NULL,retry_at=NULL
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND boundary=?5
                AND attempted_at IS NOT NULL AND state IN ('pending','failed')
-               AND send_unknown_at IS NULL AND source_uncertain=0 AND superseded_at IS NULL",
+               AND send_unknown_at IS NULL AND superseded_at IS NULL",
             params![c.company.as_str(), c.connector, c.conversation, message.message, message.boundary, now.to_string(), cause],
         ).map_err(state::sql(&state::db_path(tx)))?;
         if changed != 0 {
@@ -1820,7 +1910,6 @@ fn possible_dispatch_at(message: &Message) -> Option<Timestamp> {
 
 fn send_reconciliation_due(message: &Message, now: Timestamp) -> bool {
     !message.send_unknown
-        && !message.source_uncertain
         && matches!(message.stage, Stage::Pending | Stage::Failed)
         && possible_dispatch_at(message).is_some_and(|at| now >= at + SEND_RECONCILE_BOUND)
 }
@@ -1853,8 +1942,6 @@ pub fn split(text: &str, limit: usize) -> Vec<String> {
     parts
 }
 
-const MISSING_SOURCE_TURN: &str =
-    "the moved conversation source cannot find the outstanding attempt";
 const FAILED_TURN: &str = "the turn ended without a reply";
 
 fn message_for_input<'a>(sent: &'a [Message], text: &str) -> Option<&'a Message> {
@@ -1880,11 +1967,11 @@ fn harvest(
     message_chars: usize,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<Presence, ConversationError> {
+    require_source(c, source.identity())?;
     let Some(session) = &c.session else {
         return Ok(Presence::Present);
     };
-    let moved = c.source_identity.as_deref() != Some(source.identity());
-    let mut read_from = if moved { None } else { c.position.clone() };
+    let mut read_from = c.position.clone();
     let mut found = BTreeSet::new();
     // Only the session's own thread is read: other threads, changing or
     // not, neither delay nor fail its answers.
@@ -1905,8 +1992,7 @@ fn harvest(
                 failure.cause
             )));
         }
-        if !moved
-            && !batch.has_more
+        if !batch.has_more
             && batch.records.is_empty()
             && batch.completed_turns.is_empty()
             && read_from.as_ref() == Some(&batch.position)
@@ -1925,7 +2011,7 @@ fn harvest(
             .into_iter()
             .filter(|m| m.stage == Stage::Sent || possible_dispatch_at(m).is_some())
             .collect::<Vec<_>>();
-        // A sent message whose opening survives the move may still be running.
+        // A retained input may belong to a turn that is still running.
         // A completed run that has no whole turn yet is retried from this same
         // position, even when the source could read its opening input.
         let complete = turns
@@ -2000,7 +2086,7 @@ fn harvest(
                 if !turn.succeeded {
                     tx.execute(
                         "UPDATE conversation_messages SET state='failed',failure=?5,turn_update=NULL,
-                         unavailable_since=coalesce(unavailable_since,?6),attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,source_uncertain=0,send_unknown_at=NULL,retry_at=?7,failed_turns=failed_turns+1
+                         unavailable_since=coalesce(unavailable_since,?6),attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,send_unknown_at=NULL,retry_at=?7,failed_turns=failed_turns+1
                          WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
                         params![c.company.as_str(), c.connector, c.conversation, message.message, FAILED_TURN, ended.to_string(), format!("{:.9}", ended + retry_delay(message.failed_turns))],
                     )
@@ -2026,7 +2112,7 @@ fn harvest(
                     // answer to post opens nothing now, and its status keeps
                     // its newest message while the answer is posted; one with
                     // nothing to post completes the message.
-                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,retry_at=NULL,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,source_uncertain=0,send_unknown_at=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
+                    "UPDATE conversation_messages SET state=?5,turn=?6,failure=NULL,retry_at=NULL,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,send_unknown_at=NULL,turn_ended_at=?8,turn_update=CASE WHEN ?7 THEN turn_update END,unavailable_since=CASE WHEN ?7 THEN unavailable_since END WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND superseded_at IS NULL",
                     params![c.company.as_str(), c.connector, c.conversation, message.message, Stage::Answered.as_str(), turn, !output.is_empty(), ended.to_string()],
                 )
                 .map_err(state::sql(&path))?;
@@ -2035,10 +2121,10 @@ fn harvest(
                 settle_failed_messages(tx, c.company.as_str(), &c.connector, &c.conversation, ended)?;
             }
             if !batch.has_more {
-                for message in sent.iter().filter(|message| moved || message.source_uncertain || message.send_unknown) {
+                for message in sent.iter().filter(|message| message.send_unknown) {
                     if found.contains(&message.message) {
                         let changed = tx.execute(
-                            "UPDATE conversation_messages SET state='sent',source_uncertain=0,failure=NULL,retry_at=NULL,send_unknown_at=NULL
+                            "UPDATE conversation_messages SET state='sent',failure=NULL,retry_at=NULL,send_unknown_at=NULL
                              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
                                AND state IN ('pending','sent','failed')
                                AND (state='sent' OR attempted_at IS NOT NULL) AND superseded_at IS NULL",
@@ -2047,21 +2133,12 @@ fn harvest(
                         if changed != 0 {
                             remember_delivery(tx, c, &message.message)?;
                         }
-                    } else if moved && !message.send_unknown {
-                        tx.execute(
-                            "UPDATE conversation_messages SET source_uncertain=1,failure=?5,
-                               unavailable_since=coalesce(unavailable_since,?6)
-                             WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
-                               AND state IN ('pending','sent','failed')
-                               AND (state='sent' OR attempted_at IS NOT NULL) AND superseded_at IS NULL",
-                            params![c.company.as_str(), c.connector, c.conversation, message.message, MISSING_SOURCE_TURN, ended.to_string()],
-                        ).map_err(state::sql(&path))?;
                     }
                 }
             }
             tx.execute(
-                "UPDATE connected_conversations SET position_json=?4,source_identity=?5 WHERE company=?1 AND connector=?2 AND conversation=?3",
-                params![c.company.as_str(), c.connector, c.conversation, serde_json::to_string(&batch.position).map_err(|e| state::invalid(&path, e))?, source.identity()],
+                "UPDATE connected_conversations SET position_json=?4 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                params![c.company.as_str(), c.connector, c.conversation, serde_json::to_string(&batch.position).map_err(|e| state::invalid(&path, e))?],
             )
             .map_err(state::sql(&path))?;
             Ok(())
@@ -2104,6 +2181,7 @@ struct DeliveryCandidate {
     boundary: Option<String>,
     attempted: Option<Timestamp>,
     source_presence: Presence,
+    source_identity: Option<String>,
     invalidated: bool,
 }
 
@@ -2151,7 +2229,7 @@ impl RelayWorkers {
                     SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3
                     AND superseded_at IS NULL AND (
                         (state='failed' AND failed_turns>=2)
-                        OR ((state='sent' AND ?4 OR source_uncertain=1)
+                        OR ((state='sent' AND ?4)
                             AND julianday(unavailable_since)<=julianday(?5))
                     )
                 )",
@@ -2223,7 +2301,8 @@ impl RelayWorkers {
             .unwrap_or_else(PoisonError::into_inner)
             .get_mut(&c.semantic_key)
         {
-            candidate.invalidated |= c.session.as_ref() != Some(&candidate.session)
+            candidate.invalidated |= c.source_identity != candidate.source_identity
+                || c.session.as_ref() != Some(&candidate.session)
                 || observed != Some(candidate.source_presence);
         }
     }
@@ -2286,6 +2365,7 @@ impl RelayWorkers {
                         boundary: next.boundary.clone(),
                         attempted: next.attempted,
                         source_presence,
+                        source_identity: c.source_identity.clone(),
                         invalidated: false,
                     },
                     reply,
@@ -2312,6 +2392,8 @@ impl RelayWorkers {
         } else {
             Ok(None)
         };
+        let identity = source.identity().to_owned();
+        let env = self.env.clone();
         let key = c.semantic_key.clone();
         let home = home.clone();
         let admitted = admitted.clone();
@@ -2357,6 +2439,12 @@ impl RelayWorkers {
                 return Ok(());
             };
             let adapter = instrukt_runner::runtime::adapter(runtime);
+            let clock = || connectors.now();
+            let delivery = NativeDelivery { home: &home, identity: &identity, env: &env, clock: &clock };
+            if let Err(error) = delivery.check_source(adapter.as_ref(), &state, &current) {
+                set_failure(&state, &current, Some(&error.to_string()))?;
+                return Err(error);
+            }
             let _key = current.session.as_ref().map(|_| {
                 keyed::KeyGuard::claim(
                     &invocation,
@@ -2385,7 +2473,7 @@ impl RelayWorkers {
                 opening,
                 &current,
                 next,
-                &|| connectors.now(),
+                &delivery,
             )
         });
         self.work
@@ -2869,12 +2957,12 @@ fn adopt_replacement(
                 params![c.company.as_str(), c.connector, c.conversation, successor.to_string(), source.identity(), serialized],
             ).map_err(state::sql(&path))?;
             tx.execute(
-                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,source_uncertain=0,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5) AND send_unknown_at IS NULL",
+                "UPDATE conversation_messages SET state=?4,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5) AND send_unknown_at IS NULL",
                 params![c.company.as_str(), c.connector, c.conversation, Stage::Pending.as_str(), Stage::Sent.as_str()],
             ).map_err(state::sql(&path))?;
             tx.execute(
-                "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,source_uncertain=0,failure=CASE WHEN source_uncertain=1 THEN ?4 ELSE failure END WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL",
-                params![c.company.as_str(), c.connector, c.conversation, FAILED_TURN],
+                "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL",
+                params![c.company.as_str(), c.connector, c.conversation],
             ).map_err(state::sql(&path))?;
             Ok(())
         })?;
@@ -2974,7 +3062,10 @@ fn relay(
         let check = workers.poll(&initial);
         if matches!(check, CheckedDelivery::Dispatching) {
             // The delivery owns the conversation record until it returns.
-            // Posting answers already retained needs only the post lock.
+            // Posting retained answers is independent of the native delivery.
+            if let Err(error) = require_source(&initial, source.identity()) {
+                set_failure(&state, &initial, Some(&error.to_string()))?;
+            }
             unconfirmed(&state, &initial, clock())?;
             if let Err(error) = post(admitted, &state, connectors, receipts, &initial) {
                 tracing::warn!(target: LOG_TARGET, event = "conversation_answer_unposted", company = %initial.company, connector = %initial.connector, key = %initial.semantic_key, %error);
@@ -3001,6 +3092,22 @@ fn relay(
         // Intake runs alongside source reads. Only work already captured
         // when the read began may use the presence it observed.
         let before_read = open_messages(&state, &c)?;
+        let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
+        if let Err(error) = require_source(&c, source.identity()) {
+            if !open_messages(&state, &c)?.is_empty() {
+                adopt_replacement(home, &state, adapter, source, &mut c)?;
+            }
+            if require_source(&c, source.identity()).is_err() {
+                set_failure(&state, &c, Some(&error.to_string()))?;
+                let waiting = open_messages(&state, &c)?
+                    .into_iter()
+                    .map(|message| message.message)
+                    .collect::<Vec<_>>();
+                unavailable(&state, &c, &waiting, clock())?;
+            }
+            workers.update_check_source(&c, None);
+            continue;
+        }
         if before_read.iter().any(|message| {
             message.stage == Stage::Failed
                 && !message.send_unknown
@@ -3009,20 +3116,10 @@ fn relay(
         }) {
             schedule_earlier_failures(&state, &c, clock())?;
         }
-        let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
-        let answer_may_need_attention = before_read.iter().any(|message| {
-            message.source_uncertain
-                || (message.attempted.is_some()
-                    && c.source_identity.as_deref() != Some(source.identity()))
-                || match message.stage {
-                    Stage::Failed => message.failed_turns > 0,
-                    Stage::Sent => {
-                        message.failed_turns > 0
-                            || observed.is_none()
-                            || c.source_identity.as_deref() != Some(source.identity())
-                    }
-                    _ => false,
-                }
+        let answer_may_need_attention = before_read.iter().any(|message| match message.stage {
+            Stage::Failed => message.failed_turns > 0,
+            Stage::Sent => message.failed_turns > 0 || observed.is_none(),
+            _ => false,
         });
         if answer_may_need_attention {
             workers.report_answer_failure(admitted, &state, &c, observed.is_none(), clock())?;
@@ -3081,7 +3178,10 @@ fn relay(
                 candidate,
                 result: Ok(DeliveryCheck::Accepted),
             } => {
-                if candidate.invalidated || c.session.as_ref() != Some(&candidate.session) {
+                if candidate.invalidated
+                    || candidate.source_identity != c.source_identity
+                    || c.session.as_ref() != Some(&candidate.session)
+                {
                     stale_acknowledgement(&c, &candidate.message);
                 } else if accepted(
                     &state,
@@ -3089,6 +3189,7 @@ fn relay(
                     &candidate.message,
                     candidate.boundary.as_deref(),
                     None,
+                    source.identity(),
                 )? {
                     continue;
                 }
@@ -3098,8 +3199,7 @@ fn relay(
         };
         let Some(observed) = observed else {
             // A source outage must not prolong an ambiguous send forever.
-            // A moved source and a known archived/deleted target retain their
-            // existing recovery paths.
+            // A known archived/deleted target retains its existing recovery path.
             if c.source_identity.as_deref() == Some(source.identity())
                 && !matches!(
                     &check,
@@ -3145,6 +3245,7 @@ fn relay(
                     _ => None,
                 };
                 if candidate.invalidated
+                    || candidate.source_identity != c.source_identity
                     || (observed != candidate.source_presence && checked_presence != Some(observed))
                 {
                     None
@@ -3175,6 +3276,7 @@ fn relay(
                 if observed == Presence::Present
                     && candidate.source_presence == observed
                     && !candidate.invalidated
+                    && candidate.source_identity == c.source_identity
                     && c.session.as_ref() == Some(&candidate.session)
                 {
                     let now = clock();
@@ -3236,7 +3338,6 @@ fn relay(
         if let Some((candidate, result)) = check
             && let Some(next) = open.iter().find(|message| {
                 matches!(message.stage, Stage::Pending | Stage::Failed)
-                    && !message.source_uncertain
                     && !message.send_unknown
                     && message.message == candidate.message
                     && message.boundary == candidate.boundary
@@ -3306,7 +3407,6 @@ fn relay(
                 matches!(m.stage, Stage::Pending | Stage::Failed)
                     && m.attempted.is_some()
                     && !m.send_unknown
-                    && !m.source_uncertain
                     && before_read(m)
             });
             if let Some(candidate) = unconfirmed {
@@ -3324,7 +3424,7 @@ fn relay(
             workers.dispatch(home, admitted, adapter, source, c, next.message.clone());
         }
     }
-    clear_idle_answer_failures(&state)?;
+    clear_idle_answer_failures(&state, source.identity())?;
     Ok(())
 }
 
@@ -3368,13 +3468,22 @@ fn prune_superseded_failures(state: &RunnerState, now: Timestamp) -> Result<(), 
 /// A conversation without remaining answer work has no answer-read failure
 /// to report. Clear it without locking the conversation or reading T3, even
 /// when all other work is also finished.
-fn clear_idle_answer_failures(state: &RunnerState) -> Result<(), StateError> {
-    let idle_failure =
-        format!("failure IS NOT NULL AND (company,connector,conversation) NOT IN ({RELAY_WORK})");
+fn clear_idle_answer_failures(
+    state: &RunnerState,
+    source_identity: &str,
+) -> Result<(), StateError> {
+    let idle_failure = format!(
+        "failure IS NOT NULL AND (source_identity=?4 OR (session IS NULL AND position_json IS NULL AND request IS NULL AND opening IS NULL)) AND (company,connector,conversation) NOT IN ({RELAY_WORK})"
+    );
     let due = state.read(|conn, path| {
         conn.query_row(
             &format!("SELECT EXISTS(SELECT 1 FROM connected_conversations WHERE {idle_failure})"),
-            relay_stages(),
+            params![
+                relay_stages()[0],
+                relay_stages()[1],
+                relay_stages()[2],
+                source_identity
+            ],
             |row| row.get::<_, bool>(0),
         )
         .map_err(state::sql(path))
@@ -3385,7 +3494,12 @@ fn clear_idle_answer_failures(state: &RunnerState) -> Result<(), StateError> {
     state.write(|tx| {
         tx.execute(
             &format!("UPDATE connected_conversations SET failure=NULL WHERE {idle_failure}"),
-            relay_stages(),
+            params![
+                relay_stages()[0],
+                relay_stages()[1],
+                relay_stages()[2],
+                source_identity
+            ],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())

@@ -225,15 +225,15 @@ connector gives.
   (`general/procedure/company-assistance`). The company relay declares
   `FAILED_RETRY_DELAY`, `FAILED_RETRY_LIMIT`, and `ANSWER_OPERATOR_BOUND`
   in `crates/instrukt-company/src/conversations.rs`.
-- When the source's identity changes, the relay reads the bound session's
-  entire thread from the new source. It matches turns by the addressed message's
-  boundary and retains existing answer and posting records. It commits the new
-  source position with any newly recovered turns. Any outstanding attempt,
-  including a send whose acknowledgement was lost, stays uncertain if the
-  moved source cannot identify its turn. The relay retains that attempt and
-  shows the cause in status. Only reconciliation of that attempt by its
-  boundary ends its no-work interval. A miss in the moved
-  source supplies no proof of absence and permits no repeat send.
+- A bound conversation keeps its recorded native source identity. A different
+  current identity, or a missing identity on an existing binding, is an
+  operator-visible configuration error naming the conversation and recorded and
+  current identities. Native reads, observation results, retries and dispatch
+  stay blocked without changing its position or input disposition. Restore the
+  recorded source to resume. Initial binding and existing confirmed-replacement
+  recovery can establish an identity; a copied or moved source is never adopted
+  automatically. Retained answer pieces can still post while native work is
+  blocked. No implementation diagnostics are sent to the member.
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
 - From the admission of an addressed message until it is complete — its
@@ -539,15 +539,21 @@ Scenario Outline: Receive the complete answer when it can be read
   When <interruption>
   Then the member receives the complete answer once it can be read, allowing a repeat after an uncertain post
   And no partial answer is posted
-  And earlier answers are never repeated and the member does not need to ask again
+  And confirmed earlier answers are not repeated and the member does not need to ask again
 
   Examples:
     | interruption                                                  |
     | the source temporarily holds only part of the completed answer |
-    | the runtime moves its records while an answer is due           |
 ```
 
 ## Known caveats
+
+- An old unmatched-input finding from an automatically adopted source cannot
+  recover the original source identity. Migration preserves that finding and
+  holds the binding with an unavailable identity. The operator restores the
+  correct binding/source from retained evidence or uses existing confirmed
+  replacement recovery when its presence conditions permit it; migration
+  invents neither an identity nor a rebinding command.
 
 - If a thread is deleted after the relay checks readiness and before it
   revalidates dispatch under lock, T3 can refuse the send, and the saved

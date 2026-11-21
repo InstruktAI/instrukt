@@ -786,15 +786,32 @@ mod tests {
                     ('acme','slack','C1/1','sent',3,'2026-11-18T10:00:00Z','2026-11-18T10:00:00Z',
                        'sent','Question','sent-boundary','Framed question','unconfirmed-send',3,NULL,NULL);",
         ).unwrap();
+        // Retain the version-24 initialization, then carry an old moved-source finding forward.
+        let tx = conn.transaction().unwrap();
+        match &_schema::MIGRATIONS[23] {
+            _schema::Migration::Sql(script) => tx.execute_batch(script),
+            _schema::Migration::Step(step) => step(&tx),
+        }
+        .unwrap();
+        tx.pragma_update(None, "user_version", 24).unwrap();
+        tx.commit().unwrap();
+        conn.execute_batch("INSERT INTO connected_conversations(company,connector,conversation,semantic_key,session,source_identity,position_json)
+            VALUES('acme','slack','C1/1','binding','t3:bound','adopted-source','{}');
+            UPDATE conversation_messages SET source_uncertain=1,failure='retained finding' WHERE message='sent';").unwrap();
         migrate(&mut conn, Path::new(":memory:")).unwrap();
         let uncertain: i64 = conn
             .query_row(
-                "SELECT count(*) FROM conversation_messages WHERE source_uncertain=1",
+                "SELECT count(*) FROM pragma_table_info('conversation_messages') WHERE name='source_uncertain'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
         assert_eq!(uncertain, 0);
+        let binding: (Option<String>, String, String, String) = conn.query_row(
+            "SELECT c.source_identity,c.session,c.position_json,m.failure FROM connected_conversations c JOIN conversation_messages m USING(company,connector,conversation) WHERE m.message='sent'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+        assert_eq!(binding, (None, "t3:bound".into(), "{}".into(), "retained finding; native input unmatched after an earlier source move; original source identity unavailable".into()));
         let retained = conn
             .prepare(
                 "SELECT state,boundary,admission_position,unavailable_since,superseded_at,attempted_at,retry_at,failed_turns
