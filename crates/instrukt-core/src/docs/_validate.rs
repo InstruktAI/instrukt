@@ -30,7 +30,7 @@ use super::_text;
 use super::DocsError;
 use crate::config::{CONFIG_FILE_NAME, Configuration};
 use crate::home::Home;
-use crate::ids::{DomainName, SnippetId, TodoSlug};
+use crate::ids::{DomainName, RoleName, SnippetId, TodoSlug};
 use crate::interfaces::{CoreWiring, FlavorCheck};
 
 /// What one validation run covers.
@@ -1500,16 +1500,17 @@ fn check_procedures(
         }
     }
     if let Some(lookup) = &env.wiring.flavor_roles {
-        let declared: BTreeSet<String> = lookup
-            .declared_roles(env.repo_root)?
-            .into_iter()
-            .map(|r| r.as_str().to_owned())
-            .collect();
-        for s in states.iter().filter(|s| !s.subscribed) {
+        let membership = lookup.declared(env.repo_root)?;
+        let declared: BTreeSet<&str> = membership.roles.iter().map(RoleName::as_str).collect();
+        let dispatched: BTreeSet<&SnippetId> = membership.dispatched_procedures.iter().collect();
+        for s in states
+            .iter()
+            .filter(|s| !s.subscribed && dispatched.contains(&s.id))
+        {
             let (Some(role), Some(path)) = (&s.role, &s.repo_path) else {
                 continue;
             };
-            if !declared.contains(role) {
+            if !declared.contains(role.as_str()) {
                 push(out, path, FindingCode::RoleUndeclared, Some(role.clone()));
             }
         }
@@ -1726,7 +1727,8 @@ mod tests {
     use crate::docs::SourceFile;
     use crate::ids::{ProjectSlug, RoleName};
     use crate::interfaces::{
-        FlavorDeclarations, FlavorFinding, FlavorRoles, FlavorSchema, InterfaceError, TodoExistence,
+        FlavorDeclarations, FlavorFinding, FlavorMembership, FlavorRoles, FlavorSchema,
+        InterfaceError, TodoExistence,
     };
 
     struct Todos(Vec<&'static str>);
@@ -1737,15 +1739,25 @@ mod tests {
         }
     }
 
-    struct Roles(Vec<&'static str>);
+    struct Roles {
+        roles: Vec<&'static str>,
+        dispatched: Vec<&'static str>,
+    }
 
     impl FlavorRoles for Roles {
-        fn declared_roles(&self, _: &Path) -> Result<Vec<RoleName>, InterfaceError> {
-            Ok(self
-                .0
-                .iter()
-                .filter_map(|r| RoleName::parse(r).ok())
-                .collect())
+        fn declared(&self, _: &Path) -> Result<FlavorMembership, InterfaceError> {
+            Ok(FlavorMembership {
+                roles: self
+                    .roles
+                    .iter()
+                    .filter_map(|r| RoleName::parse(r).ok())
+                    .collect(),
+                dispatched_procedures: self
+                    .dispatched
+                    .iter()
+                    .filter_map(|p| SnippetId::parse(p).ok())
+                    .collect(),
+            })
         }
     }
 
@@ -1810,10 +1822,19 @@ mod tests {
 
     #[test]
     fn with_todos_on_unknown_slugs_and_undeclared_roles_are_findings() {
-        let c = corpus(&[("docs/project/procedure/p.md", &procedure(PENDING_BUILDER))]);
+        let c = corpus(&[
+            ("docs/project/procedure/p.md", &procedure(PENDING_BUILDER)),
+            (
+                "docs/general/procedure/company-assistance.md",
+                &procedure("role: company-agent\n"),
+            ),
+        ]);
         let wiring = CoreWiring {
             todo_existence: Some(Arc::new(Todos(vec!["known"]))),
-            flavor_roles: Some(Arc::new(Roles(vec!["reviewer"]))),
+            flavor_roles: Some(Arc::new(Roles {
+                roles: vec!["reviewer"],
+                dispatched: vec!["project/demo/procedure/p"],
+            })),
             ..CoreWiring::default()
         };
         assert_eq!(
@@ -1821,7 +1842,10 @@ mod tests {
             [FindingCode::RoleUndeclared, FindingCode::PendingSlugUnknown]
         );
         let declared = CoreWiring {
-            flavor_roles: Some(Arc::new(Roles(vec!["builder"]))),
+            flavor_roles: Some(Arc::new(Roles {
+                roles: vec!["builder"],
+                dispatched: vec!["project/demo/procedure/p"],
+            })),
             ..CoreWiring::default()
         };
         assert!(run(&c, &declared, &[]).is_empty());

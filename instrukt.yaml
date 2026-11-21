@@ -3,5 +3,6 @@ schema_version: 6
 project: instrukt
 modules:
   events: true
+  todos: true
 ci:
   dependency_branch_prefixes: [renovate/, upstream/]
