@@ -25,12 +25,13 @@ use flavor::Tracked;
 
 /// Recording stand-ins for the schedulers' commands, in `<test>/registrar`.
 fn registrar_stubs(env: &mut TestEnv) -> PathBuf {
+    env.remove_env("INSTRUKT_CRONTAB_FILE");
     let dir = env.path("registrar");
     std::fs::create_dir_all(&dir).unwrap();
     let log = dir.join("calls");
     for name in ["launchctl", "systemctl", "crontab"] {
         let script = format!(
-            "#!/bin/sh\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = list-units ]; then exit 0; fi\nif [ \"{name}\" = launchctl ] && [ \"$*\" = list ]; then printf 'PID\\tStatus\\tLabel\\n'; exit 0; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = list ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = load ]; then touch '{dir}/loaded'; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = is-active ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = enable ]; then touch '{dir}/loaded'; fi\nprintf '%s' \"{name}\" >> '{log}'\nfor a in \"$@\"; do printf ' %s' \"$a\" >> '{log}'; done\necho >> '{log}'\n\
+            "#!/bin/sh\nif [ \"$*\" = \"--user show --property=UnitPath --value\" ]; then printf 'systemctl --user show --property=UnitPath --value\\n' >> '{log}'; printf '\"%s\"\\n' \"$SYSTEMD_UNIT_PATH\"; exit 0; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = list-units ]; then exit 0; fi\nif [ \"{name}\" = launchctl ] && [ \"$*\" = list ]; then printf 'PID\\tStatus\\tLabel\\n'; exit 0; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = list ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = launchctl ] && [ \"${{1:-}}\" = load ]; then touch '{dir}/loaded'; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = is-active ]; then [ -f '{dir}/loaded' ]; exit $?; fi\nif [ \"{name}\" = systemctl ] && [ \"${{2:-}}\" = enable ]; then touch '{dir}/loaded'; fi\nprintf '%s' \"{name}\" >> '{log}'\nfor a in \"$@\"; do printf ' %s' \"$a\" >> '{log}'; done\necho >> '{log}'\n\
              if [ \"{name}\" = crontab ] && [ \"${{1:-}}\" = - ]; then cat > '{dir}/crontab'; fi\n\
              if [ \"{name}\" = crontab ] && [ \"${{1:-}}\" = -l ]; then cat '{dir}/crontab' 2>/dev/null || exit 1; fi\n",
             log = log.display(),
@@ -79,11 +80,13 @@ fn between<'t>(text: &'t str, open: &str, close: &str) -> Vec<&'t str> {
 fn registered(env: &TestEnv, calls: &str) -> Registered {
     let plist_path = env
         .home()
-        .join("Library/LaunchAgents/ai.instrukt.tick.plist");
+        .join("Library/LaunchAgents")
+        .join(env.service_name("ai.instrukt.tick.plist"));
     let plist = std::fs::read_to_string(&plist_path).unwrap();
     insta::assert_snapshot!(
         calls.replace(plist_path.to_str().unwrap(), "<plist>"),
         @r"
+    crontab -l
     crontab -l
     launchctl unload <plist>
     launchctl load -w <plist>
@@ -115,42 +118,78 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
 
 #[cfg(not(target_os = "macos"))]
 fn registered(env: &TestEnv, calls: &str) -> Registered {
-    insta::assert_snapshot!(calls, @r"
-    crontab -l
+    let mut unit_path_seen = false;
+    let registration = calls
+        .lines()
+        .filter(|line| {
+            if *line == "systemctl --user show --property=UnitPath --value" {
+                let first = !unit_path_seen;
+                unit_path_seen = true;
+                first
+            } else {
+                *line != "crontab -l"
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!(registration, @r"
+    systemctl --user show --property=UnitPath --value
     systemctl --user daemon-reload
-    systemctl --user enable --now instrukt-tick.timer
-    crontab -l
+    systemctl --user enable --now instrukt-tick-[HOME].timer
     ");
     let units = env.home().join(".config/systemd/user");
-    let timer = std::fs::read_to_string(units.join("instrukt-tick.timer")).unwrap();
+    let timer =
+        std::fs::read_to_string(units.join(env.service_name("instrukt-tick.timer"))).unwrap();
     let on_calendar = between(&timer, "OnCalendar=", "\n")[0];
     insta::assert_snapshot!(on_calendar, @"*-*-* *:*:00");
-    let service = std::fs::read_to_string(units.join("instrukt-tick.service")).unwrap();
+    let service =
+        std::fs::read_to_string(units.join(env.service_name("instrukt-tick.service"))).unwrap();
     let exec = between(&service, "ExecStart=", "\n")[0];
     let (program, rest) = exec[1..].split_once('"').unwrap();
-    let path = between(&service, "Environment=PATH=", "\n")[0];
     Registered {
         program: std::iter::once(program.to_owned())
             .chain(rest.split_whitespace().map(str::to_owned))
             .collect(),
-        env: vec![
-            ("PATH".into(), path.to_owned()),
-            ("HOME".into(), env.home().display().to_string()),
-        ],
+        env: service
+            .lines()
+            .filter_map(|line| line.strip_prefix("Environment="))
+            .map(|value| {
+                let assignment = if value.starts_with('"') {
+                    serde_json::from_str::<String>(value).unwrap()
+                } else {
+                    value.to_owned()
+                };
+                let (key, value) = assignment.split_once('=').unwrap();
+                (key.to_owned(), value.to_owned())
+            })
+            .collect(),
     }
 }
 
 /// Fires the registered wake-up as the scheduler would at `at`: its
 /// program, in the environment it declares, with the clock at `at`.
-fn run_registered(registered: &Registered, cwd: &Path, at: &str) {
-    if let Some((_, home)) = registered.env.iter().find(|(key, _)| key == "HOME") {
-        common::github::sync_auth_clock(Path::new(home), Some(at));
+fn run_registered(env: &TestEnv, registered: &Registered, cwd: &Path, at: &str) {
+    if let Some((_, home)) = registered
+        .env
+        .iter()
+        .find(|(key, _)| key == "INSTRUKT_HOME")
+    {
+        common::github::sync_auth_clock(Path::new(home).parent().unwrap(), Some(at));
     }
     let (program, args) = registered.program.split_first().unwrap();
     let output = std::process::Command::new(program)
         .args(args)
         .env_clear()
         .envs(registered.env.iter().map(|(k, v)| (k, v)))
+        .env(
+            instrukt_core::fsx::FENCE_VARIABLE,
+            env.injected(instrukt_core::fsx::FENCE_VARIABLE).unwrap(),
+        )
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            env.injected("GIT_CONFIG_GLOBAL").unwrap(),
+        )
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("INSTRUKT_NOW", at)
         .current_dir(cwd)
         .output()
@@ -185,13 +224,23 @@ fn the_installed_wake_up_runs_due_work_under_its_missed_run_policy() {
     // The scheduler fires the registered wake-up with nobody at a runner:
     // at 09:05 nothing is due; the computer is then off until 11:05, past
     // several occurrences, and one catch-up run is dispatched.
-    run_registered(&registered, project.env.home(), "2030-01-06T09:05:00Z");
+    run_registered(
+        &project.env,
+        &registered,
+        project.env.home(),
+        "2030-01-06T09:05:00Z",
+    );
     assert!(
         project.rt.thread_calls().is_empty(),
         "{:?}",
         project.rt.calls()
     );
-    run_registered(&registered, project.env.home(), "2030-01-06T11:05:00Z");
+    run_registered(
+        &project.env,
+        &registered,
+        project.env.home(),
+        "2030-01-06T11:05:00Z",
+    );
     assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!("installed-catch-up", project.rt.opening("s1"));
 }

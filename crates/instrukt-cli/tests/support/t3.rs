@@ -16,7 +16,7 @@
 )]
 
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::common::TestEnv;
 
@@ -105,7 +105,7 @@ if (root/'down').exists() or (command=='list' and (root/'list-failure').exists()
 def all_threads():
     return [json.loads(p.read_text()) for p in sorted(root.glob('*.json'))]
 def sync_inputs():
-    db=pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite'
+    db=pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite'
     db.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(db) as connection:
         connection.execute('CREATE TABLE IF NOT EXISTS orchestration_command_receipts (command_id TEXT PRIMARY KEY, aggregate_kind TEXT, aggregate_id TEXT, command_type TEXT, status TEXT)')
@@ -175,7 +175,7 @@ if command=='list':
         copy=dict(threads[0]); copy['threadId']='duplicate'; threads.append(copy)
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
-    if not (pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite').exists(): sync_inputs()
+    if not (pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite').exists(): sync_inputs()
     launch=json.loads(os.environ['T3_TEST_LAUNCH']) if 'T3_TEST_LAUNCH' in os.environ else None
     if launch and (root/(launch['threadId']+'.json')).exists(): print(launch['threadId']); sys.exit(0)
     if launch and (root/(launch['threadId']+'.deleted')).exists(): print('Thread not found.',file=sys.stderr); sys.exit(1)
@@ -222,7 +222,7 @@ elif command=='start':
         if (root/(alias+'.hold-show')).exists() and not (root/(id+'.hold-show')).exists():
             (root/(id+'.hold-show')).symlink_to(root/(alias+'.hold-show'))
     # Native launch publishes its thread projection before accepting the opening.
-    with sqlite3.connect(pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite') as db:
+    with sqlite3.connect(pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite') as db:
         db.execute('CREATE TABLE IF NOT EXISTS orchestration_v2_projection_threads(thread_id TEXT PRIMARY KEY,project_id TEXT,title TEXT,created_at TEXT,updated_at TEXT,archived_at TEXT,deleted_at TEXT,payload_json TEXT)')
         at=t['updatedAt']
         native={'id':id,'projectId':t['projectId'],'title':t['title'],'lineage':{'parentThreadId':None,'relationshipToParent':None},'createdAt':at,'updatedAt':at,'archivedAt':None,'deletedAt':None}
@@ -254,7 +254,7 @@ elif command=='send':
     reject=root/(operands[0]+'.reject-next-command')
     if command_id and reject.exists():
         reject.unlink()
-        with sqlite3.connect(pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite') as db:
+        with sqlite3.connect(pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite') as db:
             db.execute("INSERT INTO orchestration_command_receipts VALUES (?,'thread',?,'message.dispatch','rejected')", (command_id, operands[0]))
         print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
     hold_submit=root/(operands[0]+'.hold-next-submit')
@@ -326,6 +326,7 @@ else: sys.exit(2)
 /// The fake `t3` of one test.
 pub struct FakeT3 {
     script: PathBuf,
+    environment: std::collections::BTreeMap<String, String>,
     state: PathBuf,
 }
 
@@ -348,7 +349,8 @@ impl FakeT3 {
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(&state).unwrap();
         if fresh {
-            let database = env.home().join(".t3/userdata/statev2.sqlite");
+            let database =
+                Path::new(env.injected("T3CODE_HOME").unwrap()).join("userdata/statev2.sqlite");
             std::fs::create_dir_all(database.parent().unwrap()).unwrap();
             let db = instrukt_core::state_db::rusqlite::Connection::open(database).unwrap();
             db.execute_batch("CREATE TABLE IF NOT EXISTS orchestration_command_receipts(command_id TEXT PRIMARY KEY,aggregate_kind TEXT,aggregate_id TEXT,command_type TEXT,status TEXT);").unwrap();
@@ -360,7 +362,11 @@ impl FakeT3 {
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self { script, state }
+        Self {
+            script,
+            state,
+            environment: env.environment().clone(),
+        }
     }
     fn default_project_id(checkout: &std::path::Path) -> String {
         use sha2::{Digest, Sha256};
@@ -409,9 +415,9 @@ impl FakeT3 {
     pub fn project(&self, env: &TestEnv, id: &str) {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
-        let status = std::process::Command::new(&self.script)
+        let status = env
+            .command(&self.script, env.home())
             .args(["thread", "show", id, "--messages", "1"])
-            .env("HOME", env.home())
             .stdout(std::process::Stdio::null())
             .status()
             .unwrap();
@@ -422,9 +428,9 @@ impl FakeT3 {
     pub fn person_sends(&self, env: &TestEnv, id: &str, text: &str) {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
-        let status = std::process::Command::new(&self.script)
+        let status = env
+            .command(&self.script, env.home())
             .args(["thread", "send", id, text])
-            .env("HOME", env.home())
             .status()
             .unwrap();
         assert!(status.success());
@@ -752,6 +758,7 @@ impl FakeT3 {
     }
     pub fn developer_starts_in(&self, checkout: &std::path::Path) -> String {
         let out = std::process::Command::new(&self.script)
+            .envs(&self.environment)
             .args([
                 "thread",
                 "start",
@@ -765,6 +772,7 @@ impl FakeT3 {
     }
     pub fn developer_starts_thread(&self) -> String {
         let out = std::process::Command::new(&self.script)
+            .envs(&self.environment)
             .args([
                 "thread",
                 "start",

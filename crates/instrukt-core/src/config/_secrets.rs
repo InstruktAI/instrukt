@@ -184,9 +184,8 @@ pub fn set_secret_in(
         // Only an existing company home has a secrets file of its own.
         super::Configuration::load_company(&home.for_inspection(), company)?;
     }
-    let machine = Home::at_user_home(home.machine_user_home().into());
     let _lock = LockGuard::acquire(
-        &machine.locks_dir().join(source.lock()),
+        &home.locks_dir().join(source.lock()),
         Duration::from_secs(10),
     )?;
     let path = source.path(home);

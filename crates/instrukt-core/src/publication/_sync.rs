@@ -136,7 +136,7 @@ pub struct SyncReport {
 pub struct GlobalDestination {
     pub path: PathBuf,
     /// The agent runtime that reads it.
-    pub runtime: &'static str,
+    pub runtime: String,
     /// The configured instances it serves.
     pub instances: Vec<String>,
     /// Whether this sync wrote it; `false` when it already held the
@@ -173,21 +173,8 @@ pub enum SyncFinding {
     /// A global agent file written with a reference left for an agent
     /// program to resolve.
     ReferenceKept { path: PathBuf, reference: String },
-    /// An enabled instance that reported no home: its runtime's file was
-    /// written in the vendor's default home.
-    HomeNotReported {
-        instance: String,
-        runtime: &'static str,
-        home: PathBuf,
-    },
-    /// An enabled instance whose home cannot be known: its settings name it
-    /// relative to the runtime's own working directory, which the runtime
-    /// does not report. Nothing is written for it.
-    HomeUnknown {
-        instance: String,
-        runtime: &'static str,
-        path: PathBuf,
-    },
+    /// Per-instance target availability, non-delivery and receipt limitations.
+    InstructionTarget { target: super::InstructionTarget },
     /// The selected runtime could not be asked which agent runtimes are
     /// configured: no global agent file was written in this sync.
     RuntimeUnreachable { runtime: String, cause: String },
@@ -340,7 +327,7 @@ struct GlobalWrite {
     at: PathBuf,
     /// Its path as the runtime's home names it.
     path: PathBuf,
-    runtime: &'static str,
+    runtime: String,
     instances: Vec<String>,
     text: String,
 }
@@ -649,7 +636,7 @@ struct GlobalPlan {
 /// take the key, or is a symbolic link, is the user's: it is left untouched
 /// and named, and the instruction file is still written.
 fn global_files(
-    home: &Home,
+    _home: &Home,
     renderer: &Renderer<'_>,
     answer: Option<Answer>,
 ) -> Result<GlobalPlan, PublicationError> {
@@ -663,35 +650,28 @@ fn global_files(
         }
         Some(Answer::Reported(instances)) => instances,
     };
-    let targets = targets(home.user_home(), &instances);
-    plan.findings
-        .extend(targets.defaulted.iter().map(|(instance, runtime, home)| {
-            SyncFinding::HomeNotReported {
-                instance: instance.clone(),
-                runtime,
-                home: home.clone(),
-            }
-        }));
-    plan.findings
-        .extend(
-            targets
-                .unknown
-                .iter()
-                .map(|(instance, runtime, path)| SyncFinding::HomeUnknown {
-                    instance: instance.clone(),
-                    runtime,
-                    path: path.clone(),
-                }),
-        );
+    let targets = targets(&instances)?;
+    plan.findings.extend(
+        targets
+            .instances
+            .iter()
+            .filter(|target| {
+                target.reason.is_some()
+                    || target.home_source == crate::interfaces::InstructionHomeSource::Default
+                    || !target.assurance.is_empty()
+            })
+            .cloned()
+            .map(|target| SyncFinding::InstructionTarget { target }),
+    );
     // One rendering per runtime, with the references it keeps: every file
     // written from it is named with them.
     let mut rendered = BTreeMap::new();
     for file in &targets.files {
         let runtime = file.destination;
-        let global = match rendered.entry(runtime.cli) {
+        let global = match rendered.entry(file.runtime.clone()) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(renderer.global_file(runtime.cli)?)
+                entry.insert(renderer.global_file(&file.runtime)?)
             }
         };
         plan.findings
@@ -704,13 +684,20 @@ fn global_files(
                         reference: reference.clone(),
                     }),
             );
-        let text = &global.text;
+        let text = if runtime.cli == "cursor" {
+            format!(
+                "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{}",
+                global.text
+            )
+        } else {
+            global.text.clone()
+        };
         plan.global.push(GlobalWrite {
             at: destination(&file.home, Path::new(runtime.file))?,
             path: file.path(),
-            runtime: runtime.cli,
+            runtime: file.runtime.clone(),
             instances: file.instances.clone(),
-            text: text.clone(),
+            text,
         });
         let Some(loading) = runtime.loading else {
             continue;
@@ -856,7 +843,7 @@ fn write(
         let written = tx.write(&file.at, file.text.as_bytes())?;
         global_files.push(GlobalDestination {
             path: file.path.clone(),
-            runtime: file.runtime,
+            runtime: file.runtime.clone(),
             instances: file.instances.clone(),
             written,
         });

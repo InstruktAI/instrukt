@@ -149,26 +149,37 @@ fn global_lines(
                 "{}: keeps {reference} for an agent program to resolve",
                 path.display()
             ),
-            SyncFinding::HomeNotReported {
-                instance,
-                runtime,
-                home,
-            } => format!(
-                "notice: instance `{instance}` ({runtime}) reported no home; its file is written in the default home {}",
-                home.display()
-            ),
-            SyncFinding::HomeUnknown {
-                instance,
-                runtime,
-                path,
-            } => format!(
-                "notice: instance `{instance}` ({runtime}) names `{}` relative to its runtime's own working directory, which the runtime does not report; no file is written for it until its home is absolute",
-                path.display()
-            ),
+            SyncFinding::InstructionTarget { target } => {
+                format!("notice: {}", instruction_line(target))
+            },
             SyncFinding::RuntimeUnreachable { runtime, cause } => format!(
                 "notice: runtime `{runtime}` could not be asked which agent runtimes are configured ({cause}); no global agent file was written, and the next sync writes them"
             ),
         });
     }
     lines
+}
+
+/// Shared sync/init wording for native target limits and non-delivery.
+pub(super) fn instruction_line(target: &instrukt_core::publication::InstructionTarget) -> String {
+    let mut details = match target.reason {
+        Some(reason) => vec![format!("{}; nothing delivered", reason.name())],
+        None => vec![format!("home source: {}", target.home_source.name())],
+    };
+    if let Some(path) = &target.conflict_path {
+        details.push(format!("conflicting entry: {}", path.display()));
+    }
+    if let Some(path) = &target.unknown_home {
+        details.push(format!("unresolved home: {}", path.display()));
+    }
+    if let Some(agent) = &target.registry_agent {
+        details.push(format!("registry agent: {agent}"));
+    }
+    details.extend(target.assurance.iter().map(|a| a.name().to_owned()));
+    format!(
+        "instance `{}` ({}): {}",
+        target.instance,
+        target.runtime,
+        details.join("; ")
+    )
 }

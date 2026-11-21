@@ -126,18 +126,56 @@ pub trait GraphGeneration: Send + Sync {
     fn start_generation(&self, request: &GenerationRequest) -> Result<(), InterfaceError>;
 }
 
+/// How the adapter selected an instruction target home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstructionHomeSource {
+    NativeVariable,
+    Default,
+    Unknown,
+}
+
+impl InstructionHomeSource {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NativeVariable => "native_variable",
+            Self::Default => "default",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// A limitation of instruction relocation or receipt, independent of file presence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstructionAssurance {
+    InstructionRelocationUnverified,
+    RuntimeHomeDiffers,
+}
+
+impl InstructionAssurance {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::InstructionRelocationUnverified => "instruction_relocation_unverified",
+            Self::RuntimeHomeDiffers => "runtime_home_differs",
+        }
+    }
+}
+
 /// One enabled agent instance of the selected runtime, with what the
 /// runtime's adapter resolved for it. Publication reads only these facts: no
 /// runtime settings or environment reach it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfiguredInstance {
     pub instance: ProviderInstanceId,
-    /// The agent runtime the instance runs (`codex`, `claude`, `pi`, ...).
+    /// The open driver/selection name, including adapter-supplied compatibility aliases.
     pub runtime: String,
+    /// Established native loader family; an open selection name alone proves no loader.
+    pub native_runtime: Option<String>,
     /// The registry agent an ACP-registry instance runs.
     pub registry_agent: Option<String>,
     /// The home the instance reads its user-scope files from, when its
-    /// configuration names one; `None` means the runtime's default home.
+    /// native variable or documented default establishes one.
     pub home: Option<PathBuf>,
     /// Each folder in which a link to the instance's file must exist.
     pub link_folders: Vec<PathBuf>,
@@ -146,6 +184,8 @@ pub struct ConfiguredInstance {
     /// the instance's home cannot be known, so `home` is `None`, it has no
     /// link folders, and publication writes nothing for it.
     pub unknown_home: Option<PathBuf>,
+    pub home_source: InstructionHomeSource,
+    pub assurance: Vec<InstructionAssurance>,
 }
 
 /// What the selected runtime reported about its configured agent instances.

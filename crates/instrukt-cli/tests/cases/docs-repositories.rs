@@ -134,7 +134,7 @@ fn a_developer_gives_their_computer_its_doctrine() {
     crate::fixtures::t3::FakeT3::create(&env);
     common::t3_readiness::configure(
         &env,
-        ["claudeAgent", "codex", "antigravity"]
+        ["claudeAgent", "codex"]
             .map(|driver| common::t3_readiness::provider(driver, driver, true))
             .to_vec(),
         serde_json::json!({}),
@@ -185,7 +185,8 @@ fn a_developer_gives_their_computer_its_doctrine() {
     assert!(!is_link(&home.join(".codex/AGENTS.md")));
     assert_eq!(read(&home.join(".codex/AGENTS.md")), claude);
     assert_eq!(read(&dotfiles.join("codex-AGENTS.md")), codex_dotfile);
-    assert_eq!(read(&home.join(".gemini/AGENTS.md")), claude);
+    // Default-only Antigravity is not a relocated delivery fixture.
+    assert!(!home.join(".gemini/AGENTS.md").exists());
 
     // Settings: nothing is written to either, nor through the link.
     assert_eq!(read(&dotfiles.join("claude/settings.json")), "[1, 2]\n");

@@ -147,12 +147,17 @@ fn claims_lines(claims: &ClaimsPreview) -> Vec<String> {
         GlobalFiles::OwnedElsewhere(owner) => lines.push(format!(
             "  global agent files: not written; docs/general/ is owned by project `{owner}`"
         )),
-        GlobalFiles::Rendered { files } => {
-            if files.is_empty() {
+        GlobalFiles::Rendered { files, targets } => {
+            if files.is_empty() && targets.is_empty() {
                 lines.push(
-                    "  global agent files: none; no agent runtime instrukt deploys to is configured"
+                    "  global agent files: none; no agent runtime is configured"
                         .to_owned(),
                 );
+            }
+            for target in targets {
+                if target.reason.is_some() || !target.assurance.is_empty() {
+                    lines.push(format!("  {}", super::sync::instruction_line(target)));
+                }
             }
             for file in files {
                 lines.push(format!(

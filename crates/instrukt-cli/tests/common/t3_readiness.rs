@@ -59,9 +59,15 @@ impl Server {
             )
             .unwrap();
         }
-        let runtime = env.home().join(".t3/userdata/server-runtime.json");
+        let runtime =
+            Path::new(env.injected("T3CODE_HOME").unwrap()).join("userdata/server-runtime.json");
         std::fs::create_dir_all(runtime.parent().unwrap()).unwrap();
         std::fs::write(runtime,json!({"version":1,"pid":std::process::id(),"port":address.port(),"origin":format!("http://{address}"),"serverVersion":"0.1.7"}).to_string()).unwrap();
+        std::fs::write(
+            dir.join("fixture-environment.json"),
+            serde_json::to_vec(&env.vars).unwrap(),
+        )
+        .unwrap();
         let home = env.home().to_path_buf();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
@@ -358,7 +364,7 @@ fn projects(dir: &Path) -> Vec<Value> {
         })
         .collect()
 }
-fn launch(dir: &Path, home: &Path, payload: &Value, owner: u64) -> Value {
+fn launch(dir: &Path, _home: &Path, payload: &Value, owner: u64) -> Value {
     use std::io::Write;
     let Some(project) = projects(dir)
         .into_iter()
@@ -388,7 +394,12 @@ fn launch(dir: &Path, home: &Path, payload: &Value, owner: u64) -> Value {
     }
     let mut child = command
         .args(["--", project["workspaceRoot"].as_str().unwrap(), "-"])
-        .env("HOME", home)
+        .envs(
+            serde_json::from_slice::<std::collections::BTreeMap<String, String>>(
+                &std::fs::read(dir.join("fixture-environment.json")).unwrap(),
+            )
+            .unwrap(),
+        )
         .env("T3_TEST_LAUNCH", payload.to_string())
         .env("T3_TEST_OPERATION_OWNER", owner.to_string())
         .stdin(std::process::Stdio::piped())
@@ -419,7 +430,7 @@ fn launch(dir: &Path, home: &Path, payload: &Value, owner: u64) -> Value {
     json!({"_tag":"Success","value":{"threadId":id,"projection":{"thread":thread},"resumed":false,"sequence":1}})
 }
 
-fn dispatch(dir: &Path, home: &Path, payload: &Value) -> Value {
+fn dispatch(dir: &Path, _home: &Path, payload: &Value) -> Value {
     use std::io::Write as _;
     // The required message.dispatch shape exercised by the pinned release
     // contract. Reject malformed requests before the fake accepts input.
@@ -460,7 +471,12 @@ fn dispatch(dir: &Path, home: &Path, payload: &Value) -> Value {
     let root = dir.parent().unwrap();
     let mut child = std::process::Command::new(root.join("runtime-bin/t3"))
         .args(["thread", "send", "--", thread, "-"])
-        .env("HOME", home)
+        .envs(
+            serde_json::from_slice::<std::collections::BTreeMap<String, String>>(
+                &std::fs::read(dir.join("fixture-environment.json")).unwrap(),
+            )
+            .unwrap(),
+        )
         .env("T3_TEST_COMMAND_ID", id)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -537,7 +553,7 @@ pub fn update(env: &TestEnv, edit: impl FnOnce(&mut Value)) {
     std::fs::write(file, snapshot.to_string()).unwrap();
 }
 pub fn state_file(env: &TestEnv) -> PathBuf {
-    env.home().join(".t3/userdata/server-runtime.json")
+    Path::new(env.injected("T3CODE_HOME").unwrap()).join("userdata/server-runtime.json")
 }
 
 /// One provider instance as T3's snapshot reports it: installed, ready,

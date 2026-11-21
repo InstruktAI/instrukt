@@ -1,4 +1,4 @@
-//! Publication's read-only cockpit: sections fail independently and never probe a runtime.
+//! Publication's read-only cockpit: sections fail independently; instruction targets use supplied adapter facts.
 use super::{PublishedRecord, position_owners};
 use crate::{
     config::{
@@ -22,6 +22,7 @@ pub struct Request<'a> {
     pub executable: Result<PathBuf, std::io::Error>,
     pub caller_error: Option<String>,
     pub env: &'a Env,
+    pub instructions: Result<Option<crate::interfaces::Answer>, String>,
 }
 #[derive(Serialize)]
 pub struct Report {
@@ -52,7 +53,7 @@ fn layer(home: &Home, layer: &Layer, errors: &mut Vec<Value>) -> Option<LayerIns
         }
     }
 }
-/// Report only recorded/local facts. No transport, publication, lock or write is performed.
+/// Inspect local state and supplied adapter facts without publishing, locking or writing.
 pub fn inspect(request: &Request<'_>) -> Report {
     let home = request.home.for_inspection();
     let mut machine_errors = Vec::new();
@@ -97,7 +98,27 @@ pub fn inspect(request: &Request<'_>) -> Report {
             }
         };
     let caller = selected.and_then(|r| r.caller(request.env));
-    let runtime = runtime_section(selected, caller, &runtime_errors);
+    let mut runtime = runtime_section(selected, caller, &runtime_errors);
+    runtime["agent_instructions"] = match &request.instructions {
+        Ok(None) => json!({"outcome":"not_applicable"}),
+        Err(cause) => {
+            runtime_errors.push(json!({"reason":cause}));
+            json!({"error":cause})
+        }
+        Ok(Some(crate::interfaces::Answer::Unreachable { runtime, cause })) => {
+            json!({"outcome":"runtime_unreachable","runtime":runtime,"cause":cause})
+        }
+        Ok(Some(crate::interfaces::Answer::Reported(instances))) => {
+            match super::_agents::targets(instances) {
+                Ok(targets) => json!({"instances":targets.instances}),
+                Err(error) => {
+                    runtime_errors.push(json!({"reason":error.to_string()}));
+                    json!({"error":error.to_string()})
+                }
+            }
+        }
+    };
+    runtime["errors"] = json!(runtime_errors);
     let mut repository_errors = Vec::new();
     let root = match git::worktree_root(request.cwd) {
         Ok(root) => root,

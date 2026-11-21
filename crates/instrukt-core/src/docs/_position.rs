@@ -113,6 +113,12 @@ impl AgentCli {
     }
 }
 
+impl std::borrow::Borrow<str> for AgentCli {
+    fn borrow(&self) -> &str {
+        self.name()
+    }
+}
+
 impl<'de> Deserialize<'de> for AgentCli {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct ProviderName;

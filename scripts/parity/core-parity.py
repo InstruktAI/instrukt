@@ -11,8 +11,8 @@ What it does:
 1. Copies the predecessor's committed `docs/` (``git archive HEAD docs``) into a
    fresh repository under a temporary directory, declares project
    ``teleclaude`` publishing the domains the predecessor's ``teleclaude.yml``
-   publishes, commits, and runs ``instrukt sync`` with ``HOME`` set to a
-   temporary directory. Nothing of the predecessor is written.
+   publishes, commits, and runs ``instrukt sync`` with native application
+   roots isolated and HOME inherited. Nothing of the predecessor is written.
 2. Takes the ids from the predecessor's own ``telec docs index`` (run in the
    predecessor's checkout, read-only), restricted to what that checkout
    publishes: its domains, its local snippets and its third-party docs.
@@ -40,12 +40,15 @@ import io
 import json
 import os
 import re
+import runpy
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 from pathlib import Path
+from collections.abc import Callable
+from typing import cast
 
 TAXONOMIES = ["principle", "concept", "policy", "procedure", "design", "spec", "adr"]
 ROOT_KEYS = ("activation_trigger",)
@@ -179,7 +182,7 @@ class Normaliser:
             # absolute paths) + architecture overview § The home: the
             # published tree is ~/.instrukt/docs, the predecessor's is
             # ~/.teleclaude/docs.
-            (str(home / ".instrukt" / "docs"), "<HOME_DOCS>"),
+            (str(home / "instrukt" / "docs"), "<HOME_DOCS>"),
             (str(pred_home / ".teleclaude" / "docs"), "<HOME_DOCS>"),
             ("~/.instrukt/docs", "<HOME_DOCS>"),
             ("~/.teleclaude/docs", "<HOME_DOCS>"),
@@ -377,13 +380,14 @@ def parity(pred: Path, binary: Path, out: Path, work: Path) -> int:
         "[user]\n\tname = Parity Run\n\temail = parity@example.test\n"
         "[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"
     )
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": str(home),
+    launcher = Path(__file__).resolve().parents[1] / "with-runtime-homes.py"
+    isolate = cast(Callable[[Path], dict[str, str]], runpy.run_path(str(launcher))["isolated_environment"])
+    env = isolate(home)
+    env.update({
         "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
         "GIT_CONFIG_NOSYSTEM": "1",
         "LANG": "C.UTF-8",
-    }
+    })
     clone = work / "teleclaude"
     clone.mkdir()
     code, pred_head, _ = run(["git", "rev-parse", "HEAD"], pred)
@@ -397,8 +401,8 @@ def parity(pred: Path, binary: Path, out: Path, work: Path) -> int:
         tar.extractall(clone, filter="data")
     migrated = migrate(clone, Path(os.environ["HOME"]))
     (out / "migrations.json").write_text(json.dumps(migrated, indent=2))
-    (home / ".instrukt").mkdir()
-    (home / ".instrukt" / "instrukt.yaml").write_text(MACHINE)
+    (home / "instrukt").mkdir()
+    (home / "instrukt" / "instrukt.yaml").write_text(MACHINE)
     domains = publishes((pred / "teleclaude.yml").read_text())
     layer = ["schema_version: 1", "project: teleclaude", "publishes:"]
     for slug, trigger in domains:

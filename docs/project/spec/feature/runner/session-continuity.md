@@ -350,12 +350,25 @@ stop before revocation leaves the session bounded by its short TTL.
 
 The same read answers publication's question which agent runtimes are
 configured (`project/instrukt/spec/feature/publication/agent-entrypoints`):
-each enabled provider instance in the response's server settings, its driver,
-for an ACP-registry instance the registry agent it names, and the home it
-reports: the home its settings name, otherwise the runtime's home variable in
-its instance environment. An instance naming neither reports no home; a home
-T3 takes from its own process environment is not in the response. A home or
-overlay folder its settings name by a relative path is not known either: T3
+each enabled provider instance in the response's server settings, its open
+well-formed driver name (wire driver `claudeAgent` is reported as `claude`
+for compatibility), without filtering through model-selection decoding. The
+canonical selection name and the established native loader family remain separate:
+an unfamiliar wire driver named `claude` does not acquire Claude loading merely
+by colliding with the index alias. The adapter reports
+registry-agent identity independently from the instance and driver names.
+The adapter combines settings with the invocation's inherited native variables:
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`, `FX_HOME`, `KIRO_HOME`
+and `PI_CODING_AGENT_DIR`. Settings translated into effective Codex/Claude
+native variables and Codex shadow links retain their pinned precedence.
+Otherwise a nonsecret instance value precedes an inherited native value.
+Defaults use the inherited machine user home. Generic instance HOME/USERPROFILE,
+OpenCode XDG, Grok variables and private Antigravity profile derivation do not
+select instruction targets. Opaque/redacted overrides remain unknown.
+Relocated Claude/fx targets carry `instruction_relocation_unverified`;
+Antigravity's default target carries `runtime_home_differs` because pinned T3
+forces a private profile. These facts qualify receipt separately from output.
+A home or overlay folder its settings name by a relative path is not known either: T3
 resolves it against its own process working directory, which the response
 does not report (its `cwd` is the workspace it serves), so such an instance
 is reported with that path as unknown, with no home and no folder, and

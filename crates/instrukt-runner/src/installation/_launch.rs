@@ -28,21 +28,7 @@ impl ReceiverLaunch {
             schema_version: 1,
             executable: request.wake.executable.into(),
             port,
-            environment: BTreeMap::from([
-                (
-                    "HOME".into(),
-                    request.home.machine_user_home().display().to_string(),
-                ),
-                (
-                    "INSTRUKT_HOME".into(),
-                    request.home.root().display().to_string(),
-                ),
-                (
-                    "INSTRUKT_DEVELOPMENT".into(),
-                    u8::from(request.home.is_development()).to_string(),
-                ),
-                ("PATH".into(), request.wake.path_env.into()),
-            ]),
+            environment: request.wake.environment(),
         }
     }
     pub fn encode(&self) -> anyhow::Result<String> {
@@ -58,7 +44,8 @@ impl ReceiverLaunch {
             value.environment.keys().all(|key| matches!(
                 key.as_str(),
                 "HOME" | "INSTRUKT_HOME" | "INSTRUKT_DEVELOPMENT" | "PATH"
-            )),
+            ) || crate::install::LOCATION_VARIABLES
+                .contains(&key.as_str())),
             "invalid receiver environment shape"
         );
         Ok(value)
@@ -94,10 +81,15 @@ pub(crate) const PROBE_PATH: &str = "/_instrukt/receiver";
 
 /// Fingerprint only this running process and its machine-local invocation settings.
 pub(crate) fn running(port: u16) -> anyhow::Result<String> {
-    let environment = ["HOME", "INSTRUKT_HOME", "INSTRUKT_DEVELOPMENT", "PATH"]
+    let mut environment = ["HOME", "INSTRUKT_HOME", "INSTRUKT_DEVELOPMENT", "PATH"]
         .into_iter()
         .map(|key| Ok((key.into(), std::env::var(key)?)))
         .collect::<Result<BTreeMap<String, String>, std::env::VarError>>()?;
+    environment.extend(
+        crate::install::LOCATION_VARIABLES
+            .iter()
+            .filter_map(|key| std::env::var(key).ok().map(|v| ((*key).to_owned(), v))),
+    );
     let invocation = ReceiverLaunch {
         schema_version: 1,
         executable: std::env::current_exe()?,
@@ -156,7 +148,11 @@ pub(crate) fn verify(
 /// launchctl's documented override affects one invocation; the receiver arms the next
 /// start before serving so a cached pre-invocation launcher cannot return on restart.
 pub(crate) fn arm(home: &Home, port: u16) -> anyhow::Result<()> {
-    let Some(unit) = super::_services::launchd_receiver(home, port) else {
+    let locations = crate::install::SchedulerLocations::resolve(
+        home,
+        &instrukt_core::config::Env::from_process(),
+    )?;
+    let Some(unit) = super::_services::launchd_receiver(home, &locations, port) else {
         return Ok(());
     };
     let (desired, _) =

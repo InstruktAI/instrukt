@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/module-installation.rs
+expression: notices.remove(0)
+---
+alternate LaunchAgents directory is loaded explicitly; it is not automatically scanned at login

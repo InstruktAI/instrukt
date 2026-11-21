@@ -1,6 +1,5 @@
 #!/bin/sh
-# Check this repository's committed project layer under a throwaway HOME, so
-# no live home is read or written. It runs the instrukt INSTRUKT_CHECK_BIN
+# Check this repository's committed project layer with isolated native roots and inherited HOME. It runs the instrukt INSTRUKT_CHECK_BIN
 # names: the commit check passes the one scripts/instrukt-for-checks chooses,
 # which is this checkout's development build when no crate file is newer than
 # it, else the installed instrukt, and every-file runs pass a build of the
@@ -22,16 +21,16 @@ if [ -z "$instrukt" ]; then
     esac
     instrukt="$target/debug/instrukt"
 fi
-home="$(mktemp -d)"
-trap 'rm -rf "$home"' EXIT
-unset XDG_STATE_HOME INSTRUKT_HOME INSTRUKT_DEVELOPMENT
-# The machine layer is written from outside the repository: a configuration
-# writing verb run inside it would convert the very layer under check.
-(
-    cd "$home"
-    HOME="$home" "$instrukt" config init --global >/dev/null
-    revision="$(HOME="$home" "$instrukt" config get --global --revision)"
-    HOME="$home" "$instrukt" config patch --global --revision "$revision" --yaml "runner: {runtime: t3}
-redis: {cluster: {url: 'redis://127.0.0.1:6379'}}"
-)
-HOME="$home" "$instrukt" config validate
+# Keep all machine-layer commands in one selected-root lifetime.
+# shellcheck disable=SC2016 # Variables expand in the delegated shell.
+exec python3 scripts/with-runtime-homes.py sh -eu -c '
+    binary=$1
+    repository=$PWD
+    cd "$(dirname "$INSTRUKT_HOME")"
+    "$binary" config init --global >/dev/null
+    revision=$("$binary" config get --global --revision)
+    "$binary" config patch --global --revision "$revision" --yaml "runner: {runtime: t3}
+redis: {cluster: {url: redis://127.0.0.1:6379}}"
+    cd "$repository"
+    "$binary" config validate
+' check-config "$instrukt"

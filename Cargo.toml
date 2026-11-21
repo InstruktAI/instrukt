@@ -61,7 +61,7 @@ walkdir = "2"
 
 # test-only
 assert_cmd = "2"
-insta = { version = "1", features = ["yaml", "json"] }
+insta = { version = "1", features = ["yaml", "json", "filters"] }
 predicates = "3"
 proptest = "1"
 tiny_http = "=0.12.0"

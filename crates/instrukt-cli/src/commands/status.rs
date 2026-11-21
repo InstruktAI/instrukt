@@ -14,6 +14,23 @@ pub fn run(
 ) -> anyhow::Result<ExitCode> {
     let env = crate::wiring::environment(ctx)
         .unwrap_or_else(|_| instrukt_core::config::Env::from_process());
+    let instructions = match instrukt_core::publication::position_owners(&ctx.home) {
+        Err(error) => Err(error.to_string()),
+        Ok(owners) if owners.keys().any(|domain| domain.as_str() == "general") => {
+            Ok(Some(match crate::wiring::configured_runtimes(ctx) {
+                Ok(Some(runtimes)) => runtimes.configured(&ctx.home, &env),
+                Ok(None) => instrukt_core::interfaces::Answer::Unreachable {
+                    runtime: "selected".into(),
+                    cause: "no compiled adapter".into(),
+                },
+                Err(error) => instrukt_core::interfaces::Answer::Unreachable {
+                    runtime: "selected".into(),
+                    cause: error.to_string(),
+                },
+            }))
+        }
+        Ok(_) => Ok(None),
+    };
     let report =
         instrukt_core::publication::status::inspect(&instrukt_core::publication::status::Request {
             home: &ctx.home,
@@ -22,6 +39,7 @@ pub fn run(
             executable: std::env::current_exe(),
             caller_error,
             env: &env,
+            instructions,
         });
     if args.json {
         ctx.out.json(&report)?;

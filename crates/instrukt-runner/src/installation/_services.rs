@@ -5,7 +5,7 @@
 //! under another name is never read or touched
 //! (`project/instrukt/policy/checks-and-guards`).
 use super::{Disposition, Report, Request, ResourceKind};
-use crate::install::Scheduler;
+use crate::install::{Scheduler, systemd_assignments};
 use crate::process::Invocation;
 use instrukt_core::fsx::atomic_write_with_permissions;
 use instrukt_core::home::Home;
@@ -21,6 +21,7 @@ pub(super) struct Definition {
     pub name: ResourceKind,
     pub unit: String,
     pub scheduler: Scheduler,
+    pub locations: crate::install::SchedulerLocations,
     /// The service's definition files: written by installation and removed
     /// when it is withdrawn.
     pub files: BTreeMap<PathBuf, String>,
@@ -53,9 +54,12 @@ impl Definition {
             }
         }
         if self.scheduler == Scheduler::Crontab {
-            return Ok(
-                marked_line(&crontab()?, marker(&self.unit)).as_deref() != Some(self.unit.as_str())
-            );
+            return Ok(marked_line(
+                &crate::install::read_crontab(self.locations.crontab_file.as_deref())?,
+                marker(&self.unit),
+            )
+            .as_deref()
+                != Some(self.unit.as_str()));
         }
         Ok(false)
     }
@@ -88,7 +92,11 @@ impl Definition {
     /// its manager reports it registered.
     fn present(&self) -> anyhow::Result<bool> {
         if self.scheduler == Scheduler::Crontab {
-            return Ok(marked_line(&crontab()?, marker(&self.unit)).is_some());
+            return Ok(marked_line(
+                &crate::install::read_crontab(self.locations.crontab_file.as_deref())?,
+                marker(&self.unit),
+            )
+            .is_some());
         }
         let listed = listed(self.scheduler)?;
         Ok(self.files.keys().any(|file| file.exists())
@@ -111,9 +119,12 @@ impl Definition {
     /// in the environment its manager retains for its registration.
     fn named_home(&self) -> anyhow::Result<Belongs> {
         if self.scheduler == Scheduler::Crontab {
-            return Ok(marked_line(&crontab()?, marker(&self.unit))
-                .and_then(|line| named_home(&line))
-                .map_or(Belongs::Unnamed, Belongs::Home));
+            return Ok(marked_line(
+                &crate::install::read_crontab(self.locations.crontab_file.as_deref())?,
+                marker(&self.unit),
+            )
+            .and_then(|line| named_home(&line))
+            .map_or(Belongs::Unnamed, Belongs::Home));
         }
         let mut files = false;
         for file in self.files.keys() {
@@ -207,7 +218,10 @@ fn managers(request: &Request<'_>) -> Vec<Scheduler> {
         .into_iter()
         .filter(|scheduler| *scheduler != request.scheduler),
     );
-    found.retain(|scheduler| on_path(program(*scheduler), request.wake.path_env));
+    found.retain(|scheduler| {
+        (*scheduler == Scheduler::Crontab && request.wake.locations.crontab_file.is_some())
+            || on_path(program(*scheduler), request.wake.path_env)
+    });
     found
 }
 fn on_path(program: &str, path_env: &str) -> bool {
@@ -296,84 +310,6 @@ fn registered_home(scheduler: Scheduler, unit: &str) -> anyhow::Result<Belongs> 
         }
     }
     Ok(Belongs::Unnamed)
-}
-
-/// The assignments of systemd's `Environment` property as `systemctl show`
-/// prints them: separated by spaces, each one that needs it in double quotes
-/// with `"`, `\\`, `` ` `` and `$` escaped by a backslash and control
-/// characters as C escapes (systemd's `shell_maybe_quote`). Output that form
-/// never takes is refused: a quote that is not closed or not at a word's
-/// edge, a backslash ending the text, or an escape it does not write.
-fn systemd_assignments(line: &str) -> Result<Vec<String>, String> {
-    let mut words = Vec::new();
-    let mut word: Vec<u8> = Vec::new();
-    let mut started = false;
-    let mut quoted = false;
-    let mut bytes = line.bytes().peekable();
-    while let Some(byte) = bytes.next() {
-        match byte {
-            b'"' if quoted => {
-                quoted = false;
-                if bytes
-                    .peek()
-                    .is_some_and(|next| !matches!(next, b' ' | b'\t'))
-                {
-                    return Err("text follows a closing quote".into());
-                }
-            }
-            b'"' => {
-                if started {
-                    return Err("a quote inside an assignment".into());
-                }
-                quoted = true;
-                started = true;
-            }
-            b'\\' if quoted => {
-                let next = bytes.next().ok_or("a backslash ends the text")?;
-                match next {
-                    b'a' => word.push(0x07),
-                    b'b' => word.push(0x08),
-                    b'f' => word.push(0x0c),
-                    b'n' => word.push(b'\n'),
-                    b'r' => word.push(b'\r'),
-                    b't' => word.push(b'\t'),
-                    b'v' => word.push(0x0b),
-                    b'"' | b'\\' | b'`' | b'$' => word.push(next),
-                    b'0'..=b'3' => {
-                        let mut value = next - b'0';
-                        for _ in 0..2 {
-                            match bytes.next() {
-                                Some(digit @ b'0'..=b'7') => value = value * 8 + (digit - b'0'),
-                                _ => return Err("an octal escape without three digits".into()),
-                            }
-                        }
-                        word.push(value);
-                    }
-                    other => {
-                        return Err(format!("the escape \\{}", char::from(other)));
-                    }
-                }
-            }
-            b' ' | b'\t' if !quoted => {
-                if started {
-                    words.push(String::from_utf8_lossy(&word).into_owned());
-                    word.clear();
-                    started = false;
-                }
-            }
-            other => {
-                word.push(other);
-                started = true;
-            }
-        }
-    }
-    if quoted {
-        return Err("a quote is not closed".into());
-    }
-    if started {
-        words.push(String::from_utf8_lossy(&word).into_owned());
-    }
-    Ok(words)
 }
 
 /// The notice for a registration whose home cannot be established: what
@@ -485,7 +421,7 @@ fn discover_under(
 fn receiver_ports(request: &Request<'_>) -> anyhow::Result<Vec<u16>> {
     let (dir, prefix, end) = match request.scheduler {
         Scheduler::Launchd => (
-            launch_agents(request.home),
+            request.wake.locations.launch_agents.clone(),
             "ai.instrukt.webhooks-",
             match crate::install::home_suffix(request.home) {
                 Some(suffix) => format!(".{suffix}.plist"),
@@ -493,7 +429,7 @@ fn receiver_ports(request: &Request<'_>) -> anyhow::Result<Vec<u16>> {
             },
         ),
         Scheduler::SystemdUser => (
-            systemd_dir(request),
+            request.wake.locations.systemd.clone(),
             "instrukt-webhooks-",
             match crate::install::home_suffix(request.home) {
                 Some(suffix) => format!("-{suffix}.socket"),
@@ -597,6 +533,20 @@ pub(super) fn reconcile(
     let changed = desired.changed()?;
     let active = running(desired)?;
     let paths = desired.files.keys().cloned().collect::<Vec<_>>();
+    if desired.scheduler == Scheduler::Crontab && desired.locations.crontab_file.is_some() {
+        if !request.check {
+            crate::install::register(request.scheduler, &request.wake)?;
+        }
+        report.finding(desired.name, "file_only: cron table is materialized but not registered; configure native scheduling for wake-up");
+        report.resource(
+            desired.name,
+            Disposition::Unmet,
+            desired.locations.crontab_file.iter().cloned().collect(),
+            projects,
+            "file_only: not registered",
+        );
+        return Ok(());
+    }
     if request.check {
         let unmet = changed || !active || !others.is_empty();
         if unmet {
@@ -1031,30 +981,6 @@ fn marked_line(table: &str, marker: &str) -> Option<String> {
         .find(|line| line.trim_end().ends_with(marker))
         .map(str::to_owned)
 }
-/// The user's crontab; empty when cron says the user has none.
-fn crontab() -> anyhow::Result<String> {
-    let table = Invocation::program("crontab", &["-l"]).run(Duration::from_secs(30))?;
-    anyhow::ensure!(
-        table.success || table.stderr.to_ascii_lowercase().contains("no crontab for"),
-        "cannot inspect crontab; restore access before install"
-    );
-    Ok(if table.success {
-        table.stdout
-    } else {
-        String::new()
-    })
-}
-fn launch_agents(home: &Home) -> PathBuf {
-    home.user_home().join("Library/LaunchAgents")
-}
-fn systemd_dir(request: &Request<'_>) -> PathBuf {
-    request
-        .wake
-        .config_home
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| request.home.user_home().join(".config"))
-        .join("systemd/user")
-}
 fn restart_receiver(home: &Home, definition: &Definition) -> anyhow::Result<()> {
     if definition.scheduler == Scheduler::Launchd {
         super::_launch::arm(
@@ -1073,6 +999,7 @@ fn restart_receiver(home: &Home, definition: &Definition) -> anyhow::Result<()> 
             &format!("gui/{uid}/{}", definition.unit),
         ])
     } else {
+        definition.locations.verify_systemd()?;
         required(&["systemctl", "--user", "daemon-reload"])?;
         required(&[
             "systemctl",
@@ -1114,14 +1041,18 @@ fn running(d: &Definition) -> anyhow::Result<bool> {
     match d.scheduler {
         Scheduler::Launchd => command(&["launchctl", "list", &d.unit]),
         Scheduler::SystemdUser => {
+            d.locations.verify_systemd()?;
             Ok(
                 command(&["systemctl", "--user", "is-active", "--quiet", &d.unit])?
                     && command(&["systemctl", "--user", "is-enabled", "--quiet", &d.unit])?,
             )
         }
         Scheduler::Crontab => {
-            let result = Invocation::program("crontab", &["-l"]).run(Duration::from_secs(30))?;
-            Ok(result.success && result.stdout.lines().any(|line| line == d.unit))
+            if d.locations.crontab_file.is_some() {
+                return Ok(false);
+            }
+            let text = crate::install::read_crontab(None)?;
+            Ok(text.lines().any(|line| line == d.unit))
         }
     }
 }
@@ -1134,6 +1065,7 @@ fn start(d: &Definition) -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("missing plist"))?;
         required(&["launchctl", "load", "-w", &file.display().to_string()])
     } else {
+        d.locations.verify_systemd()?;
         required(&["systemctl", "--user", "daemon-reload"])?;
         required(&["systemctl", "--user", "enable", "--now", &d.unit])
     }
@@ -1190,23 +1122,15 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
             }
         }
         Scheduler::Crontab => {
-            let result = Invocation::program("crontab", &["-l"]).run(Duration::from_secs(30))?;
-            anyhow::ensure!(
-                result.success,
-                "cannot read crontab; restore access before withdrawal"
-            );
+            let current = crate::install::read_crontab(d.locations.crontab_file.as_deref())?;
             let marker = marker(&d.unit);
-            let text = result
-                .stdout
+            let text = current
                 .lines()
                 .filter(|line| !line.trim_end().ends_with(marker))
                 .collect::<Vec<_>>()
                 .join("\n")
                 + "\n";
-            let written = Invocation::program("crontab", &["-"])
-                .input(text.as_bytes())
-                .run(Duration::from_secs(30))?;
-            anyhow::ensure!(written.success, "cannot withdraw owned crontab line");
+            crate::install::write_crontab(d.locations.crontab_file.as_deref(), &text)?;
         }
     }
     Ok(())
@@ -1226,6 +1150,7 @@ pub(super) fn tick(request: &Request<'_>) -> Definition {
                 .into(),
         },
         scheduler: request.scheduler,
+        locations: request.wake.locations.clone(),
         files,
         kept: BTreeMap::new(),
         probe: None,
@@ -1265,15 +1190,10 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
             "<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>".into()
         };
         let sockets=socket.map_or(keep,|port|format!("<key>Sockets</key><dict><key>instrukt</key><dict><key>SockNodeName</key><string>127.0.0.1</string><key>SockServiceName</key><string>{port}</string><key>SockType</key><string>stream</string></dict></dict>"));
-        files.insert(request.home.user_home().join(format!("Library/LaunchAgents/{label}.plist")),format!("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>{label}</string><key>ProgramArguments</key><array>{program}</array><key>EnvironmentVariables</key><dict><key>HOME</key><string>{}</string><key>INSTRUKT_HOME</key><string>{}</string><key>INSTRUKT_DEVELOPMENT</key><string>{}</string><key>PATH</key><string>{}</string></dict><key>Umask</key><integer>63</integer>{sockets}</dict></plist>\n",xml(&request.home.machine_user_home().display().to_string()),xml(&request.home.root().display().to_string()),u8::from(request.home.is_development()),xml(request.wake.path_env)));
+        files.insert(request.wake.locations.launch_agents.join(format!("{label}.plist")),format!("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>{label}</string><key>ProgramArguments</key><array>{program}</array><key>EnvironmentVariables</key><dict><key>HOME</key><string>{}</string><key>INSTRUKT_HOME</key><string>{}</string><key>INSTRUKT_DEVELOPMENT</key><string>{}</string><key>PATH</key><string>{}</string></dict><key>Umask</key><integer>63</integer>{sockets}</dict></plist>\n",xml(&request.home.machine_user_home().display().to_string()),xml(&request.home.root().display().to_string()),u8::from(request.home.is_development()),xml(request.wake.path_env)));
     } else {
         let stem = crate::install::systemd_stem(&format!("instrukt-{name}"), request.home);
-        let dir = request
-            .wake
-            .config_home
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| request.home.user_home().join(".config"))
-            .join("systemd/user");
+        let dir = &request.wake.locations.systemd;
         let extra = if socket.is_some() {
             format!("Requires={stem}.socket\nAfter={stem}.socket\n")
         } else if name == RUNNER {
@@ -1297,6 +1217,28 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
             format!("{stem}.service")
         };
     }
+    for (path, content) in &mut files {
+        if request.scheduler == Scheduler::Launchd {
+            let extra = request
+                .wake
+                .locations
+                .environment
+                .iter()
+                .map(|(k, v)| format!("<key>{}</key><string>{}</string>", xml(k), xml(v)))
+                .collect::<String>();
+            *content =
+                content.replacen("</dict><key>Umask", &format!("{extra}</dict><key>Umask"), 1);
+        } else if path.extension().is_some_and(|e| e == "service") {
+            let extra = request
+                .wake
+                .locations
+                .environment
+                .iter()
+                .map(|(k, v)| format!("Environment={}\n", quote(&format!("{k}={v}"))))
+                .collect::<String>();
+            *content = content.replacen("\nUMask=", &format!("\n{extra}UMask="), 1);
+        }
+    }
     Definition {
         name: if name.starts_with("webhooks") {
             ResourceKind::Receiver
@@ -1307,6 +1249,7 @@ fn native(request: &Request<'_>, name: &str, args: &[String], socket: Option<u16
         },
         unit,
         scheduler: request.scheduler,
+        locations: request.wake.locations.clone(),
         files,
         kept: BTreeMap::new(),
         probe: None,
@@ -1436,9 +1379,14 @@ pub(super) fn receiver_file(file: &Path) -> anyhow::Result<Option<String>> {
 
 /// The launchd label of this home's receiver at `port`, when its definition
 /// is present under launchd.
-pub(super) fn launchd_receiver(home: &Home, port: u16) -> Option<String> {
+pub(super) fn launchd_receiver(
+    home: &Home,
+    locations: &crate::install::SchedulerLocations,
+    port: u16,
+) -> Option<String> {
     let label = crate::install::launchd_label(&format!("ai.instrukt.webhooks-{port}"), home);
-    launch_agents(home)
+    locations
+        .launch_agents
         .join(format!("{label}.plist"))
         .is_file()
         .then_some(label)

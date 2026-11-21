@@ -221,6 +221,15 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         )?)
     };
     let mut report = Report::default();
+    if request.scheduler == Scheduler::Launchd
+        && request.wake.locations.launch_agents
+            != request
+                .home
+                .machine_user_home()
+                .join("Library/LaunchAgents")
+    {
+        report.notices.push("alternate LaunchAgents directory is loaded explicitly; it is not automatically scanned at login".into());
+    }
     let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     if request.check

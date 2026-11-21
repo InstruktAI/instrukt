@@ -63,10 +63,10 @@ impl Drop for RedisServer {
     }
 }
 
-fn spawn(home: &Path, dir: &Path, socket: &Path) -> Child {
+fn spawn(_home: &Path, dir: &Path, socket: &Path) -> Child {
     Command::new(super::tool_executable("redis-server"))
         .env_clear()
-        .env("HOME", home)
+        .env("HOME", std::env::var_os("HOME").unwrap())
         .args([
             "--port",
             "0",

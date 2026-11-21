@@ -23,6 +23,17 @@ home, and the flows.
 
 ## Inputs/Outputs
 
+### Root separation
+
+The inherited machine home supplies documented native defaults; explicit
+INSTRUKT_HOME owns configuration, publication, state and secrets without copying
+or falling back to normal machine secrets. Logs follow the separate native
+INSTRUKT_LOG_DIR/shared logging contract. Scheduler artifacts use one runner-owned
+SchedulerLocations value under the installation contract, never an artificial
+application user directory. Native instruction variables are resolved by the
+runtime adapter and consumed as facts by publication.
+
+
 ### Modules and crates
 
 | Module | Contexts | Switch | Needs |
