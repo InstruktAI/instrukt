@@ -90,7 +90,15 @@ fn output_breaking_the_contract_is_never_served_and_the_previous_map_stays() {
 #[test]
 fn shipped_generation_and_questions_use_home_binary_and_ignore_path_graphify() {
     let mut env = machine();
-    let path_tool = script(&env, "graphify", "touch \"$HOME/path-tool-ran\"; exit 9\n");
+    env.set_env(
+        "GRAPHIFY_PATH_MARKER",
+        env.home().join("path-tool-ran").to_str().unwrap(),
+    );
+    let path_tool = script(
+        &env,
+        "graphify",
+        "touch \"$GRAPHIFY_PATH_MARKER\"; exit 9\n",
+    );
     let home_tool = env.instrukt_home().join("tools/bin/graphify");
     std::fs::create_dir_all(home_tool.parent().unwrap()).unwrap();
     let tool = script(
