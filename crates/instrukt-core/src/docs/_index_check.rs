@@ -352,16 +352,12 @@ impl Index<'_, '_> {
             );
             return;
         };
-        let supported: Vec<&str> = AgentCli::ALL.iter().map(|cli| cli.name()).collect();
         for (key, ids) in map {
             let name = key.as_str().map_or_else(|| shown_value(key), str::to_owned);
-            if !supported.contains(&name.as_str()) {
+            if key.as_str().and_then(AgentCli::named).is_none() {
                 self.finding(
-                    FindingCode::IndexAgentUnsupported,
-                    format!(
-                        "agents: {name} (the agent runtimes instrukt deploys to are {})",
-                        supported.join(", ")
-                    ),
+                    FindingCode::IndexAgentInvalid,
+                    format!("agents: {name} (provider names require 1–64 ASCII characters: a leading letter, then letters, digits, underscores or hyphens)"),
                 );
                 continue;
             }
