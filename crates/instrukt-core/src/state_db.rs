@@ -642,21 +642,15 @@ mod tests {
         migrate(&mut conn, Path::new(":memory:")).unwrap();
         let attempt = conn
             .query_row(
-                "SELECT attempted_at,latest_attempted_at,post_id,legacy_read_at,delivery_unknown_at FROM conversation_answers WHERE turn='turn-1'",
+                "SELECT attempted_at,provider_post_id FROM conversation_answers WHERE turn='turn-1'",
                 [],
                 |row| Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
                 )),
             )
             .unwrap();
-        assert_eq!(
-            attempt,
-            ("2026-11-18T10:00:00Z".to_owned(), None, None, None, None)
-        );
+        assert_eq!(attempt, ("2026-11-18T10:00:00Z".to_owned(), None));
         let positions: Vec<(i64, i64)> = conn
             .prepare("SELECT m.admission_position,a.admission_position FROM conversation_messages m JOIN conversation_answers a USING(company,connector,conversation,turn) ORDER BY m.admission_position")
             .unwrap()

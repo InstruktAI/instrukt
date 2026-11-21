@@ -2,8 +2,8 @@
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
-    Admission, AnswerError, Captured, ConnectorError, ContextSnapshot, Incoming, Limits, Place,
-    ReadBackError, ReadBackGap, ReadBackPage, Status,
+    Admission, AnswerError, AnswerReceipt, Captured, ConnectorError, ContextSnapshot, Incoming,
+    Limits, Place, ReadBackError, ReadBackGap, ReadBackPage, Status,
 };
 use jiff::Timestamp;
 
@@ -53,31 +53,8 @@ pub trait Connector: Send + Sync {
         excluded: &std::collections::HashSet<String>,
         readable: &dyn Fn(ContextSnapshot),
     ) -> Result<Captured, ConnectorError>;
-    /// Post an answer piece with its durable identity, returning
-    /// the provider's posting time when its receipt has one.
-    fn answer(
-        &self,
-        conversation: &str,
-        part: &str,
-        post_id: &str,
-    ) -> Result<Option<Timestamp>, AnswerError>;
-    /// Look for this connector's own post by its durable identity after
-    /// the provider message `since`, returning the receipt's posting time.
-    fn post_receipt(
-        &self,
-        conversation: &str,
-        since: &str,
-        post_id: &str,
-    ) -> Result<Option<Timestamp>, ConnectorError>;
-    /// Best-effort recovery for a post made before durable identities
-    /// existed. Only this connector's own untagged posts after the attempt
-    /// are candidates.
-    fn legacy_answer_receipt(
-        &self,
-        conversation: &str,
-        attempted_at: Timestamp,
-        part: &str,
-    ) -> Result<Option<Timestamp>, ConnectorError>;
+    /// Post one answer piece, returning the provider's optional id and posting time.
+    fn answer(&self, conversation: &str, part: &str) -> Result<AnswerReceipt, AnswerError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
     /// Make one bounded post of the connector's fixed unavailable notice,

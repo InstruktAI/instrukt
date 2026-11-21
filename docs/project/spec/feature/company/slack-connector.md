@@ -274,20 +274,12 @@ The one platform notice of `project/instrukt/spec/feature/company/conversations`
 is attempted once per outage with an ordinary bounded post, worded
 `<@member-id> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.`,
 with the waiting person's Slack id. Its failure or lost response is not retried
-or reconciled. Each answer piece carries
-`chat.postMessage` metadata with event type `instrukt_post` and a single
-opaque id in `event_payload.id`. The connector uses
-`include_all_metadata=true` with `conversations.replies` for a thread or
-`conversations.history` for a direct message. It matches the id on a post
-by its own bot and returns the posting timestamp. It reads answers from the
-first addressed message.
-For an answer attempted before ids were recorded, the single best-effort
-read matches an untagged post from the same bot and conversation by text
-and requires a provider timestamp after the recorded attempt.
-
-These Web API calls use the existing bot scopes `chat:write` and the
-conversation's history scope. The metadata Events API scope is needed for
-metadata event subscriptions. The connector uses Web API read-back.
+or reconciled. Answer posts return Slack's raw `ts`, when present, as the
+opaque provider message id and its parsed posting time when available. A
+successful response without a timestamp still confirms acceptance. No outbound
+receipt metadata or provider-history receipt search is used. An uncertain post
+is retried from the retained answer and can duplicate an already delivered piece.
+The post uses the existing `chat:write` bot scope.
 
 ### Reading back after a connection
 
