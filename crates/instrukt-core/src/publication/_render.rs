@@ -116,7 +116,7 @@ impl Renderer<'_> {
     /// The global file of `cli`, with the references it keeps for an agent
     /// program to resolve: a global file is written as rendered and each
     /// such reference is a finding of the sync, never a refusal.
-    pub(super) fn global_file(&self, cli: AgentCli) -> Result<GlobalFile, PublicationError> {
+    pub(super) fn global_file(&self, cli: &str) -> Result<GlobalFile, PublicationError> {
         let source = self.source();
         let rendering = self.rendering(&source);
         let file = "docs/general/index.yaml";
@@ -177,7 +177,7 @@ impl Renderer<'_> {
             blocks.push(configured);
         }
         if let Some(PositionIndex::General(general_index)) = index
-            && let Some(ids) = general_index.agents.get(&cli)
+            && let Some(ids) = AgentCli::named(cli).and_then(|name| general_index.agents.get(&name))
         {
             // What the general section holds in full is not repeated.
             let mut own = Expansion {

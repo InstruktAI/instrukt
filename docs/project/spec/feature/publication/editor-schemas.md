@@ -20,7 +20,7 @@ names a home path.
 
 | File | Schema in `.instrukt/schemas/` | Generated from |
 | --- | --- | --- |
-| `docs/general/index.yaml` | `general-index.schema.json` | the `general` position's index type: `expanded`, `listed`, `agents`, where `agents` admits only the names of the agent runtimes instrukt deploys to |
+| `docs/general/index.yaml` | `general-index.schema.json` | the `general` position's index type: `expanded`, `listed`, `agents`, where `agents` admits open provider keys constrained to 1–64 ASCII characters, a leading letter and then letters, digits, underscores or hyphens |
 | `docs/domain/<x>/index.yaml` | `domain-index.schema.json` | the domain position's index type: `description`, `expanded`, `listed` |
 | `docs/project/index.yaml` | `project-index.schema.json` | the project position's index type: `expanded`, `listed` |
 | `schema.yaml` at the root of any position | `snippet-schema.schema.json` | the snippet-schema type |

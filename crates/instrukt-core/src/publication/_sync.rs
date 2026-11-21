@@ -708,7 +708,7 @@ fn global_files(
         plan.global.push(GlobalWrite {
             at: destination(&file.home, Path::new(runtime.file))?,
             path: file.path(),
-            runtime: runtime.cli.name(),
+            runtime: runtime.cli,
             instances: file.instances.clone(),
             text: text.clone(),
         });

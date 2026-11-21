@@ -154,7 +154,7 @@ fn rendered_global_files(
                 .files
                 .into_iter()
                 .map(|file| PlannedGlobalFile {
-                    runtime: file.destination.cli.name(),
+                    runtime: file.destination.cli,
                     path: file.path(),
                     instances: file.instances,
                 })

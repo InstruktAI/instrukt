@@ -297,16 +297,25 @@ fn a_policy_mapped_to_one_runtime_reaches_only_that_runtime() {
     insta::assert_snapshot!("claude_global_file", read(".claude/CLAUDE.md"));
     insta::assert_snapshot!("codex_global_file", read(".codex/AGENTS.md"));
 
-    // A policy mapped to a runtime instrukt does not deploy to is refused,
-    // naming the ones it does.
+    // Valid unfamiliar names remain valid even without a configured instance.
+    platform
+        .write(
+            "docs/general/index.yaml",
+            "expanded: [general/policy/care]\nagents:\n  cursor: [general/policy/agents/claude]\n",
+        )
+        .commit("accept an open provider name");
+    env.run(platform.path(), ["sync"]).success();
+
+    // Malformed provider names are refused.
     let claude = std::fs::read(home.join(".claude/CLAUDE.md")).unwrap();
     platform
         .write(
             "docs/general/index.yaml",
-            "expanded:\n  - general/policy/care\nagents:\n  cursor:\n    - general/policy/agents/claude\n",
+            "expanded:\n  - general/policy/care\nagents:\n  1invalid:\n    - general/policy/agents/claude\n",
         )
-        .commit("map a policy to cursor");
+        .commit("reject a malformed provider name");
     let refused = env.run(platform.path(), ["sync"]).failure();
+    // Retain this snapshot identity for malformed-name rejection.
     insta::assert_snapshot!("unsupported_agent_cli", stdout(&env, &refused));
     assert_eq!(
         std::fs::read(home.join(".claude/CLAUDE.md")).unwrap(),

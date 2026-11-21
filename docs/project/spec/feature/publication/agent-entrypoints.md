@@ -335,8 +335,8 @@ publishes. They are the computer's own, never committed anywhere.
   runtime cannot be asked, no global file is written in that sync: it
   reports a notice naming the runtime and the cause, publishes the rest, and
   the next sync of that project writes them, whether or not main has moved.
-- **`agents` names** are validated against the runtimes instrukt deploys to,
-  whatever is configured on the computer.
+- **`agents` names** use the open syntax in the position-index contract,
+  independently of configuration or native-loader knowledge.
 - **Written whole, every time.** Each destination is written whole by every
   sync that publishes, whatever it holds: a file another tool or a person
   wrote there is overwritten. Nothing is refused because of what a file holds
@@ -403,8 +403,10 @@ And the always-on doctrine maps a policy to one of them
 When publication runs for the project that owns the always-on doctrine
 Then that runtime's global instructions end with the policy
 And the other runtime's global instructions do not contain it
-When the developer maps a policy to an agent runtime instrukt does not deploy to
-Then publication is refused and names that runtime and the ones instrukt deploys to
+When the developer maps a policy to another syntactically valid provider name
+Then the index remains valid independently of configured instances
+But when the provider name is malformed
+Then publication is refused and explains the name syntax
 ```
 
 ### UC-AE4: Publication never overwrites global agent instructions the developer wrote (retired)
