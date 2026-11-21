@@ -38,8 +38,11 @@ and readable at the level of behavior rather than implementation.
    stakeholder of the product achieves, stated in the stakeholder's own terms,
    that the product owner can accept or reject a release on. Subfunctions and
    internal mechanics are written as the spec's prose contract (rules,
-   invariants, refusal conditions, tables) and get no use case. A failure or
-   refusal that threatens a goal is an extension of that goal's use case.
+   invariants, refusal conditions, tables) and get no use case. A refusal, an
+   ordinary outage, or a failure with a recorded occurrence or dangerous path
+   (`sdlc/concept/defect-evidence`) that threatens a goal is an extension of that
+   goal's use case. Crash and interleaving matrices are mechanism, never extensions;
+   required invariants go in the prose.
 
    Establish the stakeholder and completed outcome before writing Gherkin.
    A capability's usefulness does not make each step supporting it a user goal.

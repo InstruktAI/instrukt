@@ -355,8 +355,8 @@ The command clock and the process-limit clock use the same reader and last
 valid reading. File-clock readings never move backward during the invocation.
 When a valid file reading resumes, the clock uses the later of that value and
 the last observed time. The invocation warns once when the file becomes
-unreadable. Stderr failure does not interrupt a clock reading. Lock waits are
-measured on the process-limit clock.
+unreadable. Stderr failure does not interrupt a clock reading. Lock and I/O waits
+run on monotonic real time, never on this clock.
 
 ### External state declarations
 
@@ -468,8 +468,8 @@ And the runner continues even if standard error is unavailable
   A machine layer of a newer schema cannot be loaded: every command names
   `instrukt config validate --global`, which prints the same installer command.
 - Unresolved and cyclic references are validation findings.
-- With `INSTRUKT_NOW=@<path>` real time bounds no started program while the
-  file is readable: its limit runs out only when the time in the file moves past
+- With `INSTRUKT_NOW=@<path>` real time bounds no started program's process
+  limit while the file is readable (lock and I/O waits stay on monotonic time): its limit runs out only when the time in the file moves past
   it, so a program that never ends waits until the file's time is moved or the
   command is interrupted. Once the file becomes unreadable mid-run, time runs on
   from the last value read and the limit runs out as elapsed time reaches it.

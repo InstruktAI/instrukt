@@ -120,8 +120,8 @@ never blesses a diff its own change produced.
    backlog. Two tests are a duplicate when they exercise the same behavior — the same failure mode
    or branch — whether or not they name the same scenario; duplicates are rejected at review;
    automated failure conditions are owned by the coverage tool's spec.
-   One scenario is realized by exactly one test, which drives the scenario's situation and checks
-   all of its required outcomes; a second test bound to the same scenario is a duplicate, whatever
+   One scenario is realized by exactly one test, which drives one execution of the scenario's situation and checks
+   all of its required outcomes — never a bundle of sibling cases or a fault matrix; a second test bound to the same scenario is a duplicate, whatever
    behavior it claims to add. A binding to a non-existent scenario is an orphan; it too
    fails the check.
 
@@ -191,7 +191,13 @@ never blesses a diff its own change produced.
     of the same behavior across files.
 14. **One behavioral path per test.** A case is a code path, not an input row. Tests are
     deterministic, independent, and named so the name is a behavioral specification. Every test
-    answers: _what real bug in our code would this catch?_
+    answers: _what real bug in our code would this catch?_ A fault inside the system — a crash mid-step,
+    a timed interleaving, a staged lock or write failure — is staged only to reproduce a recorded
+    occurrence or an established dangerous path (`sdlc/concept/defect-evidence`); an ordinary
+    outage at the process or network line stays a valid fixture for an admitted scenario. A failure
+    produced only by conditions the test itself manipulated establishes no product defect.
+    Production code carries no test-only hooks that stage behavior for a test; declared
+    configuration boundaries (an API address, a write fence, a clock override) are not hooks.
 15. **Snapshot approval is a conscious act.** A snapshot's regression value is realized only when its
     diff is read at update time — CI never updates snapshots, so a person or agent does, and a blind
     `--snapshot-update` converts the test into theater and forfeits the guarantee. The approval is
@@ -211,7 +217,8 @@ never blesses a diff its own change produced.
     controlled clock or an explicit timer advance — rather than sleeping real time and asserting on
     the outcome of the race. Real time spent sleeping in a test is a defect twice over: it either
     races (a flake) or pads the suite for no assertion value. The concrete waiting idiom is
-    per-language (see the per-language testing policy).
+    per-language (see the per-language testing policy). A controlled clock drives only the timing
+    behavior under test; lock and I/O waits always run on monotonic real time.
 
 ## Rationale
 

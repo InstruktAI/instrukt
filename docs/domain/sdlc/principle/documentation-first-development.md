@@ -81,8 +81,9 @@ owner can accept or reject a release on it. The stakeholder is a person, or an
 agent acting for a named person; the platform's own agents coordinating with
 each other are machinery, not stakeholders. Subfunctions (the steps inside a
 goal, such as setting a value, listing records or refusing invalid input) and
-internal mechanics get no use case, and a failure or refusal that threatens a
-goal is an extension of that goal's use case. Most behavioral changes therefore
+internal mechanics get no use case, and a refusal, an ordinary outage, or a failure with a recorded occurrence or
+dangerous path (`sdlc/concept/defect-evidence`) that threatens a goal is an
+extension of that goal's use case. Most behavioral changes therefore
 refine a spec's prose contract and add no use case. The reason is that a use
 case is what a product owner accepts: below goal level, scenarios restate
 mechanics, multiply with every change to the steps, and turn the specs into
