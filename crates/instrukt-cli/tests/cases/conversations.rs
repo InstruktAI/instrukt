@@ -562,12 +562,6 @@ fn set_clock(path: &std::path::Path, at: jiff::Timestamp) {
     let next = path.with_extension("next");
     std::fs::write(&next, at.to_string()).unwrap();
     std::fs::rename(&next, path).unwrap();
-    let wake = path.with_extension("notice-wake");
-    if wake.exists() {
-        let next_wake = wake.with_extension("notice-wake-next");
-        std::fs::write(&next_wake, at.to_string()).unwrap();
-        std::fs::rename(next_wake, wake).unwrap();
-    }
 }
 
 /// Stops `running` once the interval of each of `messages` has opened and
@@ -758,42 +752,17 @@ fn wait_for_answer_fixture(what: &str, condition: impl FnMut() -> bool) {
 }
 
 fn answer_recovery_company(debug: bool) -> (Company, std::path::PathBuf) {
-    let mut c = Company::prepared_for_recovery(status_env());
-    // The fixture controls native notifications independently of its writes.
-    let wakes = c.env.path("answer-recovery-wakes");
-    answer_source_changed(&c, 0);
+    let mut c = Company::prepared_for_recovery(common::TestEnv::new());
     if debug {
         c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
     }
-    c.env
-        .set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
     let clock = c.env.path("clock");
     set_clock(&clock, "2026-11-19T10:00:00Z".parse().unwrap());
     c.env
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
-    for (setting, name) in [
-        ("INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD", "presence-hold"),
-        ("INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD", "dispatch-hold"),
-        ("INSTRUKT_TEST_CONVERSATION_ACK_HOLD", "ack-hold"),
-    ] {
-        c.env.set_env(setting, c.env.path(name).to_str().unwrap());
-    }
     c.runtime.flag("separate-completion", true);
     c.run();
     (c, clock)
-}
-
-fn answer_source_changed(c: &Company, revision: u64) {
-    let wakes = c.env.path("answer-recovery-wakes");
-    let next = wakes.with_extension("next");
-    std::fs::write(&next, revision.to_string()).unwrap();
-    std::fs::rename(next, wakes).unwrap();
-}
-
-fn finish_answer_turn(c: &mut Company, session: &str, input: usize, answer: &str) {
-    c.finish_turn(session, input, answer);
-    let revision = std::fs::read_to_string(c.env.path("answer-recovery-wakes")).unwrap();
-    answer_source_changed(c, revision.trim().parse::<u64>().unwrap() + 1);
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV8
@@ -853,7 +822,6 @@ fn an_outage_before_dispatch_keeps_the_question() {
     // Keep dispatch unavailable with a different descriptor error. Only a
     // retry that has finished after the clock advance can persist that cause.
     std::fs::write(&descriptor, "invalid descriptor").unwrap();
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture(
         "the relay persists a fresh failure past the send reconciliation bound",
         || failure().is_some_and(|cause| cause != prior_failure),
@@ -867,7 +835,7 @@ fn an_outage_before_dispatch_keeps_the_question() {
     );
     let ids = std::fs::read_to_string(c.runtime.state_dir().join("dispatch-ids")).unwrap();
     assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id]);
-    finish_answer_turn(&mut c, &session, 1, "The report is in the drive.");
+    c.finish_turn(&session, 1, "The report is in the drive.");
     wait_for_answer_fixture("the saved question is answered once", || {
         c.slack.posts_beginning("The report is in the drive.") == 1
     });
@@ -910,7 +878,7 @@ fn an_idle_conversation_retries_an_unrecorded_send() {
         c.input(&session, 1)
             .contains("Where is the revised report?")
     );
-    finish_answer_turn(&mut c, &session, 1, "The revised report is in the drive.");
+    c.finish_turn(&session, 1, "The revised report is in the drive.");
     wait_for_answer_fixture("the next question follows without a duplicate", || {
         c.runtime.message_count(&session) == 3 && id().is_none()
     });
@@ -962,7 +930,7 @@ fn a_late_original_dispatch_is_deduplicated_after_restart() {
         || c.runtime.message_count(&session) == 2,
     );
     assert_eq!(c.runtime.message(&session, 1).as_bytes(), original_input);
-    finish_answer_turn(&mut c, &session, 1, "The plan is by the calendar.");
+    c.finish_turn(&session, 1, "The plan is by the calendar.");
     wait_for_answer_fixture("the retry answers and clears the current attempt", || {
         c.slack.posts_beginning("The plan is by the calendar.") == 1 && tracked() == (None, None)
     });
@@ -1018,7 +986,6 @@ fn a_busy_conversation_releases_an_unresolved_send() {
     c.slack
         .direct("D30", "USTEVEN", "Do we have meeting notes?");
     set_clock(&clock, at + jiff::SignedDuration::from_mins(5));
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture(
         "a busy thread releases the unresolved send at the operator bound",
         || retained().1.is_some(),
@@ -1027,20 +994,20 @@ fn a_busy_conversation_releases_an_unresolved_send() {
     assert!(conversation_finding(&c, &format!("delivery unknown for message {first}")).is_some());
     assert!(interval(&c, &first).is_none());
     assert_eq!(c.runtime.message_count(&session), 2);
-    finish_answer_turn(&mut c, &session, 1, "NOOP");
+    c.finish_turn(&session, 1, "NOOP");
     wait_for_answer_fixture(
         "later work proceeds without retrying the unknown send",
         || c.runtime.message_count(&session) == 3,
     );
     assert!(c.input(&session, 2).contains("Do we have meeting notes?"));
     assert!(!c.input(&session, 2).contains("Is the draft in the drive?"));
-    finish_answer_turn(&mut c, &session, 2, "The notes are saved.");
+    c.finish_turn(&session, 2, "The notes are saved.");
     wait_for_answer_fixture("the later question's answer is recorded", || {
         c.slack.posts_beginning("The notes are saved.") == 1 && answers_recorded(&c)
     });
     // The native runtime finally exposes the original input and its answer.
     c.runtime.person_sends(&c.env, &session, &original);
-    finish_answer_turn(&mut c, &session, 3, "Yes, the draft is in the drive.");
+    c.finish_turn(&session, 3, "Yes, the draft is in the drive.");
     wait_for_answer_fixture(
         "the late answer posts and clears the unknown delivery",
         || {
@@ -1065,7 +1032,7 @@ fn failed_work_is_retried_after_a_restart() {
         Some(&parent),
     );
     let session = started(&c, &[]);
-    finish_answer_turn(&mut c, &session, 0, "Ready to review.");
+    c.finish_turn(&session, 0, "Ready to review.");
     wait_for_answer_fixture("the opening answer is recorded", || {
         c.slack.posts_beginning("Ready to review.") == 1 && answers_recorded(&c)
     });
@@ -1097,7 +1064,6 @@ fn failed_work_is_retried_after_a_restart() {
         &original,
         "Still checking the release.",
     );
-    answer_source_changed(&c, 2);
     let state = instrukt_core::state_db::rusqlite::Connection::open(
         c.env.instrukt_home().join("state/instrukt.db"),
     )
@@ -1145,7 +1111,6 @@ fn failed_work_is_retried_after_a_restart() {
         "2026-11-19T10:01:00Z",
     );
     c.finish_projected_turn(&session, 2, "Version two.");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "the other member's completed answer posts from the archived thread",
         || {
@@ -1174,7 +1139,6 @@ fn failed_work_is_retried_after_a_restart() {
     c.runtime.flag("send-failure", true);
     c.finish_turn(&successor, 0, "NOOP");
     let session = successor;
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture(
         "the first successor redelivery is refused by the runtime",
         || {
@@ -1194,7 +1158,6 @@ fn failed_work_is_retried_after_a_restart() {
     assert!(retried.contains("Can we ship?"));
     assert_ne!(retried, original, "redelivery has its own boundary");
     c.finish_turn(&session, 1, "Ship on Friday.");
-    answer_source_changed(&c, 5);
     wait_for_answer_fixture(
         "the recovered answer closes the first member's outage",
         || {
@@ -1242,16 +1205,13 @@ fn a_replacement_reports_the_old_acknowledgement() {
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     std::fs::remove_file(c.runtime.state_dir().join(format!("{old}.hold-show"))).unwrap();
-    answer_source_changed(&c, 2);
     let successor = started(&c, &[old]);
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "only the current successor receives the retained question",
         || c.runtime.message_count(&successor) == 2,
     );
     c.finish_turn(&successor, 1, "The changes are in the appendix.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the retained question has one answer", || {
         c.slack.posts_beginning("The changes are in the appendix.") == 1
     });
@@ -1285,7 +1245,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
     c.runtime.project(&c.env, &session);
     c.store
         .streaming_turn(&session, "incomplete-summary", 1, &input, partial);
-    answer_source_changed(&c, 1);
     wait_for_answer_fixture("the relay sees completed but unstable content", || {
         interval(&c, &request).is_some()
             && retained_conversations(&c).conversations.iter().any(|row| {
@@ -1307,7 +1266,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         .unwrap();
     };
     finish(&original, "The summary is on page two.");
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture("the turn finishes in the original store", || {
         c.slack.posts_beginning("The summary is on page two.") == 1 && answers_recorded(&c)
     });
@@ -1320,7 +1278,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         c.runtime.message_count(&session) == before + 1
     });
     c.finish_turn(&session, before, answer);
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "the appendix answer is retained while Slack refuses it",
         || {
@@ -1385,7 +1342,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         || c.runtime.message_count(&session) == delivered + 1,
     );
     c.finish_turn(&session, delivered, "The next section is ready.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the original binding answers after restoration", || {
         c.slack.posts_beginning("The next section is ready.") == 1 && answers_recorded(&c)
     });
@@ -1450,7 +1406,6 @@ fn answered_conversation_with_logs(
         );
     }
     c.finish_turn(&session, 0, "The old report is ready.");
-    answer_source_changed(&c, 1);
     wait_for_answer_fixture("the earlier answer recorded", || {
         c.slack.posts_beginning("The old report is ready.") == 1 && answers_recorded(&c)
     });
@@ -1485,7 +1440,6 @@ fn held_runtime_checks_leave_another_conversation_free() {
     );
     let other = started(&c, std::slice::from_ref(&session));
     c.finish_turn(&other, 0, "In the main office.");
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture(
         "the second conversation is answered during the dispatch check",
         || c.slack.posts_beginning("In the main office.") == 1,
@@ -1508,7 +1462,6 @@ fn held_runtime_checks_leave_another_conversation_free() {
     std::fs::remove_file(&held).unwrap();
 
     c.finish_turn(&session, 1, "The changes are in the appendix.");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "the lost acknowledgment reconciles without another send",
         || c.slack.posts_beginning("The changes are in the appendix.") == 1 && answers_recorded(&c),
@@ -1548,7 +1501,6 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     c.slack.direct("D30", "USTEVEN", "What changed?");
-    answer_source_changed(&c, 2);
     // The failed probe must finish before advancing the frozen clock;
     // otherwise its later completion schedules retry beyond that clock.
     wait_for_answer_fixture("the failed presence probe schedules its retry", || {
@@ -1563,10 +1515,8 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
     );
-    answer_source_changed(&c, 3);
     let successor = started(&c, &[]);
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture("the saved work reaches one successor", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1594,7 +1544,6 @@ fn archived_and_deleted_conversations_keep_saved_work() {
         "2026-11-19T10:01:00Z",
     );
     c.slack.direct("D30", "USTEVEN", "Who kept the notes?");
-    answer_source_changed(&c, 2);
     let successor = started(&c, &before);
     assert_eq!(c.runtime.message_count(&successor), 1);
     assert!(
@@ -1603,12 +1552,10 @@ fn archived_and_deleted_conversations_keep_saved_work() {
             .contains("Who kept the notes?")
     );
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture("the saved question reaches the successor once", || {
         c.runtime.message_count(&successor) == 2
     });
     c.finish_turn(&successor, 1, "Ada kept the notes.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the saved question is answered normally", || {
         c.slack.posts_beginning("Ada kept the notes.") == 1
     });
@@ -1633,7 +1580,6 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     let question = c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
-    answer_source_changed(&c, 2);
     let pending = || {
         db.query_row(
         "SELECT b.session,b.start_key FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE c.session=?1 AND b.accepted=0 AND c.failure IS NOT NULL",
@@ -1662,7 +1608,6 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     });
     assert_ne!(old, successor);
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture("the saved question is delivered after deletion", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1679,7 +1624,6 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         .unwrap();
     assert_eq!(still_retained, retained);
     c.finish_turn(&successor, 1, "The attachment is in the shared folder.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the successor answers the saved question", || {
         c.slack
             .posts_beginning("The attachment is in the shared folder.")
@@ -2172,8 +2116,6 @@ fn observe_notice_pass(c: &Company, clock: &std::path::Path, now: jiff::Timestam
     });
 }
 
-/// Wait for this member's notice task to finish its decision at the new
-/// time. Another member's post does not establish this ordering.
 /// Seed the interrupted answer and its conversation into the schema shipped
 /// before metadata receipts. The runner opening this file owns its upgrade.
 fn seed_v22_answer_attempt(
@@ -2742,7 +2684,7 @@ fn prepared_status_company() -> Company {
         })
         .collect()
     });
-    let company = Company::with_fakes(status_env());
+    let company = Company::with_fakes(common::TestEnv::new());
     for file in files {
         let path = company.env.instrukt_home().join(file.path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -2750,19 +2692,6 @@ fn prepared_status_company() -> Company {
         std::fs::set_permissions(path, file.permissions.clone()).unwrap();
     }
     company
-}
-
-fn status_env() -> common::TestEnv {
-    let mut env = common::TestEnv::new();
-    let wake = env.path("clock.notice-wake");
-    std::fs::write(&wake, "").unwrap();
-    env.set_env("INSTRUKT_TEST_NOTICE_WAKE_FILE", wake.to_str().unwrap());
-    #[cfg(debug_assertions)]
-    env.set_env(
-        "INSTRUKT_TEST_NOTICE_DECISIONS",
-        env.path("notice-decisions").to_str().unwrap(),
-    );
-    env
 }
 
 /// A company whose conversations run on a runner under the operator's clock
@@ -3261,28 +3190,16 @@ fn a_queued_turn_acceptance_closes_the_unavailable_interval() {
 
 #[cfg(debug_assertions)]
 fn a_completed_turn_is_read_again_after_a_locked_read() {
-    use sha2::Digest as _;
     let mut c = prepared_status_company();
     c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
     c.env.set_env("INSTRUKT_NOW", "2026-11-19T10:00:00Z");
-    let notifications = c.env.path("t3-wakes");
-    let wake = |revision: u64| {
-        let next = notifications.with_extension("next");
-        std::fs::write(&next, revision.to_string()).unwrap();
-        std::fs::rename(next, &notifications).unwrap();
-    };
-    wake(0);
-    c.env
-        .set_env("INSTRUKT_TEST_T3_WAKES", notifications.to_str().unwrap());
     c.run();
 
     projected(&c);
-    let initial = c
-        .slack
+    c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> Where are the notes?", None);
     let settled = c.session();
     c.finish_projected_turn(&settled, 0, "In the wiki.");
-    wake(1);
     wait("the earlier answer posted", || c.slack.posts().len() == 1);
 
     let channel = "C1";
@@ -3294,56 +3211,23 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
     let run = c.runtime.active_run(&session);
     c.store
         .agent_writes(&session, &run, 1, "Checking the release plan.");
-    wake(2);
     wait("the relay to observe the running turn's update", || {
         c.slack.status(channel, &asked).as_deref() == Some("Checking the release plan.")
     });
 
-    let log_path = c
-        .env
-        .home()
-        .join(".local/state/instrukt-ai/instrukt/run.log");
-    let locked_pass = |revision: u64| {
-        let marker = format!("event=t3_fixture_wake revision={revision}");
-        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-        let Some((_, pass)) = log.split_once(&marker) else {
-            return false;
-        };
-        pass.split_once("event=conversation_relay_source_processed")
-            .is_some_and(|(pass, _)| {
-                pass.lines().any(|line| {
-                    line.contains("event=conversation_answer_unread")
-                        && line.contains("database is locked")
-                })
-            })
-    };
     c.store.exclude_readers();
     c.store
         .agent_writes(&session, &run, 2, "Checking the remaining items.");
-    wake(3);
-    wait("the relay tried reading between the fixture writes", || {
-        locked_pass(3)
+    wait("the relay reports the locked source", || {
+        retained_conversations(&c).conversations.iter().any(|row| {
+            row.failures
+                .iter()
+                .any(|cause| cause.contains("database is locked"))
+        })
     });
 
     c.finish_projected_turn(&session, 0, "On Friday.");
-    wake(4);
-    wait("the final fixture wake processed while reads fail", || {
-        locked_pass(4)
-    });
     assert_eq!(c.slack.posts().len(), 1);
-    // Only the fixture supplies notifications, and revision four was
-    // consumed with the source still locked. Leave the earlier, settled
-    // conversation locked to prove the timer only visits current work.
-    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{initial}"));
-    let _settled = instrukt_core::fsx::LockGuard::acquire(
-        &home.state_dir().join(format!(
-            "conversation-{}.lock",
-            hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
-        )),
-        std::time::Duration::from_secs(5),
-    )
-    .unwrap();
     c.store.let_readers_in();
     common::wait_until(
         "the answer without another projection write",

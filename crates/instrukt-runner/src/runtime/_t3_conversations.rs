@@ -354,15 +354,7 @@ fn open(path: &Path) -> Result<Connection, SourceError> {
         "mode=ro",
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    // The notification fixture holds locks until it observes the failed
-    // read. It can report contention immediately instead of waiting for a
-    // lock the fixture will only release after that report.
-    let busy = if cfg!(debug_assertions) && std::env::var_os("INSTRUKT_TEST_T3_WAKES").is_some() {
-        Duration::ZERO
-    } else {
-        Duration::from_secs(5)
-    };
-    db.busy_timeout(busy)?;
+    db.busy_timeout(Duration::from_secs(5))?;
     Ok(db)
 }
 fn columns(db: &Connection, table: &str) -> Result<BTreeMap<String, String>, SourceError> {
