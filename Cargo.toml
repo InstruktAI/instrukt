@@ -1,6 +1,5 @@
 [workspace]
 resolver = "3"
-exclude = ["vendor/instrukt-ai-logging"]
 members = [
     "crates/instrukt-cli",
     "crates/instrukt-core",
@@ -29,7 +28,7 @@ instrukt-todos = { path = "crates/instrukt-todos", version = "0.1.0" }
 instrukt-connector = { path = "crates/instrukt-connector", version = "0.1.0" }
 instrukt-company = { path = "crates/instrukt-company", version = "0.1.0" }
 instrukt-connector-slack = { path = "crates/instrukt-connector-slack", version = "0.1.0" }
-instrukt-ai-logging = "=0.10.0"
+instrukt-ai-logging = "=0.10.3"
 
 anyhow = "1"
 base64 = "0.23"
@@ -78,6 +77,3 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
-
-[patch.crates-io]
-instrukt-ai-logging = { path = "vendor/instrukt-ai-logging" }

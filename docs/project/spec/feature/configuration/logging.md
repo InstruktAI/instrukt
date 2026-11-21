@@ -1,5 +1,5 @@
 ---
-description: instrukt logs through the InstruktAI logging contract — one file per source under `$XDG_STATE_HOME/instrukt-ai/instrukt/`, readable with `instrukt-ai-logs instrukt` — so a developer or an agent can read what instrukt did after the fact.
+description: instrukt logs through the InstruktAI logging contract — one file per source in the selected app directory, readable with `instrukt-ai-logs instrukt` — so a developer or an agent can read what instrukt did after the fact.
 ---
 # Logging — Spec
 
@@ -15,7 +15,7 @@ diagnostics would otherwise be gone with them.
 
 ### Location and reader
 
-- The log of the app `instrukt` lives under
+- By default, the log of the app `instrukt` lives under
   `$XDG_STATE_HOME/instrukt-ai/instrukt/` (fallback `~/.local/state`, per the
   XDG Base Directory specification), one file per source:
   `<source>.log`.
@@ -23,9 +23,13 @@ diagnostics would otherwise be gone with them.
   `tick`, `blueprint`, `todo`, `repo`, …), so `instrukt-ai-logs instrukt
   --logs tick` reads only the runner's ticks and `instrukt-ai-logs
   instrukt` reads them all.
-- The location is a fixed rule of the contract; instrukt adds no override of
-  its own. A test redirects it the way it redirects the home: through `HOME`
-  (and `XDG_STATE_HOME` left unset).
+- A nonempty `INSTRUKT_LOG_DIR` selects the complete app directory through
+  the logging library: `/work/logs` places source `sync` at `/work/logs/sync.log`.
+  Unset or empty keeps the XDG/default-home location above. The library's path
+  normalization and tilde expansion apply. All sources share that directory;
+  the reader must receive the same variable as the writer.
+- Tests set `INSTRUKT_LOG_DIR` to a per-test directory, without relocating logs
+  through `HOME` or an XDG base. instrukt adds no location parser of its own.
 
 ### What is logged and where it goes
 
@@ -33,7 +37,7 @@ diagnostics would otherwise be gone with them.
   for (`sdlc/policy/observability`) — go to the log, in the contract's line
   format, from the logging crate the contract ships for Rust
   (`instrukt-ai-logging`), pinned to the released crates.io version
-  `=0.10.0` with the stderr sink patch in `vendor/instrukt-ai-logging`.
+  `=0.10.3`, including its caller-owned stderr writer and path redaction.
   instrukt does not format log lines itself. The same layer redacts event
   messages and fields before writing to either destination. The crate also
   redacts paths in its own write-failure diagnostic.
@@ -80,7 +84,8 @@ Then the write-failure diagnostic on standard error redacts credentials in the l
 ## Known caveats
 
 - Rotation and retention belong to the logging contract and its tooling, not
-  to instrukt.
+  to instrukt. Arbitrary directories outside the default shared root are not
+  automatically covered by the rotation setup.
 
 ## See Also
 

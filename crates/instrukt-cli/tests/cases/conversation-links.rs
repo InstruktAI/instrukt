@@ -968,11 +968,7 @@ fn native_observation_failure_keeps_its_transport_cause_without_resending() {
 }
 
 fn discussion_log(env: &common::TestEnv, command: &str, link: &str) -> String {
-    let log = std::fs::read_to_string(
-        env.home()
-            .join(format!(".local/state/instrukt-ai/instrukt/{command}.log")),
-    )
-    .unwrap();
+    let log = std::fs::read_to_string(env.log_dir().join(format!("{command}.log"))).unwrap();
     let link_field = format!("link={link}");
     log.lines()
         .filter(|line| {
@@ -1098,16 +1094,15 @@ fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_posi
         link.directions.iter().all(|d| d.failure.is_some())
     });
     wait_for(|| {
-        std::fs::read_to_string(env.home().join(".local/state/instrukt-ai/instrukt/run.log"))
-            .is_ok_and(|log| {
-                log.lines()
-                    .filter(|line| {
-                        line.contains("event=conversation_relay_failed")
-                            && line.contains(&format!("link={id}"))
-                    })
-                    .count()
-                    == 2
-            })
+        std::fs::read_to_string(env.log_dir().join("run.log")).is_ok_and(|log| {
+            log.lines()
+                .filter(|line| {
+                    line.contains("event=conversation_relay_failed")
+                        && line.contains(&format!("link={id}"))
+                })
+                .count()
+                == 2
+        })
     });
     let log = discussion_log(&env, "run", &id);
     let mut directions = log
@@ -1260,7 +1255,7 @@ fn a_failed_link_pass_retries_without_another_native_change() {
     c.run();
     let (env, store, fake) = (&c.env, &c.store, &c.runtime);
     let home = instrukt_core::home::Home::at_user_home(env.home().into());
-    let log = env.home().join(".local/state/instrukt-ai/instrukt/run.log");
+    let log = env.log_dir().join("run.log");
     wait_for(|| {
         std::fs::read_to_string(&log)
             .is_ok_and(|log| log.contains("conversation_relay_source_processed"))
