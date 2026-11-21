@@ -9,8 +9,7 @@
 //! `session-continuity` requires. Every wait is bounded, except for a command
 //! that runs another party's code for as long as that code takes — git
 //! running the repository's hooks — which is waited for to its end, as the
-//! plain command is ([`output_to_end`]). A limit is measured in real time,
-//! or on the operator's file clock when one is given ([`measure_limits_on`]).
+//! plain command is ([`output_to_end`]). Limits use monotonic real time.
 
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt as _;
@@ -18,7 +17,7 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -50,69 +49,40 @@ pub enum ProcessError {
         program: String,
         source: std::io::Error,
     },
-    #[error("cannot measure the limit of `{program}`: {reason}")]
-    Clock { program: String, reason: String },
-}
-
-/// The clock the operator measures limits on (`INSTRUKT_NOW=@<path>`,
-/// layered-configuration § Environment): the current time, or why there is
-/// none.
-pub type LimitClock = Box<dyn Fn() -> Result<jiff::Timestamp, String> + Send + Sync>;
-
-// The operator's clock is process-wide, as the environment that names it.
-static LIMIT_CLOCK: OnceLock<LimitClock> = OnceLock::new();
-
-/// Measures the limit of every command started after this on `clock`
-/// instead of in real time. The first clock given holds for the process.
-pub fn measure_limits_on(clock: LimitClock) {
-    if LIMIT_CLOCK.set(clock).is_err() {
-        tracing::debug!(event = "limit_clock_already_set");
-    }
 }
 
 /// The longest pause between two looks at a running command.
 const LONGEST_PAUSE: Duration = Duration::from_millis(50);
 
-/// A program's limit, measured from its start in real time, or on the
-/// operator's clock when one is given ([`measure_limits_on`]).
+/// A program's limit, measured from its start in monotonic real time.
 #[derive(Clone, Copy)]
 pub struct Limit {
     limit: Duration,
-    start: Start,
+    deadline: Instant,
 }
 
 /// What a look at a running program finds against its limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Look<T> {
-    /// The program ended within its limit.
+    /// The program ended.
     Ended(T),
     Running,
     /// The limit passed.
     Passed,
 }
 
-#[derive(Clone, Copy)]
-enum Start {
-    /// Real time: the limit passes at this instant.
-    Real(Instant),
-    /// The operator's clock, and its time when the command started.
-    Clock(&'static LimitClock, jiff::Timestamp),
-}
-
 impl Limit {
-    /// `limit`, measured from now; a clock without a time is the error.
-    pub fn start(limit: Duration) -> Result<Self, String> {
+    /// `limit`, measured from now.
+    pub fn start(limit: Duration) -> Self {
         Self::from(limit, Instant::now())
     }
 
-    /// `limit`, measured from `started`, read on the operator's clock now
-    /// when one is given.
-    fn from(limit: Duration, started: Instant) -> Result<Self, String> {
-        let start = match LIMIT_CLOCK.get() {
-            None => Start::Real(started + limit),
-            Some(clock) => Start::Clock(clock, clock()?),
-        };
-        Ok(Self { limit, start })
+    /// `limit`, measured from `started`.
+    fn from(limit: Duration, started: Instant) -> Self {
+        Self {
+            limit,
+            deadline: started + limit,
+        }
     }
 
     /// The limit the program was given.
@@ -120,32 +90,13 @@ impl Limit {
         self.limit
     }
 
-    /// Judges `ended`, what a look at the program found just before. In
-    /// real time an end always counts. On the operator's clock an end counts
-    /// only when the clock, read after it, is still within the limit: a
-    /// clock moved past the limit while the program ran stops it, however
-    /// soon the program ended after the move.
-    pub fn judge<T>(&self, ended: Option<T>) -> Result<Look<T>, String> {
-        let passed = match self.start {
-            Start::Real(_) if ended.is_some() => false,
-            Start::Real(deadline) => Instant::now() >= deadline,
-            Start::Clock(..) => self.passed_on_clock()?,
-        };
-        Ok(match ended {
-            _ if passed => Look::Passed,
+    /// Judges the latest look at the program, giving completion precedence.
+    pub fn judge<T>(&self, ended: Option<T>) -> Look<T> {
+        match ended {
             Some(ended) => Look::Ended(ended),
+            None if Instant::now() >= self.deadline => Look::Passed,
             None => Look::Running,
-        })
-    }
-
-    /// Whether the operator's clock has passed the limit; real time is
-    /// asked by its own waits.
-    fn passed_on_clock(&self) -> Result<bool, String> {
-        let Start::Clock(clock, started) = self.start else {
-            return Ok(false);
-        };
-        let elapsed = clock()?.duration_since(started);
-        Ok(jiff::SignedDuration::try_from(self.limit).is_ok_and(|limit| elapsed >= limit))
+        }
     }
 }
 
@@ -212,19 +163,7 @@ impl<'a> Invocation<'a> {
     /// timeout reported.
     pub fn run(&self, timeout: Duration) -> Result<Finished, ProcessError> {
         let started = Instant::now();
-        let limit = self.limit(timeout, started)?;
-        self.finish(limit, started)
-    }
-
-    /// As [`Invocation::run`], with `timeout` measured in real time even
-    /// when the operator's clock is set: for what must end within a real
-    /// bound, as a process's stop does.
-    pub fn run_in_real_time(&self, timeout: Duration) -> Result<Finished, ProcessError> {
-        let started = Instant::now();
-        let limit = Limit {
-            limit: timeout,
-            start: Start::Real(started + timeout),
-        };
+        let limit = Limit::from(timeout, started);
         self.finish(limit, started)
     }
 
@@ -327,13 +266,6 @@ impl<'a> Invocation<'a> {
         })
     }
 
-    /// The limit `timeout` of a command started at `started`, on the
-    /// operator's clock when one is given; a clock without a time refuses
-    /// the command.
-    fn limit(&self, timeout: Duration, started: Instant) -> Result<Limit, ProcessError> {
-        Limit::from(timeout, started).map_err(|reason| self.clock(reason))
-    }
-
     /// Waits for `child` to end, or until its limit passes; the timeout
     /// reported is the limit the command was given.
     fn wait(
@@ -347,26 +279,14 @@ impl<'a> Invocation<'a> {
         };
         let mut pause = Duration::from_millis(2);
         loop {
-            match limit.start {
-                Start::Real(deadline) => {
-                    if let Some(status) = group.try_wait(child).map_err(|source| self.io(source))? {
-                        return Ok(status);
-                    }
-                    let now = Instant::now();
-                    if now >= deadline {
-                        return Err(self.timeout(limit.limit));
-                    }
-                    std::thread::sleep(pause.min(deadline - now));
-                }
-                Start::Clock(..) => {
-                    let ended = group.try_wait(child).map_err(|source| self.io(source))?;
-                    match limit.judge(ended).map_err(|reason| self.clock(reason))? {
-                        Look::Ended(status) => return Ok(status),
-                        Look::Passed => return Err(self.timeout(limit.limit)),
-                        Look::Running => std::thread::sleep(pause),
-                    }
-                }
+            if let Some(status) = group.try_wait(child).map_err(|source| self.io(source))? {
+                return Ok(status);
             }
+            let now = Instant::now();
+            if now >= limit.deadline {
+                return Err(self.timeout(limit.limit));
+            }
+            std::thread::sleep(pause.min(limit.deadline - now));
             pause = (pause * 2).min(LONGEST_PAUSE);
         }
     }
@@ -379,36 +299,9 @@ impl<'a> Invocation<'a> {
     ) -> Result<T, ProcessError> {
         let delivered = match limit {
             None => receiver.recv().map_err(|_| self.ended()),
-            Some(Limit {
-                limit,
-                start: Start::Real(deadline),
-            }) => receiver
+            Some(Limit { limit, deadline }) => receiver
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .map_err(|_| self.timeout(limit)),
-            Some(clocked) => loop {
-                match receiver.recv_timeout(LONGEST_PAUSE) {
-                    // Delivered counts only when the clock, read after it,
-                    // is still within the limit.
-                    Ok(delivered) => {
-                        if clocked
-                            .passed_on_clock()
-                            .map_err(|reason| self.clock(reason))?
-                        {
-                            break Err(self.timeout(clocked.limit));
-                        }
-                        break Ok(delivered);
-                    }
-                    Err(RecvTimeoutError::Disconnected) => break Err(self.ended()),
-                    Err(RecvTimeoutError::Timeout) => {
-                        if clocked
-                            .passed_on_clock()
-                            .map_err(|reason| self.clock(reason))?
-                        {
-                            break Err(self.timeout(clocked.limit));
-                        }
-                    }
-                }
-            },
         };
         delivered?.map_err(|source| self.io(source))
     }
@@ -418,13 +311,6 @@ impl<'a> Invocation<'a> {
         self.io(std::io::Error::other(
             "its input or output ended without a result",
         ))
-    }
-
-    fn clock(&self, reason: String) -> ProcessError {
-        ProcessError::Clock {
-            program: self.program.clone(),
-            reason,
-        }
     }
 
     fn timeout(&self, timeout: Duration) -> ProcessError {
@@ -694,7 +580,7 @@ pub fn output(
     let mut invocation = Invocation::program(&name, &[]);
     invocation.input = input;
     let started = Instant::now();
-    let limit = invocation.limit(timeout, started)?;
+    let limit = Limit::from(timeout, started);
     invocation.execute(command, Some(limit), started)
 }
 
@@ -737,7 +623,6 @@ mod darwin_group_tests {
     use super::*;
     use rustix::io::Errno;
     use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
-    use std::sync::LazyLock;
 
     fn wait_without_reaping(child: &Child) {
         let pid = Pid::from_raw(child.id() as i32).unwrap();
@@ -814,18 +699,12 @@ mod darwin_group_tests {
 
     #[test]
     fn an_unsignalable_group_preserves_the_reaped_childs_exit() {
-        static CLOCK: LazyLock<LimitClock> =
-            LazyLock::new(|| Box::new(|| Ok(jiff::Timestamp::UNIX_EPOCH)));
         let duration = Duration::from_secs(5);
         let limits = [
             None,
             Some(Limit {
                 limit: duration,
-                start: Start::Real(Instant::now() + duration),
-            }),
-            Some(Limit {
-                limit: duration,
-                start: Start::Clock(&CLOCK, jiff::Timestamp::UNIX_EPOCH),
+                deadline: Instant::now() + duration,
             }),
         ];
         for limit in limits {

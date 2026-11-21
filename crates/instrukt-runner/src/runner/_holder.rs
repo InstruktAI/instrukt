@@ -144,16 +144,12 @@ pub(super) fn tick(home: &Home) -> Result<Option<RunnerLock>, RunnerError> {
         .transpose()
 }
 
-/// The lock for `instrukt run`. Both entry paths wait on the process-limit
-/// clock. A hand-started run still refuses immediately when a service holds
+/// The lock for `instrukt run`. Both entry paths wait in monotonic real
+/// time. A hand-started run still refuses immediately when a service holds
 /// the lock.
 pub(super) fn run(home: &Home, service: bool) -> Result<RunnerLock, RunnerError> {
     let path = home.runner_lock_file();
-    let clock_error = |cause| FsError::Lock {
-        path: path.clone(),
-        source: std::io::Error::other(cause),
-    };
-    let limit = Limit::start(RUN_LOCK_WAIT).map_err(clock_error)?;
+    let limit = Limit::start(RUN_LOCK_WAIT);
     let mut announced = false;
     let mut expired = false;
     loop {
@@ -186,7 +182,7 @@ pub(super) fn run(home: &Home, service: bool) -> Result<RunnerLock, RunnerError>
             }
             .into());
         }
-        if limit.judge(None::<()>).map_err(clock_error)? == Look::Passed {
+        if limit.judge(None::<()>) == Look::Passed {
             // Give an acquisition that became possible at the bound precedence.
             expired = true;
             continue;
