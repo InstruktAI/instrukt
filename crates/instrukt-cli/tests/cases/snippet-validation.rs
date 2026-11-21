@@ -526,11 +526,34 @@ fn publish_crew_flavor(env: &TestEnv) {
 #[test]
 fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_reported() {
     let env = TestEnv::new();
-    publish_crew_flavor(&env);
     let repo = env.git_repo("demo");
     repo.write(
         "instrukt.yaml",
         "schema_version: 1\nproject: demo\nmodules: {todos: true}\nworkflow: {domain: crew}\n",
+    )
+    .write(
+        "docs/domain/crew/workflow/actions.yaml",
+        "roles: [lead, reviewer, checker]\n\
+         review:\n  command: instrukt docs get crew/procedure/review\n  template: templates/review.md\n\
+         haunt:\n  command: instrukt docs get project/demo/procedure/haunt\n  template: templates/review.md\n",
+    )
+    .write("docs/domain/crew/workflow/templates/review.md", "Review {slug}.\n")
+    .write(
+        "docs/domain/crew/workflow/work.yaml",
+        "flow: work\norchestrator: lead\nrequires: []\ninitial: start\nstates: [start, reviewing]\n\
+         transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
+    )
+    .write(
+        "docs/domain/crew/procedure/lead.md",
+        &snippet("procedure", "role: lead\nactivation_trigger: When work is led.\n", ""),
+    )
+    .write(
+        "docs/domain/crew/procedure/review.md",
+        &snippet("procedure", "role: reviewer\nactivation_trigger: When work is reviewed.\n", ""),
+    )
+    .write(
+        "docs/general/procedure/company-assistance.md",
+        &snippet("procedure", "role: company-agent\n", ""),
     )
     .write(
         "docs/project/procedure/check.md",

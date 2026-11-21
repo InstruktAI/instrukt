@@ -3,5 +3,9 @@ source: crates/instrukt-cli/tests/cases/snippet-validation.rs
 expression: run.out
 ---
 docs/project/procedure/haunt.md: procedure-role-undeclared: haunter
+notice: docs/domain/crew/: domain-without-index: `crew` has no index.yaml: it is absent from the global agent files and found only through `instrukt docs index --domain crew`
+notice: docs/domain/crew/procedure/lead.md: unreferenced-snippet: crew/procedure/lead
+notice: docs/domain/crew/procedure/review.md: unreferenced-snippet: crew/procedure/review
+notice: docs/general/procedure/company-assistance.md: unreferenced-snippet: general/procedure/company-assistance
 notice: docs/project/procedure/check.md: unreferenced-snippet: project/demo/procedure/check
 notice: docs/project/procedure/haunt.md: unreferenced-snippet: project/demo/procedure/haunt

@@ -52,12 +52,23 @@ pub trait TodoExistence: Send + Sync {
     fn todo_exists(&self, project: &ProjectSlug, slug: &TodoSlug) -> Result<bool, InterfaceError>;
 }
 
-/// The roles the selected workflow flavor declares (workflow, through the
-/// `todos` module). Used by docs to validate procedure roles.
+/// The roles and dispatched procedures of the selected workflow flavor
+/// (workflow, through the `todos` module).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FlavorMembership {
+    /// `roles:` declared by the selected workflow's `actions.yaml`.
+    pub roles: Vec<RoleName>,
+    /// Procedures dispatched by the selected workflow's actions.
+    pub dispatched_procedures: Vec<SnippetId>,
+}
+
+/// The roles and dispatched procedures of the selected workflow flavor
+/// (workflow, through the `todos` module). Used by docs to validate
+/// procedure roles.
 pub trait FlavorRoles: Send + Sync {
-    /// The declared roles for the project at `project_root`, read from the
-    /// published flavor its configuration selects.
-    fn declared_roles(&self, project_root: &Path) -> Result<Vec<RoleName>, InterfaceError>;
+    /// The declared roles and dispatched procedures for the project at
+    /// `project_root`, read from the flavor its configuration selects.
+    fn declared(&self, project_root: &Path) -> Result<FlavorMembership, InterfaceError>;
 }
 
 /// One problem in an authored flavor's workflow files.

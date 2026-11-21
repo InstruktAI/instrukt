@@ -19,7 +19,7 @@ use instrukt_core::git::{self, GitError};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId, TodoSlug};
 use instrukt_core::index::{GlobalIndex, IndexError};
-use instrukt_core::interfaces::{FlavorRoles, InterfaceError};
+use instrukt_core::interfaces::{FlavorMembership, FlavorRoles, InterfaceError};
 use instrukt_runner::interfaces::{
     AssignedEffect, AssignedObligation, Assignment, ClaimOutcome, Claimant, Claims, Lane,
     ProjectRef, Responsibility, TodoKind, WorkInterfaceError, WorkflowAssignments,
@@ -690,7 +690,7 @@ impl SelectedFlavorRoles {
 }
 
 impl FlavorRoles for SelectedFlavorRoles {
-    fn declared_roles(&self, project_root: &Path) -> Result<Vec<RoleName>, InterfaceError> {
+    fn declared(&self, project_root: &Path) -> Result<FlavorMembership, InterfaceError> {
         let failed = |message: String| InterfaceError {
             module: "todos",
             message,
@@ -709,7 +709,13 @@ impl FlavorRoles for SelectedFlavorRoles {
             self.home.domain_dir(&domain).join("workflow")
         };
         Flavor::load(&dir)
-            .map(|flavor| flavor.roles().to_vec())
+            .map(|flavor| FlavorMembership {
+                roles: flavor.roles().to_vec(),
+                dispatched_procedures: flavor
+                    .action_procedures()
+                    .map(|(_, procedure)| procedure.clone())
+                    .collect(),
+            })
             .map_err(|err| failed(err.to_string()))
     }
 }
