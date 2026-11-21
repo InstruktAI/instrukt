@@ -263,7 +263,7 @@ fn an_interrupted_send_recovers_native_acceptance_without_duplicate_input() {
     // Upgrade the retained native handover from the preceding owned schema.
     let previous =
         instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
-    previous.execute_batch("UPDATE conversation_relay_positions SET pending_json=(SELECT json_group_array(json(json_remove(value,'$.origin'))) FROM json_each(conversation_relay_positions.pending_json)); ALTER TABLE poll_deferrals DROP COLUMN cause; PRAGMA user_version=11;").unwrap();
+    previous.execute_batch("UPDATE conversation_relay_positions SET pending_json=(SELECT json_group_array(json(json_remove(value,'$.origin'))) FROM json_each(conversation_relay_positions.pending_json)); ALTER TABLE poll_deferrals DROP COLUMN cause; CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations; PRAGMA user_version=11;").unwrap();
     drop(previous);
     let runner = run();
     wait_for(|| {
@@ -391,6 +391,7 @@ fn a_migrated_nonfocused_worker_keeps_scoped_commands_but_cannot_link_to_its_dis
     db.execute("UPDATE session_bindings SET evidence=json_set(evidence,'$.native_assignment',json(?1)) WHERE session=?2", instrukt_core::state_db::rusqlite::params![old.to_string(), f.b.to_string()]).unwrap();
     db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
         .unwrap();
+    db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
     db.pragma_update(None, "user_version", 12).unwrap();
     drop(db);
     let env = &f.crew.project.env;
@@ -1287,21 +1288,32 @@ fn a_failed_link_pass_retries_without_another_native_change() {
     wait_for(|| {
         state
             .query_row(
-                "SELECT session='t3:s3' FROM connected_conversations WHERE conversation='D30'",
-                [],
+                "SELECT session=?1 FROM connected_conversations WHERE conversation='D30'",
+                [format!("t3:{}", fake.native_id("s3"))],
                 |row| row.get::<_, bool>(0),
             )
             .unwrap_or(false)
     });
     fake.delete("s3");
-    store.unproject_thread("s3");
+    store.unproject_thread(&fake.native_id("s3"));
     wake("2");
     let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
     wait_for(|| read_log().contains("event=conversation_presence_probe_confirmed"));
+    wait_for(|| {
+        fake.threads()
+            .iter()
+            .any(|id| id != "parent" && id != "child" && id != &fake.native_id("s3"))
+    });
     let shows = || {
         fake.calls()
             .iter()
-            .filter(|call| call.as_str() == "thread show --json --messages 0 -- s3")
+            .filter(|call| {
+                call.as_str()
+                    == format!(
+                        "thread show --json --messages 0 -- {}",
+                        fake.native_id("s3")
+                    )
+            })
             .count()
     };
     let before = shows();
@@ -1380,18 +1392,5 @@ fn a_failed_link_pass_retries_without_another_native_change() {
         log.matches("event=conversation_presence_probe_confirmed")
             .count(),
         1
-    );
-    assert!(
-        instrukt_company::conversations::status(&home)
-            .unwrap()
-            .conversations
-            .iter()
-            .any(|row| {
-                row.conversation == "D30"
-                    && row
-                        .failures
-                        .iter()
-                        .any(|cause| cause.contains("--stopped t3:s3"))
-            })
     );
 }

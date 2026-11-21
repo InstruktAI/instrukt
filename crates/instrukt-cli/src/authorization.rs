@@ -58,7 +58,6 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ] => TodoWrite,
         ["discuss", "open" | "close"] => ConversationLink,
         ["sessions", "list"] => SessionObserve,
-        ["sessions", "resolve-start" | "replace-deleted"] => SessionRecover,
         ["history", "search" | "show"] => HistoryRead,
         ["history", "import-teleclaude" | "extract"] => HistoryRead,
         ["events", "bind"] => StandingBind,
@@ -320,7 +319,6 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
                     assignment.company.as_ref().map(|own| own.as_str()) == Some(asked)
                 })
         }
-        SessionRecover => raw("key") == Some(assignment.key.as_str()),
         StandingBind => {
             if let Some(procedure) = assignment
                 .procedure

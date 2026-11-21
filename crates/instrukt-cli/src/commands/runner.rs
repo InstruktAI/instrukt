@@ -10,14 +10,11 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use instrukt_core::config::{Configuration, Module};
-use instrukt_core::ids::SessionRef;
 use instrukt_runner::install::{Scheduler, WakeUp};
-use instrukt_runner::keyed;
 use instrukt_runner::runner::{self, RunnerContext, TickOutcome};
 use instrukt_runner::sessions::Sessions;
 
 use jiff::tz::TimeZone;
-use serde_json::json;
 
 use crate::context::Ctx;
 use crate::wiring;
@@ -135,33 +132,6 @@ pub struct SessionsArgs {
 enum SessionsCommand {
     /// List this project's active and settled runtime threads, newest activity first.
     List(ListArgs),
-    /// Resolve a pending start by verifying a thread or allowing a fresh start.
-    ResolveStart(ResolveStartArgs),
-    /// Confirm a deleted thread's provider stopped and start its replacement.
-    ReplaceDeleted {
-        /// The retained runtime key shown in events status.
-        key: String,
-        /// The stopped session whose thread was deleted.
-        #[arg(long)]
-        stopped: SessionRef,
-    },
-}
-
-#[derive(Debug, clap::Args)]
-#[command(group(clap::ArgGroup::new("resolution").required(true).args(["session", "none"])))]
-struct ResolveStartArgs {
-    /// Durable start key, or the home-standing shorthand `<procedure>@<project>`.
-    key: String,
-    /// The session the runtime created, `<runtime>:<id>`.
-    #[arg(long)]
-    session: Option<SessionRef>,
-    /// Allow a fresh start after confirming no thread or creation remains.
-    /// A retained first thread must be proven absent.
-    #[arg(long)]
-    none: bool,
-    /// Print the resolution as JSON.
-    #[arg(long)]
-    json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -234,66 +204,6 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
                             .map(|t| t.to_string())
                             .unwrap_or_else(|| "unknown".into())
                     ))?;
-                }
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-        SessionsCommand::ReplaceDeleted { key, stopped } => {
-            keyed::validate_recovery_key(&key)?;
-            let adapter = sessions.adapter()?;
-            let invocation =
-                keyed::RuntimeInvocation::acquire(&ctx.home, Duration::from_secs(120))?;
-            let work = crate::wiring::work_ports(ctx)?;
-            let thread = keyed::replace_deleted(
-                &invocation,
-                adapter.as_ref(),
-                &key,
-                &stopped,
-                ctx.clock.now(),
-                work.as_ref().map(|ports| ports.bindings.as_ref()),
-            )?;
-            ctx.out.line(&format!(
-                "replaced {stopped} with {} under {key}",
-                thread.session
-            ))?;
-            if let Some(warning) = thread.warning {
-                ctx.out.line(&format!("warning: {warning}"))?;
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-        SessionsCommand::ResolveStart(args) => {
-            keyed::validate_recovery_key(&args.key)?;
-            sessions.runner_runtime()?;
-            let key = match args.key.rsplit_once('@') {
-                Some((procedure, project)) if !args.key.starts_with("instrukt:") => {
-                    keyed::standing_key(procedure, project)
-                }
-                _ => args.key.clone(),
-            };
-            let invocation =
-                keyed::RuntimeInvocation::acquire(&ctx.home, Duration::from_secs(120))?;
-            keyed::resolve(
-                &invocation,
-                sessions.adapter()?.as_ref(),
-                &key,
-                args.session.as_ref(),
-                args.json,
-                ctx.clock.now(),
-            )?;
-            if args.json {
-                ctx.out.json(&json!({
-                    "key": key,
-                    "session": args.session.as_ref().map(ToString::to_string),
-                }))?;
-            } else {
-                match &args.session {
-                    Some(session) => ctx
-                        .out
-                        .line(&format!("{} is bound to {session}", args.key))?,
-                    None => ctx.out.line(&format!(
-                        "{} has no session; the next wake-up starts one",
-                        args.key
-                    ))?,
                 }
             }
             Ok(ExitCode::SUCCESS)

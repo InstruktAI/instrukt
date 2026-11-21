@@ -803,6 +803,44 @@ pub fn websocket_dispatch(id: &str) -> Result<Value> {
     Ok(json!({"queued":true,"inputs_after_replay":count,"missing_provenance_rejected":true}))
 }
 
+/// Provider-free launch management: no opening message or provider turn is requested.
+pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
+    let mut token = Token::issue(true)?;
+    let input = json!({"commandId":"contract-keyed-launch","threadId":"contract-keyed-thread","projectId":project,
+        "title":"Readable contract title","generateTitle":false,"modelSelection":{"instanceId":"codex","model":"default"},
+        "runtimeMode":"approval-required","interactionMode":"default","creationSource":"mcp",
+        "workspaceStrategy":{"type":"existing_worktree","worktreePath":root.join("project"),"branch":"main"}});
+    let first = rpc(&token.secret, "orchestration.launchThread", input.clone())?;
+    let second = rpc(&token.secret, "orchestration.launchThread", input)?;
+    ensure!(
+        first["threadId"] == "contract-keyed-thread" && second["threadId"] == first["threadId"],
+        "native fixed-ID launch replay"
+    );
+    let projection = rpc(
+        &token.secret,
+        "orchestration.getThreadProjection",
+        json!({"threadId":"contract-keyed-thread"}),
+    )?;
+    let thread = &projection["thread"];
+    ensure!(
+        thread["runtimeMode"] == "approval-required" && thread["interactionMode"] == "default",
+        "native captured mode pair"
+    );
+    ensure!(
+        thread["projectId"] == project
+            && thread["worktreePath"] == root.join("project").to_str().unwrap(),
+        "native existing-worktree placement"
+    );
+    ensure!(
+        thread["createdBy"] == "user",
+        "native WebSocket provenance stamp"
+    );
+    token.revoke()?;
+    Ok(
+        json!({"same_thread":true,"modes_retained":true,"existing_worktree":true,"native_created_by":"user","opening_provider_turn":"not requested"}),
+    )
+}
+
 pub fn real(root: &Path) -> Result<()> {
     grammar()?;
     let _server = Server::start(root)?;
@@ -839,6 +877,7 @@ pub fn real(root: &Path) -> Result<()> {
         )?;
     }
     let project = find_project()?.context("registered temporary project")?;
+    let native_launch = native_launch_contract(root, &project)?;
     let id = "contract-thread";
     rpc(
         &token.secret,
@@ -916,7 +955,7 @@ pub fn real(root: &Path) -> Result<()> {
     let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch})
             .to_string(),
     )?;
     Ok(())

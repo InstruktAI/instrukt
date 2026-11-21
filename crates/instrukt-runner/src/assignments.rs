@@ -106,7 +106,7 @@ pub fn resolve(
     if assignment.is_none()
         && let Some(db) = StateRead::open(home)?
     {
-        let known:bool=db.conn().query_row("SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE runtime=?1 AND session=?2 AND kind IN ('todo','work','task','standing'))",instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(),caller.id.as_str()],|r|r.get(0)).map_err(StateDbError::sqlite(db.path()))?;
+        let known:bool=db.conn().query_row("SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE runtime=?1 AND session=?2 AND kind IN ('todo','work','task','standing'))",instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(),caller.to_string()],|r|r.get(0)).map_err(StateDbError::sqlite(db.path()))?;
         if known {
             return Err(StateDbError::invalid(
                 db.path(),

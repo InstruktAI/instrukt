@@ -180,6 +180,7 @@ impl Agents {
                 current: VERSION,
             });
         }
+        super::_agents_migrate::retire_session_recover(&mut value);
         inherit_capabilities(&mut value)?;
         let result: Self = serde_yaml_ng::from_value(value).map_err(|e| invalid(e.to_string()))?;
         if result.schema_version != VERSION {

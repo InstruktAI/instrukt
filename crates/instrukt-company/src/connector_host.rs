@@ -1051,15 +1051,7 @@ fn capture_contexts(
             .map_err(Into::into)
         }) {
             Some(Ok(captured)) => {
-                conversations::captured(
-                    home,
-                    company,
-                    key,
-                    &unread,
-                    &captured.text,
-                    Ok(captured.accompanying),
-                    clock.now(),
-                )?;
+                conversations::captured(home, company, key, &unread, Ok(captured), clock.now())?;
                 let _ = wakes.relay.try_send(());
                 continue;
             }
@@ -1070,7 +1062,6 @@ fn capture_contexts(
                     company,
                     key,
                     &unread,
-                    "",
                     Err(error.cause),
                     clock.now(),
                 )?;
@@ -1282,6 +1273,7 @@ mod test_connector {
             _: &dyn Fn(instrukt_connector::ContextSnapshot),
         ) -> Result<Captured, ConnectorError> {
             Ok(Captured {
+                display: None,
                 text: text.to_owned(),
                 accompanying: Default::default(),
             })

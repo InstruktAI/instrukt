@@ -35,6 +35,16 @@ entries, a digest mismatch, unavailable assets and execution failures fail the
 check visibly. The downloaded executable is the sole T3 used by this check;
 an installed executable never substitutes for it.
 
+### Native launch and replay
+
+The consumed native boundary includes `GET /api/projects`, `server.getConfig`,
+`orchestration.getThreadProjection` and `orchestration.launchThread`. Verify fixed
+command/thread identity and opening-message replay, captured native project and
+resolved modes, and existing-worktree capability where provider-free evidence
+permits. Native launch accepts `createdBy:"user"` on the pinned WebSocket path;
+caller payload provenance does not override it. Grammar or projection shape alone
+proves neither completed workspace preparation nor successful provider execution.
+
 ### Consumed upstream surfaces
 
 Paths in this table belong to `pingdotgg/t3code`; the instrukt identities name
@@ -44,6 +54,7 @@ the owners of the required behavior.
 | --- | --- |
 | Contracts package, `packages/contracts/` | Runtime operations, response shapes and capability evidence in `project/instrukt/spec/feature/runner/session-continuity`. |
 | Server persistence migrations, `apps/server/src/persistence/Migrations.ts` and `apps/server/src/persistence/Migrations/`, and their projection writer, `apps/server/src/orchestration-v2/ProjectionStore.ts` | Runtime-owned conversation-source compatibility in `project/instrukt/spec/feature/runner/session-continuity`, extraction in `project/instrukt/spec/feature/runner/history`, finished-turn relay in `project/instrukt/spec/feature/runner/conversation-links`, and the running turn's assistant messages a conversation's status shows in `project/instrukt/spec/feature/company/conversations`. |
+| WebSocket contracts/handlers, native `ThreadLaunchService`, and project HTTP snapshot | Fixed native launch/replay, captured project/model/modes and existing-worktree placement in `project/instrukt/spec/feature/runner/session-continuity`. |
 | CLI entry and commands, `apps/server/scripts/cli.ts` and `apps/server/src/cli/` | Unattended runtime operations and evidence in `project/instrukt/spec/feature/runner/session-continuity`, and native input delivery in `project/instrukt/spec/feature/runner/conversation-links`. |
 
 ### Isolation and real evidence
@@ -78,7 +89,7 @@ interfaces and real CLI boundaries, without widening implementation visibility:
 Each disposable server start waits for the runtime descriptor to report
 that server's assigned port before connecting, including after a restart.
 
-Company conversation sends use authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and T3's automated sender provenance. The release and its fake are compared for queued acceptance, replay without a duplicate, and explicit RPC rejection when required sender provenance is missing. A deferred opening run keeps the checks provider-free.
+Company conversation sends use authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and T3's native sender provenance. The release and its fake are compared for queued acceptance, replay without a duplicate, and the native `createdBy:"user"` stamp applied by WebSocket dispatch and launch. A deferred opening run keeps the checks provider-free.
 
 The consumed expectations derive from the owning specs and adapter contract,
 not from copying every field of an upstream response. Additional upstream fields

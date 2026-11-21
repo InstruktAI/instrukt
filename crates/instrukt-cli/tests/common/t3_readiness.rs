@@ -55,7 +55,7 @@ impl Server {
         if !dir.join("snapshot.json").exists() {
             std::fs::write(
                 dir.join("snapshot.json"),
-                json!({"providers":providers,"settings":{"providerInstances":{}}}).to_string(),
+                json!({"providers":providers,"settings":{"providerInstances":{},"defaultRuntimeMode":"full-access","projectSettingsOverrides":{}}}).to_string(),
             )
             .unwrap();
         }
@@ -139,6 +139,38 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .unwrap();
+    let mut prefix = [0; 32];
+    if stream.peek(&mut prefix).unwrap_or(0) > 0 && prefix.starts_with(b"GET /api/projects ") {
+        use std::io::{Read, Write};
+        let mut stream = stream;
+        let mut bytes = Vec::new();
+        let mut byte = [0; 1];
+        while stream.read_exact(&mut byte).is_ok() {
+            bytes.push(byte[0]);
+            if bytes.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let request = String::from_utf8(bytes).unwrap();
+        let authorized = request
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                    .and_then(|(_, value)| value.trim().strip_prefix("Bearer "))
+            })
+            .and_then(|token| session(dir, token))
+            .is_some();
+        let value =
+            json!({"projects":projects(dir),"updatedAt":"2026-11-06T10:00:00Z"}).to_string();
+        let status = if authorized {
+            "200 OK"
+        } else {
+            "401 Unauthorized"
+        };
+        write!(stream,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{value}",value.len()).unwrap();
+        return;
+    }
     let header_dir = dir.to_path_buf();
     let mut authenticated = None;
     let accepted = tungstenite::accept_hdr(
@@ -172,6 +204,55 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
         return;
     };
     let request: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    if request["tag"] == "orchestration.launchThread"
+        || request["tag"] == "orchestration.getThreadProjection"
+    {
+        let exit = if request["tag"] == "orchestration.launchThread" {
+            {
+                let sid = authenticated.as_ref().unwrap();
+                let token: Value = serde_json::from_slice(
+                    &std::fs::read(dir.join(format!("tokens/{sid}.json"))).unwrap(),
+                )
+                .unwrap();
+                launch(
+                    dir,
+                    home,
+                    &request["payload"],
+                    token["owner"].as_u64().unwrap(),
+                )
+            }
+        } else {
+            let id = request["payload"]["threadId"].as_str().unwrap();
+            match std::fs::read(
+                dir.parent()
+                    .unwrap()
+                    .join("t3-state")
+                    .join(format!("{id}.json")),
+            ) {
+                Ok(bytes) => {
+                    let mut thread: Value = serde_json::from_slice(&bytes).unwrap();
+                    thread["id"] = thread["threadId"].clone();
+                    json!({"_tag":"Success","value":{"thread":thread}})
+                }
+                Err(_) => {
+                    json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":"Thread not found."}}]})
+                }
+            }
+        };
+        if request["tag"] == "orchestration.launchThread"
+            && dir.parent().unwrap().join("t3-state/silent-start").exists()
+        {
+            std::fs::remove_file(dir.parent().unwrap().join("t3-state/silent-start")).unwrap();
+            let _ = socket.close(None);
+            return;
+        }
+        let _ = socket.send(tungstenite::Message::Text(
+            json!({"_tag":"Exit","requestId":request["id"],"exit":exit})
+                .to_string()
+                .into(),
+        ));
+        return;
+    }
     if request["tag"] == "orchestration.dispatchCommand" {
         let sid = authenticated.unwrap();
         let token = std::fs::read(dir.join(format!("tokens/{sid}.json"))).unwrap();
@@ -187,7 +268,12 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
     // A held read stays open until the test releases it, every held read or
     // this one by its number, unless its client gives up first: it is
     // recorded when it arrived, and whether the client ended it.
-    if dir.join("hold-read").exists() {
+    let session_record: Value = serde_json::from_slice(
+        &std::fs::read(dir.join(format!("tokens/{}.json", authenticated.as_ref().unwrap())))
+            .unwrap(),
+    )
+    .unwrap();
+    if dir.join("hold-read").exists() && session_record["label"] != "instrukt-launch-metadata" {
         let number = held.fetch_add(1, Ordering::SeqCst) + 1;
         let record = dir.join("held-reads").join(number.to_string());
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
@@ -215,13 +301,122 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
     }
     let value: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("snapshot.json")).unwrap()).unwrap();
-    let response = if dir.join("malformed").exists() {
+    let response = if dir.join("malformed").exists()
+        && session_record["label"] != "instrukt-launch-metadata"
+    {
         json!({"unknown":true})
     } else {
         json!({"_tag":"Exit","requestId":request["id"],"exit":{"_tag":"Success","value":value}})
     };
     let _ = socket.send(tungstenite::Message::Text(response.to_string().into()));
     let _ = socket.close(None);
+}
+
+fn projects(dir: &Path) -> Vec<Value> {
+    fn visit(dir: &Path, depth: usize, roots: &mut Vec<PathBuf>) {
+        if depth == 0 {
+            return;
+        }
+        if dir.join(".git").exists() {
+            roots.push(dir.to_path_buf());
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                visit(&entry.path(), depth - 1, roots);
+            }
+        }
+    }
+    let mut roots = Vec::new();
+    visit(dir.parent().unwrap(), 6, &mut roots);
+    if let Ok(companies) = std::fs::read_dir(dir.parent().unwrap().join("home/.instrukt/companies"))
+    {
+        for company in companies.flatten() {
+            if company.path().is_dir() && !roots.contains(&company.path()) {
+                roots.push(company.path());
+            }
+        }
+    }
+    roots
+        .into_iter()
+        .map(|root| {
+            let id = format!(
+                "project-{}",
+                hex::encode(Sha256::digest(root.to_string_lossy().as_bytes()))
+            );
+            let id = std::fs::read_to_string(
+                dir.parent()
+                    .unwrap()
+                    .join("t3-state")
+                    .join(format!("{id}.id")),
+            )
+            .unwrap_or(id);
+            json!({"id":id,"workspaceRoot":root,"deletedAt":null})
+        })
+        .collect()
+}
+fn launch(dir: &Path, home: &Path, payload: &Value, owner: u64) -> Value {
+    use std::io::Write;
+    let Some(project) = projects(dir)
+        .into_iter()
+        .find(|p| p["id"] == payload["projectId"])
+    else {
+        return json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":"Project not found."}}]});
+    };
+    let root = dir.parent().unwrap();
+    let mut command = std::process::Command::new(root.join("runtime-bin/t3"));
+    command.args([
+        "thread",
+        "start",
+        "--title",
+        payload["title"].as_str().unwrap(),
+        "--provider",
+        payload["modelSelection"]["instanceId"].as_str().unwrap(),
+        "--model",
+        payload["modelSelection"]["model"].as_str().unwrap(),
+    ]);
+    if payload["workspaceStrategy"]["type"] == "worktree" {
+        command.args([
+            "--worktree",
+            payload["workspaceStrategy"]["baseRef"].as_str().unwrap(),
+            "--branch",
+            payload["workspaceStrategy"]["branch"].as_str().unwrap(),
+        ]);
+    }
+    let mut child = command
+        .args(["--", project["workspaceRoot"].as_str().unwrap(), "-"])
+        .env("HOME", home)
+        .env("T3_TEST_LAUNCH", payload.to_string())
+        .env("T3_TEST_OPERATION_OWNER", owner.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            payload["initialMessage"]["text"]
+                .as_str()
+                .unwrap_or("")
+                .as_bytes(),
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    if !output.status.success() {
+        return json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":String::from_utf8_lossy(&output.stderr)}}]});
+    }
+    let id = payload["threadId"].as_str().unwrap();
+    let thread: Value = serde_json::from_slice(
+        &std::fs::read(root.join("t3-state").join(format!("{id}.json"))).unwrap(),
+    )
+    .unwrap();
+    json!({"_tag":"Success","value":{"threadId":id,"projection":{"thread":thread},"resumed":false,"sequence":1}})
 }
 
 fn dispatch(dir: &Path, home: &Path, payload: &Value) -> Value {

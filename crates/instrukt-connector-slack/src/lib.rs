@@ -900,6 +900,26 @@ impl Connector for Slack {
         let mut captured = render_context(text, &messages, limit, me.as_ref(), &mut |user| {
             names.of(user)
         });
+        let (channel, thread) = split_conversation(conversation);
+        captured.display = self
+            .api
+            .call("conversations.info", false, &[("channel", channel)])
+            .ok()
+            .and_then(|info| {
+                let info = &info["channel"];
+                if thread.is_none() {
+                    let user = info["user"].as_str()?;
+                    let name = names.of(user);
+                    (name != user).then_some(instrukt_connector::ConversationDisplay::Direct(name))
+                } else {
+                    info["name"]
+                        .as_str()
+                        .filter(|name| !name.is_empty())
+                        .map(|name| {
+                            instrukt_connector::ConversationDisplay::Channel(name.to_owned())
+                        })
+                }
+            });
         captured.accompanying.stopped_early = stopped_early;
         captured.accompanying.complete_from = complete_from;
         Ok(captured)
@@ -1244,6 +1264,7 @@ fn render_context(
         })
         .collect();
     Captured {
+        display: None,
         text,
         accompanying: Accompanying {
             messages,

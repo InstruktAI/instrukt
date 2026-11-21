@@ -943,7 +943,6 @@ impl Work {
             })?;
             if !in_workspace
                 || &proof.session != caller
-                || (proof.title != title && proof.title != key)
                 || proof.key != key
                 || proof.branch != branch
                 || proof.source.trim().is_empty()

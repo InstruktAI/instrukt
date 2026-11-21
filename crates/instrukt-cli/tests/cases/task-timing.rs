@@ -285,7 +285,10 @@ fn a_recurring_task_continues_after_success_and_holds_after_an_error() {
     );
     project.rt.set_status("s2", "ended failed");
     project.tick_at("2030-01-06T09:16:20Z");
-    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"t3:s2");
+    assert_eq!(
+        project.rt.notifications(),
+        [format!("t3:{}", project.rt.native_id("s2"))]
+    );
     insta::assert_snapshot!(
         "held-after-error",
         work::redact(&project.todo(["show", "quarter-hourly-sync"]))
@@ -337,7 +340,10 @@ fn a_task_failure_committed_before_interrupted_reflection_is_notified_on_the_nex
     assert!(reached, "the runner never reached hold reflection");
 
     project.tick_at("2030-01-06T09:15:20Z");
-    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"t3:s1");
+    assert_eq!(
+        project.rt.notifications(),
+        [format!("t3:{}", project.rt.native_id("s1"))]
+    );
     project.tick_at("2030-01-06T09:30:20Z");
     assert_eq!(project.rt.started_count(), 1);
     assert_eq!(project.rt.notifications().len(), 1);
@@ -363,7 +369,10 @@ fn a_finished_run_repeating_its_outcome_is_refused_and_leaves_the_next_runs_clai
     project.tick_at("2030-01-06T09:15:20Z");
     assert_eq!(project.rt.started_count(), 2, "{:?}", project.rt.calls());
 
-    project.env.set_env("T3CODE_THREAD_ID", "s1");
+    project.env.set_env(
+        "T3CODE_THREAD_ID",
+        &crate::fixtures::t3::FakeT3::create(&project.env).native_id("s1"),
+    );
     let repeated = project
         .env
         .instrukt(project.repo.path())
@@ -404,7 +413,10 @@ fn a_replayed_start_of_a_finished_run_is_refused_and_leaves_the_current_run() {
     let before = project.todo(["show", "quarter-hourly-sync"]);
 
     // The finished run replays its start of the occurrence it completed.
-    project.env.set_env("T3CODE_THREAD_ID", "s1");
+    project.env.set_env(
+        "T3CODE_THREAD_ID",
+        &crate::fixtures::t3::FakeT3::create(&project.env).native_id("s1"),
+    );
     let replayed = project
         .env
         .instrukt(project.repo.path())

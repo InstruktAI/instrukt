@@ -859,7 +859,6 @@
             "integration",
             "session-observe",
             "history-read",
-            "session-recover",
             "standing-bind",
             "agents-read",
             "agents-write",

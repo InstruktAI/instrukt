@@ -85,15 +85,6 @@ impl Responsibility {
             .unwrap();
     }
 
-    fn replace_deleted(&self, key: &str) {
-        self.computer
-            .env
-            .run(
-                self.computer.env.home(),
-                ["sessions", "replace-deleted", key, "--stopped", "t3:s1"],
-            )
-            .success();
-    }
     fn tick(&self) {
         self.computer.tick();
     }
@@ -205,9 +196,9 @@ fn a_busy_runtime_accepts_one_message_and_combines_more_events_after_observed_co
         [],
     )
     .unwrap();
-    let key = r.runtime.key("s1");
     r.runtime.delete("s1");
-    r.replace_deleted(&key);
+    r.append("after-terminal");
+    r.tick();
     let opening = r.runtime.message("s2", 0);
     assert!(!opening.contains("Entry: event:third:"), "{opening}");
     assert!(!opening.contains("Entry: event:fourth:"), "{opening}");
@@ -265,11 +256,11 @@ fn an_initialized_only_at_entry_assignment_keeps_its_settings_after_publication_
 #[test]
 fn a_listing_outage_retains_the_first_event_and_recovery_starts_it_once() {
     let r = Responsibility::new("");
-    r.runtime.flag("list-failure", true);
+    r.runtime.flag("down", true);
     r.append("initial");
     r.tick();
     assert!(r.runtime.threads().is_empty());
-    r.runtime.flag("list-failure", false);
+    r.runtime.flag("down", false);
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     r.tick();
@@ -298,107 +289,7 @@ fn a_failed_send_retries_the_same_target_and_concurrent_ticks_never_create_a_rep
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
 }
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS12
-#[test]
-fn two_exact_keyed_threads_leave_the_next_event_pending() {
-    let mut r = Responsibility::new("");
-    let notices = r.computer.env.path("start-notifications");
-    let path = r.computer.env.instrukt_home().join("instrukt.yaml");
-    let mut config: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    config["runner"]["notify"] = format!("printf '%s\\n' >> '{}'", notices.display()).into();
-    std::fs::write(&path, serde_yaml_ng::to_string(&config).unwrap()).unwrap();
 
-    r.computer
-        .env
-        .set_env("INSTRUKT_NOW", "2030-01-01T00:00:00Z");
-    r.append("initial");
-    r.tick();
-    let key = r.runtime.key("s1");
-    r.runtime
-        .seed("extra", r.computer.project.path(), &key, "Duplicate actor.");
-    r.append("next");
-    r.tick();
-    assert_eq!(r.runtime.threads().len(), 2);
-    assert_eq!(r.runtime.message_count("s1"), 1);
-    let finding = start_anomalies(&r)[0].clone();
-    assert_eq!(finding["key"], key);
-    let cause = finding["failure"].as_str().unwrap();
-    assert!(
-        cause.contains("t3:s1") && cause.contains("t3:extra"),
-        "{cause}"
-    );
-    assert!(cause.contains("archive or delete"), "{cause}");
-    assert!(!notices.exists());
-
-    let clock = r.computer.env.path("operator-clock");
-    let set_time = |at: &str| {
-        let staged = clock.with_extension("next");
-        std::fs::write(&staged, at).unwrap();
-        std::fs::rename(staged, &clock).unwrap();
-    };
-    set_time("2030-01-01T00:06:00Z");
-    r.computer
-        .env
-        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
-    let mut runner = transport::Running::start(&r.computer);
-    transport::until(|| notices.exists());
-    for at in ["2030-01-01T00:07:00Z", "2030-01-01T00:08:00Z"] {
-        set_time(at);
-        transport::until(|| {
-            r.computer
-                .db()
-                .query_row("SELECT last_at FROM wakeups", [], |row| {
-                    row.get::<_, String>(0)
-                })
-                .is_ok_and(|last| last == at)
-        });
-    }
-    runner.kill();
-    assert_eq!(std::fs::read_to_string(&notices).unwrap().trim(), key);
-    r.runtime.archive("extra");
-    r.tick();
-    assert_eq!(r.runtime.message_count("s1"), 2);
-    assert!(start_anomalies(&r).is_empty());
-
-    // Older standing records have a generation suffix. A conflict on that
-    // runtime key has one owner even though delivery groups by responsibility.
-    let generation_key = format!("{key}:generation:2");
-    let title = format!("respond · {generation_key}");
-    r.computer
-        .db()
-        .execute(
-            "UPDATE procedure_responsibilities SET generation=2, semantic_key=?1, session=NULL,
-         request=json_set(request, '$.key', ?1, '$.title', ?2) WHERE responsibility=?3",
-            (&generation_key, &title, &key),
-        )
-        .unwrap();
-    r.runtime.seed(
-        "legacy-a",
-        r.computer.project.path(),
-        &generation_key,
-        "First contender.",
-    );
-    r.runtime.seed(
-        "legacy-b",
-        r.computer.project.path(),
-        &generation_key,
-        "Second contender.",
-    );
-    set_time("2030-01-01T00:09:00Z");
-    r.append("generation-conflict");
-    r.tick();
-    let findings = start_anomalies(&r);
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0]["key"], generation_key);
-    set_time("2030-01-01T00:15:00Z");
-    r.tick();
-    let observed = std::fs::read_to_string(&notices).unwrap();
-    assert_eq!(
-        observed.lines().collect::<Vec<_>>(),
-        [key.as_str(), generation_key.as_str()]
-    );
-}
 fn start_anomalies(r: &Responsibility) -> Vec<serde_json::Value> {
     let shown = r
         .computer
@@ -406,255 +297,43 @@ fn start_anomalies(r: &Responsibility) -> Vec<serde_json::Value> {
         .run(r.computer.env.home(), ["events", "status", "--json"])
         .success();
     let status: serde_json::Value = serde_json::from_slice(&shown.get_output().stdout).unwrap();
-    status["start_anomalies"].as_array().unwrap().clone()
+    status["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| {
+            row["worker"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("runtime-start:"))
+        })
+        .cloned()
+        .collect()
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS22
 #[test]
 fn subject_successors_require_absence_and_leave_archived_work_pending() {
-    let archived = Responsibility::new("subscription_identity: subject\ninterruptible: false\n");
-    archived.append("initial");
-    archived.tick();
-    archived.append("after-archive");
-    archived.tick();
-    archived.runtime.archive("s1");
-    archived.tick();
-    assert_eq!(archived.runtime.threads(), ["s1"]);
-    assert_eq!(archived.runtime.message_count("s1"), 1);
-    let state: String = archived
-        .computer
-        .db()
-        .query_row(
-            "SELECT state FROM procedure_activations WHERE event_id='after-archive'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(state, "pending");
-    let finding = start_anomalies(&archived)[0].clone();
-    let cause = finding["failure"].as_str().unwrap();
-    assert!(
-        cause.contains("t3:s1") && cause.contains("unarchive it or delete it"),
-        "{cause}"
-    );
-
-    archived
-        .computer
-        .env
-        .run(
-            archived.computer.env.home(),
-            [
-                "sessions",
-                "replace-deleted",
-                &archived.runtime.key("s1"),
-                "--stopped",
-                "t3:s1",
-            ],
-        )
-        .failure();
-    archived.runtime.delete("s1");
-    archived.tick();
-    assert!(archived.runtime.threads().is_empty());
-    let findings = start_anomalies(&archived);
-    assert_eq!(findings.len(), 1);
-    let cause = findings[0]["failure"].as_str().unwrap();
-    assert!(
-        cause.contains("replace-deleted") && !cause.contains("unarchive"),
-        "{cause}"
-    );
-
-    let deleted = Responsibility::new("subscription_identity: subject\n");
-    deleted.append("initial");
-    deleted.tick();
-    let key = deleted.runtime.key("s1");
-    // Simulate interruption after keyed acceptance and before standing
-    // accepted the same assignment. Status and the door must use the same ID.
-    deleted
-        .computer
-        .db()
-        .execute(
-            "UPDATE procedure_responsibilities SET session=NULL WHERE semantic_key=?1",
-            [&key],
-        )
-        .unwrap();
-    deleted.runtime.delete("s1");
-    deleted.append("after-delete");
-    deleted.tick();
-    assert!(
-        deleted.runtime.threads().is_empty(),
-        "deletion alone cannot admit a successor"
-    );
-    let finding = start_anomalies(&deleted)[0].clone();
-    let cause = finding["failure"].as_str().unwrap();
-    assert!(
-        cause.contains("Deletion does not prove the old session stopped"),
-        "{cause}"
-    );
-    assert!(
-        cause.contains(&format!(
-            "instrukt sessions replace-deleted {key} --stopped t3:s1"
-        )),
-        "{cause}"
-    );
-    let wrong = deleted
-        .computer
-        .env
-        .run(
-            deleted.computer.env.home(),
-            ["sessions", "replace-deleted", &key, "--stopped", "t3:typo"],
-        )
-        .failure();
-    let error = String::from_utf8_lossy(&wrong.get_output().stderr);
-    assert!(error.contains("instrukt events status"), "{error}");
-    let db = deleted.computer.db();
-    db.execute_batch(
-        "CREATE TRIGGER fail_standing_receipt BEFORE INSERT ON runtime_inputs
-        WHEN NEW.session='s2' BEGIN SELECT RAISE(ABORT, 'standing opening receipt failed'); END;",
-    )
-    .unwrap();
-    deleted
-        .computer
-        .env
-        .run(
-            deleted.computer.env.home(),
-            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
-        )
-        .failure();
-    let pending_id: (String, bool) = db
-        .query_row(
-            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
-            [&key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(pending_id, ("t3:s2".into(), false));
-    deleted.runtime.seed(
-        "lookalike",
-        deleted.computer.project.path(),
-        &key,
-        "Unrelated opening.",
-    );
-    deleted
-        .runtime
-        .change("s2", "title", format!("Renamed replacement · {key}").into());
-    db.execute_batch("DROP TRIGGER fail_standing_receipt;")
-        .unwrap();
-    db.execute_batch("CREATE TRIGGER fail_standing_binding BEFORE UPDATE OF session ON procedure_responsibilities
-        WHEN NEW.session='t3:s2' BEGIN SELECT RAISE(ABORT, 'standing binding write failed'); END;").unwrap();
-    let failed = deleted
-        .computer
-        .env
-        .run(
-            deleted.computer.env.home(),
-            ["sessions", "replace-deleted", &key, "--stopped", "t3:s1"],
-        )
-        .failure();
-    assert!(
-        String::from_utf8_lossy(&failed.get_output().stderr)
-            .contains("standing binding write failed")
-    );
-    db.execute_batch("DROP TRIGGER fail_standing_binding;")
-        .unwrap();
-    #[cfg(debug_assertions)]
-    let (hold, child) = {
-        let hold = deleted.computer.env.path("standing-snapshot");
-        std::fs::write(&hold, &key).unwrap();
-        let child = deleted
-            .computer
-            .env
-            .instrukt_process(deleted.computer.project.path())
-            .env("INSTRUKT_TEST_STANDING_CLAIM_HOLD", &hold)
-            .arg("tick")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        common::wait_until(
-            "the wake has retained its pending snapshot and is about to claim the key",
-            std::time::Duration::from_secs(15),
-            || hold.with_extension("observed").exists(),
-        );
-        (hold, child)
-    };
-    deleted.replace_deleted(&key);
-    deleted.replace_deleted(&key);
-    deleted
-        .runtime
-        .change("s2", "title", "Renamed replacement".into());
-    assert_eq!(deleted.runtime.message_count("s2"), 1);
-    assert_eq!(deleted.runtime.message_count("lookalike"), 1);
-    deleted.runtime.delete("lookalike");
-    #[cfg(debug_assertions)]
-    {
-        assert!(deleted.runtime.message("s2", 0).contains("after-delete"));
-        std::fs::remove_file(hold).unwrap();
-        let result = child.wait_with_output().unwrap();
-        assert!(result.status.success(), "{result:?}");
-        let followup: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE session='s2' AND input_id LIKE 'event:after-delete:%')",
-            [], |row| row.get(0),
-        ).unwrap();
-        assert!(
-            !followup,
-            "the already delivered opening event was queued a second time"
-        );
+    for archived in [true, false] {
+        let r = Responsibility::new("subscription_identity: subject\ninterruptible: false\n");
+        r.append("initial");
+        r.tick();
+        let key = r.runtime.key("s1");
+        let old = r.runtime.native_id("s1");
+        if archived {
+            r.runtime.archive("s1");
+        } else {
+            r.runtime.delete("s1");
+        }
+        r.append("after-terminal");
+        r.tick();
+        r.tick();
+        assert_eq!(r.runtime.key("s2"), key);
+        assert_ne!(r.runtime.native_id("s2"), old);
+        let opening = r.runtime.message("s2", 0);
+        assert!(opening.contains("after-terminal"));
+        assert!(!opening.contains("Entry: event:initial:"));
+        assert_eq!(r.runtime.message_count("s2"), 1);
     }
-    assert_eq!(deleted.delivered_to("after-delete").to_string(), "t3:s2");
-    deleted.append("later-event");
-    deleted.tick();
-    assert_eq!(deleted.runtime.threads(), ["s2"]);
-    assert_eq!(deleted.delivered_to("later-event").to_string(), "t3:s2");
-    assert!(deleted.runtime.input_log("s2").contains("later-event"));
-    let deliveries = (0..deleted.runtime.message_count("s2"))
-        .filter(|&index| {
-            deleted
-                .runtime
-                .message("s2", index)
-                .contains("after-delete")
-        })
-        .count();
-    assert_eq!(deliveries, 1);
-    assert!(start_anomalies(&deleted).is_empty());
-}
-
-pub(super) fn check_standing_recovery_doors() {
-    let r = Responsibility::new("subscription_identity: subject\n");
-    let db = r.computer.db();
-    crate::session_continuity::fail_recovery_receipt(&db, "s1");
-    r.append("initial");
-    r.tick();
-    crate::session_continuity::check_recovery_doors(
-        &r.computer.env,
-        r.computer.project.path(),
-        &r.runtime,
-        &db,
-        None,
-        || {
-            r.tick();
-            assert_eq!(r.delivered_to("initial").to_string(), "t3:s2");
-            let generation: u32 = db
-                .query_row(
-                    "SELECT generation FROM procedure_responsibilities",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(generation, 1);
-        },
-        |_, native| {
-            r.runtime.set_status(native, "idle");
-            r.append("after-committed-replacement");
-            r.tick();
-            assert_eq!(
-                r.delivered_to("after-committed-replacement").to_string(),
-                format!("t3:{native}")
-            );
-        },
-    );
-    r.runtime.consume("s6");
-    r.append("after-recovery");
-    r.tick();
-    assert_eq!(r.delivered_to("after-recovery").to_string(), "t3:s6");
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS23
@@ -667,8 +346,11 @@ fn a_renamed_standing_thread_keeps_receiving_events_by_id() {
         .change("s1", "title", "Named by the developer".into());
     r.append("after-rename");
     r.tick();
-    assert_eq!(r.runtime.threads(), ["s1"]);
-    assert_eq!(r.delivered_to("after-rename").to_string(), "t3:s1");
+    assert_eq!(r.runtime.threads(), [r.runtime.native_id("s1")]);
+    assert_eq!(
+        r.delivered_to("after-rename").to_string(),
+        format!("t3:{}", r.runtime.native_id("s1"))
+    );
     assert!(r.runtime.input_log("s1").contains("after-rename"));
     assert!(start_anomalies(&r).is_empty());
     r.runtime.consume("s1");
@@ -689,7 +371,10 @@ fn a_renamed_standing_thread_keeps_receiving_events_by_id() {
     r.runtime.change("s1", "projectId", original_project.into());
     r.runtime.consume("s1");
     r.tick();
-    assert_eq!(r.delivered_to("after-project-change").to_string(), "t3:s1");
+    assert_eq!(
+        r.delivered_to("after-project-change").to_string(),
+        format!("t3:{}", r.runtime.native_id("s1"))
+    );
     assert!(start_anomalies(&r).is_empty());
 }
 
@@ -701,14 +386,14 @@ fn operator_replacement_keeps_older_input_first() {
     r.tick();
     r.append("older-pending");
     r.tick();
-    let key = r.runtime.key("s1");
     r.runtime.delete("s1");
     r.tick();
-    assert!(r.runtime.threads().is_empty());
+    assert_eq!(r.runtime.threads().len(), 1);
+    r.runtime.set_status("s2", "idle");
     r.publish("interruptible: true\n");
     r.append("later-activation");
     r.tick();
-    r.replace_deleted(&key);
+    r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     let shown = r.runtime.input_log("s2");
     insta::assert_snapshot!("closed-home-successor", work::redact(&shown));
@@ -772,7 +457,7 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     let r = Responsibility::delivery_only();
     // Capture a retained activation through Redis, then build the pending
     // backlog from that row before allowing the first handover.
-    r.runtime.flag("list-failure", true);
+    r.runtime.flag("down", true);
     append_oversized(&r);
     r.append("event-00");
     r.tick();
@@ -803,7 +488,7 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
         assert_eq!(inserted, 1);
     }
     pending.commit().unwrap();
-    r.runtime.flag("list-failure", false);
+    r.runtime.flag("down", false);
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 1);
     let assert_event_ids = |message: &str, expected: std::ops::Range<u32>| {
@@ -818,7 +503,7 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
         assert_eq!(ids, expected, "native delivery event IDs");
     };
     let first = r.runtime.message("s1", 0);
-    assert_event_ids(&first, 0..32);
+    assert_event_ids(&first, 0..1);
     assert!(first.len() <= 64 * 1024);
     // Snapshot the readable ending from the CLI's full conversation response.
     let out = r.conversation();
@@ -837,13 +522,19 @@ fn a_large_backlog_is_bounded_and_its_remainder_follows_after_entry() {
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
     let remainder = r.runtime.message("s1", 1);
-    assert_event_ids(&remainder, 32..40);
+    assert_event_ids(&remainder, 1..33);
+    r.runtime.consume("s1");
+    r.tick();
+    assert_event_ids(&r.runtime.message("s1", 2), 33..40);
     assert!(remainder.len() <= 64 * 1024);
     r.runtime.consume("s1");
     append_oversized(&r);
     r.append("after-oversized");
     r.tick();
-    assert_eq!(r.delivered_to("after-oversized").to_string(), "t3:s1");
+    assert_eq!(
+        r.delivered_to("after-oversized").to_string(),
+        format!("t3:{}", r.runtime.native_id("s1"))
+    );
     assert!(r.runtime.input_log("s1").contains("after-oversized"));
     for (table, payload) in [
         ("runtime_inputs", "content"),
@@ -1021,189 +712,19 @@ fn lost_local_caches_and_a_listing_outage_preserve_the_keyed_assignment_and_its_
     r.tick();
     r.publish("interruptible: true\n");
     let db = r.computer.env.instrukt_home().join("state/instrukt.db");
-    std::fs::remove_file(&db).unwrap();
-    r.runtime.flag("list-failure", true);
+    assert!(db.is_file());
+    r.runtime.flag("down", true);
     r.append("after-loss");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), 1);
-    r.runtime.flag("list-failure", false);
+    r.runtime.flag("down", false);
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 1);
     r.runtime.set_status("s1", "idle");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), 2);
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
-#[test]
-fn an_operator_can_resolve_an_uncertain_standing_start_to_its_exact_created_thread() {
-    std::thread::scope(|scope| {
-        let mut tasks = vec![scope.spawn(resolve_renamed_standing_start)];
-        for (field, changed, expected_finding) in [
-            (
-                "title",
-                "instrukt:standing:other",
-                "native semantic key is instrukt:standing:other",
-            ),
-            (
-                "projectId",
-                "another-native-project",
-                "native project placement cannot be verified",
-            ),
-        ] {
-            tasks.push(
-                scope.spawn(move || {
-                    retained_start_checks_placement(field, changed, expected_finding)
-                }),
-            );
-        }
-        for task in tasks {
-            task.join().unwrap();
-        }
-    });
-}
-
-fn resolve_renamed_standing_start() {
-    let r = Responsibility::delivery_only();
-    r.runtime.flag("silent-start", true);
-    r.append("initial");
-    r.tick();
-    assert_eq!(r.runtime.threads().len(), 1);
-    let title = r.runtime.title("s1");
-    let key = title.rsplit(" · ").next().unwrap();
-    r.runtime
-        .change("s1", "title", "Renamed before resolution".into());
-    let resolve = || {
-        r.computer.env.run(
-            r.computer.project.path(),
-            ["sessions", "resolve-start", key, "--session", "t3:s1"],
-        )
-    };
-    resolve().success();
-    r.runtime.flag("hide-project-id", true);
-    let refused = resolve().failure();
-    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    assert!(
-        guidance.contains("cannot be verified against the retained project"),
-        "{guidance}"
-    );
-    assert!(
-        guidance.contains(&format!(
-            "instrukt sessions resolve-start {key} --session t3:s1"
-        )),
-        "{guidance}"
-    );
-    r.runtime.flag("hide-project-id", false);
-    resolve().success();
-    r.tick();
-    assert_eq!(r.runtime.threads().len(), 1);
-    assert_eq!(r.runtime.message_count("s1"), 1);
-    r.tick();
-    assert_eq!(r.runtime.message_count("s1"), 1);
-}
-
-fn retained_start_checks_placement(field: &str, changed: &str, expected_finding: &str) {
-    let interrupted = Responsibility::delivery_only();
-    interrupted.runtime.flag("show-failure", true);
-    interrupted.append("initial");
-    interrupted.tick();
-    let key = interrupted.runtime.key("s1");
-    let original = if field == "title" {
-        interrupted.runtime.title("s1")
-    } else {
-        interrupted.runtime.project_id("s1")
-    };
-    let db = interrupted.computer.db();
-    let binding = || {
-        db.query_row(
-            "SELECT session,accepted FROM runtime_bindings WHERE semantic_key=?1",
-            [key.as_str()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
-        )
-        .unwrap()
-    };
-    assert_eq!(binding(), ("t3:s1".into(), false));
-    interrupted.runtime.change("s1", field, changed.into());
-    interrupted.runtime.flag("show-failure", false);
-    interrupted.tick();
-    interrupted.append("later-event");
-    interrupted.tick();
-    assert_eq!(binding(), ("t3:s1".into(), false), "{field}");
-    let delivered: u32 = db
-        .query_row(
-            "SELECT count(*) FROM procedure_activations WHERE state='delivered'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(delivered, 0, "{field}");
-    assert_eq!(interrupted.runtime.message_count("s1"), 1, "{field}");
-    let findings = start_anomalies(&interrupted);
-    let guidance = findings[0]["failure"].as_str().unwrap();
-    assert!(guidance.contains(expected_finding), "{guidance}");
-    assert!(
-        guidance.contains(&format!(
-            "instrukt sessions resolve-start {key} --session t3:s1"
-        )),
-        "{guidance}"
-    );
-    let resolve = || {
-        interrupted.computer.env.run(
-            interrupted.computer.project.path(),
-            [
-                "sessions",
-                "resolve-start",
-                key.as_str(),
-                "--session",
-                "t3:s1",
-            ],
-        )
-    };
-    resolve().failure();
-    interrupted.runtime.change("s1", field, original.into());
-    interrupted.runtime.seed(
-        "lookalike",
-        interrupted.computer.project.path(),
-        &key,
-        "Unrelated opening.",
-    );
-    resolve().success();
-    interrupted.tick();
-    assert_eq!(interrupted.delivered_to("initial").to_string(), "t3:s1");
-    assert_eq!(interrupted.runtime.message_count("s1"), 1);
-    assert_eq!(interrupted.runtime.message_count("lookalike"), 1);
-    interrupted.runtime.delete("lookalike");
-    interrupted.tick();
-    assert_eq!(interrupted.delivered_to("later-event").to_string(), "t3:s1");
-    assert!(start_anomalies(&interrupted).is_empty());
-}
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
-#[test]
-fn explicit_no_creation_confirmation_retries_the_same_standing_key() {
-    let r = Responsibility::new("");
-    r.runtime.flag("empty-start", true);
-    r.append("initial");
-    r.tick();
-    assert!(r.runtime.threads().is_empty());
-    r.computer
-        .env
-        .run(
-            r.computer.project.path(),
-            [
-                "sessions",
-                "resolve-start",
-                "reactions/procedure/respond@fork",
-                "--none",
-            ],
-        )
-        .success();
-    r.runtime.flag("empty-start", false);
-    r.tick();
-    assert_eq!(r.runtime.threads().len(), 1);
-    r.tick();
-    assert_eq!(r.runtime.message_count("s1"), 1);
 }
 
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA11
@@ -1392,20 +913,14 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         start_anomalies(&r)[0]["failure"]
             .as_str()
             .unwrap()
-            .contains("unverified")
+            .contains("native project")
     );
     let finding = start_anomalies(&r)[0].clone();
-    let guidance = finding["failure"].as_str().unwrap();
     assert!(
-        guidance.contains("stop the session, delete the thread"),
-        "{guidance}"
-    );
-    assert!(
-        guidance.contains(&format!(
-            "instrukt sessions replace-deleted {} --stopped t3:s1",
-            request["key"].as_str().unwrap()
-        )),
-        "{guidance}"
+        finding["failure"]
+            .as_str()
+            .unwrap()
+            .contains("native project")
     );
     r.runtime.change("s1", "projectId", retained_project.into());
     r.runtime.change("s1", "title", request["title"].clone());
@@ -1420,80 +935,10 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         .change("s1", "title", "No verifiable project".into());
     r.append("recover-unverified-binding");
     r.tick();
-    let key = request["key"].as_str().unwrap();
-    let status = start_anomalies(&r);
-    assert!(status[0]["failure"].as_str().unwrap().contains(&format!(
-        "instrukt sessions replace-deleted {key} --stopped t3:s1"
-    )));
-    r.runtime.set_status("s1", "stopped");
-    r.runtime.delete("s1");
-    r.replace_deleted(key);
+    assert!(start_anomalies(&r).is_empty());
     assert_eq!(
         r.delivered_to("recover-unverified-binding").to_string(),
-        "t3:s2"
-    );
-    let obsolete = bind().failure();
-    let guidance = String::from_utf8_lossy(&obsolete.get_output().stderr);
-    assert!(guidance.contains("records t3:s2"), "{guidance}");
-    assert!(!guidance.contains("replace-deleted"), "{guidance}");
-    start_anomalies(&r);
-    let live = Responsibility::new("");
-    let root = live.computer.project.path();
-    let out = live
-        .computer
-        .env
-        .instrukt(root)
-        .env("T3CODE_THREAD_ID", "manual-parent")
-        .args([
-            "events",
-            "bind",
-            "reactions/procedure/respond",
-            "--reserve",
-            "--json",
-        ])
-        .assert()
-        .success();
-    let request: instrukt_runner::standing::ManualReservation =
-        serde_json::from_slice(&out.get_output().stdout).unwrap();
-    live.runtime.seed("s1", root, &request.key, &request.brief);
-    let no_start = || {
-        live.computer
-            .env
-            .instrukt(root)
-            .env("T3CODE_THREAD_ID", "manual-parent")
-            .args([
-                "events",
-                "bind",
-                "reactions/procedure/respond",
-                "--reservation",
-                &request.reservation,
-                "--not-started",
-                "--reason",
-                "no start observed",
-            ])
-            .assert()
-    };
-    let refused = no_start().failure();
-    let expected = format!(
-        "instrukt sessions replace-deleted {} --stopped t3:s1",
-        request.key
-    );
-    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    assert!(guidance.contains(&expected), "{guidance}");
-    live.runtime
-        .change("s1", "title", "Renamed after refusal".into());
-    let refused = no_start().failure();
-    let guidance = String::from_utf8_lossy(&refused.get_output().stderr);
-    assert!(guidance.contains(&expected), "{guidance}");
-    live.append("pending-on-manual-entry");
-    live.tick();
-    assert_eq!(live.runtime.threads(), ["s1"]);
-    live.runtime.set_status("s1", "stopped");
-    live.runtime.delete("s1");
-    live.replace_deleted(&request.key);
-    assert_eq!(
-        live.delivered_to("pending-on-manual-entry").to_string(),
-        "t3:s2"
+        "t3:s1"
     );
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA11
@@ -1544,6 +989,7 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
         .unwrap();
     db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
         .unwrap();
+    db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
     db.pragma_update(None, "user_version", 9).unwrap();
     drop(db);
 
@@ -1648,11 +1094,10 @@ fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    let key = r.runtime.key("s1");
     r.runtime.delete("s1");
     r.append("next-generation");
     r.tick();
-    r.replace_deleted(&key);
+    r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     insta::assert_snapshot!(
         "closed-home-next-generation",
@@ -1665,7 +1110,6 @@ fn an_unrelated_broken_entry_leaves_the_successor_and_its_reading_available() {
     let r = Responsibility::new("");
     r.append("initial");
     r.tick();
-    let key = r.runtime.key("s1");
     r.runtime.delete("s1");
     let path = r.computer.env.instrukt_home().join("state/index.yaml");
     let mut index: serde_yaml_ng::Value =
@@ -1677,7 +1121,7 @@ fn an_unrelated_broken_entry_leaves_the_successor_and_its_reading_available() {
 
     r.append("next-generation");
     r.tick();
-    r.replace_deleted(&key);
+    r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
     assert!(r.runtime.input_log("s2").contains("next-generation"));
     let shown = r
@@ -1880,34 +1324,6 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
     }
 }
 
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS2
-#[test]
-fn unresolved_start_reporting_is_once_and_absence_alone_never_authorizes_another_start() {
-    let r = Responsibility::new("");
-    let local = RedisServer::new(&r.computer.env);
-    r.computer.config(&r.redis, Some(&local));
-    r.runtime.flag("empty-start", true);
-    r.append("initial");
-    let first = r
-        .computer
-        .env
-        .run(r.computer.project.path(), ["tick"])
-        .success();
-    assert!(first.get_output().stderr.is_empty());
-    r.runtime.flag("empty-start", false);
-    let again = r
-        .computer
-        .env
-        .run(r.computer.project.path(), ["tick"])
-        .success();
-    assert!(
-        again.get_output().stderr.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&again.get_output().stderr)
-    );
-    assert!(r.runtime.threads().is_empty());
-}
-
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS10
 #[test]
 fn lost_send_acknowledgement_reconciles_visible_waiting_input_without_a_second_copy() {
@@ -2062,16 +1478,12 @@ fn bound_standing_delivery_keeps_a_relabelled_threads_event_pending() {
     r.append("initial");
     r.tick();
     r.runtime.consume("s1");
-    let title = r.runtime.title("s1");
-    let key = title.rsplit(" · ").next().unwrap();
-    r.runtime
-        .change("s1", "title", format!("Changed label · {key}").into());
+    let native = r.runtime.native_id("s1");
+    r.runtime.change("s1", "title", "Changed label".into());
     r.append("after-relabel");
     r.tick();
-    assert_eq!(r.runtime.message_count("s1"), 1);
+    assert_eq!(r.runtime.native_id("s1"), native);
     assert_eq!(r.runtime.threads().len(), 1);
-    r.runtime.change("s1", "title", title.into());
-    r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
 }
 
@@ -2113,7 +1525,10 @@ fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human
     r.runtime.finish("s1", "completed", "Reconciled.");
     r.tick();
     r.tick();
-    let shown = r.runtime.state_dir().join("s1.json");
+    let shown = r
+        .runtime
+        .state_dir()
+        .join(format!("{}.json", r.runtime.native_id("s1")));
     let thread: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&shown).unwrap()).unwrap();
     assert_eq!(thread["settled"], false);

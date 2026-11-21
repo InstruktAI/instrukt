@@ -97,14 +97,6 @@ pub enum SessionsError {
         line: usize,
         column: usize,
     },
-    #[error(
-        "start `{key}` remains unresolved; use {commands}", commands = keyed::resolve_choices(.key)
-    )]
-    Unresolved { key: String },
-    #[error(
-        "start `{key}` has an unconfirmed result: {detail}; use {commands}", commands = keyed::resolve_choices(.key)
-    )]
-    Uncertain { key: String, detail: String },
     #[error("runtime key conflict for `{0}`; no thread was selected or started")]
     KeyConflict(String),
     #[error("runtime key conflict for `{key}` among {}; archive or delete the extra thread", threads.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))]
@@ -112,8 +104,6 @@ pub enum SessionsError {
         key: String,
         threads: Vec<SessionRef>,
     },
-    #[error("bound thread {session} for `{key}` is archived; unarchive it or delete it")]
-    ArchivedBound { key: String, session: SessionRef },
     #[error(
         "thread {session} for `{key}` changed native project from `{retained}` to `{observed}`; restore its original project before delivering pending work"
     )]
@@ -123,41 +113,12 @@ pub enum SessionsError {
         retained: String,
         observed: String,
     },
-    #[error(
-        "pending thread {session} for `{key}`: {detail}. Restore its recorded key and placement, then run `{retry}`"
-    )]
-    PendingPlacement {
-        key: String,
-        session: SessionRef,
-        detail: String,
-        retry: Box<str>,
-    },
     #[error("recorded start inputs differ for `{0}`; retry with the original inputs")]
     ChangedRequest(String),
     #[error(
-        "native project for {session} under `{key}` is unverified. Restore the retained key in its original native project if it can be verified. Otherwise stop the session, delete the thread, then run `{command}`", command = keyed::replace_command(.key, .session)
+        "native project for {session} under `{key}` is unverified; restore its retained project evidence"
     )]
     ProjectUnverified { key: String, session: SessionRef },
-    #[error(
-        "thread {session} for `{key}` is deleted. Deletion does not prove the old session stopped. Once it has stopped, use `{command}`", command = keyed::replace_command(.key, .session)
-    )]
-    DeletedBound { key: String, session: SessionRef },
-    #[error(
-        "first thread {session} for `{key}` is absent before acceptance. Run `{command}` to allow a fresh start", command = keyed::resolve_command(.key, None, false)
-    )]
-    FirstStartAbsent { key: String, session: SessionRef },
-    #[error(
-        "delivery target {session} for `{key}` is already retained. Run `{command}`", command = keyed::resolve_command(.key, Some(.session), false)
-    )]
-    PendingStartPresent { key: String, session: SessionRef },
-    #[error(
-        "replacement thread {session} for `{key}` is pending acceptance; use `{command}`", command = keyed::replace_command(.key, .stopped)
-    )]
-    PendingReplacement {
-        key: String,
-        session: SessionRef,
-        stopped: Box<SessionRef>,
-    },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]
@@ -186,7 +147,6 @@ impl SessionsError {
 #[derive(Clone)]
 pub struct StartRequest<'a> {
     pub now: jiff::Timestamp,
-    pub creation: crate::runtime::CreationPermit,
     pub invocation: &'a keyed::RuntimeInvocation,
     pub message: &'a str,
     pub label: &'a str,
@@ -235,14 +195,12 @@ impl<'c> Sessions<'c> {
     pub fn start(
         &self,
         order: &[AgentChoice],
+        bindings: &dyn crate::interfaces::SessionBindings,
         request: &StartRequest<'_>,
     ) -> Result<Started, SessionsError> {
         let adapter = self.adapter()?;
         let (mut input, project) = self.input(request)?;
-        if request.creation == crate::runtime::CreationPermit::Reconcile
-            && let Some(retained) =
-                keyed::retained_request(self.home, adapter.as_ref(), &input.key)?
-        {
+        if let Some(retained) = keyed::retained_request(self.home, adapter.as_ref(), &input.key)? {
             if retained.checkout != input.checkout {
                 return Err(SessionsError::ChangedRequest(input.key.clone()));
             }
@@ -259,7 +217,7 @@ impl<'c> Sessions<'c> {
             );
         }
         let thread = adapter.start(&crate::runtime::RuntimeAssignment {
-            creation: request.creation,
+            bindings: Some(bindings),
             invocation: request.invocation,
             project: Some(project.as_str()),
             request: &input,
@@ -293,8 +251,7 @@ impl<'c> Sessions<'c> {
             && let Some(key) = keyed::pending_run(self.home, project.as_str())?
         {
             return Err(SessionsError::Refused(format!(
-                "recorded request `{key}` is still pending; use {}",
-                keyed::resolve_choices(&key)
+                "recorded request `{key}` is still pending; retry its captured native launch"
             )));
         }
         let key = match request.key {
@@ -362,13 +319,14 @@ impl<'c> Sessions<'c> {
             key,
             brief: if crate::envelopes::segment(request.message).iter().all(|span| matches!(span, crate::envelopes::Span::Control) || matches!(span, crate::envelopes::Span::Ordinary(text) if text.trim().is_empty())) { request.message.into() } else { crate::envelopes::Control::Assignment.frame(request.message) },
             worktree,
-            profiles: crate::runtime::Profiles::default(),
+            launch_modes: None, native_launch: None, profiles: crate::runtime::Profiles::default(),
         };
         Ok((input, project))
     }
     pub fn followup(
         &self,
         order: &[AgentChoice],
+        work: &dyn crate::interfaces::SessionBindings,
         session: &SessionRef,
         path: Option<&Path>,
         title: Option<&str>,
@@ -381,12 +339,37 @@ impl<'c> Sessions<'c> {
         }
         let (mut input, project) = self.input(request)?;
         input.preferences = order.to_vec();
+        let adapter = self.adapter()?;
+        let observed = adapter.read_state(session)?;
+        if observed.presence != crate::runtime::Presence::Present {
+            let thread = keyed::succeed(
+                adapter.as_ref(),
+                &crate::runtime::FollowupAssignment {
+                    bindings: Some(work),
+                    original_request: None,
+                    invocation: request.invocation,
+                    request: &input,
+                    session,
+                    worktree_path: path,
+                    project: Some(project.as_str()),
+                    now: request.now,
+                },
+            )?;
+            return Ok(Started {
+                session: thread.session,
+                worktree: thread.worktree,
+                agent: None,
+                key: input.key,
+            });
+        }
         if let Some(title) = title {
             input.title = title.to_owned();
         }
         let thread = keyed::followup(
             self.adapter()?.as_ref(),
             &crate::runtime::FollowupAssignment {
+                bindings: Some(work),
+                original_request: None,
                 invocation: request.invocation,
                 request: &input,
                 session,
@@ -456,12 +439,27 @@ impl<'c> Sessions<'c> {
             } else {
                 thread.state.as_str().into()
             };
+            let semantic_key = crate::state::RunnerState::new(self.home)
+                .read(|conn, path| {
+                    use instrukt_core::state_db::rusqlite::OptionalExtension;
+                    conn.query_row(
+                        "SELECT semantic_key FROM runtime_bindings WHERE runtime=?1 AND session=?2",
+                        instrukt_core::state_db::rusqlite::params![
+                            thread.session.runtime.as_str(),
+                            thread.session.to_string()
+                        ],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                    .map_err(crate::state::sql(path))
+                })?
+                .flatten();
             listed.push(ListedSession {
                 provider: thread.provider,
                 model: thread.model,
                 session: thread.session,
                 title: thread.title,
-                semantic_key: thread.semantic_key,
+                semantic_key,
                 activity_source: thread
                     .activity
                     .map(|a| format!("{}: {}", a.source, a.meaning)),

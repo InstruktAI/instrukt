@@ -129,9 +129,9 @@ impl WorkflowCapability {
         match self {
             Self::SharedDelegation => runtime.native_capabilities().shared_delegation,
             // These requirements describe unattended placement/adapter operations.
-            // Native MCP attachment or model options do not implement those CLI routes.
+            // Native model options remain distinct from the consumed launch operations.
             other => match runtime {
-                Runtime::T3 => other == Self::WorktreeCreate,
+                Runtime::T3 => matches!(other, Self::WorktreeCreate | Self::WorktreeAttach),
             },
         }
     }

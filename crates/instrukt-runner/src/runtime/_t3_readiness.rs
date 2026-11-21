@@ -668,7 +668,12 @@ fn rpc(
             if frame["exit"]["_tag"] == "Success" {
                 return Ok(frame["exit"]["value"].clone());
             }
-            if tag == "orchestration.dispatchCommand" {
+            if matches!(
+                tag,
+                "orchestration.dispatchCommand"
+                    | "orchestration.launchThread"
+                    | "orchestration.getThreadProjection"
+            ) {
                 let exit = &frame["exit"];
                 let detail = exit
                     .pointer("/cause/0/error/detail")
@@ -680,7 +685,12 @@ fn rpc(
                     .unwrap_or("T3 refused the WebSocket dispatch");
                 return Err(AfterFrame(SessionsError::Failed {
                     runtime: "t3".into(),
-                    operation: "send".into(),
+                    operation: match tag {
+                        "orchestration.launchThread" => "launch",
+                        "orchestration.getThreadProjection" => "thread projection",
+                        _ => "send",
+                    }
+                    .into(),
                     detail: detail.into(),
                 }));
             }
@@ -949,6 +959,236 @@ fn translate(source: Snapshot) -> ProviderSnapshot {
             })
             .collect(),
     }
+}
+
+/// Launch metadata is acquired independently of provider readiness/capacity.
+pub(super) fn resolve_launch(
+    home: &Home,
+    env: &Env,
+    input: &super::RuntimeStart,
+    existing: Option<&instrukt_core::ids::SessionRef>,
+) -> Result<super::RuntimeStart, SessionsError> {
+    use super::{LaunchInteractionMode, LaunchRuntimeMode, ResolvedLaunchModes};
+    let endpoint = server_endpoint(home, env)?;
+    let mut token = Token::issue_scoped("orchestration:read", "instrukt-launch-metadata")?;
+    let result = (|| {
+        let mut request = input.clone();
+        if request
+            .native_launch
+            .as_ref()
+            .is_none_or(|launch| launch.project_id.is_empty())
+        {
+            let mut origin = endpoint.clone();
+            origin
+                .set_scheme("http")
+                .map_err(|_| launch_error("invalid project snapshot origin"))?;
+            origin.set_path("/api/projects");
+            origin.set_query(None);
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .timeout_global(Some(TIMEOUT))
+                .build()
+                .into();
+            let snapshot_text = agent
+                .get(origin.as_str())
+                .header("Authorization", &format!("Bearer {}", token.secret))
+                .call()
+                .map_err(|e| launch_error(&format!("project snapshot: {e}")))?
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| launch_error(&format!("project snapshot: {e}")))?;
+            let snapshot: serde_json::Value = serde_json::from_str(&snapshot_text)
+                .map_err(|e| launch_error(&format!("project snapshot: {e}")))?;
+            let projects = snapshot["projects"]
+                .as_array()
+                .ok_or_else(|| launch_error("invalid project snapshot"))?;
+            let absolute =
+                std::path::absolute(&request.checkout).map_err(|e| launch_error(&e.to_string()))?;
+            let checkout = absolute.canonicalize().unwrap_or(absolute);
+            let mut selected = None;
+            for project in projects {
+                let id = project["id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| launch_error("invalid native project ID"))?;
+                let root = project["workspaceRoot"]
+                    .as_str()
+                    .ok_or_else(|| launch_error("invalid native workspace root"))?;
+                let deleted = project
+                    .get("deletedAt")
+                    .ok_or_else(|| launch_error("missing native project deletion state"))?;
+                if !deleted.is_null() {
+                    continue;
+                }
+                let absolute =
+                    std::path::absolute(root).map_err(|e| launch_error(&e.to_string()))?;
+                let root = absolute.canonicalize().unwrap_or(absolute);
+                let depth = root.components().count();
+                if checkout.starts_with(&root)
+                    && selected.as_ref().is_none_or(|(_, prior)| depth > *prior)
+                {
+                    selected = Some((id.to_owned(), depth));
+                }
+            }
+            let project_id = selected
+                .ok_or_else(|| {
+                    launch_error("checkout has no containing registered native project")
+                })?
+                .0;
+            let launch = request.native_launch.as_mut().ok_or_else(|| {
+                launch_error("native IDs must be reserved before metadata acquisition")
+            })?;
+            launch.project_id = project_id;
+        }
+        if request.launch_modes.is_none() {
+            let modes = if let Some(session) = existing {
+                let projection = rpc(
+                    &endpoint,
+                    &token.secret,
+                    "orchestration.getThreadProjection",
+                    json!({"threadId": session.id}),
+                    &mut || Ok(()),
+                )
+                .map_err(super::DispatchError::into_inner)?;
+                let thread = projection
+                    .get("thread")
+                    .ok_or_else(|| launch_error("missing legacy thread projection"))?;
+                if thread["id"].as_str() != Some(session.id.as_str()) {
+                    return Err(launch_error(
+                        "legacy projection differs from the bound native ID",
+                    ));
+                }
+                if thread["projectId"].as_str()
+                    != request
+                        .native_launch
+                        .as_ref()
+                        .map(|launch| launch.project_id.as_str())
+                {
+                    return Err(launch_error(
+                        "legacy native project contradicts retained/resolved project",
+                    ));
+                }
+                ResolvedLaunchModes {
+                    runtime: serde_json::from_value(thread["runtimeMode"].clone())
+                        .map_err(|e| launch_error(&format!("legacy runtime mode: {e}")))?,
+                    interaction: serde_json::from_value(thread["interactionMode"].clone())
+                        .map_err(|e| launch_error(&format!("legacy interaction mode: {e}")))?,
+                    source: "native legacy thread projection".into(),
+                }
+            } else {
+                let config = rpc(
+                    &endpoint,
+                    &token.secret,
+                    "server.getConfig",
+                    json!({}),
+                    &mut || Ok(()),
+                )
+                .map_err(super::DispatchError::into_inner)?;
+                let settings = &config["settings"];
+                let project_id = &request
+                    .native_launch
+                    .as_ref()
+                    .ok_or_else(|| launch_error("missing native identity"))?
+                    .project_id;
+                let effective = settings
+                    .pointer(&format!(
+                        "/projectSettingsOverrides/{}/defaultRuntimeMode",
+                        project_id.replace('~', "~0").replace('/', "~1")
+                    ))
+                    .unwrap_or(&settings["defaultRuntimeMode"]);
+                let mut mode: LaunchRuntimeMode = serde_json::from_value(effective.clone())
+                    .map_err(|e| launch_error(&format!("effective runtime mode: {e}")))?;
+                let mut source =
+                    "native effective project runtime default; standalone default interaction"
+                        .to_owned();
+                let ceiling = match config.pointer("/managedPolicy/limits/maxRuntimeMode") {
+                    Some(value) => serde_json::from_value(value.clone())
+                        .map_err(|e| launch_error(&format!("managed runtime ceiling: {e}")))?,
+                    None => LaunchRuntimeMode::FullAccess,
+                };
+                if mode > ceiling {
+                    mode = ceiling;
+                    source.push_str(
+                        "; native caught project-default escalation uses managed ceiling",
+                    );
+                }
+                let instance = &request
+                    .selection
+                    .as_ref()
+                    .ok_or_else(|| launch_error("missing model selection"))?
+                    .instance;
+                let providers = config["providers"]
+                    .as_array()
+                    .ok_or_else(|| launch_error("missing providers"))?;
+                let provider = providers
+                    .iter()
+                    .find(|p| p["instanceId"].as_str() == Some(instance.as_str()))
+                    .ok_or_else(|| launch_error("selected native provider instance missing"))?;
+                if let Some(value) = provider.get("supportedRuntimeModes") {
+                    let supported: Vec<LaunchRuntimeMode> =
+                        serde_json::from_value(value.clone())
+                            .map_err(|e| launch_error(&format!("supported runtime modes: {e}")))?;
+                    if !supported.is_empty() && !supported.contains(&mode) {
+                        mode = supported
+                            .into_iter()
+                            .filter(|candidate| *candidate <= mode)
+                            .max()
+                            .unwrap_or(LaunchRuntimeMode::ApprovalRequired);
+                        source.push_str("; native provider inherited-mode adaptation");
+                    }
+                }
+                ResolvedLaunchModes {
+                    runtime: mode,
+                    interaction: LaunchInteractionMode::Default,
+                    source,
+                }
+            };
+            request.launch_modes = Some(modes);
+        }
+        Ok(request)
+    })();
+    let cleanup = token.revoke();
+    match (result, cleanup) {
+        (Ok(request), Ok(())) => Ok(request),
+        (Err(error), Err(cleanup)) => {
+            tracing::warn!(event="t3_launch_metadata_token_cleanup_failed",%cleanup);
+            Err(error)
+        }
+        (Ok(request), Err(cleanup)) => {
+            // A cleanup failure does not erase observed metadata; the read-only credential expires.
+            tracing::warn!(event="t3_launch_metadata_token_cleanup_failed",%cleanup);
+            Ok(request)
+        }
+        (Err(error), Ok(())) => Err(error),
+    }
+}
+
+fn launch_error(cause: &str) -> SessionsError {
+    SessionsError::Failed {
+        runtime: "t3".into(),
+        operation: "launch".into(),
+        detail: cause.into(),
+    }
+}
+
+pub(super) fn launch(
+    home: &Home,
+    env: &Env,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, SessionsError> {
+    let endpoint = server_endpoint(home, env)?;
+    let mut token = Token::issue_scoped("orchestration:operate", "instrukt-keyed-launch")?;
+    let result = rpc(
+        &endpoint,
+        &token.secret,
+        "orchestration.launchThread",
+        payload,
+        &mut || Ok(()),
+    )
+    .map_err(|error| launch_error(&error.into_inner().to_string()));
+    if let Err(error) = token.revoke() {
+        tracing::warn!(event="t3_launch_token_cleanup_failed", %error);
+    }
+    result
 }
 
 #[cfg(test)]

@@ -1,9 +1,7 @@
 //! Resolve durably accepted procedure responsibilities and hand over retained events.
 use crate::inputs::{self, Entry, InputKind, InputOutcome, Intent};
 use crate::keyed::{self, RuntimeInvocation};
-use crate::runtime::{
-    CreationPermit, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread,
-};
+use crate::runtime::{Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::{self, RunnerState, StateError};
 use instrukt_core::config::Configuration;
@@ -291,12 +289,22 @@ fn deliver_group(
     }
     let selected_runtime = config.runner_runtime()?;
     let adapter = crate::runtime::adapter(selected_runtime);
-    #[cfg(debug_assertions)]
-    keyed::hold_for_fixture("INSTRUKT_TEST_STANDING_CLAIM_HOLD", responsibility);
+    let object_key = state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT semantic_key FROM procedure_responsibilities WHERE responsibility=?1",
+                [responsibility],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(state::sql(path))
+        })?
+        .flatten()
+        .unwrap_or_else(|| responsibility.to_owned());
     let guard = keyed::KeyGuard::claim(
         invocation,
         adapter.as_ref(),
-        responsibility,
+        &object_key,
         project.as_deref(),
         now,
     )?;
@@ -319,114 +327,17 @@ fn deliver_group(
     };
     let manual=state.read(|conn,path|conn.query_row("SELECT token FROM manual_standing_reservations WHERE responsibility=?1 AND session IS NULL",[responsibility],|r|r.get::<_,String>(0)).optional().map_err(state::sql(path)))?.flatten();
     if manual.is_some() {
-        return Err(SessionsError::Unresolved {
-            key: responsibility.into(),
-        });
+        return Err(SessionsError::Refused(format!(
+            "manual reservation for `{responsibility}` is still open"
+        )));
     }
-    let mut existing=state.read(|conn,path|conn.query_row("SELECT request,declaration,session,seen_position FROM procedure_responsibilities WHERE responsibility=?1",[responsibility],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,u64>(3)?))).optional().map_err(state::sql(path)))?.flatten();
-    if existing.is_none() {
-        let family = adapter.list(&root)?;
-        if family.iter().any(|t| {
-            t.semantic_key
-                .as_ref()
-                .is_some_and(|title| title.starts_with(&format!("{responsibility}:generation:")))
-        }) {
-            return Err(SessionsError::KeyConflict(responsibility.into()));
-        }
-        let found = family
-            .iter()
-            .filter(|t| {
-                t.semantic_key.as_deref() == Some(responsibility) && t.presence == Presence::Present
-            })
-            .collect::<Vec<_>>();
-        if found.len() > 1 {
-            return Err(keyed::conflict(
-                responsibility,
-                found.iter().map(|thread| &thread.session),
-            ));
-        }
-        if found.is_empty()
-            && let Some(thread) = family.iter().find(|thread| {
-                thread.presence == Presence::Archived
-                    && thread.semantic_key.as_deref() == Some(responsibility)
-            })
-        {
-            return Err(keyed::archived(responsibility, &thread.session));
-        }
-        if let Some(found) = found.first() {
-            let thread = adapter.read_state(&found.session)?;
-            if crate::runtime::project_conflict(&thread.project_id, &found.project_id)
-                || thread.state == SessionState::Gone
-            {
-                return Err(SessionsError::KeyConflict(responsibility.into()));
-            }
-            let evidence = adapter.assignment_evidence(&thread.session, now)?;
-            let original = evidence.opening;
-            let facts = original
-                .lines()
-                .find_map(|line| line.strip_prefix("Assignment facts: "))
-                .ok_or_else(|| SessionsError::Refused("initialization facts unavailable".into()))?
-                .to_owned();
-            let facts: AssignmentFacts = serde_json::from_str(&facts).map_err(|e| {
-                SessionsError::Refused(format!("unreadable assignment evidence: {e}"))
-            })?;
-            if !facts.system_origin
-                || facts.procedure != first.procedure
-                || facts.home != first.home
-                || facts.subject.as_deref() != subject
-            {
-                return Err(SessionsError::KeyConflict(responsibility.into()));
-            }
-            let mut fixed = first.declaration.clone();
-            fixed.role = Some(facts.role);
-            fixed.subscription_attendance = facts.attendance;
-            fixed.interruptible = facts.interruptible;
-            let request = RuntimeStart {
-                preferences: Vec::new(),
-                selection: None,
-                selection_evidence: None,
-                checkout: root.clone(),
-                title: thread.title.clone().ok_or_else(|| {
-                    SessionsError::Refused("native assignment lacks a title".into())
-                })?,
-                key: responsibility.into(),
-                brief: original,
-                worktree: None,
-                profiles: crate::runtime::Profiles::default(),
-            };
-            keyed::recover_binding(
-                &guard,
-                adapter.as_ref(),
-                &RuntimeAssignment {
-                    creation: CreationPermit::Reconcile,
-                    invocation,
-                    project: project.as_deref(),
-                    request: &request,
-                    now,
-                },
-                &thread,
-            )?;
-            let request_json = serde_json::to_string(&request)
-                .map_err(|e| SessionsError::Refused(e.to_string()))?;
-            let declaration =
-                serde_json::to_string(&fixed).map_err(|e| SessionsError::Refused(e.to_string()))?;
-            state.write::<_,StateError>(|tx|{tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,subject,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,?4,1,?1,?5,?6,?7,?8)",params![responsibility,first.procedure,first.home,subject,root.to_string_lossy(),declaration,request_json,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
-            if let Some(waiting) = &evidence.waiting {
-                inputs::record_initial(
-                    state,
-                    &thread.session,
-                    &format!("recovered-waiting:{responsibility}"),
-                    waiting,
-                    now,
-                )?;
-            }
-            existing = Some((
-                request_json,
-                declaration,
-                Some(thread.session.to_string()),
-                0,
-            ));
-        }
+    let existing=state.read(|conn,path|conn.query_row("SELECT request,declaration,session,seen_position FROM procedure_responsibilities WHERE responsibility=?1",[responsibility],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,u64>(3)?))).optional().map_err(state::sql(path)))?.flatten();
+    if existing.is_none()
+        && let Some(key) = retained_standing_key(state, selected_runtime.name(), responsibility)?
+    {
+        return Err(SessionsError::Refused(format!(
+            "standing binding `{key}` retains native identity but its initialized responsibility record is missing; restore that record before dispatch"
+        )));
     }
     let fixed = existing
         .as_ref()
@@ -446,49 +357,43 @@ fn deliver_group(
             .ok_or_else(|| SessionsError::Refused("standing binding has no assignment".into()))?;
         let original: RuntimeStart =
             serde_json::from_str(&recorded.0).map_err(|e| SessionsError::Refused(e.to_string()))?;
-        let listed = adapter.list(&root)?;
-        let thread = adapter.read_state(target)?;
-        let found = listed
-            .iter()
-            .filter(|t| {
-                t.presence == Presence::Present && t.semantic_key.as_deref() == Some(&original.key)
-            })
-            .collect::<Vec<_>>();
-        if thread.presence == Presence::Archived {
-            return Err(keyed::archived(&original.key, target));
+        let assignment = RuntimeAssignment {
+            bindings: None,
+            invocation,
+            project: project.as_deref(),
+            request: &original,
+            now,
+        };
+        if keyed::recorded_session(state, adapter.runtime().name(), &original.key)?.is_none() {
+            let thread = adapter.read_state(target)?;
+            if thread.presence != Presence::Present {
+                replace_deleted(
+                    &guard,
+                    invocation,
+                    adapter.as_ref(),
+                    &original.key,
+                    target,
+                    now,
+                )?;
+                return Ok(());
+            }
+            keyed::recover_binding(&guard, adapter.as_ref(), &assignment, &thread, true)?;
         }
-        if thread.presence == Presence::Absent {
-            return Err(keyed::deleted(&original.key, target));
-        }
-        if found.len() > 1
-            || found
-                .first()
-                .is_some_and(|thread| thread.session != *target)
-        {
-            return Err(keyed::conflict(
-                &original.key,
-                found.iter().map(|thread| &thread.session).chain([target]),
-            ));
-        }
-        if keyed::retained_project(state, &original.key, target)?.is_none()
-            && let Some(listed) = found.first()
-            && thread.project_id.is_some()
-            && thread.project_id == listed.project_id
-        {
-            adapter.verify_start(&original, &thread)?;
-            state.write::<_, StateError>(|tx| {
-                keyed::remember_manual(tx, selected_runtime, &original, &thread, project.as_deref())
-            })?;
-        }
-        keyed::verify_recorded_project(state, &original.key, &thread)?;
-        if found.first().is_some_and(|found| {
-            crate::runtime::project_conflict(&thread.project_id, &found.project_id)
-        }) {
-            return Err(keyed::conflict(&original.key, [target]));
-        }
-        keyed::verify_bound(adapter.as_ref(), &original, target, &thread)
-            .map_err(|_| keyed::conflict(&original.key, [target]))?;
-        keyed::note(state, selected_runtime, &original.key, now, Ok(()));
+        let thread = match keyed::start_owned(adapter.as_ref(), &assignment, &guard) {
+            Ok(thread) => thread,
+            Err(SessionsError::Gone(_)) => {
+                replace_deleted(
+                    &guard,
+                    invocation,
+                    adapter.as_ref(),
+                    &original.key,
+                    target,
+                    now,
+                )?;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         inputs::observe(invocation, adapter.as_ref(), target, now)?;
         let newest = items.iter().map(|p| p.position).max().unwrap_or(0);
         state.write::<_, StateError>(|tx| {
@@ -509,20 +414,10 @@ fn deliver_group(
         }
     }
     state.write::<_,StateError>(|tx|{for p in items{tx.execute("INSERT INTO standing_deliveries(event_id,procedure,exact_home,responsibility,envelope,declaration,state) VALUES (?1,?2,?3,?4,?5,?6,'pending') ON CONFLICT DO NOTHING",params![p.event,p.procedure,p.home,responsibility,p.envelope,serde_json::to_string(&p.declaration).map_err(|e|state::invalid(&state::db_path(tx),e))?]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
-    let mut fresh = false;
     let request = if let Some((request, _, _, _)) = &existing {
         serde_json::from_str::<RuntimeStart>(request)
             .map_err(|e| SessionsError::Refused(e.to_string()))?
     } else {
-        // Missing generation evidence is a conflict, never permission to adopt an older generation.
-        let family = adapter.list(&root)?;
-        if family.iter().any(|t| {
-            t.semantic_key
-                .as_ref()
-                .is_some_and(|t| t.starts_with(&format!("{responsibility}:generation:")))
-        }) {
-            return Err(SessionsError::KeyConflict(responsibility.into()));
-        }
         let prefix = loader(state.home(), &fixed, &first.home, subject)?;
         let content = state
             .write::<_, SessionsError>(|tx| compose_opening(tx, now, &prefix, &mut selected))?;
@@ -546,6 +441,8 @@ fn deliver_group(
             key: responsibility.into(),
             brief: content,
             worktree: None,
+            launch_modes: None,
+            native_launch: None,
             profiles: crate::runtime::Profiles::default(),
         };
         state.write::<_,StateError>(|tx|{tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,subject,generation,semantic_key,checkout,declaration,request) VALUES (?1,?2,?3,?4,1,?1,?5,?6,?7)",params![responsibility,first.procedure,first.home,subject,root.to_string_lossy(),serde_json::to_string(&fixed).map_err(|e|state::invalid(&state::db_path(tx),e))?,serde_json::to_string(&request).map_err(|e|state::invalid(&state::db_path(tx),e))?]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
@@ -559,7 +456,6 @@ fn deliver_group(
             .map_err(state::sql(&state::db_path(tx)))?;
             Ok(())
         })?;
-        fresh = true;
         request
     };
     if existing.as_ref().is_some_and(|r| r.2.is_none()) {
@@ -579,11 +475,7 @@ fn deliver_group(
             responsibility,
             &selected,
             &RuntimeAssignment {
-                creation: if fresh {
-                    CreationPermit::Initial
-                } else {
-                    CreationPermit::Reconcile
-                },
+                bindings: None,
                 invocation,
                 project: project.as_deref(),
                 request: &request,
@@ -607,6 +499,14 @@ fn deliver_group(
         state.write::<_,StateError>(|tx|{for p in &selected{tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE standing_deliveries SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
     }
     Ok(())
+}
+
+fn retained_standing_key(
+    state: &RunnerState,
+    runtime: &str,
+    responsibility: &str,
+) -> Result<Option<String>, StateError> {
+    Ok(state.read(|conn,path|conn.query_row("SELECT semantic_key FROM runtime_bindings WHERE runtime=?1 AND kind='standing' AND (semantic_key=?2 OR instr(semantic_key,?2||':generation:')=1) LIMIT 1",params![runtime,responsibility],|row|row.get::<_,String>(0)).optional().map_err(state::sql(path)))?.flatten())
 }
 
 fn selected_opening_ids(
@@ -873,12 +773,19 @@ pub fn reserve_manual(
             existing.unwrap_or_else(|| key.clone())
         )));
     }
+    if let Some(binding) = retained_standing_key(&state, runtime.name(), &key)? {
+        return Err(SessionsError::Refused(format!(
+            "standing binding `{binding}` still owns this responsibility; restore its initialized record before reserving another entry"
+        )));
+    }
     let old=state.read(|conn,path|conn.query_row("SELECT request,caller,retry_allowed FROM manual_standing_reservations WHERE responsibility=?1",[&key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?))).optional().map_err(state::sql(path)))?.flatten();
     if let Some((request, owner, retry)) = old {
         let mut request: ManualReservation =
             serde_json::from_str(&request).map_err(|e| SessionsError::Refused(e.to_string()))?;
         if owner != caller.to_string() || request.brief != initialized {
-            return Err(SessionsError::Unresolved { key });
+            return Err(SessionsError::Refused(format!(
+                "manual reservation for `{key}` is still open"
+            )));
         }
         request.selection = request
             .selection
@@ -910,10 +817,9 @@ pub fn reserve_manual(
     state.write::<_,StateError>(|tx|{tx.execute("INSERT INTO manual_standing_reservations(responsibility,token,caller,home,declaration,request) VALUES (?1,?2,?3,?4,?5,?6)",params![key,request.reservation,caller.to_string(),home,serde_json::to_string(&fixed).map_err(|e|state::invalid(&state::db_path(tx),e))?,serde_json::to_string(&request).map_err(|e|state::invalid(&state::db_path(tx),e))?]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
     Ok(request)
 }
-fn manual_thread_exists(key: &str, session: &SessionRef) -> SessionsError {
+fn manual_thread_exists(key: &str, session: &SessionRef, command: &str) -> SessionsError {
     SessionsError::Refused(format!(
-        "same-key thread {session} still exists. Stop and delete it, then run `{}`",
-        keyed::replace_command(key, session)
+        "thread {session} still exists for reservation `{key}`. Bind its initialized assignment with `{command}`, or stop/delete it before retrying no-start confirmation"
     ))
 }
 
@@ -929,6 +835,8 @@ fn manual_start(request: &ManualReservation, adapter: &dyn RuntimeAdapter) -> Ru
         key: request.key.clone(),
         brief: request.brief.clone(),
         worktree: None,
+        launch_modes: None,
+        native_launch: None,
         profiles: crate::runtime::Profiles::default(),
     }
 }
@@ -1007,6 +915,27 @@ pub fn bind_manual(
             Ok(())
         })
     };
+    let existing_thread = |session: &SessionRef| {
+        let native = session.to_string();
+        let company = home.strip_prefix("company:");
+        let command = keyed::recovery_command(
+            [
+                "instrukt",
+                "events",
+                "bind",
+                procedure,
+                "--reservation",
+                token,
+                "--session",
+                &native,
+                "--evidence",
+                "-",
+            ]
+            .into_iter()
+            .chain(company.into_iter().flat_map(|name| ["--company", name])),
+        );
+        manual_thread_exists(&reserved.key, session, &command)
+    };
     let observed = if let Some(evidence) = evidence {
         if let Some(id) = retained.as_deref().or(seen.as_deref())
             && id != evidence.session.to_string()
@@ -1028,23 +957,15 @@ pub fn bind_manual(
         let request = &reserved;
         let listed = adapter.list(&request.checkout)?;
         let mut matches = listed.iter().filter(|thread| {
-            thread.presence == Presence::Present
-                && thread.semantic_key.as_deref() == Some(&request.key)
+            thread.presence == Presence::Present && thread.session == evidence.session
         });
         let thread = adapter.read_state(&evidence.session)?;
         let matches_project = matches.next().is_some_and(|entry| {
             entry.session == thread.session && entry.project_id == thread.project_id
         }) && matches.next().is_none();
-        if !matches_project
-            || thread.project_id.is_none()
-            || thread.presence != Presence::Present
-            || thread.semantic_key.as_deref() != Some(&request.key)
-        {
+        if !matches_project || thread.project_id.is_none() || thread.presence != Presence::Present {
             if retained.is_none() {
-                if !listed.iter().any(|entry| {
-                    entry.session == evidence.session
-                        && entry.semantic_key.as_deref() == Some(&request.key)
-                }) {
+                if !listed.iter().any(|entry| entry.session == evidence.session) {
                     return Err(SessionsError::Refused(format!(
                         "thread {} cannot be verified for reservation {}. Inspect `{}`",
                         evidence.session,
@@ -1106,8 +1027,7 @@ pub fn bind_manual(
             Err(error) => return Err(error),
         };
         let mut same_key = listed.iter().filter(|thread| {
-            thread.presence != Presence::Absent
-                && thread.semantic_key.as_deref() == Some(&reserved.key)
+            thread.presence != Presence::Absent && thread.title.as_deref() == Some(&reserved.title)
         });
         if let Some(thread) = same_key.next() {
             if same_key.next().is_some() {
@@ -1117,7 +1037,7 @@ pub fn bind_manual(
                         .iter()
                         .filter(|entry| {
                             entry.presence != Presence::Absent
-                                && entry.semantic_key.as_deref() == Some(&reserved.key)
+                                && entry.title.as_deref() == Some(&reserved.title)
                         })
                         .map(|entry| &entry.session),
                 ));
@@ -1130,12 +1050,12 @@ pub fn bind_manual(
                 return Err(keyed::conflict(&reserved.key, [prior, &thread.session]));
             }
             remember_observation(&thread.session)?;
-            return Err(manual_thread_exists(&reserved.key, &thread.session));
+            return Err(existing_thread(&thread.session));
         }
         if let Some(session) = previously_seen
             && adapter.read_state(&session)?.presence != Presence::Absent
         {
-            return Err(manual_thread_exists(&reserved.key, &session));
+            return Err(existing_thread(&session));
         }
         None
     };
@@ -1161,17 +1081,6 @@ pub fn bind_manual(
         Ok(())
     })?;
     Ok(())
-}
-
-pub(crate) fn replacement_is_bound(
-    state: &RunnerState,
-    key: &str,
-    session: &SessionRef,
-) -> Result<bool, StateError> {
-    Ok(state.read(|conn, path| conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM procedure_responsibilities WHERE semantic_key=?1 AND session=?2)",
-        params![key, session.to_string()], |row| row.get(0),
-    ).map_err(state::sql(path)))?.unwrap_or(false))
 }
 
 pub(crate) fn replace_deleted(
@@ -1245,7 +1154,6 @@ pub(crate) fn replace_deleted(
         };
     if !resuming {
         keyed::confirm_deleted(adapter, stopped)?;
-        keyed::check_replacement_key(adapter, &old_request, stopped, Some(&responsibility))?;
     }
     let (root, project) = checkout(&state, &home)?;
     let config = execution_config(state.home(), &home, &root)?;
@@ -1283,7 +1191,6 @@ pub(crate) fn replace_deleted(
                 responsibility: &responsibility,
                 home: &home,
                 root: &root,
-                project: project.as_deref(),
                 old_session: stopped,
                 manual_assignment: manual_assignment.as_deref(),
                 current: &current,
@@ -1299,7 +1206,7 @@ pub(crate) fn replace_deleted(
         &responsibility,
         &selected,
         &RuntimeAssignment {
-            creation: CreationPermit::Reconcile,
+            bindings: None,
             invocation,
             project: project.as_deref(),
             request: &request,
@@ -1320,7 +1227,6 @@ struct Successor<'a> {
     responsibility: &'a str,
     home: &'a str,
     root: &'a std::path::Path,
-    project: Option<&'a str>,
     old_session: &'a SessionRef,
     manual_assignment: Option<&'a str>,
     current: &'a IndexEntry,
@@ -1364,23 +1270,9 @@ fn prepare_successor(
             tx.execute("DELETE FROM manual_standing_reservations WHERE responsibility=?1",[cx.responsibility]).map_err(state::sql(&path))?;
         }
         let (generation,old_key)=tx.query_row("SELECT generation,semantic_key FROM procedure_responsibilities WHERE responsibility=?1",[cx.responsibility],|r|Ok((r.get::<_,u64>(0)?,r.get::<_,String>(1)?))).map_err(state::sql(&path))?;
-        let unresolved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM runtime_starts WHERE runtime=?2 AND semantic_key=?1)",params![old_key,cx.old_session.runtime.as_str()],|r|r.get(0)).map_err(state::sql(&path))?;
-        if unresolved {
-            let pending: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE runtime=?1
-                 AND semantic_key=?2 AND session=?3 AND accepted=0)",
-                params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()],
-                |row| row.get(0),
-            ).map_err(state::sql(&path))?;
-            if !pending {
-                return Err(SessionsError::Unresolved{key:old_key});
-            }
-            tx.execute("DELETE FROM runtime_starts WHERE runtime=?1 AND semantic_key=?2",
-                params![cx.old_session.runtime.as_str(),old_key]).map_err(state::sql(&path))?;
-        }
         let next=generation.checked_add(1).ok_or_else(||SessionsError::Refused("standing generation counter exhausted".into()))?;
         let next_key=old_key.clone();
-        tx.execute("DELETE FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2 AND session=?3",params![cx.old_session.runtime.as_str(),old_key,cx.old_session.to_string()]).map_err(state::sql(&path))?;
+        keyed::retire_in(tx,cx.old_session.runtime.as_str(),&old_key)?;
         tx.execute("INSERT INTO procedure_generations(responsibility,generation,semantic_key,session,declaration,request,terminal) SELECT responsibility,generation,semantic_key,coalesce(session,?3),declaration,request,?2 FROM procedure_responsibilities WHERE responsibility=?1",params![cx.responsibility,cx.now.to_string(),cx.old_session.to_string()]).map_err(state::sql(&path))?;
         settle_terminal(tx)?;
         tx.execute("UPDATE procedure_activations SET state='pending',failure=NULL WHERE EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target WHERE d.event_id=procedure_activations.event_id AND d.procedure=procedure_activations.procedure AND d.exact_home=procedure_activations.exact_home AND d.responsibility=?1 AND d.target=?2 AND i.state IN ('pending','selected','accepted'))",params![cx.responsibility,cx.old_session.to_string()]).map_err(state::sql(&path))?;
@@ -1389,15 +1281,13 @@ fn prepare_successor(
         let mut pending=Vec::new();for item in pending_on(tx,&path)? {if responsibility(&item)?.0==cx.responsibility{pending.push(item);}}
         let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);
         let content=compose_opening(tx,cx.now,&prefix,&mut pending)?;
-        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,profiles:crate::runtime::Profiles::default()};
+        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,launch_modes:None,native_launch:None,profiles:crate::runtime::Profiles::default()};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
         tx.execute("UPDATE procedure_responsibilities SET generation=?2,semantic_key=?3,session=NULL,request=?4,declaration=?5,terminal=NULL,seen_position=?6 WHERE responsibility=?1",params![cx.responsibility,next,next_key,encoded,declaration,newest]).map_err(state::sql(&path))?;
         for item in &pending{
             tx.execute("INSERT INTO standing_deliveries(event_id,procedure,exact_home,responsibility,envelope,declaration,state,input_id) VALUES (?1,?2,?3,?4,?5,?6,'selected',?7) ON CONFLICT(event_id,procedure,exact_home) DO UPDATE SET state='selected',target=NULL,input_id=excluded.input_id",params![item.event,item.procedure,item.home,cx.responsibility,item.envelope,serde_json::to_string(&item.declaration).map_err(|e|SessionsError::Refused(e.to_string()))?,format!("assignment:{next_key}")]).map_err(state::sql(&path))?;
         }
-        // This marker proves that creation was not attempted before the new assignment committed.
-        tx.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state,resolution,resolved_by,resolved_at) VALUES (?7,?1,?2,'standing',?1,?3,?4,?5,?6,0,'retry_allowed',?8,'operator',?6)",params![next_key,cx.project,cx.root.to_string_lossy(),request.brief,encoded,cx.now.to_string(),cx.old_session.runtime.as_str(),format!("{}{}",keyed::REPLACEMENT,cx.old_session)]).map_err(state::sql(&path))?;
         Ok((request,pending))
     })
 }

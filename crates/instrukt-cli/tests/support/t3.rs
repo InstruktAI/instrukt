@@ -32,7 +32,9 @@ readiness=root.parent/'t3-readiness'
 def clock_now():
     import datetime
     value=os.environ.get('INSTRUKT_NOW','')
-    if value.startswith('@'): value=pathlib.Path(value[1:]).read_text().strip()
+    if value.startswith('@'):
+        try: value=pathlib.Path(value[1:]).read_text().strip()
+        except FileNotFoundError: value=''
     if value: return datetime.datetime.fromisoformat(value.replace('Z','+00:00'))
     return datetime.datetime.now(datetime.timezone.utc)
 if args[:3]==['auth','session','issue']:
@@ -41,14 +43,15 @@ if args[:3]==['auth','session','issue']:
     # the launch is still running or was ended by its caller. A test that
     # failed before releasing it leaves no launch behind: it gives up after a
     # minute.
-    if (root/'hold-issue').exists():
+    readiness_issue='--label' in args and args[args.index('--label')+1]=='instrukt-readiness'
+    if (root/'hold-issue').exists() and readiness_issue:
         held=root/'held-issues'; held.mkdir(exist_ok=True)
         (held/str(len(list(held.iterdir()))+1)).write_text(str(os.getpid()))
         given_up=time.monotonic()+60
         while not (root/'release-issue').exists():
             if time.monotonic()>given_up: sys.exit(1)
             time.sleep(0.02)
-    if (root/'issue-failure').exists(): print('cannot issue a session',file=sys.stderr); sys.exit(1)
+    if (root/'issue-failure').exists() and readiness_issue: print('cannot issue a session',file=sys.stderr); sys.exit(1)
     # The next session number is reserved under the counter's lock, which
     # FakeT3::issued takes too: a late issue takes the next unused number and
     # never writes a lower one.
@@ -64,7 +67,7 @@ if args[:3]==['auth','session','issue']:
     token=base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')+'.test-signature'
     expires=(clock_now()+datetime.timedelta(seconds=seconds)).strftime('%Y-%m-%dT%H:%M:%SZ')
     (readiness/'tokens').mkdir(parents=True,exist_ok=True)
-    (readiness/'tokens'/(sid+'.json')).write_text(json.dumps({'digest':hashlib.sha256(token.encode()).hexdigest(),'expires':expires,'revoked':False,'scope':scope}))
+    (readiness/'tokens'/(sid+'.json')).write_text(json.dumps({'digest':hashlib.sha256(token.encode()).hexdigest(),'expires':expires,'revoked':False,'scope':scope,'owner':os.getppid(),'label':args[args.index('--label')+1] if '--label' in args else ''}))
     (readiness/'clock-source').write_text(os.environ.get('INSTRUKT_NOW',''))
     print(token); sys.exit(0)
 if args[:3]==['auth','session','revoke']:
@@ -119,6 +122,8 @@ def sync_inputs():
         # the fake active projection when the corresponding native turn ends.
         separate_completion=(root/'separate-completion').exists()
         for thread in all_threads():
+            if thread.get('commandId'):
+                connection.execute("INSERT OR IGNORE INTO orchestration_command_receipts(command_id,aggregate_kind,aggregate_id,command_type,status) VALUES (?,'thread',?,'thread.create','accepted')",(thread['commandId'],thread['threadId']))
             runs=set()
             for index,message in enumerate(thread['messages']):
                 if message['role']!='user': continue
@@ -170,6 +175,10 @@ if command=='list':
         copy=dict(threads[0]); copy['threadId']='duplicate'; threads.append(copy)
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
+    if not (pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite').exists(): sync_inputs()
+    launch=json.loads(os.environ['T3_TEST_LAUNCH']) if 'T3_TEST_LAUNCH' in os.environ else None
+    if launch and (root/(launch['threadId']+'.json')).exists(): print(launch['threadId']); sys.exit(0)
+    if launch and (root/(launch['threadId']+'.deleted')).exists(): print('Thread not found.',file=sys.stderr); sys.exit(1)
     watch=root/'watch-read-at-start'
     if watch.exists():
         read=readiness/'held-reads'/watch.read_text()
@@ -177,22 +186,25 @@ elif command=='start':
     while (root/'hold-start').exists():
         (root/'start-held').touch(); time.sleep(0.02)
     if (root/'start-failure').exists(): print('start failed',file=sys.stderr); sys.exit(1)
-    if (root/'empty-start').exists(): sys.exit(0)
     if (root/'die-before-start').exists():
-        (root/'die-before-start').unlink(); os.kill(os.getppid(),9); sys.exit(1)
+        (root/'die-before-start').unlink()
+        os.kill(int(os.environ.get('T3_TEST_OPERATION_OWNER',os.getppid())),9)
+        sys.exit(1)
     n=len(all_threads())+1
     id='s'+str(n)
-    while (root/(id+'.json')).exists() or (root/(id+'.deleted')).exists():
+    while (root/(id+'.json')).exists() or (root/(id+'.deleted')).exists() or (root/(id+'.alias')).exists():
         n+=1
         id='s'+str(n)
     named=root/'next-thread-id'
-    if named.exists():
+    if named.exists() and not launch:
         id=named.read_text()
         named.unlink()
         assert not (root/(id+'.json')).exists() and not (root/(id+'.deleted')).exists()
+    alias=id
+    if launch: id=launch['threadId']
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
-    t={'threadId':id,'projectId':project_for(checkout),'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
+    t={'runtimeMode':'full-access','interactionMode':'default','threadId':id,'projectId':project_for(checkout),'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
     # With `queued-start`, the runtime accepts the thread's opening input
     # and keeps it queued: neither entered nor completed.
     if (root/'queued-start').exists(): t['status']='queued'
@@ -201,9 +213,25 @@ elif command=='start':
         folder.parent.mkdir(exist_ok=True)
         subprocess.run(['git','-C',checkout,'worktree','add','--quiet']+(['-b',flags['--branch']] if '--branch' in flags else [])+[str(folder),flags['--worktree']],check=True)
         t['worktreePath']=str(folder); t['branch']=flags.get('--branch',flags['--worktree']); t['base']=flags['--worktree']
+    if launch:
+        t['runtimeMode']=launch['runtimeMode'];t['interactionMode']=launch['interactionMode'];t['createdBy']='user';t['commandId']=launch['commandId']
+        if 'initialMessage' not in launch: t['messages']=[];t['status']='idle';t['latestRunId']=None;t['activeRunId']=None
+        if launch['workspaceStrategy']['type']=='existing_worktree':
+            t['worktreePath']=launch['workspaceStrategy']['worktreePath'];t['branch']=launch['workspaceStrategy'].get('branch')
+        (root/(alias+'.alias')).write_text(id)
+        if (root/(alias+'.hold-show')).exists() and not (root/(id+'.hold-show')).exists():
+            (root/(id+'.hold-show')).symlink_to(root/(alias+'.hold-show'))
+    # Native launch publishes its thread projection before accepting the opening.
+    with sqlite3.connect(pathlib.Path(os.environ['HOME'])/'.t3/userdata/statev2.sqlite') as db:
+        db.execute('CREATE TABLE IF NOT EXISTS orchestration_v2_projection_threads(thread_id TEXT PRIMARY KEY,project_id TEXT,title TEXT,created_at TEXT,updated_at TEXT,archived_at TEXT,deleted_at TEXT,payload_json TEXT)')
+        at=t['updatedAt']
+        native={'id':id,'projectId':t['projectId'],'title':t['title'],'lineage':{'parentThreadId':None,'relationshipToParent':None},'createdAt':at,'updatedAt':at,'archivedAt':None,'deletedAt':None}
+        db.execute('INSERT OR REPLACE INTO orchestration_v2_projection_threads VALUES(?,?,?,?,?,NULL,NULL,?)',(id,t['projectId'],t['title'],at,at,json.dumps(native)))
     save(t)
     if (root/'die-after-start').exists():
-        (root/'die-after-start').unlink(); os.kill(os.getppid(),9)
+        (root/'die-after-start').unlink()
+        os.kill(int(os.environ.get('T3_TEST_OPERATION_OWNER',os.getppid())),9)
+        sys.exit(1)
     elif not (root/'silent-start').exists(): print(id)
 elif command=='send':
     text=sys.stdin.read() if operands[1]=='-' else operands[1]
@@ -316,8 +344,15 @@ impl FakeT3 {
         env.readiness_server();
         let bin = env.path("runtime-bin");
         let state = env.path("t3-state");
+        let fresh = !state.exists();
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(&state).unwrap();
+        if fresh {
+            let database = env.home().join(".t3/userdata/statev2.sqlite");
+            std::fs::create_dir_all(database.parent().unwrap()).unwrap();
+            let db = instrukt_core::state_db::rusqlite::Connection::open(database).unwrap();
+            db.execute_batch("CREATE TABLE IF NOT EXISTS orchestration_command_receipts(command_id TEXT PRIMARY KEY,aggregate_kind TEXT,aggregate_id TEXT,command_type TEXT,status TEXT);").unwrap();
+        }
         let script = bin.join("t3");
         std::fs::write(
             &script,
@@ -337,6 +372,8 @@ impl FakeT3 {
     }
 
     pub fn next_thread_id(&self, id: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         std::fs::write(self.state.join("next-thread-id"), id).unwrap();
     }
 
@@ -350,10 +387,12 @@ impl FakeT3 {
     }
 
     pub fn seed(&self, id: &str, checkout: &std::path::Path, key: &str, brief: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         let default_id = Self::default_project_id(checkout);
         let project = std::fs::read_to_string(self.state.join(format!("{default_id}.id")))
             .unwrap_or(default_id);
-        let thread = serde_json::json!({"threadId":id,"projectId":project,"checkout":checkout.to_string_lossy(),"title":key,"status":"running","latestRunId":format!("run:{id}:1"),"activeRunId":format!("run:{id}:1"),"updatedAt":"2026-11-06T10:00:00Z","pendingRequestCount":0,"archived":false,"settled":false,"worktreePath":null,"branch":null,"messages":[{"role":"user","text":brief,"runId":format!("run:{id}:1")}]});
+        let thread = serde_json::json!({"runtimeMode":"full-access","interactionMode":"default","threadId":id,"projectId":project,"checkout":checkout.to_string_lossy(),"title":key,"status":"running","latestRunId":format!("run:{id}:1"),"activeRunId":format!("run:{id}:1"),"updatedAt":"2026-11-06T10:00:00Z","pendingRequestCount":0,"archived":false,"settled":false,"worktreePath":null,"branch":null,"messages":[{"role":"user","text":brief,"runId":format!("run:{id}:1")}]});
         std::fs::write(
             self.state.join(format!("{id}.fixture")),
             serde_json::to_vec(&thread).unwrap(),
@@ -368,6 +407,8 @@ impl FakeT3 {
     /// Projects the threads' current state into T3's store, as the T3 server
     /// does whenever a thread changes.
     pub fn project(&self, env: &TestEnv, id: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         let status = std::process::Command::new(&self.script)
             .args(["thread", "show", id, "--messages", "1"])
             .env("HOME", env.home())
@@ -379,6 +420,8 @@ impl FakeT3 {
     /// A person types `text` straight into the thread `id`, as T3's own
     /// interface sends it; with the thread idle it opens a turn of its own.
     pub fn person_sends(&self, env: &TestEnv, id: &str, text: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         let status = std::process::Command::new(&self.script)
             .args(["thread", "send", id, text])
             .env("HOME", env.home())
@@ -387,6 +430,8 @@ impl FakeT3 {
         assert!(status.success());
     }
     pub fn input_log(&self, id: &str) -> String {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["messages"]
             .as_array()
             .unwrap()
@@ -406,24 +451,47 @@ impl FakeT3 {
         ids.sort();
         ids
     }
-    /// The semantic key a thread was started under, as its title carries
-    /// it last.
+    /// The runner-owned object binding for the fake native creation receipt.
     pub fn key(&self, id: &str) -> String {
-        let title = self.read(id)["title"].as_str().unwrap().to_owned();
-        title.rsplit(" · ").next().unwrap().to_owned()
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        let thread = self.read(id);
+        let command = thread["commandId"].as_str().unwrap_or_default();
+        let db = instrukt_core::state_db::rusqlite::Connection::open(
+            self.state
+                .parent()
+                .unwrap()
+                .join("home/.instrukt/state/instrukt.db"),
+        )
+        .unwrap();
+        db.query_row(
+            "SELECT semantic_key FROM runtime_bindings WHERE start_key=?1",
+            [command],
+            |row| row.get(0),
+        )
+        .unwrap()
     }
     /// The provider instance a thread was started on.
     pub fn provider(&self, id: &str) -> instrukt_core::ids::ProviderInstanceId {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         instrukt_core::ids::ProviderInstanceId::parse(
             self.read(id)["providerInstanceId"].as_str().unwrap(),
         )
         .unwrap()
     }
+    pub fn native_id(&self, id: &str) -> String {
+        std::fs::read_to_string(self.state.join(format!("{id}.alias")))
+            .unwrap_or_else(|_| id.to_owned())
+    }
     fn read(&self, id: &str) -> serde_json::Value {
+        let id = self.native_id(id);
         serde_json::from_slice(&std::fs::read(self.state.join(format!("{id}.json"))).unwrap())
             .unwrap()
     }
     pub fn change(&self, id: &str, key: &str, value: serde_json::Value) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         let mut t = self.read(id);
         t[key] = value;
         std::fs::write(
@@ -451,23 +519,31 @@ impl FakeT3 {
     }
     /// The run thread `id` has active, as the fake records it.
     pub fn active_run(&self, id: &str) -> String {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["activeRunId"].as_str().unwrap().to_owned()
     }
     /// Thread `id`'s inputs leave T3's projection and stay out until
     /// [`FakeT3::show_inputs`].
     pub fn hide_inputs(&self, id: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         std::fs::write(self.state.join("hide-inputs"), id).unwrap();
     }
     pub fn show_inputs(&self) {
         self.flag("hide-inputs", false);
     }
     pub fn set_status(&self, id: &str, value: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         if matches!(value, "idle" | "completed" | "stopped" | "failed") {
             self.consume(id);
         }
         self.change(id, "status", value.into());
     }
     pub fn consume(&self, id: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         let mut t = self.read(id);
         let pending = t["messages"]
             .as_array()
@@ -499,6 +575,8 @@ impl FakeT3 {
         .unwrap();
     }
     pub fn finish(&self, id: &str, status: &str, text: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.set_status(id, status);
         let mut t = self.read(id);
         let run = t["latestRunId"].clone();
@@ -518,9 +596,13 @@ impl FakeT3 {
         .unwrap();
     }
     pub fn set_pending(&self, id: &str, count: u32) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.change(id, "pendingRequestCount", count.into());
     }
     pub fn delete(&self, id: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         std::fs::rename(
             self.state.join(format!("{id}.json")),
             self.state.join(format!("{id}.deleted")),
@@ -528,6 +610,8 @@ impl FakeT3 {
         .unwrap();
     }
     pub fn archive(&self, id: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.change(id, "archived", true.into());
     }
     /// The sessions issued so far, in order: read under the lock the fake's
@@ -572,14 +656,17 @@ impl FakeT3 {
             .success()
     }
     pub fn held_send_running(&self, session: &str) -> bool {
+        let session = self.native_id(session);
         self.running(&format!("{session}.send-held"))
     }
     /// Lose this target's next send acknowledgment and hold its read-back.
     pub fn hold_show_after_send(&self, session: &str) {
+        let session = self.native_id(session);
         self.flag(&format!("{session}.hold-show-after-send"), true);
     }
     /// The original held show is still running, even if another was launched.
     pub fn held_show_running(&self, session: &str) -> bool {
+        let session = self.native_id(session);
         self.running(&format!("{session}.show-held"))
     }
     /// How many `auth session issue` launches were held so far.
@@ -603,24 +690,54 @@ impl FakeT3 {
         self.flag("down", true);
     }
     pub fn folder(&self, id: &str) -> PathBuf {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["checkout"].as_str().unwrap().into()
     }
     pub fn worktree(&self, id: &str) -> PathBuf {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["worktreePath"].as_str().unwrap().into()
     }
     pub fn worktree_base(&self, id: &str) -> String {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["base"].as_str().unwrap().into()
     }
+    pub fn title_if_present(&self, id: &str) -> Option<String> {
+        let id = self.native_id(id);
+        let bytes = std::fs::read(self.state.join(format!("{id}.json")));
+        if bytes
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
+            return None;
+        }
+        Some(
+            serde_json::from_slice::<serde_json::Value>(&bytes.unwrap()).unwrap()["title"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        )
+    }
     pub fn title(&self, id: &str) -> String {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["title"].as_str().unwrap().into()
     }
     pub fn message_count(&self, id: &str) -> usize {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["messages"].as_array().unwrap().len()
     }
     pub fn messages(&self, id: &str) -> String {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         serde_json::to_string(&self.read(id)["messages"]).unwrap()
     }
     pub fn message(&self, id: &str, n: usize) -> String {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
         self.read(id)["messages"][n]["text"]
             .as_str()
             .unwrap()

@@ -133,7 +133,14 @@ fn pickup(
             return Vec::new();
         }
     };
-    if let Err(err) = Executions::new(cx.state).observe(cx, config, workflow, project, &offered) {
+    if let Err(err) = Executions::new(cx.state).observe(
+        cx,
+        config,
+        workflow,
+        work.bindings.as_ref(),
+        project,
+        &offered,
+    ) {
         tracing::warn!(event = "executions_unobservable", project = %project.slug, error = %err);
     }
     for candidate in &offered {
@@ -274,18 +281,11 @@ fn dispatch_one(
             return Some(Dispatched::StartUncertain { todo: todo.clone() });
         }
     };
-    let (dispatch_key, creation, existing, placement) = match reservation {
-        crate::interfaces::DispatchReservation::Existing(binding) => (
-            binding.key.clone(),
-            crate::runtime::CreationPermit::Reconcile,
-            Some(binding),
-            None,
-        ),
-        crate::interfaces::DispatchReservation::Start {
-            key,
-            creation,
-            worktree,
-        } => (key, creation, None, worktree),
+    let (dispatch_key, existing, placement) = match reservation {
+        crate::interfaces::DispatchReservation::Existing(binding) => {
+            (binding.key.clone(), Some(binding), None)
+        }
+        crate::interfaces::DispatchReservation::Start { key, worktree } => (key, None, worktree),
     };
     let label = if occurrence.is_some() {
         format!("task · {todo}")
@@ -296,7 +296,6 @@ fn dispatch_one(
         label: &label,
         now: cx.now,
         invocation: cx.invocation,
-        creation,
         message: &prepared.message,
         worktree: placement.as_ref().map(|p| p.branch.as_str()),
         cwd: Some(&project.root),
@@ -307,20 +306,20 @@ fn dispatch_one(
     let started = match existing {
         Some(binding) => sessions.followup(
             &order,
+            work.bindings.as_ref(),
             &binding.session,
             binding.worktree.as_deref(),
             binding.title.as_deref(),
             &request,
         ),
-        None => sessions.start(&order, &request),
+        None => sessions.start(&order, work.bindings.as_ref(), &request),
     };
     let started = match started {
         Ok(started) => started,
         Err(SessionsError::OrderExhausted { tried }) => {
-            if creation == crate::runtime::CreationPermit::Initial
-                && let Err(error) = work
-                    .bindings
-                    .release_unstarted(project, todo, &dispatch_key)
+            if let Err(error) = work
+                .bindings
+                .release_unstarted(project, todo, &dispatch_key)
             {
                 tracing::warn!(event="unstarted_reservation_retained",todo=%todo,error=%error);
                 return Some(Dispatched::StartUncertain { todo: todo.clone() });

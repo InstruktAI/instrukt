@@ -206,10 +206,10 @@ And changing those choices requires no change to the evaluation engine
 ### UC-WD2: Enable a workflow whose runtime can carry its declared work
 
 ```gherkin
-Given a developer selected a runtime with worktree creation and shared native delegation but no unattended existing-worktree attachment
-When they enable the shipped sdlc workflow declaring worktree creation and shared delegation
+Given a developer selected a runtime with worktree creation, sharing and existing-worktree attachment but no native notification operation
+When they enable a workflow declaring those workspace capabilities
 Then that requirement permits enablement
-But when they enable a custom workflow declaring existing-worktree attachment
+But when they enable a custom workflow requiring native notification
 Then instrukt refuses naming the runtime, flow and missing capability
 And the configuration remains unchanged
 ```

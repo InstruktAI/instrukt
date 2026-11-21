@@ -330,6 +330,9 @@ impl TestEnv {
     pub fn set_env(&mut self, key: &str, value: &str) -> &mut Self {
         let value = if key == "PATH" {
             format!("{}:{value}", self.path("runtime-bin").display())
+        } else if key == "T3CODE_THREAD_ID" {
+            std::fs::read_to_string(self.path(&format!("t3-state/{value}.alias")))
+                .unwrap_or_else(|_| value.to_owned())
         } else {
             value.to_owned()
         };
@@ -700,6 +703,46 @@ pub fn agent_profiles(env: &TestEnv, patch: &str) {
         serde_yaml_ng::to_string(&agents).unwrap(),
     )
     .unwrap();
+    let Ok(profiles) =
+        instrukt_core::config::Agents::parse(&serde_yaml_ng::to_string(&agents).unwrap())
+    else {
+        return;
+    };
+    t3_readiness::update(env, |snapshot| {
+        let providers = snapshot["providers"].as_array_mut().unwrap();
+        for profile in profiles.profiles.values() {
+            if providers
+                .iter()
+                .any(|provider| provider["instanceId"] == profile.instance.as_str())
+            {
+                continue;
+            }
+            let kind = serde_json::to_value(profile.kind).unwrap();
+            let driver = if kind == "claude" {
+                "claudeAgent"
+            } else {
+                kind.as_str().unwrap()
+            };
+            let mut provider = t3_readiness::provider(profile.instance.as_str(), driver, true);
+            let models = [
+                &profile.light,
+                &profile.standard,
+                &profile.strong,
+                &profile.premium,
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry["model"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+            provider["models"] = serde_json::json!(
+                models
+                    .into_iter()
+                    .map(|model| serde_json::json!({"slug":model}))
+                    .collect::<Vec<_>>()
+            );
+            providers.push(provider);
+        }
+    });
 }
 
 /// Locate a declared prerequisite; subprocesses never search ambient PATH.

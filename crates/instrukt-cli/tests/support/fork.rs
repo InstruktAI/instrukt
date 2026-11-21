@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::common::{Repo, TestEnv};
 use crate::fixtures::documented::{project, snippet, sync};
 
-/// The standing agent, as `resolve-start` and its anomaly name it.
+/// The standing responsibility used by the fork fixture.
 pub const STANDING_AGENT: &str = "fork/procedure/upstream-watch@fork";
 
 fn fork_layer() -> String {

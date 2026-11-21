@@ -677,7 +677,6 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
     })?.unwrap_or_default();
     // What the retained consumers hold whatever the files say now.
     let consumers = crate::consumers::status(request.home, &state)?;
-    let start_anomalies = crate::keyed::status(&state)?;
     let stopped_executions = crate::executions::Executions::new(&state).stopped()?;
     let input_findings = state.read(|conn, path| {
         let sql = crate::state::sql(path);
@@ -702,7 +701,7 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
     })?.unwrap_or_else(|| serde_json::json!({"count":0,"recent":[]}));
     // The history workers' current failures, while they last.
     let workers = state.read(|conn, path| {
-        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers WHERE worker NOT GLOB 'keyed-start:*' ORDER BY worker").map_err(crate::state::sql(path))?;
+        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
         let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
@@ -725,7 +724,7 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         .unwrap_or(serde_json::Value::Null);
     Ok(serde_json::json!({
         "runner": runner, "workers": workers, "skipped_wake": skipped_wake,
-        "activation_failures": failures, "consumers": consumers, "start_anomalies": start_anomalies,
+        "activation_failures": failures, "consumers": consumers,
         "stopped_executions": stopped_executions, "input_findings": input_findings,
         "set_aside": set_aside, "links": links, "conversations": conversations
     }))

@@ -61,7 +61,6 @@ bundles:
     - {action: todo-orchestration, scope: own}
     - {action: assignment-write, scope: own}
     - {action: session-observe, scope: own}
-    - {action: session-recover, scope: own}
     - {action: standing-bind, scope: own}
     - {action: conversation-link, scope: own}
   integrate:
@@ -90,7 +89,6 @@ bundles:
     - {action: integration, scope: any}
     - {action: session-observe, scope: any}
     - {action: history-read, scope: any}
-    - {action: session-recover, scope: any}
     - {action: standing-bind, scope: any}
     - {action: conversation-link, scope: any}
     - {action: agents-read, scope: any}

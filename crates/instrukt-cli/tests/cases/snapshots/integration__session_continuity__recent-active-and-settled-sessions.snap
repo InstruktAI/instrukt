@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/session-continuity.rs
-assertion_line: 166
 expression: "shown(&p, &list.get_output().stdout)"
 ---
 [
@@ -11,7 +10,7 @@ expression: "shown(&p, &list.get_output().stdout)"
     "title": "instrukt:run:active",
     "state": "running",
     "settled": false,
-    "semantic_key": "instrukt:run:active",
+    "semantic_key": null,
     "last_activity": "<time>",
     "activity_source": "t3 updatedAt/settledAt: native latest activity or settling"
   },
@@ -22,7 +21,7 @@ expression: "shown(&p, &list.get_output().stdout)"
     "title": "instrukt:run:recent",
     "state": "settled",
     "settled": true,
-    "semantic_key": "instrukt:run:recent",
+    "semantic_key": null,
     "last_activity": "<time>",
     "activity_source": "t3 updatedAt/settledAt: native latest activity or settling"
   },
@@ -33,7 +32,7 @@ expression: "shown(&p, &list.get_output().stdout)"
     "title": "instrukt:run:unknown",
     "state": "settled",
     "settled": true,
-    "semantic_key": "instrukt:run:unknown",
+    "semantic_key": null,
     "last_activity": null,
     "activity_source": null
   }
