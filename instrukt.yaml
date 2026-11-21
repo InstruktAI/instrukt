@@ -1,6 +1,8 @@
 # yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
 schema_version: 6
 project: instrukt
+github:
+  repository: InstruktAI/instrukt
 modules:
   events: true
   todos: true
