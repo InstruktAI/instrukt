@@ -222,6 +222,15 @@ fn linked_state_shares_one_writer_and_refuses_database_file_links() {
         .unwrap();
     assert!(status.status.success(), "{status:?}");
 
+    let events = env
+        .instrukt_process(project.repo.path())
+        .env("INSTRUKT_HOME", &a)
+        .args(["events", "status", "--json"])
+        .output()
+        .unwrap();
+    assert!(events.status.success(), "{events:?}");
+    assert!(!state.join("connector-read-back.sqlite").exists());
+
     let lock = instrukt_core::fsx::LockGuard::acquire(
         &a.join("state/writer.lock"),
         Duration::from_secs(2),
@@ -298,6 +307,20 @@ fn status_reports_older_and_newer_state_without_writing_it() {
         let out = env.run(project.repo.path(), args).success();
         serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
     };
+    let scan_store = state.join("connector-read-back.sqlite");
+    {
+        let scans = Connection::open(&scan_store).unwrap();
+        scans.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             CREATE TABLE scans(company TEXT, connector TEXT, failure TEXT, retry_at INTEGER);
+             CREATE TABLE seen(company TEXT, connector TEXT, conversation TEXT, message TEXT, written_us INTEGER, missed_link TEXT);
+             INSERT INTO scans VALUES('fixture','slack','retained scan failure',NULL);"
+        ).unwrap();
+    }
+    let scan_bytes = std::fs::read(&scan_store).unwrap();
+    let scan_sidecars =
+        ["sqlite-wal", "sqlite-shm"].map(|suffix| scan_store.with_extension(suffix));
+    assert!(scan_sidecars.iter().all(|path| !path.exists()));
     let older = bytes();
     assert!(status(&["status", "--json"])["machine"]["state_database"].is_null());
     let events = status(&["events", "status", "--json"]);
@@ -306,6 +329,12 @@ fn status_reports_older_and_newer_state_without_writing_it() {
         events["activation_failures"][0]["failure"],
         "retained activation failure"
     );
+    assert_eq!(
+        events["conversations"]["read_back_failures"][0]["cause"],
+        "retained scan failure"
+    );
+    assert_eq!(std::fs::read(scan_store).unwrap(), scan_bytes);
+    assert!(scan_sidecars.iter().all(|path| !path.exists()));
     assert_eq!(bytes(), older);
     let current = instrukt_core::state_db::schema_version();
     db.pragma_update(None, "user_version", current + 1).unwrap();

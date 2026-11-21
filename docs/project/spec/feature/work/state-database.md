@@ -809,7 +809,9 @@ observation when the scan store has none and establishes no scan coverage.
 this store for one home's connectors. Its saved window is authoritative and
 durable when first learned. Losing it can skip an unread question the window
 would have recovered. Provider positions and seen identities record external
-bookkeeping. The store has its own SQLite writer outside live intake.
+bookkeeping. The store has its own SQLite writer outside live intake. It uses the
+canonical state directory. Status reads existing records without creating
+the store or touching its sidecars.
 
 Each connector keeps one active window with its start and lower bound, the
 provider position, the current fetched page until processed, and any

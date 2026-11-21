@@ -317,6 +317,19 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
     Ok(())
 }
 
+/// Inspect an existing SQLite store without opening a disk connection or
+/// creating sidecars. The in-memory connection permits queries only.
+pub fn inspect_file(path: &Path) -> Result<Option<Connection>, StateDbError> {
+    refuse_database_links(path)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let conn = _snapshot::read(path)?;
+    conn.pragma_update(None, "query_only", true)
+        .map_err(StateDbError::sqlite(path))?;
+    Ok(Some(conn))
+}
+
 fn refuse_database_links(path: &Path) -> Result<(), StateDbError> {
     refuse_link(path)?;
     for suffix in ["-wal", "-shm", "-journal"] {
