@@ -164,7 +164,6 @@ struct Workspace {
     hold_reads: bool,
     hold_later_history_pages: bool,
     refuse_replies: bool,
-    refused_reply: Option<String>,
     read_back_channels: Vec<String>,
     hold_read_back_channel: Option<String>,
     refuse_app_connection: bool,
@@ -192,7 +191,6 @@ struct Workspace {
     held_posts: usize,
     /// `users.info` answers wait until released.
     hold_lookups: bool,
-    hold_lookups_for: std::collections::BTreeSet<String>,
     /// How many lookups were held back.
     held_lookups: usize,
     reads: usize,
@@ -292,15 +290,7 @@ impl FakeSlack {
                         }
                         let mut counted = false;
                         while method == "users.info"
-                            && {
-                                let workspace = workspace.lock().unwrap();
-                                workspace.hold_lookups
-                                    || body.split('&').any(|field| {
-                                        field.strip_prefix("user=").is_some_and(|user| {
-                                            workspace.hold_lookups_for.contains(user)
-                                        })
-                                    })
-                            }
+                            && workspace.lock().unwrap().hold_lookups
                             && !stop.load(Ordering::Acquire)
                         {
                             if !counted {
@@ -552,12 +542,7 @@ impl FakeSlack {
                     return json!({"ok": false, "error": "channel_not_found"});
                 }
 
-                if method == "conversations.replies"
-                    && (w.refuse_replies
-                        || w.refused_reply
-                            .as_deref()
-                            .is_some_and(|id| arg("latest") == Some(id)))
-                {
+                if method == "conversations.replies" && w.refuse_replies {
                     return json!({"ok": false, "error": "thread_not_found"});
                 }
                 if arg("include_all_metadata") == Some("true") {
@@ -1098,18 +1083,8 @@ impl FakeSlack {
         self.workspace.lock().unwrap().hold_lookups = true;
     }
 
-    pub fn hold_lookups_for(&self, user: &str) {
-        self.workspace
-            .lock()
-            .unwrap()
-            .hold_lookups_for
-            .insert(user.to_owned());
-    }
-
     pub fn release_lookups(&self) {
-        let mut workspace = self.workspace.lock().unwrap();
-        workspace.hold_lookups = false;
-        workspace.hold_lookups_for.clear();
+        self.workspace.lock().unwrap().hold_lookups = false;
     }
 
     /// How many lookups were held back while lookups were held.
@@ -1135,10 +1110,6 @@ impl FakeSlack {
     /// How many accepted posts had their answer held.
     pub fn held_posts(&self) -> usize {
         self.workspace.lock().unwrap().held_posts
-    }
-
-    pub fn refuse_replies_for(&self, question: Option<&str>) {
-        self.workspace.lock().unwrap().refused_reply = question.map(str::to_owned);
     }
 
     pub fn refuse_replies(&self, refused: bool) {

@@ -245,19 +245,11 @@ and `unarchive`, `channel_convert_to_private`, `channel_convert_to_public`,
 it: what a person or an integration wrote, and a form the connector does not
 know.
 
-The context bound is declared by `CONTEXT_BOUND` in
-`crates/instrukt-company/src/conversations.rs`. It starts when the addressed
-message is retained and uses the runner's clock. The sender must still be
-admitted. Context expiry and handoff run independently of sender lookups and
-other provider calls. At expiry the admitted question proceeds, even during an active read.
-The context keeps usable messages already read and says that earlier
-messages could not be read only when part or all of the needed range
-remained unread. If the messages were
-read in time, the agent receives them. Name enrichment gets at most the
-next intake retry interval and never extends the context bound. Names
-still unresolved at handoff use Slack IDs. Later results
-cannot change the stored delivery. The context note and provider errors
-stay out of Slack.
+The question stays saved until the connector can read the earlier messages
+needed for delivery. When Slack cannot supply them, the connector retries and
+shows the fixed unavailable status and notice under the conversation rules.
+It hands the question and its context to the agent once the read succeeds.
+Unresolved names use Slack IDs. Provider errors stay out of Slack.
 
 ### Posting
 
@@ -414,17 +406,11 @@ And an answer longer than Slack takes in one message arrives in parts, in order,
 ### UC-SL6: Be answered when the earlier messages cannot be read
 
 ```gherkin
-Given a member addresses the agent in a thread whose earlier messages Slack cannot hand over
-Then the message stays saved while context is still being read within the context bound
-When the context bound passes
-Then the agent receives the member's question and identity with a note that earlier messages could not be read
-And the member receives the answer without a technical message about the read
-When context becomes readable on retry
-Then previously unseen messages can accompany the question even if a refused tag or a later delivery followed them
-And queued tags still take their own turns
-And a confirmed send refusal causes the next attempt to exclude messages delivered in the meantime
-And a stalled earlier page never drops context already read
-And messages already delivered out of written order or pruned within the receipt window are not replayed
+Given a member asks a question whose earlier messages Slack cannot return
+Then the question stays saved and nothing is delivered to the agent
+And the member sees the fixed unavailable status and notice
+When Slack returns the earlier messages
+Then the agent receives the saved question with its context and the answer posts
 ```
 
 ## Known caveats

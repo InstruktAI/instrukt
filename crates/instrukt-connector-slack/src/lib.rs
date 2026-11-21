@@ -993,38 +993,31 @@ impl Connector for Slack {
         message: &str,
         text: &str,
         excluded: &std::collections::HashSet<String>,
-        readable: &dyn Fn(instrukt_connector::ContextSnapshot, bool) -> bool,
+        readable: &dyn Fn(instrukt_connector::ContextSnapshot),
     ) -> Result<Captured, ConnectorError> {
         let limit = usize::try_from(self.context_messages).unwrap_or(usize::MAX);
-        let me = self.cached_identity();
-        let snapshot = |messages: Vec<Value>,
-                        stopped_early: bool,
-                        complete_from: Option<Timestamp>,
-                        complete: bool| {
-            let me = me.clone();
-            let names = Arc::clone(&self.names);
-            let text = text.to_owned();
-            readable(
-                Box::new(move || {
-                    let mut captured = cached_names(&names, |lookup| {
-                        render_context(&text, &messages, limit, me.as_ref(), lookup)
-                    });
-                    captured.accompanying.stopped_early = stopped_early;
-                    captured.accompanying.complete_from = complete_from;
-                    captured.accompanying.unread = !complete;
-                    captured
-                }),
-                complete,
-            )
-        };
         let (messages, stopped_early, complete_from) =
-            read_context(self, conversation, message, excluded, limit, &snapshot)
-                .map_err(failed)?;
-        if !snapshot(messages.clone(), stopped_early, complete_from, true) {
-            return Err(ConnectorError {
-                cause: "context capture reached its bound".into(),
+            read_context(self, conversation, message, excluded, limit).map_err(failed)?;
+        let messages = Arc::new(messages);
+        let cached_messages = Arc::clone(&messages);
+        let names = Arc::clone(&self.names);
+        let cached_text = text.to_owned();
+        let me = self.cached_identity();
+        let cached_me = me.clone();
+        readable(Box::new(move || {
+            let mut captured = cached_names(&names, |lookup| {
+                render_context(
+                    &cached_text,
+                    &cached_messages,
+                    limit,
+                    cached_me.as_ref(),
+                    lookup,
+                )
             });
-        }
+            captured.accompanying.stopped_early = stopped_early;
+            captured.accompanying.complete_from = complete_from;
+            captured
+        }));
         let me = me.or_else(|| self.me().ok());
         let mut names = self.names();
         let mut captured = render_context(text, &messages, limit, me.as_ref(), &mut |user| {
@@ -1033,16 +1026,6 @@ impl Connector for Slack {
         captured.accompanying.stopped_early = stopped_early;
         captured.accompanying.complete_from = complete_from;
         Ok(captured)
-    }
-
-    fn without_context(&self, text: &str) -> Captured {
-        Captured {
-            text: cached_names(&self.names, |lookup| written_mentions(text, lookup)),
-            accompanying: Accompanying {
-                unread: true,
-                ..Default::default()
-            },
-        }
     }
 
     fn answer(
@@ -1281,7 +1264,6 @@ fn read_context(
     message: &str,
     excluded: &std::collections::HashSet<String>,
     limit: usize,
-    snapshot: &dyn Fn(Vec<Value>, bool, Option<Timestamp>, bool) -> bool,
 ) -> Result<(Vec<Value>, bool, Option<Timestamp>), SlackError> {
     use std::collections::BTreeMap;
 
@@ -1374,14 +1356,6 @@ fn read_context(
                 complete_from,
             ));
         }
-        if (more || !earlier.is_empty())
-            && !snapshot(messages.values().cloned().collect(), false, None, false)
-        {
-            return Err(SlackError::Api {
-                method: method.into(),
-                cause: "context capture reached its bound".into(),
-            });
-        }
         if !more {
             let Some(next) = earlier.pop() else {
                 return Ok((messages.into_values().collect(), false, None));
@@ -1461,7 +1435,6 @@ fn render_context(
             messages,
             limit: Some(limit),
             left_out: false,
-            unread: false,
             ..Accompanying::default()
         },
     }

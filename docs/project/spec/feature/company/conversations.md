@@ -130,7 +130,7 @@ a message delivered as its own turn or as context for another message.
 For each delivery, including a retry, select only earlier messages in the
 provider's thread or channel range that lack a receipt. Exclude messages
 waiting for their own turns. Apply the context limit to that selection and
-include the omission note when the limit trims it. Record the selected
+include the omission note when the limit trims it. If the connector cannot read the required context, the question stays saved and its unavailable interval opens until delivery resumes. Record the selected
 messages and addressed message in the same transaction that records the
 delivery. A send or start whose acceptance is uncertain retains the exact
 input for reconciliation and keeps later work queued until it is resolved.
@@ -393,8 +393,8 @@ messages by provider identity. An admitted offline message uses the same
 delivery receipt rule for context as a live message: earlier messages absent
 from the durable receipt record supply context. A send to a retained session
 uses the same durable command identity and replay path as a live message.
-The saved window decides whether a recovered message is answered. Its
-context deadline starts when intake actually records the message.
+The saved window decides whether a recovered message is answered. The
+saved question waits until its required context can be read.
 An interrupted scan resumes its saved window and provider page before
 covering the interval since that window began. Scan failures and older
 missed messages are visible to the operator without posting a diagnostic in

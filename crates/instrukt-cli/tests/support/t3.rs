@@ -212,10 +212,6 @@ elif command=='send':
         (root/(operands[0]+'.send-held')).write_text(str(os.getpid()))
     while held.exists(): time.sleep(0.02)
     t=find(operands[0])
-    fail_once=root/(operands[0]+'.fail-next-send')
-    if fail_once.exists():
-        fail_once.unlink()
-        print('No running T3 Code server uses the fixture store. Start T3 Code, then retry.',file=sys.stderr); sys.exit(1)
     ambiguous=root/(operands[0]+'.lose-next-send')
     if ambiguous.exists():
         ambiguous.unlink()
@@ -255,11 +251,6 @@ elif command=='send':
     if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
         queued=False; t['latestRunId']=run; t['activeRunId']=run; t['status']='running'
     t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued})
-    defer=root/(operands[0]+'.defer-next-send')
-    if defer.exists():
-        defer.unlink()
-        (root/(operands[0]+'.deferred-input')).write_text(json.dumps(t))
-        print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
     save(t)
     if command_id:
         receipts.execute('INSERT INTO command_receipts VALUES (?)',(command_id,))
@@ -289,20 +280,6 @@ elif command=='show':
     while held.exists(): time.sleep(0.02)
     t=find(operands[0]); limit=int(flags.get('--messages',100))
     if limit or not os.environ.get('INSTRUKT_TEST_T3_WAKES'): sync_inputs()
-    deferred=root/(operands[0]+'.deferred-input')
-    missed=root/(operands[0]+'.deferred-input-missed')
-    if limit==0 and deferred.exists():
-        if missed.exists():
-            ready=root/(operands[0]+'.deferred-ready-read')
-            ready.write_text(str(os.getpid()))
-            while not (root/(operands[0]+'.release-deferred-input')).exists(): time.sleep(0.02)
-            # The readiness reply was read before the accepted input became
-            # visible. Publish acceptance now and return that older reply.
-            save(json.loads(deferred.read_text())); deferred.unlink(); missed.unlink()
-        else:
-            missed.touch()
-            t=dict(t,status='running')
-
     if limit==0 and (root/'busy-before-entry').exists():
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=3:

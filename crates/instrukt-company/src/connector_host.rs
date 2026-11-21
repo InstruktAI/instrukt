@@ -523,7 +523,7 @@ fn connection(
     std::thread::scope(|scope| {
         scope.spawn(move || {
             let _ended = Ended(ended);
-            intake_worker(&quit, &nudges, reach.connectors.as_ref(), || {
+            intake_worker(&quit, &nudges, || {
                 intake_pass(home, reach, company, key, |connector| {
                     admit_messages(
                         home,
@@ -540,7 +540,7 @@ fn connection(
         scope.spawn(move || {
             let _ended = Ended(ended);
             let mut contexts = ContextReads::default();
-            intake_worker(&quit, &context_wakes, reach.connectors.as_ref(), || {
+            intake_worker(&quit, &context_wakes, || {
                 intake_pass(home, reach, company, key, |connector| {
                     capture_contexts(
                         home,
@@ -642,8 +642,7 @@ fn connection(
     }
 }
 
-/// Whom intake wakes: the relay, for what became deliverable, and the
-/// working pass, for a message just admitted.
+/// Wake the relay on capture and intake when a context read completes.
 #[derive(Clone, Copy)]
 struct Wakes<'a> {
     relay: &'a SyncSender<()>,
@@ -669,7 +668,6 @@ fn retry_wait(failures: u32) -> Duration {
 fn intake_worker(
     stop: &dyn Fn() -> bool,
     nudges: &std::sync::mpsc::Receiver<()>,
-    clock: &dyn Connectors,
     mut pass: impl FnMut() -> IntakeProgress,
 ) {
     let mut failures: u32 = 0;
@@ -686,12 +684,7 @@ fn intake_worker(
             retry_wait(failures)
         };
         let retry_at = Instant::now() + wait;
-        while Instant::now() < retry_at
-            && progress
-                .next_deadline
-                .is_none_or(|deadline| clock.now() < deadline)
-            && !stop()
-        {
+        while Instant::now() < retry_at && !stop() {
             if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
                 break;
             }
@@ -900,148 +893,105 @@ fn owed(refusals: Vec<(Refusal, bool)>) -> Vec<Refusal> {
 }
 
 enum ContextReply {
-    Readable(ContextSnapshot, Timestamp, Option<Instant>),
-    Finished(Result<Captured, ConnectorError>, Timestamp),
+    Readable(ContextSnapshot),
+    Finished(Result<Captured, ConnectorError>),
 }
 
 struct ContextFlight {
     replies: std::sync::mpsc::Receiver<ContextReply>,
-    readable: Option<(ContextSnapshot, Option<Instant>)>,
+    readable: Option<(ContextSnapshot, Instant)>,
 }
 
 #[derive(Default)]
-struct ContextReads {
-    active: BTreeMap<(String, String), ContextFlight>,
-    partial: BTreeMap<(String, String), Captured>,
-}
+struct ContextReads(BTreeMap<(String, String), ContextFlight>);
 
 impl ContextReads {
     fn capture(
         &mut self,
         connector: &Arc<dyn Connector>,
         item: &conversations::Unread,
-        clock: &Arc<dyn Connectors>,
         wake: &SyncSender<()>,
-        deadline: Timestamp,
         exclusions: impl FnOnce() -> Result<
             std::collections::HashSet<String>,
             conversations::ConversationError,
         >,
     ) -> Option<Result<Captured, ConnectorError>> {
+        use std::collections::btree_map::Entry;
         use std::sync::mpsc::{self, TryRecvError};
         let key = (item.conversation.clone(), item.message.clone());
-        let now = clock.now();
-        if let Some(flight) = self.active.get_mut(&key) {
-            loop {
-                match flight.replies.try_recv() {
-                    Ok(ContextReply::Readable(snapshot, at, ready)) if at < deadline => {
-                        flight.readable = Some((snapshot, ready));
-                    }
-                    Ok(ContextReply::Readable(..)) => {}
-                    Ok(ContextReply::Finished(Ok(captured), at)) if at < deadline => {
-                        self.active.remove(&key);
-                        self.partial.remove(&key);
-                        return Some(Ok(captured));
-                    }
-                    Ok(ContextReply::Finished(outcome, finished)) => {
-                        if let Some(captured) = self.finish_read(&key) {
-                            return Some(Ok(captured));
+        match self.0.entry(key) {
+            Entry::Occupied(mut slot) => {
+                let flight = slot.get_mut();
+                loop {
+                    match flight.replies.try_recv() {
+                        Ok(ContextReply::Readable(snapshot)) => {
+                            flight.readable = Some((snapshot, Instant::now() + RETRY));
                         }
-                        if now >= deadline || finished >= deadline {
-                            return Some(Ok(self
-                                .partial
-                                .remove(&key)
-                                .unwrap_or_else(|| connector.without_context(&item.text))));
+                        Ok(ContextReply::Finished(result)) => {
+                            slot.remove();
+                            return Some(result);
                         }
-                        return Some(outcome);
-                    }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
-                        if let Some(captured) = self.finish_read(&key) {
-                            return Some(Ok(captured));
-                        }
-                        if now < deadline {
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            slot.remove();
                             return Some(Err(ConnectorError {
                                 cause: "the context reader stopped before reporting its result"
                                     .into(),
                             }));
                         }
-                        break;
                     }
                 }
-            }
-        }
-        let enrichment_done = self
-            .active
-            .get(&key)
-            .and_then(|flight| flight.readable.as_ref())
-            .and_then(|(_, ready)| *ready)
-            .is_some_and(|ready| Instant::now() >= ready);
-        if now >= deadline || enrichment_done {
-            let captured = self.finish_read(&key).or_else(|| self.partial.remove(&key));
-            return Some(Ok(
-                captured.unwrap_or_else(|| connector.without_context(&item.text))
-            ));
-        }
-        if let std::collections::btree_map::Entry::Vacant(slot) = self.active.entry(key) {
-            let excluded = match exclusions() {
-                Ok(excluded) => excluded,
-                Err(error) => {
-                    return Some(Err(ConnectorError {
-                        cause: error.to_string(),
-                    }));
+                if flight
+                    .readable
+                    .as_ref()
+                    .is_some_and(|(_, ready)| Instant::now() >= *ready)
+                {
+                    let (snapshot, _) = slot.remove().readable?;
+                    return Some(Ok(snapshot()));
                 }
-            };
-            let connector = Arc::clone(connector);
-            let clock = Arc::clone(clock);
-            let item = item.clone();
-            let wake = wake.clone();
-            let (send, replies) = mpsc::channel();
-            let spawned = std::thread::Builder::new()
-                .name("conversation-context".into())
-                .spawn(move || {
-                    let readable = |snapshot, complete: bool| {
-                        let ready = complete.then(|| Instant::now() + RETRY);
-                        let at = clock.now();
-                        let reading = at < deadline && send.send(ContextReply::Readable(snapshot, at, ready)).is_ok();
-                        if reading {
+            }
+            Entry::Vacant(slot) => {
+                let excluded = match exclusions() {
+                    Ok(excluded) => excluded,
+                    Err(error) => {
+                        return Some(Err(ConnectorError {
+                            cause: error.to_string(),
+                        }));
+                    }
+                };
+                let connector = Arc::clone(connector);
+                let item = item.clone();
+                let wake = wake.clone();
+                let (send, replies) = mpsc::channel();
+                let spawned = std::thread::Builder::new()
+                    .name("conversation-context".into())
+                    .spawn(move || {
+                        let result = connector.capture(
+                            &item.conversation,
+                            &item.message,
+                            &item.text,
+                            &excluded,
+                            &|snapshot| {
+                                if send.send(ContextReply::Readable(snapshot)).is_ok() {
+                                    let _ = wake.try_send(());
+                                }
+                            },
+                        );
+                        if send.send(ContextReply::Finished(result)).is_ok() {
                             let _ = wake.try_send(());
                         }
-                        reading
-                    };
-                    let result = connector.capture(
-                        &item.conversation, &item.message, &item.text, &excluded, &readable,
-                    );
-                    if send.send(ContextReply::Finished(result, clock.now())).is_err() {
-                        tracing::debug!(target: LOG_TARGET, event = "conversation_context_late_result", message = %item.message);
-                    }
-                    let _ = wake.try_send(());
+                    });
+                if let Err(error) = spawned {
+                    return Some(Err(ConnectorError {
+                        cause: format!("cannot start context read: {error}"),
+                    }));
+                }
+                slot.insert(ContextFlight {
+                    replies,
+                    readable: None,
                 });
-            if let Err(error) = spawned {
-                return Some(Err(ConnectorError {
-                    cause: format!("cannot start context read: {error}"),
-                }));
             }
-            slot.insert(ContextFlight {
-                replies,
-                readable: None,
-            });
         }
-        None
-    }
-
-    fn finish_read(&mut self, key: &(String, String)) -> Option<Captured> {
-        let (snapshot, ready) = self.active.remove(key)?.readable?;
-        let mut captured = snapshot();
-        if let Some(previous) = self.partial.remove(key)
-            && captured.accompanying.unread
-        {
-            captured.accompanying.retain_read(previous.accompanying);
-        }
-        if ready.is_some() {
-            return Some(captured);
-        }
-        self.partial.insert(key.clone(), captured);
         None
     }
 }
@@ -1049,7 +999,6 @@ impl ContextReads {
 struct IntakeProgress {
     clean: bool,
     reading_context: bool,
-    next_deadline: Option<Timestamp>,
 }
 
 impl Default for IntakeProgress {
@@ -1057,12 +1006,11 @@ impl Default for IntakeProgress {
         Self {
             clean: true,
             reading_context: false,
-            next_deadline: None,
         }
     }
 }
 
-/// Sender decisions and refusals can call Slack. Context expiry and relay
+/// Sender decisions and refusals can call Slack. Context reads and relay
 /// handoff run on a different worker.
 fn admit_messages(
     home: &Home,
@@ -1118,17 +1066,11 @@ fn capture_contexts(
     contexts: &mut ContextReads,
 ) -> Result<IntakeProgress, conversations::ConversationError> {
     let mut progress = IntakeProgress::default();
-    #[cfg(debug_assertions)]
-    let now = clock.now();
     for unread in conversations::unread(home, company, key)?
         .into_iter()
         .filter(|item| item.admitted)
     {
-        let deadline = unread
-            .arrived_at
-            .checked_add(conversations::CONTEXT_BOUND)
-            .unwrap_or(Timestamp::MAX);
-        match contexts.capture(connector, &unread, clock, wakes.context, deadline, || {
+        match contexts.capture(connector, &unread, wakes.context, || {
             conversations::context_exclusions(
                 &RunnerState::new(home),
                 company,
@@ -1145,30 +1087,25 @@ fn capture_contexts(
                     &unread,
                     &captured.text,
                     Ok(captured.accompanying),
+                    clock.now(),
                 )?;
                 let _ = wakes.relay.try_send(());
                 continue;
             }
             Some(Err(error)) => {
                 progress.clean = false;
-                conversations::captured(home, company, key, &unread, "", Err(error.cause))?;
+                conversations::captured(
+                    home,
+                    company,
+                    key,
+                    &unread,
+                    "",
+                    Err(error.cause),
+                    clock.now(),
+                )?;
             }
             None => progress.reading_context = true,
         }
-        progress.next_deadline = Some(
-            progress
-                .next_deadline
-                .map_or(deadline, |next| next.min(deadline)),
-        );
-    }
-    #[cfg(debug_assertions)]
-    if instrukt_core::fsx::fence_active()
-        && let Some(path) = std::env::var_os("INSTRUKT_TEST_CONTEXT_PASS")
-    {
-        let _ = instrukt_core::fsx::atomic_write(
-            std::path::Path::new(&path),
-            now.to_string().as_bytes(),
-        );
     }
     Ok(progress)
 }
@@ -1372,7 +1309,7 @@ mod test_connector {
             _: &str,
             text: &str,
             _: &std::collections::HashSet<String>,
-            _: &dyn Fn(instrukt_connector::ContextSnapshot, bool) -> bool,
+            _: &dyn Fn(instrukt_connector::ContextSnapshot),
         ) -> Result<Captured, ConnectorError> {
             Ok(Captured {
                 text: text.to_owned(),
