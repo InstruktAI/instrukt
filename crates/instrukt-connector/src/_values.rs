@@ -36,29 +36,6 @@ pub struct Accompanying {
     /// Delivery needs a fresh read because eligibility changed after a short read.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub refresh: bool,
-    /// Some or all of the needed context could not be read by the bound.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub unread: bool,
-}
-
-impl Accompanying {
-    /// Preserve messages from a prior partial read. Prefer the latest
-    /// rendering of a message for any ID both reads supplied.
-    pub fn retain_read(&mut self, previous: Self) {
-        self.limit = self.limit.or(previous.limit);
-        let current: std::collections::HashSet<_> = self
-            .messages
-            .iter()
-            .filter_map(|entry| entry.id.as_deref())
-            .collect();
-        let remaining = previous
-            .messages
-            .into_iter()
-            .filter(|entry| entry.id.as_deref().is_some_and(|id| !current.contains(id)))
-            .collect::<Vec<_>>();
-        self.messages.extend(remaining);
-        self.messages.sort_by_key(|entry| entry.at);
-    }
 }
 
 /// What a connector supplies for one message addressed to the agent, as it
