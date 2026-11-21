@@ -148,8 +148,8 @@ codes! {
     IndexIdPending => "index-id-pending",
     /// A domain's or the project's index naming an id of another position.
     IndexIdForeign => "index-id-foreign",
-    /// An `agents` key that is not a supported agent CLI.
-    IndexAgentUnsupported => "index-agent-unsupported",
+    /// An `agents` key with invalid provider-name syntax.
+    IndexAgentInvalid => "index-agent-invalid",
     /// A `listed` id already in the closure of `expanded`.
     IndexListedInExpanded => "index-listed-in-expanded",
     /// An `index.yaml` anywhere but a position's root.

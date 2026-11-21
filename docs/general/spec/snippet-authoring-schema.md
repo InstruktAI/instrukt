@@ -294,9 +294,9 @@ do not accumulate by default.
 - Domain names: any name except `general` and `project`, which are reserved,
   and `third-party`, which keeps its existing special case; a domain claiming
   one is refused, naming the rule.
-- `agents` keys in `docs/general/index.yaml`: the agent runtimes instrukt
-  deploys global files to; `instrukt docs validate` names them when a key is
-  not one of them.
+- `agents` keys in `docs/general/index.yaml`: open provider names with the
+  syntax owned by `project/instrukt/spec/feature/docs/position-index`,
+  independent of configured providers or established native loaders.
 - `visibility`: public, internal. Default: `internal`.
 
 ## Known caveats

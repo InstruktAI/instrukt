@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::docs::AgentCli;
 use crate::interfaces::ConfiguredInstance;
 
 /// A settings key that makes an agent runtime load `AGENTS.md` files.
@@ -27,7 +26,7 @@ pub(super) struct LoadingKey {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Destination {
     /// The runtime, as its adapter and `agents` name it.
-    pub cli: AgentCli,
+    pub cli: &'static str,
     /// Its default home, relative to the user's home directory: where an
     /// instance that reports no home of its own reads.
     pub default_home: &'static str,
@@ -41,7 +40,7 @@ pub(super) struct Destination {
 /// One destination per runtime instrukt deploys to.
 pub(super) const DESTINATIONS: [Destination; 7] = [
     Destination {
-        cli: AgentCli::Claude,
+        cli: "claude",
         default_home: ".claude",
         file: "CLAUDE.md",
         loading: Some(LoadingKey {
@@ -56,37 +55,37 @@ pub(super) const DESTINATIONS: [Destination; 7] = [
         }),
     },
     Destination {
-        cli: AgentCli::Codex,
+        cli: "codex",
         default_home: ".codex",
         file: "AGENTS.md",
         loading: None,
     },
     Destination {
-        cli: AgentCli::Pi,
+        cli: "pi",
         default_home: ".pi/agent",
         file: "AGENTS.md",
         loading: None,
     },
     Destination {
-        cli: AgentCli::Opencode,
+        cli: "opencode",
         default_home: ".config/opencode",
         file: "AGENTS.md",
         loading: None,
     },
     Destination {
-        cli: AgentCli::Kiro,
+        cli: "kiro",
         default_home: ".kiro",
         file: "steering/instrukt.md",
         loading: None,
     },
     Destination {
-        cli: AgentCli::Antigravity,
+        cli: "antigravity",
         default_home: ".gemini",
         file: "AGENTS.md",
         loading: None,
     },
     Destination {
-        cli: AgentCli::Fx,
+        cli: "fx",
         default_home: ".fx",
         file: "AGENTS.md",
         loading: None,
@@ -96,10 +95,9 @@ pub(super) const DESTINATIONS: [Destination; 7] = [
 /// The destination of the runtime named `runtime`; `None` for a runtime
 /// instrukt does not deploy to.
 pub(super) fn destination_of(runtime: &str) -> Option<&'static Destination> {
-    let cli = AgentCli::named(runtime)?;
     DESTINATIONS
         .iter()
-        .find(|destination| destination.cli == cli)
+        .find(|destination| destination.cli == runtime)
 }
 
 /// One global agent file the configured instances need: its runtime, the
@@ -168,7 +166,7 @@ pub(super) fn targets(user_home: &Path, instances: &[ConfiguredInstance]) -> Tar
         if let Some(path) = relative {
             targets
                 .unknown
-                .push((instance.instance.to_string(), destination.cli.name(), path));
+                .push((instance.instance.to_string(), destination.cli, path));
             continue;
         }
         let home = match &instance.home {
@@ -177,7 +175,7 @@ pub(super) fn targets(user_home: &Path, instances: &[ConfiguredInstance]) -> Tar
                 let home = user_home.join(destination.default_home);
                 targets.defaulted.push((
                     instance.instance.to_string(),
-                    destination.cli.name(),
+                    destination.cli,
                     home.clone(),
                 ));
                 home
