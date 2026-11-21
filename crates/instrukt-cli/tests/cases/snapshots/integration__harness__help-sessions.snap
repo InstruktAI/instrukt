@@ -2,15 +2,13 @@
 source: crates/instrukt-cli/tests/cases/harness.rs
 expression: help
 ---
-Inspect keyed runtime threads and resolve uncertain unattended starts
+Inspect active and settled native runtime threads
 
 Usage: instrukt sessions <COMMAND>
 
 Commands:
-  list             List this project's active and settled runtime threads, newest activity first
-  resolve-start    Resolve a pending start by verifying a thread or allowing a fresh start
-  replace-deleted  Confirm a deleted thread's provider stopped and start its replacement
-  help             Print this message or the help of the given subcommand(s)
+  list  List this project's active and settled runtime threads, newest activity first
+  help  Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

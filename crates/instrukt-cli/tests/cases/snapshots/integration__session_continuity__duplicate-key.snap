@@ -1,6 +1,0 @@
----
-source: crates/instrukt-cli/tests/cases/session-continuity.rs
-assertion_line: 105
-expression: "shown(&p, &out.get_output().stderr)"
----
-instrukt: thread t3:s1 already belongs to another runtime key; choose a different session with `instrukt sessions resolve-start instrukt:todo:demo/<id 1>:prepare-orchestrator:1 --session '<runtime:id>'`

@@ -60,7 +60,7 @@ and stamps; workflow owns authorization and derived workflow state.
 
 **Runtime adapter**
 : A Rust trait implemented in code, selected explicitly by global
-`runner.runtime`. T3 is shipped first over its published host CLI and native thread stream. The
+`runner.runtime`. T3 is shipped first over authenticated native keyed-launch RPC, native-ID CLI reads and native thread stream. The
 adapter translates start-or-wake, start, send, state and conversation reads,
 recognises caller identity without runtime I/O,
 and reports optional capabilities. Its recognized native session is the key to
@@ -68,8 +68,10 @@ work/standing assignment lookup, not a role supplied by the caller.
 Native agent-operation prose is supplied by configuration and rendered through `@config`, independently of this adapter.
 
 **Singleton key**
-: The standing procedure, exact home and optional subject identity carried as a discoverable semantic key, separate from display title; the database binding is a cache. A per-key database lock admits one
- starter or deliverer at a time.
+: The standing procedure, exact home and optional subject identity carried as an
+  object key, separate from display title. Its authoritative database binding
+  captures each generation and fixed native launch identity. Exact-key ownership
+  admits one starter or deliverer at a time.
 
 **Conversation link**
 : A runner-owned relationship between two agent threads in which the human
@@ -122,7 +124,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   them; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
-  watched-ref observations, executions, cached standing-agent bindings, pending delivery targets, start markers and per-key locks,
+  watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
   conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls, plus retained history, source positions and import provenance), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 - **Does not own:** Work content, approval, workflow derivation or step
@@ -138,7 +140,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   released primitives. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
-  operational `instrukt sessions list|resolve-start` surface,
+  operational `instrukt sessions list` surface,
   `instrukt history extract|import-teleclaude|search|show`,
   `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
@@ -212,8 +214,8 @@ responsibility is distinct from its configured role class.
 - **Contains:** Canonical procedure, exact home, subject when identity is subject,
   and the configured runtime's session identity.
 - **Invariants:** Activation acceptance is distinct from runtime resolution and
-  event delivery. Exact runtime semantic-key discovery repairs the cached binding
-  under its per-key database lock; status observation determines reuse. Domain
+  event delivery. Retained owner-native identity restores a missing binding
+  under exact-key ownership; native status determines reuse or succession. Domain
   completion requires its owning work record's evidence. Conversation links are
   a separate runner-owned aggregate.
 - **Identifier:** Procedure and exact home, plus subject when declared; todo-role
@@ -455,7 +457,7 @@ The runtime adapter and the event-source boundary form an
 **Anti-corruption layer (ACL)** translating session operations and external
 observations. These are
 external boundaries, not additional bounded contexts. The runtime side is a Rust
-trait and code implementations; T3 is the first, over its host CLI and
+trait and code implementations; T3 is the first, over authenticated native keyed-launch RPC, native-ID CLI reads and
 read-scoped `subscribeThread` stream. The explicit
 configuration name selects the implementation
 (`project/instrukt/spec/feature/runner/session-continuity`).

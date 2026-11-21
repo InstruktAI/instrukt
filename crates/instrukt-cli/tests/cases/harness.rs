@@ -39,11 +39,6 @@ fn every_command_prints_its_contract_with_help_and_does_nothing_else() {
         let help = String::from_utf8(output.get_output().stdout.clone()).unwrap();
         insta::assert_snapshot!(format!("help-{command}"), help);
     }
-    let output = env
-        .run(&cwd, ["sessions", "resolve-start", "--help"])
-        .success();
-    let help = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    insta::assert_snapshot!("help-sessions-resolve-start", help);
     assert!(
         !env.instrukt_home().exists(),
         "--help must not create the home"

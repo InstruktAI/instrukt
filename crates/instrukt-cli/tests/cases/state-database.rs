@@ -112,13 +112,13 @@ fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_intr
 fn retain_historical_starts(env: &common::TestEnv) -> serde_json::Value {
     let file = env.instrukt_home().join("state/instrukt.db");
     let db = Connection::open(&file).unwrap();
-    db.execute_batch("DROP TABLE history_projection_records; DROP TABLE history_source_positions; DROP TABLE history_sources; DROP TABLE history_conversations; DROP TABLE history_fts; DROP TABLE agent_quota; DROP TABLE conversation_relay_positions; DROP TABLE conversation_links; ALTER TABLE poll_deferrals DROP COLUMN cause; PRAGMA user_version=4;")
+    db.execute_batch("DROP TABLE history_projection_records; DROP TABLE history_source_positions; DROP TABLE history_sources; DROP TABLE history_conversations; DROP TABLE history_fts; DROP TABLE agent_quota; DROP TABLE conversation_relay_positions; DROP TABLE conversation_links; ALTER TABLE poll_deferrals DROP COLUMN cause; CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations; PRAGMA user_version=4;")
         .unwrap();
     let checkout = env.git_repo("retained");
     let old = serde_json::json!({"key":"retained-key","brief":"retained-input","checkout":checkout.path(),"worktree":null,"selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});
-    db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s',?1,'retained-input',?2,'2030-01-01T00:00:00Z',0,'unresolved')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),old.to_string()]).unwrap();
+    db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s',?1,'retained-input',?2,'2030-01-01T00:00:00Z',0,'retry_allowed')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),old.to_string()]).unwrap();
     let cursor = serde_json::json!({"key":"cursor-key","brief":"cursor-input","checkout":checkout.path(),"selection":{"family":"cursor","provider":"cursor-account","model":"open-model","effort":"high","options":{"effort":"high","reasoning":"medium","fastMode":true}}});
-    db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','cursor-key','p','run','s',?1,'cursor-input',?2,'2030-01-01T00:00:00Z',0,'unresolved')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),cursor.to_string()]).unwrap();
+    db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','cursor-key','p','run','s',?1,'cursor-input',?2,'2030-01-01T00:00:00Z',0,'retry_allowed')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),cursor.to_string()]).unwrap();
     drop(db);
     old
 }
@@ -126,7 +126,13 @@ fn retain_historical_starts(env: &common::TestEnv) -> serde_json::Value {
 fn assert_retained_starts(env: &common::TestEnv, old: &serde_json::Value) {
     let file = env.instrukt_home().join("state/instrukt.db");
     let db = Connection::open(file).unwrap();
-    let (encoded, unresolved): (String, bool) = db.query_row("SELECT request,state='unresolved' FROM runtime_starts WHERE semantic_key='retained-key'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    let (encoded, unresolved): (String, bool) = db
+        .query_row(
+            "SELECT request,accepted=0 FROM runtime_bindings WHERE semantic_key='retained-key'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
     let current: instrukt_runner::runtime::RuntimeStart = serde_json::from_str(&encoded).unwrap();
     assert!(unresolved);
     assert_eq!(current.key, old["key"].as_str().unwrap());
@@ -162,7 +168,7 @@ fn assert_retained_starts(env: &common::TestEnv, old: &serde_json::Value) {
     );
     let encoded: String = db
         .query_row(
-            "SELECT request FROM runtime_starts WHERE semantic_key='cursor-key'",
+            "SELECT request FROM runtime_bindings WHERE semantic_key='cursor-key'",
             [],
             |r| r.get(0),
         )

@@ -52,39 +52,29 @@ path is the same for every connector, whichever channel it speaks to
 
 ### The session bound to a conversation
 
-- A conversation is identified by company, connector and the connector's
-  conversation identity. It is bound to exactly one agent session, started or
-  woken by key through the runtime adapter. Key discovery, ambiguous starts and
-  settled threads follow session-continuity, case by case: a failed listing,
-  start or send leaves the message pending for that same conversation and is
-  retried. A lost acknowledgement or a live key conflict goes to the operator.
-- When work is waiting, the relay checks the bound session. A rename preserves
-  delivery to that session. An archived session is left in place and the operator
-  is told to unarchive or delete it. Archiving blocks new turns while replies
-  already completed are still read and posted. Deletion is not evidence that the old
-  provider stopped. Once the operator knows it has stopped, the finding directs
-  them to `instrukt sessions replace-deleted <key> --stopped <runtime:id>`
-  (`project/instrukt/spec/feature/runner/session-continuity`). Neither an archive
-  nor a deletion starts a successor automatically. While work is blocked the member
-  sees the fixed unavailable status and can receive the usual notice, with the
-  cause and recovery command visible only to the operator. An interrupted
-  replacement reports the recovery door for the current keyed state, including
-  any pending successor. The relay reads presence from the conversation source.
-  It confirms a missing thread with the runtime once per observed absence,
-  without blocking other conversations. Runtime checks before sending and
-  when reconciling a lost acknowledgment also run independently for each
-  conversation. At most one presence probe runs per conversation. A projection
-  change during a probe defers the next check until that probe returns.
-  A newer native observation supersedes a cached confirmation.
-  Failed absence observations retry with a bounded backoff. A notification
-  alone does not reset a completed confirmation. If an operator has a live
-  replacement awaiting acceptance, the finding directs them to resume the
-  authorized replacement.
-  Posting retained answers continues while a thread or replacement is blocked.
-- An operator-confirmed successor starts with the assignment alone. The relay
-  binds it to the same conversation and hands over the questions still awaiting
-  turns in written order, including work handed to the stopped session whose
-  answer has not yet been retained. Retained answers keep their posting state.
+- A conversation is identified by company, connector and provider conversation
+  identity. Its durable binding follows the native launch/replay and automatic
+  succession rules in `project/instrukt/spec/feature/runner/session-continuity`.
+  Rename and settlement preserve its native ID. Runtime failures retain work
+  and report the actual cause to the operator; the member sees only the normal
+  temporarily unavailable status/notice.
+- Saved or new unanswered work after confirmed native archive/deletion starts
+  one successor with the assignment alone. A pending successor replays its
+  persisted native launch identity on later relay passes until accepted. A failed
+  successor launch opens the normal unavailable interval without resetting an
+  existing timestamp; resumed delivery clears it normally. Harvest
+  readable completed old answers
+  before adoption. Reset only unanswered work for ordered delivery, including
+  questions whose old turn has no retained answer. Retained answers keep their
+  posting state and identities; posting continues during a runtime outage.
+- Optional connector display facts supply a channel name or direct-message
+  counterpart. Company captures the readable title during message capture and
+  freezes it into the generation's request. Slack titles use company plus channel
+  and a shortened first-text preview, company plus DM counterpart, or company
+  plus `Slack thread` when enrichment is absent. Enrichment never controls identity
+  or delivery and requires no new mandatory provider scope.
+
+
 - The session works in the company's home
   (`project/instrukt/spec/feature/configuration/company-homes`), where it
   starts with the company's own knowledge
@@ -531,21 +521,14 @@ And its completion clears the earlier failure from the member's status
 And a subsequent outage can earn its own notice
 ```
 
-### UC-CV20: Keep a question when the conversation thread is archived or deleted
+### UC-CV20: A member keeps their question after native terminal presence
 
 ```gherkin
-Scenario Outline: Restore a conversation with work waiting
-  Given a member has a question waiting and the assistant's thread for that conversation is <state>
-  When the operator <recovery>
-  Then the member gets one answer to their saved question in the same conversation
-  And the operator sees how to recover the work that is waiting
-  And their question waits for the operator's recovery action
-  And answers already saved for posting can still reach their members while the question waits
-
-  Examples:
-    | state    | recovery                                             |
-    | archived | unarchives the thread                                |
-    | deleted  | confirms the stopped session and replaces the thread |
+Given a member has an unanswered saved question in a company conversation
+When its bound native thread is archived or deleted and the runner resumes
+Then one successor receives the assignment and outstanding questions in order
+And the member receives their answer normally
+And retained answers preserve their posting identities and state
 ```
 
 ### UC-CV21: Keep an answer through an interruption at its source
@@ -568,8 +551,7 @@ Scenario Outline: Receive the complete answer when it can be read
 
 - If a thread is deleted after the relay checks readiness and before it
   revalidates dispatch under lock, T3 can refuse the send, and the saved
-  question waits for the operator to run `instrukt sessions replace-deleted`
-  before delivery resumes.
+  question remains saved for automatic native succession on the next pass.
 
 - Read-back reads what the provider still serves; its retention, the app's
   access and rate limits are its only limits.

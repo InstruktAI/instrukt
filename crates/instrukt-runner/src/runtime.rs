@@ -27,8 +27,43 @@ pub struct WorktreeRequest {
     pub branch: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LaunchRuntimeMode {
+    ApprovalRequired,
+    AutoAcceptEdits,
+    Auto,
+    FullAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LaunchInteractionMode {
+    Plan,
+    Default,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedLaunchModes {
+    pub runtime: LaunchRuntimeMode,
+    pub interaction: LaunchInteractionMode,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeLaunch {
+    pub command_id: String,
+    pub thread_id: String,
+    pub project_id: String,
+    pub existing_worktree: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeStart {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_modes: Option<ResolvedLaunchModes>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_launch: Option<NativeLaunch>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preferences: Vec<crate::agents::AgentChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,9 +92,9 @@ impl PartialEq for Profiles {
 }
 impl Eq for Profiles {}
 
-/// Keep labels opaque and place semantic identity last for narrow sidebars.
-pub fn thread_title(label: &str, key: &str) -> String {
-    format!("{label} · {key}")
+/// Readable labels are presentation, independent of durable object identity.
+pub fn thread_title(label: &str, _key: &str) -> String {
+    label.to_owned()
 }
 
 /// Reconstruct the preceding driver's label from its retained role and phase placement.
@@ -156,13 +191,9 @@ impl std::fmt::Display for Capability {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CreationPermit {
-    Initial,
-    Reconcile,
-}
-
 pub struct FollowupAssignment<'a> {
+    pub bindings: Option<&'a dyn crate::interfaces::SessionBindings>,
+    pub original_request: Option<&'a RuntimeStart>,
     pub invocation: &'a crate::keyed::RuntimeInvocation,
     pub request: &'a RuntimeStart,
     pub session: &'a SessionRef,
@@ -173,7 +204,7 @@ pub struct FollowupAssignment<'a> {
 
 /// Operations use structured facts; no user input is executable command text.
 pub struct RuntimeAssignment<'a> {
-    pub creation: CreationPermit,
+    pub bindings: Option<&'a dyn crate::interfaces::SessionBindings>,
     pub invocation: &'a crate::keyed::RuntimeInvocation,
     pub project: Option<&'a str>,
     pub request: &'a RuntimeStart,
@@ -343,6 +374,13 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
         &self,
         selection: &instrukt_core::config::AgentSelection,
     ) -> instrukt_core::config::AgentSelection;
+    fn launch_scope(&self, home: &instrukt_core::home::Home) -> String;
+    fn resolve_launch(
+        &self,
+        request: &RuntimeStart,
+        existing: Option<&SessionRef>,
+    ) -> Result<RuntimeStart, SessionsError>;
+    fn accepted_start(&self, request: &RuntimeStart) -> Result<bool, SessionsError>;
     fn create_thread(&self, request: &RuntimeStart) -> Result<SessionRef, SessionsError>;
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError>;
     fn verify_placement(
@@ -419,11 +457,6 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
             capability: Capability::Notify,
         })
     }
-}
-
-/// Missing optional native metadata is unknown; two supplied identities may conflict.
-pub(crate) fn project_conflict(a: &Option<String>, b: &Option<String>) -> bool {
-    a.as_ref().zip(b.as_ref()).is_some_and(|(a, b)| a != b)
 }
 
 /// Explicit runtime selection for every unattended path.

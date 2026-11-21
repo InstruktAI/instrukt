@@ -39,6 +39,7 @@ impl T3Store {
         db.busy_handler(Some(retry_soon)).unwrap();
         db.execute_batch("PRAGMA journal_mode=WAL;
 CREATE TABLE effect_sql_migrations(migration_id INTEGER PRIMARY KEY,name TEXT);
+CREATE TABLE IF NOT EXISTS orchestration_command_receipts(command_id TEXT PRIMARY KEY,aggregate_kind TEXT,aggregate_id TEXT,command_type TEXT,status TEXT);
 INSERT INTO effect_sql_migrations VALUES(79,'fixture');
 CREATE TABLE orchestration_v2_projection_threads(thread_id TEXT PRIMARY KEY,project_id TEXT,title TEXT,created_at TEXT,updated_at TEXT,archived_at TEXT,deleted_at TEXT,payload_json TEXT);
 CREATE TABLE orchestration_v2_projection_messages(message_id TEXT PRIMARY KEY,thread_id TEXT,role TEXT,streaming INTEGER,created_at TEXT,updated_at TEXT,payload_json TEXT);

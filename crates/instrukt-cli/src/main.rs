@@ -88,7 +88,7 @@ enum Command {
     Tick(runner::TickArgs),
     /// Scheduled tick status.
     Ticks(runner::TicksArgs),
-    /// Inspect keyed runtime threads and resolve uncertain unattended starts.
+    /// Inspect active and settled native runtime threads.
     Sessions(runner::SessionsArgs),
     /// Converge/check module infrastructure across adopted projects; repair with the same command.
     Install(runner::InstallArgs),

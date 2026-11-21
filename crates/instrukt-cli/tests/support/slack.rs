@@ -498,6 +498,25 @@ impl FakeSlack {
                     .map(|id| json!({"id": id, "is_im": id.starts_with('D')}))
                     .collect::<Vec<_>>(),
             }),
+            "conversations.info" => {
+                let channel = arg("channel").unwrap();
+                if channel.starts_with('D') {
+                    let users = w
+                        .messages
+                        .iter()
+                        .filter(|message| message["channel"].as_str() == Some(channel))
+                        .filter_map(|message| message["user"].as_str())
+                        .filter(|user| *user != BOT_USER)
+                        .collect::<std::collections::BTreeSet<_>>();
+                    if users.len() == 1 {
+                        json!({"ok":true,"channel":{"id":channel,"is_im":true,"user":users.into_iter().next().unwrap()}})
+                    } else {
+                        json!({"ok":true,"channel":{"id":channel,"is_im":false,"is_mpim":true}})
+                    }
+                } else {
+                    json!({"ok":true,"channel":{"id":channel,"name":channel.to_ascii_lowercase()}})
+                }
+            }
             "users.info" if w.refuse_lookups => json!({"ok": false, "error": "ratelimited"}),
             "users.info" => match w.people.get(arg("user").unwrap()) {
                 Some(person) => json!({"ok": true, "user": person.record()}),

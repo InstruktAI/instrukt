@@ -39,6 +39,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V26),
     Step(v27),
     Step(v28),
+    Step(v29),
 ];
 
 /// Version 28: only successful post responses confirm retained answer pieces.
@@ -1226,3 +1227,90 @@ CREATE TABLE IF NOT EXISTS connector_states (
     PRIMARY KEY (company, connector)
 );
 "#;
+
+/// Native launch bindings replace the pre-keyed CLI start journal without
+/// discarding evidence of an external effect.
+fn v29(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    use rusqlite::{OptionalExtension, params};
+    tx.execute_batch(
+        "ALTER TABLE runtime_bindings ADD COLUMN generation INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE runtime_bindings ADD COLUMN start_key TEXT;
+        ALTER TABLE runtime_bindings ADD COLUMN replaced_session TEXT;
+        ALTER TABLE runtime_bindings ADD COLUMN legacy_modes TEXT;
+        ALTER TABLE connected_conversations ADD COLUMN display_title TEXT;
+        CREATE TABLE runtime_generations (
+            runtime TEXT NOT NULL, semantic_key TEXT NOT NULL, generation INTEGER NOT NULL,
+            session TEXT, request TEXT, project_id TEXT, checkout TEXT, worktree TEXT,
+            branch TEXT, base_head TEXT, accepted INTEGER NOT NULL, display_title TEXT,
+            start_key TEXT, replaced_session TEXT, legacy_evidence TEXT, legacy_modes TEXT,
+            PRIMARY KEY(runtime,semantic_key,generation)
+        );",
+    )?;
+    tx.execute_batch("UPDATE runtime_bindings SET replaced_session=json_extract(request,'$.replaced_session'),start_key=json_extract(request,'$.native_launch.command_id') WHERE request IS NOT NULL;
+        UPDATE runtime_bindings SET generation=coalesce((SELECT generation FROM procedure_responsibilities p WHERE p.semantic_key=runtime_bindings.semantic_key),generation) WHERE kind='standing';")?;
+    let starts = {
+        let mut query=tx.prepare("SELECT runtime,semantic_key,state,request,project,kind,checkout,resolution,
+            json_object('brief',brief,'begun_at',begun_at,'reported',reported,'resolved_at',resolved_at,'resolved_by',resolved_by,'resolution',resolution,'state',state) FROM runtime_starts")?;
+        query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                    r.get::<_, String>(8)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (runtime, key, state, request, project, kind, checkout, resolution, evidence) in starts {
+        let bound: Option<String> = tx
+            .query_row(
+                "SELECT session FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",
+                params![runtime, key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let mut owners = std::collections::BTreeSet::new();
+        let mut query=tx.prepare("SELECT session FROM connected_conversations WHERE semantic_key=?1 AND session IS NOT NULL
+            UNION SELECT session FROM procedure_responsibilities WHERE semantic_key=?1 AND session IS NOT NULL
+            UNION SELECT session FROM session_bindings WHERE semantic_key=?1 AND session IS NOT NULL")?;
+        for value in query.query_map([&key], |r| r.get::<_, String>(0))? {
+            owners.insert(value?);
+        }
+        if let Some(bound) = &bound {
+            owners.insert(bound.clone());
+        }
+        let replaced = resolution.as_deref().and_then(|r| {
+            r.strip_prefix("operator_confirmed_replacement:")
+                .or_else(|| r.strip_prefix("operator_confirmed_todo_replacement:"))
+        });
+        if let Some(replaced) = replaced {
+            for session in replaced.split_whitespace() {
+                owners.remove(session);
+            }
+        }
+        if owners.len() > 1 {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "contradictory native identities for `{key}`: {owners:?}"
+            )));
+        }
+        let session = bound.or_else(|| owners.into_iter().next());
+        if session.is_none() && state != "retry_allowed" {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "legacy start `{key}` in state `{state}` has no recoverable native ID or proven unstarted state; settle it using the old version before upgrading"
+            )));
+        }
+        tx.execute("INSERT INTO runtime_generations(runtime,semantic_key,generation,session,request,checkout,accepted,legacy_evidence,replaced_session) VALUES(?1,?2,0,?3,?4,?5,0,?6,?7)",params![runtime,key,session,request,checkout,evidence,replaced])?;
+        let session = session.unwrap_or_else(|| format!("{runtime}:instrukt:unstarted:{key}"));
+        tx.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,project,subject,session,checkout,accepted,request,generation,replaced_session) VALUES(?1,?2,?3,?4,?2,?5,?6,0,?7,1,?8) ON CONFLICT(runtime,semantic_key) DO UPDATE SET request=coalesce(runtime_bindings.request,excluded.request),replaced_session=coalesce(runtime_bindings.replaced_session,excluded.replaced_session)",params![runtime,key,kind,project,session,checkout,request,replaced.and_then(|r|r.split_whitespace().next())])?;
+    }
+    tx.execute_batch(
+        "UPDATE runtime_bindings SET generation=coalesce((SELECT generation FROM procedure_responsibilities p WHERE p.semantic_key=runtime_bindings.semantic_key),generation) WHERE kind='standing'; DROP TABLE runtime_starts; DELETE FROM runner_workers WHERE worker GLOB 'keyed-start:*';",
+    )?;
+    Ok(())
+}

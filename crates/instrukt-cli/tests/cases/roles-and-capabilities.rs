@@ -2,6 +2,7 @@
 use crate::common;
 use crate::fixtures::documented;
 use crate::fixtures::handler;
+use crate::fixtures::work;
 use crate::fixtures::workflow;
 use common::TestEnv;
 
@@ -141,6 +142,7 @@ fn a_retained_baseline_worker_keeps_command_access_with_explicitly_unknown_dispa
     db.execute("UPDATE session_bindings SET evidence=json_set(evidence,'$.native_assignment',json(?1)) WHERE session=?2",instrukt_core::state_db::rusqlite::params![native.to_string(),worker["session"].as_str().unwrap()]).unwrap();
     db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
         .unwrap();
+    db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
     db.pragma_update(None, "user_version", 12).unwrap();
     drop(db);
     let caller = worker["session"]
@@ -266,7 +268,10 @@ modules: {events: true}
         .computer
         .env
         .instrukt(other.path())
-        .env("T3CODE_THREAD_ID", "s1")
+        .env(
+            "T3CODE_THREAD_ID",
+            crate::fixtures::t3::FakeT3::create(&h.computer.env).native_id("s1"),
+        )
         .args(["events", "bind", "reactions/procedure/respond", "--reserve"])
         .assert()
         .failure();
@@ -304,7 +309,10 @@ fn foreign_reservation(h: &handler::Handler) -> (common::Repo, serde_json::Value
     std::fs::write(&file, serde_yaml_ng::to_string(&configured).unwrap()).unwrap();
     let reserved = env
         .instrukt(other.path())
-        .env("T3CODE_THREAD_ID", "s1")
+        .env(
+            "T3CODE_THREAD_ID",
+            crate::fixtures::t3::FakeT3::create(&h.computer.env).native_id("s1"),
+        )
         .args(["events", "bind", "reactions/procedure/respond", "--reserve"])
         .assert()
         .success();
@@ -423,7 +431,10 @@ fn native_selection(h: &handler::Handler, name: &str) {
         .success();
     insta::assert_json_snapshot!(
         name,
-        serde_json::from_slice::<serde_json::Value>(&shown.get_output().stdout).unwrap()
+        serde_json::from_str::<serde_json::Value>(&work::redact(&String::from_utf8_lossy(
+            &shown.get_output().stdout,
+        )))
+        .unwrap()
     );
 }
 

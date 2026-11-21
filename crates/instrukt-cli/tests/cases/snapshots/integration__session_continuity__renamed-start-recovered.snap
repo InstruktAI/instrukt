@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/session-continuity.rs
-assertion_line: 515
 expression: "support::redact(&p.todo([\"show\", \"parser-depth\"]))"
 ---
 parser-depth · change · active
@@ -12,13 +11,13 @@ intent:
   Improve the parser.
 reflection: reflected to GitHub
 issue: #1
-claim: held since <time> by session t3:s1
+claim: held since <time> by session t3:instrukt:launch:<event 1>
 hold: none
 sessions:
-  prepare-orchestrator/1: t3:s1
+  prepare-orchestrator/1: t3:instrukt:launch:<event 1>
     key: instrukt:todo:demo/<id 1>:prepare-orchestrator:1
     branch: parser/prepare; base: <commit 1>
-    worktree: [TMP]/t3-state/worktrees/s1
+    worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1>
 artifacts:
   input (1 version)
     <digest 1> by Test Developer at <time>

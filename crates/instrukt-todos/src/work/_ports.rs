@@ -320,14 +320,40 @@ fn checked_replacement(
         .claim
         .as_ref()
         .ok_or_else(|| WorkError::refused("the replacement has no current execution claim"))?;
-    if old.session.as_ref() != Some(stopped)
+    if old
+        .session
+        .as_ref()
+        .is_some_and(|session| session != stopped)
         || old.attempt.released_at.is_some()
         || &claim.machine != machine
-        || claim.session.as_ref() != Some(stopped)
+        || claim
+            .session
+            .as_ref()
+            .is_some_and(|session| Some(session) != old.session.as_ref())
     {
         return Err(WorkError::refused(
             "the replacement does not match the current todo binding and claim",
         ));
+    }
+    if let Some(path) = old.worktree.as_ref() {
+        if let Some(expected) = old.attempt.branch.as_ref() {
+            let branch = instrukt_core::git::run(path, ["branch", "--show-current"])
+                .map_err(|e| WorkError::refused(e.to_string()))?;
+            if branch.trim() != expected {
+                return Err(WorkError::refused(
+                    "retained phase worktree no longer carries its captured branch",
+                ));
+            }
+        }
+        if let Some(base) = old.attempt.base_head.as_ref().map(|base| base.as_str()) {
+            instrukt_core::git::run(path, ["merge-base", "--is-ancestor", base, "HEAD"]).map_err(
+                |e| {
+                    WorkError::refused(format!(
+                        "retained phase worktree differs from its captured base: {e}"
+                    ))
+                },
+            )?;
+        }
     }
     Ok(index)
 }
@@ -375,7 +401,15 @@ impl SessionBindings for Work {
         let state = instrukt_core::state_db::StateRead::open(s.home())
             .map_err(WorkError::from)?
             .ok_or_else(|| WorkError::refused("missing reservation database"))?;
-        let attempted:bool=state.conn().query_row("SELECT EXISTS(SELECT 1 FROM runtime_starts WHERE semantic_key=?1) OR EXISTS(SELECT 1 FROM runtime_bindings WHERE semantic_key=?1)",[key],|row|row.get(0)).map_err(instrukt_core::state_db::StateDbError::sqlite(state.path())).map_err(WorkError::from)?;
+        let attempted: bool = state
+            .conn()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE semantic_key=?1)",
+                [key],
+                |row| row.get(0),
+            )
+            .map_err(instrukt_core::state_db::StateDbError::sqlite(state.path()))
+            .map_err(WorkError::from)?;
         if attempted {
             return Err(WorkError::refused(
                 "runtime start evidence exists; preserve this assignment for reconciliation",
@@ -412,7 +446,6 @@ impl SessionBindings for Work {
         lane: &instrukt_runner::interfaces::Lane,
     ) -> Result<instrukt_runner::interfaces::DispatchReservation, WorkInterfaceError> {
         use instrukt_runner::interfaces::{AssignmentKind, DispatchReservation};
-        use instrukt_runner::runtime::CreationPermit;
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
         let machine = s.machine()?;
@@ -568,7 +601,6 @@ impl SessionBindings for Work {
             }
             return Ok(DispatchReservation::Start {
                 key: pending.attempt.semantic_key.clone(),
-                creation: CreationPermit::Reconcile,
                 worktree: placement,
             });
         }
@@ -648,7 +680,6 @@ impl SessionBindings for Work {
         }
         Ok(DispatchReservation::Start {
             key,
-            creation: CreationPermit::Initial,
             worktree: placement,
         })
     }

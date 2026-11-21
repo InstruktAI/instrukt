@@ -492,6 +492,8 @@ impl Company {
     /// The runtime finishes the turn started by the session's `n`th input,
     /// answering with `reply`, and the session becomes idle.
     pub fn finish_turn(&mut self, session: &str, n: usize, reply: &str) {
+        let native = self.runtime.native_id(session);
+        let session = native.as_str();
         self.store
             .thread(session, None, None, "2026-11-08T10:00:00.000Z");
         self.finish_projected_turn(session, n, reply);
@@ -499,6 +501,8 @@ impl Company {
 
     /// Complete a turn in an already projected thread with a single commit.
     pub fn finish_projected_turn(&mut self, session: &str, n: usize, reply: &str) {
+        let native = self.runtime.native_id(session);
+        let session = native.as_str();
         self.turns += 1;
         let turn = format!("turn-{}", self.turns);
         let input = self.runtime.message(session, n);

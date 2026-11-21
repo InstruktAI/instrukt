@@ -135,9 +135,17 @@ pub enum Admission {
     Undecided(String),
 }
 
+/// Optional provider-owned presentation facts; never conversation identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversationDisplay {
+    Channel(String),
+    Direct(String),
+}
+
 /// An addressed message as the agent reads it, and what accompanies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Captured {
+    pub display: Option<ConversationDisplay>,
     /// The addressed text, mentions written as names.
     pub text: String,
     pub accompanying: Accompanying,

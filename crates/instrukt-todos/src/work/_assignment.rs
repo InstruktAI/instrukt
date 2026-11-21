@@ -17,7 +17,7 @@ pub fn recorded_assignment(
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 ORDER BY b.rowid").map_err(StateDbError::sqlite(db.path()))?;
+    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0").map_err(StateDbError::sqlite(db.path()))?;
     let rows = stmt
         .query_map([caller.to_string()], |r| {
             Ok((
@@ -27,12 +27,13 @@ pub fn recorded_assignment(
                 r.get::<_, String>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
             ))
         })
         .map_err(StateDbError::sqlite(db.path()))?;
     let mut found = None;
     for row in rows {
-        let (role, key, workspace, evidence, project, todo) =
+        let (role, key, workspace, evidence, project, todo, current_session) =
             row.map_err(StateDbError::sqlite(db.path()))?;
         let binding: Binding = serde_json::from_str(&evidence).map_err(|e| {
             StateDbError::invalid(
@@ -40,8 +41,13 @@ pub fn recorded_assignment(
                 format!("binding {key}: {e}; recover the recorded attempt"),
             )
         })?;
+        let current_session = current_session
+            .map(|id| {
+                SessionRef::parse(&id).map_err(|e| StateDbError::invalid(db.path(), e.to_string()))
+            })
+            .transpose()?;
         if binding.role.as_str() != role
-            || binding.session.as_ref() != Some(caller)
+            || binding.session != current_session
             || binding.attempt.semantic_key != key
             || binding.worktree.as_deref() != workspace.as_deref().map(std::path::Path::new)
             || binding.attempt.assignment

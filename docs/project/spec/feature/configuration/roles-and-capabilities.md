@@ -63,7 +63,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`, Bug reports); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo prepare|work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
-| Session observation and recovery | `session-observe`, `history-read`, `session-recover`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `sessions resolve-start|replace-deleted`, and `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
+| Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
 | Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
 | Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate|schema`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
 | Repository | `repository-read`, `repository-write`, `code-commit` | `hooks status`; `init`, `hooks install|remove`; `repo commit` in the assigned authoring workspace. Raw git is outside this catalog. |
@@ -102,8 +102,8 @@ the canonical procedure, exact subscription home, optional subject and own
 thread. Project scope resolves to that recorded project home; platform scope
 resolves to the recorded platform responsibility, not all projects. The
 subject does not imply a todo claim. The own-thread object is the caller's
-recorded native session. `session-recover: own` additionally reaches the
-unresolved start key the caller's recorded assignment owns. Scheduled and other
+recorded native session. Obsolete `session-recover` grants migrate away with
+the removed commands; every other configured grant and restriction is retained. Scheduled and other
 instrukt starts retain their role and placement in their existing assignment
 evidence. No second session registry or login identity is introduced.
 
@@ -127,7 +127,7 @@ composition is:
 | `review` | `artifact-write`, `stamp`, each at `own`. |
 | `record` | `todo-write`, `artifact-write`, `stamp`, `bug-report`, each at `own`. |
 | `report` | `bug-report` at `any`. |
-| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `session-recover`, `standing-bind`, `conversation-link`, each at `own`. |
+| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
 | `tools` | `mcp-access` at `own`. |

@@ -259,7 +259,7 @@ pub enum DispatchReservation {
     Existing(SessionBinding),
     Start {
         key: String,
-        creation: crate::runtime::CreationPermit,
+
         worktree: Option<crate::runtime::WorktreeRequest>,
     },
 }

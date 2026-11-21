@@ -49,9 +49,17 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                 )?;
                 let result = release::observe("contract-thread")?;
                 let websocket = release::websocket_dispatch("contract-thread")?;
+                let shown: Value = serde_json::from_str(&release::cli(
+                    &["thread", "show", "--json", "contract-thread"],
+                    None,
+                )?)?;
+                let native_launch = release::native_launch_contract(
+                    root,
+                    shown["thread"]["projectId"].as_str().unwrap(),
+                )?;
                 fs::write(
                     root.join("fake.json"),
-                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket}).to_string(),
+                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch}).to_string(),
                 )?;
                 Ok(())
             })()
@@ -152,6 +160,8 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
             "fake persisted input/run relationships differ"
         );
         manifest["operation"] = json!("WebSocket queued dispatch, replay, and required fields");
+        assert_eq!(real["native_launch"], emulated["native_launch"]);
+        manifest["native_launch"] = real["native_launch"].clone();
         assert_eq!(real["websocket_dispatch"], emulated["websocket_dispatch"]);
         manifest["websocket_dispatch"] = real["websocket_dispatch"].clone();
         manifest["fake_operations"]["WebSocket dispatch"] = json!(

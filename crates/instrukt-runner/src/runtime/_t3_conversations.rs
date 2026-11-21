@@ -976,3 +976,14 @@ impl ConversationSource for T3Conversations {
         latest_update(&self.path, thread.as_str())
     }
 }
+
+/// Creation evidence survives deletion of the native thread projection.
+pub(super) fn accepted_start(
+    home: &Home,
+    env: &Env,
+    thread: &str,
+    command: &str,
+) -> Result<bool, SourceError> {
+    let db = open(&T3Home::discover(home, env).database())?;
+    Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM orchestration_command_receipts WHERE command_id=?1 AND aggregate_kind='thread' AND aggregate_id=?2 AND command_type='thread.create' AND status='accepted')",params![command,thread],|row|row.get(0))?)
+}

@@ -72,7 +72,11 @@ pub fn availability(runtime: Runtime, features: &[Feature]) -> Option<Unavailabl
             Feature::StandingAgents => None,
             Feature::AnomalyNotification => Some("notification"),
             Feature::LinkedSessionInput => Some("link"),
-            Feature::WorktreeAttachment => Some("worktree attachment"),
+            Feature::WorktreeAttachment
+                if !super::WorkflowCapability::WorktreeAttach.supported_by(runtime) =>
+            {
+                Some("worktree attachment")
+            }
             _ => None,
         };
         if let Some(missing) = missing

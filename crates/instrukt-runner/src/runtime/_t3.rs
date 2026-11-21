@@ -1,4 +1,4 @@
-//! T3 host CLI, verified against list and show responses on 2026-11-05.
+//! T3 native keyed launch and native-ID CLI observations.
 use std::path::Path;
 use std::time::Duration;
 
@@ -42,31 +42,63 @@ impl T3 {
         &self,
         request: &RuntimeStart,
     ) -> Result<SessionRef, SessionsError> {
-        let checkout = request.checkout.to_string_lossy();
-        let mut args = vec!["thread", "start", "--title", request.title.as_str()];
-        if let Some(worktree) = &request.worktree {
-            args.extend([
-                "--worktree",
-                worktree.from.as_str(),
-                "--branch",
-                worktree.branch.as_str(),
-            ]);
+        let launch = request
+            .native_launch
+            .as_ref()
+            .ok_or_else(|| failure("launch", "missing captured native identity"))?;
+        let modes = request
+            .launch_modes
+            .as_ref()
+            .ok_or_else(|| failure("launch", "missing captured modes"))?;
+        let selection = request
+            .selection
+            .as_ref()
+            .ok_or_else(|| failure("launch", "missing provider/model selection"))?;
+        let workspace = match (&request.worktree, &launch.existing_worktree) {
+            (Some(worktree), Some(path)) => {
+                serde_json::json!({"type":"existing_worktree", "worktreePath":path, "branch":worktree.branch})
+            }
+            (Some(worktree), None) => {
+                serde_json::json!({"type":"worktree", "baseRef":worktree.from, "branch":worktree.branch})
+            }
+            (None, Some(path)) => {
+                serde_json::json!({"type":"existing_worktree","worktreePath":path})
+            }
+            (None, None) => serde_json::json!({"type":"root"}),
+        };
+        let value = super::_t3_readiness::launch(
+            &self.operation_home()?,
+            &self.env,
+            serde_json::json!({
+                "commandId":launch.command_id, "threadId":launch.thread_id, "projectId":launch.project_id,
+                "title":request.title, "generateTitle":false, "creationSource":"mcp",
+                "modelSelection":{"instanceId":selection.instance,"model":selection.model},
+                "runtimeMode":modes.runtime, "interactionMode":modes.interaction, "workspaceStrategy":workspace,
+                "initialMessage":{"messageId":launch.command_id,"text":request.brief,"attachments":[]}
+            }),
+        )?;
+        if value["threadId"].as_str() != Some(&launch.thread_id)
+            || value
+                .pointer("/projection/thread/projectId")
+                .and_then(serde_json::Value::as_str)
+                != Some(&launch.project_id)
+        {
+            return Err(failure(
+                "launch",
+                "native launch identity/project differs from captured request",
+            ));
         }
-        if let Some(selection) = &request.selection {
-            args.extend([
-                "--provider",
-                selection.instance.as_str(),
-                "--model",
-                &selection.model,
-            ]);
-        }
-        args.extend(["--", &checkout, "-"]);
-        let out = self.call(&args, Some(&request.brief))?;
-        let id = out.trim();
-        if id.is_empty() || id.chars().any(char::is_whitespace) {
-            return Err(failure("start", "no unambiguous native thread id returned"));
-        }
-        SessionRef::parse(&format!("t3:{id}")).map_err(|e| failure("start", e.to_string()))
+        SessionRef::parse(&format!("t3:{}", launch.thread_id))
+            .map_err(|e| failure("launch", e.to_string()))
+    }
+
+    fn operation_home(&self) -> Result<instrukt_core::home::Home, SessionsError> {
+        let user_home = self
+            .env
+            .get("HOME")
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| failure("launch", "machine home unavailable"))?;
+        Ok(instrukt_core::home::Home::at_user_home(user_home.into()))
     }
 
     fn call(&self, args: &[&str], input: Option<&str>) -> Result<String, SessionsError> {
@@ -203,9 +235,36 @@ impl RuntimeAdapter for T3 {
     ) -> Result<Vec<instrukt_core::interfaces::ConfiguredInstance>, SessionsError> {
         super::_t3_readiness::configured(home, env)
     }
+    fn launch_scope(&self, home: &instrukt_core::home::Home) -> String {
+        super::_t3_home::T3Home::discover(home, &self.env)
+            .database()
+            .to_string_lossy()
+            .into_owned()
+    }
+    fn accepted_start(&self, request: &RuntimeStart) -> Result<bool, SessionsError> {
+        let launch = request
+            .native_launch
+            .as_ref()
+            .ok_or_else(|| failure("launch", "missing native identity"))?;
+        super::_t3_conversations::accepted_start(
+            &self.operation_home()?,
+            &self.env,
+            &launch.thread_id,
+            &launch.command_id,
+        )
+        .map_err(|e| failure("launch", e.to_string()))
+    }
+    fn resolve_launch(
+        &self,
+        request: &RuntimeStart,
+        existing: Option<&SessionRef>,
+    ) -> Result<RuntimeStart, SessionsError> {
+        super::_t3_readiness::resolve_launch(&self.operation_home()?, &self.env, request, existing)
+            .map_err(|error| failure("launch", error.to_string()))
+    }
     fn selection_realization(&self, operation: super::SelectionOperation) -> String {
         match operation {
-            super::SelectionOperation::ThreadStart=>"T3 thread start accepts provider instance/model; requested effort/options are not expressible through this CLI operation.".into(),
+            super::SelectionOperation::ThreadStart=>"T3 native launch receives the selected provider/model and captured native modes; the existing start effort/options limitation is retained.".into(),
             super::SelectionOperation::NativeDelegation=>"T3 native delegation receives provider instance/model and translated harness options where the native operation supports them.".into(),
         }
     }
@@ -281,6 +340,7 @@ impl RuntimeAdapter for T3 {
             capability,
             Capability::ConversationSource
                 | Capability::CreateWorktree
+                | Capability::AttachWorktree
                 | Capability::AgentSelection
                 | Capability::InputConsumption
                 | Capability::AssignmentEvidence
@@ -529,20 +589,39 @@ pub(crate) fn verify_request(request: &RuntimeStart, thread: &Thread) -> Result<
     if thread.presence != super::Presence::Present {
         return Err(failure("start recovery", "thread is not present for work"));
     }
-    if thread.semantic_key.as_deref() != Some(request.key.as_str())
-        || ![request.title.as_str(), request.key.as_str()]
-            .into_iter()
-            .any(|title| thread.title.as_deref() == Some(title))
-    {
-        return Err(failure(
-            "start recovery",
-            "thread title differs from the recorded key",
-        ));
-    }
     verify_placement(request, thread)
 }
 
 fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
+    if let Some(path) = request
+        .native_launch
+        .as_ref()
+        .and_then(|launch| launch.existing_worktree.as_ref())
+    {
+        if !path.is_absolute() || thread.worktree.as_ref() != Some(path) {
+            return Err(failure(
+                "placement",
+                "native successor differs from the captured existing worktree",
+            ));
+        }
+        if request.worktree.is_none() {
+            let listing =
+                instrukt_core::git::run(&request.checkout, ["worktree", "list", "--porcelain"])
+                    .map_err(|e| failure("placement", e.to_string()))?;
+            let branch = instrukt_core::git::run(path, ["branch", "--show-current"])
+                .map_err(|e| failure("placement", e.to_string()))?;
+            if !listing
+                .lines()
+                .any(|line| line == format!("worktree {}", path.display()))
+                || thread.branch.as_deref() != Some(branch.trim())
+            {
+                return Err(failure(
+                    "placement",
+                    "native successor lacks its registered phase worktree/branch",
+                ));
+            }
+        }
+    }
     if let Some(worktree) = &request.worktree {
         if thread.branch.as_deref() != Some(&worktree.branch)
             || thread.worktree.as_ref().is_none_or(|p| !p.is_absolute())
@@ -654,7 +733,7 @@ impl NativeThread {
             session: SessionRef::parse(&format!("t3:{}", self.thread_id))
                 .map_err(|e| failure("decode", e.to_string()))?,
             project_id: self.project_id,
-            semantic_key: semantic_key(&self.title).map(str::to_owned),
+            semantic_key: None,
             title: Some(self.title),
             state,
             presence,
@@ -690,23 +769,4 @@ fn failure(operation: &str, detail: impl Into<String>) -> SessionsError {
         operation: operation.into(),
         detail: detail.into(),
     }
-}
-
-// The label is opaque. Legacy whole-key titles and labelled suffixes share identity.
-fn semantic_key(title: &str) -> Option<&str> {
-    let key = title.rsplit(" · ").next()?;
-    [
-        "instrukt:todo:",
-        "instrukt:standing:",
-        "instrukt:task:",
-        "instrukt:run:",
-        "instrukt:conversation:",
-    ]
-    .iter()
-    .any(|prefix| {
-        key.strip_prefix(prefix)
-            .is_some_and(|rest| !rest.is_empty())
-    })
-    .then_some(key)
-    .filter(|key| !key.chars().any(char::is_whitespace))
 }

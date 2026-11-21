@@ -440,16 +440,6 @@ pub(crate) fn pump_all(
 }
 
 /// Startup already handed over the assignment and selected data in one message.
-pub(crate) fn record_initial(
-    state: &RunnerState,
-    target: &SessionRef,
-    id: &str,
-    content: &str,
-    now: Timestamp,
-) -> Result<(), StateError> {
-    state.write(|tx| record_initial_in(tx, target, id, content, now))
-}
-
 pub(crate) fn record_initial_in(
     tx: &Transaction<'_>,
     target: &SessionRef,

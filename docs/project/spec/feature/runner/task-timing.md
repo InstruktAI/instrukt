@@ -51,21 +51,15 @@ start remains in flight until reconciled, even without a task-started stamp.
 
 ### Occurrence identity and interrupted dispatch
 
-Each occurrence has one title key:
-`instrukt:task:<encoded-project>/<encoded-slug>:<encoded-occurrence>` under
-`project/instrukt/spec/feature/runner/session-continuity`. The occurrence is
-its scheduled instant in canonical RFC 3339 UTC with `Z`; a catch-up selects one
-missed instant and persists it before dispatch. A later wake-up retries that
-same occurrence, rather than selecting another while its start is unresolved.
-
-Commit its `runtime_starts` marker before invoking the runtime. After restart,
-keyed discovery recovers the existing thread before any new start for that
-occurrence. A successful empty listing leaves it unresolved and exposes
-`instrukt sessions resolve-start <key>`; it does not make the task eligible for
-another firing. A failed send retains its recorded target. Acceptance binds
-the thread and last-fired evidence to that occurrence; completion or error
-still requires its matching outcome stamp. Only after the occurrence resolves
-may the recurring schedule select the next due occurrence under `catch_up`.
+Each occurrence has one immutable object key:
+`instrukt:task:<encoded-project>/<todo-id>:<encoded-occurrence>` under
+`project/instrukt/spec/feature/runner/session-continuity`. Persist the selected
+scheduled UTC instant before dispatch. A retry retains that occurrence and its
+captured native launch IDs, project, model, modes and request. Native receipt
+replay recovers a lost reply without another actor. Outstanding work after
+confirmed native terminal presence uses the common generation succession rule;
+completed occurrences never run again. Acceptance binds last-fired evidence to
+that occurrence; completion/error still requires the matching outcome stamp.
 
 ### Wake-up installation and visibility
 
@@ -151,7 +145,7 @@ Given a developer's scheduled task was started but instrukt lost the reply
 When a later wake-up finds that occurrence's keyed thread
 Then the task continues in that thread without firing the occurrence again
 But when listing finds no matching thread
-Then the occurrence remains unresolved and the developer sees its resolve-start command
+Then the occurrence remains pending and retries its captured native launch identity
 And later occurrences wait until the interrupted occurrence is resolved
 ```
 

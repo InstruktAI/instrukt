@@ -165,7 +165,7 @@ But unrelated branches and successful or unfinished checks do not produce this f
 
 - Person origins and references travel intact, but resolving a person home is
   unsupported and fails visibly. Unknown never means none.
-- Runtime delivery equivalence remains subject to the S6/A3 feasibility gate. Adapter key-title discovery and ambiguous-start limits remain; a lost acknowledgment can repeat a send and requires owner idempotency.
+- Runtime delivery equivalence remains subject to the S6/A3 feasibility gate. Native fixed-key launch replay preserves creation identity; a lost send acknowledgment still requires owner idempotency.
 
 ## See Also
 

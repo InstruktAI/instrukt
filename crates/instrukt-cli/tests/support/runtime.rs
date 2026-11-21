@@ -15,8 +15,11 @@ impl FakeRuntime {
             fake: FakeT3::create(env),
         }
     }
+    pub fn native_id(&self, id: &str) -> String {
+        self.fake.native_id(id)
+    }
     pub fn open_session(&self, id: &str) {
-        let json = serde_json::json!({"threadId":id,"projectId":"test","title":"Developer thread","checkout":"test","status":"waiting","providerInstanceId":"codex","model":"gpt-test","worktreePath":null,"branch":null,"pendingRequestCount":0,"archived":false,"messages":[]});
+        let json = serde_json::json!({"runtimeMode":"full-access","interactionMode":"default","threadId":id,"projectId":"test","title":"Developer thread","checkout":"test","status":"waiting","providerInstanceId":"codex","model":"gpt-test","worktreePath":null,"branch":null,"pendingRequestCount":0,"archived":false,"messages":[]});
         std::fs::write(
             self.state_dir().join(format!("{id}.json")),
             serde_json::to_vec(&json).unwrap(),
@@ -145,5 +148,5 @@ pub fn placement_evidence(env: &TestEnv, request: &NativePlacement<'_>) -> Strin
         .unwrap_or_else(|| instrukt_runner::keyed::todo_key(&project, &id, request.role, number));
     let head = env.git(request.cwd, ["rev-parse", "HEAD"]);
     let branch = env.git(request.cwd, ["branch", "--show-current"]);
-    serde_json::json!({"title":instrukt_runner::runtime::thread_title(&format!("{} · {}",request.role,request.slug), &key),"session":format!("t3:{}",request.session),"key":key,"worktree":request.cwd,"branch":branch,"head":head,"source":"native launch/recorded-workspace fixture plus Git HEAD"}).to_string()
+    serde_json::json!({"title":FakeT3::create(env).title_if_present(request.session).unwrap_or_else(||format!("{} · {}",request.role,request.slug)),"session":format!("t3:{}",request.session),"key":key,"worktree":request.cwd,"branch":branch,"head":head,"source":"native launch/recorded-workspace fixture plus Git HEAD"}).to_string()
 }

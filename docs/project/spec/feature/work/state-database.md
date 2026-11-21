@@ -604,30 +604,34 @@ and initialized-assignment evidence are explicit adapter capabilities, with
 unknown/unsupported outcomes instead of synthesized conversations or run ids.
 The adapter is always selected by `runner.runtime`.
 
-**`runtime_bindings`** — runner-owned native identities scoped to this computer
-and runtime. The pending row is the authoritative record of the native ID
-returned by a keyed start. Key:
-`(runtime, semantic_key)`. Columns are `runtime`, `semantic_key`, `kind`, `project`,
-`subject` (the assignment's durable semantic address), `session`, optional `native_project_id`, `display_title`,
-`checkout`, `worktree`, `branch`, `base_head`, `accepted`, original structured
-`request` when known. These are instrukt-owned starts only. Standing scope,
-initialized facts and generation are normalized in `procedure_responsibilities`
-and `procedure_generations`, joined by `semantic_key`. The native project id is nullable; instrukt project
-identity and runtime endpoint/placement scope remain separate. Display-title
-changes do not change the semantic key or authorize a new start. Work's `session_bindings`
-retains todo/role/attempt facts, and task occurrence stamps own completion.
-One pending row per key keeps the exact returned ID and opening acceptance
-from the native start result, before thread inspection or placement verification,
-until the start commits. Retry reads that ID directly. The pending row becomes
-accepted when the owning records commit, or is retired by explicit recovery.
-During a todo or task replacement, the start marker retains the original claim's
-session and the latest confirmed stopped session. Retiring a pending successor
-updates that marker and retires its binding in one write. The work claim moves
-only when a verified replacement commits.
-An accepted replacement retains its most recent stopped ID so the same
-operator command can finish pending reflection and return its result.
-Discovery can recover a missing accepted binding. Removing a row proves no
-absence.
+**`runtime_bindings`** — runner-owned authoritative current object identity,
+scoped to computer/runtime/endpoint and keyed by `(runtime, semantic_key)`.
+The row retains generation, fixed native start key/thread ID, native project,
+captured request (including resolved model/modes and resolution source), checkout,
+worktree/branch/base, display title and acceptance. Identity/request are durable
+before native mutation. Retry replays them; acceptance commits with owner-local
+work facts and opening receipt. Titles neither establish identity nor rebuild rows. A legacy binding whose
+original request is unknown keeps that request unknown and stores its observed
+native mode pair in nullable `legacy_modes`; known requests carry the pair only
+in their request. Retired history preserves either form.
+
+**`runtime_generations`** — runner-owned append-only retired-generation evidence,
+including native identities, immutable request/selection/placement, acceptance and
+replacement lineage. One current binding stays separate from history. Historical
+assignment lookup joins the retired native ID to its retained owner role-attempt
+or conversation facts; it never selects that ID as a current worker. This
+reference does not recreate owner facts after their own retention removes them. Migration
+preserves legacy bindings and external effects; joins missing IDs only from
+existing company, standing and work owner records, refusing contradictory IDs.
+A legacy unresolved start without a recoverable native ID refuses the entire
+migration atomically. Release preparation inventories an authorized copy and
+settles those starts using the old version. Explicitly proven unstarted legacy
+requests can receive their first fixed-key reservation. Only after every old row
+is accounted for is the active `runtime_starts` table removed; resolution-only
+information remains inert audit evidence. No continuing retry-permission state
+or operator start-resolution subsystem remains.
+
+
 
 **`manual_standing_reservations`** — runner-owned reservation keyed by standing
 responsibility. The request can retain one native ID observed for the reserved
@@ -649,32 +653,12 @@ Acquisition writes the row under the writer lock after acquiring an OS lock
 for this exact runtime and key. Only that owner performs the list/start/send
 sequence and releases the row. No transaction spans a runtime command. A
 successor holding the same key's OS lock can recover its ownership row while
-preserving unresolved `runtime_starts`. Every instrukt-owned start and wake,
+preserving captured current-generation identity and request. Every instrukt-owned start and wake,
 including lane orchestrators and task occurrences, uses this table. Native
 worker attempts do not enter this keyed-discovery table.
 
-**`runtime_starts`** — starts recorded before calling the runtime and not yet
-completely bound. Key: `(runtime, semantic_key)`.
-
-| Column | Meaning |
-| --- | --- |
-| `runtime`, `semantic_key`, `project`, `kind`, `subject`, execution checkout | Same assignment address as the binding. Owning work/standing records retain the orchestrator attempt, occurrence or generation before instrukt starts it. Native worker reservations use `session_bindings`, not this table. |
-| `brief`, `request` | Opening input and structured start request, including requested branch, captured base SHA and worktree requirement. Persisted before the external start. |
-| `begun_at`, `reported` | Start time and whether the unresolved-start finding was reported. |
-| `resolved_at`, `resolved_by`, `resolution` | Resolution time, actor and evidence. A todo replacement retains the operator-confirmed stopped ID until the replacement commits. |
-| `state` | `unresolved` while creation may be in flight; `retry_allowed` after `resolve-start --none` or proof of rejection before creation. The request and key are retained for retry. |
-
-One design covers every instrukt-owned start kind under
-`project/instrukt/spec/feature/runner/session-continuity`. Commit the marker
-before calling start; bind and clear it in the same transaction only after
-recovering all requested evidence. On restart, discover its exact key before
-any new start. An empty listing alone never clears it. `resolve-start` or proof
-of rejection before creation permits retry of the same key; the marker returns
-to `unresolved` before that retry calls the runtime. Removing a todo or
-releasing its execution never discards an unresolved marker. When the runtime
-reports a bound session absent, its binding and marker are retired together
-under the key lock and the start proceeds under the same key; an archived session
-retires nothing (`project/instrukt/spec/feature/runner/session-continuity`).
+The old active start journal is removed after migration 29 accounts for its effect
+evidence in current bindings and immutable generation history.
 
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
 the developer was notified. Key: `(project, todo_id)`. Columns: `project`,

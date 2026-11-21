@@ -34,8 +34,7 @@ use instrukt_runner::runtime::conversations::{
     AuthorKind, ConversationSource, RecordKind, Role, Scope, SourcePosition,
 };
 use instrukt_runner::runtime::{
-    CreationPermit, DispatchError, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart,
-    SendEvidence,
+    DispatchError, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, SendEvidence,
 };
 use instrukt_runner::sessions::{SessionState, SessionsError};
 use instrukt_runner::state::{self, RunnerState, StateError};
@@ -605,6 +604,29 @@ pub fn notice_posted(
     Ok(())
 }
 
+fn conversation_title(
+    company: &str,
+    display: Option<&instrukt_connector::ConversationDisplay>,
+    text: &str,
+) -> String {
+    match display {
+        Some(instrukt_connector::ConversationDisplay::Direct(name)) => {
+            format!("{company} · DM with {name}")
+        }
+        Some(instrukt_connector::ConversationDisplay::Channel(channel)) => {
+            let words = text.split_whitespace().collect::<Vec<_>>();
+            let preview = words.iter().take(8).copied().collect::<Vec<_>>().join(" ");
+            let shortened = words.len() > 8 || preview.chars().count() > 80;
+            let preview = preview.chars().take(80).collect::<String>();
+            format!(
+                "{company} · #{channel} · \"{preview}{}\"",
+                if shortened { "…" } else { "" }
+            )
+        }
+        None => format!("{company} · Slack thread"),
+    }
+}
+
 /// Record what accompanies an admitted received message and frame it for
 /// its turn with `text`, its text as the connector supplies it; or record
 /// why what accompanies it could not be read.
@@ -613,13 +635,12 @@ pub fn captured(
     company: &ProjectSlug,
     connector: &str,
     unread: &Unread,
-    text: &str,
-    accompanying: Result<Accompanying, String>,
+    captured: Result<instrukt_connector::Captured, String>,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
     let state = RunnerState::new(home);
-    let accompanying = match accompanying {
-        Ok(accompanying) => accompanying,
+    let captured = match captured {
+        Ok(captured) => captured,
         Err(failure) => {
             state.write::<_, StateError>(|tx| {
                 tx.execute(
@@ -635,6 +656,9 @@ pub fn captured(
             return Ok(());
         }
     };
+    let text = &captured.text;
+    let display = captured.display.as_ref();
+    let accompanying = captured.accompanying;
     let row = state
         .read(|conn, path| {
             conn.query_row(
@@ -660,7 +684,23 @@ pub fn captured(
         &Accompanying::default(),
     )?;
     let context = serde_json::to_string(&accompanying)?;
+    let first_content=state.read(|conn,path|conn.query_row("SELECT content FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 ORDER BY admission_position LIMIT 1",params![company.as_str(),connector,unread.conversation],|row|row.get::<_,Option<String>>(0)).map_err(state::sql(path)))?.flatten();
+    let first_text = first_content.as_deref().and_then(|content| {
+        envelopes::segment(content)
+            .into_iter()
+            .rev()
+            .find_map(|span| match span {
+                envelopes::Span::Member { body, .. } => Some(body.to_owned()),
+                _ => None,
+            })
+    });
+    let title = conversation_title(
+        company.as_str(),
+        display,
+        first_text.as_deref().unwrap_or(text),
+    );
     state.write::<_, StateError>(|tx| {
+        tx.execute("UPDATE connected_conversations SET display_title=?4 WHERE company=?1 AND connector=?2 AND conversation=?3 AND (display_title IS NULL OR display_title=?6) AND (?5 OR display_title IS NULL)",params![company.as_str(),connector,unread.conversation,title,display.is_some(),conversation_title(company.as_str(),None,"")]).map_err(state::sql(&state::db_path(tx)))?;
         tx.execute(
             "UPDATE conversation_messages
              SET state=CASE WHEN state=?9 THEN ?5 ELSE state END,context_json=?6,boundary=?7,content=?8,
@@ -793,6 +833,7 @@ pub fn admitted_demand(admitted: &Admitted) -> Vec<(ProjectSlug, String)> {
         .collect()
 }
 
+#[derive(Clone)]
 struct Conversation {
     company: ProjectSlug,
     connector: String,
@@ -1464,13 +1505,8 @@ fn record_delivery_failure(
     result: &Result<(), ConversationError>,
 ) -> Result<(), ConversationError> {
     // A runtime failure is retained through the adapter's safe diagnostic,
-    // never its raw native output. An unresolved start says so, with its key
-    // and the command that resolves it.
+    // never its raw native output.
     let failure = result.as_ref().err().map(|error| match error {
-        ConversationError::Sessions(
-            instrukt_runner::sessions::SessionsError::Unresolved { key }
-            | instrukt_runner::sessions::SessionsError::Uncertain { key, .. },
-        ) => instrukt_runner::sessions::SessionsError::Unresolved { key: key.clone() }.to_string(),
         ConversationError::Sessions(native) => adapter
             .diagnostic("conversation delivery", native)
             .to_string(),
@@ -1553,14 +1589,11 @@ fn start(
                     instrukt_runner::runtime::SelectionOperation::ThreadStart,
                 )),
                 checkout,
-                title: instrukt_runner::runtime::thread_title(
-                    &format!("conversation · {}", c.connector),
-                    &c.semantic_key,
-                ),
+                title: state.read(|conn,path|conn.query_row("SELECT display_title FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?3",params![c.company.as_str(),c.connector,c.conversation],|row|row.get::<_,Option<String>>(0)).map_err(state::sql(path)))?.flatten().unwrap_or_else(||conversation_title(c.company.as_str(),None,"")),
                 key: c.semantic_key.clone(),
                 brief: format!("{}\n{input}", assignment(admitted, c, &procedure)?),
                 worktree: None,
-                profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
+                launch_modes: None, native_launch: None, profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
             };
             let source = opening_source.ok_or_else(|| {
                 ConversationError::Refused("the opening source is unavailable".into())
@@ -1601,7 +1634,7 @@ fn start(
         Ok(())
     })?;
     let thread = adapter.start_or_wake(&RuntimeAssignment {
-        creation: CreationPermit::Initial,
+        bindings: None,
         invocation,
         project: None,
         request: &request,
@@ -2361,6 +2394,42 @@ impl RelayWorkers {
             .insert(key, DeliveryWork::Dispatching(reply));
     }
 
+    fn succeed(&self, home: &Home, adapter: &dyn RuntimeAdapter, c: Conversation) {
+        let home = home.clone();
+        let runtime = adapter.runtime();
+        let key = c.semantic_key.clone();
+        let connectors = Arc::clone(&self.connectors);
+        let reply = self.spawn(move || -> Result<(), ConversationError> {
+            let _lock = lock(&home, &c)?;
+            let state = RunnerState::new(&home);
+            let Some(current) = reread(&state, &c)?.filter(|current| current.session == c.session)
+            else {
+                return Ok(());
+            };
+            let invocation = RuntimeInvocation::acquire(&home, LOCK_WAIT)?;
+            let adapter = instrukt_runner::runtime::adapter(runtime);
+            let title=state.read(|conn,path|conn.query_row("SELECT display_title FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?3",params![c.company.as_str(),c.connector,c.conversation],|row|row.get::<_,Option<String>>(0)).map_err(state::sql(path)))?.flatten().unwrap_or_else(||conversation_title(c.company.as_str(),None,""));
+            let mut request=match current.request.as_deref() {Some(raw)=>serde_json::from_str::<RuntimeStart>(raw)?,None=>keyed::request(&home,adapter.as_ref(),&current.semantic_key)?};
+            let original=request.clone();
+            request.title=title;
+            let session=current.session.as_ref().ok_or_else(||ConversationError::Refused("successor has no owner-retained native ID".into()))?;
+            if let Err(error)=keyed::succeed(adapter.as_ref(),&instrukt_runner::runtime::FollowupAssignment{bindings:None,original_request:Some(&original),invocation:&invocation,request:&request,session,worktree_path:None,project:None,now:connectors.now()}) {
+                set_failure(&state, &current, Some(&error.to_string()))?;
+                let waiting = open_messages(&state, &current)?
+                    .into_iter()
+                    .map(|message| message.message)
+                    .collect::<Vec<_>>();
+                unavailable(&state, &current, &waiting, connectors.now())?;
+                return Err(error.into());
+            }
+            Ok(())
+        });
+        self.work
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, DeliveryWork::Dispatching(reply));
+    }
+
     fn spawn<T: Send + 'static>(&self, run: impl FnOnce() -> T + Send + 'static) -> Receiver<T> {
         let (send, reply) = mpsc::channel();
         let wake = self.wake.clone();
@@ -2992,25 +3061,9 @@ fn relay(
         {
             stale_acknowledgement(&c, &candidate.message);
         }
-        if let Some(pending) = replacement {
-            let observed = source
-                .changed_since(None, Scope::Only(std::slice::from_ref(&pending.id)))
-                .ok()
-                .and_then(|batch| batch.scoped_presence);
+        if replacement.is_some() {
             workers.update_check_source(&c, None);
-            let presence = match observed {
-                Some(Presence::Absent) if !matches!(check, CheckedDelivery::Checking(_)) => {
-                    workers.confirm_missing(adapter, &c, &pending, clock())
-                }
-                Some(Presence::Absent) => None,
-                Some(presence) => {
-                    workers.source_present(&pending);
-                    workers.absence_in_flight(&c, None, clock());
-                    Some(presence)
-                }
-                None => None,
-            };
-            blocked(home, adapter, &state, &c, &pending, presence, clock())?;
+            workers.succeed(home, adapter, c.clone());
             continue;
         }
         // The batch belonged to the old binding. Read the successor on
@@ -3169,7 +3222,11 @@ fn relay(
             };
             if presence != Some(Presence::Present) {
                 if !open_messages(&state, &c)?.is_empty() {
-                    blocked(home, adapter, &state, &c, session, presence, clock())?;
+                    if matches!(presence, Some(Presence::Archived | Presence::Absent)) {
+                        workers.succeed(home, adapter, c.clone());
+                    } else {
+                        blocked(home, adapter, &state, &c, session, presence, clock())?;
+                    }
                 }
                 continue;
             }
@@ -3707,13 +3764,13 @@ pub fn conversation_assignment(
     let row = db
         .conn()
         .query_row(
-            "SELECT company,semantic_key FROM connected_conversations WHERE session=?1",
+            "SELECT company,semantic_key,NULL FROM connected_conversations WHERE session=?1 UNION ALL SELECT c.company,c.semantic_key,g.checkout FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0",
             [caller.to_string()],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?,r.get::<_,Option<String>>(2)?)),
         )
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let Some((company, key)) = row else {
+    let Some((company, key, workspace)) = row else {
         return Ok(None);
     };
     let company = ProjectSlug::parse(&company)
@@ -3727,7 +3784,11 @@ pub fn conversation_assignment(
         project: None,
         procedure: None,
         todo: None,
-        workspace: Some(home.company_dir(&company)),
+        workspace: Some(
+            workspace
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.company_dir(&company)),
+        ),
         key,
         platform: false,
         company: Some(company),

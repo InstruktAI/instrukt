@@ -406,6 +406,13 @@ When Slack returns the earlier messages
 Then the agent receives the saved question with its context and the answer posts
 ```
 
+### Conversation display facts
+
+Capture optionally resolves channel name or DM counterpart through existing
+Slack APIs and the name cache. Missing optional scope yields absent facts and
+normal delivery. Company owns formatting of the captured title; provider IDs
+remain opaque to runner. No new required scope is introduced.
+
 ## Known caveats
 
 - A message written while the connection is down is read back after it returns,

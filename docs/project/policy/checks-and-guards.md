@@ -30,9 +30,10 @@ description: What instrukt adds to trust-and-guardrails — prerequisites guarde
 - A person writing to a company's agent may be told about their request and about
   their own world — a service of theirs that is unreachable, the assistant being
   unavailable for a while — and never about instrukt's internals. What instrukt
-  cannot resolve goes to the operator. A new actor is started only where the
-  earlier one is proven gone or cannot have acted; otherwise the operation is
-  reconciled.
+  cannot resolve goes to the operator. Each object generation uses a fixed native start key and thread ID; retries
+  replay that identity. Outstanding work after confirmed native archive or deletion
+  uses a new generation automatically. Native lifecycle owns provider detachment;
+  a create receipt supplies no physical-process exit guarantee.
 - A record in an older or unknown shape is discarded only when its specification
   names the source that rebuilds it. A person's stated choices and restrictions,
   and records of external effects, are migrated, never discarded or expired.

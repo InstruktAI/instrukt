@@ -515,23 +515,15 @@ fn capacity_returning_after_total_exhaustion_starts_without_a_phantom_pending_re
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS13
 #[test]
-fn confirmed_no_creation_allows_the_runner_to_retry_the_next_available_model() {
+fn a_captured_native_start_retries_the_same_selection_without_an_operator() {
     let p = Tracked::new(true);
     selection_config(
         &p,
         "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n",
     );
     let fake = runtime::FakeT3::create(&p.env);
-    fake.flag("empty-start", true);
+    fake.flag("start-failure", true);
     create_change(&p);
-    p.tick();
-    let key = p
-        .todo(["show", "tidy-imports"])
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("key: "))
-        .unwrap()
-        .to_owned();
-    fake.flag("empty-start", false);
     p.tick();
     assert_eq!(p.rt.started_count(), 0);
     p.env
@@ -551,12 +543,11 @@ fn confirmed_no_creation_allows_the_runner_to_retry_the_next_available_model() {
             ],
         )
         .success();
-    p.env
-        .run(p.repo.path(), ["sessions", "resolve-start", &key, "--none"])
-        .success();
+    fake.flag("start-failure", false);
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
-    insta::assert_snapshot!("confirmed-no-start-model-fallback", chosen(&p));
+    assert_eq!(fake.provider("s1").as_str(), "codex");
+    assert!(chosen(&p).contains("gpt-6-astra"));
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
@@ -908,14 +899,18 @@ fn compatible_readiness_releases_do_not_block_start() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn an_unknown_readiness_descriptor_version_is_a_failed_refresh_and_the_start_proceeds() {
+fn an_unknown_native_descriptor_keeps_start_pending_until_supported() {
     let p = Tracked::new(true);
     let file = common::t3_readiness::state_file(&p.env);
     let mut state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     state["version"] = 2.into();
-    std::fs::write(file, state.to_string()).unwrap();
+    std::fs::write(&file, state.to_string()).unwrap();
     create_change(&p);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 0);
+    state["version"] = 1.into();
+    std::fs::write(&file, state.to_string()).unwrap();
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
     // The tick's readiness ended with it: no worker is shown.

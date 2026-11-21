@@ -31,14 +31,18 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
             current: super::_agents::VERSION,
         });
     }
+    let retired = retire_session_recover(&mut value);
     let from = match found {
         Some(from @ (1 | 2)) => from,
+        Some(3) if retired => 3,
         _ => return Ok(None),
     };
     if from == 1 {
         efforts(&mut value)?;
     }
-    rename_role(&mut value)?;
+    if from < 3 {
+        rename_role(&mut value)?;
+    }
     value["schema_version"] = super::_agents::VERSION.into();
     let text = super::render_yaml(&value).map_err(|e| invalid(e.to_string()))?;
     super::Agents::parse(&text)?;
@@ -47,6 +51,39 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
         .unwrap_or_default();
     out.extend_from_slice(text.as_bytes());
     Ok(Some(Converted { from, bytes: out }))
+}
+
+/// A removed command grants no continuing action. All other grants are retained.
+pub(super) fn retire_session_recover(value: &mut Value) -> bool {
+    fn strip(value: &mut Value) -> bool {
+        let Some(grants) = value.as_sequence_mut() else {
+            return false;
+        };
+        let before = grants.len();
+        grants
+            .retain(|grant| grant.get("action").and_then(Value::as_str) != Some("session-recover"));
+        grants.len() != before
+    }
+    let mut changed = false;
+    if let Some(can) = value
+        .get_mut("default")
+        .and_then(|entry| entry.get_mut("can"))
+    {
+        changed |= strip(can);
+    }
+    if let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) {
+        for entry in roles.values_mut() {
+            if let Some(can) = entry.get_mut("can") {
+                changed |= strip(can);
+            }
+        }
+    }
+    if let Some(bundles) = value.get_mut("bundles").and_then(Value::as_mapping_mut) {
+        for grants in bundles.values_mut() {
+            changed |= strip(grants);
+        }
+    }
+    changed
 }
 
 /// Version one to two: retired per-kind effort spellings become `effort`.

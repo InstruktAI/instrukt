@@ -46,7 +46,10 @@ fn check_configured_notification() {
     project.tick_at("2030-01-06T09:02:20Z");
     project.tick_at("2030-01-06T09:03:20Z");
 
-    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"t3:s1");
+    assert_eq!(
+        project.rt.notifications(),
+        [format!("t3:{}", project.rt.native_id("s1"))]
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/anomaly-notification UC-AN1
@@ -76,15 +79,18 @@ fn a_stopped_execution_is_visible_without_a_notification_command() {
     .unwrap();
     db.execute(
         "INSERT INTO runtime_inputs(runtime,session,input_id,intent,content,state,kind,arrived_at,accepted_at,waiting,group_id,selected_content)
-        SELECT 't3','s1','recovery:' || session || ':' || workflow_state,'asap','interrupted recovery','accepted','recovery',
+        SELECT 't3',?1,'recovery:' || session || ':' || workflow_state,'asap','interrupted recovery','accepted','recovery',
         '2030-01-06T09:01:00Z','2030-01-06T09:01:00Z',1,'recovery:' || session || ':' || workflow_state,'interrupted recovery'
-        FROM executions WHERE session='t3:s1'",
-        [],
+        FROM executions WHERE session=?2",
+        [project.rt.native_id("s1"),format!("t3:{}",project.rt.native_id("s1"))],
     ).unwrap();
     project.tick_at("2030-01-06T09:04:20Z");
     let report = status(&project);
     assert_eq!(report["notification_configured"], false);
-    assert_eq!(report["stopped_executions"][0]["session"], "t3:s1");
+    assert_eq!(
+        report["stopped_executions"][0]["session"],
+        format!("t3:{}", project.rt.native_id("s1"))
+    );
     assert_eq!(report["stopped_executions"][0]["todo"], "weekly-status");
     assert!(project.rt.notifications().is_empty());
     project.todo_in_session(
@@ -119,12 +125,14 @@ fn a_failed_recovery_send_retries_the_same_thread_without_starting_another() {
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
-fn a_confirmed_gone_thread_is_reported_once_after_its_recovery_send_fails() {
+fn a_confirmed_gone_thread_is_replaced_for_an_eligible_execution() {
     let mut project = dispatched_task();
-    let thread = project.rt.state_dir().join("s1.json");
-    std::fs::remove_file(&thread).unwrap();
+    let fake = crate::fixtures::t3::FakeT3::create(&project.env);
+    let old = fake.native_id("s1");
+    fake.delete("s1");
     project.tick_at("2030-01-06T09:01:20Z");
     project.tick_at("2030-01-06T09:02:20Z");
-    insta::assert_snapshot!(project.rt.notifications().join("\n"), @"t3:s1");
-    assert!(!thread.exists(), "the missing thread was never replaced");
+    assert_eq!(project.rt.started_count(), 1);
+    assert_ne!(fake.native_id("s2"), old);
+    assert!(project.rt.notifications().is_empty());
 }

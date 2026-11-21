@@ -115,7 +115,7 @@ deleting the home is not a lossless reset.
 | `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; no record of the files a sync wrote outside the home | `sync` |
 | `state/hook-runs/<repository>/` | each hook section's last run outcome for one repository, shared by all its worktrees: the folder is named by a digest of the repository's git common directory, and each record names the repository's path; shown by `instrukt hooks status` | the next hook run |
-| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, standing-agent binding caches, pending delivery targets, start markers and per-key locks, conversation links and directional relay positions, held task failures, the last wake-up, and retained searchable conversations with their extraction positions and legacy import provenance; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state starts empty; retained history must be preserved (only conversations still held by a source can be extracted again) |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures, the last wake-up, and retained searchable conversations with their extraction positions and legacy import provenance; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state, authoritative object bindings and generation history must be preserved; retained conversations must be preserved (only conversations still held by a source can be extracted again) |
 | `state/writer.lock` | the per-computer writer lock, held only for each local state-database write transaction (the database's write-isolation unit), including migration before an older-state read; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
 | `Home::history_lock_file` | serializes history extraction and one-time imports; database writer ownership remains limited to local transactions | taken again by the next extraction |
@@ -328,12 +328,14 @@ The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
 the switched-on modules need: it dispatches todos (when `runner.autostart`), and
 starts or wakes standing agents on events. It reaches a runtime only through its
 Rust adapter for unattended operations. Its operational sessions surface is
-`instrukt sessions list|resolve-start`; agents discover and operate conversations
+`instrukt sessions list`; agents discover and operate conversations
 through configured native instructions, recording attempts and native child ids
-through work commands. Standing start-or-wake takes a
-database lock per semantic key and discovers it through the selected adapter before considering a
-start; the local binding is a cache. Unknown list or send results leave work
-pending, and lost start replies require key recovery or explicit resolution.
+through work commands. Start-or-wake holds exact object-key ownership across
+native operations and short database transactions. The binding is authoritative:
+each generation captures its native command/thread IDs and launch request before
+creation. Lost replies replay that fixed native identity; unknown observations
+and sends leave work pending. Outstanding work after confirmed native archive or
+deletion starts a successor generation through the same owner.
 instrukt derives `<slug>/prepare` or `<slug>/work`; T3 creates the corresponding
 worktree from main and refuses an existing local phase branch. Work on another
 computer creates its local `<slug>/work` branch from `origin/<slug>/work`. Native shared children use that recorded
@@ -451,13 +453,12 @@ session-fixed timing through A3's bounded batch log.
   enablement refuses and names it. Unset, it is the compiled adapter; code never
   detects one. A missing caller context makes
   `runtime.session_id` fail and omits a commit's `Session:` trailer.
-- **Runtime identity or delivery is uncertain:** preserve the event, key and
-  any start marker; recover through listing or explicit resolution. A failed
+- **Runtime identity or delivery is uncertain:** preserve the event and captured native launch request/IDs; recover through
+  native fixed-key receipt replay. A failed
   observation or send never requests a replacement session.
 - **Conversation stream or relay fails:** the runner retains its link, position
   and pending handover evidence and exposes the failure through
   `instrukt events status` and logs under the conversation-link contract.
-- **A deleted orchestrator left its todo branch checked out:** T3's host CLI
-  cannot bind an existing worktree. Safely remove the retained worktree first,
-  or use the runtime's existing-worktree start where available (T3 MCP). A
+- **A deleted orchestrator left its todo branch checked out:** native keyed launch
+  attaches the verified retained worktree to the new object generation. A
   settled retained orchestrator wakes in its existing shared workspace.

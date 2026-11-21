@@ -69,7 +69,9 @@ impl Handler {
     }
     pub fn call(&self, args: &[&str]) -> assert_cmd::Command {
         let mut command = self.computer.env.instrukt(self.computer.project.path());
-        command.env("T3CODE_THREAD_ID", "s1").args(args);
+        command
+            .env("T3CODE_THREAD_ID", self.runtime.native_id("s1"))
+            .args(args);
         command
     }
     pub fn help(&self) -> String {

@@ -292,7 +292,7 @@ fn admission_reads_existing_database_and_live_wal_without_creating_or_changing_f
     writer
         .execute_batch("PRAGMA journal_mode=WAL;PRAGMA wal_autocheckpoint=0;")
         .unwrap();
-    writer.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted) VALUES('t3','inspection-live-key','standing','subject','caller',?1,1)",[env.home().to_str().unwrap()]).unwrap();
+    writer.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted) VALUES('t3','inspection-live-key','standing','subject','t3:caller',?1,1)",[env.home().to_str().unwrap()]).unwrap();
     let before = filesystem(env.home());
     let result = env.run(env.home(), ["status", "--json"]).failure();
     let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
