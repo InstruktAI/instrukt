@@ -690,7 +690,7 @@ mod tests {
             Option<String>,
         );
         let kept: Vec<Row> = conn
-            .prepare("SELECT sender,reason,state,replied_at,failure FROM conversation_refusals ORDER BY rowid")
+            .prepare("SELECT sender,reason,attempted_at,replied_at,failure FROM conversation_refusals ORDER BY rowid")
             .unwrap()
             .query_map([], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
@@ -735,18 +735,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(failed, ("failed".to_owned(), 1));
-        // A sender has a notice beside a fixed reply; a notice keeps its
-        // decision, and a fixed reply none.
-        conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','UOTHER','unavailable','2026-11-18T10:03:00Z','owed')", []).unwrap();
-        assert!(
-            conn.execute(
-                "UPDATE conversation_refusals SET state='posting' WHERE reason='unavailable'",
-                []
-            )
-            .is_err()
-        );
-        assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1','USTEVEN','unavailable','2026-11-18T10:03:00Z')", []).is_err());
-        assert!(conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state) VALUES('acme','slack','C1/1','USTEVEN','not_own','2026-11-18T10:03:00Z','owed')", []).is_err());
+        // A sender retains the unavailable attempt beside their fixed reply.
+        conn.execute("INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,attempted_at) VALUES('acme','slack','C1/1','UOTHER','unavailable','2026-11-18T10:03:00Z','2026-11-18T10:04:00Z')", []).unwrap();
     }
 
     #[test]

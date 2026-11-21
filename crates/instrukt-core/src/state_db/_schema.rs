@@ -37,7 +37,36 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V24),
     Step(v25),
     Sql(V26),
+    Step(v27),
 ];
+
+fn v27(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let state_present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_refusals') WHERE name='state')",
+        [], |row| row.get(0),
+    )?;
+    if !state_present {
+        tx.execute_batch("ALTER TABLE conversation_refusals ADD COLUMN state TEXT")?;
+    }
+    tx.execute_batch(V27)
+}
+
+/// Version 27: an unavailable notice has one durable attempt per outage.
+const V27: &str = "
+CREATE TABLE conversation_refusals_v27 (
+    company TEXT NOT NULL, connector TEXT NOT NULL, conversation TEXT NOT NULL,
+    sender TEXT NOT NULL, reason TEXT NOT NULL CHECK(reason IN ('not_own','unavailable')),
+    received_at TEXT NOT NULL, replied_at TEXT, failure TEXT, attempted_at TEXT,
+    PRIMARY KEY(company,connector,conversation,sender,reason)
+);
+INSERT INTO conversation_refusals_v27(rowid,company,connector,conversation,sender,reason,received_at,replied_at,failure,attempted_at)
+    SELECT rowid,company,connector,conversation,sender,reason,received_at,replied_at,failure,
+      CASE WHEN reason='unavailable' AND state IN ('posting','posted')
+        THEN coalesce(attempted_at,replied_at,received_at) ELSE attempted_at END
+    FROM conversation_refusals;
+DROP TABLE conversation_refusals;
+ALTER TABLE conversation_refusals_v27 RENAME TO conversation_refusals;
+";
 
 /// Version 26: seed the first observation of existing connectors for the
 /// independent scan store. Intake timestamps never establish scan coverage.

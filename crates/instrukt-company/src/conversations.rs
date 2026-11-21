@@ -520,274 +520,128 @@ pub const SETTLE: jiff::SignedDuration = jiff::SignedDuration::from_mins(2);
 /// notice again.
 pub const INTAKE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// A notice still to settle: one person's in one conversation, decided and
-/// not known posted.
+/// One person's eligible unavailable notice in a conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
     pub conversation: String,
-    /// The waiting person, the provider identity.
     pub sender: String,
-    /// The provider message at the start of the read-back range.
-    pub since_message: String,
-    /// The identity carried by any attempted post of this notice.
-    pub post_id: Option<String>,
-    /// A post of it was sent and its effect is not known.
-    pub posting: bool,
 }
 
-/// Find candidates from the shared no-work intervals and retained notices.
-/// The decision is taken under the conversation's post lock in [`notice_step`].
+/// Find due notices, retiring attempt markers whose no-work interval recovered.
 pub fn notices(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
     now: Timestamp,
 ) -> Result<Vec<Notice>, ConversationError> {
-    let waiting = unfinished(home, company, connector)?;
-    // The person's oldest unfinished message and earliest interval, per
-    // conversation, in written order.
-    let mut people: Vec<(String, String, String, Option<Timestamp>)> = Vec::new();
-    for message in waiting
-        .into_iter()
-        .filter(|message| message.notice_eligible)
-    {
-        let Some(sender) = message.sender else {
-            continue;
+    RunnerState::new(home).write::<_, ConversationError>(|tx| {
+        let path = state::db_path(tx);
+        let conversations = {
+            let mut query = tx.prepare("SELECT DISTINCT conversation FROM conversation_refusals WHERE company=?1 AND connector=?2 AND reason='unavailable'")
+                .map_err(state::sql(&path))?;
+            query.query_map(params![company.as_str(), connector], |row| row.get::<_, String>(0))
+                .map_err(state::sql(&path))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(&path))?
         };
-        match people.iter_mut().find(|(conversation, member, ..)| {
-            *conversation == message.conversation && *member == sender
-        }) {
-            Some((.., since)) => {
-                *since = match (*since, message.since) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                };
+        for conversation in conversations {
+            retire_notices(tx, company.as_str(), connector, &conversation)?;
+        }
+        let mut due = BTreeSet::new();
+        for message in read_unfinished(tx, &path, company, connector)? {
+            if message.notice_eligible && message.since.is_some_and(|since| since + NOTICE_AFTER <= now)
+                && let Some(sender) = message.sender
+            {
+                due.insert((message.conversation, sender));
             }
-            None => people.push((message.conversation, sender, message.message, message.since)),
         }
-    }
-    let state = RunnerState::new(home);
-    let rows = state
-        .read(|conn, path| {
-            let mut q = conn
-                .prepare(
-                    "SELECT r.conversation,r.sender,r.state,r.post_id,r.anchor_message
-             FROM conversation_refusals r WHERE r.company=?1 AND r.connector=?2
-               AND r.reason='unavailable' ORDER BY r.rowid",
-                )
-                .map_err(state::sql(path))?;
-            q.query_map(params![company.as_str(), connector], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, Option<String>>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                ))
-            })
-            .map_err(state::sql(path))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(state::sql(path))
-        })?
-        .unwrap_or_default();
-    let mut notices = Vec::new();
-    // A posting record needs read-back even after its messages have answers.
-    for (conversation, sender, phase, post_id, anchor) in &rows {
-        if phase == "posting"
-            && let Some(anchor) = anchor
-        {
-            notices.push(Notice {
-                conversation: conversation.clone(),
-                sender: sender.clone(),
-                since_message: anchor.clone(),
-                post_id: post_id.clone(),
-                posting: true,
-            });
+        let mut notices = Vec::new();
+        for (conversation, sender) in due {
+            let attempted = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_refusals WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable' AND attempted_at IS NOT NULL)",
+                params![company.as_str(), connector, conversation, sender], |row| row.get::<_, bool>(0),
+            ).map_err(state::sql(&path))?;
+            if !attempted { notices.push(Notice { conversation, sender }); }
         }
-    }
-    for (conversation, sender, first, since) in people {
-        if !since.is_some_and(|since| since + NOTICE_AFTER <= now)
-            || rows
-                .iter()
-                .any(|(c, s, phase, ..)| *c == conversation && *s == sender && phase != "owed")
-        {
-            continue;
-        }
-        notices.push(Notice {
-            conversation,
-            sender,
-            since_message: first,
-            post_id: None,
-            posting: false,
-        });
-    }
-    Ok(notices)
+        Ok(notices)
+    })
 }
 
-/// What a notice's decision step under the conversation's post lock found.
+/// The durable one-attempt decision for an unavailable notice.
 #[derive(Debug, PartialEq, Eq)]
 pub enum NoticeStep {
-    /// Nothing of the person waits any more, or an answer to them ended the
-    /// epoch: nothing is posted.
     Cancelled,
-    /// It is known posted.
-    Posted,
-    /// A post of it was sent less than [`SETTLE`] ago and may still land.
-    Settling,
-    /// It is to be posted now; the attempt is recorded.
-    Post(String),
+    Post,
 }
 
-/// The decision step of `notice`, taken under the conversation's post lock
-/// ([`post_lock`]) from the state as it stands now. Reconciliation carries
-/// when the provider read began and the receipt's timestamp when found.
+/// Recheck the person's interval and mark the attempt before provider I/O.
 pub fn notice_step(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
     notice: &Notice,
-    reconciliation: Option<(Timestamp, Option<Timestamp>)>,
     accepted: &Accepted,
     now: Timestamp,
 ) -> Result<NoticeStep, ConversationError> {
     let accepted_turns = accepted.turns(company, connector, &notice.conversation);
-    let step = RunnerState::new(home).write::<_, ConversationError>(|tx| {
+    RunnerState::new(home).write::<_, ConversationError>(|tx| {
         let path = state::db_path(tx);
-        let overdue = read_unfinished(tx, &path, company, connector)?
-            .into_iter()
-            .filter(|m| {
-                m.notice_eligible
-                    && m.conversation == notice.conversation
-                    && m.sender.as_deref() == Some(notice.sender.as_str())
-                    && m.since.is_some_and(|since| since + NOTICE_AFTER <= now)
-            })
-            .filter_map(|message| message.admission_position)
-            .collect::<Vec<_>>();
-        let positions = serde_json::to_string(&overdue)?;
-        let row = tx.query_row(
-            "SELECT state,attempted_at,post_id FROM conversation_refusals WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
-            params![company.as_str(), connector, notice.conversation, notice.sender],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?)),
-        ).optional().map_err(state::sql(&path))?;
-        if notice.posting && row.is_none() {
-            return Ok(NoticeStep::Cancelled);
-        }
-        if let Some((phase, attempt, post_id)) = &row {
-            if phase == "posted" {
-                return Ok(NoticeStep::Posted);
-            }
-            if notice.post_id != *post_id {
-                return Ok(NoticeStep::Cancelled);
-            }
-            if let Some((_, Some(posted_at))) = reconciliation {
-                mark_notice_posted(tx, company, connector, notice, posted_at)?;
-                return Ok(NoticeStep::Posted);
-            }
-            if phase == "posting" {
-                let attempted = attempt.as_deref()
-                    .map(str::parse::<Timestamp>)
-                    .transpose().map_err(|error| state::invalid(&path, error))?;
-                let read_after_settle = attempted.zip(reconciliation).is_some_and(
-                    |(attempted, (read, _))| attempted + SETTLE <= read,
-                );
-                if !read_after_settle {
-                    return Ok(NoticeStep::Settling);
-                }
-                // A read past the window established that this attempt
-                // never landed. Its epoch may now close if answered.
-                if retire_settled_notices(tx, company.as_str(), connector, &notice.conversation, Some(&notice.sender))? > 0 {
-                    return Ok(NoticeStep::Cancelled);
-                }
-            }
-        }
-        if overdue.is_empty() {
-            return Ok(NoticeStep::Cancelled);
-        }
+        let overdue = read_unfinished(tx, &path, company, connector)?.into_iter().any(|message| {
+            message.notice_eligible && message.conversation == notice.conversation
+                && message.sender.as_deref() == Some(notice.sender.as_str())
+                && message.since.is_some_and(|since| since + NOTICE_AFTER <= now)
+        });
+        if !overdue { return Ok(NoticeStep::Cancelled); }
         for turn in accepted_turns {
             let answered = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND turn=?5)",
                 params![company.as_str(), connector, notice.conversation, notice.sender, turn],
-                |r| r.get::<_, bool>(0),
-            ).map_err(state::sql(&path))?;
-            if answered {
-                return Ok(NoticeStep::Cancelled);
-            }
-        }
-        let unreconciled_answer = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM conversation_answers a JOIN conversation_messages m
-                    USING (company,connector,conversation,turn)
-                 WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3 AND m.sender=?4
-                   AND a.posted_at IS NULL AND a.delivery_unknown_at IS NULL AND a.attempted_at IS NOT NULL)",
-                params![company.as_str(), connector, notice.conversation, notice.sender],
                 |row| row.get::<_, bool>(0),
-            )
-            .map_err(state::sql(&path))?;
-        if unreconciled_answer {
-            return Ok(NoticeStep::Cancelled);
-        }
-        if row.is_none() {
-            tx.execute(
-                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,covered_positions,anchor_message)
-                 VALUES (?1,?2,?3,?4,'unavailable',?5,'owed',?6,
-                   (SELECT m.message FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3
-                     AND m.admission_position IN (SELECT value FROM json_each(?6)) ORDER BY m.written_us,m.message LIMIT 1))",
-                params![company.as_str(), connector, notice.conversation, notice.sender, now.to_string(), positions],
             ).map_err(state::sql(&path))?;
+            if answered { return Ok(NoticeStep::Cancelled); }
         }
-        let id = tx.query_row(
-            "UPDATE conversation_refusals SET state='posting',attempted_at=?5,post_id=coalesce(post_id,lower(hex(randomblob(16)))) WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable' RETURNING post_id",
-            params![company.as_str(), connector, notice.conversation, notice.sender, now.to_string()],
-            |row| row.get::<_, String>(0),
+        let unreconciled_answer = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_answers a JOIN conversation_messages m
+                USING(company,connector,conversation,turn)
+             WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3 AND m.sender=?4
+               AND a.posted_at IS NULL AND a.delivery_unknown_at IS NULL AND a.attempted_at IS NOT NULL)",
+            params![company.as_str(), connector, notice.conversation, notice.sender],
+            |row| row.get::<_, bool>(0),
         ).map_err(state::sql(&path))?;
-        Ok(NoticeStep::Post(id))
-    })?;
-    Ok(step)
+        if unreconciled_answer { return Ok(NoticeStep::Cancelled); }
+        let changed = tx.execute(
+            "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,attempted_at)
+             VALUES (?1,?2,?3,?4,'unavailable',?5,?5)
+             ON CONFLICT(company,connector,conversation,sender,reason) DO UPDATE SET attempted_at=excluded.attempted_at,failure=NULL
+             WHERE conversation_refusals.attempted_at IS NULL",
+            params![company.as_str(), connector, notice.conversation, notice.sender, now.to_string()],
+        ).map_err(state::sql(&path))?;
+        Ok(if changed == 0 { NoticeStep::Cancelled } else { NoticeStep::Post })
+    })
 }
 
-/// Record that the connector accepted `notice`'s post, or why it did not; a
-/// post that failed or lost its response stays `posting`.
+/// Keep the observed response for operator status; it never schedules a retry.
 pub fn notice_posted(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
     notice: &Notice,
-    outcome: Result<Option<Timestamp>, String>,
+    outcome: Result<(), String>,
     now: Timestamp,
 ) -> Result<(), ConversationError> {
     RunnerState::new(home).write::<_, StateError>(|tx| {
-        match outcome {
-            Ok(posted_at) => mark_notice_posted(tx, company, connector, notice, posted_at.unwrap_or(now)),
-            Err(cause) => {
-                tx.execute(
-                    "UPDATE conversation_refusals SET failure=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
-                    params![company.as_str(), connector, notice.conversation, notice.sender, cause],
-                ).map_err(state::sql(&state::db_path(tx)))?;
-                Ok(())
-            }
-        }
+        let failure = outcome.err();
+        tx.execute(
+            "UPDATE conversation_refusals SET failure=?5,replied_at=CASE WHEN ?5 IS NULL THEN ?6 ELSE replied_at END
+             WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
+            params![company.as_str(), connector, notice.conversation, notice.sender, failure, now.to_string()],
+        ).map_err(state::sql(&state::db_path(tx)))?;
+        Ok(())
     })?;
     Ok(())
 }
 
-fn mark_notice_posted(
-    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
-    company: &ProjectSlug,
-    connector: &str,
-    notice: &Notice,
-    posted_at: Timestamp,
-) -> Result<(), StateError> {
-    tx.execute(
-        "UPDATE conversation_refusals SET state='posted',replied_at=?5,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
-        params![company.as_str(), connector, notice.conversation, notice.sender, posted_at.to_string()],
-    ).map_err(state::sql(&state::db_path(tx)))?;
-    retire_settled_notices(tx, company.as_str(), connector, &notice.conversation, None)?;
-    Ok(())
-}
-
-/// The post lock of one conversation, in this process: held around a
-/// notice's decision and its one post, and around each answer post with
-/// what it records, never around a read at the provider or a runtime call.
+/// The post lock of one conversation, in this process: held around
+/// each answer post and what it records, never around a read at the provider
+/// or a runtime call. Unavailable notices do not participate.
 pub fn post_lock(
     company: &ProjectSlug,
     connector: &str,
@@ -1360,6 +1214,7 @@ fn available(state: &RunnerState, c: &Conversation, messages: &[String]) -> Resu
             )
             .map_err(state::sql(&state::db_path(tx)))?;
         }
+        retire_notices(tx, c.company.as_str(), &c.connector, &c.conversation)?;
         Ok(())
     })
 }
@@ -1564,6 +1419,7 @@ fn accepted(
         ).map_err(state::sql(&path))?;
         if changed != 0 {
             remember_delivery(tx, c, message)?;
+            retire_notices(tx, c.company.as_str(), &c.connector, &c.conversation)?;
         }
         if changed != 0 && let Some(session) = session {
             tx.execute(
@@ -1977,7 +1833,7 @@ fn send_unknown(
             params![c.company.as_str(), c.connector, c.conversation, message.message, message.boundary, now.to_string(), cause],
         ).map_err(state::sql(&state::db_path(tx)))?;
         if changed != 0 {
-            retire_settled_notices(tx, c.company.as_str(), &c.connector, &c.conversation, None)?;
+            retire_notices(tx, c.company.as_str(), &c.connector, &c.conversation)?;
             tracing::warn!(target: LOG_TARGET, event = "conversation_send_delivery_unknown", key = %c.semantic_key, message = %message.message, %cause);
         }
         Ok(())
@@ -3210,43 +3066,48 @@ fn settle_failed_messages(
         params![company, connector, conversation, format!("{now:.9}")],
     )
     .map_err(state::sql(&state::db_path(tx)))?;
-    retire_settled_notices(tx, company, connector, conversation, None)?;
+    retire_notices(tx, company, connector, conversation)?;
     Ok(())
 }
 
-/// Retire an epoch when every covered message has settled answer pieces or a
-/// successful turn with no output, or was superseded after a failure.
-/// An in-flight notice must reconcile first. Pruned positions are settled:
-/// only superseded failures can be pruned and the epoch keeps its anchor.
-fn retire_settled_notices(
+/// A recovered no-work interval rearms the person's next outage notice.
+fn retire_notices(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
     company: &str,
     connector: &str,
     conversation: &str,
-    confirmed_absent_sender: Option<&str>,
 ) -> Result<usize, StateError> {
-    tx.execute(
-        "DELETE FROM conversation_refusals AS r
-         WHERE r.company=?1 AND r.connector=?2 AND r.conversation=?3 AND r.reason='unavailable'
-           AND (r.state IN ('owed','posted') OR (r.state='posting' AND r.sender=?4))
-           AND json_array_length(r.covered_positions) > 0
-           AND NOT EXISTS(SELECT 1 FROM json_each(r.covered_positions) covered
-             WHERE NOT EXISTS(SELECT 1 FROM conversation_answers a
-               WHERE a.company=r.company AND a.connector=r.connector AND a.conversation=r.conversation
-                 AND a.admission_position=covered.value
-                 AND NOT EXISTS(SELECT 1 FROM conversation_answers p WHERE p.company=a.company
-                   AND p.connector=a.connector AND p.conversation=a.conversation AND p.turn=a.turn
-                   AND p.posted_at IS NULL AND p.delivery_unknown_at IS NULL))
-               AND NOT EXISTS(SELECT 1 FROM conversation_messages m
-                 WHERE m.company=r.company AND m.connector=r.connector AND m.conversation=r.conversation
-                   AND m.admission_position=covered.value
-                   AND (m.superseded_at IS NOT NULL OR m.send_unknown_at IS NOT NULL OR (m.state='answered' AND m.turn IS NOT NULL
-                     AND NOT EXISTS(SELECT 1 FROM conversation_answers a WHERE a.company=m.company
-                       AND a.connector=m.connector AND a.conversation=m.conversation AND a.turn=m.turn))))
-               AND EXISTS(SELECT 1 FROM conversation_messages m WHERE m.company=r.company
-                 AND m.connector=r.connector AND m.conversation=r.conversation AND m.admission_position=covered.value))",
-        params![company, connector, conversation, confirmed_absent_sender],
-    ).map_err(state::sql(&state::db_path(tx)))
+    let path = state::db_path(tx);
+    let company_id = ProjectSlug::parse(company).map_err(|error| state::invalid(&path, error))?;
+    let active = read_unfinished(tx, &path, &company_id, connector)?
+        .into_iter()
+        .filter(|message| {
+            message.conversation == conversation
+                && message.notice_eligible
+                && message.since.is_some()
+        })
+        .filter_map(|message| message.sender)
+        .collect::<BTreeSet<_>>();
+    let senders = {
+        let mut query = tx.prepare("SELECT sender FROM conversation_refusals WHERE company=?1 AND connector=?2 AND conversation=?3 AND reason='unavailable'")
+            .map_err(state::sql(&path))?;
+        query
+            .query_map(params![company, connector, conversation], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(state::sql(&path))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(state::sql(&path))?
+    };
+    let mut retired = 0;
+    for sender in senders
+        .into_iter()
+        .filter(|sender| !active.contains(sender))
+    {
+        retired += tx.execute("DELETE FROM conversation_refusals WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND reason='unavailable'",
+            params![company, connector, conversation, sender]).map_err(state::sql(&path))?;
+    }
+    Ok(retired)
 }
 
 /// Keep `cause` as the last failure of `piece`.
@@ -3992,6 +3853,17 @@ pub fn relay_state(home: &Home, failure: Option<&str>, now: Timestamp) {
             params![failure, now.to_string()],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
+        if failure.is_none() {
+            let addresses = {
+                let mut query = tx.prepare("SELECT DISTINCT company,connector,conversation FROM conversation_refusals WHERE reason='unavailable'")
+                    .map_err(state::sql(&state::db_path(tx)))?;
+                query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+                    .map_err(state::sql(&state::db_path(tx)))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(&state::db_path(tx)))?
+            };
+            for (company, connector, conversation) in addresses {
+                retire_notices(tx, &company, &connector, &conversation)?;
+            }
+        }
         Ok(())
     });
     if let Err(error) = result {

@@ -271,15 +271,16 @@ followed by no empty part. Nothing is inserted, so no part is longer than
 12,000 characters.
 
 The one platform notice of `project/instrukt/spec/feature/company/conversations`
-is posted the same way, worded
+is attempted once per outage with an ordinary bounded post, worded
 `<@member-id> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.`,
-with the waiting person's Slack id. Each notice and answer piece carries
+with the waiting person's Slack id. Its failure or lost response is not retried
+or reconciled. Each answer piece carries
 `chat.postMessage` metadata with event type `instrukt_post` and a single
 opaque id in `event_payload.id`. The connector uses
 `include_all_metadata=true` with `conversations.replies` for a thread or
 `conversations.history` for a direct message. It matches the id on a post
-by its own bot and returns the posting timestamp. It reads notices from the
-current epoch's anchor and answers from the first addressed message.
+by its own bot and returns the posting timestamp. It reads answers from the
+first addressed message.
 For an answer attempted before ids were recorded, the single best-effort
 read matches an untagged post from the same bot and conversation by text
 and requires a provider timestamp after the recorded attempt.

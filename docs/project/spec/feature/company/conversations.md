@@ -295,7 +295,7 @@ is told only what belongs to their world):
 | Their message is admitted | The connector's indication of its state (above). |
 | The agent works on it, however long | The newest message the agent has written in the running turn, as the runtime records it; the indication that the assistant is working on the request until the agent has written one. |
 | A failure shows the agent cannot work on it | The indication that the assistant is temporarily unavailable and the message is saved, from the next status pass after its no-work interval opens. |
-| The agent has been unable to work on it for one minute | One message, worded by the connector, beginning with the person's mention: "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again." Once per person and conversation until an answer to that person has been posted. |
+| The agent has been unable to work on it for one minute | One message, worded by the connector, beginning with the person's mention: "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again." One best-effort attempt per person and conversation outage. |
 | The work is done | The agent's answer; the person never repeats their message. |
 | A service of theirs is unreachable or refuses, inside a turn | The agent says so in its answer (`general/procedure/company-assistance`). |
 | They are not one of the company's own | The fixed reply above. |
@@ -337,45 +337,21 @@ leaves the eligibility evaluation and other members' reads free to proceed.
 A retained message without a provider sender still has status and cannot
 produce an addressed notice.
 
-**The one notice** is once per person per epoch. An epoch records the durable
-admission positions of the person's messages that made the notice due.
+**The one notice** is one best-effort attempt per person and conversation
+outage, using that person's effective no-work interval above. Admission and a
+healthy wait create no outage. Confirmed work or answer recovery clears the
+attempt marker; a later failure can earn a new notice.
 
-- The decision is recorded before the post (owed, posting with the attempt's time,
-  posted); the record is never taken as proof of delivery.
-- Each answer piece carries the admission position of the message it answers.
-  An epoch closes when every covered position is settled. A turn that
-  completes successfully with a bare `NOOP` or blank output settles its
-  position. A multipart answer settles its position once every piece is
-  confirmed or resolved as delivery unknown. A failed turn with no reply
-  keeps its interval and notice epoch open until a later-admitted message
-  from the same member in the same conversation settles. That settlement
-  supersedes every earlier failed message from that member, closes those
-  intervals, and settles those positions for the notice. Provider timestamps
-  and the runner clock do not order answers, notices, or supersession.
-- When the delivery of an attempted answer is uncertain, the relay reconciles
-  it before a notice can post to that person. A confirmed rejection leaves the
-  person's notice eligible once the no-work interval reaches a minute and
-  no earlier attempt is still uncertain. A read that finds no post clears
-  earlier uncertainty only if it began after the latest unconfirmed request's
-  timeout window.
-- The notice and the conversation's answers are posted under one short
-  per-conversation post lock, held for the decision and one post, never for a
-  read at the provider or a runtime call. An answer receipt can retire a fully
-  answered epoch in the same critical section once the notice's own delivery is
-  known. An unconfirmed notice keeps its id until read-back finds it or
-  establishes absence after the settle window.
-- A notice whose post timed out or lost its response is not posted again before
-  the settle bound after the attempt has passed. After it, the connector reads the
-  conversation from the epoch's start for a post of its own with the notice's
-  durable id. Finding one records it posted, and finding none posts again
-  with the same id.
+The decision transaction rechecks eligibility and records the attempt timestamp
+before provider I/O. A failed post, a lost response or a crash after that record
+never schedules another notice attempt in the same outage. A failure remains
+visible to the operator. Notice delivery and ordering against an answer are best
+effort: a post already in flight can arrive after recovery. No provider read-back
+or shared notice/answer post lock establishes notice delivery. Notice eligibility
+still waits for the existing answer-post reconciliation when a prior answer's
+outcome is unresolved.
 
-If a post is committed by the provider later than the settle bound after it was sent,
-the person can see the sentence twice, or once after their answer: the provider's
-methods promise neither a write deadline nor idempotent posts.
-
-The intake interval and settle bound are declared with the conversation
-core. The read-back answering bound, reporting period and scan overlap are
+The intake interval is declared with the conversation core. The read-back answering bound, reporting period and scan overlap are
 declared in `crates/instrukt-company/src/conversations/read_back.rs`.
 
 ### After the agent was offline
@@ -447,9 +423,10 @@ And no subscribed procedure is activated by that message
 ```gherkin
 Given a member addresses the agent and a failure shows the agent cannot work on it
 When a minute passes from that failure without the agent working on the message
-Then the member gets one message, beginning with their mention, that the assistant is temporarily unavailable, that their message is saved and that they need not send it again
-And writing again before they are answered brings no second one
-And another member waiting in the same conversation gets their own
+Then the assistant makes one best-effort attempt to notify the member, beginning with their mention, that it is temporarily unavailable, that their message is saved and that they need not send it again
+And writing again during that outage brings no second attempt
+And another member waiting in the same conversation can get their own notice
+And recovery allows a later outage to earn a new notice
 And the member's answer follows once the agent has done the work
 And a healthy wait does not earn an unavailable notice
 And a request completed successfully without a reply is complete without a post or an unavailable notice
@@ -475,7 +452,7 @@ Scenario: The member receives the answer after a retry
   Then the member receives one answer without sending the question again
   And progress from the unsuccessful work is never posted as the answer
   And another member can be answered while the failed question waits
-  And if the wait earns an unavailable notice, only one is posted before the answer
+  And each outage that earns an unavailable notice gets at most one best-effort attempt
   And a send with a lost response and no runtime record is retried with the same command identity once the runtime is idle
   And if the original dispatch reaches T3 after a runner restart and its retry, only one turn takes the question
   And an outage before dispatch keeps a saved question retryable even past the reconciliation bound

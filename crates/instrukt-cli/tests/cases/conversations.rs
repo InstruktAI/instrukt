@@ -668,7 +668,7 @@ fn notice_record(
     use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension as _, params};
     let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
     db.query_row(
-        "SELECT state,failure FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
+        "SELECT 'attempted',failure FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable' AND attempted_at IS NOT NULL",
         params![conversation, member],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
@@ -718,8 +718,6 @@ fn started(c: &Company, before: &[String]) -> String {
 fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() {
     std::thread::scope(|scope| {
         scope.spawn(notice_epochs_and_reconciliation);
-        scope.spawn(a_notice_in_flight_reconciles_after_a_noop);
-        scope.spawn(a_normalized_notice_is_reconciled_after_a_restart);
         scope.spawn(a_mixed_notice_epoch_waits_for_the_final_answer_piece);
         scope.spawn(successful_empty_turns_rearm_notices);
         scope.spawn(the_notice_minute_starts_when_a_slow_start_fails);
@@ -1368,8 +1366,8 @@ fn failed_work_is_retried_after_a_restart() {
     "Version two."
   ],
   [
-    null,
-    "<@USTEVEN> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again."
+    "<@USTEVEN> The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.",
+    null
   ],
   [
     null,
@@ -2378,8 +2376,6 @@ fn an_operator_can_resume_conversations_with_uncertain_answers_after_upgrade() {
         scope.spawn(found_legacy_answer_is_confirmed);
         scope.spawn(missing_legacy_answer_expires);
         scope.spawn(late_legacy_answer_upgrades_unknown_delivery);
-        scope.spawn(late_legacy_answer_leaves_a_newer_notice_intact);
-        scope.spawn(late_legacy_answer_leaves_an_unconfirmed_newer_notice_intact);
         scope.spawn(legacy_messages_keep_status_and_the_notice_anchor);
     });
 }
@@ -2405,14 +2401,6 @@ fn missing_legacy_answer_expires() {
 
 fn late_legacy_answer_upgrades_unknown_delivery() {
     legacy_answer_attempt_releases_conversation(LegacyReceipt::Late);
-}
-
-fn late_legacy_answer_leaves_a_newer_notice_intact() {
-    legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithNewNotice);
-}
-
-fn late_legacy_answer_leaves_an_unconfirmed_newer_notice_intact() {
-    legacy_answer_attempt_releases_conversation(LegacyReceipt::LateWithUnconfirmedNotice);
 }
 
 fn successful_empty_turns_rearm_notices() {
@@ -2797,31 +2785,17 @@ fn notice_epochs_and_reconciliation() {
     });
     wait("the other member's refused notice attempt", || {
         notice_record(&c, &conversation, other)
-            .is_some_and(|(state, failure)| state == "posting" && failure.is_some())
+            .is_some_and(|(state, failure)| state == "attempted" && failure.is_some())
     });
     assert_eq!(notices(&c, other), 0);
     c.runner_dies();
-    let held = c.slack.held();
-    c.slack.hold_reads_from(&first);
     set_clock(&clock, first_at + jiff::SignedDuration::from_mins(3));
     c.run();
-    wait("the first member's reconciliation read held", || {
-        c.slack.held() > held
-    });
-    common::wait_until(
-        "the other member told while the first read is held",
-        std::time::Duration::from_secs(12),
-        || notices(&c, other) == 1,
-    );
-    c.slack.release_reads();
-    wait("the lost response reconciled after restart", || {
-        notice_state(&c, &conversation, sender).as_deref() == Some("posted")
-    });
-    wait(
-        "the other member told after their own attempt did not land",
-        || notices(&c, other) == 1,
-    );
+    observe_notice_pass(&c, &clock, first_at + jiff::SignedDuration::from_mins(4));
     assert_eq!(notices(&c, sender), 1);
+    // The control conversation has Anna's one notice; her failed attempt here stays suppressed.
+    assert_eq!(notices(&c, other), 1);
+    c.runtime.flag("list-failure", false);
 
     c.runner_dies();
     std::fs::remove_dir(&database).unwrap();
@@ -2843,18 +2817,10 @@ fn notice_epochs_and_reconciliation() {
     wait("the second answer", || {
         c.slack.posts_beginning("The release notes.") == 1
     });
-    // The next input was queued before the first notice. Its new epoch
-    // must disregard that visible notice when the new attempt is refused.
+    // Recovery rearmed the queued message's later outage.
     let queued_at = interval_at(&c, &again);
-    c.slack.fate(&notice_text(sender), Fate::Refused, 1);
     set_clock(&clock, queued_at + minute());
-    wait("the new attempt for the queued message", || {
-        notice_state(&c, &conversation, sender).as_deref() == Some("posting")
-    });
-    set_clock(&clock, queued_at + jiff::SignedDuration::from_mins(3));
-    wait("the new notice after the refused attempt settles", || {
-        notices(&c, sender) == 2
-    });
+    wait("a notice for the new outage", || notices(&c, sender) == 2);
     c.runtime.flag("send-failure", false);
     wait("the third input accepted", || {
         c.runtime.message_count(&session) == 3
@@ -2867,124 +2833,15 @@ fn notice_epochs_and_reconciliation() {
         notice_state(&c, &conversation, sender).is_none()
             && notice_state(&c, &conversation, other).is_none()
     });
-    for post in c.slack.posts() {
+    for post in c
+        .slack
+        .posts()
+        .into_iter()
+        .filter(|post| post.channel == channel)
+    {
         assert_eq!(post.channel, channel);
         assert_eq!(post.thread.as_deref(), Some(first.as_str()));
     }
-}
-
-fn a_notice_in_flight_reconciles_after_a_noop() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    let channel = "C1";
-    let sender = "USTEVEN";
-    c.runtime.flag("separate-completion", true);
-    c.runtime.flag("list-failure", true);
-    projected(&c);
-    let next = c
-        .slack
-        .mention(channel, sender, "<@UAGENT> Where are the notes?", None);
-    let conversation = format!("{channel}/{next}");
-    let next_at = interval_at(&c, &next);
-    c.slack.fate(&notice_text(sender), Fate::Late, 1);
-    set_clock(&clock, next_at + minute());
-    wait("the notice sent", || {
-        notice_state(&c, &conversation, sender).as_deref() == Some("posting")
-    });
-    let reads = c.slack.metadata_reads();
-    wait(
-        "a reconciliation read while the notice is in flight",
-        || c.slack.metadata_reads() > reads,
-    );
-    assert_eq!(notices(&c, sender), 0);
-    c.runtime.flag("list-failure", false);
-    let session = started(&c, &[]);
-    c.finish_turn(&session, 0, "NOOP");
-    wait("the completed message leaves no pending message", || {
-        retained_conversations(&c)
-            .conversations
-            .iter()
-            .all(|row| row.pending_messages == 0)
-    });
-    // The NOOP settles this question. Its in-flight notice keeps its
-    // identity until the eventual post is reconciled without a duplicate.
-    c.slack.commit_late();
-    wait("the in-flight notice becomes visible", || {
-        notices(&c, sender) == 1
-    });
-    set_clock(&clock, next_at + jiff::SignedDuration::from_mins(3));
-    wait(
-        "the late notice reconciled and its settled epoch removed",
-        || notice_state(&c, &conversation, sender).is_none(),
-    );
-    assert_eq!(notices(&c, sender), 1);
-    c.slack
-        .mention(channel, sender, "<@UAGENT> And the contract?", Some(&next));
-    wait("the next input accepted", || {
-        c.runtime.message_count(&session) == 2
-    });
-    c.finish_turn(&session, 1, "In the wiki.");
-    wait("the new epoch's answer", || {
-        c.slack.posts_beginning("In the wiki.") == 1
-    });
-    for post in c.slack.posts() {
-        assert_eq!(post.channel, channel);
-        assert_eq!(post.thread.as_deref(), Some(next.as_str()));
-    }
-}
-
-fn a_normalized_notice_is_reconciled_after_a_restart() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    let channel = "D18";
-    let member = "USTEVEN";
-    projected(&c);
-    c.runtime.flag("list-failure", true);
-    let asked = c.slack.direct(channel, member, "When do we ship?");
-    let started_at = interval_at(&c, &asked);
-    let text = notice_text(member);
-    c.slack
-        .render_post(&text, &text.replace("you'll", "you’ll"));
-    let state = instrukt_core::state_db::rusqlite::Connection::open(
-        c.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    state.execute_batch(
-        "CREATE TRIGGER hold_notice_receipt BEFORE UPDATE OF replied_at ON conversation_refusals
-         WHEN OLD.reason='unavailable' AND NEW.state='posted'
-         BEGIN SELECT RAISE(ABORT, 'forced notice receipt failure'); END"
-    ).unwrap();
-    set_clock(&clock, started_at + minute());
-    wait("Slack shows the notice and the receipt write fails", || {
-        notices(&c, member) == 1 && run_log(&c).contains("forced notice receipt failure")
-    });
-    assert_eq!(
-        notice_state(&c, channel, member).as_deref(),
-        Some("posting")
-    );
-    c.runner_dies();
-
-    // If read-back misses the rewritten text, the notice can be retried
-    // immediately at this clock setting.
-    set_clock(&clock, started_at + jiff::SignedDuration::from_mins(4));
-    state
-        .execute_batch("DROP TRIGGER hold_notice_receipt")
-        .unwrap();
-    c.run();
-    wait(
-        "the normalized notice receipt reconciled after restart",
-        || notice_state(&c, channel, member).as_deref() == Some("posted"),
-    );
-    assert_eq!(
-        notices(&c, member),
-        1,
-        "the accepted notice must not be posted again"
-    );
-    c.runtime.flag("list-failure", false);
-    let session = started(&c, &[]);
-    c.finish_turn(&session, 0, "Friday.");
-    wait("the member answered after the notice", || {
-        c.slack.posts_beginning("Friday.") == 1
-    });
-    assert_eq!(notices(&c, member), 1);
 }
 
 fn run_log(c: &Company) -> String {
@@ -3152,8 +3009,6 @@ enum LegacyReceipt {
     Found,
     Missing,
     Late,
-    LateWithNewNotice,
-    LateWithUnconfirmedNotice,
 }
 
 /// Seed the interrupted answer and its conversation into the schema shipped
@@ -3226,33 +3081,17 @@ fn seed_v22_answer_attempt(
 }
 
 fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
-    let out_of_order = receipt == LegacyReceipt::LateWithUnconfirmedNotice;
-    let notice_before_receipt = out_of_order || receipt == LegacyReceipt::LateWithNewNotice;
-    let late = notice_before_receipt || receipt == LegacyReceipt::Late;
+    let late = receipt == LegacyReceipt::Late;
     let at = jiff::Timestamp::from_second(1_700_000_010).unwrap();
     let (mut c, clock) = status_company(at);
     c.runtime.flag("separate-completion", true);
     let channel = "C1";
     let member = "USTEVEN";
     projected(&c);
-    let (asked, thread) = if out_of_order {
-        let thread = c
-            .slack
-            .say_at("1700000000.000100", channel, member, "Thread context", None);
-        let asked = c.slack.mention_at(
-            "1700000005.000100",
-            channel,
-            member,
-            "<@UAGENT> Where are the notes?",
-            Some(&thread),
-        );
-        (asked, thread)
-    } else {
-        let asked = c
-            .slack
-            .mention(channel, member, "<@UAGENT> Where are the notes?", None);
-        (asked.clone(), asked)
-    };
+    let asked = c
+        .slack
+        .mention(channel, member, "<@UAGENT> Where are the notes?", None);
+    let thread = asked.clone();
     let conversation = format!("{channel}/{thread}");
     let session = started(&c, &[]);
     let legacy = "The legacy answer.";
@@ -3318,8 +3157,8 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             // The upgraded runner already read the legacy attempt. Retain a
             // confirmed notice before the held receipt can settle its epoch.
             state.execute(
-                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,state,replied_at,covered_positions) VALUES (?1,'slack',?2,?3,'unavailable',?4,'posted',?4,json_array((SELECT admission_position FROM conversation_messages WHERE company=?1 AND connector='slack' AND conversation=?2 AND message=?5)))",
-                instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string(), asked],
+                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,attempted_at,replied_at) VALUES (?1,'slack',?2,?3,'unavailable',?4,?4,?4)",
+                instrukt_core::state_db::rusqlite::params![COMPANY, conversation, member, at.to_string()],
             ).unwrap();
             c.slack.say_at(
                 "1700000010.500000",
@@ -3337,63 +3176,6 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
         );
         assert!(legacy_state().0.is_none());
     }
-    let later_noticed = if notice_before_receipt {
-        c.runtime.flag("send-failure", true);
-        let later = if out_of_order {
-            c.slack.fate(&notice_text(member), Fate::Lost, 1);
-            c.slack.hold_reads_from("1700000003.000100");
-            c.slack.mention_at(
-                "1700000003.000100",
-                channel,
-                member,
-                "<@UAGENT> And the contract?",
-                Some(&thread),
-            )
-        } else {
-            c.slack.mention(
-                channel,
-                member,
-                "<@UAGENT> And the contract?",
-                Some(&thread),
-            )
-        };
-        // Intake runs while the legacy read is held. Give this admitted
-        // question the retained interval of a failed hand-over.
-        common::wait_until(
-            "the later question admitted while the first receipt is held",
-            std::time::Duration::from_secs(7),
-            || {
-                state.execute(
-                "UPDATE conversation_messages SET unavailable_since=?2 WHERE message=?1 AND state='pending' AND admission_position IS NOT NULL",
-                instrukt_core::state_db::rusqlite::params![later, (at + jiff::SignedDuration::from_secs(121)).to_string()],
-            ).unwrap() == 1
-            },
-        );
-        if out_of_order {
-            assert!(state.query_row(
-                "SELECT newer.admission_position > older.admission_position AND newer.written_us < older.written_us FROM conversation_messages newer, conversation_messages older WHERE newer.message=?1 AND older.message=?2",
-                [&later, &asked], |row| row.get::<_, bool>(0),
-            ).unwrap());
-        }
-        set_clock(&clock, at + jiff::SignedDuration::from_secs(181));
-        let phase = if out_of_order { "posting" } else { "posted" };
-        common::wait_until(
-            "Slack accepts the later question's notice before the older receipt",
-            std::time::Duration::from_secs(8),
-            || {
-                notices(&c, member) == 1
-                    && notice_state(&c, &conversation, member).as_deref() == Some(phase)
-            },
-        );
-        let id = state.query_row(
-            "SELECT post_id FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
-            [&conversation, member], |row| row.get::<_, String>(0),
-        ).unwrap();
-        c.slack.release_reads_from("1700000010.000000");
-        Some(id)
-    } else {
-        None
-    };
     if receipt == LegacyReceipt::Late {
         // Expiry settles this position and retires its confirmed notice.
         assert!(notice_state(&c, &conversation, member).is_none());
@@ -3419,31 +3201,7 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
             legacy_state().0.is_some()
         });
         assert!(legacy_state().2.is_none());
-        if let Some(id) = &later_noticed {
-            use instrukt_core::state_db::rusqlite::OptionalExtension as _;
-            let retained = state.query_row(
-                "SELECT post_id FROM conversation_refusals WHERE conversation=?1 AND sender=?2 AND reason='unavailable'",
-                [&conversation, member], |row| row.get::<_, String>(0),
-            ).optional().unwrap();
-            assert_eq!(
-                retained.as_ref(),
-                Some(id),
-                "the recovered answer must leave the later notice and its ID in place"
-            );
-            if out_of_order {
-                assert_eq!(
-                    notice_state(&c, &conversation, member).as_deref(),
-                    Some("posting")
-                );
-                c.slack.release_reads();
-                wait("the later notice reconciles by its original ID", || {
-                    notice_state(&c, &conversation, member).as_deref() == Some("posted")
-                });
-            }
-            assert_eq!(notices(&c, member), 1);
-        } else {
-            assert!(notice_state(&c, &conversation, member).is_none());
-        }
+        assert!(notice_state(&c, &conversation, member).is_none());
     } else {
         assert!(legacy_state().0.is_none());
         assert!(legacy_state().2.is_none());
@@ -3471,11 +3229,9 @@ fn legacy_answer_attempt_releases_conversation(receipt: LegacyReceipt) {
         }));
     }
     assert_eq!(interval(&c, &asked), None);
-    assert_eq!(c.slack.posts().len(), usize::from(later_noticed.is_some()));
+    assert_eq!(c.slack.posts().len(), 0);
 
-    if later_noticed.is_some() {
-        c.runtime.flag("send-failure", false);
-    } else {
+    {
         if receipt == LegacyReceipt::Late {
             c.runtime.flag("send-failure", true);
         }
@@ -3621,11 +3377,8 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
         state.query_row("SELECT count(*) FROM conversation_messages WHERE conversation=?1 AND admission_position IS NOT NULL", [channel], |row| row.get::<_, i64>(0)).unwrap() == 2
     });
     set_clock(&clock, at + minute());
-    wait("one notice covers both unanswered questions", || {
-        notices(&c, member) == 1 && state.query_row(
-            "SELECT count(*) FROM conversation_refusals WHERE conversation=?1 AND state='posted' AND json_array_length(covered_positions)=2",
-            [channel], |row| row.get::<_, i64>(0),
-        ).unwrap() == 1
+    wait("one notice for the waiting member", || {
+        notices(&c, member) == 1
     });
     std::fs::remove_dir(&database).unwrap();
     std::fs::rename(&hidden, &database).unwrap();
@@ -3653,13 +3406,10 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
             }) && c.slack.posts_beginning("xxxxxxxx") == 1
         },
     );
-    assert_eq!(
-        notice_state(&c, channel, member).as_deref(),
-        Some("posted"),
-        "a NOOP and a partial answer must keep the mixed epoch"
-    );
     observe_notice_pass(&c, &clock, opened + minute());
-    assert_eq!(notices(&c, member), 1);
+    wait("the answer-post outage gets its own notice", || {
+        notices(&c, member) == 2
+    });
     c.slack.clear_fates();
     wait(
         "the final piece confirmed and the mixed epoch closed",
@@ -3668,7 +3418,7 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
                 && notice_state(&c, channel, member).is_none()
         },
     );
-    assert_eq!(notices(&c, member), 1);
+    assert_eq!(notices(&c, member), 2);
 }
 
 fn an_unconfirmed_post_waits_after_a_metadata_miss() {
@@ -3714,7 +3464,8 @@ fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
     let first = c.slack.direct(channel, sender, "Any changes?");
     set_clock(&clock, interval_at(&c, &first) + minute());
     wait("the first question's notice posted", || {
-        notices(&c, sender) == 1 && notice_state(&c, channel, sender).as_deref() == Some("posted")
+        notices(&c, sender) == 1
+            && notice_state(&c, channel, sender).as_deref() == Some("attempted")
     });
     c.runtime.flag("list-failure", false);
     let session = started(&c, &[]);
@@ -3748,7 +3499,7 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     let first = c.slack.direct(channel, sender, "Any changes?");
     set_clock(&clock, interval_at(&c, &first) + minute());
     wait("the notice before the failed turn", || {
-        notice_state(&c, channel, sender).as_deref() == Some("posted")
+        notice_state(&c, channel, sender).as_deref() == Some("attempted")
     });
     c.runtime.flag("list-failure", false);
     let session = started(&c, &[]);
@@ -3770,12 +3521,13 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     let second = c.slack.direct(channel, sender, "Who reviews the release?");
     let second_at = interval_at(&c, &second);
     observe_notice_pass(&c, &clock, second_at + minute());
+    wait("the failed-turn outage's notice posted", || {
+        notices(&c, sender) == 2
+    });
     assert_eq!(
-        notices(&c, sender),
-        1,
-        "the failed turn's notice still covers the member"
+        notice_state(&c, channel, sender).as_deref(),
+        Some("attempted")
     );
-    assert_eq!(notice_state(&c, channel, sender).as_deref(), Some("posted"));
     assert!(
         failed_at.is_some(),
         "the failed turn opens its own interval"
@@ -3806,7 +3558,7 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     c.runtime.project(&c.env, &session);
     c.store.failed_turn(&session, "failed-turn-2", 2, &input);
     interval_at(&c, &second);
-    assert_eq!(notices(&c, sender), 1);
+    assert_eq!(notices(&c, sender), 2);
 
     let third = c.slack.direct(channel, sender, "When can we release?");
     wait("the third question reaches the same session", || {
@@ -3842,14 +3594,15 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
             .into_iter()
             .all(|message| c.slack.status(channel, message).is_none())
     });
-    assert_eq!(notices(&c, sender), 1);
+    assert_eq!(notices(&c, sender), 2);
 
     set_clock(&clock, first_settled + jiff::SignedDuration::from_hours(1));
     c.runtime.flag("send-failure", true);
     let fourth = c.slack.direct(channel, sender, "Who is on call?");
     set_clock(&clock, interval_at(&c, &fourth) + minute());
     wait("the later outage gets its own notice", || {
-        notices(&c, sender) == 2 && notice_state(&c, channel, sender).as_deref() == Some("posted")
+        notices(&c, sender) == 3
+            && notice_state(&c, channel, sender).as_deref() == Some("attempted")
     });
 
     for message in [&first, &second] {
@@ -3886,7 +3639,7 @@ fn a_blank_reply_supersedes_a_failed_question() {
     c.store.failed_turn(&session, "failed-turn", 1, &input);
     set_clock(&clock, interval_at(&c, &failed) + minute());
     wait("the failed question's notice posted", || {
-        notice_state(&c, channel, sender).as_deref() == Some("posted")
+        notice_state(&c, channel, sender).as_deref() == Some("attempted")
     });
     c.slack.direct(channel, sender, "Did the rotation change?");
     wait("the next question can settle without a reply", || {
@@ -4027,13 +3780,7 @@ fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     c.slack.fate(&notice_text(sender), Fate::Refused, 1);
     set_clock(&clock, at + minute());
     wait("the dropped notice attempt", || {
-        notice_state(&c, channel, sender).as_deref() == Some("posting")
-    });
-    let held = c.slack.held();
-    c.slack.hold_reads();
-    set_clock(&clock, at + jiff::SignedDuration::from_mins(3));
-    wait("the held notice reconciliation read", || {
-        c.slack.held() > held
+        notice_state(&c, channel, sender).as_deref() == Some("attempted")
     });
     c.runtime.show_inputs();
     c.finish_turn(&session, 0, "Ada signed.");
@@ -4042,16 +3789,9 @@ fn an_answer_can_post_while_its_notice_is_being_reconciled() {
         std::time::Duration::from_secs(12),
         || c.slack.posts_beginning("Ada signed.") == 1 && answers_recorded(&c),
     );
-    assert_eq!(
-        notice_state(&c, channel, sender).as_deref(),
-        Some("posting")
-    );
-    c.slack.release_reads();
-    wait(
-        "the absent notice reconciled before its epoch closes",
-        || notice_state(&c, channel, sender).is_none(),
-    );
-    // The next message can be admitted after the held read is released.
+    wait("recovery clears the notice attempt", || {
+        notice_state(&c, channel, sender).is_none()
+    });
     let later = c.slack.direct(channel, sender, "Thanks.");
     wait("intake takes up the next message", || {
         c.runtime.message_count(&session) == 2
@@ -4789,9 +4529,7 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
             "DROP TABLE connector_read_back_seed; DROP TABLE conversation_missed_identities;",
         )
         .unwrap();
-    state
-        .pragma_update(None, "user_version", schema_version() - 1)
-        .unwrap();
+    state.pragma_update(None, "user_version", 25).unwrap();
 
     c.slack.read_back_channels(&["D30"]);
     projected(&c);
