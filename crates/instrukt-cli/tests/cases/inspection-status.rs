@@ -261,7 +261,10 @@ fn filesystem(
 #[test]
 fn strict_inspection_creates_no_files_in_home_or_log_destinations() {
     let mut env = TestEnv::new();
-    env.set_env("XDG_STATE_HOME", env.path("xdg-state").to_str().unwrap());
+    env.set_env(
+        "INSTRUKT_LOG_DIR",
+        env.path("inspection-logs").to_str().unwrap(),
+    );
     let before = filesystem(&env.path(""));
     env.run(env.home(), ["install", "--check", "--json"])
         .success();

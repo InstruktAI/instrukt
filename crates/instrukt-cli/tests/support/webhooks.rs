@@ -54,10 +54,7 @@ impl Receiver {
     }
 
     fn spawn(computer: &Computer, port: u16) -> Result<Self, String> {
-        let log = computer
-            .env
-            .home()
-            .join(".local/state/instrukt-ai/instrukt/webhooks.log");
+        let log = computer.env.log_dir().join("webhooks.log");
         let offset = match std::fs::metadata(&log) {
             Ok(metadata) => metadata.len(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,

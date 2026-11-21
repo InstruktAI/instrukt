@@ -519,12 +519,7 @@ fn a_tick_preserves_a_dirty_canonical_checkout_and_retries_after_clearance() {
         std::fs::read(p.repo.path().join("uncommitted.txt")).unwrap(),
         b"owned by another session"
     );
-    let log = std::fs::read_to_string(
-        p.env
-            .home()
-            .join(".local/state/instrukt-ai/instrukt/tick.log"),
-    )
-    .unwrap();
+    let log = std::fs::read_to_string(p.env.log_dir().join("tick.log")).unwrap();
     let lines = log
         .lines()
         .filter(|l| l.contains("event=canonical_checkout_sync_failed"))
@@ -558,12 +553,7 @@ fn a_tick_preserves_diverged_local_history_instead_of_forcing_main() {
     assert_eq!(p.repo.head(), local);
     assert_ne!(local, delivered);
     assert_eq!(p.repo.git(["rev-parse", "origin/main"]), delivered);
-    let log = std::fs::read_to_string(
-        p.env
-            .home()
-            .join(".local/state/instrukt-ai/instrukt/tick.log"),
-    )
-    .unwrap();
+    let log = std::fs::read_to_string(p.env.log_dir().join("tick.log")).unwrap();
     let lines = log
         .lines()
         .filter(|l| l.contains("event=canonical_checkout_sync_failed"))

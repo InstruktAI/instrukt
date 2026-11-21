@@ -1970,12 +1970,7 @@ fn notice_epochs_and_reconciliation() {
 }
 
 fn run_log(c: &Company) -> String {
-    std::fs::read_to_string(
-        c.env
-            .home()
-            .join(".local/state/instrukt-ai/instrukt/run.log"),
-    )
-    .unwrap_or_default()
+    std::fs::read_to_string(c.env.log_dir().join("run.log")).unwrap_or_default()
 }
 
 /// Make a control member overdue on the operator clock. Seeing their notice

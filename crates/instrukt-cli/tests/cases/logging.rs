@@ -50,11 +50,7 @@ fn a_hook_publication_is_retrievable_and_recorded_in_the_sync_log() {
     );
 
     // This is the public log location the InstruktAI reader discovers.
-    let log = std::fs::read_to_string(
-        env.home()
-            .join(".local/state/instrukt-ai/instrukt/sync.log"),
-    )
-    .unwrap();
+    let log = std::fs::read_to_string(env.log_dir().join("sync.log")).unwrap();
     let read = env
         .run(repo.path(), ["docs", "get", "acme/policy/rules"])
         .success();
@@ -95,7 +91,7 @@ fn an_unwritable_log_directory_keeps_publication_output_and_logs_to_stderr() {
     let credential = "fixture-credential-never-printed";
     let blocked = env.path(&format!("Bearer {credential}"));
     std::fs::write(&blocked, "not a directory").unwrap();
-    env.set_env("XDG_STATE_HOME", blocked.to_str().unwrap());
+    env.set_env("INSTRUKT_LOG_DIR", blocked.to_str().unwrap());
     let output = env.run(repo.path(), ["sync"]).success();
     let path = env.path("");
     let commit = repo.git(["rev-parse", "HEAD"]);
@@ -132,7 +128,7 @@ fn check_redacted_write_failure() {
     let state = project.env.path(&format!("Bearer {credential}"));
     project
         .env
-        .set_env("XDG_STATE_HOME", state.to_str().unwrap());
+        .set_env("INSTRUKT_LOG_DIR", state.to_str().unwrap());
     let clock = project.env.path("log-rotation-clock");
     std::fs::write(&clock, "2030-01-06T00:00:00Z").unwrap();
     let stderr = project.env.path("rotation.stderr");
@@ -146,7 +142,7 @@ fn check_redacted_write_failure() {
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(&stderr).unwrap()),
     );
-    let log = state.join("instrukt-ai/instrukt/run.log");
+    let log = state.join("run.log");
     common::wait_until(
         "the runner writes to its active log",
         Duration::from_secs(30),
