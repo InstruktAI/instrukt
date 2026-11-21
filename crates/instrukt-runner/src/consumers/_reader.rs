@@ -31,7 +31,6 @@ pub(super) struct Reader<'a> {
     pub identity: String,
     gate: &'a Mutex<()>,
     retiring: bool,
-    pub announcements: Option<&'a super::_parking::Announcements>,
 }
 
 impl<'a> Reader<'a> {
@@ -49,7 +48,6 @@ impl<'a> Reader<'a> {
             group: format!("consumer-{}-{}", consumer.name, runtime.computer),
             identity: format!("reader-{}", runtime.computer),
             gate,
-            announcements: None,
         }
     }
 

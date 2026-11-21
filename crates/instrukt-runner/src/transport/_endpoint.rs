@@ -162,8 +162,8 @@ impl Endpoint {
         result.map_err(|error| self.redis_error(error))
     }
 
-    /// One worker owns this short-lived connection. It never borrows a
-    /// reader's slot, even when local and cluster share this endpoint.
+    /// One bounded attempt owns this short-lived connection. It never borrows
+    /// a reader slot, even when local and cluster share this endpoint.
     pub fn run_best_effort<T>(
         &self,
         timeout: Duration,

@@ -25,7 +25,8 @@ description: What instrukt adds to trust-and-guardrails — prerequisites guarde
 - A part that depends on a service outside instrukt — the runtime, Slack, Redis,
   the network, a model provider — retries until it returns and reports its state
   to the operator, except for the best-effort unavailable notices governed by
-  `project/instrukt/spec/feature/company/conversations`. Any other failure of a
+  `project/instrukt/spec/feature/company/conversations` and dead-letter
+  announcements governed by `project/instrukt/spec/feature/runner/event-consumers`. Any other failure of a
   part is a defect to fix in the code.
 - A person writing to a company's agent may be told about their request and about
   their own world — a service of theirs that is unreachable, the assistant being

@@ -61,23 +61,26 @@ parked. Invocation shutdown retains pending obligations for the next drain.
 Malformed envelopes enter this failure path with original raw evidence.
 
 At the attempt ceiling the consumer persists a dead-letter record on its failing
-Redis and ACKs the original before queuing `instrukt.system.event.dead_lettered`.
-The record names consumer and source coordinate, retains original envelope or raw
-entry, and records attempts, first/last attempt and failure details. The
-announcement names the consumer and parked entry, uses a stream-entry subject
-and none origin, and is a declared stateless fact. It never states successful
-business handling. Parking advances settled accounting only after the persist
-and the ACK succeed. A failed persist or ACK remains unsettled and retries
-unfinished parking before later entries; already completed stages remain
-recognizable after interruption. A bounded worker records the complete
-announcement intent in the settled outcome before sending on its own Redis
-connection. Reader connections stay available even when both scopes use one
-endpoint. One Redis script checks the receipt, then appends and records it
-only when it is absent. The worker replays open intents with the same script,
-so a lost reply can be recovered without a duplicate while the receipt is
-retained. Status counts
-unannounced dead letters and reports abandoned announcements separately.
-Other groups keep their own progress.
+Redis, records the parking stage, ACKs the original and commits settlement. The
+record names consumer and source coordinate, retains original envelope or raw
+entry, and records attempts, first/last attempt and failure details. A failed
+persist or ACK remains unsettled and resumes unfinished parking before later
+entries; completed stages remain recognizable after interruption.
+
+After settlement, one best-effort local XADD attempts to announce
+`instrukt.system.event.dead_lettered`. It preserves the consumer, parked entry,
+stream-entry subject, causation and none origin as a declared stateless fact;
+it never states successful business handling. Recursive announcement of a failed
+dead-letter announcement is suppressed. The inline attempt uses one short-lived
+connection with the transport's short operation bound and borrows no reader slot,
+including when local and cluster share an endpoint. Later work can pay this one
+finite attempt. A failed call, lost reply, process interruption or failed local
+confirmation never reopens settlement or schedules replay.
+
+The settled outcome stays unannounced until an XADD response is confirmed in
+SQLite. Status counts this conservative lack of confirmation, including an append
+that might already have happened. Parking evidence remains inspectable. Other
+groups keep their own progress; no announcement worker or intent journal runs.
 
 A reaction that panics is caught where it is called: the entry counts a failed
 attempt, as any failure does, and the reader goes on.
@@ -166,7 +169,7 @@ Then selection is identical and only the selected reaction interprets data
 Given a developer has an event that fails through the attempt ceiling, including a malformed entry
 When parking succeeds
 Then its original evidence and failure facts are inspectable as that consumer's dead letter
-And later entries proceed even while its announcement is waiting for local Redis
+And later entries proceed after at most one bounded best-effort announcement attempt
 And a dead letter that could not be announced is counted in status
 But a failed persist or ACK leaves it unsettled and resumes the unfinished stages after interruption
 ```
@@ -202,11 +205,9 @@ And the developer can read that procedure and sees the broken entry named in the
 
 - Duplicate protection lasts seven days and replay lasts only while Redis retains payloads. This is no permanent exactly-once business-effect contract.
 - UC-EC11 and UC-EC12's TeleClaude notification/correlation goals have no admitted instrukt consumers in this port and are not imported or repurposed.
-- An interruption before recording announcement intent leaves the recovered
-  parking unannounced. An older receipt-only intent can be confirmed by its
-  receipt. If the receipt is absent, the intent retires unannounced because
-  the payload is unavailable. The dead letter remains inspectable. Receipt
-  retention is defined in [event transport](event-transport.md).
+- An interruption or lost append response can leave a settled dead letter counted
+  as unannounced even if its announcement reached Redis. It is not replayed; the
+  durable dead letter remains inspectable.
 
 ## See Also
 

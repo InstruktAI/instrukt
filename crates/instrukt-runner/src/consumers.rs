@@ -213,15 +213,12 @@ impl ConsumerRuntime {
     /// One bounded pending-first opportunity for every independent reader.
     pub fn drain(&self, now: Timestamp) {
         std::thread::scope(|threads| {
-            let (send, receive) = std::sync::mpsc::sync_channel(_parking::ANNOUNCEMENT_QUEUE);
-            threads.spawn(move || _parking::announce(self, receive));
             for ((consumer, gate), sources) in
                 self.consumers.iter().zip(&self.gates).zip(&self.sources)
             {
                 for source in sources {
                     let source = source.clone();
-                    let send = send.clone();
-                    threads.spawn(move || { let mut reader = _reader::Reader::new(self, consumer, gate, source); reader.announcements = Some(&send); if let Err(error) = reader.drain(now, TICK_ENTRY_BUDGET) { tracing::warn!(event = "consumer_drain_failed", consumer = %consumer.name, error = %error); } });
+                    threads.spawn(move || { let reader = _reader::Reader::new(self, consumer, gate, source); if let Err(error) = reader.drain(now, TICK_ENTRY_BUDGET) { tracing::warn!(event = "consumer_drain_failed", consumer = %consumer.name, error = %error); } });
                 }
             }
         });
@@ -240,15 +237,7 @@ impl ConsumerRuntime {
         let mut workers = ConsumerWorkers {
             stop,
             threads: Vec::new(),
-            announcement: None,
         };
-        let (send, receive) = std::sync::mpsc::sync_channel(_parking::ANNOUNCEMENT_QUEUE);
-        let runtime = self.clone();
-        workers.announcement = Some(
-            std::thread::Builder::new()
-                .name("dead-letter-announcements".into())
-                .spawn(move || _parking::announce(&runtime, receive))?,
-        );
         for ((consumer, gate), sources) in self.consumers.iter().zip(&self.gates).zip(&self.sources)
         {
             for source in sources {
@@ -258,10 +247,8 @@ impl ConsumerRuntime {
                 let gate = Arc::clone(gate);
                 let stop = Arc::clone(&workers.stop);
                 let clock = Arc::clone(&clock);
-                let send = send.clone();
                 let thread = std::thread::Builder::new().name(format!("event-{}", consumer.name)).spawn(move || {
-                    let mut reader = _reader::Reader::new(&runtime, &consumer, &gate, source);
-                    reader.announcements = Some(&send);
+                    let reader = _reader::Reader::new(&runtime, &consumer, &gate, source);
                     while !stop.requested.load(Ordering::Acquire) {
                         match reader.drain(clock(), TICK_ENTRY_BUDGET) {
                             Ok(_reader::DrainState::BudgetUsed) => continue,
@@ -291,7 +278,6 @@ struct Stop {
 pub struct ConsumerWorkers {
     stop: Arc<Stop>,
     threads: Vec<JoinHandle<()>>,
-    announcement: Option<JoinHandle<()>>,
 }
 
 impl ConsumerWorkers {
@@ -311,12 +297,7 @@ impl ConsumerWorkers {
         self.request_stop();
         let deadline = Instant::now() + _sources::HANDOVER_WAIT;
         loop {
-            if self
-                .threads
-                .iter()
-                .chain(&self.announcement)
-                .all(JoinHandle::is_finished)
-            {
+            if self.threads.iter().all(JoinHandle::is_finished) {
                 return true;
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -335,13 +316,6 @@ impl Drop for ConsumerWorkers {
             if thread.join().is_err() {
                 tracing::error!(event = "consumer_reader_panicked");
             }
-        }
-        if self
-            .announcement
-            .take()
-            .is_some_and(|worker| worker.join().is_err())
-        {
-            tracing::error!(event = "dead_letter_announcement_worker_panicked");
         }
     }
 }
@@ -385,12 +359,6 @@ pub(crate) fn status(
             .map_err(crate::state::sql(path))
         })?
         .unwrap_or(0);
-    let abandoned_announcements = state.read(|conn, path| {
-        conn.query_row(
-            "SELECT count(*) FROM consumer_outcomes WHERE json_extract(outcome, '$.parked.announcement_abandoned') = 1",
-            [], |row| row.get::<_, u64>(0),
-        ).map_err(crate::state::sql(path))
-    })?.unwrap_or(0);
     let transitions = state.read(|conn, path| {
         let mut statement = conn.prepare(
             "SELECT worker, failure, since FROM runner_workers WHERE worker LIKE ?1 ORDER BY worker",
@@ -425,7 +393,6 @@ pub(crate) fn status(
         "settled_without_activation": settled_without_activation,
         "unannounced_dead_letters": unannounced,
         "abandoned_sources": abandoned,
-        "abandoned_announcements": abandoned_announcements,
         "pending_source_transitions": transitions,
     }))
 }

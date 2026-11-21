@@ -408,7 +408,16 @@ mod tests {
         for version in [9, 11, 12] {
             let mut conn = Connection::open_in_memory().unwrap();
             conn.pragma_update(None, "foreign_keys", true).unwrap();
-            migrate(&mut conn, path).unwrap();
+            // The last schema retaining announcement intents and their index.
+            for migration in _schema::MIGRATIONS.iter().take(29) {
+                let tx = conn.transaction().unwrap();
+                match migration {
+                    _schema::Migration::Sql(script) => tx.execute_batch(script),
+                    _schema::Migration::Step(step) => step(&tx),
+                }
+                .unwrap();
+                tx.commit().unwrap();
+            }
 
             // The historical reservation fixture restores the pre-link schema.
             // All three fixture versions restore poll deferrals without a cause.
@@ -428,6 +437,12 @@ mod tests {
             )
             .unwrap();
 
+            let parked = serde_json::json!({"parked": {
+                "destination": "instrukt:events:dlq", "entry_id": "1-0", "announced": false,
+                "announcement_source": "former", "announcement_receipt": "old-receipt",
+                "announcement_payload": "{}", "announcement_abandoned": true
+            }});
+            conn.execute("INSERT INTO consumer_outcomes VALUES('consumer','former','instrukt:events','1-0',?1,'2026-11-05T00:00:00Z')", [parked.to_string()]).unwrap();
             migrate(&mut conn, path).unwrap_or_else(|error| panic!("schema {version}: {error}"));
             assert_eq!(user_version(&conn, path).unwrap(), schema_version());
             let retained: bool = conn.query_row(
@@ -441,7 +456,20 @@ mod tests {
                 [],
                 |row| row.get(0),
             ).unwrap();
-            assert_eq!(indexes, 1);
+            assert_eq!(indexes, 0);
+            let outcome: String = conn
+                .query_row(
+                    "SELECT outcome FROM consumer_outcomes WHERE consumer='consumer'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&outcome).unwrap(),
+                serde_json::json!({"parked": {
+                    "destination": "instrukt:events:dlq", "entry_id": "1-0", "announced": false
+                }})
+            );
         }
     }
 

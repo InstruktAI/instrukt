@@ -362,19 +362,15 @@ stage recovery retain enough identity to recognize completed stages after a
 crash; no later event settles past unfinished parking. Raw malformed entries
 remain diagnosable at the transport boundary.
 
-**`consumer_outcomes`** — a parked outcome can carry an open announcement
-intent with the destination Redis identity, deterministic receipt key and
-complete encoded announcement. The worker records the intent before sending.
-A partial SQLite index covers only open intents, with a limit of 1,024
-on the computer. At the limit, the newly parked outcome remains unannounced
-and no append is attempted. Recovery takes up to 32 entries per sweep, in
-oldest-settled order. The runner keeps the last position in
-`state/announcement-recovery-cursor` across scheduled ticks and wraps
-after the final page. Recording a confirmed append retires the intent before
-the worker tries to delete its Redis receipt. Receipt deletion is best effort.
-The receipt expires seven days after the append or the most recent retry that
-finds it. A destination that is no longer configured retires the intent as
-abandoned and keeps that fact on the outcome for status.
+**`consumer_outcomes`** — parked coordinates and their `announced` confirmation
+remain after durable settlement. The announcement is attempted once afterwards;
+only a successful append response followed by a state transaction sets the
+boolean. Failure or interruption leaves a conservative unannounced count and
+never creates replay work. Migration retires the open-announcement index and
+announcement source, receipt, payload and abandonment metadata, preserving base
+parking coordinates, outcomes, cursors, failures and confirmation booleans. The
+same normalization applies to in-progress parking records before consumption.
+Old open announcements get no final replay. The former recovery cursor is inert.
 
 **`runner_workers`** — current worker failures, deferred consumer source
 transitions and keyed-start findings. A keyed-start finding keeps its first

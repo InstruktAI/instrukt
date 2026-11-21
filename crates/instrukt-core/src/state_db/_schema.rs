@@ -40,6 +40,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v27),
     Step(v28),
     Step(v29),
+    Sql(V30),
 ];
 
 /// Version 28: only successful post responses confirm retained answer pieces.
@@ -68,6 +69,17 @@ fn v28(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
         DROP TABLE conversation_answers;
         ALTER TABLE conversation_answers_v28 RENAME TO conversation_answers;"))
 }
+
+/// Version 30: settled parking retains confirmation without announcement replay state.
+const V30: &str = "
+DROP INDEX IF EXISTS consumer_open_announcements;
+UPDATE consumer_outcomes SET outcome=json_remove(outcome,
+    '$.parked.announcement_source', '$.parked.announcement_receipt',
+    '$.parked.announcement_payload', '$.parked.announcement_abandoned');
+UPDATE event_parking SET outcome=json_remove(outcome,
+    '$.parked.announcement_source', '$.parked.announcement_receipt',
+    '$.parked.announcement_payload', '$.parked.announcement_abandoned');
+";
 
 fn v27(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     let state_present: bool = tx.query_row(
