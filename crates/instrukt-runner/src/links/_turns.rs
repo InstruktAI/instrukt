@@ -183,7 +183,7 @@ mod tests {
         ] {
             let framed = format!(
                 "{}\n{}",
-                envelopes::context(token, &[], false, false),
+                envelopes::context(token, &[], false),
                 envelopes::member(connector, conversation, author, None, token, text)
             );
             let output = relayed(A, vec![contribution(AuthorKind::Human, framed)]);
