@@ -782,8 +782,7 @@ fn notice_worker(
     });
 }
 
-/// Read back the post outside the conversation lock, then decide and post
-/// under the lock shared with answers.
+/// Decide durably, then make one best-effort provider post without an answer lock.
 fn deliver_notice(
     home: &Home,
     reach: Reach<'_>,
@@ -798,41 +797,18 @@ fn deliver_notice(
             return;
         }
     };
-    let text = connector.unavailable_notice(&notice.sender);
-    let reconciliation = if notice.posting {
-        let read_at = reach.connectors.now();
-        let Some(post_id) = &notice.post_id else {
-            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_missing_post_identity", company = %company, connector = key);
-            return;
-        };
-        match connector.post_receipt(&notice.conversation, &notice.since_message, post_id) {
-            Ok(receipt) => Some((read_at, receipt)),
-            // Not knowing whether it landed, nothing is posted now.
-            Err(error) => {
-                tracing::warn!(target: LOG_TARGET, event = "conversation_notice_unread", company = %company, connector = key, error = %error.cause);
-                return;
-            }
-        }
-    } else {
-        None
-    };
-    let lock = conversations::post_lock(company, key, &notice.conversation);
-    let _held = lock
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let step = conversations::notice_step(
         home,
         company,
         key,
         notice,
-        reconciliation,
         reach.accepted,
         reach.connectors.now(),
     );
     let result = match step {
-        Ok(conversations::NoticeStep::Post(post_id)) => {
+        Ok(conversations::NoticeStep::Post) => {
             let outcome = connector
-                .answer(&notice.conversation, &text, &post_id)
+                .unavailable_notice(&notice.conversation, &notice.sender)
                 .map_err(|error| error.cause);
             tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
             conversations::notice_posted(
@@ -1343,8 +1319,8 @@ mod test_connector {
         fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
             Ok(())
         }
-        fn unavailable_notice(&self, member: &str) -> String {
-            format!("{member}: unavailable")
+        fn unavailable_notice(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
+            Ok(())
         }
         fn place(&self, conversation: &str, message: &str) -> Place {
             if self.per_message {

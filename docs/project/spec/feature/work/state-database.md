@@ -710,7 +710,7 @@ and `message`, the connector's identity of that message.
 | `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice coverage without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
+| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice eligibility without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The captured earlier messages with provider IDs and the context limit, how far an early read was complete, whether more context must be read, the delivery boundary, and the framed input. These fields are null until capture. The framed input is set to the selected context before an attempt and retained through uncertain acceptance. |
 | `context_delivery_ids` | The provider IDs selected for the most recent attempted input. The delivery transaction uses these IDs to write the receipts. |
@@ -770,25 +770,17 @@ before it is posted again. A rejected retry preserves earlier attempts unless
 a read started after their latest request's timeout and found no post
 (`project/instrukt/spec/feature/company/conversations`).
 
-**`conversation_refusals`** — the platform's own replies owed to a sender in a
-conversation (`project/instrukt/spec/feature/company/conversations`). Key: the
-address, `sender` and `reason`: `not_own`, the one fixed reply to a sender the agent
-does not answer, or `unavailable`, the one notice of the sender's current epoch.
-Columns: `received_at`; `state` for `unavailable`: `owed`, `posting` (a post was
-sent, its effect possibly in flight) with `attempted_at`, or `posted`; `post_id`,
-the notice's opaque identity, allocated before its first post and reused
-until the epoch ends; `covered_positions`, the admission positions that
-made the notice due; `replied_at`,
-when the connector accepted the reply, `NULL` while outstanding; `failure`. The row
-records the decision, never proof of delivery. An `unavailable` row is retired
-only when every covered position has settled and any attempted notice is
-reconciled. A posted answer, a successful empty turn, a delivery-unknown
-resolution or a superseded failure can settle a position. `not_own` rows stay.
-
-A notice's `anchor_message` retains the provider id at the start of its
-read-back range. Its admission coverage remains available to reconcile the
-notice after a superseded failed message is pruned. Pruning applies only to
-settled positions.
+**`conversation_refusals`** — the platform's fixed replies and best-effort
+unavailable-notice attempts (`project/instrukt/spec/feature/company/conversations`).
+Key: the address, `sender` and `reason`: `not_own` for the fixed refusal, or
+`unavailable` for the person's current conversation outage. Columns:
+`received_at`, `attempted_at`, `replied_at` and `failure`. For an unavailable
+notice, the attempt timestamp is recorded atomically before provider I/O and
+suppresses every further attempt in that outage, regardless of the response.
+Recovery of the person's no-work interval retires that marker. `not_own` rows
+and their reply records remain. Migration preserves old posting/posted attempts
+and known reply times while removing notice phases, reserved post ids, anchors
+and admission coverage; an old unattempted notice remains eligible.
 
 **`connector_states`** — one row per declared connector. Key:
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,

@@ -1105,8 +1105,10 @@ impl Connector for Slack {
         self.api.post(conversation, TURN_AWAY).map_err(failed)
     }
 
-    fn unavailable_notice(&self, member: &str) -> String {
-        format!("<@{member}> {NOTICE}")
+    fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError> {
+        self.api
+            .post(conversation, &format!("<@{member}> {NOTICE}"))
+            .map_err(failed)
     }
 
     /// A channel conversation's thread; a direct message's addressed message.

@@ -513,7 +513,7 @@ fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
         c.slack
             .posts()
             .iter()
-            .any(|post| post.markdown.as_deref() == Some(notice.as_str()))
+            .any(|post| post.text.as_deref() == Some(notice.as_str()))
     });
     assert_eq!(c.slack.posts().len(), 1);
     assert!(c.sessions().is_empty());

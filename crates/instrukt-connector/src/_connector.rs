@@ -53,7 +53,7 @@ pub trait Connector: Send + Sync {
         excluded: &std::collections::HashSet<String>,
         readable: &dyn Fn(ContextSnapshot),
     ) -> Result<Captured, ConnectorError>;
-    /// Post an answer piece or notice with its durable identity, returning
+    /// Post an answer piece with its durable identity, returning
     /// the provider's posting time when its receipt has one.
     fn answer(
         &self,
@@ -80,11 +80,9 @@ pub trait Connector: Send + Sync {
     ) -> Result<Option<Timestamp>, ConnectorError>;
     /// Post the connector's fixed reply to someone who is not answered.
     fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
-    /// The one notice that the assistant is temporarily unavailable, worded
-    /// by the connector and beginning with `member`'s mention; it is posted
-    /// through [`Connector::answer`] and reconciled by
-    /// [`Connector::post_receipt`].
-    fn unavailable_notice(&self, member: &str) -> String;
+    /// Make one bounded post of the connector's fixed unavailable notice,
+    /// beginning with `member`'s mention. The caller records the attempt first.
+    fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError>;
     /// Where the status for `message` of `conversation` sits.
     fn place(&self, conversation: &str, message: &str) -> Place;
     /// Show `state` at `place`, or clear what is shown there with `None`;
