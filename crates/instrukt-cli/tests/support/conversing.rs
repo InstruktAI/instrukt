@@ -205,6 +205,38 @@ pub fn slack_settings(members: &str, extra: &str) -> String {
     )
 }
 
+/// Publishes the procedure conversations start from: one declaring the
+/// role `company-agent`, in a domain of a docs project of its own. The
+/// docs project keeps no history, so it adds no installation demand of
+/// its own to the computer.
+pub fn publish_company_procedure(env: &TestEnv) {
+    let docs = documented::project(
+        env,
+        "assistance-docs",
+        &[
+            (
+                "instrukt.yaml",
+                format!(
+                    "schema_version: {}\nproject: assistance-docs\nmodules: {{history: false, todos: false}}\n",
+                    instrukt_core::config::CURRENT_SCHEMA_VERSION
+                ),
+            ),
+            (
+                "docs/domain/assistance/procedure/company-assistance.md",
+                documented::snippet(
+                    "procedure",
+                    "Company Assistance",
+                    "Assist a company's people in their conversations.",
+                    "role: company-agent\n",
+                    &[],
+                    "Carry out the message that addresses you.\n",
+                ),
+            ),
+        ],
+    );
+    documented::sync(env, &docs);
+}
+
 impl Company {
     /// A company whose Slack connector declares `extra` fields, on a
     /// computer with conversations switched on.
@@ -222,36 +254,8 @@ impl Company {
         company
     }
 
-    /// Publishes the procedure conversations start from: one declaring the
-    /// role `company-agent`, in a domain of a docs project of its own. The
-    /// docs project keeps no history, so it adds no installation demand of
-    /// its own to the computer.
     pub fn publish_procedure(&self) {
-        let docs = documented::project(
-            &self.env,
-            "assistance-docs",
-            &[
-                (
-                    "instrukt.yaml",
-                    format!(
-                        "schema_version: {}\nproject: assistance-docs\nmodules: {{history: false}}\n",
-                        instrukt_core::config::CURRENT_SCHEMA_VERSION
-                    ),
-                ),
-                (
-                    "docs/domain/assistance/procedure/company-assistance.md",
-                    documented::snippet(
-                        "procedure",
-                        "Company Assistance",
-                        "Assist a company's people in their conversations.",
-                        "role: company-agent\n",
-                        &[],
-                        "Carry out the message that addresses you.\n",
-                    ),
-                ),
-            ],
-        );
-        documented::sync(&self.env, &docs);
+        publish_company_procedure(&self.env);
     }
 
     /// The company as [`Self::on`] makes it, on a computer where no

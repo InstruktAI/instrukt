@@ -103,7 +103,9 @@ disconnected at the wake that admits the change
 (`project/instrukt/spec/feature/runner/work-dispatch`: the runner works from its
 admitted configuration). At admission the connector reads the scopes Slack names
 for its bot token; one the manifest requires that is missing withholds the
-connector with a finding naming it
+connector with a finding naming it. If Slack cannot provide the scope list,
+the connector retries the check before connecting. Scope findings appear
+in operator status and send no message to members
 (`project/instrukt/spec/feature/configuration/company-homes`). A token Slack
 refuses later is retried and reported like a lost connection.
 

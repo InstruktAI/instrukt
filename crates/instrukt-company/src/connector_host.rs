@@ -52,20 +52,50 @@ pub trait Connectors: Send + Sync {
         company: &ProjectSlug,
         key: &str,
     ) -> Result<Box<dyn Connector>, ConnectorError>;
+    fn ready(&self, _admitted: &Admitted, _company: &ProjectSlug, _key: &str) -> bool {
+        true
+    }
+    fn set_ready(&self, _company: &ProjectSlug, _key: &str, _identity: Option<ConnectorIdentity>) {}
+
     /// The time now on the runner's clock.
     fn now(&self) -> Timestamp;
 }
 
 /// The kinds built into this process, each built once when the runner
 /// starts, and the runner's clock.
+#[derive(Clone, PartialEq)]
+pub struct ConnectorIdentity {
+    entry: Value,
+    secrets: AdmittedSecrets,
+}
+
+fn identity(admitted: &Admitted, company: &ProjectSlug, key: &str) -> Option<ConnectorIdentity> {
+    let company = admitted.company(company)?;
+    let declared = company
+        .connectors
+        .iter()
+        .find(|connector| connector.key == key)?;
+    Some(ConnectorIdentity {
+        entry: declared.entry.clone(),
+        secrets: company.secrets.clone(),
+    })
+}
+
+type ConnectorKey = (ProjectSlug, String);
+
 pub struct Directory {
     kinds: Vec<Box<dyn Kind>>,
     clock: Clock,
+    ready: std::sync::Mutex<std::collections::HashMap<ConnectorKey, ConnectorIdentity>>,
 }
 
 impl Directory {
     pub fn new(kinds: Vec<Box<dyn Kind>>, clock: Clock) -> Self {
-        Self { kinds, clock }
+        Self {
+            kinds,
+            clock,
+            ready: Default::default(),
+        }
     }
 }
 
@@ -97,6 +127,29 @@ impl Connectors for Directory {
             &declared_values(&declared.entry),
             &AdmittedResolver(&admitted_company.secrets),
         )
+    }
+
+    fn ready(&self, admitted: &Admitted, company: &ProjectSlug, key: &str) -> bool {
+        let ready = self
+            .ready
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ready
+            .get(&(company.clone(), key.to_owned()))
+            .is_some_and(|known| identity(admitted, company, key).as_ref() == Some(known))
+    }
+
+    fn set_ready(&self, company: &ProjectSlug, key: &str, identity: Option<ConnectorIdentity>) {
+        let mut ready = self
+            .ready
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = (company.clone(), key.to_owned());
+        if let Some(identity) = identity {
+            ready.insert(key, identity);
+        } else {
+            ready.remove(&key);
+        }
     }
 
     fn now(&self) -> Timestamp {
@@ -148,6 +201,8 @@ struct Hosted {
     company: ProjectSlug,
     key: String,
     thread: Option<std::thread::JoinHandle<()>>,
+    identity: ConnectorIdentity,
+    stop: Arc<AtomicBool>,
 }
 
 /// Where a connection reaches its company: the admitted generation current
@@ -165,10 +220,11 @@ pub struct Connections {
     current: Current,
     connectors: Arc<dyn Connectors>,
     accepted: Arc<conversations::Accepted>,
-    stop: Arc<AtomicBool>,
     wake: SyncSender<()>,
     supervise: SyncSender<()>,
     hosted: Vec<Hosted>,
+    observed: std::collections::HashSet<ConnectorKey>,
+    published: Vec<(String, String)>,
 }
 
 impl Connections {
@@ -188,36 +244,27 @@ impl Connections {
             current: current.clone(),
             connectors,
             accepted,
-            stop: Arc::new(AtomicBool::new(false)),
             wake,
             supervise,
             hosted: Vec::new(),
+            observed: Default::default(),
+            published: Vec::new(),
         };
-        let demand = conversations::admitted_demand(&current.get());
-        let hosted: Vec<(String, String)> = demand
-            .iter()
-            .map(|(company, key)| (company.to_string(), key.clone()))
-            .collect();
-        if let Err(error) = instrukt_runner::runner::publish_hosted(home, &hosted) {
-            tracing::warn!(target: LOG_TARGET, event = "connector_hosting_unpublished", error = %error);
-        }
-        for (company, key) in demand {
-            let thread = connections.spawn(&company, &key);
-            connections.hosted.push(Hosted {
-                company,
-                key,
-                thread,
-            });
-        }
+        connections.check();
         Ok(connections)
     }
 
-    fn spawn(&self, company: &ProjectSlug, key: &str) -> Option<std::thread::JoinHandle<()>> {
+    fn spawn(
+        &self,
+        company: &ProjectSlug,
+        key: &str,
+        identity: ConnectorIdentity,
+        stop: Arc<AtomicBool>,
+    ) -> Option<std::thread::JoinHandle<()>> {
         let home = self.home.clone();
         let current = self.current.clone();
         let connectors = Arc::clone(&self.connectors);
         let accepted = Arc::clone(&self.accepted);
-        let stop = Arc::clone(&self.stop);
         let wake = self.wake.clone();
         let notice = ExitNotice(self.supervise.clone());
         let company = company.clone();
@@ -231,7 +278,13 @@ impl Connections {
                     connectors: &connectors,
                     accepted: &accepted,
                 };
-                connection(&home, reach, &company, &key, &stop, &wake);
+                admit_connector(&home, reach, &company, &key, &stop);
+                if !stop.load(Ordering::Acquire) {
+                    connectors.set_ready(&company, &key, Some(identity));
+                    let _ = wake.try_send(());
+                    connection(&home, reach, &company, &key, &stop, &wake);
+                }
+                connectors.set_ready(&company, &key, None);
             });
         match spawned {
             Ok(thread) => Some(thread),
@@ -242,43 +295,136 @@ impl Connections {
         }
     }
 
-    /// Restart every connection whose thread ended unexpectedly, retaining
-    /// the cause as that connector's failure.
+    /// Reconcile hosted connections with the admitted generation.
     pub fn check(&mut self) {
-        for index in 0..self.hosted.len() {
-            let ended = self.hosted[index]
+        let admitted = self.current.get();
+        let declared = conversations::demand(&self.home).unwrap_or_default();
+        self.observed.retain(|(company, key)| {
+            declared
+                .iter()
+                .any(|(owner, entry)| owner == company && entry.key == *key)
+        });
+        for (company, declared) in declared {
+            if self
+                .observed
+                .insert((company.clone(), declared.key.clone()))
+                && let Err(error) = conversations::read_back::observe(
+                    &self.home,
+                    &company,
+                    &declared.key,
+                    self.connectors.now(),
+                )
+            {
+                self.observed.remove(&(company, declared.key));
+                tracing::warn!(target: LOG_TARGET, event = "connector_read_back_unrecorded", %error);
+            }
+        }
+        let demand = conversations::admitted_demand(&admitted);
+        for hosted in &self.hosted {
+            if identity(&admitted, &hosted.company, &hosted.key).as_ref() != Some(&hosted.identity)
+            {
+                self.connectors
+                    .set_ready(&hosted.company, &hosted.key, None);
+                hosted.stop.store(true, Ordering::Release);
+            }
+        }
+        self.hosted.retain_mut(|hosted| {
+            if hosted
                 .thread
                 .as_ref()
-                .is_none_or(std::thread::JoinHandle::is_finished);
-            if !ended || self.stop.load(Ordering::Acquire) {
+                .is_some_and(|thread| !thread.is_finished())
+            {
+                return true;
+            }
+            self.connectors
+                .set_ready(&hosted.company, &hosted.key, None);
+            if let Some(thread) = hosted.thread.take()
+                && thread.join().is_err()
+            {
+                state(
+                    &self.home,
+                    &hosted.company,
+                    &hosted.key,
+                    ConnectionState::Failed,
+                    Some("the connector's worker stopped unexpectedly; restarted"),
+                );
+            }
+            false
+        });
+        for (company, key) in demand {
+            if self
+                .hosted
+                .iter()
+                .any(|hosted| hosted.company == company && hosted.key == key)
+            {
                 continue;
             }
-            let cause = match self.hosted[index]
-                .thread
-                .take()
-                .map(std::thread::JoinHandle::join)
-            {
-                Some(Err(_)) => "the connection's intake panicked; restarted",
-                _ => "the connection's intake stopped unexpectedly; restarted",
+            let Some(identity) = identity(&admitted, &company, &key) else {
+                continue;
             };
-            let hosted = &self.hosted[index];
-            tracing::error!(target: LOG_TARGET, event = "connector_intake_stopped", company = %hosted.company, connector = %hosted.key, cause);
-            state(
-                &self.home,
-                &hosted.company,
-                &hosted.key,
-                ConnectionState::Failed,
-                Some(cause),
-            );
-            let thread = self.spawn(&hosted.company, &hosted.key);
-            self.hosted[index].thread = thread;
+            let stop = Arc::new(AtomicBool::new(false));
+            let thread = self.spawn(&company, &key, identity.clone(), Arc::clone(&stop));
+            self.hosted.push(Hosted {
+                company,
+                key,
+                thread,
+                identity,
+                stop,
+            });
         }
+        let hosted: Vec<_> = self
+            .hosted
+            .iter()
+            .filter(|hosted| !hosted.stop.load(Ordering::Acquire))
+            .map(|hosted| (hosted.company.to_string(), hosted.key.clone()))
+            .collect();
+        if hosted != self.published {
+            match instrukt_runner::runner::publish_hosted(&self.home, &hosted) {
+                Ok(()) => self.published = hosted,
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, event = "connector_hosting_unpublished", %error)
+                }
+            }
+        }
+    }
+}
+
+fn admit_connector(
+    home: &Home,
+    reach: Reach<'_>,
+    company: &ProjectSlug,
+    key: &str,
+    stop: &AtomicBool,
+) {
+    let mut delay = Duration::from_secs(1);
+    while !stop.load(Ordering::Acquire) {
+        let result = reach
+            .connectors
+            .open(&reach.current.get(), company, key)
+            .and_then(|connector| connector.check_permissions());
+        match result {
+            Ok(()) => return,
+            Err(error) => state(
+                home,
+                company,
+                key,
+                ConnectionState::Failed,
+                Some(&error.cause),
+            ),
+        }
+        let until = Instant::now() + delay;
+        while Instant::now() < until && !stop.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        delay = (delay * 2).min(Duration::from_secs(60));
     }
 }
 
 impl Drop for Connections {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        for hosted in &self.hosted {
+            hosted.stop.store(true, Ordering::Release);
+        }
         for hosted in &mut self.hosted {
             if let Some(thread) = hosted.thread.take()
                 && thread.join().is_err()

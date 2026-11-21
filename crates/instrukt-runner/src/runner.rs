@@ -351,11 +351,7 @@ pub fn run(
     // connector: its connections start first, building each connector kind
     // once; a setting a kind refuses stops the runner here. The relay then
     // serves its conversations beside links.
-    let company = cx
-        .wiring
-        .company
-        .as_ref()
-        .filter(|company| company.demand(&current.get()));
+    let company = cx.wiring.company.as_ref();
     let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
     let mut connections = match company {
         Some(company) => Some(
@@ -411,9 +407,6 @@ pub fn run(
         // began, however long its work takes.
         let woke_at = clock();
         supervise_relay(&mut relay);
-        if let Some(connections) = &mut connections {
-            connections.check();
-        }
         // Every wake admits the files again; an invalid change leaves the
         // current generation in force and is reported.
         match Admitted::load(cx.home) {
@@ -430,6 +423,9 @@ pub fn run(
                 tracing::warn!(event = "configuration_kept", error = %error);
                 crate::state::admission_outcome(cx.home, clock(), false);
             }
+        }
+        if let Some(connections) = &mut connections {
+            connections.check();
         }
         let admitted = current.get();
         if let Some(readiness) = &readiness {
