@@ -2227,7 +2227,7 @@ fn notice_epochs_and_reconciliation() {
     assert_eq!(notices(&c, sender), 1);
     // The control conversation has Anna's one notice; her failed attempt here stays suppressed.
     assert_eq!(notices(&c, other), 1);
-    c.runtime.flag("list-failure", false);
+    c.runtime.flag("start-failure", false);
 
     c.runner_dies();
     std::fs::remove_dir(&database).unwrap();
