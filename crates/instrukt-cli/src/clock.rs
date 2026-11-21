@@ -6,8 +6,8 @@
 //! clock. It is never silent: while it is set, every command says so on
 //! stderr. An unparseable value refuses the command rather than falling back
 //! to the system clock. A file is read again on each request for the time,
-//! and the limits on the programs instrukt starts are measured on it. The
-//! first reading must succeed. After that, a failed reading advances the
+//! independently of monotonic process and I/O limits. The first reading
+//! must succeed. After that, a failed reading advances the
 //! last valid value by elapsed monotonic time.
 
 use std::io::Write;
@@ -115,8 +115,6 @@ impl Clock {
                         "instrukt: clock overridden to the time in {}",
                         clock.path.display()
                     );
-                    let limits = Arc::clone(&clock);
-                    instrukt_core::process::measure_limits_on(Box::new(move || Ok(limits.now())));
                     *shared = Some(Arc::clone(&clock));
                     return Ok(Clock::File(clock));
                 }

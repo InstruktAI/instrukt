@@ -346,17 +346,17 @@ refuses the command; it never falls back to the system clock.
 
 `INSTRUKT_NOW=@<path>` takes the time from a file instead. The file holds one
 RFC 3339 time and is read again each time the command asks for the time, so a
-verification can move the clock while a command runs. In this form the time
-limits instrukt gives the programs it starts are measured on that clock as
-well. A file that is missing or holds no RFC 3339 time when the command starts
+verification can move the clock while a command runs. A file that is missing
+or holds no RFC 3339 time when the command starts
 refuses the command. One that becomes unreadable later keeps time running from the
 last valid reading, advanced by elapsed monotonic time since that reading.
-The command clock and the process-limit clock use the same reader and last
-valid reading. File-clock readings never move backward during the invocation.
+File-clock readings never move backward during the invocation.
 When a valid file reading resumes, the clock uses the later of that value and
 the last observed time. The invocation warns once when the file becomes
-unreadable. Stderr failure does not interrupt a clock reading. Lock and I/O waits
-run on monotonic real time, never on this clock.
+unreadable. Stderr failure does not interrupt a clock reading. Both fixed and
+file overrides affect domain timestamps, retention windows, schedule eligibility
+and due times only. All live subprocess, pipe/I/O and lock elapsed-time limits
+use monotonic real time regardless of the override.
 
 ### External state declarations
 
@@ -445,14 +445,6 @@ But a cloned project cannot replace the machine's agent-action values
 
 ### UC-CL7: Keep a runner operating when its clock file disappears
 
-```gherkin
-Given a developer started the runner with a valid operator clock file
-When the file disappears during the run
-Then the runner warns once and keeps time from its last reading by elapsed monotonic time
-And a later wake dispatches pending work through the runtime with the clock file still absent
-And the runner continues even if standard error is unavailable
-```
-
 ## Known caveats
 
 - An unknown key is a validation finding. There is no `publishes` key: what a
@@ -468,11 +460,6 @@ And the runner continues even if standard error is unavailable
   A machine layer of a newer schema cannot be loaded: every command names
   `instrukt config validate --global`, which prints the same installer command.
 - Unresolved and cyclic references are validation findings.
-- With `INSTRUKT_NOW=@<path>` real time bounds no started program's process
-  limit while the file is readable (lock and I/O waits stay on monotonic time): its limit runs out only when the time in the file moves past
-  it, so a program that never ends waits until the file's time is moved or the
-  command is interrupted. Once the file becomes unreadable mid-run, time runs on
-  from the last value read and the limit runs out as elapsed time reaches it.
 - `requires` naming a switched-off module is a validation finding.
 - Runtime capability metadata belongs to the shipped integration; adapter
   behavior requires code. Agent instruction prose remains configuration.

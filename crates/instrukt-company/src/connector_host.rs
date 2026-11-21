@@ -729,16 +729,9 @@ fn notice_worker(
     key: &str,
     stop: &dyn Fn() -> bool,
 ) {
-    // A fixture can request a pass after it advances its operator clock.
-    // This signal is independent of the clock used in lock-wait scenarios.
-    let wake_file = cfg!(debug_assertions)
-        .then(|| std::env::var_os("INSTRUKT_TEST_NOTICE_WAKE_FILE"))
-        .flatten();
-    let wake = || wake_file.as_ref().and_then(|path| std::fs::read(path).ok());
     std::thread::scope(|scope| {
         let mut pending = BTreeMap::new();
         while !stop() {
-            let current_wake = wake();
             pending
                 .retain(|_, task: &mut std::thread::ScopedJoinHandle<'_, ()>| !task.is_finished());
             let now = reach.connectors.now();
@@ -768,9 +761,6 @@ fn notice_worker(
             }
             let until = Instant::now() + conversations::INTAKE_INTERVAL;
             while Instant::now() < until && !stop() {
-                if wake() != current_wake {
-                    break;
-                }
                 std::thread::sleep(Duration::from_millis(100));
             }
         }
@@ -818,18 +808,6 @@ fn deliver_notice(
         Ok(_) => Ok(()),
         Err(error) => Err(error),
     };
-    // Append only after the decision and any resulting post have completed,
-    // so a fixture holding a receipt can wait for this member's own task.
-    if cfg!(debug_assertions)
-        && result.is_ok()
-        && let Some(path) = std::env::var_os("INSTRUKT_TEST_NOTICE_DECISIONS")
-        && let Ok(mut file) =
-            instrukt_core::fsx::open(std::fs::OpenOptions::new().create(true).append(true), path)
-    {
-        use std::io::Write as _;
-        let decision = format!("{}\t{}\n", notice.conversation, notice.sender);
-        let _ = file.write_all(decision.as_bytes());
-    }
     if let Err(error) = result {
         tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error);
     }

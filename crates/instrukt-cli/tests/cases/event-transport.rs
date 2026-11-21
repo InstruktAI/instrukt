@@ -36,13 +36,7 @@ fn absent_local_configuration_reports_cluster_fallback() {
     let cluster = RedisServer::new(&computer.env);
     computer.config(&cluster, None);
     computer.env.run(&computer.env.path(""), ["tick"]).success();
-    let log = std::fs::read_to_string(
-        computer
-            .env
-            .home()
-            .join(".local/state/instrukt-ai/instrukt/tick.log"),
-    )
-    .unwrap();
+    let log = std::fs::read_to_string(computer.env.log_dir().join("tick.log")).unwrap();
     let messages = log
         .lines()
         .filter(|line| line.contains(" logger=instrukt_runner::transport "))

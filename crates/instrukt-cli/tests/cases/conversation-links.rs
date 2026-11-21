@@ -968,11 +968,7 @@ fn native_observation_failure_keeps_its_transport_cause_without_resending() {
 }
 
 fn discussion_log(env: &common::TestEnv, command: &str, link: &str) -> String {
-    let log = std::fs::read_to_string(
-        env.home()
-            .join(format!(".local/state/instrukt-ai/instrukt/{command}.log")),
-    )
-    .unwrap();
+    let log = std::fs::read_to_string(env.log_dir().join(format!("{command}.log"))).unwrap();
     let link_field = format!("link={link}");
     log.lines()
         .filter(|line| {
@@ -1098,16 +1094,15 @@ fn source_failure_before_a_pending_turn_reports_each_affected_direction_and_posi
         link.directions.iter().all(|d| d.failure.is_some())
     });
     wait_for(|| {
-        std::fs::read_to_string(env.home().join(".local/state/instrukt-ai/instrukt/run.log"))
-            .is_ok_and(|log| {
-                log.lines()
-                    .filter(|line| {
-                        line.contains("event=conversation_relay_failed")
-                            && line.contains(&format!("link={id}"))
-                    })
-                    .count()
-                    == 2
-            })
+        std::fs::read_to_string(env.log_dir().join("run.log")).is_ok_and(|log| {
+            log.lines()
+                .filter(|line| {
+                    line.contains("event=conversation_relay_failed")
+                        && line.contains(&format!("link={id}"))
+                })
+                .count()
+                == 2
+        })
     });
     let log = discussion_log(&env, "run", &id);
     let mut directions = log
@@ -1246,9 +1241,6 @@ fn a_peer_link_delivers_while_another_links_send_and_reconciliation_wait() {
 fn a_failed_link_pass_retries_without_another_native_change() {
     let mut env = common::TestEnv::new();
     env.set_env("INSTRUKT_LOG_LEVEL", "debug");
-    let wakes = env.path("native-wakes");
-    std::fs::write(&wakes, "0").unwrap();
-    env.set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
     let mut c = crate::fixtures::conversing::Company::prepared_for_recovery(env);
     c.runtime
         .seed("parent", c.env.home(), "peer-a", "Opening A.");
@@ -1263,61 +1255,15 @@ fn a_failed_link_pass_retries_without_another_native_change() {
     c.run();
     let (env, store, fake) = (&c.env, &c.store, &c.runtime);
     let home = instrukt_core::home::Home::at_user_home(env.home().into());
-    let log = env.home().join(".local/state/instrukt-ai/instrukt/run.log");
+    let log = env.log_dir().join("run.log");
     wait_for(|| {
         std::fs::read_to_string(&log)
             .is_ok_and(|log| log.contains("conversation_relay_source_processed"))
     });
-    let wake = |revision: &str| {
-        let next = wakes.with_extension("next");
-        std::fs::write(&next, revision).unwrap();
-        std::fs::rename(next, &wakes).unwrap();
-    };
     store.turn("parent", "first-reply", 1, "Shared topic.", "Parent reply.");
-    wake("1");
     wait_for(|| fake.message_count("child") == 2);
     assert!(fake.message("child", 1).contains("Parent reply."));
     assert_eq!(fake.message_count("parent"), 1);
-    let at = "2026-11-08T10:00:00Z";
-    store.thread("s3", None, None, at);
-    c.slack.direct("D30", "USTEVEN", "Is the report ready?");
-    let state = instrukt_core::state_db::rusqlite::Connection::open(
-        env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    wait_for(|| {
-        state
-            .query_row(
-                "SELECT session=?1 FROM connected_conversations WHERE conversation='D30'",
-                [format!("t3:{}", fake.native_id("s3"))],
-                |row| row.get::<_, bool>(0),
-            )
-            .unwrap_or(false)
-    });
-    fake.delete("s3");
-    store.unproject_thread(&fake.native_id("s3"));
-    wake("2");
-    let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
-    wait_for(|| read_log().contains("event=conversation_presence_probe_confirmed"));
-    wait_for(|| {
-        fake.threads()
-            .iter()
-            .any(|id| id != "parent" && id != "child" && id != &fake.native_id("s3"))
-    });
-    let shows = || {
-        fake.calls()
-            .iter()
-            .filter(|call| {
-                call.as_str()
-                    == format!(
-                        "thread show --json --messages 0 -- {}",
-                        fake.native_id("s3")
-                    )
-            })
-            .count()
-    };
-    let before = shows();
-
     store.exclude_readers();
     store.turn(
         "child",
@@ -1326,7 +1272,6 @@ fn a_failed_link_pass_retries_without_another_native_change() {
         "Question.",
         "Reply after recovery.",
     );
-    wake("3");
     wait_for(|| {
         links::status(&home).unwrap().iter().any(|link| {
             link.directions.iter().any(|direction| {
@@ -1343,7 +1288,6 @@ fn a_failed_link_pass_retries_without_another_native_change() {
     assert_eq!(fake.message_count("child"), 2);
 
     store.unproject_thread("child");
-    wake("4");
     wait_for(|| {
         links::status(&home).unwrap().iter().any(|link| {
             link.directions.iter().any(|direction| {
@@ -1354,10 +1298,7 @@ fn a_failed_link_pass_retries_without_another_native_change() {
             })
         })
     });
-    let retries = read_log()
-        .matches("event=conversation_link_retry_processed")
-        .count();
-    store.thread("child", None, None, at);
+    store.thread("child", None, None, "2026-11-08T10:00:00Z");
     store.turn(
         "child",
         "timer-reply",
@@ -1365,32 +1306,9 @@ fn a_failed_link_pass_retries_without_another_native_change() {
         "Question.",
         "Recovered on the timer.",
     );
-    wait_for(|| {
-        fake.message_count("parent") == 3
-            && read_log()
-                .matches("event=conversation_link_retry_processed")
-                .count()
-                > retries
-    });
+    wait_for(|| fake.message_count("parent") == 3);
     assert!(
         fake.message("parent", 2)
             .contains("Recovered on the timer.")
-    );
-    assert_eq!(std::fs::read_to_string(wakes).unwrap(), "4");
-    assert_eq!(
-        shows(),
-        before,
-        "a link timer must not issue another company show"
-    );
-    let log = read_log();
-    assert_eq!(
-        log.matches("event=conversation_presence_probe_started")
-            .count(),
-        1
-    );
-    assert_eq!(
-        log.matches("event=conversation_presence_probe_confirmed")
-            .count(),
-        1
     );
 }

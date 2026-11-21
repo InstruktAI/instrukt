@@ -52,11 +52,11 @@ enum SpecsCommand {
 
 #[derive(Debug, clap::Args)]
 struct CoverageArgs {
-    /// Fail on any ambiguous claim, and on orphan or anonymous counts above
-    /// the committed baseline (`instrukt-coverage-baseline.json`).
+    /// Fail on ambiguous claims or orphan, anonymous and per-use-case binding
+    /// counts above the committed baseline (`instrukt-coverage-baseline.json`).
     #[arg(long)]
     check: bool,
-    /// Record the current orphan and anonymous counts as the baseline.
+    /// Record orphan/anonymous counts and per-use-case binding allowances above one.
     #[arg(long, conflicts_with = "check")]
     update_baseline: bool,
 }
@@ -91,8 +91,14 @@ fn coverage(args: CoverageArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     if args.update_baseline {
         let baseline = coverage.update_baseline()?;
         ctx.out.line(&format!(
-            "baseline updated: orphans {}, anonymous {}",
-            baseline.orphans, baseline.anonymous
+            "baseline updated: orphans {}, anonymous {}, binding allowances {}",
+            baseline.orphans,
+            baseline.anonymous,
+            baseline
+                .bindings
+                .values()
+                .map(|cases| cases.len())
+                .sum::<usize>()
         ))?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -216,10 +222,11 @@ fn reserve(args: ReserveArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     })
 }
 
-fn debt(ratchet: Ratchet) -> &'static str {
-    match ratchet.debt {
-        Debt::Orphans => "orphans",
-        Debt::Anonymous => "anonymous scenarios",
+fn debt(ratchet: &Ratchet) -> String {
+    match &ratchet.debt {
+        Debt::Orphans => "orphans".to_owned(),
+        Debt::Anonymous => "anonymous scenarios".to_owned(),
+        Debt::Bindings(reference) => format!("{reference} bindings"),
     }
 }
 

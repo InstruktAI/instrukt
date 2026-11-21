@@ -14,7 +14,7 @@ retries = 0
 # scheduling budget so grouping by use case does not oversubscribe the host.
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer)'
-threads-required = 10
+threads-required = 9
 
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_can_follow_the_status_of_an_unanswered_message) | test(=conversations::an_interrupted_answer_is_reconciled_and_the_member_can_keep_asking)'
@@ -26,7 +26,7 @@ threads-required = 6
 
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_can_keep_asking_after_the_assistant_fails_to_answer)'
-threads-required = 4
+threads-required = 3
 
 # UC-CV20 exercises four recovery fixtures.
 [[profile.default.overrides]]

@@ -20,6 +20,11 @@ This repository authors new tests under the opt-in doctrine in
   target, with feature cases in `crates/instrukt-cli/tests/cases/<feature>.rs`;
   only that package's tests can locate the built binary. Live configuration,
   agent entrypoints and settings are never test destinations.
+- Logging is isolated through the library's production `INSTRUKT_LOG_DIR`
+  variable, set to a per-test directory and shared by subprocesses, hooks,
+  background runners and log readers. The logger creates it when writing;
+  inspection leaves it absent. Log isolation changes neither `HOME` nor XDG
+  bases (`sdlc/policy/testing`).
 - CLI behavior uses no in-process mocks. For GitHub, the only legitimate fake
   is a local HTTP server standing in for GitHub's API at the network line;
   the client remains real (`sdlc/concept/functional-test-boundary`). The GitHub

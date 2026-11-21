@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/cases/logging.rs
 expression: records
 ---
-[TIME] level=WARNING logger=instrukt msg="logging to stderr" error="cannot create log directory [TMP]/Bearer <REDACTED> Not a directory (os error 20)" event=file_logging_unavailable
+[TIME] level=WARNING logger=instrukt msg="logging to stderr" error="cannot open log file [TMP]/Bearer <REDACTED> Not a directory (os error 20)" event=file_logging_unavailable
 [TIME] level=INFO logger=instrukt_core::publication::_sync msg="" commit=[SHA] event=docs_published project=demo

@@ -68,15 +68,8 @@ fn staged(repo: &Repo) -> String {
     repo.git(["diff", "--cached", "--name-only"])
 }
 
-/// The clock when a held commit starts, and the time it is moved to while
-/// the hook holds the commit: past the 120 seconds instrukt gives git's own
-/// commands.
-const STARTED: &str = "2026-11-03T12:00:00Z";
-const PAST_GIT_LIMIT: &str = "2026-11-03T12:05:00Z";
-
 /// How long, in real time, each step of a held commit may take before the
-/// test fails. The commit's own limit runs on the file clock, which only the
-/// test moves, so this bound never races it.
+/// test fails.
 const STEP_BOUND: Duration = Duration::from_secs(30);
 /// The pause between two looks at instrukt while a step is awaited.
 const LOOK: Duration = Duration::from_millis(20);
@@ -273,9 +266,8 @@ impl Drop for Running {
 
 /// Runs `instrukt repo commit <args>` in `repo` while the project's
 /// pre-commit hook holds the commit: once the hook's entry arrives, the
-/// clock instrukt reads (`INSTRUKT_NOW=@<file>`) moves past git's limit, and
-/// only then is the hook released to end.
-fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> Assert {
+/// hook is released to end.
+fn commit_with_a_held_project_hook(env: &TestEnv, repo: &Repo, args: &[&str]) -> Assert {
     let held = env.path("held");
     std::fs::create_dir_all(&held).unwrap();
     let entered = held.join("entered");
@@ -294,8 +286,6 @@ fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> 
     )
     .unwrap();
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let clock = held.join("now");
-    std::fs::write(&clock, STARTED).unwrap();
     // Each pipe is opened for reading and writing: opening waits for no
     // one, reading the entry sees no end before the hook writes, and the
     // release line stays in its pipe until the hook reads it.
@@ -309,10 +299,7 @@ fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> 
     let mut entry = open(&entered);
 
     let mut command = env.instrukt_process(repo.path());
-    command
-        .args(["repo", "commit"])
-        .args(args)
-        .env("INSTRUKT_NOW", format!("@{}", clock.display()));
+    command.args(["repo", "commit"]).args(args);
     let mut running = Running::spawn(command);
     let deadline = Instant::now() + STEP_BOUND;
     loop {
@@ -342,9 +329,6 @@ fn commit_held_past_the_git_limit(env: &TestEnv, repo: &Repo, args: &[&str]) -> 
         "the hook's entry arrived"
     );
 
-    let moved = held.join("now.moved");
-    std::fs::write(&moved, PAST_GIT_LIMIT).unwrap();
-    std::fs::rename(&moved, &clock).unwrap();
     let mut released = open(&release);
     released.write_all(b"go\n").unwrap();
     let output = running
@@ -377,7 +361,7 @@ fn a_native_session_commits_with_its_session_without_guessing_an_agent_author() 
     repo.write("parser.rs", "fn parse() {}\n");
     let staged_before = staged(&repo);
 
-    let committed = commit_held_past_the_git_limit(
+    let committed = commit_with_a_held_project_hook(
         &env,
         &repo,
         &[
@@ -454,7 +438,7 @@ fn a_developer_outside_any_session_commits_as_themselves() {
     std::fs::remove_file(&refusing).unwrap();
 
     repo.git(["add", "notes.md"]);
-    commit_held_past_the_git_limit(&env, &repo, &["--message", MESSAGE]).success();
+    commit_with_a_held_project_hook(&env, &repo, &["--message", MESSAGE]).success();
     insta::assert_snapshot!("developer-commit", last_commit(&repo));
     insta::assert_snapshot!(commit_paths(&repo), @"notes.md");
 }

@@ -181,12 +181,13 @@ fn the_loggers_own_files_are_refused_before_they_land() {
     let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
     let mut env = TestEnv::new();
     env.fence(&live.path());
-    // The temporary home's log location leads into the live home.
-    std::fs::create_dir_all(env.home().join(".local")).unwrap();
-    std::os::unix::fs::symlink(live.path(), env.home().join(".local/state")).unwrap();
+    // The selected log directory leads into the fenced live fixture.
+    let logs = env.home().join("logs");
+    env.set_env("INSTRUKT_LOG_DIR", logs.to_str().unwrap());
+    std::os::unix::fs::symlink(live.path(), logs).unwrap();
     let (status, stderr) = initialize(&env, &live);
     assert_eq!(status, Some(i32::from(FENCE_EXIT)));
-    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.local/state/instrukt-ai/instrukt resolves to [LIVE]/instrukt-ai/instrukt, under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/logs resolves to [LIVE], under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
     assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
     assert_eq!(env.refusals().len(), 1);
 }

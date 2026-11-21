@@ -1,5 +1,5 @@
 ---
-description: Coverage measured against use cases, not source files — the inventory of a project's feature specs against the bindings in its tests, reporting orphans, unbound, anonymous and multi-bound, with a ratchet that lets orphans and anonymous scenarios shrink but never grow.
+description: Coverage measured against use cases, not source files — the inventory of a project's feature specs against the bindings in its tests, reporting orphans, unbound, anonymous and multi-bound, with a ratchet over orphan and anonymous counts and each use case’s binding count.
 ---
 # Use-Case Coverage — Spec
 
@@ -129,7 +129,15 @@ And a change that only leaves use cases unbound passes the check
   actually drives its use case is a reviewer's judgment.
 - A retired heading without Gherkin leaves the inventory and is never counted unbound.
 
-- The committed baseline is `instrukt-coverage-baseline.json` at the repository root, rewritten only by `instrukt specs coverage --update-baseline`.
+- The committed baseline is `instrukt-coverage-baseline.json` at the repository
+  root, rewritten only by `instrukt specs coverage --update-baseline`. It holds
+  `orphans` and `anonymous` counts and a `bindings` object keyed first by spec id,
+  then by use-case id, whose values are total allowed binding counts. Updates
+  store only live cases with more than one binding, in stable key order. An
+  absent `bindings` field reads as empty, including in a legacy two-counter
+  baseline; an absent case allows one binding. Malformed baseline data fails
+  the command. Retired or no-longer-bound allowances can be removed on update;
+  they never exempt orphan bindings.
 - Bindings are read from every `.rs` file in the project and Python test files (`test_*.py`, `*_test.py`); this is not configurable.
 - Companion files are pending next versions of their parents and are not counted in the inventory.
 

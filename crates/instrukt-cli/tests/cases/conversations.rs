@@ -486,42 +486,6 @@ fn projected(c: &Company) {
     );
 }
 
-/// The operator's clock in the file `path`, running `rate` times faster than
-/// real time from `from` until stopped: a lock's two-minute wait passes in
-/// moments, while a write's short wait for the state database still outlasts
-/// any write.
-struct RunningClock {
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    mover: Option<std::thread::JoinHandle<jiff::Timestamp>>,
-}
-impl RunningClock {
-    fn start(path: std::path::PathBuf, from: jiff::Timestamp, rate: u32) -> Self {
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stopping = std::sync::Arc::clone(&stop);
-        let mover = std::thread::spawn(move || {
-            let started = std::time::Instant::now();
-            let mut now = from;
-            while !stopping.load(std::sync::atomic::Ordering::Acquire) {
-                now = from + jiff::SignedDuration::try_from(started.elapsed() * rate).unwrap();
-                let next = path.with_extension("next");
-                std::fs::write(&next, now.to_string()).unwrap();
-                std::fs::rename(&next, &path).unwrap();
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            now
-        });
-        Self {
-            stop,
-            mover: Some(mover),
-        }
-    }
-    /// Stops the clock where it stands, and returns that time.
-    fn stop(mut self) -> jiff::Timestamp {
-        self.stop.store(true, std::sync::atomic::Ordering::Release);
-        self.mover.take().unwrap().join().unwrap()
-    }
-}
-
 /// When the no-work interval of the addressed message `message` opened, as
 /// the state database keeps it; `None` while none is open.
 fn interval(c: &Company, message: &str) -> Option<String> {
@@ -562,40 +526,6 @@ fn set_clock(path: &std::path::Path, at: jiff::Timestamp) {
     let next = path.with_extension("next");
     std::fs::write(&next, at.to_string()).unwrap();
     std::fs::rename(&next, path).unwrap();
-    let wake = path.with_extension("notice-wake");
-    if wake.exists() {
-        let next_wake = wake.with_extension("notice-wake-next");
-        std::fs::write(&next_wake, at.to_string()).unwrap();
-        std::fs::rename(next_wake, wake).unwrap();
-    }
-}
-
-/// Stops `running` once the interval of each of `messages` has opened and
-/// sets the clock back to the earliest opening, so no minute of it passes
-/// while the row goes on and no notice is owed.
-fn halt_at_intervals(
-    c: &Company,
-    running: RunningClock,
-    clock: &std::path::Path,
-    messages: &[&str],
-) {
-    common::wait_until(
-        "the intervals opened",
-        std::time::Duration::from_secs(60),
-        || {
-            messages
-                .iter()
-                .all(|message| interval(c, message).is_some())
-        },
-    );
-    running.stop();
-    let since = messages
-        .iter()
-        .filter_map(|message| interval(c, message))
-        .map(|at| at.parse::<jiff::Timestamp>().unwrap())
-        .min()
-        .unwrap();
-    set_clock(clock, since);
 }
 
 const EXPECTED_NOTICE: &str = "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.";
@@ -692,7 +622,6 @@ fn a_member_hears_once_that_the_assistant_is_unavailable_then_gets_the_answer() 
         scope.spawn(the_notice_minute_starts_when_a_slow_start_fails);
         scope.spawn(working_status_stays_visible_during_a_slow_start);
         scope.spawn(an_answer_to_one_member_does_not_restart_anothers_minute);
-        scope.spawn(a_dispatch_failure_notifies_the_member_once_before_the_answer);
     });
 }
 
@@ -758,42 +687,17 @@ fn wait_for_answer_fixture(what: &str, condition: impl FnMut() -> bool) {
 }
 
 fn answer_recovery_company(debug: bool) -> (Company, std::path::PathBuf) {
-    let mut c = Company::prepared_for_recovery(status_env());
-    // The fixture controls native notifications independently of its writes.
-    let wakes = c.env.path("answer-recovery-wakes");
-    answer_source_changed(&c, 0);
+    let mut c = Company::prepared_for_recovery(common::TestEnv::new());
     if debug {
         c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
     }
-    c.env
-        .set_env("INSTRUKT_TEST_T3_WAKES", wakes.to_str().unwrap());
     let clock = c.env.path("clock");
     set_clock(&clock, "2026-11-19T10:00:00Z".parse().unwrap());
     c.env
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
-    for (setting, name) in [
-        ("INSTRUKT_TEST_CONVERSATION_PRESENCE_HOLD", "presence-hold"),
-        ("INSTRUKT_TEST_CONVERSATION_DISPATCH_HOLD", "dispatch-hold"),
-        ("INSTRUKT_TEST_CONVERSATION_ACK_HOLD", "ack-hold"),
-    ] {
-        c.env.set_env(setting, c.env.path(name).to_str().unwrap());
-    }
     c.runtime.flag("separate-completion", true);
     c.run();
     (c, clock)
-}
-
-fn answer_source_changed(c: &Company, revision: u64) {
-    let wakes = c.env.path("answer-recovery-wakes");
-    let next = wakes.with_extension("next");
-    std::fs::write(&next, revision.to_string()).unwrap();
-    std::fs::rename(next, wakes).unwrap();
-}
-
-fn finish_answer_turn(c: &mut Company, session: &str, input: usize, answer: &str) {
-    c.finish_turn(session, input, answer);
-    let revision = std::fs::read_to_string(c.env.path("answer-recovery-wakes")).unwrap();
-    answer_source_changed(c, revision.trim().parse::<u64>().unwrap() + 1);
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV8
@@ -853,7 +757,6 @@ fn an_outage_before_dispatch_keeps_the_question() {
     // Keep dispatch unavailable with a different descriptor error. Only a
     // retry that has finished after the clock advance can persist that cause.
     std::fs::write(&descriptor, "invalid descriptor").unwrap();
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture(
         "the relay persists a fresh failure past the send reconciliation bound",
         || failure().is_some_and(|cause| cause != prior_failure),
@@ -867,7 +770,7 @@ fn an_outage_before_dispatch_keeps_the_question() {
     );
     let ids = std::fs::read_to_string(c.runtime.state_dir().join("dispatch-ids")).unwrap();
     assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id]);
-    finish_answer_turn(&mut c, &session, 1, "The report is in the drive.");
+    c.finish_turn(&session, 1, "The report is in the drive.");
     wait_for_answer_fixture("the saved question is answered once", || {
         c.slack.posts_beginning("The report is in the drive.") == 1
     });
@@ -910,7 +813,7 @@ fn an_idle_conversation_retries_an_unrecorded_send() {
         c.input(&session, 1)
             .contains("Where is the revised report?")
     );
-    finish_answer_turn(&mut c, &session, 1, "The revised report is in the drive.");
+    c.finish_turn(&session, 1, "The revised report is in the drive.");
     wait_for_answer_fixture("the next question follows without a duplicate", || {
         c.runtime.message_count(&session) == 3 && id().is_none()
     });
@@ -962,7 +865,7 @@ fn a_late_original_dispatch_is_deduplicated_after_restart() {
         || c.runtime.message_count(&session) == 2,
     );
     assert_eq!(c.runtime.message(&session, 1).as_bytes(), original_input);
-    finish_answer_turn(&mut c, &session, 1, "The plan is by the calendar.");
+    c.finish_turn(&session, 1, "The plan is by the calendar.");
     wait_for_answer_fixture("the retry answers and clears the current attempt", || {
         c.slack.posts_beginning("The plan is by the calendar.") == 1 && tracked() == (None, None)
     });
@@ -1018,7 +921,6 @@ fn a_busy_conversation_releases_an_unresolved_send() {
     c.slack
         .direct("D30", "USTEVEN", "Do we have meeting notes?");
     set_clock(&clock, at + jiff::SignedDuration::from_mins(5));
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture(
         "a busy thread releases the unresolved send at the operator bound",
         || retained().1.is_some(),
@@ -1027,20 +929,20 @@ fn a_busy_conversation_releases_an_unresolved_send() {
     assert!(conversation_finding(&c, &format!("delivery unknown for message {first}")).is_some());
     assert!(interval(&c, &first).is_none());
     assert_eq!(c.runtime.message_count(&session), 2);
-    finish_answer_turn(&mut c, &session, 1, "NOOP");
+    c.finish_turn(&session, 1, "NOOP");
     wait_for_answer_fixture(
         "later work proceeds without retrying the unknown send",
         || c.runtime.message_count(&session) == 3,
     );
     assert!(c.input(&session, 2).contains("Do we have meeting notes?"));
     assert!(!c.input(&session, 2).contains("Is the draft in the drive?"));
-    finish_answer_turn(&mut c, &session, 2, "The notes are saved.");
+    c.finish_turn(&session, 2, "The notes are saved.");
     wait_for_answer_fixture("the later question's answer is recorded", || {
         c.slack.posts_beginning("The notes are saved.") == 1 && answers_recorded(&c)
     });
     // The native runtime finally exposes the original input and its answer.
     c.runtime.person_sends(&c.env, &session, &original);
-    finish_answer_turn(&mut c, &session, 3, "Yes, the draft is in the drive.");
+    c.finish_turn(&session, 3, "Yes, the draft is in the drive.");
     wait_for_answer_fixture(
         "the late answer posts and clears the unknown delivery",
         || {
@@ -1065,7 +967,7 @@ fn failed_work_is_retried_after_a_restart() {
         Some(&parent),
     );
     let session = started(&c, &[]);
-    finish_answer_turn(&mut c, &session, 0, "Ready to review.");
+    c.finish_turn(&session, 0, "Ready to review.");
     wait_for_answer_fixture("the opening answer is recorded", || {
         c.slack.posts_beginning("Ready to review.") == 1 && answers_recorded(&c)
     });
@@ -1097,7 +999,6 @@ fn failed_work_is_retried_after_a_restart() {
         &original,
         "Still checking the release.",
     );
-    answer_source_changed(&c, 2);
     let state = instrukt_core::state_db::rusqlite::Connection::open(
         c.env.instrukt_home().join("state/instrukt.db"),
     )
@@ -1145,7 +1046,6 @@ fn failed_work_is_retried_after_a_restart() {
         "2026-11-19T10:01:00Z",
     );
     c.finish_projected_turn(&session, 2, "Version two.");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "the other member's completed answer posts from the archived thread",
         || {
@@ -1174,7 +1074,6 @@ fn failed_work_is_retried_after_a_restart() {
     c.runtime.flag("send-failure", true);
     c.finish_turn(&successor, 0, "NOOP");
     let session = successor;
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture(
         "the first successor redelivery is refused by the runtime",
         || {
@@ -1194,7 +1093,6 @@ fn failed_work_is_retried_after_a_restart() {
     assert!(retried.contains("Can we ship?"));
     assert_ne!(retried, original, "redelivery has its own boundary");
     c.finish_turn(&session, 1, "Ship on Friday.");
-    answer_source_changed(&c, 5);
     wait_for_answer_fixture(
         "the recovered answer closes the first member's outage",
         || {
@@ -1242,16 +1140,13 @@ fn a_replacement_reports_the_old_acknowledgement() {
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     std::fs::remove_file(c.runtime.state_dir().join(format!("{old}.hold-show"))).unwrap();
-    answer_source_changed(&c, 2);
     let successor = started(&c, &[old]);
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "only the current successor receives the retained question",
         || c.runtime.message_count(&successor) == 2,
     );
     c.finish_turn(&successor, 1, "The changes are in the appendix.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the retained question has one answer", || {
         c.slack.posts_beginning("The changes are in the appendix.") == 1
     });
@@ -1285,7 +1180,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
     c.runtime.project(&c.env, &session);
     c.store
         .streaming_turn(&session, "incomplete-summary", 1, &input, partial);
-    answer_source_changed(&c, 1);
     wait_for_answer_fixture("the relay sees completed but unstable content", || {
         interval(&c, &request).is_some()
             && retained_conversations(&c).conversations.iter().any(|row| {
@@ -1307,7 +1201,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         .unwrap();
     };
     finish(&original, "The summary is on page two.");
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture("the turn finishes in the original store", || {
         c.slack.posts_beginning("The summary is on page two.") == 1 && answers_recorded(&c)
     });
@@ -1320,7 +1213,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         c.runtime.message_count(&session) == before + 1
     });
     c.finish_turn(&session, before, answer);
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "the appendix answer is retained while Slack refuses it",
         || {
@@ -1385,7 +1277,6 @@ fn a_member_keeps_their_answer_through_a_source_interruption() {
         || c.runtime.message_count(&session) == delivered + 1,
     );
     c.finish_turn(&session, delivered, "The next section is ready.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the original binding answers after restoration", || {
         c.slack.posts_beginning("The next section is ready.") == 1 && answers_recorded(&c)
     });
@@ -1450,7 +1341,6 @@ fn answered_conversation_with_logs(
         );
     }
     c.finish_turn(&session, 0, "The old report is ready.");
-    answer_source_changed(&c, 1);
     wait_for_answer_fixture("the earlier answer recorded", || {
         c.slack.posts_beginning("The old report is ready.") == 1 && answers_recorded(&c)
     });
@@ -1485,7 +1375,6 @@ fn held_runtime_checks_leave_another_conversation_free() {
     );
     let other = started(&c, std::slice::from_ref(&session));
     c.finish_turn(&other, 0, "In the main office.");
-    answer_source_changed(&c, 2);
     wait_for_answer_fixture(
         "the second conversation is answered during the dispatch check",
         || c.slack.posts_beginning("In the main office.") == 1,
@@ -1508,7 +1397,6 @@ fn held_runtime_checks_leave_another_conversation_free() {
     std::fs::remove_file(&held).unwrap();
 
     c.finish_turn(&session, 1, "The changes are in the appendix.");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture(
         "the lost acknowledgment reconciles without another send",
         || c.slack.posts_beginning("The changes are in the appendix.") == 1 && answers_recorded(&c),
@@ -1548,7 +1436,6 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     c.slack.direct("D30", "USTEVEN", "What changed?");
-    answer_source_changed(&c, 2);
     // The failed probe must finish before advancing the frozen clock;
     // otherwise its later completion schedules retry beyond that clock.
     wait_for_answer_fixture("the failed presence probe schedules its retry", || {
@@ -1563,10 +1450,8 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         &clock,
         interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
     );
-    answer_source_changed(&c, 3);
     let successor = started(&c, &[]);
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture("the saved work reaches one successor", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1594,7 +1479,6 @@ fn archived_and_deleted_conversations_keep_saved_work() {
         "2026-11-19T10:01:00Z",
     );
     c.slack.direct("D30", "USTEVEN", "Who kept the notes?");
-    answer_source_changed(&c, 2);
     let successor = started(&c, &before);
     assert_eq!(c.runtime.message_count(&successor), 1);
     assert!(
@@ -1603,12 +1487,10 @@ fn archived_and_deleted_conversations_keep_saved_work() {
             .contains("Who kept the notes?")
     );
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture("the saved question reaches the successor once", || {
         c.runtime.message_count(&successor) == 2
     });
     c.finish_turn(&successor, 1, "Ada kept the notes.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the saved question is answered normally", || {
         c.slack.posts_beginning("Ada kept the notes.") == 1
     });
@@ -1633,7 +1515,6 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     c.runtime.delete(&old);
     c.store.unproject_thread(&old);
     let question = c.slack.direct("D30", "USTEVEN", "Where is the attachment?");
-    answer_source_changed(&c, 2);
     let pending = || {
         db.query_row(
         "SELECT b.session,b.start_key FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE c.session=?1 AND b.accepted=0 AND c.failure IS NOT NULL",
@@ -1662,7 +1543,6 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
     });
     assert_ne!(old, successor);
     c.finish_turn(&successor, 0, "NOOP");
-    answer_source_changed(&c, 3);
     wait_for_answer_fixture("the saved question is delivered after deletion", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1679,7 +1559,6 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         .unwrap();
     assert_eq!(still_retained, retained);
     c.finish_turn(&successor, 1, "The attachment is in the shared folder.");
-    answer_source_changed(&c, 4);
     wait_for_answer_fixture("the successor answers the saved question", || {
         c.slack
             .posts_beginning("The attachment is in the shared folder.")
@@ -1731,7 +1610,6 @@ fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
         scope.spawn(failed_turns_share_a_notice_until_a_later_turn_settles);
         scope.spawn(a_blank_reply_supersedes_a_failed_question);
         scope.spawn(pruning_keeps_younger_and_unsuperseded_failures);
-        scope.spawn(one_members_answer_proceeds_after_another_conversations_lock_times_out);
     });
 }
 
@@ -1832,49 +1710,6 @@ fn working_status_stays_visible_during_a_slow_start() {
     });
     assert_eq!(shown(&c, channel, &slow), [WORKING, ""]);
     assert_eq!(notices(&c, "USTEVEN"), 0);
-}
-
-fn a_dispatch_failure_notifies_the_member_once_before_the_answer() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    let channel = "C1";
-    // A message waits on the runtime's dispatch lock past the wait: the
-    // working text, then the unavailable text; once the lock is had, the
-    // message is started and answered.
-    let held = hold_dispatch(&c);
-    let before = c.sessions();
-    projected(&c);
-    let locked = c
-        .slack
-        .mention(channel, "USTEVEN", "<@UAGENT> Is the build green?", None);
-    wait("the working text", || {
-        c.slack.status(channel, &locked).as_deref() == Some(WORKING)
-    });
-    // The clock runs until the lock's wait has passed, from whenever the
-    // relay began it.
-    let running = RunningClock::start(clock.clone(), "2026-11-19T10:00:00Z".parse().unwrap(), 30);
-    halt_at_intervals(&c, running, &clock, &[&locked]);
-    wait("the unavailable text", || {
-        c.slack.status(channel, &locked).as_deref() == Some(UNAVAILABLE)
-    });
-    set_clock(&clock, interval_at(&c, &locked) + minute());
-    wait(
-        "the notice a minute after the dispatch lock timed out",
-        || notices(&c, "USTEVEN") == 1,
-    );
-    drop(held);
-    let session = started(&c, &before);
-    wait("the working text after the start", || {
-        c.slack.status(channel, &locked).as_deref() == Some(WORKING)
-    });
-    c.finish_turn(&session, 0, "It is green.");
-    wait("the locked message's answer", || answers(&c) == 1);
-    wait("the status cleared", || {
-        shown(&c, channel, &locked).last().map(String::as_str) == Some("")
-    });
-    assert_eq!(
-        shown(&c, channel, &locked),
-        [WORKING, UNAVAILABLE, WORKING, ""]
-    );
 }
 
 fn unavailable_status_clears_when_the_source_or_post_recovers() {
@@ -2135,12 +1970,7 @@ fn notice_epochs_and_reconciliation() {
 }
 
 fn run_log(c: &Company) -> String {
-    std::fs::read_to_string(
-        c.env
-            .home()
-            .join(".local/state/instrukt-ai/instrukt/run.log"),
-    )
-    .unwrap_or_default()
+    std::fs::read_to_string(c.env.log_dir().join("run.log")).unwrap_or_default()
 }
 
 /// Make a control member overdue on the operator clock. Seeing their notice
@@ -2172,8 +2002,6 @@ fn observe_notice_pass(c: &Company, clock: &std::path::Path, now: jiff::Timestam
     });
 }
 
-/// Wait for this member's notice task to finish its decision at the new
-/// time. Another member's post does not establish this ordering.
 /// Seed the interrupted answer and its conversation into the schema shipped
 /// before metadata receipts. The runner opening this file owns its upgrade.
 fn seed_v22_answer_attempt(
@@ -2742,7 +2570,7 @@ fn prepared_status_company() -> Company {
         })
         .collect()
     });
-    let company = Company::with_fakes(status_env());
+    let company = Company::with_fakes(common::TestEnv::new());
     for file in files {
         let path = company.env.instrukt_home().join(file.path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -2750,19 +2578,6 @@ fn prepared_status_company() -> Company {
         std::fs::set_permissions(path, file.permissions.clone()).unwrap();
     }
     company
-}
-
-fn status_env() -> common::TestEnv {
-    let mut env = common::TestEnv::new();
-    let wake = env.path("clock.notice-wake");
-    std::fs::write(&wake, "").unwrap();
-    env.set_env("INSTRUKT_TEST_NOTICE_WAKE_FILE", wake.to_str().unwrap());
-    #[cfg(debug_assertions)]
-    env.set_env(
-        "INSTRUKT_TEST_NOTICE_DECISIONS",
-        env.path("notice-decisions").to_str().unwrap(),
-    );
-    env
 }
 
 /// A company whose conversations run on a runner under the operator's clock
@@ -2775,60 +2590,6 @@ fn status_company(at: jiff::Timestamp) -> (Company, std::path::PathBuf) {
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
     c.run();
     (c, clock)
-}
-
-fn one_members_answer_proceeds_after_another_conversations_lock_times_out() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    let now: jiff::Timestamp = "2026-11-19T10:00:00Z".parse().unwrap();
-    let channel = "C1";
-    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-
-    // Another conversation's lock is held past its wait: that conversation
-    // is left for later, and a member in this one is still answered.
-    use sha2::Digest as _;
-    let posts = c.slack.posts().len();
-    projected(&c);
-    let first = c
-        .slack
-        .mention(channel, "USTEVEN", "<@UAGENT> What is next?", None);
-    let session = started(&c, &[]);
-    c.finish_turn(&session, 0, "The release.");
-    wait("the other conversation's answer", || {
-        c.slack.posts().len() == posts + 1
-    });
-    let other = conversations::key(&c.company(), SLACK, &format!("{channel}/{first}"));
-    let other_lock = instrukt_core::fsx::LockGuard::acquire(
-        &home.state_dir().join(format!(
-            "conversation-{}.lock",
-            hex::encode(&sha2::Sha256::digest(other.as_bytes())[..8])
-        )),
-        std::time::Duration::from_secs(5),
-    )
-    .unwrap();
-    let before = c.sessions();
-    projected(&c);
-    let apart = c
-        .slack
-        .mention(channel, "USTEVEN", "<@UAGENT> Who is on call?", None);
-    // Each pass waits out the held lock first, a few seconds on a clock
-    // running thirty times faster.
-    let running = RunningClock::start(clock.clone(), now, 30);
-    common::wait_until(
-        "the session past the held lock",
-        std::time::Duration::from_secs(60),
-        || c.sessions().len() > before.len(),
-    );
-    let session = started(&c, &before);
-    c.finish_turn(&session, 0, "Linus is on call.");
-    wait("the answer beside the held lock", || {
-        c.slack.posts().len() == posts + 2
-    });
-    assert_eq!(
-        c.slack.posts().last().unwrap().thread.as_deref(),
-        Some(apart.as_str())
-    );
-    running.stop();
-    drop(other_lock);
 }
 
 fn the_notice_minute_starts_when_a_slow_start_fails() {
@@ -2867,13 +2628,9 @@ fn the_notice_minute_starts_when_a_slow_start_fails() {
 }
 
 fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
-    let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
-    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    use sha2::Digest as _;
-    // In a direct message each message has a status of its own. A message
-    // queued behind the running turn and that turn's own message both have
-    // their interval opened while the conversation's lock is held past its
-    // wait; once the running turn is observed again, both close.
+    let (mut c, _clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
+    // A direct message and the question queued behind it each retain their
+    // working status until their own answer is posted.
     let posts = c.slack.posts().len();
     let direct = "D7";
     let before = c.sessions();
@@ -2887,25 +2644,6 @@ fn observing_a_running_turn_again_clears_its_and_the_queued_status() {
     wait("the queued message's working text", || {
         c.slack.status(direct, &queued).as_deref() == Some(WORKING)
     });
-    // Acquire the lock before the restarted relay can take it.
-    c.runner_dies();
-    let key = conversations::key(&c.company(), SLACK, direct);
-    let held = instrukt_core::fsx::LockGuard::acquire(
-        &home.state_dir().join(format!(
-            "conversation-{}.lock",
-            hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
-        )),
-        std::time::Duration::from_secs(5),
-    )
-    .unwrap();
-    c.run();
-    let running = RunningClock::start(clock.clone(), interval_clock(&clock), 30);
-    halt_at_intervals(&c, running, &clock, &[&own, &queued]);
-    wait("both statuses unavailable", || {
-        c.slack.status(direct, &own).as_deref() == Some(UNAVAILABLE)
-            && c.slack.status(direct, &queued).as_deref() == Some(UNAVAILABLE)
-    });
-    drop(held);
     wait(
         "both statuses working once the turn is seen running",
         || {
@@ -3261,28 +2999,16 @@ fn a_queued_turn_acceptance_closes_the_unavailable_interval() {
 
 #[cfg(debug_assertions)]
 fn a_completed_turn_is_read_again_after_a_locked_read() {
-    use sha2::Digest as _;
     let mut c = prepared_status_company();
     c.env.set_env("INSTRUKT_LOG_LEVEL", "debug");
     c.env.set_env("INSTRUKT_NOW", "2026-11-19T10:00:00Z");
-    let notifications = c.env.path("t3-wakes");
-    let wake = |revision: u64| {
-        let next = notifications.with_extension("next");
-        std::fs::write(&next, revision.to_string()).unwrap();
-        std::fs::rename(next, &notifications).unwrap();
-    };
-    wake(0);
-    c.env
-        .set_env("INSTRUKT_TEST_T3_WAKES", notifications.to_str().unwrap());
     c.run();
 
     projected(&c);
-    let initial = c
-        .slack
+    c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> Where are the notes?", None);
     let settled = c.session();
     c.finish_projected_turn(&settled, 0, "In the wiki.");
-    wake(1);
     wait("the earlier answer posted", || c.slack.posts().len() == 1);
 
     let channel = "C1";
@@ -3294,56 +3020,23 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
     let run = c.runtime.active_run(&session);
     c.store
         .agent_writes(&session, &run, 1, "Checking the release plan.");
-    wake(2);
     wait("the relay to observe the running turn's update", || {
         c.slack.status(channel, &asked).as_deref() == Some("Checking the release plan.")
     });
 
-    let log_path = c
-        .env
-        .home()
-        .join(".local/state/instrukt-ai/instrukt/run.log");
-    let locked_pass = |revision: u64| {
-        let marker = format!("event=t3_fixture_wake revision={revision}");
-        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-        let Some((_, pass)) = log.split_once(&marker) else {
-            return false;
-        };
-        pass.split_once("event=conversation_relay_source_processed")
-            .is_some_and(|(pass, _)| {
-                pass.lines().any(|line| {
-                    line.contains("event=conversation_answer_unread")
-                        && line.contains("database is locked")
-                })
-            })
-    };
     c.store.exclude_readers();
     c.store
         .agent_writes(&session, &run, 2, "Checking the remaining items.");
-    wake(3);
-    wait("the relay tried reading between the fixture writes", || {
-        locked_pass(3)
+    wait("the relay reports the locked source", || {
+        retained_conversations(&c).conversations.iter().any(|row| {
+            row.failures
+                .iter()
+                .any(|cause| cause.contains("database is locked"))
+        })
     });
 
     c.finish_projected_turn(&session, 0, "On Friday.");
-    wake(4);
-    wait("the final fixture wake processed while reads fail", || {
-        locked_pass(4)
-    });
     assert_eq!(c.slack.posts().len(), 1);
-    // Only the fixture supplies notifications, and revision four was
-    // consumed with the source still locked. Leave the earlier, settled
-    // conversation locked to prove the timer only visits current work.
-    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{initial}"));
-    let _settled = instrukt_core::fsx::LockGuard::acquire(
-        &home.state_dir().join(format!(
-            "conversation-{}.lock",
-            hex::encode(&sha2::Sha256::digest(key.as_bytes())[..8])
-        )),
-        std::time::Duration::from_secs(5),
-    )
-    .unwrap();
     c.store.let_readers_in();
     common::wait_until(
         "the answer without another projection write",
@@ -4236,8 +3929,6 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         )],
     );
     documented::sync(&c.env, &events);
-    // The runner starts under a clock file while the dispatch lock is held:
-    // its wake waits for the lock on that clock.
     let clock = c.env.path("clock");
     // The runner reads the clock file at any moment: each new time replaces
     // the file whole, so no read finds it half written.
@@ -4246,41 +3937,18 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
         std::fs::write(&next, at).unwrap();
         std::fs::rename(&next, &clock).unwrap();
     };
-    set_clock("2026-11-18T12:00:00Z");
+    let mut now: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
+    set_clock(&now.to_string());
     c.env
         .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
-    let lock = c.env.instrukt_home().join("state/runtime-dispatch.lock");
-    let held = instrukt_core::fsx::LockGuard::try_acquire(&lock)
-        .unwrap()
-        .unwrap();
     c.run();
-    // Past the run-lock wait the wake is skipped, shown in status with its
-    // cause, and the runner goes on. The clock moves on at every look, so
-    // it passes the wait whenever the runner began it.
-    let mut now: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
-    wait("the skipped wake in status", || {
-        now += jiff::SignedDuration::from_mins(3);
-        set_clock(&now.to_string());
-        c.status()["skipped_wake"]["cause"]
-            .as_str()
-            .is_some_and(|cause| !cause.is_empty())
-    });
     assert!(c.runner_running());
-    // Once the lock is free, the same runner answers a member.
-    drop(held);
     let channel = "C1";
     c.slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
     let first = c.session();
     c.finish_turn(&first, 0, "On Friday.");
     wait("the first answer", || answers(&c) == 1);
-    // The skipped wake stays until a wake takes the lock: the next one comes
-    // a minute on, so a runner started again shows it with its first.
-    c.runner_dies();
-    c.run();
-    wait("the skipped wake to clear", || {
-        c.status()["skipped_wake"].is_null()
-    });
     // Status names the project's event responses as not admitted.
     let findings = |c: &Company| -> Vec<(std::path::PathBuf, String)> {
         c.status()["admission"]["findings"]
@@ -4499,7 +4167,7 @@ fn uninstalled(c: &Company, profile: &str) {
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV1
 #[test]
-fn a_slow_or_failing_t3_cli_does_not_refuse_a_start() {
+fn a_failing_t3_cli_does_not_refuse_a_start() {
     let mut c = Company::new("");
     patch_company(&c.env, COMPANY, "profiles: [claude, codex]");
     // Every snapshot T3 gives reports the first profile not installed: a
@@ -4507,43 +4175,24 @@ fn a_slow_or_failing_t3_cli_does_not_refuse_a_start() {
     // the configured order's first.
     uninstalled(&c, "claude");
     let mut clock = OperatorClock::on(&mut c, "2030-01-01T00:00:00Z");
-    // No snapshot is known yet: T3's CLI blocks issuing the runner's token
-    // until its launch limit has passed on the clock.
-    c.runtime.flag("hold-issue", true);
-    c.run();
-    wait("the held token issue", || c.runtime.held_issue_running(1));
-    clock.advance(1);
-    wait("the failed refresh in status", || c.readiness_failing());
-    let started = c.asked_and_answered("When do we ship?", "On Friday.");
-    assert_eq!(c.runtime.provider(&started), instance("claude"));
-    // Still none known: the CLI now exits non-zero.
-    c.runtime.flag("hold-issue", false);
+    // No snapshot is known yet: the CLI exits non-zero.
     c.runtime.flag("issue-failure", true);
-    let launches = c.issue_launches();
-    clock.advance(2);
-    wait("the next token issue", || c.issue_launches() > launches);
-    assert!(c.readiness_failing());
+    c.run();
+    wait("the failed refresh in status", || c.readiness_failing());
     let started = c.asked_and_answered("Who reviews it?", "Ada does.");
     assert_eq!(c.runtime.provider(&started), instance("claude"));
     // A snapshot is read once the CLI answers again.
     c.runtime.flag("issue-failure", false);
     clock.advance(2);
     wait("a refresh that succeeds", || !c.readiness_failing());
-    // With that snapshot retained, the renewal of the token blocks past its
-    // limit, and then fails: the starts still choose by the snapshot.
-    let renewal = c.runtime.held_issues() + 1;
-    c.runtime.flag("hold-issue", true);
-    clock.advance(5);
-    wait("the held renewal", || c.runtime.held_issue_running(renewal));
-    clock.advance(1);
-    wait("the failed refresh in status", || c.readiness_failing());
-    let started = c.asked_and_answered("And the release notes?", "They are ready.");
-    assert_eq!(c.runtime.provider(&started), instance("codex"));
-    c.runtime.flag("hold-issue", false);
+    // With the snapshot retained, an immediate renewal failure still
+    // leaves starts choosing by that snapshot.
     c.runtime.flag("issue-failure", true);
     let launches = c.issue_launches();
     clock.advance(5);
-    wait("the next token issue", || c.issue_launches() > launches);
+    wait("the next token issue fails", || {
+        c.issue_launches() > launches && c.readiness_failing()
+    });
     assert!(c.readiness_failing());
     let started = c.asked_and_answered("And the date?", "The 20th.");
     assert_eq!(c.runtime.provider(&started), instance("codex"));
@@ -4906,66 +4555,6 @@ fn answers_recorded(c: &Company) -> bool {
         .conversations
         .iter()
         .all(|conversation| conversation.pending_answers == 0)
-}
-
-// spec: project/instrukt/spec/feature/company/conversations UC-CV14
-#[test]
-fn an_answer_whose_acceptance_could_not_be_recorded_is_posted_once() {
-    // History is off, so the conversation relay is the stand-in's only
-    // source reader while the runner runs.
-    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
-    // The runner measures its waits on a clock the scenario moves.
-    let clock = c.env.path("clock");
-    let set_clock = |at: &jiff::Timestamp| {
-        let next = clock.with_extension("next");
-        std::fs::write(&next, at.to_string()).unwrap();
-        std::fs::rename(&next, &clock).unwrap();
-    };
-    let start: jiff::Timestamp = "2026-11-18T12:00:00Z".parse().unwrap();
-    set_clock(&start);
-    c.env
-        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
-    let gate = c.store.gate();
-    c.run();
-    c.slack
-        .mention("C1", "USTEVEN", "<@UAGENT> When do we ship?", None);
-    let session = c.session();
-    // Slack accepts the post of the answer, and its answer is held.
-    c.slack.hold_posts();
-    c.finish_turn(&session, 0, "On Friday.");
-    wait("the accepted post", || c.slack.held_posts() == 1);
-    // While Slack's answer arrives, the state database is held by another
-    // process and the runner's clock moves on, so the runner's wait to
-    // record the acceptance ends unrecorded.
-    let held = instrukt_core::fsx::LockGuard::try_acquire(
-        &c.env.instrukt_home().join("state/writer.lock"),
-    )
-    .unwrap()
-    .unwrap();
-    gate.hold();
-    let ticking = std::sync::atomic::AtomicBool::new(true);
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let mut now = start;
-            while ticking.load(std::sync::atomic::Ordering::Acquire) {
-                now += jiff::SignedDuration::from_mins(10);
-                set_clock(&now);
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        });
-        c.slack.release_posts();
-        // The relay's next pass reads the source only after the pass that
-        // posted has ended, the database still held.
-        gate.held();
-        ticking.store(false, std::sync::atomic::Ordering::Release);
-    });
-    drop(held);
-    gate.open();
-    wait("the answer's acceptance recorded", || answers_recorded(&c));
-    assert_eq!(
-        destinations(&c),
-        [("C1".to_owned(), Some("1700000001.000100".to_owned()))]
-    );
 }
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV14

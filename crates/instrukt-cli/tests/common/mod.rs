@@ -7,6 +7,8 @@
 //! - subprocesses (instrukt and git) run with a cleared environment: `PATH`,
 //!   the temporary `HOME`, an isolated git configuration and whatever the
 //!   test sets with [`TestEnv::set_env`] — no live session variable leaks in;
+//! - `INSTRUKT_LOG_DIR` selects a per-test log directory independently of the
+//!   synthetic home; it is created by the logger, never by setup;
 //! - every subprocess carries the write fence
 //!   (`instrukt_core::fsx::FENCE_VARIABLE`) over the live user's home: an
 //!   instrukt process whose own file operation would land there, directly or
@@ -178,6 +180,10 @@ impl TestEnv {
             format!("{}:{}", base.join("runtime-bin").display(), tools.display()),
         );
         vars.insert("HOME".into(), home.display().to_string());
+        vars.insert(
+            "INSTRUKT_LOG_DIR".into(),
+            base.join("logs").display().to_string(),
+        );
         vars.insert("TMPDIR".into(), tmp.display().to_string());
         vars.insert(
             "XDG_CONFIG_HOME".into(),
@@ -236,6 +242,11 @@ impl TestEnv {
     /// The temporary user home (`HOME` of every subprocess).
     pub fn home(&self) -> &Path {
         &self.home
+    }
+
+    /// The configured app log directory, including a case-specific override.
+    pub fn log_dir(&self) -> PathBuf {
+        PathBuf::from(self.injected("INSTRUKT_LOG_DIR").unwrap())
     }
 
     /// `$HOME/.instrukt` of this test.
