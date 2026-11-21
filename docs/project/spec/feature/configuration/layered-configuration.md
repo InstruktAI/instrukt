@@ -355,8 +355,8 @@ The command clock and the process-limit clock use the same reader and last
 valid reading. File-clock readings never move backward during the invocation.
 When a valid file reading resumes, the clock uses the later of that value and
 the last observed time. The invocation warns once when the file becomes
-unreadable. Stderr failure does not interrupt a clock reading. Lock waits are
-measured on the process-limit clock.
+unreadable. Stderr failure does not interrupt a clock reading. Lock and I/O waits
+run on monotonic real time, never on this clock.
 
 ### External state declarations
 

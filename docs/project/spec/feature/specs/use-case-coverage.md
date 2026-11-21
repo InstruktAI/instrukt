@@ -67,13 +67,13 @@ is the scenario inventory bound, never source lines or a file mapping
 | unbound | a use case with no binding — the backlog | no |
 | orphan | a binding naming no use case in the inventory | yes, ratcheted |
 | anonymous | Gherkin with no use-case id | yes, ratcheted |
-| multi-bound | a use case with more than one binding | no — a review lead |
+| multi-bound | a use case with more than one binding | yes, ratcheted per use case |
 | ambiguous claim | a whole spec file pending for several delivering slugs with no in-body markers | yes, always (not ratcheted) |
 
 Unbound is not gated: under documentation first, use cases are written before
 their tests and the backlog rises and falls with every delivery. A multi-bound
 use case breaks the one-test-per-use-case rule (`sdlc/policy/testing`, rule 8);
-the report lists it for review and does not fail on it.
+its excess bindings are ratcheted per use case until each is down to one.
 
 ### The report
 
@@ -88,13 +88,14 @@ the report lists it for review and does not fail on it.
 ### The ratchet
 
 - `--check` fails (non-zero exit) on any ambiguous claim, naming each.
-- `--check` compares the orphan and anonymous counts with the project's
-  committed ratchet baseline. A count above its baseline fails the check
+- `--check` compares the orphan and anonymous counts, and each multi-bound
+  use case's number of bindings, with the project's committed ratchet baseline.
+  A use case not in the baseline may have one binding. A count above its baseline fails the check
   (non-zero exit) and names each regression with its count and baseline; the
   remedy is to resolve the new debt.
 - A missing baseline counts as zero for both.
 - A count below its baseline passes and says the baseline can be tightened.
-- The check never fails on unbound or multi-bound use cases.
+- The check never fails on unbound use cases.
 
 ## Use cases
 

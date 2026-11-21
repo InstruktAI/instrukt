@@ -167,13 +167,13 @@ Systematically check changed code for bugs, pattern violations, and structural a
 
 For each changed file, evaluate:
 
-1. **Bug detection** — Logic errors, null/undefined handling, race conditions, off-by-one errors, resource leaks. Focus on code paths that can produce wrong results or crash.
+1. **Bug detection** — Logic errors, null/undefined handling, race conditions, off-by-one errors, resource leaks. Focus on code paths that can produce wrong results or crash. A race or interleaving is a finding only when it is reachable under `sdlc/concept/defect-evidence` — a recorded occurrence, a real producer whose output reaches it, or a dangerous path; an unproven interleaving is at most a nonblocking lead.
 2. **Contract fidelity** — Do call sites honour the contract of the functions they call? Are preconditions met? Are return values handled correctly?
 3. **Pattern violations** — Does the code follow the established patterns in adjacent code? Import conventions, error handling style, naming, module structure.
 4. **Duplication** — Is logic copy-pasted where it should be extracted? Is an existing utility ignored?
 5. **Unnecessary complexity** — Premature abstraction, over-engineering, dead code, unreachable branches, abstractions with a single consumer, and a named constant for a string with a single use (`sdlc/policy/code-quality-practices` → State and Data).
 6. **Language-policy ownership** — For every changed code file, load the applicable language policy and apply its rules for string ownership, closed vocabularies, typing, and tooling. Findings cite that language owner. A generic review rule never substitutes its own language construct or command.
-7. **Shared-resource cost** — Where the change makes a path wait on a lock, transaction or other resource that unrelated work also holds, name those other holders and what they do while holding it, whether the wait is bounded, and whether the outcome reaches each caller within that caller's deadline. Judge it from the change, the resource's other holders in the code, and the callers the path serves.
+7. **Shared-resource cost** — Where the change makes a path wait on a lock, transaction or other resource that unrelated work also holds, name those other holders and what they do while holding it, whether the wait is bounded, and whether the outcome reaches each caller within that caller's deadline. Judge it from the change, the resource's other holders in the code, and the callers the path serves. The wait is a finding only when it is reachable under `sdlc/concept/defect-evidence`.
 8. **Executable logic in carriers** — In every changed file whose purpose is configuration, declaration, orchestration or convention, whatever its format, each executable body it carries — a Make recipe, a workflow run block, a build step, a hook — is a single delegation line to a script or module. Declarative content is unaffected, and a file may hold several such bodies; a body that branches, loops, computes or parses is code in the wrong place (`sdlc/policy/no-inline-logic`).
 
 Only report findings with high confidence — quality over quantity. Each finding must name the file, line range, the specific violation, and a concrete fix.
@@ -182,7 +182,7 @@ Severity guidance:
 
 - Bugs that produce wrong results or crash → **Critical**.
 - Contract violations at boundaries → **Critical**.
-- A wait on a shared resource that can outlast its caller's deadline → **Critical**.
+- A reachable wait on a shared resource that can outlast its caller's deadline → **Critical**.
 - Pattern violations that increase maintenance cost → **Important**.
 - Executable logic in a carrier file → **Important**.
 - Unnecessary complexity or duplication → **Important**.
@@ -367,13 +367,12 @@ Treat the following as common weak-test patterns:
 Severity guidance:
 
 - Weakening or deleting prepare-delivered spec assertions -> **Critical**.
-- Missing tests for new or changed behavior -> **Important**.
+- An unbound in-scope scenario this change delivers, where the project ruling requires its binding -> **Important**.
 - New or changed behavior covered only by weak tests -> **Important**.
 - A changed test that cannot answer the "what bug would this catch?" question -> **Important**.
 - A `functional`-marked test that drives an internal non-boundary symbol or fakes in-process collaborators so the real chain never runs -> **Important** (the coverage is illusory; **Critical** when it replaces or weakens a prepare-delivered spec assertion).
 - Supplemental cleanup observations where a strong behavioral test already exists -> **drop the observation; it is not a finding**.
 
-Missing tests for new behavior are **Important** findings.
 Missing browser-smoke verification for browser-based frontend changes is an **Important** finding.
 
 #### Error handling review

@@ -298,9 +298,9 @@ whose purpose that is.
 - A person writing to a company's agent may be told about their request and about
   their own world — a service of theirs that is unreachable, the assistant being
   unavailable for a while — and never about instrukt's internals. What instrukt
-  cannot resolve goes to the operator. A new actor is started only where the
-  earlier one is proven gone or cannot have acted; otherwise the operation is
-  reconciled.
+  cannot resolve goes to the operator. An actor is started under an
+  idempotency key fixed by the object it serves, so a repeated start yields the
+  same actor and two live actors on one object cannot arise.
 - A record in an older or unknown shape is discarded only when its specification
   names the source that rebuilds it. A person's stated choices and restrictions,
   and records of external effects, are migrated, never discarded or expired.
