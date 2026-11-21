@@ -418,8 +418,7 @@ impl SharedLockGuard {
 }
 
 /// Retries `attempt` with backoff until it yields a guard or `timeout` has
-/// passed. The wait is measured on the same clock as process limits: real
-/// time, or the operator's clock when one is set.
+/// passed. The wait uses monotonic real time, as process limits do.
 fn wait_for<G>(
     path: &Path,
     timeout: Duration,
