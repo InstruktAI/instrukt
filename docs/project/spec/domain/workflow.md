@@ -72,6 +72,16 @@ runner and event capability. Workflow stores no phase.
   workspace, with workflow definitions, actions and templates supplied by the
   flavor. Internal source-directory allocation does not define this boundary.
 
+<!-- planned:fix-false-recovery-on-released-executions -->
+The current assignment workflow derives for a todo also names the session holding
+its execution claim and states whether the todo waits on a person, by the rule
+work owns for its `Needs you` marker
+(`project/instrukt/spec/feature/work/github-record`). Workflow reads both from the
+work record's evidence in the same derivation and decides neither; the runner
+consumes them for execution observation
+(`project/instrukt/spec/feature/runner/session-continuity`).
+<!-- /planned:fix-false-recovery-on-released-executions -->
+
 ### Flavor-facing contract
 
 Project key `workflow.domain` selects the published domain, default `sdlc`.

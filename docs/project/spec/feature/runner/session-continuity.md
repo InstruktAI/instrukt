@@ -511,6 +511,7 @@ is an observation error, never `gone` or success. Status spellings and optional
 metadata must be verified against the installed T3 response before translation;
 a fake runtime fixture is not evidence of the live shape.
 
+<!-- planned-change:fix-false-recovery-on-released-executions -->
 Work records retain sessions per todo, role and attempt; subsequent work reads that
 binding and confirms that its attempt is active and unreleased before sending
 a native follow-up to it. An ended turn can leave a reusable
@@ -526,6 +527,38 @@ state advances, whether or not a notification command is configured; recovered m
 that its state advanced (`project/instrukt/policy/checks-and-guards`: what instrukt
 cannot resolve goes to the operator). Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
+<!-- change:fix-false-recovery-on-released-executions -->
+Work records retain sessions per todo, role and attempt; subsequent work reads that
+binding and confirms that its attempt is active and unreleased before sending
+a native follow-up to it. An ended turn can leave a reusable
+conversation within that active attempt. A released finalizer's record-only
+readiness write uses its retained binding after confirmed completion and release; further
+workspace work requires a new attempt. Artifact writers and stamps retain `<runtime>:<id>` identity. A
+step is complete only with its required artifact and stamp.
+
+A runner-owned execution lasts while its session holds the todo's execution claim
+(`project/instrukt/spec/feature/work/dependencies-and-holds`). Once that claim is
+released or held by another session, the execution has ended: its former session
+receives no recovery send and raises no anomaly, whether its thread is present,
+settled or gone (`general/principle/session-lifecycle`: release of a claim, end of
+an execution and loss of a session are separate facts). While the todo waits on a
+person, as work decides for its `Needs you` marker
+(`project/instrukt/spec/feature/work/github-record`), the session owes no evidence:
+an ended turn receives no recovery send and raises no anomaly, whichever state its
+thread reports (`general/principle/session-lifecycle`: runtime silence alone
+establishes no missing work). The runner reads both facts from workflow's current
+assignment for the todo (`project/instrukt/spec/domain/workflow`).
+
+For every other runner-owned
+execution, a present thread ending without evidence receives one recovery send;
+a repeated ending raises an anomaly. Confirmed native archive/deletion with an
+eligible active assignment uses the common successor and work-claim transaction.
+Observation failure retries observation instead. Such an execution is listed in `instrukt events status` until its workflow
+state advances, whether or not a notification command is configured; recovered means
+that its state advanced (`project/instrukt/policy/checks-and-guards`: what instrukt
+cannot resolve goes to the operator). Release claims through work's command contract; ending
+conversations remains the runtime's responsibility.
+<!-- /planned-change:fix-false-recovery-on-released-executions -->
 
 ### Fresh canonical base
 
@@ -740,6 +773,18 @@ Then the runtime binding, work binding and claim move to one successor atomicall
 And a lost acknowledgement replays that successor with the same IDs
 ```
 
+<!-- planned:fix-false-recovery-on-released-executions -->
+### UC-SS27: A handed-off orchestrator's conversation stays settled
+
+```gherkin
+Given a developer's orchestrator released its todo at the approved preparation handoff and settled its conversation
+And the todo still awaits integration of its preparation
+When the runner next considers the project's work
+Then that conversation receives no recovery message and stays settled
+And no stopped execution is reported for it
+```
+<!-- /planned:fix-false-recovery-on-released-executions -->
+
 ### UC-SS25: Keyed recovery commands (retired)
 
 Retired: the former operator/title-discovery goal is removed.
@@ -786,6 +831,13 @@ Retired: the runtime owns session ending; its test bindings have been removed.
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
   a visible gap; the operational session surface is independent of extracted
   history under `project/instrukt/spec/feature/runner/history`.
+
+<!-- planned:fix-false-recovery-on-released-executions -->
+- A wait is recognised from the work record, never from thread state: T3 reports
+  a turn that ended on a plain message as `input-ready`. A session that yields
+  while it holds the claim and its todo does not wait on a person is an ended
+  turn and receives the recovery send.
+<!-- /planned:fix-false-recovery-on-released-executions -->
 
 ## See Also
 
