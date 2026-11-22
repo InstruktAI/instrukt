@@ -13,7 +13,7 @@ use instrukt_core::{
         rusqlite::{Connection, OptionalExtension, Transaction, params},
     },
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a history writer waits for another one holding the history lock.
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -165,9 +165,10 @@ fn record_complete(db: &mut StoreDb) -> Result<(), HistoryError> {
 /// Completes moving the history an earlier build kept in the state
 /// database, resuming wherever a stopped move left it.
 fn move_in(home: &Home, db: &mut StoreDb) -> Result<(), HistoryError> {
+    let started = Instant::now();
     let mut cursor = match progress(db.conn())? {
         Some(Progress::Complete) => return Ok(()),
-        Some(Progress::RemovalPending) => return remove(home, db),
+        Some(Progress::RemovalPending) => return remove(home, db, started),
         Some(Progress::Copying {
             conversations,
             records,
@@ -196,7 +197,7 @@ fn move_in(home: &Home, db: &mut StoreDb) -> Result<(), HistoryError> {
     // No connection that read the state database outlives the copy, so the
     // checkpoint after reclaiming is never held back by the move itself.
     drop(state);
-    remove(home, db)
+    remove(home, db, started)
 }
 
 fn holds_history(state: &Connection) -> Result<bool, HistoryError> {
@@ -425,14 +426,20 @@ fn copy_bookkeeping(state: &Connection, db: &mut StoreDb) -> Result<(), HistoryE
 
 /// In one hold of the writer lock: drops whichever history tables the
 /// state database still holds and reclaims the space they freed; then
-/// records the move complete. A failure leaves the removal pending for the
-/// next write-open.
-fn remove(home: &Home, db: &mut StoreDb) -> Result<(), HistoryError> {
+/// records the move complete, logging it with the time since `started`. A
+/// failure leaves the removal pending for the next write-open.
+fn remove(home: &Home, db: &mut StoreDb, started: Instant) -> Result<(), HistoryError> {
     let mut state = StateDb::open(home)?;
     state.remove_history()?;
     state.reclaim()?;
     drop(state);
-    record_complete(db)
+    record_complete(db)?;
+    tracing::info!(
+        event = "history_moved",
+        duration_ms = started.elapsed().as_millis() as u64,
+        "earlier history moved out of the state database"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
