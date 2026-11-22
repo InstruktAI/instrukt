@@ -833,10 +833,12 @@ Retired: the runtime owns session ending; its test bindings have been removed.
   history under `project/instrukt/spec/feature/runner/history`.
 
 <!-- planned:fix-false-recovery-on-released-executions -->
-- A wait is recognised from the work record, never from thread state: T3 reports
-  a turn that ended on a plain message as `input-ready`. A session that yields
-  while it holds the claim and its todo does not wait on a person is an ended
-  turn and receives the recovery send.
+- T3 reports a turn that ended on a plain message, with no pending request, as
+  `input-ready`; nothing in the thread tells a session that paused there from
+  one that stopped. Such an ending is left alone only while the work record
+  shows the todo waiting on a person. Otherwise, when the workflow state has
+  not advanced, it receives the one recovery send and a repeated ending raises
+  the anomaly. A thread reported as `running` or `needs-input` receives neither.
 <!-- /planned:fix-false-recovery-on-released-executions -->
 
 ## See Also

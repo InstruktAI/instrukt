@@ -74,11 +74,12 @@ runner and event capability. Workflow stores no phase.
 
 <!-- planned:fix-false-recovery-on-released-executions -->
 The current assignment workflow derives for a todo also names the session holding
-its execution claim and states whether the todo waits on a person, by the rule
-work owns for its `Needs you` marker
-(`project/instrukt/spec/feature/work/github-record`). Workflow reads both from the
-work record's evidence in the same derivation and decides neither; the runner
-consumes them for execution observation
+its execution claim and states whether the todo waits on a person. Work decides
+that wait, by the rule it owns for its `Needs you` marker
+(`project/instrukt/spec/feature/work/github-record`); workflow answers only
+whether an approval gate currently waits for a human, as it does for that
+marker, and relays work's decision and the claim's session from the evidence of
+the same derivation. The runner consumes both for execution observation
 (`project/instrukt/spec/feature/runner/session-continuity`).
 <!-- /planned:fix-false-recovery-on-released-executions -->
 
