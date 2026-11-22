@@ -605,7 +605,9 @@ impl Effort {
                 self,
                 Self::Low | Self::Medium | Self::High | Self::Xhigh | Self::Max | Self::Ultrathink
             ),
-            HarnessKind::Antigravity => matches!(self, Self::Low | Self::Medium | Self::High),
+            HarnessKind::Antigravity => {
+                matches!(self, Self::Low | Self::Medium | Self::High | Self::Xhigh)
+            }
             HarnessKind::Kiro | HarnessKind::Grok => matches!(
                 self,
                 Self::None | Self::Low | Self::Medium | Self::High | Self::Xhigh | Self::Max
@@ -909,5 +911,18 @@ mod tests {
             .capabilities("builder")
             .unwrap();
         assert_eq!(role.scope(Action::DocsWrite), None);
+    }
+
+    #[test]
+    fn an_antigravity_effort_outside_its_vocabulary_is_refused() {
+        let edited = SHIPPED_AGENTS.replacen(
+            "standard: [{model: gemini-3.8-flash-high, effort: high}]",
+            "standard: [{model: gemini-3.8-flash-high, effort: max}]",
+            1,
+        );
+        assert!(matches!(
+            Agents::parse(&edited),
+            Err(ConfigError::InvalidValue { .. })
+        ));
     }
 }
