@@ -1000,6 +1000,7 @@ dependencies = [
  "serde_yaml_ng",
  "service-binding",
  "sha2",
+ "tempfile",
  "thiserror",
  "tiny_http",
  "tracing",
