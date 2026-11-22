@@ -547,7 +547,8 @@ person, as work decides for its `Needs you` marker
 an ended turn receives no recovery send and raises no anomaly, whichever state its
 thread reports (`general/principle/session-lifecycle`: runtime silence alone
 establishes no missing work). The runner reads both facts from workflow's current
-assignment for the todo (`project/instrukt/spec/domain/workflow`).
+assignment for the todo (`project/instrukt/spec/domain/workflow`). For a todo that
+work offers for pickup, the offer itself shows that no session holds the claim.
 
 For every other runner-owned
 execution, a present thread ending without evidence receives one recovery send;
