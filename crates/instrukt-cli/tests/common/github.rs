@@ -193,12 +193,14 @@ impl StatusState {
 }
 
 /// The running fake. Dropping it stops the server and releases its
-/// address. A failure of the fake's own transport is recorded with its
-/// operation and cause: an operation on a socket that failed, a relay or
-/// request-copy thread that could not be started, a panic in any of the
-/// fake's threads, or a drop that could not end the accept thread and so
-/// leaves the address held. Dropping the fake then fails the test, or, when the test is
-/// already failing, adds the report to its output.
+/// address. A failure inside the fake is recorded with its operation and
+/// cause: a socket operation of one of the fake's threads that failed, a
+/// relay or request-copy thread that could not be started, a panic in one
+/// of the fake's threads, or a drop that could not end the accept thread
+/// and so leaves the address held. Dropping the fake then fails the test,
+/// or, when the test is already failing, adds the report to its output.
+/// A socket `resume` opens itself is not recorded: when it fails, `resume`
+/// fails the test at once with the operation and cause.
 pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
