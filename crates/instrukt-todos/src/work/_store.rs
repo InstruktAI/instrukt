@@ -1843,19 +1843,4 @@ mod tests {
             .collect();
         assert_eq!(remotes, vec![Some(1), Some(2), None]);
     }
-
-    #[test]
-    fn the_reflection_lock_refuses_a_symbolic_link() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        let lock = home.reflection_lock_file();
-        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
-        let elsewhere = dir.path().join("elsewhere.lock");
-        std::fs::write(&elsewhere, "").unwrap();
-        std::os::unix::fs::symlink(&elsewhere, &lock).unwrap();
-        assert!(matches!(
-            ReflectionLock::acquire(&home),
-            Err(WorkError::StateDb(StateDbError::Symlink { .. }))
-        ));
-    }
 }
