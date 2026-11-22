@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: unavailable.err
+---
+instrukt: todos: cannot tell whether todo `plan-work` exists: it is not on this computer and GitHub cannot be read (GitHub App setup incomplete: github.project_app is missing; repair github.apps and its repository installation with the configuration skill)

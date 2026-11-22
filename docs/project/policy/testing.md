@@ -110,6 +110,12 @@ Cursor/Grok/Antigravity default-only outputs are not filesystem-delivery
 fixtures against a real home. Existing pure/source evidence covers their
 planning/format; relocated Claude/fx file checks do not prove context receipt.
 
+Because the isolated Instrukt root holds no work database or GitHub App setup,
+`.pre-commit-config.yaml`'s document validation check runs `instrukt docs
+validate --no-todo-lookup` (`project/instrukt/spec/feature/docs/snippet-validation`),
+checking pending-slug form, marker structure, workflow roles and all other
+structural rules without services.
+
 ## Rationale
 
 The live T3 boundary supplies independent evidence for the adapter and its fake;

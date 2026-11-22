@@ -216,20 +216,7 @@ impl Store {
     }
 
     pub fn provider(&self) -> Result<ProviderState, WorkError> {
-        let path = self.db.path();
-        let until: Option<String> = self
-            .db
-            .conn()
-            .query_row(
-                "SELECT until FROM provider_deferrals WHERE project = ?1",
-                params![self.project.as_str()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(StateDbError::sqlite(path))?;
-        Ok(ProviderState {
-            deferred_until: until.map(|text| time(path, &text)).transpose()?,
-        })
+        load_provider(self.db.conn(), self.db.path(), &self.project)
     }
 
     pub fn save_provider(&mut self, state: &ProviderState) -> Result<(), WorkError> {
@@ -388,12 +375,46 @@ fn load_copies(
         .collect()
 }
 
+fn load_provider(
+    conn: &Connection,
+    path: &Path,
+    project: &ProjectSlug,
+) -> Result<ProviderState, WorkError> {
+    let until: Option<String> = conn
+        .query_row(
+            "SELECT until FROM provider_deferrals WHERE project = ?1",
+            params![project.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StateDbError::sqlite(path))?;
+    Ok(ProviderState {
+        deferred_until: until.map(|text| time(path, &text)).transpose()?,
+    })
+}
+
 /// Every local item of `project`, read without the writer lock; no
 /// database yet is no items.
 pub(crate) fn read_items(home: &Home, project: &ProjectSlug) -> Result<Vec<LocalItem>, WorkError> {
     match StateRead::open(home)? {
         Some(read) => load_items(read.conn(), read.path(), project),
         None => Ok(Vec::new()),
+    }
+}
+
+/// Local items, listing copies and provider state of `project`, read
+/// without the writer lock; no database yet is empty state.
+pub(crate) fn read_existence_state(
+    home: &Home,
+    project: &ProjectSlug,
+) -> Result<(Vec<LocalItem>, Vec<ListingCopy>, ProviderState), WorkError> {
+    match StateRead::open(home)? {
+        Some(read) => Ok((
+            load_items(read.conn(), read.path(), project)?,
+            load_copies(read.conn(), read.path(), project)?,
+            load_provider(read.conn(), read.path(), project)?,
+        )),
+        None => Ok((Vec::new(), Vec::new(), ProviderState::default())),
     }
 }
 

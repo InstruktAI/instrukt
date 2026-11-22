@@ -974,3 +974,199 @@ fn independent_subscriptions_use_their_own_roles_and_publish_the_implicit_handle
         .unwrap();
     assert_eq!(implicit.role.as_deref(), Some("event-handler"));
 }
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV7
+#[test]
+fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
+    let empty_env = TestEnv::new();
+    let repo = empty_env.git_repo("demo");
+    repo.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {}\nproject: demo\nmodules: {{todos: true}}\nworkflow: {{domain: crew}}\ngithub: {{repository: acme/demo}}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION
+        ),
+    )
+    .write(
+        "docs/domain/crew/workflow/actions.yaml",
+        "roles: [lead, reviewer, checker]\n\
+         review:\n  command: instrukt docs get crew/procedure/review\n  template: templates/review.md\n\
+         check:\n  command: instrukt docs get project/demo/procedure/check\n  template: templates/review.md\n",
+    )
+    .write(
+        "docs/domain/crew/workflow/templates/review.md",
+        "Review {slug}.\n",
+    )
+    .write(
+        "docs/domain/crew/workflow/work.yaml",
+        "flow: work\norchestrator: lead\nrequires: []\ninitial: start\nstates: [start, reviewing]\n\
+         transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
+    )
+    .write(
+        "docs/domain/crew/procedure/lead.md",
+        &snippet("procedure", "role: lead\nactivation_trigger: When work is led.\n", ""),
+    )
+    .write(
+        "docs/domain/crew/procedure/review.md",
+        &snippet(
+            "procedure",
+            "role: reviewer\nactivation_trigger: When work is reviewed.\n",
+            "",
+        ),
+    )
+    .write(
+        "docs/domain/crew/index.yaml",
+        "description: The crew workflow.\nlisted: [crew/procedure/lead, crew/procedure/review]\n",
+    )
+    .write(
+        "docs/project/procedure/check.md",
+        &snippet(
+            "procedure",
+            "role: checker\nactivation_trigger: When checking.\n",
+            "",
+        ),
+    )
+    .write(
+        "docs/project/index.yaml",
+        "listed: [project/demo/procedure/check, project/demo/spec/live]\n",
+    )
+    .write(
+        "docs/project/spec/live.md",
+        &snippet(
+            "spec",
+            "",
+            "\n<!-- planned:plan-work -->\nAdded by plan-work.\n<!-- /planned:plan-work -->\n\n\
+             <!-- planned-change:plan-work -->\nCurrent.\n<!-- change:plan-work -->\nReplaced.\n\
+             <!-- /planned-change:plan-work -->\n",
+        ),
+    )
+    .write(
+        "docs/project/spec/fresh.md",
+        &snippet("spec", "delivered_by: [plan-work]\n", ""),
+    );
+
+    let db_path = empty_env.instrukt_home().join("state/instrukt.db");
+    let lock_path = empty_env.instrukt_home().join("state/writer.lock");
+
+    // Clause 1: --no-todo-lookup validates pending markers in an isolated empty home
+    // without creating state files, while still enforcing slug form, marker structure
+    // and workflow roles.
+    let clean = validate(&empty_env, &repo, &["--no-todo-lookup"]);
+    assert!(clean.success, "{}{}", clean.out, clean.err);
+    assert!(clean.out.is_empty(), "{}", clean.out);
+    assert!(!db_path.exists());
+    assert!(!lock_path.exists());
+
+    repo.write(
+        "docs/project/procedure/check.md",
+        &snippet(
+            "procedure",
+            "role: haunter\nactivation_trigger: When checking.\n",
+            "",
+        ),
+    )
+    .write(
+        "docs/project/concept/bad.md",
+        &snippet(
+            "concept",
+            "",
+            "\n<!-- planned:Bad_Slug -->\nBad slug and unbalanced marker.\n",
+        ),
+    );
+    let structural = validate(&empty_env, &repo, &["--no-todo-lookup"]);
+    assert!(!structural.success, "{}", structural.err);
+    insta::assert_snapshot!("no_todo_lookup_structural_findings", structural.out);
+    assert!(!db_path.exists());
+    assert!(!lock_path.exists());
+
+    // Restore valid docs before Clause 2.
+    std::fs::remove_file(repo.path().join("docs/project/concept/bad.md")).unwrap();
+    repo.write(
+        "docs/project/procedure/check.md",
+        &snippet(
+            "procedure",
+            "role: checker\nactivation_trigger: When checking.\n",
+            "",
+        ),
+    );
+
+    // Clause 2: default docs validate (without --no-todo-lookup) against the empty home
+    // reports the unavailable todo lookup and leaves neither state DB nor writer lock.
+    let unavailable = validate(&empty_env, &repo, &[]);
+    assert!(!unavailable.success, "{}", unavailable.out);
+    assert!(unavailable.out.is_empty(), "{}", unavailable.out);
+    insta::assert_snapshot!("todo_lookup_unavailable_empty_home", unavailable.err);
+    assert!(!db_path.exists());
+    assert!(!lock_path.exists());
+
+    // Clause 3: default docs validate against a home whose state database records the todo
+    // succeeds while writer.lock is held and leaves the database unmodified (no purge).
+    let work = crate::fixtures::work::Project::new();
+    publish_crew_flavor(&work.env);
+    work.repo.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\nworkflow:\n  domain: crew\ngithub:\n  repository: {}\n",
+            instrukt_core::config::CURRENT_SCHEMA_VERSION,
+            crate::fixtures::work::REPOSITORY
+        ),
+    );
+    work.create("plan-work", "change", "Plan pending documentation.");
+    work.create("expired-work", "change", "Withdrawn beyond recovery.");
+    work.ok(["remove", "expired-work"]);
+    let work_db = work.env.instrukt_home().join("state/instrukt.db");
+    {
+        let conn = instrukt_core::state_db::rusqlite::Connection::open(&work_db).unwrap();
+        conn.execute(
+            "UPDATE todos SET removed_at = '2020-01-01T00:00:00Z' WHERE slug = 'expired-work'",
+            [],
+        )
+        .unwrap();
+    }
+    let read_todos = || -> Vec<(String, String, String, i64)> {
+        let conn = instrukt_core::state_db::rusqlite::Connection::open(&work_db).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, slug, status, revision FROM todos ORDER BY slug")
+            .unwrap();
+        stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    };
+    let before = read_todos();
+    assert_eq!(before.len(), 2);
+
+    work.repo
+        .write(
+            "docs/project/index.yaml",
+            "listed: [project/demo/spec/live]\n",
+        )
+        .write(
+            "docs/project/spec/live.md",
+            &snippet(
+                "spec",
+                "",
+                "\n<!-- planned:plan-work -->\nAdded by plan-work.\n<!-- /planned:plan-work -->\n\n\
+                 <!-- planned-change:plan-work -->\nCurrent.\n<!-- change:plan-work -->\nReplaced.\n\
+                 <!-- /planned-change:plan-work -->\n",
+            ),
+        )
+        .write(
+            "docs/project/spec/fresh.md",
+            &snippet("spec", "delivered_by: [plan-work]\n", ""),
+        );
+
+    let lock = instrukt_core::fsx::LockGuard::acquire(
+        &work.env.instrukt_home().join("state/writer.lock"),
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap();
+    let backed = validate(&work.env, &work.repo, &[]);
+    assert!(backed.success, "{}{}", backed.out, backed.err);
+    assert!(backed.out.is_empty(), "{}", backed.out);
+    drop(lock);
+
+    assert_eq!(read_todos(), before);
+}

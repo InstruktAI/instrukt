@@ -49,7 +49,9 @@ resolved as in a default read.
 - **A lens that does not reach.** `get --target <slug>` of a pending snippet
   that `<slug>` neither delivers nor reworks is withheld like a default read.
 - **Slug checks.** A slug is checked for form during validation; whether it
-  names an existing todo is checked only when the `todos` module is on.
+  names an existing todo is checked when the `todos` module is on unless
+  validation omits the lookup
+  (`project/instrukt/spec/feature/docs/snippet-validation`).
 - **Closures stay current.** A closure never includes a pending required read
   (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 - **Indexes name delivered snippets.** An `index.yaml` naming a pending

@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: structural.out
+---
+docs/project/concept/bad.md: pending-slug-invalid: Bad_Slug
+docs/project/concept/bad.md: pending-marker-unbalanced: <!-- planned:Bad_Slug -->
+docs/project/procedure/check.md: procedure-role-undeclared: haunter
+notice: docs/project/concept/bad.md: unreferenced-snippet: project/demo/concept/bad
