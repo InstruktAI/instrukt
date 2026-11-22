@@ -40,8 +40,6 @@ pub enum HistoryError {
     #[error("history source unavailable: {0}")]
     Source(String),
     #[error(transparent)]
-    Lock(#[from] instrukt_core::fsx::FsError),
-    #[error(transparent)]
     Machine(#[from] instrukt_core::machine::MachineError),
     #[error(transparent)]
     Transport(#[from] crate::transport::TransportError),
