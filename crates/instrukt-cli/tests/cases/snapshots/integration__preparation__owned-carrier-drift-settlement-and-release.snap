@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/preparation.rs
-expression: "redact(&format!(\"{at_drift}---\\n{settled_v1}---\\n{re_drifted}---\\n{settled_v2}---\\n{deleted_drift}---\\n{deleted_settled}---\\n{restored_drift}---\\n{restored_settled}---\\n{companion_deleted_drift}---\\n{companion_deleted_settled}---\\n{companion_restored_drift}---\\n{companion_restored_settled}---\\n{}\",\nshow_v1.replace(tmp, \"[TMP]\")))"
+expression: "redact(&format!(\"{at_drift}---\\n{settled_v1}---\\n{re_drifted}---\\n{settled_v2}---\\n{deleted_drift}---\\n{deleted_settled}---\\n{restored_drift}---\\n{restored_settled}---\\n{companion_deleted_drift}---\\n{companion_deleted_settled}---\\n{companion_restored_drift}---\\n{companion_restored_settled}---\\n{parent_main_edit_drift}---\\n{parent_main_edit_settled}---\\n{}\",\nshow_v1.replace(tmp, \"[TMP]\")))"
 ---
 todo: docs-first (demo)
 flow: prepare
@@ -159,6 +159,34 @@ command: instrukt todo update docs-first --unclaim
 effects: none
 instructions:
 docs-first is prepared: release the claim.
+---
+todo: docs-first (demo)
+flow: prepare
+claim: held by this session
+state: drift_analysis
+transition: plan_review -> drift_analysis (#8)
+action: analyze-drift
+responsible: drift-analyzer (crew/procedure/drift-analyze)
+command: instrukt todo attempt docs-first --role drift-analyzer --procedure crew/procedure/drift-analyze --args docs-first --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
+effects: none
+instructions:
+Judge the drift of docs-first: PRD pending, plan pending.
+---
+todo: docs-first (demo)
+flow: prepare
+claim: held by this session
+state: drift_analysis
+transition: plan_review -> drift_analysis (#8)
+action: analyze-drift
+responsible: drift-analyzer (crew/procedure/drift-analyze)
+command: instrukt todo attempt docs-first --role drift-analyzer --procedure crew/procedure/drift-analyze --args docs-first --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
+effects: none
+instructions:
+Judge the drift of docs-first: PRD pending, plan cosmetic.
 ---
 docs-first · feature · active
 identity: <id 1>

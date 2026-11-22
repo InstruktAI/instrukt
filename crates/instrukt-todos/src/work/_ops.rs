@@ -742,28 +742,7 @@ impl Work {
             let content = latest_version
                 .and_then(|v| v.content.clone())
                 .unwrap_or_default();
-            let mut prior_owned = Vec::new();
-            if let Some(version) = latest_version {
-                for snippet in &version.grounding.owned_snippets {
-                    if !prior_owned.contains(&snippet.id) {
-                        prior_owned.push(snippet.id.clone());
-                    }
-                }
-            }
-            if let Some(prior_grounding) = record.stamps.iter().rev().find_map(|s| match &s.fact {
-                StampFact::DriftReviewed {
-                    artifact: prior_artifact,
-                    grounding,
-                    ..
-                } if prior_artifact == artifact => Some(grounding),
-                _ => None,
-            }) {
-                for snippet in &prior_grounding.owned_snippets {
-                    if !prior_owned.contains(&snippet.id) {
-                        prior_owned.push(snippet.id.clone());
-                    }
-                }
-            }
+            let prior_owned = prior_owned_for_version(&record, artifact);
             *grounding = grounding_now(&mut s, index, artifact.as_str(), &content, &prior_owned)?;
         }
         let stamp = StampRecord {
@@ -1613,6 +1592,43 @@ impl Work {
     }
 }
 
+/// Pure selection of previously-owned snippet IDs applicable to `artifact`'s
+/// current version: the current version's recorded owned IDs plus any owned IDs
+/// carried by a drift judgment recorded *after* that version (ignoring older
+/// judgments that predate an artifact rewrite).
+fn prior_owned_for_version(
+    record: &TodoRecord,
+    artifact: &ArtifactName,
+) -> Vec<instrukt_core::ids::SnippetId> {
+    let mut prior_owned = Vec::new();
+    let latest_version = record
+        .artifact(artifact.as_str())
+        .and_then(|a| a.versions.last());
+    let version_seq = latest_version.map_or(0, |v| v.sequence);
+    if let Some(version) = latest_version {
+        for snippet in &version.grounding.owned_snippets {
+            if !prior_owned.contains(&snippet.id) {
+                prior_owned.push(snippet.id.clone());
+            }
+        }
+    }
+    if let Some(prior_grounding) = record.stamps.iter().rev().find_map(|s| match &s.fact {
+        StampFact::DriftReviewed {
+            artifact: prior_artifact,
+            grounding,
+            ..
+        } if prior_artifact == artifact && s.sequence > version_seq => Some(grounding),
+        _ => None,
+    }) {
+        for snippet in &prior_grounding.owned_snippets {
+            if !prior_owned.contains(&snippet.id) {
+                prior_owned.push(snippet.id.clone());
+            }
+        }
+    }
+    prior_owned
+}
+
 /// Pure replay check for `StampFact::DriftReviewed`: only the latest drift
 /// judgment for the artifact, matching fact and actor, with neither the
 /// artifact itself nor any upstream artifact rewritten after that stamp,
@@ -2193,5 +2209,64 @@ mod tests {
         rec.stamps.push(cosmetic.clone());
         rec.stamps.push(substantive);
         assert!(current_drift_replay(&rec, &cosmetic.fact, &actor).is_none());
+    }
+
+    #[test]
+    fn prior_owned_for_version_ignores_judgments_predating_artifact_rewrite() {
+        let mut rec = record("demo", 1, &[]);
+        let actor = Actor::Person { name: "dev".into() };
+        let old_owned = instrukt_core::ids::SnippetId::parse("project/demo/policy/old").unwrap();
+        let cur_owned = instrukt_core::ids::SnippetId::parse("project/demo/policy/cur").unwrap();
+        rec.stamps.push(StampRecord {
+            source_comment: None,
+            fact: StampFact::DriftReviewed {
+                artifact: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
+                class: crate::evidence::DriftClass::Cosmetic,
+                reason: "prior version".into(),
+                examined: ContentDigest::of("plan-v1"),
+                grounding: crate::evidence::Grounding {
+                    owned_snippets: vec![crate::evidence::SnippetDigest {
+                        id: old_owned,
+                        digest: Some(ContentDigest::of("parent")),
+                    }],
+                    ..Default::default()
+                },
+            },
+            at: jiff::Timestamp::UNIX_EPOCH,
+            actor,
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+            sequence: 3,
+            model_provenance: Default::default(),
+        });
+        rec.artifacts.push(Artifact {
+            name: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
+            address: None,
+            versions: vec![Version {
+                digest: ContentDigest::of("plan-v2"),
+                writer: Actor::Person { name: "dev".into() },
+                created: jiff::Timestamp::UNIX_EPOCH,
+                derived_from: Vec::new(),
+                sequence: 5,
+                grounding: crate::evidence::Grounding {
+                    owned_snippets: vec![crate::evidence::SnippetDigest {
+                        id: cur_owned.clone(),
+                        digest: Some(ContentDigest::of("cur")),
+                    }],
+                    ..Default::default()
+                },
+                remote: None,
+                content: None,
+            }],
+        });
+        assert_eq!(
+            prior_owned_for_version(
+                &rec,
+                &ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN)
+            ),
+            vec![cur_owned]
+        );
     }
 }

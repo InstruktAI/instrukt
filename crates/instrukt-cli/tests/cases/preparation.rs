@@ -565,12 +565,71 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
     .success();
     let companion_restored_settled = crew.next("prepare", slug);
 
+    // After removing the companion and rewriting the plan to reference its
+    // surviving parent as an ordinary upstream snippet, a cosmetic judgment
+    // must not import the pre-rewrite owned ID back onto the prepare tree:
+    // editing the parent on main must return the plan to pending drift.
+    std::fs::remove_file(&companion).unwrap();
+    project.env.git(prepare, ["add", "-A", "docs"]);
+    project
+        .env
+        .git(prepare, ["commit", "--quiet", "-m", "docs: drop companion"]);
+    project.env.git(
+        prepare,
+        ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
+    );
+    crew.write(
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "Implement @docs/project/spec/feature/early-contract.md referencing @docs/project/spec/feature/live-parent.md.\n\n```referenced-paths\nREADME.md\n```\n",
+    );
+    crew.write(
+        slug,
+        artifact_names::PLAN_REVIEW_FINDINGS,
+        "Re-approved plan.",
+    );
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    std::fs::write(crew.root().join("README.md"), "# demo\n\nUpdated twice.\n").unwrap();
+    project.repo.commit("update readme again");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    let analyzer6 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer6["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "second readme update assessed",
+        ],
+    )
+    .success();
+    // Edit the referenced parent on main: the rewritten plan must detect it.
+    project.repo.write(
+        "docs/project/spec/feature/live-parent.md",
+        "---\ndescription: Live parent snippet with a pending companion.\n---\n# Live parent — Spec\n\n## What it is\n\nUpdated live parent on main.\n\n## Canonical fields\n\nLive value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n",
+    );
+    project.repo.commit("docs: update live parent on main");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    let parent_main_edit_drift = crew.next("prepare", slug);
+    let analyzer7 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer7["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "live parent update on main assessed",
+        ],
+    )
+    .success();
+    let parent_main_edit_settled = crew.next("prepare", slug);
+
     let tmp_root = project.env.path("");
     let tmp = tmp_root.to_str().unwrap().trim_end_matches('/');
     insta::assert_snapshot!(
         "owned-carrier-drift-settlement-and-release",
         redact(&format!(
-            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{deleted_drift}---\n{deleted_settled}---\n{restored_drift}---\n{restored_settled}---\n{companion_deleted_drift}---\n{companion_deleted_settled}---\n{companion_restored_drift}---\n{companion_restored_settled}---\n{}",
+            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{deleted_drift}---\n{deleted_settled}---\n{restored_drift}---\n{restored_settled}---\n{companion_deleted_drift}---\n{companion_deleted_settled}---\n{companion_restored_drift}---\n{companion_restored_settled}---\n{parent_main_edit_drift}---\n{parent_main_edit_settled}---\n{}",
             show_v1.replace(tmp, "[TMP]")
         ))
     );
