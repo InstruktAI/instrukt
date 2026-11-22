@@ -117,8 +117,12 @@ Then no review is started for it
   intent the diff does not show; it relies on the pull request's description and
   commits.
 - Every new head of every eligible pull request starts a review.
-- A pull request outside eligibility receives no review status. A canonical
-  branch that requires the status does not admit it.
+- A pull request outside eligibility starts no review, so no review status is
+  published on its account. The status belongs to the commit: a canonical
+  branch that requires it blocks that pull request's head while the reviewer
+  bot's approving status on that commit is missing or unsuccessful, and admits
+  it once the commit carries one, as when an eligible pull request has the same
+  head.
 
 ## See Also
 
