@@ -43,7 +43,13 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V30),
     Step(v31),
     Step(v32),
+    Sql(V33),
 ];
+
+/// Version 33: a stored Antigravity reservation holding `thinking_level` carries it as T3's `thought_level`.
+const V33: &str = "
+UPDATE manual_standing_reservations SET request=json_remove(json_set(request,'$.selection.options.thought_level',json_extract(request,'$.selection.options.thinking_level')),'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind')='antigravity' AND json_type(request,'$.selection.options.thinking_level') IS NOT NULL;
+";
 
 /// Drops every history table earlier versions created; the history store
 /// owns retained history (`project/instrukt/spec/feature/runner/history`).

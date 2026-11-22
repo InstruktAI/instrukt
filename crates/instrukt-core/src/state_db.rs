@@ -862,6 +862,99 @@ mod tests {
     }
 
     #[test]
+    fn version_33_carries_a_stored_antigravity_effort_as_thought_level_and_keeps_other_reservations()
+     {
+        use crate::config::{AgentSelection, Effort, HarnessKind};
+        use crate::ids::{ProfileName, ProviderInstanceId};
+        let path = Path::new(":memory:");
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(32) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 32).unwrap();
+        let request = |key: &str, selection: serde_json::Value| {
+            serde_json::json!({
+                "preferences": [{"agent": "antigravity", "tier": "strong"}],
+                "selection": selection,
+                "title": format!("standing · {key}"),
+                "reservation": format!("token-{key}"),
+                "key": key,
+                "brief": "retained-input",
+                "checkout": "/checkout",
+                "start_allowed": true,
+            })
+        };
+        let stored = [
+            request(
+                "antigravity-effort",
+                serde_json::json!({"profile": "antigravity", "kind": "antigravity", "instance": "antigravity", "model": "gemini-pro-agent", "effort": "high", "options": {"thinking_level": "high"}}),
+            ),
+            request(
+                "codex-effort",
+                serde_json::json!({"profile": "codex", "kind": "codex", "instance": "codex", "model": "gpt-6-astra", "effort": "high", "options": {"reasoningEffort": "high", "serviceTier": "flex"}}),
+            ),
+            request(
+                "antigravity-plain",
+                serde_json::json!({"profile": "antigravity", "kind": "antigravity", "instance": "antigravity", "model": "gemini-pro-agent", "effort": null, "options": {}}),
+            ),
+        ];
+        for row in &stored {
+            conn.execute(
+                "INSERT INTO manual_standing_reservations(responsibility,token,caller,home,declaration,request) VALUES (?1,?2,'caller','/home','{}',?3)",
+                rusqlite::params![row["key"].as_str().unwrap(), row["reservation"].as_str().unwrap(), row.to_string()],
+            )
+            .unwrap();
+        }
+        migrate(&mut conn, path).unwrap();
+        assert_eq!(user_version(&conn, path).unwrap(), schema_version());
+        let loaded = |key: &str| -> serde_json::Value {
+            let text: String = conn
+                .query_row(
+                    "SELECT request FROM manual_standing_reservations WHERE responsibility=?1",
+                    [key],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            serde_json::from_str(&text).unwrap()
+        };
+        let selection = |value: &serde_json::Value| -> AgentSelection {
+            serde_json::from_value(value["selection"].clone()).unwrap()
+        };
+        let without_selection = |value: &serde_json::Value| {
+            let mut rest = value.clone();
+            rest.as_object_mut().unwrap().remove("selection");
+            rest
+        };
+        let converted = loaded("antigravity-effort");
+        assert_eq!(
+            selection(&converted),
+            AgentSelection {
+                profile: ProfileName::parse("antigravity").unwrap(),
+                kind: HarnessKind::Antigravity,
+                instance: ProviderInstanceId::parse("antigravity").unwrap(),
+                model: "gemini-pro-agent".into(),
+                effort: Some(Effort::High),
+                options: [("thought_level".to_string(), serde_json::json!("high"))].into(),
+            }
+        );
+        assert_eq!(without_selection(&converted), without_selection(&stored[0]));
+        for (key, original) in [
+            ("codex-effort", &stored[1]),
+            ("antigravity-plain", &stored[2]),
+        ] {
+            let kept = loaded(key);
+            assert_eq!(selection(&kept), selection(original));
+            assert_eq!(without_selection(&kept), without_selection(original));
+        }
+    }
+
+    #[test]
     fn version_20_records_when_an_answer_piece_was_posted_and_keeps_stored_pieces() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(19) {
