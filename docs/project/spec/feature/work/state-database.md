@@ -1,6 +1,8 @@
 ---
 description: The one SQLite database holding a computer's work record, runner state and conversations — its tables, its migrations, and instrukt as its single, transactional writer.
 visibility: public
+binding_reservations:
+  UC-SD5: fix-reflection-holds-writer-lock
 ---
 # State Database — Spec
 
@@ -63,6 +65,11 @@ meaning and the writes of the conversation tables.
   the reflection lock. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
   before consuming it, except during status inspection.
+- A change to a todo is computed from the record its command read and is
+  written only while that record is unchanged. When another command changed it
+  in between, the later write is refused whole, naming the todo and its door:
+  run the command again, which acts on the current record
+  (`general/principle/trust-and-guardrails`, interference).
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
@@ -940,9 +947,19 @@ And newer state is reported with the installer command while configuration is st
 And a write against newer state is refused with the installer command
 ```
 
+### UC-SD5: Local work and runner writes proceed while GitHub reflection is in flight
+
+```gherkin
+Given a developer has a project reflecting work to GitHub
+And a GitHub reflection request for one of its todos is in flight on their computer
+When other commands on the same computer list the local work, read that todo and its artifacts, and record a local change to it
+Then the local change completes without waiting for the in-flight GitHub request
+And listing the work and reading an artifact complete without waiting for that request or for a local write that is still open
+And the reflected change and the concurrent local change both reach GitHub intact, with no conflict between them
+```
+
 ## Known caveats
 
-- Work's per-computer writer lock remains held during point refresh and stamp model observation; slow provider or runtime reads can delay other work commands.
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
