@@ -517,11 +517,9 @@ mod tests {
 
     use super::*;
 
-    const RESET: &str = "1767225600";
-
     fn failure(errors: Value, remaining: Option<&str>) -> GitHubError {
         let errors = errors.as_array().cloned().unwrap_or_default();
-        graphql_failure(&errors, 200, remaining, Some(RESET), "secret")
+        graphql_failure(&errors, 200, remaining, Some("1767225600"), "secret")
     }
 
     #[test]
