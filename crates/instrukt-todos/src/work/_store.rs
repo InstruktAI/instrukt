@@ -395,12 +395,21 @@ impl Store {
     }
 
     /// Makes `item`, a todo read from GitHub, a local item when no row of
-    /// its identity exists; the written or the live row.
+    /// its identity exists; the written or the live row. An identity that
+    /// is already a local item of another project is refused, and that
+    /// item is left as it is.
     pub fn adopt(&self, item: &LocalItem) -> Result<LocalItem, WorkError> {
         let id = &item.record.id;
-        self.write(|tx, path, _| {
-            if load_one(tx, path, id)?.is_none() {
-                save_in(tx, path, item)?;
+        self.write(|tx, path, project| {
+            match load_one(tx, path, id)? {
+                None => save_in(tx, path, item)?,
+                Some(live) if &live.record.project != project => {
+                    return Err(WorkError::refused(format!(
+                        "`{}` read from GitHub has the identity {id}, which is already a todo of project `{}` on this computer; it is not taken into `{project}`",
+                        item.record.slug, live.record.project
+                    )));
+                }
+                Some(_) => {}
             }
             written(tx, path, id)
         })
