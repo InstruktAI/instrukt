@@ -272,7 +272,8 @@ changes no delivered record. The integrator executes removal outside evaluation.
 Claim release belongs to the work lane before integration handoff. After delivery
 or withdrawal, the work record retains its recorded `sessions:` bindings and
 attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
-for audit and for terminal session retirement under `general/principle/session-lifecycle`.
+for audit and for identifying the todo's recorded phase orchestrator sessions
+(`project/instrukt/spec/feature/configuration/layered-configuration`).
 <!-- /planned-change:archive-terminal-todo-sessions -->
 
 Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded phase assignment, preserving original preparation branches and ownership across successive renames.
