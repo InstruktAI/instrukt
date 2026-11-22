@@ -37,15 +37,19 @@
 //! so there is no `412`; a test simulates the other computer with
 //! [`FakeGitHub::edit_issue`] or [`FakeGitHub::edit_comment`], and the
 //! client meets the newer revision when it reads. Unreachability is
-//! [`FakeGitHub::stop`] (connections refused) until [`FakeGitHub::resume`]
-//! on the same address. Rate limiting and other failures are one-shot
-//! answers queued with [`FakeGitHub::respond_once`] or
-//! [`FakeGitHub::rate_limit_next`].
+//! [`FakeGitHub::stop`] until [`FakeGitHub::resume`]: the address stays the
+//! fake's own and every connection to it, including one already open, ends
+//! before any byte of a response, so the client meets a failed exchange
+//! without waiting. The fake listens on its address for its whole life and
+//! relays each connection to its HTTP server on a private address while it
+//! answers. Rate limiting and other failures are one-shot answers queued
+//! with [`FakeGitHub::respond_once`] or [`FakeGitHub::rate_limit_next`].
 
 use std::collections::{BTreeMap, VecDeque};
-use std::net::SocketAddr;
+use std::io;
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -182,33 +186,75 @@ impl StatusState {
     }
 }
 
-/// The running fake. Dropping it stops the server.
+/// The running fake. Dropping it stops the server and releases its
+/// address.
 pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
-    running: Option<Running>,
+    /// The listener on `addr`, held from `start` to drop.
+    _listener: Arc<TcpListener>,
+    front: Arc<Mutex<Front>>,
+    accepting: Option<JoinHandle<()>>,
+    server: Arc<tiny_http::Server>,
+    serving: Option<JoinHandle<()>>,
     auth_clock: tempfile::TempDir,
 }
 
-struct Running {
-    server: Arc<tiny_http::Server>,
-    thread: JoinHandle<()>,
+/// What the fake's public address does with a connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// Relays it to the HTTP server.
+    Answering,
+    /// Ends it before any byte of a response.
+    Stopped,
+    /// The fake is being dropped: accepting ends.
+    Ending,
+}
+
+/// The public address's transport state: its reach and the client side of
+/// every connection it is relaying.
+struct Front {
+    reach: Reach,
+    next_connection: u64,
+    relayed: BTreeMap<u64, TcpStream>,
+}
+
+impl Front {
+    /// Ends every relayed connection for the client.
+    fn close_relayed(&mut self) {
+        for client in std::mem::take(&mut self.relayed).into_values() {
+            // A client that already closed its side leaves nothing to end.
+            let _closed = client.shutdown(Shutdown::Both);
+        }
+    }
 }
 
 impl FakeGitHub {
     /// Starts the fake on 127.0.0.1 with an ephemeral port.
     pub fn start() -> Self {
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-        let addr = server.server_addr().to_ip().unwrap();
+        let listener = Arc::new(TcpListener::bind("127.0.0.1:0").unwrap());
+        let addr = listener.local_addr().unwrap();
+        let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let backend = server.server_addr().to_ip().unwrap();
         let auth_clock = tempfile::tempdir().unwrap();
         let clock_file = auth_clock.path().join("clock");
         std::fs::write(&clock_file, "system").unwrap();
         let state = Arc::new(Mutex::new(State::new(format!("http://{addr}"), clock_file)));
-        let running = Running::spawn(server, Arc::clone(&state));
+        let front = Arc::new(Mutex::new(Front {
+            reach: Reach::Answering,
+            next_connection: 0,
+            relayed: BTreeMap::new(),
+        }));
+        let accepting = accept(Arc::clone(&listener), backend, Arc::clone(&front));
+        let serving = serve_requests(Arc::clone(&server), Arc::clone(&front), Arc::clone(&state));
         Self {
             state,
             addr,
-            running: Some(running),
+            _listener: listener,
+            front,
+            accepting: Some(accepting),
+            server,
+            serving: Some(serving),
             auth_clock,
         }
     }
@@ -239,20 +285,19 @@ impl FakeGitHub {
         configure_apps(env, &self.url(), &self.auth_clock.path().join("clock"));
     }
 
-    /// Stops answering: connections to the address are refused.
+    /// Stops answering. From the moment this returns, every connection to
+    /// the address, including one open now, ends before any byte of a
+    /// response, and no request reaches the fake's state or its request
+    /// record. The address stays the fake's.
     pub fn stop(&mut self) {
-        if let Some(running) = self.running.take() {
-            running.server.unblock();
-            running.thread.join().unwrap();
-        }
+        let mut front = lock_front(&self.front);
+        front.reach = Reach::Stopped;
+        front.close_relayed();
     }
 
     /// Answers again on the same address, with the state it had.
     pub fn resume(&mut self) {
-        if self.running.is_none() {
-            let server = tiny_http::Server::http(self.addr).unwrap();
-            self.running = Some(Running::spawn(server, Arc::clone(&self.state)));
-        }
+        lock_front(&self.front).reach = Reach::Answering;
     }
 
     // --- seeding -----------------------------------------------------
@@ -522,11 +567,23 @@ impl FakeGitHub {
 
 impl Drop for FakeGitHub {
     fn drop(&mut self) {
-        if let Some(running) = self.running.take() {
-            running.server.unblock();
-            // A panic in the server thread already failed a request; the
-            // test reports its own failure.
-            let _joined = running.thread.join();
+        {
+            let mut front = lock_front(&self.front);
+            front.reach = Reach::Ending;
+            front.close_relayed();
+        }
+        // Wakes the blocking accept, which then sees `Ending`. The listener
+        // is the fake's until its fields drop, so the connect only lands in
+        // its backlog when the accepting thread has already ended.
+        let _wake_accept = TcpStream::connect(self.addr);
+        // A panic in a fake thread already failed a request; the test
+        // reports its own failure.
+        if let Some(accepting) = self.accepting.take() {
+            let _joined = accepting.join();
+        }
+        self.server.unblock();
+        if let Some(serving) = self.serving.take() {
+            let _joined = serving.join();
         }
     }
 }
@@ -550,17 +607,103 @@ pub struct IssueView {
     pub closed: bool,
 }
 
-impl Running {
-    fn spawn(server: tiny_http::Server, state: Arc<Mutex<State>>) -> Self {
-        let server = Arc::new(server);
-        let serving = Arc::clone(&server);
-        let thread = std::thread::spawn(move || {
-            for request in serving.incoming_requests() {
+/// The transport state, also after a fake thread panicked while holding
+/// it: the address keeps its reach whatever failed a request.
+fn lock_front(front: &Mutex<Front>) -> MutexGuard<'_, Front> {
+    front.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Accepts on the fake's public address until the fake is dropped, relaying
+/// each connection to `backend` while the fake answers.
+fn accept(
+    listener: Arc<TcpListener>,
+    backend: SocketAddr,
+    front: Arc<Mutex<Front>>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut relays: Vec<JoinHandle<()>> = Vec::new();
+        for connection in listener.incoming() {
+            // A connection that failed before it was accepted has no client
+            // left to answer.
+            let Ok(client) = connection else { continue };
+            let mut transport = lock_front(&front);
+            match transport.reach {
+                Reach::Ending => break,
+                // Dropping the connection ends it before any response.
+                Reach::Stopped => continue,
+                Reach::Answering => {}
+            }
+            let Ok(registered) = client.try_clone() else {
+                continue;
+            };
+            let id = transport.next_connection;
+            transport.next_connection += 1;
+            transport.relayed.insert(id, registered);
+            drop(transport);
+            relays.retain(|relay| !relay.is_finished());
+            relays.push(relay(client, backend, id, Arc::clone(&front)));
+        }
+        for relay in relays {
+            let _joined = relay.join();
+        }
+    })
+}
+
+/// Relays one client connection to the HTTP server until either side ends
+/// it, then forgets it.
+fn relay(
+    client: TcpStream,
+    backend: SocketAddr,
+    id: u64,
+    front: Arc<Mutex<Front>>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        // A server that cannot be reached leaves the client's connection to
+        // end unanswered.
+        if let Ok(server) = TcpStream::connect(backend) {
+            pipe(client, server);
+        }
+        lock_front(&front).relayed.remove(&id);
+    })
+}
+
+/// Copies bytes both ways between `client` and `server`; when the server
+/// side ends, both connections end.
+fn pipe(mut client: TcpStream, mut server: TcpStream) {
+    let (Ok(mut request_from), Ok(mut request_to)) = (client.try_clone(), server.try_clone())
+    else {
+        return;
+    };
+    let upstream = std::thread::spawn(move || {
+        // Either side closing ends the copy; the half-close tells the
+        // server no further request follows.
+        let _copied = io::copy(&mut request_from, &mut request_to);
+        let _closed = request_to.shutdown(Shutdown::Write);
+    });
+    // Either side closing ends the copy, and ending both connections
+    // releases the upstream copy.
+    let _copied = io::copy(&mut server, &mut client);
+    let _client_closed = client.shutdown(Shutdown::Both);
+    let _server_closed = server.shutdown(Shutdown::Both);
+    let _joined = upstream.join();
+}
+
+/// Serves the HTTP server's requests until it is unblocked. Holding the
+/// transport state across each request is what keeps a request that was in
+/// flight when the fake stopped away from its state.
+fn serve_requests(
+    server: Arc<tiny_http::Server>,
+    front: Arc<Mutex<Front>>,
+    state: Arc<Mutex<State>>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        for request in server.incoming_requests() {
+            let transport = lock_front(&front);
+            if transport.reach == Reach::Answering {
                 serve(request, &state);
             }
-        });
-        Self { server, thread }
-    }
+        }
+    })
 }
 
 // ---------------------------------------------------------------------
