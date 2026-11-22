@@ -91,6 +91,18 @@ reference calls for setup, never silently disables the cockpit. Repeated setup,
 on any computer, reconciles existing resources instead of creating duplicate
 boards or views.
 
+<!-- planned:public-repo-board-visibility -->
+A board instrukt creates for a public repository is made public when it is
+created; a private repository's board stays private. instrukt sets a board's
+visibility only at its creation: it never changes the visibility of a board it
+found or that the developer named, and later setup never changes it again, so a
+maintainer who makes the board private keeps it private. When GitHub refuses to
+make the new board public, for example because the organization lets only its
+owners change project visibility, the board stays private, setup and reflection
+continue, and the operator is told that a project admin or organization owner
+can make it public in the project's settings.
+<!-- /planned:public-repo-board-visibility -->
+
 instrukt adds every reflected issue and maintains its owned single-select
 `Record status` field and required options (active, iceboxed, held, delivered,
 withdrawn). Its owned cockpit views are:
@@ -432,7 +444,30 @@ But a newer schema refuses before any dependent mutation and names the upgrade d
 And the remote record and existing local evidence remain intact
 ```
 
+<!-- planned:public-repo-board-visibility -->
+### UC-GR11: A developer's public project gets a public board
+
+```gherkin
+Given a developer's project is public and reflects its todos to GitHub
+When instrukt sets up the project's board automatically
+Then the board is public
+When a maintainer later makes that board private
+Then it stays private as reflection continues
+But when the project is private, or the developer named the board in the project layer
+Then instrukt leaves the board's visibility as it is
+But when GitHub refuses to make the new board public
+Then the board stays private and their todos are still reflected on it
+```
+<!-- /planned:public-repo-board-visibility -->
+
 ## Known caveats
+
+<!-- planned:public-repo-board-visibility -->
+- A new board is made public in a request that follows its creation. When that
+  request is lost, the board stays private and nothing makes it public later:
+  a later pass cannot tell a lost request from a maintainer's choice to keep the
+  board private.
+<!-- /planned:public-repo-board-visibility -->
 
 - Code hosted anywhere but GitHub is not supported for todos.
 - Whether `github.repository` names the repository the remote reaches is
