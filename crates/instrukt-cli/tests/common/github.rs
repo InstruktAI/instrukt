@@ -51,6 +51,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::panic::AssertUnwindSafe;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
@@ -223,6 +224,9 @@ enum Reach {
     },
     /// The fake is being dropped: accepting ends.
     Ending,
+    /// No thread accepts on it any more: accepting ended on a failure the
+    /// fake recorded, and connections wait unanswered in the listen queue.
+    Unattended,
 }
 
 /// The public address's transport state: its reach and both sides of every
@@ -350,7 +354,10 @@ impl FakeGitHub {
     pub fn stop(&mut self) {
         {
             let mut front = lock_front(&self.front);
-            front.reach = Reach::Stopped;
+            // An address no thread accepts on stays so; `resume` says why.
+            if !matches!(front.reach, Reach::Unattended) {
+                front.reach = Reach::Stopped;
+            }
             front.close_relayed();
         }
         // A request admitted before the switch does its model work under
@@ -362,11 +369,17 @@ impl FakeGitHub {
     /// Answers again on the same address, with the state it had. A
     /// connection made while the fake was stopped stays unanswered even when
     /// it is accepted only now; from the moment this returns, every new
-    /// connection is answered.
+    /// connection is answered. When no thread accepts on the address any
+    /// more, whether before this call or while it waits, it fails the test
+    /// with the failure that ended accepting.
     pub fn resume(&mut self) {
         let (resumed, answering) = mpsc::channel();
         let marker = {
             let mut front = lock_front(&self.front);
+            if matches!(front.reach, Reach::Unattended) {
+                drop(front);
+                self.cannot_resume();
+            }
             if !matches!(front.reach, Reach::Stopped) {
                 return;
             }
@@ -384,13 +397,20 @@ impl FakeGitHub {
             };
             marker
         };
-        // The accept thread tells this wait once it takes the marker; if it
-        // ends first, the wait ends with it.
+        // The accept thread tells this wait once it takes the marker. If
+        // accepting ends first, by any route, the thread replaces this reach
+        // and so drops `resumed`, which ends the wait.
         if answering.recv().is_err() {
-            let failures = lock_front(&self.front).failures.join("\n");
-            panic!("the fake GitHub stopped accepting before it answered again:\n{failures}");
+            self.cannot_resume();
         }
         drop(marker);
+    }
+
+    /// Fails a `resume` no thread can answer, with the recorded failure
+    /// that ended accepting.
+    fn cannot_resume(&self) -> ! {
+        let failures = lock_front(&self.front).failures.join("\n");
+        panic!("the fake GitHub stopped accepting before it answered again:\n{failures}");
     }
 
     // --- seeding -----------------------------------------------------
@@ -737,7 +757,8 @@ fn lock_front(front: &Mutex<Front>) -> MutexGuard<'_, Front> {
 }
 
 /// Accepts on the fake's public address until the fake is dropped, relaying
-/// each connection to `backend` while the fake answers.
+/// each connection to `backend` while the fake answers. However accepting
+/// ends, the address is left `Unattended` unless the fake is being dropped.
 fn accept(
     listener: Arc<TcpListener>,
     backend: SocketAddr,
@@ -745,61 +766,90 @@ fn accept(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut relays: Vec<JoinHandle<()>> = Vec::new();
-        for connection in listener.incoming() {
-            let client = match connection {
-                Ok(client) => client,
-                // A connection its client ended before it was accepted
-                // leaves no one to answer.
-                Err(cause) if peer_left_or_interrupted(&cause) => continue,
-                Err(cause) => {
-                    lock_front(&front).fail("accept on the public address", &cause);
-                    break;
-                }
-            };
-            let mut transport = lock_front(&front);
-            match &transport.reach {
-                Reach::Ending => break,
-                // Dropping the connection ends it before any response.
-                Reach::Stopped => continue,
-                Reach::Resuming { marker, .. } => {
-                    let marker = *marker;
-                    if client.peer_addr().ok() == Some(marker) {
-                        transport.answer_again();
-                    }
-                    continue;
-                }
-                Reach::Answering => {}
-            }
-            let registered = match client.try_clone() {
-                Ok(registered) => registered,
-                Err(cause) => {
-                    transport.fail("hold a relayed connection", &cause);
-                    continue;
-                }
-            };
-            let id = transport.next_connection;
-            transport.next_connection += 1;
-            transport.relayed.insert(
-                id,
-                Relayed {
-                    client: registered,
-                    server: None,
-                },
-            );
-            drop(transport);
-            relays.retain(|relay| !relay.is_finished());
-            relays.push(relay(client, backend, id, Arc::clone(&front)));
-        }
-        // A `resume` waiting for the marker learns that accepting ended.
+        run_part(&front, "accept on the public address", || {
+            accept_connections(&listener, backend, &front, &mut relays);
+        });
         let mut transport = lock_front(&front);
-        if matches!(transport.reach, Reach::Resuming { .. }) {
-            transport.reach = Reach::Stopped;
+        if !matches!(transport.reach, Reach::Ending) {
+            // Replacing a `Resuming` reach drops its `resumed`: the waiting
+            // `resume` learns that accepting ended.
+            transport.reach = Reach::Unattended;
         }
         drop(transport);
         for relay in relays {
             let _joined = relay.join();
         }
     })
+}
+
+/// Takes connections from the public address until the fake is dropped or
+/// accepting fails, which it records.
+fn accept_connections(
+    listener: &TcpListener,
+    backend: SocketAddr,
+    front: &Arc<Mutex<Front>>,
+    relays: &mut Vec<JoinHandle<()>>,
+) {
+    for connection in listener.incoming() {
+        let client = match connection {
+            Ok(client) => client,
+            // A connection its client ended before it was accepted
+            // leaves no one to answer.
+            Err(cause) if peer_left_or_interrupted(&cause) => continue,
+            Err(cause) => {
+                lock_front(front).fail("accept on the public address", &cause);
+                return;
+            }
+        };
+        let mut transport = lock_front(front);
+        match &transport.reach {
+            // Only this thread leaves the address unattended, once it ends.
+            Reach::Ending | Reach::Unattended => return,
+            // Dropping the connection ends it before any response.
+            Reach::Stopped => continue,
+            Reach::Resuming { marker, .. } => {
+                let marker = *marker;
+                if client.peer_addr().ok() == Some(marker) {
+                    transport.answer_again();
+                }
+                continue;
+            }
+            Reach::Answering => {}
+        }
+        let registered = match client.try_clone() {
+            Ok(registered) => registered,
+            Err(cause) => {
+                transport.fail("hold a relayed connection", &cause);
+                continue;
+            }
+        };
+        let id = transport.next_connection;
+        transport.next_connection += 1;
+        transport.relayed.insert(
+            id,
+            Relayed {
+                client: registered,
+                server: None,
+            },
+        );
+        drop(transport);
+        relays.retain(|relay| !relay.is_finished());
+        relays.push(relay(client, backend, id, Arc::clone(front)));
+    }
+}
+
+/// Runs `part` of one of the fake's threads. A panic in it is recorded as a
+/// failure of `operation`, with its message, instead of ending the thread
+/// unseen.
+fn run_part(front: &Mutex<Front>, operation: &str, part: impl FnOnce()) {
+    if let Err(panic) = std::panic::catch_unwind(AssertUnwindSafe(part)) {
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(|message| (*message).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic without a message".to_owned());
+        lock_front(front).fail(operation, &format!("the thread panicked: {message}"));
+    }
 }
 
 /// Relays one client connection to the HTTP server until either side ends
