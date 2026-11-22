@@ -172,8 +172,10 @@ pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
     Ok(report)
 }
 
-/// One atomic, repeat-safe import into the history store. A completed
-/// source is never opened again.
+/// Imports the TeleClaude mirror store once, in resumable batches: an
+/// interrupted import continues after its last committed mirror, and a
+/// completed one is preserved without opening the source again. Reports the
+/// conversations this run loaded and the last committed mirror id.
 pub fn import_teleclaude(
     home: &Home,
     path: Option<&std::path::Path>,

@@ -19,29 +19,43 @@ pub(super) struct Conversation {
     pub limitations: Vec<String>,
 }
 
-/// Whether the TeleClaude import of `source` completed.
-pub(super) fn imported(db: &StoreDb, source: &str) -> Result<bool, HistoryError> {
-    Ok(db
-        .conn()
-        .query_row(
-            "SELECT imported FROM history_sources WHERE source=?1",
-            [source],
-            |r| r.get(0),
-        )
-        .optional()?
-        .unwrap_or(false))
+/// Where the TeleClaude import of a source stands.
+pub(super) enum Import {
+    /// The import completed; its stored position is never read.
+    Complete,
+    /// The import continues after this mirror id; absent before a first
+    /// batch commits.
+    After(Option<i64>),
 }
 
+pub(super) fn position(db: &StoreDb, source: &str) -> Result<Import, HistoryError> {
+    let stored: Option<(bool, Option<i64>)> = db
+        .conn()
+        .query_row(
+            "SELECT imported,CASE WHEN imported THEN NULL ELSE position END FROM history_sources WHERE source=?1",
+            [source],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match stored {
+        Some((true, _)) => Import::Complete,
+        Some((false, cursor)) => Import::After(cursor),
+        None => Import::After(None),
+    })
+}
+
+/// Commits one import batch's conversations with the source's position and
+/// completion, in one transaction.
 pub(super) fn load(
     db: &mut StoreDb,
     source: &str,
-    position: u64,
+    position: Option<i64>,
     imported: bool,
     conversations: &[Conversation],
 ) -> Result<Extraction, HistoryError> {
     db.write(|tx| -> Result<_,HistoryError> {
         for c in conversations { write_conversation(tx,source,c)?; }
-        tx.execute("INSERT INTO history_sources(source,position,imported) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET position=max(history_sources.position,excluded.position),imported=max(history_sources.imported,excluded.imported)",params![source,position,imported])?;
+        tx.execute("INSERT INTO history_sources(source,position,imported) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET position=excluded.position,imported=excluded.imported",params![source,position,imported])?;
         Ok(Extraction {loaded:conversations.len(),position:serde_json::json!(position)})
     })
 }

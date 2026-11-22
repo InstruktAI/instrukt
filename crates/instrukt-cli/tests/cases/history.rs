@@ -111,23 +111,83 @@ fn search_refreshes_active_children_even_when_shell_transcript_events_are_suppre
 
 // spec: project/instrukt/spec/feature/runner/history UC-HI2
 #[test]
-fn legacy_import_keeps_aliases_once_without_a_continuing_mirror_dependency() {
+fn legacy_import_resumes_in_batches_and_keeps_aliases_once_without_a_continuing_mirror_dependency()
+{
     let env = TestEnv::new();
     let t3 = fixture::T3Store::new(&env);
-    let mirror = fixture::mirror(&env);
-    let original = std::fs::read(&mirror).unwrap();
-    env.run(
-        env.home(),
-        [
-            "history",
-            "import-teleclaude",
-            "--source",
-            mirror.to_str().unwrap(),
-            "--json",
-        ],
+    let mirror = fixture::mirrors(&env);
+    let import = |expect_success: bool| {
+        let before = std::fs::read(&mirror).unwrap();
+        let run = env.run(
+            env.home(),
+            [
+                "history",
+                "import-teleclaude",
+                "--source",
+                mirror.to_str().unwrap(),
+                "--json",
+            ],
+        );
+        if expect_success {
+            run.success();
+        } else {
+            run.failure();
+        }
+        assert_eq!(std::fs::read(&mirror).unwrap(), before);
+    };
+    let batched = |env: &TestEnv| -> Vec<String> {
+        let out = env
+            .run(
+                env.home(),
+                [
+                    "history",
+                    "search",
+                    fixture::BATCHED_TERM,
+                    "--limit",
+                    "1000",
+                    "--json",
+                ],
+            )
+            .success();
+        let found: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+        let mut conversations: Vec<String> = found["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["conversation"].as_str().unwrap().to_owned())
+            .collect();
+        conversations.sort();
+        conversations
+    };
+    // A current state database without history tables, and no history store;
+    // nothing the import, a catch-up or a search does may take its writer lock.
+    env.run(env.home(), ["history", "extract", "--json"])
+        .success();
+    remove_history_store(&env);
+    let _writer = instrukt_core::fsx::LockGuard::acquire(
+        &env.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(5),
     )
-    .success();
-    assert_eq!(std::fs::read(&mirror).unwrap(), original);
+    .unwrap();
+    // The import stops at a mirror it cannot read; what it committed stays.
+    import(false);
+    let first = batched(&env);
+    assert!(!first.is_empty());
+    assert!(first.len() < fixture::BATCHED.count() - 1);
+    for id in -5..=0 {
+        assert!(first.contains(&format!("mirror:{id}")), "mirror {id}");
+    }
+    // A rerun continues after the committed mirrors without reading them.
+    fixture::retitle(&mirror, fixture::UNREADABLE, Some("Repaired"));
+    fixture::retitle(&mirror, -5, None);
+    import(true);
+    let all = batched(&env);
+    let mut expected: Vec<String> = fixture::BATCHED
+        .filter(|id| *id != 1)
+        .map(|id| format!("mirror:{id}"))
+        .collect();
+    expected.sort();
+    assert_eq!(all, expected);
     std::fs::remove_file(&mirror).unwrap();
     env.run(
         env.home(),

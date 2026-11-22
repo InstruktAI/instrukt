@@ -15,7 +15,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Import the legacy mirror store once; subsequent runs preserve that completed import.
+    /// Import the legacy mirror store once, in resumable batches; a rerun continues an interrupted import and preserves a completed one.
     ImportTeleclaude {
         #[arg(long)]
         source: Option<PathBuf>,

@@ -3,7 +3,11 @@ use crate::common::TestEnv;
 use instrukt_core::state_db::rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::os::unix::fs::OpenOptionsExt as _;
-use std::{path::PathBuf, process::Child, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Child,
+    time::Duration,
+};
 
 /// How a write to T3's database waits while the other work streams: the
 /// stream takes the database for a moment every millisecond, so the write is
@@ -772,6 +776,41 @@ INSERT INTO mirrors VALUES(1,'old-computer','Retained archive','The archive jewe
 INSERT INTO mirror_sources VALUES(1,1,'source-alias','native-session','claude','/gone/transcript',0,'The archive jewels.');").unwrap();
     file
 }
+/// The mirrors `mirrors` adds beside the archive mirror: more than one import
+/// batch, ids from below zero through zero and on past it, each carrying
+/// [`BATCHED_TERM`].
+pub const BATCHED: std::ops::RangeInclusive<i64> = -5..=125;
+pub const BATCHED_TERM: &str = "Batchtoken";
+/// A mirror after the first batch the importer cannot read: it has no title.
+pub const UNREADABLE: i64 = 125;
+
+/// The archive mirror store of [`mirror`] with the [`BATCHED`] mirrors
+/// beside it, [`UNREADABLE`] among them.
+pub fn mirrors(env: &TestEnv) -> PathBuf {
+    let file = mirror(env);
+    let db = Connection::open(&file).unwrap();
+    for id in BATCHED.filter(|id| *id != 1) {
+        let title = (id != UNREADABLE).then(|| format!("Batched {id}"));
+        db.execute(
+            "INSERT INTO mirrors(id,computer,title,conversation_text,metadata) VALUES(?1,'old-computer',?2,?3,'{}')",
+            params![id, title, format!("{BATCHED_TERM} mirror {id}.")],
+        )
+        .unwrap();
+    }
+    file
+}
+
+/// Gives mirror `id` a title, or takes it away so the importer cannot read it.
+pub fn retitle(file: &Path, id: i64, title: Option<&str>) {
+    Connection::open(file)
+        .unwrap()
+        .execute(
+            "UPDATE mirrors SET title=?2 WHERE id=?1",
+            params![id, title],
+        )
+        .unwrap();
+}
+
 pub fn configure_cluster(env: &TestEnv, url: &str) {
     std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 1\nmodules: {{events: false, todos: false}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: {url}\n")).unwrap();
 }
