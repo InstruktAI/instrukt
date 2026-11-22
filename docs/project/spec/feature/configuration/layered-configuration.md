@@ -486,7 +486,7 @@ But a cloned project cannot replace the machine's agent-action values
 ### UC-CL7: Keep a runner operating when its clock file disappears
 
 <!-- planned:archive-terminal-todo-sessions -->
-### UC-CL8: Retire terminal todo sessions distinctly from dormant settling
+### UC-CL8: Obtain terminal session retirement instructions distinctly from dormant settling
 
 ```gherkin
 Given a developer chose T3 as this machine's runtime
