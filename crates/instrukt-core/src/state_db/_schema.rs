@@ -3,7 +3,7 @@
 //! shipped. Tables and columns are the `state-database` spec's.
 
 /// One migration: a script, or a step that looks at the database first.
-pub(super) enum Migration {
+pub enum Migration {
     Sql(&'static str),
     Step(fn(&rusqlite::Transaction<'_>) -> rusqlite::Result<()>),
 }
