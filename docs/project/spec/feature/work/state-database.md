@@ -921,9 +921,24 @@ And newer state is reported with the installer command while configuration is st
 And a write against newer state is refused with the installer command
 ```
 
+<!-- planned:fix-reflection-holds-writer-lock -->
+### UC-SD5: Local work and runner writes proceed while GitHub reflection is in flight
+
+```gherkin
+Given a developer has a project reflecting work to GitHub
+And a GitHub reflection request is in flight on their computer
+When another command reads the local work list or records a local state-database change on the same computer
+Then the local read and the local state-database write complete without waiting for the in-flight GitHub request
+And the reflected and concurrent local changes both remain intact once GitHub answers
+```
+<!-- /planned:fix-reflection-holds-writer-lock -->
+
 ## Known caveats
 
+<!-- planned-change:fix-reflection-holds-writer-lock -->
 - Work's per-computer writer lock remains held during point refresh and stamp model observation; slow provider or runtime reads can delay other work commands.
+<!-- change:fix-reflection-holds-writer-lock -->
+<!-- /planned-change:fix-reflection-holds-writer-lock -->
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.
