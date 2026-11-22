@@ -758,6 +758,17 @@ remain retired.
 
 Retired: the runtime owns session ending; its test bindings have been removed.
 
+<!-- planned:fix-antigravity-thought-level -->
+### UC-SS26: Native delegation translates Antigravity effort to T3's thought_level option
+
+```gherkin
+Given a developer configures an Antigravity profile with xhigh effort in agents.yaml
+When instrukt prepares native delegation inputs for a role using that profile on T3
+Then the resolved native options map that effort to thought_level with value xhigh
+And no legacy thinking_level option key is emitted
+```
+<!-- /planned:fix-antigravity-thought-level -->
+
 ## Known caveats
 
 - A legacy native admission whose original startup request is unknown remains

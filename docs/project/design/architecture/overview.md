@@ -484,3 +484,6 @@ session-fixed timing through A3's bounded batch log.
   `instrukt docs validate --no-todo-lookup` to omit the live existence lookup
   while keeping slug-form, pending-marker, workflow-role and all other
   structural checks (`project/instrukt/spec/feature/docs/snippet-validation`).
+<!-- planned:fix-antigravity-thought-level -->
+- **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
+<!-- /planned:fix-antigravity-thought-level -->
