@@ -1595,7 +1595,12 @@ fn a_public_projects_new_board_is_public_and_a_maintainers_later_choice_is_kept(
     );
     let elsewhere = project.other_computer();
     without_board(elsewhere.repo.path());
+    project.github.clear_project_items("acme", 2);
     elsewhere.ok(["update", "cockpit"]);
+    assert!(
+        on_board(&project, "acme", 2).contains(&todo),
+        "the other computer reflects the todo onto the board it found"
+    );
     assert_eq!(
         project.github.project_numbers("acme"),
         [1, 2],
