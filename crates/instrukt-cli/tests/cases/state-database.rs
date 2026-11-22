@@ -404,7 +404,10 @@ fn finished_within(mut command: Command, bound: Duration) -> Option<Output> {
 fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     const FIRST: &str = "Started the depth parser.";
     const SECOND: &str = "Joined the nested-list cases.";
-    let project = support::Project::new();
+    let mut project = support::Project::new();
+    // One application clock for every command, so the listing's age of
+    // the copy is what the record says, whatever time the test takes.
+    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
     project.create(
         "list-depth",
         "feature",
