@@ -87,23 +87,6 @@ transitions:
       - true
   action: return-to-prepare-kickback
 - from: start
-  to: drift_analysis
-  when:
-    all:
-    - not:
-        exists: build.start_base_sha
-    - any:
-      - equals:
-        - drift.prd
-        - pending
-      - equals:
-        - drift.architecture
-        - pending
-      - equals:
-        - drift.implementation_plan
-        - pending
-  action: analyze-drift
-- from: start
   to: not_prepared
   when:
     not:
@@ -165,6 +148,23 @@ transitions:
             - implementation_plan.seeded
             - true
   action: await-prepare
+- from: start
+  to: drift_analysis
+  when:
+    all:
+    - not:
+        exists: build.start_base_sha
+    - any:
+      - equals:
+        - drift.prd
+        - pending
+      - equals:
+        - drift.architecture
+        - pending
+      - equals:
+        - drift.implementation_plan
+        - pending
+  action: analyze-drift
 - from: start
   to: workspace_request
   when:

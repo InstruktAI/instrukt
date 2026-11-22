@@ -96,8 +96,12 @@ mod tests {
     }
 
     /// The lane the sdlc flavor derives for `evidence` with delivered
-    /// prerequisites and nothing observed in the repository.
-    fn lane_of(evidence: &TodoEvidence, role_of: &dyn Fn(&SnippetId) -> Option<RoleName>) -> Lane {
+    /// prerequisites and the given repository observations.
+    fn lane_with_observed(
+        evidence: &TodoEvidence,
+        observed: &Observations,
+        role_of: &dyn Fn(&SnippetId) -> Option<RoleName>,
+    ) -> Lane {
         let flavor = Flavor::load(&sdlc_dir()).unwrap();
         let facts = derive_facts(&ProviderInput {
             evidence,
@@ -106,7 +110,7 @@ mod tests {
                 prd: Approver::Human,
                 task: Approver::Human,
             },
-            observed: &Observations::default(),
+            observed,
         })
         .unwrap();
         let subject = Subject {
@@ -118,6 +122,12 @@ mod tests {
             .unwrap()
             .unwrap()
             .0
+    }
+
+    /// The lane the sdlc flavor derives for `evidence` with delivered
+    /// prerequisites and nothing observed in the repository.
+    fn lane_of(evidence: &TodoEvidence, role_of: &dyn Fn(&SnippetId) -> Option<RoleName>) -> Lane {
+        lane_with_observed(evidence, &Observations::default(), role_of)
     }
 
     #[test]
@@ -168,6 +178,42 @@ mod tests {
             .artifact(artifact_names::IMPLEMENTATION_PLAN, "plan-1")
             .build();
         assert_eq!(lane_of(&evidence, &indexed), Lane::Prepare);
+    }
+
+    #[test]
+    fn an_unprepared_change_with_pending_drift_stays_in_preparation() {
+        let evidence = todo(TodoKind::Change)
+            .artifact(artifact_names::IMPLEMENTATION_PLAN, "plan-1")
+            .build();
+        let mut observed = Observations::default();
+        observed.grounding.insert(
+            artifact_names::IMPLEMENTATION_PLAN.to_owned(),
+            super::super::_provider::GroundingChange {
+                snippets: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            lane_with_observed(&evidence, &observed, &indexed),
+            Lane::Prepare
+        );
+    }
+
+    #[test]
+    fn a_prepared_change_with_pending_drift_routes_to_work() {
+        let evidence = prepared_change().build();
+        let mut observed = Observations::default();
+        observed.grounding.insert(
+            artifact_names::IMPLEMENTATION_PLAN.to_owned(),
+            super::super::_provider::GroundingChange {
+                snippets: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            lane_with_observed(&evidence, &observed, &indexed),
+            Lane::Work
+        );
     }
 
     #[test]
