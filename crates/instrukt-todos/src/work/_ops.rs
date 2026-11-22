@@ -366,9 +366,10 @@ impl Work {
     /// the local record; every other todo as last known, labelled with the
     /// computer its claim names and the copy's age.
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {
-        // A local read: neither lock, no GitHub request (`state-database`,
-        // "Writing"). Withdrawn work past its recovery window is left out;
-        // a writing command purges it.
+        // A local read: no GitHub request, and no lock on a current schema;
+        // a database behind this build's schema migrates once under the
+        // writer lock (`state-database`, "Writing"). Withdrawn work past its
+        // recovery window is left out; a writing command purges it.
         let store = self.local_store_checked(project)?;
         let (items, copies, provider) = store.existence()?;
         let now = self.now();

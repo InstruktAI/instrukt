@@ -2,7 +2,8 @@
 //! (`state-database`, "Work tables"): each local item is one `todos` row
 //! with its prerequisites, artifacts and versions, stamps, holds, session
 //! bindings, reflection state and answered inbound commands. Reads take no
-//! lock; each write takes the per-computer writer lock for its one
+//! lock (a database behind this build's schema migrates once under the
+//! writer lock); each write takes the per-computer writer lock for its one
 //! transaction alone, and one accepted change commits in one transaction.
 //! GitHub reflection serializes on the separate reflection lock, taken
 //! before the writer lock and never while it is held.

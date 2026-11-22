@@ -131,8 +131,10 @@ pub(crate) struct Session<'w> {
 }
 
 impl<'w> Session<'w> {
-    /// Loads the project's local record, taking no lock. Purges withdrawn
-    /// work whose recovery window has expired.
+    /// Loads the project's local record. It takes no lock, except that a
+    /// database behind this build's schema migrates once under the writer
+    /// lock, and withdrawn work whose recovery window has expired is purged,
+    /// each item in a writer transaction of its own.
     pub fn open(work: &'w Work, project: &ProjectRef) -> Result<Self, WorkError> {
         let store = Store::new(work.home(), &project.slug);
         let config = Configuration::load(work.home(), Some(&project.root))?;
@@ -317,10 +319,13 @@ impl<'w> Session<'w> {
     /// and the result is committed only while the row is unchanged; a row
     /// that changed meanwhile is pulled once more. A conflict judgment is
     /// committed only while this command holds the reflection lock, taken
-    /// without waiting: a reflection holding it may be between posting a
-    /// revision and recording it, and its own revision check judges the
-    /// head instead. An item carrying this command's uncommitted change is
-    /// judged as held here.
+    /// without waiting: a reflection holding it may be this computer's own,
+    /// between posting a revision of this todo and recording it. A busy
+    /// lock leaves the head unjudged and the command proceeds on the local
+    /// record; the revision check of this todo's next reflection, the
+    /// command's own flush included, judges it (`github-record`,
+    /// "Interest-driven refresh"). An item carrying this command's
+    /// uncommitted change is judged as held here.
     pub fn pull_through(&mut self, index: usize) -> Result<(), WorkError> {
         let id = self.items[index].record.id.clone();
         if !self.current.contains(&id) {
@@ -535,8 +540,9 @@ impl<'w> Session<'w> {
             };
             self.answered(index, id, &answer)?;
         }
-        // Replies are posted by the holder of the reflection lock; a
-        // reflection holding it posts them itself.
+        // Replies are posted by the holder of the reflection lock. A busy
+        // lock leaves them pending for the next flush of this project, which
+        // posts every item's pending replies.
         let todo = self.items[index].record.id.to_string();
         let Some(issue) = self.items[index].reflection.issue else {
             return Ok(());
