@@ -342,14 +342,8 @@ impl<'w> Session<'w> {
             if matches!(&result, Some(Ok(_))) && pulled.reflection.issue.is_some() {
                 pulled.reflection.refreshed_at = Some(self.now);
             }
+            let adopted = matches!(&result, Some(Ok(Pulled::Adopted)));
             match &result {
-                Some(Ok(Pulled::Adopted)) => tracing::info!(
-                    event = "work_pulled",
-                    project = %self.project.slug,
-                    todo = %pulled.record.slug,
-                    revision = pulled.record.revision,
-                    "a newer remote revision entered the local record"
-                ),
                 Some(Err(err @ GitHubError::RecordSchema { .. })) => {
                     self.incompatible.insert(id.clone());
                     self.lookup_failure(err.clone());
@@ -366,7 +360,7 @@ impl<'w> Session<'w> {
                         event = "work_conflict_left_to_reflection",
                         project = %self.project.slug,
                         todo = %pulled.record.slug,
-                        "a reflection is in flight; its revision check judges the head"
+                        "a reflection holds the reflection lock; the head is left unjudged, for the revision check of this todo's next reflection"
                     );
                     pulled = base.clone();
                 }
@@ -380,6 +374,15 @@ impl<'w> Session<'w> {
             drop(judging);
             match swapped {
                 Swapped::Applied(row) => {
+                    if adopted {
+                        tracing::info!(
+                            event = "work_pulled",
+                            project = %self.project.slug,
+                            todo = %row.record.slug,
+                            revision = row.record.revision,
+                            "a newer remote revision entered the local record"
+                        );
+                    }
                     self.take_row(index, *row);
                     self.items[index].reflection.inbound = inbound;
                     break;
@@ -387,7 +390,7 @@ impl<'w> Session<'w> {
                 Swapped::Changed(Some(live)) => {
                     self.take_row(index, *live);
                     if attempt > 0 {
-                        tracing::info!(
+                        tracing::warn!(
                             event = "work_pull_superseded",
                             project = %self.project.slug,
                             todo = %self.items[index].record.slug,
@@ -1734,18 +1737,30 @@ impl<'w> Session<'w> {
             if past_recovery(&self.items[index].record, now) {
                 let slug = self.items[index].record.slug.clone();
                 let id = self.items[index].record.id.clone();
-                self.store
+                let deleted = self
+                    .store
                     .delete_if(&id, |live| past_recovery(&live.record, now))?;
+                if !deleted {
+                    // Another process purged or restored it meanwhile: the
+                    // session holds what the store holds now.
+                    if let Some(live) = self.store.item(&id)? {
+                        self.take_row(index, live);
+                        index += 1;
+                        continue;
+                    }
+                }
                 self.items.remove(index);
                 self.bases.remove(&id);
-                tracing::info!(
-                    event = "work_purged",
-                    project = %self.project.slug,
-                    todo = %slug,
-                    id = %id,
-                    "withdrawn work past its recovery window purged from the local record"
-                );
-                self.purged.push(slug);
+                if deleted {
+                    tracing::info!(
+                        event = "work_purged",
+                        project = %self.project.slug,
+                        todo = %slug,
+                        id = %id,
+                        "withdrawn work past its recovery window purged from the local record"
+                    );
+                    self.purged.push(slug);
+                }
             } else {
                 index += 1;
             }
