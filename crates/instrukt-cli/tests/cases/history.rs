@@ -166,11 +166,11 @@ fn legacy_import_resumes_in_batches_and_keeps_aliases_once_without_a_continuing_
     import(false);
     let first = batched(&env, fixture::BATCHED_TERM);
     assert!(!first.is_empty());
-    assert!(first.len() < fixture::BATCHED.count() - 1);
+    assert!(first.len() < fixture::batched_ids().count());
     // The first batch starts at the lowest mirror id, below zero.
     assert_eq!(
         batched(&env, fixture::NONPOSITIVE_TERM).len(),
-        fixture::BATCHED.filter(|id| *id <= 0).count()
+        fixture::batched_ids().filter(|id| *id <= 0).count()
     );
     // A rerun continues after the committed mirrors without reading them.
     fixture::retitle(&mirror, fixture::UNREADABLE, Some("Repaired"));
@@ -181,7 +181,10 @@ fn legacy_import_resumes_in_batches_and_keeps_aliases_once_without_a_continuing_
     all.dedup();
     assert_eq!(
         (found, all.len()),
-        (fixture::BATCHED.count() - 1, fixture::BATCHED.count() - 1)
+        (
+            fixture::batched_ids().count(),
+            fixture::batched_ids().count()
+        )
     );
     std::fs::remove_file(&mirror).unwrap();
     env.run(

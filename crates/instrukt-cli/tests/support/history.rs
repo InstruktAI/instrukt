@@ -776,21 +776,24 @@ INSERT INTO mirrors VALUES(1,'old-computer','Retained archive','The archive jewe
 INSERT INTO mirror_sources VALUES(1,1,'source-alias','native-session','claude','/gone/transcript',0,'The archive jewels.');").unwrap();
     file
 }
-/// The mirrors `mirrors` adds beside the archive mirror: more than one import
-/// batch, ids from below zero through zero and on past it, each carrying
-/// [`BATCHED_TERM`]; those up to zero carry [`NONPOSITIVE_TERM`] as well.
-pub const BATCHED: std::ops::RangeInclusive<i64> = -5..=125;
+/// The ids of the mirrors `mirrors` adds beside the archive mirror, id 1:
+/// more than one import batch, from below zero through zero and on past it,
+/// each carrying [`BATCHED_TERM`]; those up to zero carry
+/// [`NONPOSITIVE_TERM`] as well.
+pub fn batched_ids() -> impl Iterator<Item = i64> {
+    (-5..=125).filter(|id| *id != 1)
+}
 pub const BATCHED_TERM: &str = "Batchtoken";
 pub const NONPOSITIVE_TERM: &str = "Lowtoken";
 /// A mirror after the first batch the importer cannot read: it has no title.
 pub const UNREADABLE: i64 = 125;
 
-/// The archive mirror store of [`mirror`] with the [`BATCHED`] mirrors
+/// The archive mirror store of [`mirror`] with the [`batched_ids`] mirrors
 /// beside it, [`UNREADABLE`] among them.
 pub fn mirrors(env: &TestEnv) -> PathBuf {
     let file = mirror(env);
     let db = Connection::open(&file).unwrap();
-    for id in BATCHED.filter(|id| *id != 1) {
+    for id in batched_ids() {
         let title = (id != UNREADABLE).then(|| format!("Batched {id}"));
         let low = if id <= 0 { NONPOSITIVE_TERM } else { "" };
         db.execute(
