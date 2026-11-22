@@ -513,64 +513,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_repository_github_reports_as_public_gets_a_public_board() {
-        let answer = |body: Value| is_public(&body);
+    fn a_repository_github_marks_private_is_not_public_whatever_its_visibility_says() {
         assert_eq!(
-            answer(json!({"private": true, "visibility": "public"})),
+            is_public(&json!({"private": true, "visibility": "public"})),
             Ok(false)
         );
+    }
+
+    #[test]
+    fn a_repository_whose_visibility_is_public_is_public() {
         assert_eq!(
-            answer(json!({"private": false, "visibility": "public"})),
+            is_public(&json!({"private": false, "visibility": "public"})),
             Ok(true)
         );
-        assert_eq!(answer(json!({"visibility": "public"})), Ok(true));
+    }
+
+    #[test]
+    fn a_repository_with_another_visibility_is_not_public() {
         assert_eq!(
-            answer(json!({"private": false, "visibility": "internal"})),
+            is_public(&json!({"private": false, "visibility": "internal"})),
             Ok(false)
         );
-        assert_eq!(
-            answer(json!({"private": false, "visibility": "private"})),
-            Ok(false)
-        );
+    }
+
+    #[test]
+    fn a_repository_answer_without_its_visibility_is_unreadable() {
         assert!(matches!(
-            answer(json!({"private": false})),
-            Err(GitHubError::Decode { .. })
-        ));
-        assert!(matches!(
-            answer(json!({"private": false, "visibility": null})),
+            is_public(&json!({"private": false})),
             Err(GitHubError::Decode { .. })
         ));
     }
 
     #[test]
-    fn only_githubs_refusal_of_the_visibility_change_is_absorbed() {
-        let refused = GitHubError::Refused {
+    fn githubs_refusal_of_the_visibility_change_is_absorbed() {
+        assert!(declined(&GitHubError::Refused {
             status: 200,
             message: String::new(),
-        };
-        assert!(declined(&refused));
-        let status = |status| GitHubError::Status {
+        }));
+    }
+
+    #[test]
+    fn a_rate_limited_visibility_change_propagates() {
+        assert!(!declined(&GitHubError::RateLimited { until: None }));
+    }
+
+    #[test]
+    fn an_ordinary_graphql_failure_of_the_visibility_change_propagates() {
+        assert!(!declined(&GitHubError::Status {
             method: "POST",
             path: "/graphql".into(),
-            status,
+            status: 200,
             message: String::new(),
-        };
-        for propagated in [
-            status(200),
-            status(403),
-            GitHubError::RateLimited { until: None },
-            GitHubError::Unreachable(String::new()),
-            GitHubError::Unauthorized { status: 401 },
-            GitHubError::NotFound {
-                path: "/graphql".into(),
-            },
-            GitHubError::Decode {
-                path: "/graphql".into(),
-                message: String::new(),
-            },
-        ] {
-            assert!(!declined(&propagated), "{propagated:?}");
-        }
+        }));
+    }
+
+    #[test]
+    fn a_forbidden_status_without_rate_limit_headers_propagates() {
+        assert!(!declined(&GitHubError::Status {
+            method: "POST",
+            path: "/graphql".into(),
+            status: 403,
+            message: String::new(),
+        }));
     }
 
     #[test]

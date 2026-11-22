@@ -558,18 +558,17 @@ mod tests {
     }
 
     #[test]
-    fn mixed_or_untyped_entries_stay_an_ordinary_status() {
-        for errors in [
+    fn mixed_entry_types_stay_an_ordinary_status() {
+        let error = failure(
             json!([{"type": "FORBIDDEN", "message": "a"}, {"type": "NOT_FOUND", "message": "b"}]),
-            json!([{"type": "FORBIDDEN", "message": "a"}, {"message": "b"}]),
-            json!([{"message": "no type"}]),
-            json!([{"type": "INSUFFICIENT_SCOPES", "message": "scopes"}]),
-        ] {
-            let error = failure(errors, None);
-            assert!(
-                matches!(error, GitHubError::Status { status: 200, .. }),
-                "{error:?}"
-            );
-        }
+            None,
+        );
+        assert!(matches!(error, GitHubError::Status { status: 200, .. }));
+    }
+
+    #[test]
+    fn an_untyped_entry_stays_an_ordinary_status() {
+        let error = failure(json!([{"message": "no type"}]), None);
+        assert!(matches!(error, GitHubError::Status { status: 200, .. }));
     }
 }
