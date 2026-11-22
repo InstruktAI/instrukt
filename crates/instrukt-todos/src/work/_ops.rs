@@ -545,9 +545,11 @@ impl Work {
         let index = s.enter(slug)?;
         writable(&s.items[index].record)?;
         // Check the working resources first: a worktree holding uncommitted
-        // work refuses the withdrawal rather than losing it. They are
-        // released only once the withdrawal is committed, so a refused
-        // commit leaves them in place.
+        // work, or locked, refuses the withdrawal rather than losing it.
+        // They are released only once the withdrawal is committed, so a
+        // refused commit leaves them in place; the withdrawal records them
+        // first, so a released branch's last commit is never left
+        // unrecorded.
         let release = plan_release(&project.root, &s.items[index].record)?;
         let now = s.now;
         let (worktrees, branch) = (release.worktrees.clone(), release.branch.clone());
@@ -563,9 +565,41 @@ impl Work {
             record.claim = None;
             Ok(())
         })?;
-        let released = release.perform(&project.root, slug);
-        s.flush()?;
-        released?;
+        let released = release.perform(&project.root);
+        // What git kept is still in place, so the record names as released
+        // only what was.
+        let recorded = (!released.kept.is_empty()).then(|| {
+            s.commit("release recorded", |s| {
+                if let Some(removal) = &mut s.items[index].record.removal {
+                    removal.worktrees.clone_from(&released.worktrees);
+                    removal.branch.clone_from(&released.branch);
+                }
+                Ok(())
+            })
+        });
+        let flushed = s.flush();
+        if !released.kept.is_empty() {
+            let mut message = format!(
+                "`{slug}` is withdrawn, but {}; release it once its work is safe",
+                released.kept.join("; ")
+            );
+            if let Some(Err(error)) = recorded {
+                message.push_str(&format!(
+                    "; recording that it was kept failed, so the record still names it released: {error}"
+                ));
+            }
+            if let Err(error) = flushed {
+                tracing::warn!(
+                    event = "work_reflection_failed",
+                    project = %project.slug,
+                    todo = %slug,
+                    error = %error,
+                    "the withdrawal's reflection failed besides its kept resources"
+                );
+            }
+            return Err(WorkError::refused(message));
+        }
+        flushed?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -1410,48 +1444,93 @@ struct Release {
     workspace: Option<std::path::PathBuf>,
 }
 
+/// What a [`Release`] did: what it released, and each resource it kept in
+/// place with why.
+struct Released {
+    worktrees: Vec<std::path::PathBuf>,
+    branch: Option<super::_model::ReleasedBranch>,
+    kept: Vec<String>,
+}
+
+/// A worktree of the project as git lists it.
+struct Worktree {
+    path: std::path::PathBuf,
+    /// The branch it has checked out.
+    branch: Option<String>,
+    /// Why it is locked, when it is (`""` for no reason given).
+    locked: Option<String>,
+}
+
+/// The project's worktrees, the primary one first.
+fn worktrees(root: &Path) -> Result<Vec<Worktree>, git::GitError> {
+    let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
+    let mut found: Vec<Worktree> = Vec::new();
+    for line in listed.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            found.push(Worktree {
+                path: std::path::PathBuf::from(path),
+                branch: None,
+                locked: None,
+            });
+        } else if let Some(last) = found.last_mut() {
+            if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+                last.branch = Some(branch.to_owned());
+            } else if line == "locked" {
+                last.locked = Some(String::new());
+            } else if let Some(reason) = line.strip_prefix("locked ") {
+                last.locked = Some(reason.to_owned());
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Checks the working resources a withdrawn todo owns: each worktree its
 /// session bindings returned that is a worktree of this project, then its
 /// work branch. Only git's own worktree list and the recorded branch are
 /// acted on; a path that is not one of the project's worktrees is left
-/// alone. A worktree with uncommitted work, a workspace holding files or a
-/// work branch checked out in the project refuses the withdrawal. Nothing
-/// is released yet.
+/// alone. A worktree with uncommitted work or locked, a workspace holding
+/// files or a work branch checked out in the project refuses the
+/// withdrawal. Nothing is released yet.
 fn plan_release(root: &Path, record: &TodoRecord) -> Result<Release, WorkError> {
-    let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
-    // Each worktree with the branch it has checked out.
-    let mut checked_out: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
-    for line in listed.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            checked_out.push((std::path::PathBuf::from(path), None));
-        } else if let Some(branch) = line.strip_prefix("branch refs/heads/")
-            && let Some(last) = checked_out.last_mut()
-        {
-            last.1 = Some(branch.to_owned());
-        }
-    }
-    let main = checked_out.first().map(|(path, _)| path.clone());
+    let listed = worktrees(root)?;
+    let main = listed.first().map(|w| w.path.clone());
     // The todo's working copies: worktrees its sessions returned, and any
     // other worktree with its work branch checked out.
-    let mut owned: Vec<std::path::PathBuf> = Vec::new();
-    for (path, branch) in &checked_out {
+    let mut owned: Vec<&Worktree> = Vec::new();
+    for worktree in &listed {
         let bound = record
             .bindings
             .iter()
-            .any(|b| b.worktree.as_ref() == Some(path));
-        let on_branch = branch.is_some() && branch.as_ref() == record.branch.as_ref();
-        if (bound || on_branch) && main.as_ref() != Some(path) && !owned.contains(path) {
-            owned.push(path.clone());
+            .any(|b| b.worktree.as_ref() == Some(&worktree.path));
+        let on_branch = worktree.branch.is_some() && worktree.branch == record.branch;
+        if (bound || on_branch)
+            && main.as_ref() != Some(&worktree.path)
+            && !owned.iter().any(|o| o.path == worktree.path)
+        {
+            owned.push(worktree);
         }
     }
-    // Check everything before releasing anything: work that would be lost
-    // refuses the withdrawal and names where it is.
-    for path in &owned {
-        let changes = git::run(path, ["status", "--porcelain"])?;
+    // Check everything before releasing anything: work that would be lost,
+    // or a worktree git keeps by its lock, refuses the withdrawal and names
+    // where it is.
+    for worktree in &owned {
+        if let Some(reason) = &worktree.locked {
+            let why = if reason.is_empty() {
+                String::new()
+            } else {
+                format!(" ({reason})")
+            };
+            return Err(WorkError::refused(format!(
+                "the worktree {} is locked{why}; unlock it with `git worktree unlock`, then withdraw again",
+                worktree.path.display()
+            )));
+        }
+        let changes = git::run(&worktree.path, ["status", "--porcelain"])?;
         if !changes.trim().is_empty() {
             return Err(WorkError::refused(format!(
                 "the worktree {} holds uncommitted changes; commit or discard them, then withdraw again",
-                path.display()
+                worktree.path.display()
             )));
         }
     }
@@ -1482,83 +1561,129 @@ fn plan_release(root: &Path, record: &TodoRecord) -> Result<Release, WorkError> 
             )));
         }
     }
-    let mut branch = None;
-    if let Some(name) = &record.branch {
-        let reference = format!("refs/heads/{name}");
-        let head = match git::run(
-            root,
-            ["rev-parse", "--verify", "--quiet", reference.as_str()],
-        ) {
-            Ok(sha) => CommitSha::parse(sha.trim()).ok(),
-            Err(git::GitError::Failed { .. }) => None,
-            Err(err) => return Err(err.into()),
-        };
-        let current = match git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]) {
-            Ok(current) => Some(current.trim().to_owned()),
-            Err(git::GitError::Failed { .. }) => None,
-            Err(err) => return Err(err.into()),
-        };
-        if let Some(head) = head {
-            if current.as_deref() == Some(name.as_str()) {
-                return Err(WorkError::refused(format!(
-                    "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
-                )));
+    let branch = match &record.branch {
+        Some(name) => {
+            if let Some(head) = branch_head(root, name)? {
+                let current = match git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]) {
+                    Ok(current) => Some(current.trim().to_owned()),
+                    Err(git::GitError::Failed { .. }) => None,
+                    Err(err) => return Err(err.into()),
+                };
+                if current.as_deref() == Some(name.as_str()) {
+                    return Err(WorkError::refused(format!(
+                        "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
+                    )));
+                }
+                Some(super::_model::ReleasedBranch {
+                    name: name.clone(),
+                    head,
+                })
+            } else {
+                None
             }
-            branch = Some(super::_model::ReleasedBranch {
-                name: name.clone(),
-                head,
-            });
         }
-    }
+        None => None,
+    };
     Ok(Release {
-        worktrees: owned,
+        worktrees: owned.iter().map(|w| w.path.clone()).collect(),
         branch,
         workspace: workspace_present.then_some(workspace),
     })
 }
 
+/// The commit work branch `name` points at, `None` when there is no such
+/// branch.
+fn branch_head(root: &Path, name: &str) -> Result<Option<CommitSha>, git::GitError> {
+    let reference = format!("refs/heads/{name}");
+    match git::run(
+        root,
+        ["rev-parse", "--verify", "--quiet", reference.as_str()],
+    ) {
+        Ok(sha) => Ok(CommitSha::parse(sha.trim()).ok()),
+        Err(git::GitError::Failed { .. }) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
 impl Release {
-    /// Releases what [`plan_release`] checked, once the withdrawal of
-    /// `slug` is committed. What git or the file system refuses now stays
-    /// in place and is named.
-    fn perform(&self, root: &Path, slug: &TodoSlug) -> Result<(), WorkError> {
-        let kept = |what: String| WorkError::refused(format!("`{slug}` is withdrawn, but {what}"));
-        if let Some(workspace) = &self.workspace {
-            instrukt_core::fsx::remove_dir(workspace).map_err(|source| {
-                kept(format!(
-                    "its workspace {} was not removed ({source})",
-                    workspace.display()
-                ))
-            })?;
+    /// Releases what [`plan_release`] checked, once the withdrawal is
+    /// committed. Git's own refusals protect what changed since the check:
+    /// a worktree that gained uncommitted work or a lock is kept, as is a
+    /// workspace that gained files. The branch is deleted only while it
+    /// still points at the head recorded as its last commit and no
+    /// remaining worktree has it checked out; a branch that moved on keeps
+    /// its newer commits.
+    fn perform(&self, root: &Path) -> Released {
+        let mut done = Released {
+            worktrees: Vec::new(),
+            branch: None,
+            kept: Vec::new(),
+        };
+        if let Some(workspace) = &self.workspace
+            && let Err(source) = instrukt_core::fsx::remove_dir(workspace)
+        {
+            done.kept.push(format!(
+                "its workspace {} was not removed ({source})",
+                workspace.display()
+            ));
         }
         for path in &self.worktrees {
             let target = path.to_string_lossy().into_owned();
             match git::run(root, ["worktree", "remove", target.as_str()]) {
-                Ok(_) => {}
-                Err(git::GitError::Failed { stderr, .. }) => {
-                    return Err(kept(format!(
-                        "git kept its worktree {} ({})",
-                        path.display(),
-                        stderr.trim()
-                    )));
-                }
-                Err(err) => return Err(err.into()),
+                Ok(_) => done.worktrees.push(path.clone()),
+                Err(git::GitError::Failed { stderr, .. }) => done.kept.push(format!(
+                    "git kept its worktree {} ({})",
+                    path.display(),
+                    stderr.trim()
+                )),
+                Err(err) => done.kept.push(format!(
+                    "its worktree {} was not removed ({err})",
+                    path.display()
+                )),
             }
         }
         if let Some(branch) = &self.branch {
-            match git::run(root, ["branch", "-D", branch.name.as_str()]) {
-                Ok(_) => {}
-                Err(git::GitError::Failed { stderr, .. }) => {
-                    return Err(kept(format!(
-                        "git kept its work branch `{}` ({})",
-                        branch.name,
-                        stderr.trim()
-                    )));
-                }
-                Err(err) => return Err(err.into()),
+            match delete_branch(root, branch) {
+                Ok(()) => done.branch = Some(branch.clone()),
+                Err(why) => done.kept.push(why),
             }
         }
-        Ok(())
+        done
+    }
+}
+
+/// Deletes `branch` while it points at its recorded head and no worktree
+/// has it checked out; otherwise says why it is kept. A branch already gone
+/// keeps its recorded head as the evidence of its last commit.
+fn delete_branch(root: &Path, branch: &super::_model::ReleasedBranch) -> Result<(), String> {
+    let name = &branch.name;
+    let kept = |why: String| format!("its work branch `{name}` is kept: {why}");
+    match worktrees(root) {
+        Ok(listed) => {
+            if let Some(user) = listed
+                .iter()
+                .find(|w| w.branch.as_deref() == Some(name.as_str()))
+            {
+                return Err(kept(format!(
+                    "the worktree {} has it checked out",
+                    user.path.display()
+                )));
+            }
+        }
+        Err(err) => return Err(kept(err.to_string())),
+    }
+    match branch_head(root, name) {
+        Ok(Some(head)) if head == branch.head => {}
+        Ok(Some(head)) => {
+            return Err(kept(format!("it moved on from {} to {head}", branch.head)));
+        }
+        Ok(None) => return Ok(()),
+        Err(err) => return Err(kept(err.to_string())),
+    }
+    match git::run(root, ["branch", "-D", name.as_str()]) {
+        Ok(_) => Ok(()),
+        Err(git::GitError::Failed { stderr, .. }) => Err(kept(stderr.trim().to_owned())),
+        Err(err) => Err(kept(err.to_string())),
     }
 }
 
