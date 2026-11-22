@@ -260,8 +260,9 @@ impl Home {
     }
 
     /// `~/.instrukt/state/history.lock` — the history store's
-    /// write-isolation unit: every history write runs under it, and none
-    /// takes the state database's writer lock.
+    /// write-isolation unit: every history write runs under it, and once the
+    /// one-time move of earlier history out of the state database is
+    /// complete, none takes the state database's writer lock.
     pub fn history_lock_file(&self) -> PathBuf {
         self.state_dir().join("history.lock")
     }
