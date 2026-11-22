@@ -394,8 +394,9 @@ impl FakeGitHub {
         });
     }
 
-    /// Holds the next matching response at the network boundary. Dropping
-    /// the returned guard lets the server answer, including during unwind.
+    /// Holds the next matching response at the network boundary, while
+    /// every other request is still served. Dropping the returned guard lets
+    /// the server answer, including during unwind.
     pub fn pause_once(&self, method: &str, path_suffix: &str) -> RequestPause {
         let (reached, received) = mpsc::channel();
         let (release, released) = mpsc::channel();
@@ -1197,13 +1198,6 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         status,
     });
     drop(guard);
-    if let Some(pause) = pause
-        && pause.reached.send(()).is_ok()
-    {
-        // The test owns the response boundary; disconnect releases it
-        // even if an assertion in the test unwinds.
-        let _released = pause.released.recv();
-    }
 
     let mut response = if status == 304 || reply.body.is_none() {
         tiny_http::Response::from_string(String::new()).with_status_code(status)
@@ -1223,7 +1217,23 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
     for (name, value) in &reply.headers {
         response.add_header(header(name, value));
     }
-    let _sent = request.respond(response);
+    match pause {
+        // A held response is answered from its own thread, so the fake
+        // keeps serving every other request meanwhile, as GitHub does.
+        Some(pause) => {
+            std::thread::spawn(move || {
+                if pause.reached.send(()).is_ok() {
+                    // The test owns the response boundary; disconnect
+                    // releases it even if an assertion in the test unwinds.
+                    let _released = pause.released.recv();
+                }
+                let _sent = request.respond(response);
+            });
+        }
+        None => {
+            let _sent = request.respond(response);
+        }
+    }
 }
 
 fn header(name: &str, value: &str) -> tiny_http::Header {

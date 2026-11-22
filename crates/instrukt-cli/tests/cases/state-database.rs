@@ -6,6 +6,10 @@
     reason = "test: a failed step fails the test"
 )]
 
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
 use crate::common;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
@@ -374,5 +378,131 @@ fn status_reports_older_and_newer_state_without_writing_it() {
         db.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
         current + 1
+    );
+}
+
+/// How long a command that must not wait on another may take. The writer
+/// lock's own wait is a minute; only a command that waited on it, or on
+/// GitHub, comes near this.
+const UNBLOCKED: Duration = Duration::from_secs(20);
+
+/// Runs `command` to completion within `bound`; `None` when it is still
+/// running then (it is left to finish on its own).
+fn finished_within(mut command: Command, bound: Duration) -> Option<Output> {
+    let child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || done.send(child.wait_with_output().unwrap()));
+    finished.recv_timeout(bound).ok()
+}
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD5
+#[test]
+fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
+    const FIRST: &str = "Started the depth parser.";
+    const SECOND: &str = "Joined the nested-list cases.";
+    let project = support::Project::new();
+    project.create(
+        "list-depth",
+        "feature",
+        "Lists keep their depth everywhere.",
+    );
+    let todo = |args: &[&str]| {
+        let mut command = project.env.instrukt_process(project.repo.path());
+        command.arg("todo").args(args);
+        command
+    };
+    let read = || finished_within(todo(&["artifacts", "read", "list-depth", "log"]), UNBLOCKED);
+
+    // The coming reflection stops at its artifact upload, before its
+    // revision comment, and again at the issue fields once GitHub holds the
+    // revision.
+    let upload = project.github.pause_once("POST", "/issues/1/artifacts");
+    let fields = project.github.pause_once("PATCH", "/issues/1");
+    let first = todo(&["artifacts", "write", "list-depth", "log", FIRST])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    assert!(
+        upload.wait_until_received(Duration::from_secs(30)),
+        "the first command's reflection never reached GitHub"
+    );
+
+    // Reads complete while a local write holds the writer lock.
+    let writer = instrukt_core::fsx::LockGuard::acquire(
+        &project.env.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let listed = finished_within(todo(&["list"]), UNBLOCKED)
+        .expect("listing the work waited on the writer lock or on GitHub");
+    assert!(listed.status.success(), "{listed:?}");
+    let current = read().expect("reading an artifact waited on the writer lock or on GitHub");
+    assert!(current.status.success(), "{current:?}");
+    assert_eq!(
+        String::from_utf8(current.stdout).unwrap(),
+        format!("{FIRST}\n")
+    );
+    drop(writer);
+
+    // A local change to the same todo commits while the reflection is in
+    // flight.
+    let second = todo(&["artifacts", "write", "list-depth", "log", SECOND])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + UNBLOCKED;
+    loop {
+        let current = read().expect("reading an artifact waited on the writer lock or on GitHub");
+        if String::from_utf8(current.stdout).unwrap() == format!("{SECOND}\n") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the local change waited on the in-flight reflection"
+        );
+    }
+
+    // GitHub now holds the first revision; this computer has not recorded
+    // it and holds a newer one. Reading the todo marks no conflict.
+    drop(upload);
+    assert!(
+        fields.wait_until_received(Duration::from_secs(30)),
+        "the first command's revision never reached GitHub"
+    );
+    let during = project.ok(["show", "list-depth"]);
+    drop(fields);
+    for command in [first, second] {
+        let output = command.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    // Both changes reached GitHub intact.
+    let listed = project.ok(["artifacts", "list", "list-depth"]);
+    let after = project.ok(["show", "list-depth"]);
+    let on_github: Vec<String> = project
+        .github
+        .artifacts(support::REPOSITORY, 1)
+        .iter()
+        .filter(|a| a["artifact"]["name"] == "log")
+        .flat_map(|a| a["versions"].as_array().unwrap().clone())
+        .map(|v| v["body"].as_str().unwrap().to_owned())
+        .collect();
+    // GitHub lists an artifact's versions newest first.
+    assert_eq!(on_github, [SECOND, FIRST]);
+    let comments = project.github.comments(support::REPOSITORY, 1);
+    let head = comments
+        .iter()
+        .filter_map(|c| c["body"].as_str())
+        .next_back()
+        .unwrap();
+    insta::assert_snapshot!(
+        "reflection-in-flight",
+        support::redact(&format!("{during}---\n{listed}---\n{after}---\n{}", head))
     );
 }

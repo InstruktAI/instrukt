@@ -1,0 +1,52 @@
+---
+source: crates/instrukt-cli/tests/cases/state-database.rs
+expression: "support::redact(&format!(\"{during}---\\n{listed}---\\n{after}---\\n{}\", head))"
+---
+list-depth · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 3
+intent:
+  Lists keep their depth everywhere.
+reflection: pending: not yet reflected
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  log (2 versions)
+    <digest 2> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+stamps:
+  none
+---
+input (1 version)
+  <digest 1> by Test Developer at <time>
+log (2 versions)
+  <digest 2> by Test Developer at <time>
+  <digest 3> by Test Developer at <time>
+---
+list-depth · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 3
+intent:
+  Lists keep their depth everywhere.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  log (2 versions)
+    <digest 2> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+stamps:
+  none
+---
+[instrukt record · list-depth · rev 3 on rev 2]
+<!-- instrukt:work-record:v2:{"base":2,"record":{"schema":3,"id":"<id 1>","project":"demo","slug":"list-depth","kind":"feature","status":"active","created":"<time>","created_by":{"person":{"name":"Test Developer"}},"revision":3,"sequence":3,"artifacts":[{"name":"input","address":1,"versions":[{"digest":"<digest 1>","writer":{"person":{"name":"Test Developer"}},"created":"<time>","sequence":1,"grounding":{},"remote":1}]},{"name":"log","address":2,"versions":[{"digest":"<digest 2>","writer":{"person":{"name":"Test Developer"}},"created":"<time>","sequence":2,"grounding":{"head":"<commit 1>"},"remote":1},{"digest":"<digest 3>","writer":{"person":{"name":"Test Developer"}},"created":"<time>","sequence":3,"grounding":{"head":"<commit 1>"},"remote":2}]}],"stamps":[],"bindings":[],"hold_history":[],"after":[],"catch_up":"once"}} -->
