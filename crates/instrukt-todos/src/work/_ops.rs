@@ -541,10 +541,13 @@ impl Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(slug)?;
         writable(&s.items[index].record)?;
-        // Release the working resources first; a worktree holding
-        // uncommitted work refuses the withdrawal rather than losing it.
-        let (worktrees, branch) = release_resources(&project.root, &s.items[index].record)?;
+        // Check the working resources first: a worktree holding uncommitted
+        // work refuses the withdrawal rather than losing it. They are
+        // released only once the withdrawal is committed, so a refused
+        // commit leaves them in place.
+        let release = plan_release(&project.root, &s.items[index].record)?;
         let now = s.now;
+        let (worktrees, branch) = (release.worktrees.clone(), release.branch.clone());
         s.commit("removed", |s| {
             let record = &mut s.items[index].record;
             record.removal = Some(Removal {
@@ -557,7 +560,9 @@ impl Work {
             record.claim = None;
             Ok(())
         })?;
+        let released = release.perform(&project.root, slug);
         s.flush()?;
+        released?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -1316,23 +1321,25 @@ fn preparation_release_head(record: &TodoRecord) -> Result<Option<CommitSha>, Wo
     Ok(Some(head.clone()))
 }
 
-/// Releases the working resources a withdrawn todo owns (`todos`,
-/// "Parking, withdrawal and delivery"): each worktree its session bindings
-/// returned that is a worktree of this project, then its work branch.
-/// Only git's own worktree list and the recorded branch are acted on; a
-/// path that is not one of the project's worktrees is left alone. A
-/// worktree with uncommitted work refuses the withdrawal. Returns what was
-/// released, as recovery evidence.
-fn release_resources(
-    root: &Path,
-    record: &TodoRecord,
-) -> Result<
-    (
-        Vec<std::path::PathBuf>,
-        Option<super::_model::ReleasedBranch>,
-    ),
-    WorkError,
-> {
+/// The working resources a withdrawn todo owns, checked and ready to be
+/// released (`todos`, "Parking, withdrawal and delivery").
+struct Release {
+    /// The todo's worktrees, as recovery evidence.
+    worktrees: Vec<std::path::PathBuf>,
+    /// Its work branch and the head it points at, as recovery evidence.
+    branch: Option<super::_model::ReleasedBranch>,
+    /// Its empty workspace directory, when present.
+    workspace: Option<std::path::PathBuf>,
+}
+
+/// Checks the working resources a withdrawn todo owns: each worktree its
+/// session bindings returned that is a worktree of this project, then its
+/// work branch. Only git's own worktree list and the recorded branch are
+/// acted on; a path that is not one of the project's worktrees is left
+/// alone. A worktree with uncommitted work, a workspace holding files or a
+/// work branch checked out in the project refuses the withdrawal. Nothing
+/// is released yet.
+fn plan_release(root: &Path, record: &TodoRecord) -> Result<Release, WorkError> {
     let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
     // Each worktree with the branch it has checked out.
     let mut checked_out: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
@@ -1396,25 +1403,6 @@ fn release_resources(
                 workspace.display()
             )));
         }
-        instrukt_core::fsx::remove_dir(&workspace).map_err(|source| WorkError::Io {
-            path: workspace.clone(),
-            source,
-        })?;
-    }
-    let mut released = Vec::new();
-    for path in &owned {
-        let target = path.to_string_lossy().into_owned();
-        match git::run(root, ["worktree", "remove", target.as_str()]) {
-            Ok(_) => released.push(path.clone()),
-            Err(git::GitError::Failed { stderr, .. }) => {
-                return Err(WorkError::refused(format!(
-                    "the worktree {} holds work git would lose ({}); commit or discard it, then withdraw again",
-                    path.display(),
-                    stderr.trim()
-                )));
-            }
-            Err(err) => return Err(err.into()),
-        }
     }
     let mut branch = None;
     if let Some(name) = &record.branch {
@@ -1438,14 +1426,62 @@ fn release_resources(
                     "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
                 )));
             }
-            git::run(root, ["branch", "-D", name.as_str()])?;
             branch = Some(super::_model::ReleasedBranch {
                 name: name.clone(),
                 head,
             });
         }
     }
-    Ok((released, branch))
+    Ok(Release {
+        worktrees: owned,
+        branch,
+        workspace: workspace_present.then_some(workspace),
+    })
+}
+
+impl Release {
+    /// Releases what [`plan_release`] checked, once the withdrawal of
+    /// `slug` is committed. What git or the file system refuses now stays
+    /// in place and is named.
+    fn perform(&self, root: &Path, slug: &TodoSlug) -> Result<(), WorkError> {
+        let kept = |what: String| WorkError::refused(format!("`{slug}` is withdrawn, but {what}"));
+        if let Some(workspace) = &self.workspace {
+            instrukt_core::fsx::remove_dir(workspace).map_err(|source| {
+                kept(format!(
+                    "its workspace {} was not removed ({source})",
+                    workspace.display()
+                ))
+            })?;
+        }
+        for path in &self.worktrees {
+            let target = path.to_string_lossy().into_owned();
+            match git::run(root, ["worktree", "remove", target.as_str()]) {
+                Ok(_) => {}
+                Err(git::GitError::Failed { stderr, .. }) => {
+                    return Err(kept(format!(
+                        "git kept its worktree {} ({})",
+                        path.display(),
+                        stderr.trim()
+                    )));
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+        if let Some(branch) = &self.branch {
+            match git::run(root, ["branch", "-D", branch.name.as_str()]) {
+                Ok(_) => {}
+                Err(git::GitError::Failed { stderr, .. }) => {
+                    return Err(kept(format!(
+                        "git kept its work branch `{}` ({})",
+                        branch.name,
+                        stderr.trim()
+                    )));
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+        Ok(())
+    }
 }
 
 fn change_kind(record: &mut TodoRecord, kind: TodoKind, force: bool) -> Result<(), WorkError> {
