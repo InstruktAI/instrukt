@@ -1063,32 +1063,24 @@ impl Work {
     }
 
     /// The record `address` names for a read of artifact `name`, with why
-    /// each version `needed` names in it still has no content. A record this
+    /// each version `wanted` asks for still has no content. A record this
     /// computer holds, a local item's or a listing copy's, answers alone
-    /// when it holds every needed version's content ([`Work::local_record`]).
+    /// when it lacks no content `wanted` asks for ([`Wanted::lacking`]).
     /// Otherwise the todo is located and refreshed as [`Work::show`] does;
-    /// each needed version still without content is then asked of GitHub
-    /// and verified against its digest, and content restored onto a local
-    /// item is committed to its row.
+    /// each version still without content is then asked of GitHub and
+    /// verified against its digest, and content restored onto a local item
+    /// is committed to its row before the read returns it.
     fn artifact_record(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
         name: &str,
-        needed: impl Fn(&Artifact) -> Vec<String>,
+        wanted: &Wanted<'_>,
     ) -> Result<(TodoRecord, BTreeMap<String, Unrestored>), WorkError> {
         let lacking = |record: &TodoRecord| -> Vec<String> {
-            record.artifact(name).map_or_else(Vec::new, |artifact| {
-                needed(artifact)
-                    .into_iter()
-                    .filter(|digest| {
-                        artifact
-                            .versions
-                            .iter()
-                            .any(|v| v.digest.as_str() == digest && v.content.is_none())
-                    })
-                    .collect()
-            })
+            record
+                .artifact(name)
+                .map_or_else(Vec::new, |artifact| wanted.lacking(artifact))
         };
         if let Some(record) = self.local_record(project, address)?
             && lacking(&record).is_empty()
@@ -1136,18 +1128,11 @@ impl Work {
         address: &TodoAddress,
         name: &str,
     ) -> Result<String, WorkError> {
-        fn current<'r>(record: &'r TodoRecord, name: &str) -> Option<&'r Version> {
-            record.artifact(name).and_then(|a| a.versions.last())
-        }
-        let (record, missing) = self.artifact_record(project, address, name, |artifact| {
-            artifact
-                .versions
-                .last()
-                .map(|v| v.digest.as_str().to_owned())
-                .into_iter()
-                .collect()
-        })?;
-        let version = current(&record, name).ok_or_else(|| no_artifact(&address.slug, name))?;
+        let (record, missing) = self.artifact_record(project, address, name, &Wanted::Current)?;
+        let version = record
+            .artifact(name)
+            .and_then(|a| a.versions.last())
+            .ok_or_else(|| no_artifact(&address.slug, name))?;
         let digest = version.digest.as_str();
         version
             .content
@@ -1164,23 +1149,18 @@ impl Work {
         old: &str,
         new: &str,
     ) -> Result<Vec<DiffLine>, WorkError> {
-        let (record, missing) = self.artifact_record(project, address, name, |_| {
-            vec![old.to_owned(), new.to_owned()]
-        })?;
+        let (record, missing) =
+            self.artifact_record(project, address, name, &Wanted::Digests(&[old, new]))?;
         let slug = &address.slug;
         let artifact = record
             .artifact(name)
             .ok_or_else(|| no_artifact(slug, name))?;
         let content = |digest: &str| -> Result<String, WorkError> {
-            let version = artifact
-                .versions
-                .iter()
-                .find(|v| v.digest.as_str() == digest)
-                .ok_or_else(|| {
-                    WorkError::refused(format!(
-                        "`{name}` of `{slug}` retains no version {digest}; `instrukt todo artifacts list {slug}` shows its versions"
-                    ))
-                })?;
+            let version = Wanted::version(artifact, digest).ok_or_else(|| {
+                WorkError::refused(format!(
+                    "`{name}` of `{slug}` retains no version {digest}; `instrukt todo artifacts list {slug}` shows its versions"
+                ))
+            })?;
             version
                 .content
                 .clone()
@@ -2146,6 +2126,57 @@ fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>,
     Ok(refs)
 }
 
+/// What a read of an artifact's content asks for.
+enum Wanted<'d> {
+    /// Its current version: the last one written.
+    Current,
+    /// The versions with these digests. Writing appends a version even when
+    /// its content repeats an earlier one, so a digest can name several;
+    /// any of them holding its content answers.
+    Digests(&'d [&'d str]),
+}
+
+impl Wanted<'_> {
+    /// The digests of the versions asked for whose content `artifact`
+    /// lacks: the current version's when it is held without content; a
+    /// digest whose versions all lack it. A digest no version carries lacks
+    /// nothing: there is no content to restore.
+    fn lacking(&self, artifact: &Artifact) -> Vec<String> {
+        match self {
+            Wanted::Current => artifact
+                .versions
+                .last()
+                .filter(|v| v.content.is_none())
+                .map(|v| v.digest.as_str().to_owned())
+                .into_iter()
+                .collect(),
+            Wanted::Digests(digests) => digests
+                .iter()
+                .filter(|digest| {
+                    Wanted::version(artifact, digest).is_some_and(|v| v.content.is_none())
+                })
+                .map(|digest| (*digest).to_owned())
+                .collect(),
+        }
+    }
+
+    /// The version of `artifact` with `digest` a read takes: one holding
+    /// its content, else the first.
+    fn version<'a>(artifact: &'a Artifact, digest: &str) -> Option<&'a Version> {
+        let mut matching = artifact
+            .versions
+            .iter()
+            .filter(|v| v.digest.as_str() == digest);
+        let first = matching.next()?;
+        Some(
+            std::iter::once(first)
+                .chain(matching)
+                .find(|v| v.content.is_some())
+                .unwrap_or(first),
+        )
+    }
+}
+
 /// The refusal for an artifact version whose content this computer does
 /// not hold, saying why restoring it failed ([`Unrestored`]).
 fn content_missing(name: &str, digest: &str, why: Option<&Unrestored>) -> WorkError {
@@ -2333,6 +2364,55 @@ mod tests {
             delivery: None,
             removal: None,
         }
+    }
+
+    /// An artifact whose versions repeat `text`, holding content only where
+    /// `held` says so, oldest first.
+    fn repeated(text: &str, held: &[bool]) -> Artifact {
+        Artifact {
+            name: ArtifactName::new("log"),
+            address: None,
+            versions: held
+                .iter()
+                .enumerate()
+                .map(|(i, held)| Version {
+                    digest: digest_of(text),
+                    writer: Actor::Person { name: "dev".into() },
+                    created: jiff::Timestamp::UNIX_EPOCH,
+                    derived_from: Vec::new(),
+                    sequence: i as u64 + 1,
+                    grounding: Default::default(),
+                    remote: None,
+                    content: held.then(|| text.to_owned()),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_held_current_version_lacks_nothing_though_an_earlier_repeat_of_it_does() {
+        let artifact = repeated("same", &[false, true]);
+        assert!(Wanted::Current.lacking(&artifact).is_empty());
+        assert_eq!(
+            Wanted::Current.lacking(&repeated("same", &[true, false])),
+            vec![digest_of("same").as_str().to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_digest_any_of_whose_versions_holds_its_content_is_answered_by_that_version() {
+        let artifact = repeated("same", &[false, true]);
+        let digest = digest_of("same");
+        assert!(
+            Wanted::Digests(&[digest.as_str()])
+                .lacking(&artifact)
+                .is_empty()
+        );
+        let taken = Wanted::version(&artifact, digest.as_str()).unwrap();
+        assert_eq!(
+            (taken.sequence, taken.content.as_deref()),
+            (2, Some("same"))
+        );
     }
 
     fn entry(record: TodoRecord, ready: bool) -> ListEntry {
