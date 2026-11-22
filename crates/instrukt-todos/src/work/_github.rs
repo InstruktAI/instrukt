@@ -533,10 +533,9 @@ mod tests {
         assert_eq!(
             error,
             GitHubError::RateLimited {
-                until: reset_at(Some(RESET))
+                until: Some("2026-01-01T00:00:00Z".parse().unwrap())
             }
         );
-        assert!(reset_at(Some(RESET)).is_some());
     }
 
     #[test]
