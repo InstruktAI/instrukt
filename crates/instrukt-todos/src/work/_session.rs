@@ -989,8 +989,34 @@ impl<'w> Session<'w> {
             .iter()
             .map(|&index| self.items[index].record.id.clone())
             .collect();
+        // A change to a todo's prerequisites or group was judged against
+        // the todos its relationship checks consulted; they must still hold
+        // what was judged, or two such changes could each pass against the
+        // same graph (`dependencies-and-holds`).
+        let edges_changed = changed.iter().any(|&index| {
+            let mine = &self.items[index].record;
+            match self.bases.get(&mine.id) {
+                Some(base) => base.record.after != mine.after || base.record.group != mine.group,
+                None => !mine.after.is_empty() || mine.group.is_some(),
+            }
+        });
+        let reads: Vec<&LocalItem> = if edges_changed {
+            self.current
+                .iter()
+                .filter(|id| !others.contains(id))
+                .filter_map(|id| self.bases.get(id))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mut conflicted = None;
         let result = self.store.write(|tx, path, project| {
+            if let Some(read) = _store::changed_read(tx, path, reads)? {
+                return Err(WorkError::refused(format!(
+                    "`{}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record",
+                    read.record.slug
+                )));
+            }
             let mut rows = Vec::new();
             for &index in changed {
                 let mine = &self.items[index];

@@ -456,6 +456,23 @@ pub(crate) fn commit_local(
     Ok(Ok(written(tx, path, id)?))
 }
 
+/// The first of `reads`, rows a change's relationship judgment consulted,
+/// whose live record inside `tx` is no longer the one judged, ignoring what
+/// reflection learns of artifact versions; `None` while every one holds.
+pub(crate) fn changed_read<'r>(
+    tx: &Transaction<'_>,
+    path: &Path,
+    reads: impl IntoIterator<Item = &'r LocalItem>,
+) -> Result<Option<&'r LocalItem>, WorkError> {
+    for read in reads {
+        let live = load_one(tx, path, &read.record.id)?;
+        if live.is_none_or(|live| unlearned(&live.record) != unlearned(&read.record)) {
+            return Ok(Some(read));
+        }
+    }
+    Ok(None)
+}
+
 /// What a local change's precondition finds on the live row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Admission {
