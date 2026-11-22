@@ -444,14 +444,15 @@ session-fixed timing through A3's bounded batch log.
 On a project that opts in, every commit GitHub checks before the canonical
 branch advances carries the reviewer bot's review status, obtained without
 anyone asking: an eligible pull request's current head and the integrator's
-candidate. Four contexts take part and each keeps its own decision.
+candidate. Four contexts take part and each keeps its own decision; the review
+itself belongs to the procedure that answers the request.
 
 | Context | Decides | Contract |
 | --- | --- | --- |
-| runner | Which heads need review; activation of the reviewer | `project/instrukt/spec/feature/runner/pull-request-review` |
-| work | The head verdict record, the reviewer identity and how a verdict is published | `project/instrukt/spec/feature/work/github-apps` |
-| workflow | Whether a candidate's content is covered by approving reviews | `project/instrukt/spec/feature/workflow/integration-gate` |
-| configuration | The per-project opt-in and where its prerequisite is refused | `project/instrukt/spec/feature/configuration/layered-configuration` |
+| runner | Which commits are owed a review; requesting it until a verdict exists | `project/instrukt/spec/feature/runner/pull-request-review` |
+| work | Review evidence and its admission, the two identities' readiness and how a verdict is published | `project/instrukt/spec/feature/work/github-apps` |
+| workflow | Whether a candidate's content is covered | `project/instrukt/spec/feature/workflow/integration-gate` |
+| configuration | The per-project opt-in and where its prerequisites are refused | `project/instrukt/spec/feature/configuration/layered-configuration` |
 
 ```mermaid
 sequenceDiagram
@@ -461,29 +462,45 @@ sequenceDiagram
   participant W as work
   participant F as workflow
   participant I as integrator (agent)
-  R->>G: open pull requests, heads, reviewer statuses (conditional requests)
-  R-->>V: runner.review_needed for an exact head
+  R->>G: open pull requests, heads, reviewer statuses and reviews (conditional requests)
+  R->>W: is a verdict recognised for this head?
+  R-->>V: runner.review_needed for an owed head, repeated until a verdict exists
   V->>W: instrukt review record (verdict, report)
-  W->>G: review on the pull request and review status on the commit, as the reviewer bot
+  R->>W: publish outstanding verdicts to the pull requests observed at each head
+  W->>G: review on each such pull request and review status on the commit, as the reviewer bot
   R->>F: active candidate: is its content covered?
-  alt covered by approving reviews
+  alt every commit covered
     R->>W: record the derived approval
     W->>G: review status on the candidate commit
-  else content beyond reviewed heads
+  else a commit is not covered
     R-->>V: runner.review_needed for the exact candidate
   end
   R-->>I: runner.ci_completed once CI and the review status are both reported
 ```
 
-The runner reads GitHub and decides eligibility; it decides nothing about a
-verdict. A verdict is recorded locally before it is published, so publication
-is retried from the record and never repeats a review
-(`sdlc/policy/state-storage`). GitHub's review status carries a verdict between
-computers: an observer that finds the reviewer bot's status on a head starts no
-review, and coverage accepts the reviewer bot's approving status on a merged
-head whichever computer published it. Observation rides the tick's existing
-conditional GitHub pass, activation the event platform and publication work's
-reflection; the gate adds no webhook, queue or process.
+A review is one judgment of one commit. Its request is addressed to a pull
+request, so a pull request keeps one reviewer across its heads, and its verdict
+is delivered to every eligible pull request at that commit. The runner reads
+GitHub and decides what is owed; it decides nothing about a verdict. A verdict
+is recorded locally before it is published, so publication is retried from the
+record and never repeats a review (`sdlc/policy/state-storage`).
+
+Review evidence has two stores, split by who waits on them. Recording waits on
+the evidence store alone; the tick writes the publication store alone.
+
+| Path | Holds | Re-created from |
+| --- | --- | --- |
+| `state/review.db` | head verdict versions with their reports, and exemptions; written only by `instrukt review record` and `instrukt review exempt` | must be preserved: an unpublished verdict and a report without a pull request exist nowhere else |
+| `state/review.lock` | the evidence store's write-isolation unit, held for each recording command's transaction | taken again by the next recording command |
+| `state/review-publication.db` | derived approvals with their coverage, and what GitHub carries of each verdict version per destination; written only by the tick | what GitHub carries, and a fresh coverage derivation |
+| `state/review-publication.lock` | the publication store's write-isolation unit, held for each tick's publication writes | taken again by the next tick |
+
+GitHub carries a verdict between computers: an observer that finds the
+reviewer bot's status or review on a head starts no review, and coverage
+accepts the reviewer bot's approving status on a merged head whichever
+computer published it. Observation rides the tick's existing conditional
+GitHub pass, requests the event platform and publication the tick; the gate
+adds no webhook, queue or process.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Failure modes
@@ -546,16 +563,23 @@ reflection; the gate adds no webhook, queue or process.
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
 
 <!-- planned:event-driven-pr-review-gate -->
-- **A reviewer records no verdict for a head it was handed:** that head keeps no
-  review status and, where the status is required, cannot merge; the same head
-  is not asked for again. A new push is a new head and is reviewed.
-- **GitHub is unavailable or refuses while a verdict waits for publication:**
-  the verdict stays recorded with its publication pending and its cause; a later
-  tick publishes it. The review is not repeated.
-- **The reviewer bot authored the pull request under review:** GitHub refuses
-  its approving review of its own pull request; the refusal stays reported on
-  the verdict and the review status is published regardless.
-- **A candidate adds content instrukt cannot reproduce from its parents:** it
-  receives no derived approval; the exact candidate is reviewed, and promotion
-  waits for that verdict.
+- **A reviewer's turn ends without a verdict for a head it was handed:** the
+  head stays owed. While it is still current the runner asks again at growing
+  intervals; the head carries no review status meanwhile and, where the status
+  is required, cannot merge.
+- **A head is replaced before its request reaches a reviewer and later becomes
+  current again:** it is asked for under a new request; the replaced request's
+  record does not stand in its way.
+- **GitHub is unavailable while a verdict waits for publication:** the verdict
+  stays recorded with its publication outstanding and its cause; a later tick
+  publishes it. The review is not repeated.
+- **GitHub carries one of a verdict's two marks:** the missing one is
+  completed from the other or from the recorded report; no second review is
+  started.
+- **A candidate adds a commit that is neither an approved head, reproducible
+  nor exempted by its author:** it receives no derived approval; the exact
+  candidate is reviewed, and promotion waits for that verdict.
+- **A project moves to another computer with a verdict unpublished:** the new
+  computer cannot see it and has that head reviewed again; the old computer's
+  record keeps the report.
 <!-- /planned:event-driven-pr-review-gate -->

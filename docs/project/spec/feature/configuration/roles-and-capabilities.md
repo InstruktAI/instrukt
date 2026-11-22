@@ -74,11 +74,13 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
 
 <!-- planned:event-driven-pr-review-gate -->
-Head verdicts belong to the Evidence family: `instrukt review record` is
-`stamp` and `instrukt review show` is `artifact-read`, addressing the head
-verdicts of the project the caller stands in
-(`project/instrukt/spec/feature/work/github-apps`). At `own`, a subscribed
-reviewer reaches the verdicts of its assignment's subject.
+Review evidence belongs to the Evidence family: `instrukt review record` and
+`instrukt review exempt` are `stamp`, and `instrukt review show` is
+`artifact-read`, addressing the review evidence of the project the caller
+stands in. The grant reaches the command; what a caller may record is decided
+by the evidence's own admission invariants, which bind every caller alike
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence).
 <!-- /planned:event-driven-pr-review-gate -->
 
 Scope is always authored as `own` or `any`. `any` reaches every object the

@@ -108,9 +108,11 @@ Automatic review adds these crossings; their composition is the review gate in
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → runner, work, workflow | Customer / Supplier | The per-project automatic-review opt-in |
-| work → configuration, runner | Customer / Supplier | The reviewer identity's publishing readiness, consulted where the opt-in is admitted and by installation inspection |
-| work → runner | Customer / Supplier | Whether a pull request is a todo's; recording a derived approval and flushing pending head-verdict publication through work's command contract |
-| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, the work record and the review statuses the runner observed |
+| work → configuration, runner | Customer / Supplier | The readiness of the project identity to observe and of the reviewer identity to publish, consulted where the opt-in is admitted and by installation inspection |
+| work → runner | Customer / Supplier | Whether a pull request is a todo's and whether a commit's verdict is recognised; recording a derived approval and publishing outstanding verdicts through work's command contract |
+| runner → work | Customer / Supplier | The review requests the runner delivered to a session, consulted when a head verdict is admitted |
+| work → workflow | Customer / Supplier | Head verdicts and exemptions as coverage evidence |
+| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's records and what the runner observed on GitHub |
 <!-- /planned:event-driven-pr-review-gate -->
 
 Workflow and runner coordinate integration without making the workflow engine

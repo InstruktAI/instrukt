@@ -69,11 +69,17 @@ runner owns dispatch, and the configured runtime owns conversations.
 <!-- planned:event-driven-pr-review-gate -->
 **Head verdict**
 : An independent review's recorded outcome for one exact commit that no todo's
-  record carries, published as the reviewer bot's review status on that commit.
+  record carries: a judgment of that commit, delivered to GitHub as the
+  reviewer bot's review status on it and as a review on each pull request it
+  heads.
+
+**Exemption**
+: The recorded decision of a commit's own author that it owes no independent
+  review under `general/policy/commits`.
 
 **Derived approval**
-: A head verdict recorded for an integration candidate from workflow's finding
-  that approving reviews cover its content, with no review of its own.
+: The record that an integration candidate's content is covered, from
+  workflow's finding and with no review of its own.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -110,13 +116,14 @@ runner owns dispatch, and the configured runtime owns conversations.
 Preparation head reviews belong to the todo record: exact clean head, complete findings digest, independent reviewer and immediate integration event. One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
 <!-- planned:event-driven-pr-review-gate -->
-Work also owns head verdicts, the review outcomes of exact commits that no
-todo's record carries, with their publication as the reviewer bot's
-pull-request review and review status; `instrukt review record` and
-`instrukt review show` are their published contract
-(`project/instrukt/spec/feature/work/github-apps`). Which heads are reviewed is
-the runner's decision and whether a candidate's content is covered is
-workflow's.
+Work also owns review evidence for exact commits that no todo's record
+carries: head verdicts, exemptions and derived approvals, their admission and
+their publication as the reviewer bot's pull-request review and review status.
+`instrukt review record`, `instrukt review exempt` and `instrukt review show`
+are their published contract
+(`project/instrukt/spec/feature/work/github-apps`). Which commits are owed a
+review is the runner's decision, whether a candidate's content is covered is
+workflow's, and how a head is reviewed is its review procedure's.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Canonical fields
@@ -172,20 +179,24 @@ and issues installation credentials under
   retired; it preserves the context needed to read retained work.
 
 <!-- planned:event-driven-pr-review-gate -->
-#### Head verdict
+#### Review evidence
 
-- **Root entity:** the verdict on one exact commit of a project's repository.
-- **Contains:** its versions, each with verdict, report or covering heads,
-  reviewing session and optional pull request, and what has been published of
-  the current version.
-- **Invariants:** a version is recorded before anything of it is published; a
-  verdict names one commit and no other commit inherits it; only the reviewer
-  identity publishes it. Recording, publication and readiness belong to
-  `project/instrukt/spec/feature/work/github-apps`.
+- **Root entity:** the review evidence of one exact commit of a project's
+  repository.
+- **Contains:** its head verdict versions, each with verdict, base, report and
+  reviewing session; its exemption; for an integration candidate its derived
+  approval with the coverage it rests on; and what has been published of the
+  current version to each destination.
+- **Invariants:** evidence is recorded before anything of it is published; a
+  verdict names one commit and no other commit inherits it; a verdict's
+  reviewing session authored none of the reviewed commits; only the reviewer
+  identity publishes it. Admission, publication, storage and readiness belong
+  to `project/instrukt/spec/feature/work/github-apps`.
 - **Identifier:** project and commit.
-- **Lifecycle:** recorded by the reviewer through `instrukt review record`, or
-  by the runner through work's command contract for a derived approval;
-  published by reflection; retired after publication under the same contract.
+- **Lifecycle:** recorded by the reviewing session, by the commit's author for
+  an exemption, or by the runner through work's command contract for a derived
+  approval; published on ticks; kept while current and retired as history
+  under the same contract.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Domain events emitted
@@ -266,10 +277,14 @@ owning design snippet or decision record is declared.
 
 <!-- planned:event-driven-pr-review-gate -->
 - **Work → runner (automatic review)** — customer-supplier. Work answers whether
-  a pull request is a todo's and whether the reviewer identity can publish, and
-  through its command contract records a derived approval, carrying the
-  coverage finding the runner read from workflow, and flushes pending verdict
-  publication.
+  a pull request is a todo's, whether a commit's verdict is recognised and
+  whether both identities are ready. Through its command contract it records a
+  derived approval, carrying the coverage finding the runner read from
+  workflow, and publishes outstanding verdicts to the pull requests the runner
+  observed.
+- **Runner → work (automatic review)** — customer-supplier. The runner supplies
+  the review requests it delivered to a session, which a head verdict's
+  admission consults.
 <!-- /planned:event-driven-pr-review-gate -->
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation

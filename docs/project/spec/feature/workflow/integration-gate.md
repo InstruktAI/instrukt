@@ -57,12 +57,14 @@ check runs:
   head carries no status and no check run; the project has no CI.
 
 <!-- planned:event-driven-pr-review-gate -->
-The review status (`project/instrukt/spec/feature/work/github-apps`) is not a
-CI result: classification ignores it, and a project whose commits carry only
-review statuses has no CI. On a project that opted in to automatic review, a
-candidate's result is complete only once the reviewer bot's review status is
-reported on the candidate commit: it is pending while that status is absent,
-`failure` when that status is a failure, and otherwise the CI result.
+On a project that opted in to automatic review, the reviewer bot's review
+status (`project/instrukt/spec/feature/work/github-apps`) is not a CI result:
+classification leaves it out, and a project whose commits carry only review
+statuses has no CI. There a candidate's result is complete only once that
+status is reported on the candidate commit: it is pending while the status is
+absent, `failure` when the status is a failure, and otherwise the CI result.
+On a project that has not opted in, classification reads every status as
+before, a review status published earlier included.
 <!-- /planned:event-driven-pr-review-gate -->
 
 | Observed result | Integrator obligation |
@@ -81,29 +83,42 @@ queue does not select, merge or discard candidates on its behalf.
 
 On a project that opted in to automatic review, each tick that observes an
 active candidate without the reviewer bot's review status derives whether the
-content the candidate adds to the canonical branch is covered. A commit the
-candidate adds is covered when one of these holds.
+content the candidate adds to the canonical branch is covered. Coverage applies
+the review-currency derivation of
+`project/instrukt/spec/feature/workflow/artifact-currency` to the candidate: it
+follows the candidate's first-parent commits back to the canonical branch, and
+each of them must be one of these.
 
-| Covered commit | Evidence |
+| Commit on the candidate's first-parent line | Covered when | Evidence |
+| --- | --- | --- |
+| An approved head | It is exactly a head that holds a current independent approval. It covers every commit it contains. | A finalized commit's or a preparation head's approval in the todo's record (`project/instrukt/spec/feature/workflow/delivery-cycle`, `project/instrukt/spec/feature/workflow/preparation`); for any other head, an approving head verdict in work's record or the reviewer bot's approving review status on that commit (`project/instrukt/spec/feature/work/github-apps`). |
+| A merge of an approved head | Its second parent is exactly such a head, and its tree is what git's own merge of its two parents produces. A commit that an approved head merely contains, and a head that contains an approved commit, are not approved heads. | The head's approval as above; the merge reproduced from its parents. |
+| A merge of the canonical branch | Its second parent is contained in the canonical branch, and its tree is what git's own merge of its two parents produces. | Reproduced from its parents. |
+| A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
+| A commit its author exempted | The session that authored it recorded that it owes no independent review under `general/policy/commits`. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
+
+A candidate that restores a failing canonical branch is covered as a whole:
+the canonical head it is based on is one the runner observed red, and its tree
+equals the tree of an earlier commit on the canonical branch's first-parent
+line. Such a candidate adds no content the canonical branch has not held. A
+revert that keeps later deliveries is a new combination and is derived commit
+by commit like any other candidate.
+
+| Finding | What follows |
 | --- | --- |
-| Contained in a finalized commit or an approved preparation head | The todo's record: current independent approval of that exact head (`project/instrukt/spec/feature/workflow/delivery-cycle`, `project/instrukt/spec/feature/workflow/preparation`). |
-| Contained in any other head that carries the reviewer bot's approving review status | That status on the exact head commit, as GitHub carries it. |
-| A merge whose tree is the mechanical merge of its parents | Reproduced from its parents. A merge resolved by hand is not reproduced. |
-| A documentation fold | Reproduced by folding its parent's tree. |
-| A revert of a commit on the canonical branch | Reproduced from that commit and the revert's parent. |
+| Every commit is covered | Work records a derived approval with the canonical head and every covering item, and publishes the review status on the candidate commit (`project/instrukt/spec/feature/work/github-apps`). |
+| A commit is not covered | The candidate owes a review. The runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Review requests), and that review's verdict is the candidate's review status. |
+| The repository cannot answer | Nothing is recorded and nothing is asked; the next tick derives again. |
 
-A candidate whose every added commit is covered receives a derived approval,
-which work publishes as the review status on the candidate commit
-(`project/instrukt/spec/feature/work/github-apps`). Any other candidate adds
-content beyond reviewed heads: the runner asks for an independent review of the
-exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`,
-Review activation), and that review's verdict is the candidate's review status.
 A candidate is never approved on its covered part alone, and a different
-candidate commit is derived afresh.
+candidate commit is derived afresh. Whether a commit owes review stays its
+author's decision under `general/policy/commits`: a reviewed head and an
+exemption are that decision on record. A commit that carries neither is asked
+for, so nothing reaches the canonical branch because its author forgot to ask.
 
 Reproduction compares trees and judges no content
 (`general/principle/intelligence-boundaries`): a commit either equals what
-instrukt computes from its parents or the candidate is reviewed.
+instrukt computes from its parents or it is not covered by reproduction.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Canonical-branch guard
@@ -153,8 +168,10 @@ warrants a bug, deduplicates against existing work and files it once when
 warranted; the runner never turns every red check into a bug automatically.
 
 <!-- planned:event-driven-pr-review-gate -->
-A revert is covered by reproduction, so on a project that requires the review
-status the restoring candidate carries it without waiting for a review.
+On a project that requires the review status, a candidate that restores the
+canonical branch to content it held before is covered as a restoration and
+carries the status without waiting for a review (Review coverage of a
+candidate). How far to restore remains the integrator's judgment.
 <!-- /planned:event-driven-pr-review-gate -->
 
 When the integrator cannot restore the baseline, the condition is an anomaly
@@ -253,19 +270,6 @@ When their integrator assesses that evidence
 Then it judges whether the failure warrants a bug
 And when warranted it records the bug work once, reusing matching existing work
 ```
-
-<!-- planned:event-driven-pr-review-gate -->
-### UC-IG7: A developer's reviewed work is promoted under a required review status
-
-```gherkin
-Given a developer's project has opted in to automatic review and requires the review status on its canonical branch
-When their integrator submits a candidate that only merges independently approved work
-Then that candidate carries the reviewer bot's approving review status without a further review
-When a candidate adds content that no approving review covers
-Then that exact candidate is reviewed independently before it carries a review status
-But a revert of a failing delivery carries the status without waiting for a review
-```
-<!-- /planned:event-driven-pr-review-gate -->
 
 ## Known caveats
 

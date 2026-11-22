@@ -137,51 +137,129 @@ reviewed; a later head never inherits it. The reviewer bot is the status's only
 publisher; a status of the same name from another identity is not a verdict.
 The reviewer identity is the App the `commit-reviewer` role selects.
 
-### Head verdicts
+The verdict is a judgment of the commit; the pull-request review is its
+delivery to one pull request. Every eligible pull request whose current head is
+that commit receives its own review of the one verdict, and the commit receives
+one status.
 
-A head verdict is work's record of an independent review's outcome for one
-exact commit of the project's repository that no todo's record carries: the
-commit, the verdict, the review report, the reviewing session and, when the
-review concerns a pull request, its number.
+### Review evidence
+
+Work keeps three kinds of review evidence for exact commits that no todo's
+record carries.
+
+| Evidence | Records | Recorded by |
+| --- | --- | --- |
+| Head verdict | An independent review's outcome for one commit: the commit, the base it was reviewed against, the verdict, the complete report and the reviewing session. | The reviewing session, with `instrukt review record`. |
+| Exemption | The decision of a commit's own author that it owes no independent review under `general/policy/commits`, with its stated basis. | The session that authored the commit, with `instrukt review exempt`. |
+| Derived approval | Workflow's finding that an integration candidate's content is covered (`project/instrukt/spec/feature/workflow/integration-gate`), with the canonical head it was derived against and every covering item. | The runner's tick, through work's command contract. No agent command records one. |
 
 | Command | Contract |
 | --- | --- |
-| `instrukt review record --head <sha> --verdict approve\|needs_work --report <file\|-> [--pull <number>]` | Records the verdict with its report, then publishes it. A later verdict for the same commit is a new version; the latest is current. A reviewer bound to one subject records verdicts for that subject only, and the refusal names the subject it holds. |
-| `instrukt review show <sha>` | The commit's verdict versions and their publication state, with the cause of a pending publication. |
+| `instrukt review record --head <sha> --verdict approve\|needs_work --report <file\|-> [--base <sha>]` | Records a head verdict. A later verdict for the same commit is a new version: the latest is current and earlier ones are kept as history. |
+| `instrukt review exempt --commit <sha> --basis <text>` | Records an exemption for a commit the canonical branch does not contain yet. |
+| `instrukt review show <sha>` | The commit's verdict versions, exemption or derived approval, and each publication with its state and the cause of an outstanding or refused one. |
 
-The record is written before anything is published. Publication writes the
-pull-request review, when a pull request is named, and the review status on the
-commit. It first recognises what GitHub already carries from the reviewer bot
-for that commit, so a retry writes neither twice. An unavailable or refusing
-GitHub leaves the verdict recorded and its publication pending with the cause;
-each tick's reflection flush retries it
-(`project/instrukt/spec/feature/work/github-record`). GitHub refuses the
-reviewer bot's approving review of a pull request it authored itself; that
-refusal stays reported and the status is published regardless.
+### Admission of review evidence
 
-A derived approval is a head verdict without a report: workflow's finding that
-an integration candidate's content is covered by approving reviews
-(`project/instrukt/spec/feature/workflow/integration-gate`), recorded with the
-covering heads and published as the review status on the candidate commit. It
-names no pull request and publishes no review.
+`instrukt review record` admits a verdict only when all of these hold. They are
+facts of the reviewed object and bind every caller, a session without a role
+included (`project/instrukt/spec/feature/configuration/roles-and-capabilities`).
 
-Head verdicts are kept per computer; the review status on GitHub carries a
-verdict to other computers. A published verdict is retired once its commit is
-contained in the canonical branch, and otherwise ninety days after it was
-recorded. An unpublished verdict is kept.
+| Invariant | Rule | The refusal names |
+| --- | --- | --- |
+| Repository | `--head` is the full id of a commit present in the repository of the project the caller stands in. | The commit and the project. |
+| Review target | Either the runner delivered a review request for exactly this project and commit to the calling session (`project/instrukt/spec/feature/runner/pull-request-review`), or no review request was issued for this commit to any session and `--base` names the commit the reviewed change starts from. A commit whose request was delivered to another session is that session's to record. | The session that holds the request. |
+| Independence | The calling session authored none of the commits under review: no commit after the base up to the head carries it in its `Session:` trailer (`project/instrukt/spec/feature/repository/attributed-commit`). The base of a requested review is the head's merge base with the canonical branch. | The commits the caller authored; the door is a review by a session that authored none of them. |
+| Report | A non-empty report is supplied. It is stored whole with the version. | The missing report. |
 
-### Reviewer readiness for automatic review
+The caller names no pull request. Where a verdict is delivered follows from
+which eligible pull requests have the commit as their current head, as the
+runner observed them. A request delivered for an earlier head of a pull request
+stays recordable after the pull request has moved on; its verdict is that
+commit's and no other's.
 
-Publishing needs the reviewer identity's App installed on the project's
-repository with write access to pull requests and to commit statuses. Work
-verifies this by requesting an installation credential scoped to exactly those
+An exemption is admitted only from the session the commit's `Session:` trailer
+names. It counts in candidate coverage alone and never gives a pull request's
+head a status. A derived approval is admitted only for the fetched integration
+head while the canonical branch does not contain it, and only with the coverage
+finding it rests on.
+
+### Verdict publication
+
+A verdict is recorded before anything of it is published, and recording does
+not wait for GitHub. Each tick publishes what is outstanding for an opted-in
+project, whether or not that project's todos module is on.
+
+| Publication | Published once |
+| --- | --- |
+| The review status on the commit | GitHub has the commit in the project's repository. A verdict of a commit GitHub does not have yet waits, and that is no failure. |
+| The pull-request review on each eligible pull request whose current head is the commit | The runner observed that pull request at that head. |
+| A derived approval's review status on the candidate commit | The derived approval is recorded. It publishes no pull-request review. |
+
+Only a commit's current version is published; a version replaced before it was
+published is not. Before writing, publication recognises what GitHub already
+carries from the reviewer bot: its status of that name on the commit, and its
+review of that commit on that pull request. A write that already landed is not
+repeated. A verdict found on GitHub with one of its two marks missing is
+completed, never reviewed again: the status from the review, and the review
+from the report on the computer that holds it.
+
+An unavailable GitHub leaves a publication outstanding with its cause, and the
+next tick retries it. A destination GitHub refuses for good, such as a pull
+request closed before its review was written, is recorded as refused with its
+cause and is not retried.
+
+### Review evidence storage
+
+| Store | Holds | Written by | Write-isolation unit |
+| --- | --- | --- | --- |
+| `state/review.db` | Head verdict versions with their reports, and exemptions. Authoritative. | `instrukt review record` and `instrukt review exempt` only: commands their caller waits on. | `state/review.lock` |
+| `state/review-publication.db` | Derived approvals with their coverage, and per verdict version and destination whether GitHub carries it, with the cause of an outstanding or refused one. | The tick only. | `state/review-publication.lock` |
+
+No background work writes the evidence store and no command a caller waits on
+writes the publication store, so recording a verdict never waits behind a tick
+(`sdlc/policy/state-storage`). Neither store takes the state database's writer
+lock, and readers take no lock. The publication store refers to evidence by
+commit and version, and a publication record that is missing is rebuilt from
+what GitHub carries, so the two stores share no transaction.
+
+Evidence is current for as long as it can still admit something: a commit's
+current verdict, and an exemption, while the canonical branch does not contain
+the commit and a branch of the project still does; an outstanding publication
+until it is published or refused; a derived approval while its candidate is
+the integration head. Everything else is history: replaced versions, evidence
+of a commit the canonical branch contains or no branch reaches any more, and
+completed publications. History is retired after a retention period. Current
+evidence and outstanding publications are never retired by age. The evidence
+store retires its history inside a recording command, the publication store
+inside a tick.
+
+Both stores are per computer. GitHub carries a published verdict to other
+computers: the status carries the verdict and its publisher, and the
+pull-request review carries the findings. A computer that takes over a project
+recognises published verdicts and derives the rest again: an owed head it finds
+no verdict for is asked for again, and a candidate's coverage is derived from
+the statuses its heads carry.
+
+### Readiness for automatic review
+
+An opted-in project needs two scoped installation credentials. No other
+credential changes.
+
+| Credential | Identity | Permissions | Used for |
+| --- | --- | --- | --- |
+| Review observation | The project identity | Read access to pull requests and to commit statuses | The tick's pull-request listing and its reads of statuses and reviews. |
+| Review publication | The reviewer identity | Write access to pull requests and to commit statuses | The pull-request review and the review status. |
+
+Work verifies both by requesting each credential with exactly those
 permissions, where the project's opt-in is admitted and in
 `instrukt install --check`
-(`project/instrukt/spec/feature/configuration/layered-configuration`). A
-missing installation or permission is an unmet finding naming the App, the
-repository, the missing permission and the configuration repair door. The
-credential that reflects build reviews is unchanged: a project that has not
-opted in needs no commit-status permission.
+(`project/instrukt/spec/feature/configuration/layered-configuration`,
+`project/instrukt/spec/feature/runner/module-installation`). A missing
+installation or permission is an unmet finding naming the App, the repository,
+the missing permission and the configuration repair door. Verification writes
+no state. The credentials that observe CI and that reflect build reviews are
+unchanged: a project that has not opted in needs neither permission.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Use cases
@@ -223,6 +301,15 @@ But a later head of that pull request carries no status from that verdict
   capabilities still bound remote work; token issuance supplies no missing API.
 - Human approval attribution remains the approvals contract. App configuration
   does not grant a bot permission to speak for an authorized human.
+
+<!-- planned:event-driven-pr-review-gate -->
+- A head verdict's report reaches other computers only inside a pull-request
+  review. A verdict of a commit without a pull request, an exemption and a
+  derived approval's coverage stay on the computer that recorded them, where
+  `instrukt review show` reads them; GitHub carries the status alone.
+- A computer that takes over a project while a verdict there is still
+  unpublished cannot see it and asks for that head's review again.
+<!-- /planned:event-driven-pr-review-gate -->
 
 ## See Also
 

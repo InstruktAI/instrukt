@@ -367,12 +367,13 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 | `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |
 
 <!-- planned:event-driven-pr-review-gate -->
-`runner.review_needed` is a state: a newer undelivered head of the same ref
-takes the place of an older one.
+`runner.review_needed` is a state: a newer undelivered request for the same
+subject takes the place of an older one. Its subject is the pull request, or
+the integration branch for a candidate; the commit stays in data.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.review_needed` | On a project that opted in to automatic review, an eligible pull request's current head carries no verdict from the reviewer identity, or workflow finds that the active integration candidate adds content no approving review covers | Project, the head's ref in the project's remote (the pull request's head ref or the integration branch), the exact head commit and, for a pull request, its number | Project, ref, head commit | The subscribed commit-review responsibility, one reviewer per ref (`project/instrukt/spec/feature/runner/pull-request-review`) |
+| `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and no request for it is open: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project and the request's number for the commit; for a pull request its number, head branch, base branch and exact head commit; for a candidate the candidate commit and the canonical head it is based on | Project, commit, request number | The subscribed review responsibility, one per pull request and one for the integration branch (`project/instrukt/spec/feature/runner/pull-request-review`) |
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Event-platform facts emitted
@@ -470,12 +471,13 @@ has no origin, as declared in Canonical fields.
 | runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 
 <!-- planned:event-driven-pr-review-gate -->
-For automatic review the runner reads three answers and makes two writes
-through its suppliers' contracts, and derives none of them itself: work says
-whether a pull request is a todo's, workflow says whether the active candidate's
-content is covered by approving reviews, and work verifies the reviewer
-identity's publishing ability; through work's command contract the runner
-records a derived approval and flushes pending verdict publication
+For automatic review the runner asks its suppliers and derives none of their
+answers: work says whether a pull request is a todo's, whether a commit's
+verdict is recognised and whether both identities are ready, and workflow says
+whether the active candidate's content is covered. Through work's command
+contract the runner records a derived approval and publishes outstanding
+verdicts, handing over the eligible pull requests it observed at each head. It
+supplies work with the review requests it delivered to a session
 (`project/instrukt/spec/domain/context-map`).
 <!-- /planned:event-driven-pr-review-gate -->
 

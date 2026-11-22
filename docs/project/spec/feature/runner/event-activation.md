@@ -71,14 +71,17 @@ credentials, not a webhook or separate failure delivery service.
 
 <!-- planned:event-driven-pr-review-gate -->
 On a project that opted in to automatic review, the same conditional pass reads
-the repository's open pull requests and, for a head not yet asked for, that
-commit's statuses. An eligible unreviewed head produces `runner.review_needed`
-and wakes its subscribed reviewer; which heads are eligible is owned by
-`project/instrukt/spec/feature/runner/pull-request-review`. The review status
-is not a CI result: the candidate, canonical and dependency-update CI sources
-ignore it (`project/instrukt/spec/feature/workflow/integration-gate`).
+the repository's open pull requests, every page, and, for an eligible head
+without a recorded verdict, that commit's statuses and that pull request's
+reviews, with a credential scoped to those reads. An owed head produces
+`runner.review_needed` and wakes its subscribed reviewer; which heads are owed
+and how a request is repeated are owned by
+`project/instrukt/spec/feature/runner/pull-request-review`. On such a project
+the reviewer bot's review status is not a CI result: the candidate, canonical
+and dependency-update CI sources leave it out
+(`project/instrukt/spec/feature/workflow/integration-gate`). On a project that
+has not opted in, these sources read every status as before.
 <!-- /planned:event-driven-pr-review-gate -->
-
 
 State watching needs no public address; signed webhook sources additionally use the opt-in ingress receiver. Each tick considers watched upstream refs, CI
 status per active candidate SHA and the CI status of remote canonical main's

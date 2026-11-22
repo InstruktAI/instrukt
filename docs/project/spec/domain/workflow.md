@@ -52,8 +52,8 @@ runner and event capability. Workflow stores no phase.
 <!-- planned:event-driven-pr-review-gate -->
 **Review coverage**
 : Whether every commit an integration candidate adds to the canonical branch
-  lies within an independently approved head or is reproduced mechanically from
-  its parents.
+  is an independently approved head, reproduced mechanically from approved or
+  canonical content, or exempted by its author.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -249,12 +249,12 @@ remain agent judgments.
   commit produces a candidate requiring its own verification.
 
 <!-- planned:event-driven-pr-review-gate -->
-A candidate's review coverage is derived on request from the repository, the
-work record and the reviewer bot's review statuses the runner observed; it is a
-derived value and is stored nowhere by workflow. Its rule belongs to
+A candidate's review coverage is derived on request from the repository,
+work's records and what the runner observed on GitHub; it is a derived value
+and is stored nowhere by workflow. Its rule belongs to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
 earns is work's record and the review it otherwise owes is the runner's
-activation.
+request.
 <!-- /planned:event-driven-pr-review-gate -->
 
 The todo itself remains a work-record aggregate. An evaluation result is a
@@ -355,8 +355,9 @@ The context map indexes the cross-cutting architecture design.
 
 <!-- planned:event-driven-pr-review-gate -->
 - **Workflow → runner (review coverage) — Customer / Supplier:** workflow
-  supplies an active candidate's review coverage; the runner supplies the
-  reviewer bot's review statuses it observed on the heads the candidate merges.
+  supplies an active candidate's review coverage; the runner supplies what it
+  observed on GitHub: the reviewer bot's review statuses on the heads the
+  candidate merges and the canonical head's CI result.
 <!-- /planned:event-driven-pr-review-gate -->
 
 
