@@ -836,10 +836,17 @@ Retired: the runtime owns session ending; its test bindings have been removed.
 <!-- planned:fix-false-recovery-on-released-executions -->
 - T3 reports a turn that ended on a plain message, with no pending request, as
   `input-ready`; nothing in the thread tells a session that paused there from
-  one that stopped. Such an ending is left alone only while the work record
-  shows the todo waiting on a person. Otherwise, when the workflow state has
-  not advanced, it receives the one recovery send and a repeated ending raises
-  the anomaly. A thread reported as `running` or `needs-input` receives neither.
+  one that stopped. This bears only on an execution that still lasts: a session
+  that no longer holds the todo's execution claim is not weighed, whatever its
+  thread shows. For a session that holds the claim, such an ending is left
+  alone while the work record shows the todo waiting on a person. Outside that
+  wait, when the workflow state has not advanced, it receives the one recovery
+  send and a repeated ending raises the anomaly. A thread reported as `running`
+  or `needs-input` is sent no recovery, and that state raises no anomaly. An
+  earlier recovery input that ended unconfirmed is a separate ground
+  (`project/instrukt/spec/feature/runner/anomaly-notification`): with the
+  workflow state unmoved and outside a person wait, it raises the anomaly
+  whichever state the thread reports.
 <!-- /planned:fix-false-recovery-on-released-executions -->
 
 ## See Also

@@ -54,10 +54,19 @@ configured, so the operator sees it when the runtime offers no notification
 (`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
 the operator).
 
+<!-- planned-change:fix-false-recovery-on-released-executions -->
 For a stopped execution, `instrukt events status` lists its work item,
 session, workflow state and whether a notification command is configured.
 A recovery input that ends unconfirmed raises the stopped-execution anomaly.
 The finding persists until the workflow advances or the execution is released.
+<!-- change:fix-false-recovery-on-released-executions -->
+For a stopped execution, `instrukt events status` lists its work item,
+session, workflow state and whether a notification command is configured.
+A recovery input that ends unconfirmed raises the stopped-execution anomaly,
+except while its todo waits on a person
+(`project/instrukt/spec/feature/runner/session-continuity`).
+The finding persists until the workflow advances or the execution is released.
+<!-- /planned-change:fix-false-recovery-on-released-executions -->
 
 ## Use cases
 
