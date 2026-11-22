@@ -203,10 +203,7 @@ impl Store {
     ) -> Result<T, WorkError> {
         let mut db = StateDb::open(&self.home)?;
         let path = db.path().to_path_buf();
-        let tx = db.transaction()?;
-        let value = change(&tx, &path, &self.project)?;
-        tx.commit().map_err(StateDbError::sqlite(&path))?;
-        Ok(value)
+        db.write(|tx| change(tx, &path, &self.project))
     }
 
     /// Every local item of the project, in identity order.
