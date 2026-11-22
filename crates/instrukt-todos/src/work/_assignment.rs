@@ -22,6 +22,25 @@ struct AssignmentCandidate {
 fn select_assignment(
     candidates: Vec<AssignmentCandidate>,
 ) -> Result<Option<Assignment>, &'static str> {
+    let Some(first) = candidates.first() else {
+        return Ok(None);
+    };
+    let scope = (
+        &first.assignment.project,
+        &first.assignment.todo,
+        &first.assignment.role,
+        first.assignment.worker,
+    );
+    if candidates.iter().any(|candidate| {
+        (
+            &candidate.assignment.project,
+            &candidate.assignment.todo,
+            &candidate.assignment.role,
+            candidate.assignment.worker,
+        ) != scope
+    }) {
+        return Err(CONFLICT_MESSAGE);
+    }
     let mut active_chosen: Option<Assignment> = None;
     let mut released = Vec::new();
     for candidate in candidates {
@@ -39,25 +58,6 @@ fn select_assignment(
     }
     if active_chosen.is_some() {
         return Ok(active_chosen);
-    }
-    let Some(first) = released.first() else {
-        return Ok(None);
-    };
-    let scope = (
-        &first.assignment.project,
-        &first.assignment.todo,
-        &first.assignment.role,
-        first.assignment.worker,
-    );
-    if released.iter().any(|candidate| {
-        (
-            &candidate.assignment.project,
-            &candidate.assignment.todo,
-            &candidate.assignment.role,
-            candidate.assignment.worker,
-        ) != scope
-    }) {
-        return Err(CONFLICT_MESSAGE);
     }
     let Some(max_attempt) = released.iter().map(|candidate| candidate.attempt).max() else {
         return Ok(None);
@@ -117,6 +117,8 @@ pub fn recorded_assignment(
             || binding.session != current_session
             || binding.attempt.semantic_key != key
             || binding.worktree.as_deref() != workspace.as_deref().map(std::path::Path::new)
+            || u64::try_from(attempt).ok() != Some(binding.attempt.number)
+            || binding.attempt.released_at.map(|t| t.to_string()) != released_at
             || binding.attempt.assignment
                 == instrukt_runner::interfaces::AssignmentKind::Unspecified
         {
@@ -282,11 +284,21 @@ mod tests {
     }
 
     #[test]
+    fn active_attempt_with_released_attempt_from_other_todo_returns_conflict_error() {
+        let released = candidate(false, 1, "prepare-orchestrator", "todo-a", false);
+        let active = candidate(true, 1, "prepare-orchestrator", "todo-b", false);
+        assert_eq!(
+            select_assignment(vec![released, active]),
+            Err(CONFLICT_MESSAGE)
+        );
+    }
+
+    #[test]
     fn released_attempts_of_same_role_and_todo_select_latest() {
         let first = candidate(false, 1, "prepare-orchestrator", "todo-a", false);
         let second = candidate(false, 2, "prepare-orchestrator", "todo-a", false);
         let expected = second.assignment.clone();
-        assert_eq!(select_assignment(vec![first, second]), Ok(Some(expected)));
+        assert_eq!(select_assignment(vec![second, first]), Ok(Some(expected)));
     }
 
     #[test]

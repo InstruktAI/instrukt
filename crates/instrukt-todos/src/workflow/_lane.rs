@@ -200,9 +200,44 @@ mod tests {
     }
 
     #[test]
-    fn a_prepared_change_with_pending_drift_routes_to_work() {
+    fn a_plan_approved_change_with_unreviewed_preparation_head_and_pending_drift_stays_in_preparation()
+     {
+        let head = instrukt_core::ids::CommitSha::parse(&"ab".repeat(20)).unwrap();
         let evidence = prepared_change().build();
-        let mut observed = Observations::default();
+        let mut observed = Observations {
+            preparation_head: Some(head),
+            preparation_integrated: Some(true),
+            ..Observations::default()
+        };
+        observed.grounding.insert(
+            artifact_names::IMPLEMENTATION_PLAN.to_owned(),
+            super::super::_provider::GroundingChange {
+                snippets: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            lane_with_observed(&evidence, &observed, &indexed),
+            Lane::Prepare
+        );
+    }
+
+    #[test]
+    fn a_handed_off_prepared_change_with_pending_drift_routes_to_work() {
+        let head = instrukt_core::ids::CommitSha::parse(&"ab".repeat(20)).unwrap();
+        let evidence = prepared_change()
+            .artifact("preparation-review-findings", "prep-findings-1")
+            .stamp(StampFact::PreparationHeadReviewed {
+                verdict: ReviewVerdict::Approve,
+                head: head.clone(),
+                report: digest("prep-findings-1"),
+            })
+            .build();
+        let mut observed = Observations {
+            preparation_head: Some(head),
+            preparation_integrated: Some(true),
+            ..Observations::default()
+        };
         observed.grounding.insert(
             artifact_names::IMPLEMENTATION_PLAN.to_owned(),
             super::super::_provider::GroundingChange {

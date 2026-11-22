@@ -32,7 +32,12 @@ states:
 transitions:
 - from: start
   to: not_prepared
-  when: {equals: [preparation.integrated, false]}
+  when:
+    any:
+    - equals: [preparation.integrated, false]
+    - all:
+      - exists: preparation.head
+      - equals: [preparation.review_current, false]
   action: await-prepare
 - from: start
   to: delivered_cleanup
