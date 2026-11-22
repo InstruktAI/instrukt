@@ -163,8 +163,7 @@ And no orchestrator is started solely to deliver the decision
 Given a developer's todo is in preparation
 When the author of a derivation records it without changing any repository file
 And records role completion at the unchanged preparation head
-Then that attempt is released without a repository change
-And the derivation's independent review can start
+Then the derivation's independent review can start
 ```
 <!-- /planned:fix-role-complete-artifact-only-revision -->
 
