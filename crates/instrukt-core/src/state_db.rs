@@ -159,16 +159,9 @@ impl From<StoreError> for StateDbError {
             } => Self::Newer { path, found, known },
             StoreError::Symlink { path } => Self::Symlink { path },
             StoreError::Lock(error) => Self::Lock(error),
-            StoreError::Invalid {
-                store,
-                path,
-                message,
-            } => Self::Invalid {
-                message: format!(
-                    "{store} at {} holds a value this build cannot read: {message}",
-                    path.display()
-                ),
-                path,
+            ref invalid @ StoreError::Invalid { ref path, .. } => Self::Invalid {
+                message: invalid.to_string(),
+                path: path.clone(),
             },
         }
     }
