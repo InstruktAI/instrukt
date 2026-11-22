@@ -38,11 +38,14 @@
 //! [`FakeGitHub::edit_issue`] or [`FakeGitHub::edit_comment`], and the
 //! client meets the newer revision when it reads. Unreachability is
 //! [`FakeGitHub::stop`] until [`FakeGitHub::resume`]: the address stays the
-//! fake's own and every connection to it, including one already open, ends
-//! before any byte of a response, so the client meets a failed exchange
-//! without waiting. The fake listens on its address for its whole life and
+//! fake's own, an exchange still open when `stop` returns ends without the
+//! rest of its response, and an exchange on a connection made while
+//! stopped ends without any byte of one, so the client meets a failed
+//! exchange without waiting. Response bytes the client already received
+//! stay received. The fake listens on its address for its whole life and
 //! relays each connection to its HTTP server on a private address while it
-//! answers. Rate limiting and other failures are one-shot answers queued
+//! answers; a failure of that transport fails the test when the fake is
+//! dropped. Rate limiting and other failures are one-shot answers queued
 //! with [`FakeGitHub::respond_once`] or [`FakeGitHub::rate_limit_next`].
 
 use std::collections::{BTreeMap, VecDeque};
@@ -187,7 +190,8 @@ impl StatusState {
 }
 
 /// The running fake. Dropping it stops the server and releases its
-/// address.
+/// address. Any failure of the fake's own transport or threads, including
+/// one that leaves the address held, then fails the test.
 pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
@@ -336,10 +340,13 @@ impl FakeGitHub {
         configure_apps(env, &self.url(), &self.auth_clock.path().join("clock"));
     }
 
-    /// Stops answering. From the moment this returns, every connection to
-    /// the address, including one open now, ends before any byte of a
-    /// response, and no request reaches the fake's state or its request
-    /// record. The address stays the fake's.
+    /// Stops answering. When this returns, every connection the fake was
+    /// relaying is closed, whatever exchange it was in: bytes of a response
+    /// already sent stay with the client and the rest never come. A request
+    /// the fake had already taken up has finished its model work; no later
+    /// request reaches the fake's state or its request record. A connection
+    /// made from now on ends before any byte of a response. The address
+    /// stays the fake's.
     pub fn stop(&mut self) {
         {
             let mut front = lock_front(&self.front);
