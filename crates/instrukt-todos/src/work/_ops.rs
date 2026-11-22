@@ -21,7 +21,8 @@ use super::_model::{
     Version, digest_of, valid_artifact_name,
 };
 use super::_session::{
-    GitHubRead, Located, ReflectionStatus, Session, exact_local, find_in, past_recovery, status_of,
+    GitHubRead, Located, ReflectionStatus, Session, Unrestored, exact_local, find_in,
+    past_recovery, status_of,
 };
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::_store::{LocalItem, Store};
@@ -1060,37 +1061,71 @@ impl Work {
         })
     }
 
-    /// The record `address` names for an artifact read, and whether GitHub
-    /// was read for it. A record this computer holds, a local item's or a
-    /// listing copy's, that holds what `enough` asks answers alone
-    /// ([`Work::local_record`]). Otherwise the todo is shown as
-    /// [`Work::show`] shows it, and verified content GitHub still serves is
-    /// restored.
+    /// The record `address` names for a read of artifact `name`, with why
+    /// each version `needed` names in it still has no content. A record this
+    /// computer holds, a local item's or a listing copy's, answers alone
+    /// when it holds every needed version's content ([`Work::local_record`]).
+    /// Otherwise the todo is located and refreshed as [`Work::show`] does;
+    /// each needed version still without content is then asked of GitHub
+    /// and verified against its digest, and content restored onto a local
+    /// item is committed to its row.
     fn artifact_record(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
-        enough: impl Fn(&TodoRecord) -> bool,
-    ) -> Result<(TodoRecord, GitHubRead), WorkError> {
+        name: &str,
+        needed: impl Fn(&Artifact) -> Vec<String>,
+    ) -> Result<(TodoRecord, BTreeMap<String, Unrestored>), WorkError> {
+        let lacking = |record: &TodoRecord| -> Vec<String> {
+            record.artifact(name).map_or_else(Vec::new, |artifact| {
+                needed(artifact)
+                    .into_iter()
+                    .filter(|digest| {
+                        artifact
+                            .versions
+                            .iter()
+                            .any(|v| v.digest.as_str() == digest && v.content.is_none())
+                    })
+                    .collect()
+            })
+        };
         if let Some(record) = self.local_record(project, address)?
-            && enough(&record)
+            && lacking(&record).is_empty()
         {
-            return Ok((record, GitHubRead::Read));
+            return Ok((record, BTreeMap::new()));
         }
-        let view = self.show(project, address)?;
-        Ok((view.record, view.refresh))
+        let mut s = Session::open(self, project)?;
+        let (mut record, issue, local) = match s.locate(address)? {
+            Located::Local(index) => {
+                match s.pull_through(index) {
+                    Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+                    Err(err) => return Err(err),
+                }
+                let item = &s.items[index];
+                (item.record.clone(), item.reflection.issue, Some(index))
+            }
+            Located::Remote { item, .. } => (item.record, item.reflection.issue, None),
+        };
+        let wanted = lacking(&record);
+        let missing = s.restore_contents(issue, &mut record, name, &wanted);
+        if let Some(index) = local {
+            s.keep_restored(index, &record)?;
+        }
+        Ok((record, missing))
     }
 
-    /// A todo's artifacts and their retained versions.
+    /// A todo's artifacts and their retained versions: from the record this
+    /// computer holds ([`Work::local_record`]), else as [`Work::show`] finds
+    /// the todo.
     pub fn list_artifacts(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
     ) -> Result<Vec<Artifact>, WorkError> {
-        Ok(self
-            .artifact_record(project, address, |_| true)?
-            .0
-            .artifacts)
+        if let Some(record) = self.local_record(project, address)? {
+            return Ok(record.artifacts);
+        }
+        Ok(self.show(project, address)?.record.artifacts)
     }
 
     /// The content of the current version of artifact `name`.
@@ -1103,14 +1138,20 @@ impl Work {
         fn current<'r>(record: &'r TodoRecord, name: &str) -> Option<&'r Version> {
             record.artifact(name).and_then(|a| a.versions.last())
         }
-        let (record, refresh) = self.artifact_record(project, address, |record| {
-            current(record, name).is_none_or(|v| v.content.is_some())
+        let (record, missing) = self.artifact_record(project, address, name, |artifact| {
+            artifact
+                .versions
+                .last()
+                .map(|v| v.digest.as_str().to_owned())
+                .into_iter()
+                .collect()
         })?;
         let version = current(&record, name).ok_or_else(|| no_artifact(&address.slug, name))?;
+        let digest = version.digest.as_str();
         version
             .content
             .clone()
-            .ok_or_else(|| content_missing(name, version.digest.as_str(), &refresh))
+            .ok_or_else(|| content_missing(name, digest, missing.get(digest)))
     }
 
     /// The line diff between two retained versions of artifact `name`.
@@ -1122,13 +1163,8 @@ impl Work {
         old: &str,
         new: &str,
     ) -> Result<Vec<DiffLine>, WorkError> {
-        let (record, refresh) = self.artifact_record(project, address, |record| {
-            record.artifact(name).is_none_or(|a| {
-                a.versions
-                    .iter()
-                    .filter(|v| v.digest.as_str() == old || v.digest.as_str() == new)
-                    .all(|v| v.content.is_some())
-            })
+        let (record, missing) = self.artifact_record(project, address, name, |_| {
+            vec![old.to_owned(), new.to_owned()]
         })?;
         let slug = &address.slug;
         let artifact = record
@@ -1147,7 +1183,7 @@ impl Work {
             version
                 .content
                 .clone()
-                .ok_or_else(|| content_missing(name, digest, &refresh))
+                .ok_or_else(|| content_missing(name, digest, missing.get(digest)))
         };
         Ok(diff_lines(&content(old)?, &content(new)?))
     }
@@ -1998,15 +2034,17 @@ fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>,
 }
 
 /// The refusal for an artifact version whose content this computer does
-/// not hold: GitHub no longer serves it, or could not be read for it.
-fn content_missing(name: &str, digest: &str, refresh: &GitHubRead) -> WorkError {
+/// not hold, saying what GitHub's answer for it established: that GitHub
+/// no longer serves it, or that it could not be read for it.
+fn content_missing(name: &str, digest: &str, why: Option<&Unrestored>) -> WorkError {
     let held = format!("this computer does not hold the content of `{name}` version {digest}");
-    WorkError::refused(match refresh {
-        GitHubRead::Read => format!("{held}, and GitHub no longer serves it"),
-        GitHubRead::NotRead(reason) => format!(
+    WorkError::refused(match why {
+        Some(Unrestored::NotServed) => format!("{held}, and GitHub no longer serves it"),
+        Some(Unrestored::Unread(reason)) => format!(
             "{held}, and GitHub could not be read for it: {}",
             super::_session::describe(reason)
         ),
+        None => format!("{held}, and GitHub was not asked for it"),
     })
 }
 

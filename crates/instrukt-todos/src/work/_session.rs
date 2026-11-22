@@ -67,6 +67,16 @@ pub enum GitHubRead {
     NotRead(PendingReason),
 }
 
+/// Why an artifact version's content is still missing after GitHub was
+/// asked for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unrestored {
+    /// GitHub answered and does not serve the recorded content.
+    NotServed,
+    /// GitHub could not be read for it, for the reason given.
+    Unread(PendingReason),
+}
+
 enum Remote {
     Client {
         gh: Box<GitHub>,
@@ -1640,6 +1650,113 @@ impl<'w> Session<'w> {
             _ => return Err(self.undetermined(&format!("`{}`", record.slug))),
         };
         result.map_err(|err| self.github_failure(err))
+    }
+
+    /// Restores from GitHub the content of each version of artifact `name`
+    /// in `record`, a todo on `issue`, whose digest `digests` names and
+    /// whose content `record` lacks, verified against that digest. Returns
+    /// why each version still lacks it: only GitHub's answer for the
+    /// artifact establishes that it does not serve a version, and a request
+    /// that failed, or a GitHub that cannot be read, leaves it unread.
+    pub fn restore_contents(
+        &mut self,
+        issue: Option<IssueRef>,
+        record: &mut TodoRecord,
+        name: &str,
+        digests: &[String],
+    ) -> std::collections::BTreeMap<String, Unrestored> {
+        let mut missing = std::collections::BTreeMap::new();
+        let unread = match &self.remote {
+            Remote::Client { down: None, .. } => None,
+            Remote::Client {
+                down: Some(err), ..
+            } => Some(reason_of(err)),
+            Remote::Unavailable(reason) => Some(reason.clone()),
+        };
+        let slug = record.slug.clone();
+        let Some(artifact) = record
+            .artifacts
+            .iter_mut()
+            .find(|a| a.name.as_str() == name)
+        else {
+            return missing;
+        };
+        let address = artifact.address;
+        let mut served: Option<Result<std::collections::BTreeMap<u64, String>, Unrestored>> =
+            unread.map(|reason| Err(Unrestored::Unread(reason)));
+        let wanted = artifact
+            .versions
+            .iter_mut()
+            .filter(|v| v.content.is_none() && digests.iter().any(|d| d == v.digest.as_str()));
+        for version in wanted {
+            let digest = version.digest.as_str().to_owned();
+            if served.is_none() {
+                // GitHub's record holds no copy of a version it carries no
+                // provider address for; there is nothing to ask for.
+                let (Some(issue), Some(address), Some(_)) = (issue, address, version.remote) else {
+                    missing.insert(digest, Unrestored::NotServed);
+                    continue;
+                };
+                let Remote::Client { gh, down: None } = &self.remote else {
+                    // Unreachable: a GitHub that cannot be read set `served`.
+                    continue;
+                };
+                let read = _reflect::served_versions(gh, issue.number, address);
+                served = Some(read.map_err(|err| {
+                    let reason = reason_of(&err);
+                    self.note(err);
+                    Unrestored::Unread(reason)
+                }));
+            }
+            let body = match (&served, version.remote) {
+                (Some(Ok(bodies)), Some(number)) => bodies.get(&number),
+                (Some(Err(why)), _) => {
+                    missing.insert(digest, why.clone());
+                    continue;
+                }
+                _ => None,
+            };
+            match body {
+                Some(body) if super::_model::digest_of(body) == version.digest => {
+                    version.content = Some(body.clone());
+                }
+                _ => {
+                    tracing::warn!(
+                        event = "work_artifact_unverifiable",
+                        todo = %slug,
+                        artifact = name,
+                        digest = %digest,
+                        "GitHub does not serve this artifact version's recorded content"
+                    );
+                    missing.insert(digest, Unrestored::NotServed);
+                }
+            }
+        }
+        missing
+    }
+
+    /// Commits content restored from GitHub onto item `index`'s row, with
+    /// `restored` the item's record holding it, while the row is unchanged.
+    /// A row another command changed meanwhile keeps its own record; the
+    /// verified content then serves only the read that restored it.
+    pub fn keep_restored(&mut self, index: usize, restored: &TodoRecord) -> Result<(), WorkError> {
+        let base = self.items[index].clone();
+        let next = _store::carry(
+            &LocalItem {
+                record: restored.clone(),
+                reflection: base.reflection.clone(),
+            },
+            &base,
+        );
+        if next.record == base.record {
+            return Ok(());
+        }
+        if let Swapped::Applied(row) = self.store.swap(&base, &next)? {
+            let inbound = std::mem::take(&mut self.items[index].reflection.inbound);
+            self.take_row(index, *row);
+            self.items[index].reflection.inbound = inbound;
+        }
+        Ok(())
     }
 
     /// Makes a reflected record found by [`Session::locate`] a local item.

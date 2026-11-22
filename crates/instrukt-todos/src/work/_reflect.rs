@@ -931,25 +931,7 @@ fn with_contents(
                 continue;
             };
             if served.is_none() {
-                served = Some(
-                    match gh.read(&format!("/issues/{number}/artifacts/{address}")) {
-                        Ok(read) => read["versions"]
-                            .as_array()
-                            .map(|list| {
-                                list.iter()
-                                    .filter_map(|v| {
-                                        Some((
-                                            v["version"].as_u64()?,
-                                            v["body"].as_str()?.to_owned(),
-                                        ))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        Err(GitHubError::NotFound { .. }) => BTreeMap::new(),
-                        Err(err) => return Err(err),
-                    },
-                );
+                served = Some(served_versions(gh, number, address)?);
             }
             let content = served.as_ref().and_then(|s| s.get(&n));
             if let Some(content) = content
@@ -968,6 +950,29 @@ fn with_contents(
         }
     }
     Ok(remote)
+}
+
+/// The bodies GitHub serves now for the artifact at `address` on issue
+/// `number`, by remote version number; none when GitHub holds no such
+/// artifact. Any other failure is the request's, never an answer about the
+/// versions.
+pub(crate) fn served_versions(
+    gh: &GitHub,
+    number: u64,
+    address: u64,
+) -> Result<BTreeMap<u64, String>, GitHubError> {
+    match gh.read(&format!("/issues/{number}/artifacts/{address}")) {
+        Ok(read) => Ok(read["versions"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|v| Some((v["version"].as_u64()?, v["body"].as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default()),
+        Err(GitHubError::NotFound { .. }) => Ok(BTreeMap::new()),
+        Err(err) => Err(err),
+    }
 }
 
 /// `text` percent-encoded for a URL path or query, keeping unreserved
