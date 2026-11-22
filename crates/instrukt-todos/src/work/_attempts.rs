@@ -636,47 +636,94 @@ pub(super) fn completion_binding(
     request: &super::StampRequest,
 ) -> Result<Option<(usize, bool)>, WorkError> {
     use super::StampRequest;
-    let roles: &[&str] = match request {
-        StampRequest::PreparationHeadVerdict { .. } => &["commit-reviewer"],
-        StampRequest::RoleComplete => &["setup", "finalizer", "intaker", "architect", "planner"],
-        StampRequest::BuildComplete => &["builder", "fixer"],
-        StampRequest::BuildVerdict { .. } => &["build-reviewer"],
-        StampRequest::DeferralsProcessed => &["deferrer"],
-        StampRequest::PreparationVerdict { phase, .. } => match phase {
-            PreparationReview::PrdReview => &["prd-reviewer"],
-            PreparationReview::ArchitectureReview => &["architecture-reviewer"],
-            PreparationReview::PlanReview => &["plan-reviewer"],
-        },
-        _ => return Ok(None),
-    };
-    if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
-        return Ok(None);
-    }
-    let caller =
-        caller.ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
-    let Some((index, b)) = record
-        .bindings
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, b)| b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str()))
-    else {
-        // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
-        if matches!(request, StampRequest::PreparationVerdict { .. }) {
+    let (index, b) = if matches!(request, StampRequest::DiagnosisSettled) {
+        let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
+            b.role.as_str() == "diagnoser"
+                && matches!(
+                    b.attempt.assignment,
+                    AssignmentKind::Child | AssignmentKind::Workspace
+                )
+        }) else {
+            // Step 1a settles a reporter's evidenced cause without reserving a diagnoser attempt.
+            return Ok(None);
+        };
+        let current_diagnosis = record.current_digest(artifact_names::DIAGNOSIS);
+        if b.attempt.released_at.is_some() {
+            let matches_current = b.attempt.completion_sequence.is_some_and(|sequence| {
+                record.stamps.iter().any(|stamp| {
+                    stamp.sequence == sequence
+                        && matches!(
+                            &stamp.fact,
+                            crate::evidence::StampFact::DiagnosisSettled { diagnosis }
+                                if current_diagnosis == Some(diagnosis)
+                        )
+                })
+            });
+            if !matches_current {
+                return Ok(None);
+            }
+        } else {
+            let bound = b.session.as_ref().ok_or_else(|| {
+                WorkError::refused("diagnoser attempt must be bound before settling its diagnosis")
+            })?;
+            if caller == Some(bound) {
+                return Err(WorkError::refused(
+                    "diagnoser cannot settle its own diagnosis; the driving session stamps --diagnosis-settled",
+                ));
+            }
+            if let Some(claim) = &record.claim
+                && claim.session.as_ref() != caller
+            {
+                return Err(WorkError::refused(
+                    "only the claim-holding orchestrator may settle a bound diagnoser attempt",
+                ));
+            }
+        }
+        (index, b)
+    } else {
+        let roles: &[&str] = match request {
+            StampRequest::PreparationHeadVerdict { .. } => &["commit-reviewer"],
+            StampRequest::RoleComplete => {
+                &["setup", "finalizer", "intaker", "architect", "planner"]
+            }
+            StampRequest::BuildComplete => &["builder", "fixer"],
+            StampRequest::BuildVerdict { .. } => &["build-reviewer"],
+            StampRequest::DeferralsProcessed => &["deferrer"],
+            StampRequest::PreparationVerdict { phase, .. } => match phase {
+                PreparationReview::PrdReview => &["prd-reviewer"],
+                PreparationReview::ArchitectureReview => &["architecture-reviewer"],
+                PreparationReview::PlanReview => &["plan-reviewer"],
+            },
+            _ => return Ok(None),
+        };
+        if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
             return Ok(None);
         }
-        return Err(WorkError::refused("caller has no bound completion role"));
+        let caller =
+            caller.ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
+        let Some((index, b)) =
+            record.bindings.iter().enumerate().rev().find(|(_, b)| {
+                b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
+            })
+        else {
+            // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
+            if matches!(request, StampRequest::PreparationVerdict { .. }) {
+                return Ok(None);
+            }
+            return Err(WorkError::refused("caller has no bound completion role"));
+        };
+        if matches!(request, StampRequest::PreparationHeadVerdict { .. })
+            && record.bindings.iter().any(|writer| {
+                writer.session.as_ref() == Some(caller)
+                    && matches!(writer.role.as_str(), "intaker" | "architect" | "planner")
+            })
+        {
+            return Err(WorkError::refused(
+                "preparation head review requires an independent reviewer",
+            ));
+        }
+        (index, b)
     };
-    if matches!(request, StampRequest::PreparationHeadVerdict { .. })
-        && record.bindings.iter().any(|writer| {
-            writer.session.as_ref() == Some(caller)
-                && matches!(writer.role.as_str(), "intaker" | "architect" | "planner")
-        })
-    {
-        return Err(WorkError::refused(
-            "preparation head review requires an independent reviewer",
-        ));
-    }
     let path = b
         .worktree
         .as_ref()
@@ -701,6 +748,7 @@ pub(super) fn completion_binding(
         request,
         StampRequest::BuildVerdict { .. }
             | StampRequest::DeferralsProcessed
+            | StampRequest::DiagnosisSettled
             | StampRequest::PreparationVerdict { .. }
             | StampRequest::PreparationHeadVerdict { .. }
     );

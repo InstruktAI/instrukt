@@ -802,6 +802,35 @@ impl Work {
                 docs_changed: std::mem::take(&mut s.docs_changed),
             });
         }
+        if matches!(stamp.fact, StampFact::DiagnosisSettled { .. })
+            && let Some(prior) = record
+                .stamps
+                .iter()
+                .rev()
+                .find(|prior| prior.fact == stamp.fact)
+                .cloned()
+        {
+            if let Some((binding, _)) = completion
+                && record.bindings[binding].attempt.released_at.is_none()
+            {
+                let now = s.now;
+                let completed_head = super::_stamps::head(cwd)?;
+                let sequence = prior.sequence;
+                s.commit("reconcile settled diagnoser attempt", |s| {
+                    let b = &mut s.items[index].record.bindings[binding];
+                    b.attempt.completion_sequence = Some(sequence);
+                    b.attempt.completed_head = Some(completed_head.clone());
+                    b.attempt.released_at = Some(now);
+                    Ok(())
+                })?;
+                s.flush()?;
+            }
+            return Ok(Outcome {
+                value: prior,
+                reflection: s.status(index),
+                docs_changed: std::mem::take(&mut s.docs_changed),
+            });
+        }
         let now = s.now;
         let events = handoff
             .as_ref()
