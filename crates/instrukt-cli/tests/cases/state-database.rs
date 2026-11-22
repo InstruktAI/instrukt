@@ -438,15 +438,13 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         Duration::from_secs(5),
     )
     .unwrap();
-    let listed = finished_within(todo(&["list"]), UNBLOCKED)
+    let listing = finished_within(todo(&["list"]), UNBLOCKED)
         .expect("listing the work waited on the writer lock or on GitHub");
-    assert!(listed.status.success(), "{listed:?}");
+    assert!(listing.status.success(), "{listing:?}");
+    let listing = String::from_utf8(listing.stdout).unwrap();
     let current = read().expect("reading an artifact waited on the writer lock or on GitHub");
     assert!(current.status.success(), "{current:?}");
-    assert_eq!(
-        String::from_utf8(current.stdout).unwrap(),
-        format!("{FIRST}\n")
-    );
+    let current = String::from_utf8(current.stdout).unwrap();
     drop(writer);
 
     // A local change to the same todo commits while the reflection is in
@@ -494,7 +492,7 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         .map(|v| v["body"].as_str().unwrap().to_owned())
         .collect();
     // GitHub lists an artifact's versions newest first.
-    assert_eq!(on_github, [SECOND, FIRST]);
+    let on_github = on_github.join("\n");
     let comments = project.github.comments(support::REPOSITORY, 1);
     let head = comments
         .iter()
@@ -503,6 +501,8 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         .unwrap();
     insta::assert_snapshot!(
         "reflection-in-flight",
-        support::redact(&format!("{during}---\n{listed}---\n{after}---\n{}", head))
+        support::redact(&format!(
+            "{listing}---\n{current}---\n{during}---\n{listed}---\n{after}---\n{on_github}\n---\n{head}"
+        ))
     );
 }
