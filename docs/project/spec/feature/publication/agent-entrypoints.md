@@ -215,24 +215,32 @@ the home and leaves any other there as it is.
 - **The company passage.** Between the generated line and the master's
   content, every company rendering carries one fixed passage. It says where
   the knowledge comes from: the company's repository, its master and the
-  documents under `docs/`; and that the checkout of that repository under
-  `~/.instrukt/companies/` is the company's home, which serves the company's
-  agents and stays on the repository's default branch. It directs an agent
-  with access to the repository to improve the knowledge by editing documents
-  under `docs/` on a branch, in a separate worktree of the home or in a clone
-  of the repository, and to open a pull request for review, through which the
-  change reaches the default branch and the company's agents: company home
-  knowledge is authored apart from the serving checkout and reviewed before
-  it reaches the default branch (`general/policy/documentation-discipline`).
-  It says that the change is made in the documents alone, `AGENTS.md` and
-  everything under `plugins/` being generated from them, and what a document
-  under `docs/` carries: a non-empty `description` in its frontmatter and
-  what is true of the company now, in the present tense, what was true
-  before staying in the repository's history
-  (`general/procedure/doc-snippet-authoring`). The passage names the home and
-  no repository host or organization. It is the same for every company and
-  is owned by this spec; the company's skill rendering gives the same
-  direction.
+  Markdown documents under `docs/`; and that the checkout of that repository
+  at `~/.instrukt/companies/<slug>/`, `<slug>` being the company's key, is
+  the company's home, which serves the company's agents and stays on the
+  repository's default branch. It directs an agent with access to the
+  repository to improve the knowledge by editing the Markdown documents
+  (`*.md`) under `docs/`, subfolders included, on a branch, in a separate
+  worktree of the home or in a clone of the repository, and to open a pull
+  request that someone other than its author reviews before it merges to the
+  default branch, through which the change reaches the company's agents:
+  company home knowledge is authored apart from the serving checkout and
+  independently reviewed before it reaches the default branch
+  (`general/policy/documentation-discipline`). It gives `company-<slug>` as
+  the repository's conventional name, which a company's repository need not
+  carry. It says that the change is made in those documents alone,
+  `AGENTS.md` and any skill published from them being generated output that
+  is left as rendered, and what each document carries: a non-empty
+  `description` in its frontmatter and what is true of the company now, in
+  the present tense, what was true before staying in the repository's
+  history (`general/procedure/doc-snippet-authoring`). The path and the
+  repository name carry `<slug>` as literal text: the passage takes no
+  company's key, names the home and no repository host or organization, and
+  is the same for every company, in a home and in a clone of the repository.
+  It is owned by this spec and is the text instrukt's rendering writes; what
+  the shared workflows repository's publisher writes into a company's
+  repository is that repository's own text
+  (`project/instrukt/policy/shared-workflows`).
   <!-- /planned-change:update-company-passage -->
 - **The company's documents.** A company document is a Markdown file in the
   home's `docs/` folder. The master and the company's documents name a
