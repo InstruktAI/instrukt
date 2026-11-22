@@ -1853,26 +1853,65 @@ impl<'w> Session<'w> {
         missing
     }
 
-    /// Commits content restored from GitHub onto item `index`'s row, with
-    /// `restored` the item's record holding it, while the row is unchanged.
-    /// A row another command changed meanwhile keeps its own record; the
-    /// verified content then serves only the read that restored it.
-    pub fn keep_restored(&mut self, index: usize, restored: &TodoRecord) -> Result<(), WorkError> {
-        let base = self.items[index].clone();
-        let next = _store::carry(
-            &LocalItem {
-                record: restored.clone(),
-                reflection: base.reflection.clone(),
-            },
-            &base,
-        );
-        if next.record == base.record {
+    /// Commits content of artifact `name` restored from GitHub onto item
+    /// `index`'s row, with `restored` the item's record holding it: every
+    /// version the item holds without content takes the verified bytes
+    /// `restored` holds for it, on the live row whatever else another
+    /// command changed there, and on the session's item and base as the row
+    /// now holds them. A read consumes restored content only once it is
+    /// committed: a row gone meanwhile, or a failed write, fails the read.
+    pub fn keep_restored(
+        &mut self,
+        index: usize,
+        restored: &TodoRecord,
+        name: &str,
+    ) -> Result<(), WorkError> {
+        let item = &self.items[index].record;
+        let (Some(mine), Some(found)) = (item.artifact(name), restored.artifact(name)) else {
+            return Ok(());
+        };
+        let contents: Vec<(u64, crate::evidence::ContentDigest, String)> = mine
+            .versions
+            .iter()
+            .filter(|v| v.content.is_none())
+            .filter_map(|v| {
+                found
+                    .versions
+                    .iter()
+                    .find(|r| r.sequence == v.sequence && r.digest == v.digest)
+                    .and_then(|r| r.content.clone())
+                    .map(|content| (v.sequence, v.digest.clone(), content))
+            })
+            .collect();
+        if contents.is_empty() {
             return Ok(());
         }
-        if let Swapped::Applied(row) = self.store.swap(&base, &next)? {
-            let inbound = std::mem::take(&mut self.items[index].reflection.inbound);
-            self.take_row(index, *row);
-            self.items[index].reflection.inbound = inbound;
+        let id = item.id.clone();
+        if !self.store.fill_contents(&id, name, &contents)? {
+            return Err(WorkError::refused(format!(
+                "`{}` left this computer's record while its artifact `{name}` was read; read it again",
+                item.slug
+            )));
+        }
+        let fill = |record: &mut TodoRecord| {
+            let Some(artifact) = record
+                .artifacts
+                .iter_mut()
+                .find(|a| a.name.as_str() == name)
+            else {
+                return;
+            };
+            for version in artifact.versions.iter_mut().filter(|v| v.content.is_none()) {
+                if let Some((_, _, content)) = contents.iter().find(|(sequence, digest, _)| {
+                    *sequence == version.sequence && *digest == version.digest
+                }) {
+                    version.content = Some(content.clone());
+                }
+            }
+        };
+        fill(&mut self.items[index].record);
+        if let Some(base) = self.bases.get_mut(&id) {
+            fill(&mut base.record);
         }
         Ok(())
     }

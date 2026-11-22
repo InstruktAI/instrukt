@@ -1110,7 +1110,7 @@ impl Work {
         let wanted = lacking(&record);
         let missing = s.restore_contents(issue, &mut record, name, &wanted);
         if let Some(index) = local {
-            s.keep_restored(index, &record)?;
+            s.keep_restored(index, &record, name)?;
         }
         Ok((record, missing))
     }

@@ -406,6 +406,42 @@ impl Store {
         })
     }
 
+    /// Stores `contents`, artifact content restored from GitHub and
+    /// verified against its digest, on the live row of `id`: each version of
+    /// artifact `name` with the given sequence and digest that is still
+    /// without content takes its bytes, whatever else changed on the row.
+    /// `false` when the row is gone or belongs to another project.
+    pub fn fill_contents(
+        &self,
+        id: &TodoId,
+        name: &str,
+        contents: &[(u64, ContentDigest, String)],
+    ) -> Result<bool, WorkError> {
+        self.write(|tx, path, project| {
+            let sql = StateDbError::sqlite(path);
+            let own: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM todos WHERE id = ?1 AND project = ?2)",
+                    params![id.as_str(), project.as_str()],
+                    |r| r.get(0),
+                )
+                .map_err(&sql)?;
+            if !own {
+                return Ok(false);
+            }
+            for (sequence, digest, content) in contents {
+                tx.execute(
+                    "UPDATE artifact_versions SET content = ?1
+                     WHERE todo_id = ?2 AND name = ?3 AND sequence = ?4 AND digest = ?5
+                        AND content IS NULL",
+                    params![content, id.as_str(), name, sequence, digest.as_str()],
+                )
+                .map_err(&sql)?;
+            }
+            Ok(true)
+        })
+    }
+
     /// Makes `item`, a todo read from GitHub, a local item when no row of
     /// its identity exists; the written or the live row. An identity that
     /// is already a local item of another project is refused, and that
