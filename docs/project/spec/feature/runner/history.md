@@ -10,12 +10,22 @@ When off, every history command reports the module is off before accessing its
 data or source; `instrukt run` starts neither history extraction nor the history
 query responder. Existing stored history and source positions survive disable.
 
+<!-- planned-change:history-isolated-store-and-batched-import -->
 instrukt makes past conversations searchable through a store on each computer.
 An extract-and-load step reads T3's local state into instrukt's own history;
 TeleClaude's existing mirrors are imported idempotently: importing a mirror
 again adds what it gained since. A search across computers
 merges results from their local stores. History needs no central service or
 Postgres deployment and does not replace the runtime's live conversations.
+<!-- change:history-isolated-store-and-batched-import -->
+instrukt makes past conversations searchable through a store on each computer.
+An extract-and-load step reads T3's local state into instrukt's own history;
+TeleClaude's existing mirrors are imported once, in bounded batches: an import
+that stops continues after the last batch it committed, and a completed import
+is never read again. A search across computers
+merges results from their local stores. History needs no central service or
+Postgres deployment and does not replace the runtime's live conversations.
+<!-- /planned-change:history-isolated-store-and-batched-import -->
 
 ## Canonical fields
 
@@ -112,6 +122,58 @@ detailed internal errors remain in the responding computer's logs. Each committe
 extraction batch emits a DEBUG operation summary identifying its source, loaded
 count, committed position and duration, without conversation content.
 
+<!-- planned:history-isolated-store-and-batched-import -->
+### History store
+
+A computer's history lives in its own store, `state/history.db` in the
+canonical state directory: one SQLite database in WAL journal mode, readable
+and writable by its owner only, with its own schema version and migrations. A
+store whose schema is newer than the running instrukt knows is refused with the
+command that installs the current instrukt, and a symbolic link at the store or
+one of its sidecars is refused with the directory-link recovery, as for the
+state database (`project/instrukt/spec/feature/work/state-database`). A committed
+write survives a process crash and a power loss.
+
+The history lock `state/history.lock` is the store's write-isolation unit
+(`sdlc/policy/state-storage`). Every history write runs while its process holds
+it: a catch-up section, one import batch, or moving earlier history in. Extraction
+and import never take the state database's writer lock, and work's writes never
+wait on the history lock; only moving earlier history in reaches the state
+database, as described below. Readers take no lock.
+
+| Table | Holds | Nature and loss cost |
+| --- | --- | --- |
+| `history_conversations`, `history_fts` | completed conversation views with their archive aliases and original source documents, and their full-text index | authoritative; a conversation no source still holds cannot be extracted again |
+| `history_projection_records` | normalized native records by source, kind and native id, including records delivered by earlier batches | authoritative for the same reason |
+| `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
+| `history_sources` | for each selected TeleClaude source, the last mirror it committed and whether the import completed | external bookkeeping; losing it reads the mirror store again |
+
+A conversation's completed view, archive aliases, original source document and
+FTS5 changes commit with the source position that delivered them. The store
+also records how far moving earlier history in has progressed.
+
+Earlier builds kept history in the state database. The first history operation
+on a computer after upgrading moves it into the history store: it first brings
+the state database to its current schema, which earlier builds refuse to
+write, then copies the retained rows in bounded batches, each committed with
+its progress, and finally removes the copied tables from the state database in
+one transaction under the writer lock and reclaims their space. A move that
+stops continues after its last committed batch; no retained row is discarded
+(`project/instrukt/policy/checks-and-guards`). A reader that finds the move not
+done performs it before reading. While history is off nothing moves, and the
+rows stay in the state database until history is switched on.
+
+The TeleClaude import reads the selected mirror store strictly read-only and
+never writes or migrates it. It imports mirrors in id order in batches bounded
+both in mirror count and in retained text, at least one mirror each. A batch is
+read in its own read-only source transaction, which ends before the batch is
+written; the batch's conversations and the id of its last mirror commit in one
+transaction under the history lock, which is released between batches. The
+transaction that commits the last mirror the store holds marks the import
+complete. A rerun continues after the last committed mirror; a completed import
+is never read again.
+<!-- /planned:history-isolated-store-and-batched-import -->
+
 ## Use cases
 
 ### UC-HI1: Search conversations extracted on one computer
@@ -128,6 +190,7 @@ And stored history survives disabling and can be searched after re-enabling
 
 ### UC-HI2: Keep the TeleClaude mirrors through one import
 
+<!-- planned-change:history-isolated-store-and-batched-import -->
 ```gherkin
 Given a developer has existing TeleClaude conversation mirrors
 When the one-time history import completes
@@ -135,6 +198,19 @@ Then those conversations are searchable in instrukt's local history
 And later extraction uses T3 local state rather than ongoing TeleClaude mirroring
 And rerunning the completed import does not duplicate those conversations
 ```
+<!-- change:history-isolated-store-and-batched-import -->
+```gherkin
+Given a developer has existing TeleClaude conversation mirrors
+When the one-time history import completes
+Then those conversations are searchable in instrukt's local history
+And the mirror store is unchanged
+And later extraction uses T3 local state rather than ongoing TeleClaude mirroring
+And rerunning the completed import does not duplicate those conversations
+But when the import stops before it completes
+Then the conversations it already imported are searchable
+And rerunning the import adds the remaining conversations without duplicating any
+```
+<!-- /planned-change:history-isolated-store-and-batched-import -->
 
 ### UC-HI3: Search history held by multiple computers
 
@@ -180,6 +256,17 @@ Then that conversation is in the developer's instrukt history without a search o
   backend or new daemon is introduced. Searches remain an explicit catch-up
   boundary.
 - This contract introduces neither the held central-service design nor Postgres.
+<!-- planned:history-isolated-store-and-batched-import -->
+- The history store grows with every conversation its sources held. Nothing
+  retires a retained conversation: outliving its source is the store's purpose.
+- Moving earlier history out of the state database holds the history lock until
+  the move completes. A history operation started meanwhile waits for the lock
+  and fails visibly when the move outlasts that wait; the runner's extraction
+  retries. Removing the moved tables holds the writer lock once, for that one
+  transaction and reclaiming its space.
+- A mirror is never split across import batches, so a single mirror larger than
+  a batch's text bound is read and written whole.
+<!-- /planned:history-isolated-store-and-batched-import -->
 
 ## See Also
 

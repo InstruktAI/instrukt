@@ -29,10 +29,18 @@ meaning and the writes of the conversation tables.
   below. Nothing else is stored in it.
 - **Protection:** the database and the files SQLite keeps beside it are
   readable and writable by their owner only.
+<!-- planned-change:history-isolated-store-and-batched-import -->
 - **Stays outside it:** the blueprint graph store (one complete graph per
   revision, as files under `~/.instrukt/state/blueprint/`), publication
   state, the global index, eval fingerprints, hook outcomes and the
   machine id. Their owners' contracts place them.
+<!-- change:history-isolated-store-and-batched-import -->
+- **Stays outside it:** the blueprint graph store (one complete graph per
+  revision, as files under `~/.instrukt/state/blueprint/`), the history store
+  (`state/history.db`), publication state, the global index, eval
+  fingerprints, hook outcomes and the machine id. Their owners' contracts
+  place them.
+<!-- /planned-change:history-isolated-store-and-batched-import -->
 - **No file stores:** the work record and the runner's state have no other
   home. Directories left by earlier builds (`state/work/`, `state/runner/`)
   are neither read nor migrated.
@@ -130,6 +138,17 @@ turn ended (`conversation_messages.admitted_at`, `unavailable_since`,
 `turn_update`, `turn_ended_at`).
 Messages stored before it have none of them: none has an interval open, and
 the relay-wide failure counts for one from that failure's start.
+<!-- planned:history-isolated-store-and-batched-import -->
+
+Version 32 removes the history tables (`history_conversations`, `history_fts`,
+`history_projection_records`, `history_source_positions` and `history_sources`)
+when none of them holds a row. Tables that hold rows stay until the history
+store has copied them; it then removes them in one transaction under the writer
+lock and reclaims their space
+(`project/instrukt/spec/feature/runner/history`). A database past version 31 is
+refused by earlier builds, so no earlier build writes history here once the
+move has begun.
+<!-- /planned:history-isolated-store-and-batched-import -->
 
 Persisted runtime requests and manual standing reservations enter domain code
 with a required captured title. Migration fills a missing or null title with
@@ -316,6 +335,7 @@ Owned by the runner and written through its interface, in the same
 transactions as the reactions they record. Work invokes that interface for
 finalized publication and approval attention committed with their stamps.
 
+<!-- planned-change:history-isolated-store-and-batched-import -->
 **History tables** — `history_sources` records selected-source legacy import
 completion. `history_source_positions` stores each runtime source's opaque
 committed position; history does not interpret adapter cursor fields.
@@ -327,6 +347,13 @@ preserves retained native records before the new source position begins.
 `history_conversations` and `history_fts` serve local search and document lookup.
 These tables are owned by `project/instrukt/spec/feature/runner/history`, survive
 source removal and are never reflected to GitHub or stored centrally in Redis.
+<!-- change:history-isolated-store-and-batched-import -->
+**History** — retained history is not stored in this database. It lives in the
+history store owned by `project/instrukt/spec/feature/runner/history`, which
+survives source removal and is never reflected to GitHub or stored centrally in
+Redis. History tables an earlier build left here with rows stay only until that
+store has moved them (version 32).
+<!-- /planned-change:history-isolated-store-and-batched-import -->
 
 **`events`** — the local event log, oldest first. `seq` is a monotone local
 position, never a transport or occurrence identity. Rows hold the stable event
