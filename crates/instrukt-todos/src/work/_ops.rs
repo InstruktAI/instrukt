@@ -1033,7 +1033,7 @@ impl Work {
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
-    ) -> Result<Option<TodoRecord>, WorkError> {
+    ) -> Result<Option<Held>, WorkError> {
         let store = self.local_store_checked(project)?;
         let (items, copies, _) = store.existence()?;
         let now = self.now();
@@ -1046,7 +1046,7 @@ impl Work {
             Some(_) => exact_local(&items, address)?,
         };
         if let Some(index) = found {
-            return Ok(Some(items[index].record.clone()));
+            return Ok(Some(Held::Item(items[index].record.clone())));
         }
         let mut copied =
             copies
@@ -1059,14 +1059,14 @@ impl Work {
         Ok(match (address.identity.is_some(), copied.next()) {
             (true, Some(record)) => copied.next().is_none().then_some(record),
             (_, found) => found,
-        })
+        }
+        .map(Held::Copy))
     }
 
     /// The record `address` names for a read of artifact `name`, with why
     /// each version `wanted` asks for still has no content. A record this
-    /// computer holds, a local item's or a listing copy's, answers alone
-    /// when it lacks no content `wanted` asks for ([`Wanted::lacking`]).
-    /// Otherwise the todo is located and refreshed as [`Work::show`] does;
+    /// computer holds answers alone when it settles the read
+    /// ([`Held::answers`]). Otherwise the todo is located and refreshed as [`Work::show`] does;
     /// each version still without content is then asked of GitHub and
     /// verified against its digest, and content restored onto a local item
     /// is committed to its row before the read returns it.
@@ -1082,10 +1082,10 @@ impl Work {
                 .artifact(name)
                 .map_or_else(Vec::new, |artifact| wanted.lacking(artifact))
         };
-        if let Some(record) = self.local_record(project, address)?
-            && lacking(&record).is_empty()
+        if let Some(held) = self.local_record(project, address)?
+            && held.answers(name, wanted)
         {
-            return Ok((record, BTreeMap::new()));
+            return Ok((held.into_record(), BTreeMap::new()));
         }
         let mut s = Session::open(self, project)?;
         let (mut record, issue, local) = match s.locate(address)? {
@@ -1115,8 +1115,8 @@ impl Work {
         project: &ProjectRef,
         address: &TodoAddress,
     ) -> Result<Vec<Artifact>, WorkError> {
-        if let Some(record) = self.local_record(project, address)? {
-            return Ok(record.artifacts);
+        if let Some(held) = self.local_record(project, address)? {
+            return Ok(held.into_record().artifacts);
         }
         Ok(self.show(project, address)?.record.artifacts)
     }
@@ -2126,6 +2126,40 @@ fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>,
     Ok(refs)
 }
 
+/// A record this computer holds for a todo ([`Work::local_record`]).
+enum Held {
+    /// A local item's: the local record it reads.
+    Item(TodoRecord),
+    /// A listing copy's: the last-known reflected record, without artifact
+    /// contents.
+    Copy(TodoRecord),
+}
+
+impl Held {
+    /// Whether this record settles a read of artifact `name` for `wanted`
+    /// on its own. A local item's does when it lacks none of the content
+    /// asked for, an artifact or version it does not carry answering that
+    /// there is none. A listing copy's is only last known: something
+    /// written after it was read is missing from it, so it settles a read
+    /// only by holding every version asked for with its content.
+    fn answers(&self, name: &str, wanted: &Wanted<'_>) -> bool {
+        match self {
+            Held::Item(record) => record
+                .artifact(name)
+                .is_none_or(|artifact| wanted.lacking(artifact).is_empty()),
+            Held::Copy(record) => record
+                .artifact(name)
+                .is_some_and(|artifact| wanted.holds(artifact)),
+        }
+    }
+
+    fn into_record(self) -> TodoRecord {
+        match self {
+            Held::Item(record) | Held::Copy(record) => record,
+        }
+    }
+}
+
 /// What a read of an artifact's content asks for.
 enum Wanted<'d> {
     /// Its current version: the last one written.
@@ -2157,6 +2191,19 @@ impl Wanted<'_> {
                 })
                 .map(|digest| (*digest).to_owned())
                 .collect(),
+        }
+    }
+
+    /// Whether `artifact` holds every version asked for with its content.
+    fn holds(&self, artifact: &Artifact) -> bool {
+        match self {
+            Wanted::Current => artifact
+                .versions
+                .last()
+                .is_some_and(|v| v.content.is_some()),
+            Wanted::Digests(digests) => digests.iter().all(|digest| {
+                Wanted::version(artifact, digest).is_some_and(|v| v.content.is_some())
+            }),
         }
     }
 
@@ -2397,6 +2444,18 @@ mod tests {
             Wanted::Current.lacking(&repeated("same", &[true, false])),
             vec![digest_of("same").as_str().to_owned()]
         );
+    }
+
+    #[test]
+    fn a_listing_copy_settles_no_read_of_content_it_does_not_hold() {
+        let mut record = record("depth", 1, &[]);
+        let copy = Held::Copy(record.clone());
+        assert!(!copy.answers("log", &Wanted::Current));
+        assert!(Held::Item(record.clone()).answers("log", &Wanted::Current));
+        record.artifacts.push(repeated("same", &[false]));
+        let unknown = Wanted::Digests(&["sha256:other"]);
+        assert!(!Held::Copy(record.clone()).answers("log", &unknown));
+        assert!(Held::Item(record).answers("log", &unknown));
     }
 
     #[test]
