@@ -441,9 +441,7 @@ impl<'w> Session<'w> {
     /// Refuses a command on item `index` when it is conflicted.
     fn refuse_conflicted(&self, index: usize) -> Result<(), WorkError> {
         if self.items[index].reflection.conflicted {
-            return Err(WorkError::Conflicted {
-                todo: self.items[index].record.slug.clone(),
-            });
+            return Err(WorkError::conflicted(&self.items[index].record));
         }
         Ok(())
     }
@@ -1052,9 +1050,9 @@ impl<'w> Session<'w> {
                 match _store::commit_local(tx, path, project, base, mine, &others)? {
                     Ok(row) => rows.push((index, row)),
                     Err(Refusal::Conflicted(live)) => {
-                        let todo = live.record.slug.clone();
+                        let error = WorkError::conflicted(&live.record);
                         conflicted = Some(live);
-                        return Err(WorkError::Conflicted { todo });
+                        return Err(error);
                     }
                     Err(Refusal::Changed(now)) => {
                         return Err(self.changed_refusal(mine, base, now));
@@ -1136,9 +1134,9 @@ impl<'w> Session<'w> {
         let (value, row) = match outcome {
             Ok(done) => done,
             Err(Refusal::Conflicted(live)) => {
-                let todo = live.record.slug.clone();
+                let error = WorkError::conflicted(&live.record);
                 self.take_row(index, *live);
-                return Err(WorkError::Conflicted { todo });
+                return Err(error);
             }
             Err(Refusal::Changed(now)) => {
                 return Err(self.changed_refusal(&mine, Some(&base), now));
@@ -2198,6 +2196,42 @@ pub(crate) fn exact_local(
                 ids.join(", ")
             )))
         }
+    }
+}
+
+/// The local item `address` names in `items`, retained entries included:
+/// an exact address its one entry; a plain slug the live item, else the
+/// one retained entry with that slug, a full identity given in its place
+/// that entry. A plain slug only several retained entries carry is
+/// refused naming each exact address. `None` when it names none.
+pub(crate) fn addressed(
+    items: &[LocalItem],
+    address: &TodoAddress,
+) -> Result<Option<usize>, WorkError> {
+    if address.identity.is_some() {
+        return exact_local(items, address);
+    }
+    let slug = &address.slug;
+    if let Some(index) = find_in(items, slug, false) {
+        return Ok(Some(index));
+    }
+    if let Some(index) = items
+        .iter()
+        .position(|it| it.record.id.as_str() == slug.as_str())
+    {
+        return Ok(Some(index));
+    }
+    let retained: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| &it.record.slug == slug)
+        .map(|(i, _)| i)
+        .collect();
+    match retained.as_slice() {
+        [] => Ok(None),
+        [index] => Ok(Some(*index)),
+        _ => Err(retained_only(items, slug)
+            .unwrap_or_else(|| WorkError::refused(format!("`{slug}` names several entries")))),
     }
 }
 

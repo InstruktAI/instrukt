@@ -21,7 +21,7 @@ use super::_model::{
     Version, digest_of, valid_artifact_name,
 };
 use super::_session::{
-    GitHubRead, Located, ReflectionStatus, Session, Unrestored, exact_local, find_in,
+    GitHubRead, Located, ReflectionStatus, Session, Unrestored, addressed, exact_local, find_in,
     past_recovery, status_of,
 };
 use super::_stamps::{self, StampInputs, StampRequest};
@@ -483,15 +483,17 @@ impl Work {
         })
     }
 
+    /// `instrukt todo refresh`: replaces the local item `address` names
+    /// with GitHub's committed record. It is the door a conflicted todo
+    /// names, retained work included: a withdrawn todo's reactivation
+    /// refuses until it is refreshed, and its door gives its exact address.
     pub fn refresh(
         &self,
         project: &ProjectRef,
-        slug: &TodoSlug,
+        address: &TodoAddress,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
-        // The door a conflicted todo names, withdrawn work included: its
-        // reactivation refuses until it is refreshed.
-        let index = s.find(slug, true).ok_or_else(|| unknown(&s, slug))?;
+        let index = addressed(&s.items, address)?.ok_or_else(|| unknown(&s, &address.slug))?;
         s.refresh(index)?;
         s.flush()?;
         Ok(Outcome {

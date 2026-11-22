@@ -52,7 +52,7 @@ enum TodoCommand {
     /// Change a todo's metadata, relationships, hold or claim.
     Update(UpdateArgs),
     /// Refresh a conflicted todo from GitHub.
-    Refresh(SlugArg),
+    Refresh(AddressArg),
     /// Park a todo in the icebox.
     Freeze(SlugArg),
     /// Return a parked todo to active consideration.
@@ -532,7 +532,7 @@ impl Session<'_> {
             }
             TodoCommand::Update(args) => self.update(args, ctx),
             TodoCommand::Refresh(args) => {
-                let outcome = work.refresh(project, &args.slug)?;
+                let outcome = work.refresh(project, &args.todo)?;
                 ctx.out.line(&format!(
                     "refreshed {} to revision {}",
                     outcome.value.slug, outcome.value.revision

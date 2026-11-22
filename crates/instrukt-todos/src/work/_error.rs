@@ -12,6 +12,7 @@ use instrukt_runner::events::EventLogError;
 use instrukt_runner::interfaces::WorkInterfaceError;
 
 use super::_github::GitHubError;
+use super::_model::{TodoAddress, TodoRecord};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkError {
@@ -59,10 +60,13 @@ pub enum WorkError {
         project: ProjectSlug,
         todo: TodoSlug,
     },
+    /// A newer remote revision met this computer's change; `todo` is the
+    /// address the door names: the slug of a live todo, the exact
+    /// `<slug>@<identity-prefix>` of a retained one.
     #[error(
         "todo `{todo}` changed on GitHub since this computer last read it; refresh it with `instrukt todo refresh {todo}`, then re-apply your change"
     )]
-    Conflicted { todo: TodoSlug },
+    Conflicted { todo: TodoAddress },
     /// The record's contract refuses the change.
     #[error("{0}")]
     Refused(String),
@@ -83,11 +87,27 @@ impl From<WorkError> for WorkInterfaceError {
             WorkError::UnknownTodo { project, todo } => {
                 WorkInterfaceError::UnknownTodo { project, todo }
             }
-            WorkError::Conflicted { todo } => WorkInterfaceError::Conflicted { todo },
+            WorkError::Conflicted { todo } => WorkInterfaceError::Conflicted { todo: todo.slug },
             WorkError::Refused(reason) => WorkInterfaceError::Refused { reason },
             other => WorkInterfaceError::Store {
                 message: other.to_string(),
             },
         }
+    }
+}
+
+impl WorkError {
+    /// The conflict of `record`, naming the address its refresh takes: a
+    /// plain slug means the live todo, so a retained one is named exactly.
+    pub(crate) fn conflicted(record: &TodoRecord) -> Self {
+        let todo = if record.is_live() {
+            TodoAddress {
+                slug: record.slug.clone(),
+                identity: None,
+            }
+        } else {
+            TodoAddress::exact(record)
+        };
+        Self::Conflicted { todo }
     }
 }

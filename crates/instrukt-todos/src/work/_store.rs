@@ -1954,6 +1954,30 @@ mod tests {
         assert!(first_cycle(&graph, &[graph[0].id.clone()]).is_some());
     }
 
+    /// `item` withdrawn, under identity `id`.
+    fn withdrawn(id: &str) -> LocalItem {
+        let mut item = item(2, &["one"]);
+        item.record.id = TodoId::parse(&id.repeat(16)).unwrap();
+        item.record.status = TodoStatus::Removed;
+        item
+    }
+
+    #[test]
+    fn a_slug_only_several_retained_entries_carry_is_refused_naming_each() {
+        use super::super::_model::TodoAddress;
+        use super::super::_session::addressed;
+        let items = [withdrawn("aa"), withdrawn("bb")];
+        let plain: TodoAddress = "list-depth".parse().unwrap();
+        let refused = addressed(&items, &plain).unwrap_err().to_string();
+        assert_eq!(
+            refused,
+            "no live todo is named `list-depth`; address a retained entry exactly: `list-depth@aaaaaaaa` (removed), `list-depth@bbbbbbbb` (removed)"
+        );
+        let exact: TodoAddress = "list-depth@bbbb".parse().unwrap();
+        assert_eq!(addressed(&items, &exact).unwrap(), Some(1));
+        assert_eq!(addressed(&items[..1], &plain).unwrap(), Some(0));
+    }
+
     #[test]
     fn a_withdrawn_listing_copy_is_no_member_its_holder_waits_on() {
         let mut gone = node("beta", &["alpha"], Some("hold"));
