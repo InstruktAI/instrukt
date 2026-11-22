@@ -80,7 +80,10 @@ Blueprint supplies its release-owned tool lifecycle to runner's module
 installation; runner consumes that API rather than defining tool policy.
 Core likewise declares the hook-generation interface; the CLI wires blueprint
 into it when enabled. Core declares the todo-existence and flavor-role lookup
-interfaces, wired by the CLI to todos only when enabled.
+interfaces, wired by the CLI to todos only when enabled (`docs validate
+--no-todo-lookup` leaves todo-existence unwired for service-free structural
+checks, and work's todo-existence lookup reads local state without taking the
+writer lock or creating state files).
 
 Core declares a caller-identity lookup interface for configuration interpolation
 and commit composition. The CLI wires the selected runtime adapter
@@ -473,3 +476,11 @@ session-fixed timing through A3's bounded batch log.
 - **A deleted orchestrator left its todo branch checked out:** native keyed launch
   attaches the verified retained worktree to the new object generation. A
   settled retained orchestrator wakes in its existing shared workspace.
+- **Document validation runs in an isolated or unprovisioned home with `modules.todos` on:**
+  an isolated temporary `INSTRUKT_HOME` or CI runner holds neither a work state
+  database nor `github.project_app`, so live todo-slug existence lookup cannot
+  resolve pending markers and fails explicitly with the GitHub App repair door
+  while leaving the home unwritten. Service-free checks and CI run
+  `instrukt docs validate --no-todo-lookup` to omit the live existence lookup
+  while keeping slug-form, pending-marker, workflow-role and all other
+  structural checks (`project/instrukt/spec/feature/docs/snippet-validation`).

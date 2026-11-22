@@ -22,7 +22,7 @@ repos:
         name: document validation
         files: &documents ^docs/
         entry: scripts/commit-check.py
-        args: [--pattern, *documents, --run, scripts/instrukt-for-checks docs validate, --]
+        args: [--pattern, *documents, --run, scripts/instrukt-for-checks docs validate --no-todo-lookup, --]
         language: system
         always_run: true
         require_serial: true

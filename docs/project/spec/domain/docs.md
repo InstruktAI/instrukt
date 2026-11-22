@@ -186,7 +186,7 @@ recorded by publication.
   cases from feature specs and their heading levels (specs); whether a todo
   slug names an existing todo (work, when the `todos` module is on); deciding
   when publication runs (repository).
-- **Published contracts** — `instrukt docs validate [paths] [--json]`;
+- **Published contracts** — `instrukt docs validate [paths] [--json] [--no-todo-lookup]`;
   `instrukt docs fold <slug>`; `instrukt docs index [--domain <x>…] [--areas]
   [--third-party] [--target <slug>] [--project <slug>]`; `instrukt docs get
   <id…> [--closure] [--target <slug>]`; `instrukt docs get --domain <x>`;

@@ -139,6 +139,11 @@ struct ValidateArgs {
     /// Print the findings as a JSON list.
     #[arg(long)]
     json: bool,
+    /// Skip checking whether pending-doc slugs name existing todos; pending
+    /// slugs are still checked for form, alongside marker structure, workflow
+    /// roles and all other structural rules.
+    #[arg(long)]
+    no_todo_lookup: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -276,7 +281,10 @@ fn repo_root(cwd: &Path) -> anyhow::Result<PathBuf> {
 fn validate(args: ValidateArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = repo_root(&ctx.cwd)?;
     let paths: Vec<PathBuf> = args.paths.iter().map(|p| ctx.cwd.join(p)).collect();
-    let wiring = core_wiring(ctx)?;
+    let mut wiring = core_wiring(ctx)?;
+    if args.no_todo_lookup {
+        wiring.todo_existence = None;
+    }
     let validation = docs::validate(&ValidationRequest {
         repo_root: &root,
         home: &ctx.home,

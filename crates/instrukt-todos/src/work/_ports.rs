@@ -2,6 +2,8 @@
 //! runner's work interfaces, workflow's evidence read and core's todo
 //! existence.
 
+use instrukt_core::config::Configuration;
+use instrukt_core::github;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::{
@@ -12,8 +14,11 @@ use instrukt_runner::interfaces::{
 use jiff::Timestamp;
 
 use super::_error::WorkError;
+use super::_github::{GitHub, GitHubError};
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
-use super::_session::{GitHubRead, PendingReason, ReflectionStatus, Session};
+use super::_reflect;
+use super::_session::{self, GitHubRead, PendingReason, ReflectionStatus, Session};
+use super::_store;
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactHistory, ArtifactVersion, ClaimRecord, HoldRecord, HoldSource, Prerequisite,
@@ -1080,7 +1085,8 @@ fn copy_record(
     }
 }
 
-/// Core's todo-existence question for one project, answered by work.
+/// Core's todo-existence question for one project, answered by work without
+/// taking the state writer lock or creating state files.
 pub struct WorkExistence {
     work: std::sync::Arc<Work>,
     project: ProjectRef,
@@ -1104,20 +1110,71 @@ impl TodoExistence for WorkExistence {
                 self.project.slug
             )));
         }
-        let mut s = Session::open(&self.work, &self.project).map_err(|e| failed(e.to_string()))?;
-        if s.find(slug, true)
-            .is_some_and(|i| s.items[i].record.status != TodoStatus::Removed)
+        let (items, copies, provider) =
+            _store::read_existence_state(self.work.home(), &self.project.slug)
+                .map_err(|e| failed(e.to_string()))?;
+        if _session::find_in(&items, slug, true)
+            .is_some_and(|i| items[i].record.status != TodoStatus::Removed)
         {
             return Ok(true);
         }
-        let found = s.live_ref(slug).is_some();
-        match s.github_read() {
-            GitHubRead::Read => Ok(found),
-            GitHubRead::NotRead(reason) => Err(failed(format!(
-                "cannot tell whether todo `{slug}` exists: it is not on this computer and GitHub cannot be read ({})",
-                super::_session::describe(&reason)
-            ))),
+        if copies
+            .iter()
+            .any(|c| &c.record.slug == slug && c.record.is_live())
+        {
+            return Ok(true);
         }
+        let config = Configuration::load(self.work.home(), Some(&self.project.root))
+            .map_err(|e| failed(e.to_string()))?;
+        let api_url = github::api_url(self.work.home()).map_err(|e| failed(e.to_string()))?;
+        let repository = match github::code_host(&config, &api_url, &self.project.root)
+            .map_err(|e| failed(e.to_string()))?
+        {
+            github::CodeHost::GitHub { repository } => repository,
+            github::CodeHost::Elsewhere { reason } => {
+                return Err(failed(WorkError::CodeNotOnGitHub { reason }.to_string()));
+            }
+        };
+        let now = self.work.now();
+        let unreadable = |reason: PendingReason| {
+            failed(format!(
+                "cannot tell whether todo `{slug}` exists: it is not on this computer and GitHub cannot be read ({})",
+                _session::describe(&reason)
+            ))
+        };
+        if let Some(until) = provider.deferred_until
+            && until > now
+        {
+            return Err(unreadable(PendingReason::RateLimited {
+                until: Some(until),
+            }));
+        }
+        self.work
+            .github
+            .begin_pass()
+            .map_err(|e| failed(WorkError::GitHub(GitHubError::from(e)).to_string()))?;
+        let gh = GitHub::for_app(
+            self.work.github.clone(),
+            &api_url,
+            &repository,
+            None,
+            github::Operation::Record,
+            now,
+        )
+        .map_err(|e| unreadable(_session::reason_of(&e)))?;
+        let remote =
+            _reflect::remote_records(&gh, true).map_err(|e| unreadable(_session::reason_of(&e)))?;
+        if remote
+            .records
+            .iter()
+            .any(|(r, _)| &r.slug == slug && r.is_live())
+        {
+            return Ok(true);
+        }
+        if let Some((_, error)) = remote.incompatible.first() {
+            return Err(unreadable(PendingReason::Failed(error.to_string())));
+        }
+        Ok(false)
     }
 }
 

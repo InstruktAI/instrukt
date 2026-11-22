@@ -237,22 +237,7 @@ impl<'w> Session<'w> {
     /// The local item addressed by `slug`: the live one, or with
     /// `retained`, else the latest delivered or removed one.
     pub fn find(&self, slug: &TodoSlug, retained: bool) -> Option<usize> {
-        let live = self
-            .items
-            .iter()
-            .position(|it| &it.record.slug == slug && it.record.is_live());
-        live.or_else(|| {
-            retained
-                .then(|| {
-                    self.items
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, it)| &it.record.slug == slug)
-                        .max_by_key(|(_, it)| it.record.created)
-                        .map(|(i, _)| i)
-                })
-                .flatten()
-        })
+        find_in(&self.items, slug, retained)
     }
 
     pub fn find_id(&self, id: &TodoId) -> Option<usize> {
@@ -1622,7 +1607,27 @@ fn past_recovery(record: &TodoRecord, now: Timestamp) -> bool {
     )
 }
 
-fn reason_of(err: &GitHubError) -> PendingReason {
+/// The local item addressed by `slug` in `items`: the live one, or with
+/// `retained`, else the latest delivered or removed one.
+pub(crate) fn find_in(items: &[LocalItem], slug: &TodoSlug, retained: bool) -> Option<usize> {
+    let live = items
+        .iter()
+        .position(|it| &it.record.slug == slug && it.record.is_live());
+    live.or_else(|| {
+        retained
+            .then(|| {
+                items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, it)| &it.record.slug == slug)
+                    .max_by_key(|(_, it)| it.record.created)
+                    .map(|(i, _)| i)
+            })
+            .flatten()
+    })
+}
+
+pub(crate) fn reason_of(err: &GitHubError) -> PendingReason {
     match err {
         GitHubError::Unreachable(_) => PendingReason::Unreachable,
         GitHubError::App(github::AppError::Unreachable) => PendingReason::Unreachable,

@@ -46,7 +46,12 @@ check documentation before committing, and it changes nothing.
 | Directives | an `@exec` or `@include` directive in a snippet, companion, third-party doc or master, naming its command or path; a `@config` directive with a `runtime.*` path in a snippet rendered into a global agent file — reached through `docs/general/index.yaml`'s `expanded` closure or `agents`; any `@config` directive in an `AGENTS.master.md` or in a snippet the repository's committed `AGENTS.md` renders in full (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
 
 A todo slug is checked for form only. Whether it names an existing todo is
-checked as well when the `todos` module is on, by asking that module.
+checked as well when the `todos` module is on, by asking that module without
+creating state files or taking the state writer lock
+(`project/instrukt/spec/feature/work/state-database`). Passing
+`--no-todo-lookup` omits that existence check while keeping slug-form,
+pending-marker, workflow-role and all other structural checks
+(`project/instrukt/policy/testing`).
 
 With todos enabled, only procedures the selected workflow dispatches must name
 a role declared by that workflow. Subscribed procedures are independent of that
@@ -174,6 +179,18 @@ Given a subscribed procedure declares a role outside the selected workflow's rol
 When its otherwise valid declarations are validated with todos enabled or disabled
 Then workflow membership does not reject that subscribed role
 But a procedure the workflow dispatches must declare a role in its workflow list
+```
+
+### UC-SV7: Validate pending documentation without a todo store and without writing home state
+
+```gherkin
+Given a project enables the todos module and has valid pending documentation markers
+When a developer validates the documentation with `--no-todo-lookup` in an isolated empty home without GitHub App configuration
+Then validation checks pending slug form, marker structure and workflow roles and succeeds without writing state files
+When they validate without `--no-todo-lookup` against an empty home without GitHub App configuration
+Then validation reports the unavailable todo lookup and leaves no state database or writer lock in that home
+When they validate without `--no-todo-lookup` against a home whose state database records that todo
+Then validation succeeds without taking the writer lock or modifying the state database
 ```
 
 ## Known caveats
