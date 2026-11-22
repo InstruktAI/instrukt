@@ -83,10 +83,11 @@ pub(super) fn open(home: &Home) -> Result<StoreDb, HistoryError> {
     Ok(db)
 }
 
-/// Opens the store for reading without the history lock; `None` when there
-/// is nothing retained yet. While the move is not recorded complete the
-/// write path runs first. An inspection home reads an existing store as it
-/// is, and never creates, migrates or moves it.
+/// Opens the store for reading without the history lock. An inspection home
+/// reads an existing store as it is and never creates, migrates or moves
+/// it; `None` means it holds no current store. Any other home runs the
+/// write path first while the move is not recorded complete, creating the
+/// store when absent, and always returns it.
 pub(super) fn read(home: &Home) -> Result<Option<Connection>, HistoryError> {
     let store = store(home);
     if home.is_state_read_only() {
