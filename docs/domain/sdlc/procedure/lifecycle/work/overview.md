@@ -190,6 +190,7 @@ receives independent review at the current head in the same worktree; its verdic
 releases that reviewer. Changes requested require a shared fixer, completion and
 another review. Undetermined currency returns to the evidence route.
 
+<!-- planned-change:reduce-worktree-disk-usage -->
 When current approval, finalizer completion and matching candidate evidence hold
 with no outstanding workspace role, send the retained finalizer the record-only
 `--finalize-ready` follow-up. Retry only that write after interruption; further
@@ -197,6 +198,19 @@ workspace work needs a new attempt and completion. Readiness and
 `workflow.finalized` append commit together for the exact project/todo/SHA.
 Confirm the handoff, run `instrukt todo update <slug> --unclaim`, confirm release
 and record remaining obligations. Integration belongs to the standing integrator.
+<!-- change:reduce-worktree-disk-usage -->
+When current approval, finalizer completion and matching candidate evidence hold
+with no outstanding workspace role, send the retained finalizer the record-only
+`--finalize-ready` follow-up. Retry only that write after interruption; further
+workspace work needs a new attempt and completion. Readiness and
+`workflow.finalized` append commit together for the exact project/todo/SHA.
+Confirm the handoff. The worktree now waits for integration: remove its
+regenerable build output (`general/policy/shared-machine-resources`), leaving
+the clean committed tree, the todo branch and the published head as the
+readiness record binds them. Then run `instrukt todo update <slug> --unclaim`,
+confirm release and record remaining obligations. Integration belongs to the
+standing integrator.
+<!-- /planned-change:reduce-worktree-disk-usage -->
 
 After confirmed delivery, the integrator removes this todo's one worktree from
 the project folder. A dirty/in-use tree or failed removal remains owed. The
@@ -251,11 +265,22 @@ unresolved technical question returns to evidence and its agent owner, never to 
 fix round failed. Kickback supplies no approval of the revised plan; normal
 independent preparation review remains required.
 
+<!-- planned-change:reduce-worktree-disk-usage -->
 Run `instrukt todo stamp {slug} --kickback --reason '<why the plan cannot be built>'`
 through the configured kickback command. The record carries the reason in
 `input`, invalidates the implementation plan and resets finalization. Execute
 `instrukt todo update <slug> --unclaim` and the cleanup effects and confirm release. Preserve the worktree,
 branches and build commits. The stamp alone performs no session side effects.
+<!-- change:reduce-worktree-disk-usage -->
+Run `instrukt todo stamp {slug} --kickback --reason '<why the plan cannot be built>'`
+through the configured kickback command. The record carries the reason in
+`input`, invalidates the implementation plan and resets finalization. The
+worktree now waits for re-preparation: remove its regenerable build output
+(`general/policy/shared-machine-resources`) and preserve the worktree, branches
+and build commits. Execute `instrukt todo update <slug> --unclaim` and the
+cleanup effects and confirm release. The stamp alone performs no session side
+effects.
+<!-- /planned-change:reduce-worktree-disk-usage -->
 
 The runner owns the next preparation dispatch. Its planner reads the recorded
 kickback; independent review and applicable approval remain owed. A new input

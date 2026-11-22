@@ -19,6 +19,14 @@ visibility: 'public'
 - **Delegation carries the duty.** A session that delegates work which creates
   checkouts names that cleanup in the brief, and when a round of delegated work
   ends, removes the regenerable output its finished delegates left behind.
+<!-- planned:reduce-worktree-disk-usage -->
+- **A kept checkout waits without its output.** A checkout that stays while
+  its work waits on another party — a finalized candidate awaiting
+  integration, or work kicked back to preparation — has its regenerable
+  output removed before the wait begins, by the session that owns that
+  output. The clean committed checkout and its branch stay as they are, and
+  the next build there regenerates what it needs.
+<!-- /planned:reduce-worktree-disk-usage -->
 - **Measure before building in a new place.** Before a build, install or full
   test run in a checkout that has no build output yet, check the volume's free
   space. With less than 20 GiB free, clean up output this session owns first;
@@ -41,14 +49,27 @@ outside the session that caused it, where restoring the files repairs nothing.
 Output is regenerable, so removing it costs only a rebuild; keeping it costs
 everyone on the machine.
 
+<!-- planned:reduce-worktree-disk-usage -->
+A checkout that waits on another party keeps its output for as long as that
+party takes, and the waiting session cannot shorten the wait. Every todo in
+flight adds one such checkout, so idle output grows with the number of todos
+in flight instead of with the builds that are running. Removing it at the
+hand-off costs one rebuild, and only when work returns to that checkout.
+<!-- /planned:reduce-worktree-disk-usage -->
+
 ## Scope
 
 All agents, all sessions, all projects, on every machine they run on.
 
 ## Enforcement
 
+<!-- planned-change:reduce-worktree-disk-usage -->
 Reviewers treat a finished checkout left with its build output as a
 process miss.
+<!-- change:reduce-worktree-disk-usage -->
+Reviewers treat a finished or waiting checkout left with its build output as
+a process miss.
+<!-- /planned-change:reduce-worktree-disk-usage -->
 
 ## Exceptions
 
