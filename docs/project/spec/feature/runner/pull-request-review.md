@@ -118,11 +118,13 @@ Then no review is started for it
   commits.
 - Every new head of every eligible pull request starts a review.
 - A pull request outside eligibility starts no review, so no review status is
-  published on its account. The status belongs to the commit: a canonical
-  branch that requires it blocks that pull request's head while the reviewer
-  bot's approving status on that commit is missing or unsuccessful, and admits
-  it once the commit carries one, as when an eligible pull request has the same
-  head.
+  published on its account. The status belongs to the commit and answers only
+  the review check. Where a canonical branch requires that check, it is unmet
+  for that pull request's head while the reviewer bot's approving status on
+  that commit is missing or unsuccessful, and the merge is blocked. It is met
+  once the commit carries that approving status, as when an eligible pull
+  request has the same head; every other check the branch requires still has
+  to pass, and a failing one still blocks the merge.
 
 ## See Also
 
