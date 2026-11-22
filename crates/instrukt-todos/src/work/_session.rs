@@ -1748,7 +1748,9 @@ impl<'w> Session<'w> {
                     .delete_if(&id, |live| past_recovery(&live.record, now))?;
                 if !deleted {
                     // Another process purged or restored it meanwhile: the
-                    // session holds what the store holds now.
+                    // session holds what the store holds of this project
+                    // now. An identity another project's row holds by now
+                    // is gone from this one (`Store::item`).
                     if let Some(live) = self.store.item(&id)? {
                         self.take_row(index, live);
                         index += 1;

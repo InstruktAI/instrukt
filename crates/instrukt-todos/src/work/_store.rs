@@ -229,9 +229,12 @@ impl Store {
         )
     }
 
-    /// The stored row of `id`, `None` when there is none.
+    /// The stored row of `id`, `None` when there is none or it belongs to
+    /// another project.
     pub fn item(&self, id: &TodoId) -> Result<Option<LocalItem>, WorkError> {
-        self.read(None, |conn, path, _| load_one(conn, path, id))
+        self.read(None, |conn, path, project| {
+            load_own(conn, path, project, id)
+        })
     }
 
     pub fn pending_replies(&self, todo: &str) -> Result<Vec<(u64, String)>, WorkError> {
@@ -315,7 +318,7 @@ impl Store {
         id: &TodoId,
         expired: impl FnOnce(&LocalItem) -> bool,
     ) -> Result<bool, WorkError> {
-        self.write(|tx, path, _| match load_one(tx, path, id)? {
+        self.write(|tx, path, project| match load_own(tx, path, project, id)? {
             Some(live) if expired(&live) => {
                 delete_in(tx, path, id)?;
                 Ok(true)
@@ -348,10 +351,12 @@ impl Store {
 
     /// Writes `next`, a pull result, a listing acceptance or a refresh
     /// judged against `base`, only while the live row still equals `base`.
+    /// A row of the identity that belongs to another project is reported
+    /// gone.
     pub fn swap(&self, base: &LocalItem, next: &LocalItem) -> Result<Swapped, WorkError> {
         let id = &base.record.id;
-        self.write(|tx, path, _| {
-            let live = load_one(tx, path, id)?;
+        self.write(|tx, path, project| {
+            let live = load_own(tx, path, project, id)?;
             if live.as_ref().map(stored) != Some(stored(base)) {
                 return Ok(Swapped::Changed(live.map(Box::new)));
             }
@@ -362,15 +367,16 @@ impl Store {
 
     /// Commits what one flush learned of `loaded`, the row it re-read
     /// under the reflection lock, as `reflected`, onto the live row
-    /// ([`merge_reflection`]). `None` when the row is gone.
+    /// ([`merge_reflection`]). `None` when the row is gone or belongs to
+    /// another project.
     pub fn commit_reflection(
         &self,
         loaded: &LocalItem,
         reflected: &LocalItem,
     ) -> Result<Option<LocalItem>, WorkError> {
         let id = &loaded.record.id;
-        self.write(|tx, path, _| {
-            let Some(live) = load_one(tx, path, id)? else {
+        self.write(|tx, path, project| {
+            let Some(live) = load_own(tx, path, project, id)? else {
                 return Ok(None);
             };
             save_in(tx, path, &merge_reflection(&live, loaded, reflected))?;
@@ -379,14 +385,15 @@ impl Store {
     }
 
     /// Applies `amend` to the live row's reflection state: a note
-    /// reflection keeps on its own. `None` when the row is gone.
+    /// reflection keeps on its own. `None` when the row is gone or belongs
+    /// to another project.
     pub fn amend_reflection(
         &self,
         id: &TodoId,
         amend: impl FnOnce(&mut ReflectionState),
     ) -> Result<Option<LocalItem>, WorkError> {
-        self.write(|tx, path, _| {
-            let Some(mut live) = load_one(tx, path, id)? else {
+        self.write(|tx, path, project| {
+            let Some(mut live) = load_own(tx, path, project, id)? else {
                 return Ok(None);
             };
             amend(&mut live.reflection);
@@ -431,7 +438,12 @@ pub(crate) fn commit_local(
     others: &[TodoId],
 ) -> Result<Result<LocalItem, Refusal>, WorkError> {
     let id = &mine.record.id;
-    let live = load_one(tx, path, id)?;
+    // An identity another project's row holds is never written over, nor
+    // its row handed to this project's session.
+    let live = match load_one(tx, path, id)? {
+        Some(other) if &other.record.project != project => return Ok(Err(Refusal::Changed)),
+        live => live,
+    };
     let next = match (base, live) {
         (None, None) => mine.clone(),
         (Some(_), None) | (None, Some(_)) => return Ok(Err(Refusal::Changed)),
@@ -1085,6 +1097,17 @@ fn load_items(
     project: &ProjectSlug,
 ) -> Result<Vec<LocalItem>, WorkError> {
     load_rows(conn, path, "project = ?1", project.as_str())
+}
+
+/// The stored row of `id` when it belongs to `project`: every row a
+/// session reloads or commits by identity is one of its own project's.
+fn load_own(
+    conn: &Connection,
+    path: &Path,
+    project: &ProjectSlug,
+    id: &TodoId,
+) -> Result<Option<LocalItem>, WorkError> {
+    Ok(load_one(conn, path, id)?.filter(|item| &item.record.project == project))
 }
 
 /// The stored row of `id`, `None` when there is none.
