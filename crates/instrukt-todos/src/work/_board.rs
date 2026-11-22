@@ -4,6 +4,12 @@
 //! owns set to the record's status. The field is created when absent and
 //! missing status options are added. The owned Needs you field and cockpit
 //! views are reconciled; user fields, views and built-in workflows are preserved.
+//!
+//! Visibility is set only when instrukt creates the board: a board created for
+//! a repository GitHub reports as public is made public, every other new board
+//! keeps GitHub's private default, and a found or named board's visibility is
+//! never read or changed. When GitHub refuses that change for this viewer, the
+//! board stays private and the operator is told where it can be changed.
 
 use instrukt_core::config::BoardRef;
 use serde_json::{Value, json};
@@ -100,6 +106,9 @@ const UPDATE_VIEW: &str = "mutation($view:ID!,$layout:ProjectV2ViewLayout!,$filt
 }";
 const DELETE_VIEW: &str = "mutation($view:ID!) {
   deleteProjectV2View(input:{viewId:$view}) {projectV2View{id}}
+}";
+const PUBLISH: &str = "mutation($project:ID!) {
+  updateProjectV2(input:{projectId:$project,public:true}) {projectV2{id}}
 }";
 const CLEAR_VALUE: &str = "mutation($project:ID!,$item:ID!,$field:ID!) {
   clearProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field}) {projectV2Item{id}}
@@ -387,9 +396,37 @@ pub(crate) fn inspect(gh: &GitHub, configured: Option<&BoardRef>) -> Result<(), 
     Ok(())
 }
 
+/// Whether GitHub's repository answer (`GET /repos/{owner}/{repo}`) says the
+/// repository is public. An answer that does not say is an error, never "not
+/// public".
+fn is_public(repository: &Value) -> Result<bool, GitHubError> {
+    if repository["private"] == true {
+        return Ok(false);
+    }
+    match repository["visibility"].as_str() {
+        Some(visibility) => Ok(visibility == "public"),
+        None => Err(GitHubError::Decode {
+            path: "repository".into(),
+            message: "missing repository visibility".into(),
+        }),
+    }
+}
+
+/// Whether a failed visibility request is GitHub declining it for this
+/// viewer, which setup absorbs; every other failure propagates.
+fn declined(error: &GitHubError) -> bool {
+    matches!(error, GitHubError::Refused { .. })
+}
+
 /// Discover the repository's cockpit before creating one. Its stable title
 /// allows a retry after a lost acknowledgement to find the same resource.
-pub(crate) fn setup(gh: &GitHub, configured: Option<&BoardRef>) -> Result<BoardRef, GitHubError> {
+/// `repository` reads the repository itself, to decide a new board's
+/// visibility.
+pub(crate) fn setup(
+    gh: &GitHub,
+    repository: &GitHub,
+    configured: Option<&BoardRef>,
+) -> Result<BoardRef, GitHubError> {
     if let Some(board) = configured {
         let data = gh.graphql(RESOLVE, &json!({"owner":board.owner,"number":board.number}))?;
         if data["repositoryOwner"]["projectV2"]["id"]
@@ -433,25 +470,108 @@ pub(crate) fn setup(gh: &GitHub, configured: Option<&BoardRef>) -> Result<BoardR
                 .to_owned();
         }
     };
+    // Decided before creation, so a failed read leaves nothing behind.
+    let public = is_public(&repository.read("")?)?;
     let created = gh.graphql(
         "mutation($owner:ID!,$title:String!){ createProjectV2(input:{ownerId:$owner,title:$title}){projectV2{id number}}}",
         &json!({"owner":owner_id,"title":title}),
     )?;
-    let number = created["createProjectV2"]["projectV2"]["number"]
+    let project = &created["createProjectV2"]["projectV2"];
+    let created_field = |name: &str| GitHubError::Decode {
+        path: "/graphql".into(),
+        message: format!("created project has no {name}"),
+    };
+    let number = project["number"]
         .as_u64()
-        .ok_or_else(|| GitHubError::Decode {
-            path: "/graphql".into(),
-            message: "created project has no number".into(),
-        })?;
-    Ok(BoardRef {
+        .ok_or_else(|| created_field("number"))?;
+    let board = BoardRef {
         owner: owner.into(),
         number,
-    })
+    };
+    if public {
+        let id = project["id"]
+            .as_str()
+            .ok_or_else(|| created_field("node id"))?;
+        match gh.graphql(PUBLISH, &json!({"project": id})) {
+            Ok(_) => {}
+            Err(error) if declined(&error) => tracing::warn!(
+                event = "work_board_left_private",
+                board = %board,
+                reason = %error,
+                "GitHub refused to make the new board public; a project admin or organization \
+                 owner can make it public in the project's settings (an organization may \
+                 reserve this for its owners)"
+            ),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(board)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_repository_github_reports_as_public_gets_a_public_board() {
+        let answer = |body: Value| is_public(&body);
+        assert_eq!(
+            answer(json!({"private": true, "visibility": "public"})),
+            Ok(false)
+        );
+        assert_eq!(
+            answer(json!({"private": false, "visibility": "public"})),
+            Ok(true)
+        );
+        assert_eq!(answer(json!({"visibility": "public"})), Ok(true));
+        assert_eq!(
+            answer(json!({"private": false, "visibility": "internal"})),
+            Ok(false)
+        );
+        assert_eq!(
+            answer(json!({"private": false, "visibility": "private"})),
+            Ok(false)
+        );
+        assert!(matches!(
+            answer(json!({"private": false})),
+            Err(GitHubError::Decode { .. })
+        ));
+        assert!(matches!(
+            answer(json!({"private": false, "visibility": null})),
+            Err(GitHubError::Decode { .. })
+        ));
+    }
+
+    #[test]
+    fn only_githubs_refusal_of_the_visibility_change_is_absorbed() {
+        let refused = GitHubError::Refused {
+            status: 200,
+            message: String::new(),
+        };
+        assert!(declined(&refused));
+        let status = |status| GitHubError::Status {
+            method: "POST",
+            path: "/graphql".into(),
+            status,
+            message: String::new(),
+        };
+        for propagated in [
+            status(200),
+            status(403),
+            GitHubError::RateLimited { until: None },
+            GitHubError::Unreachable(String::new()),
+            GitHubError::Unauthorized { status: 401 },
+            GitHubError::NotFound {
+                path: "/graphql".into(),
+            },
+            GitHubError::Decode {
+                path: "/graphql".into(),
+                message: String::new(),
+            },
+        ] {
+            assert!(!declined(&propagated), "{propagated:?}");
+        }
+    }
 
     #[test]
     fn only_the_statuses_the_field_lacks_are_added() {
