@@ -80,7 +80,13 @@ pub(crate) fn observe(
         }
         _ => None,
     };
-    let (grounding, judged_grounding) = grounding(home, project_root, evidence, prerequisites)?;
+    let (grounding, judged_grounding) = grounding(
+        home,
+        project_root,
+        worktree_dir.as_deref(),
+        evidence,
+        prerequisites,
+    )?;
     let preparation_branch = evidence
         .bindings
         .iter()
@@ -288,16 +294,20 @@ fn classify(
 fn grounding(
     home: &Home,
     project_root: &Path,
+    worktree_dir: Option<&Path>,
     evidence: &TodoEvidence,
     prerequisites: &[TodoEvidence],
 ) -> Result<(Changes, Changes), ObservationError> {
     let main = git::default_branch(project_root, REMOTE)?;
     let canonical = resolve(project_root, &format!("refs/remotes/{REMOTE}/{main}"))?;
+    let owned_root = worktree_dir.unwrap_or(project_root);
     let mut reader = Current {
         home,
         project_root,
+        owned_root,
         canonical,
         corpus: None,
+        owned_corpus: None,
         prerequisites,
     };
     let mut versions = BTreeMap::new();
@@ -341,8 +351,10 @@ type Changes = BTreeMap<String, GroundingChange>;
 struct Current<'a> {
     home: &'a Home,
     project_root: &'a Path,
+    owned_root: &'a Path,
     canonical: Option<CommitSha>,
     corpus: Option<Corpus>,
+    owned_corpus: Option<Corpus>,
     prerequisites: &'a [TodoEvidence],
 }
 
@@ -352,9 +364,7 @@ impl Current<'_> {
         let code = code_change(self.project_root, recorded, self.canonical.as_ref());
         let mut unresolved = self.missing_path(recorded)?;
         let mut snippets = false;
-        let referenced = recorded.referenced_snippets.iter().map(|s| (true, s));
-        let owned = recorded.owned_snippets.iter().map(|s| (false, s));
-        for (is_reference, snippet) in referenced.chain(owned) {
+        for snippet in &recorded.referenced_snippets {
             if self.corpus.is_none() {
                 self.corpus = Some(Corpus::load(self.project_root, self.home)?);
             }
@@ -362,7 +372,31 @@ impl Current<'_> {
                 Some(corpus) => snippet_digest(self.home, self.project_root, corpus, &snippet.id)?,
                 None => None,
             };
-            unresolved |= is_reference && current.is_none();
+            unresolved |= current.is_none();
+            snippets |= current != snippet.digest;
+        }
+        for snippet in &recorded.owned_snippets {
+            let current = if self.owned_root == self.project_root {
+                if self.corpus.is_none() {
+                    self.corpus = Some(Corpus::load(self.project_root, self.home)?);
+                }
+                match &self.corpus {
+                    Some(corpus) => {
+                        snippet_digest(self.home, self.project_root, corpus, &snippet.id)?
+                    }
+                    None => None,
+                }
+            } else {
+                if self.owned_corpus.is_none() {
+                    self.owned_corpus = Some(Corpus::load(self.owned_root, self.home)?);
+                }
+                match &self.owned_corpus {
+                    Some(corpus) => {
+                        snippet_digest(self.home, self.owned_root, corpus, &snippet.id)?
+                    }
+                    None => None,
+                }
+            };
             snippets |= current != snippet.digest;
         }
         let (dependencies, dependency_unresolved) =
@@ -493,4 +527,160 @@ pub(crate) fn readiness_approved(
             change_since(root, root, target, candidate),
             ChangeSinceReview::Unchanged | ChangeSinceReview::CleanUpstreamMerges
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::SnippetDigest;
+
+    fn write_snippet(root: &Path, rel: &str, body: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    fn init_project_dir(root: &Path) {
+        std::fs::write(root.join("instrukt.yaml"), "project: demo\n").unwrap();
+    }
+
+    #[test]
+    fn owned_snippets_read_from_active_worktree_so_unintegrated_pending_carriers_settle() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let worktree = tempfile::tempdir().unwrap();
+        init_project_dir(project.path());
+        init_project_dir(worktree.path());
+
+        let base_doc = "---\ndescription: spec.\n---\n# Owned\n\nBase body.\n";
+        let pending_doc = "---\ndescription: spec.\n---\n# Owned\n\nBase body.\n<!-- planned:my-todo -->\nPending clause.\n<!-- /planned:my-todo -->\n";
+        write_snippet(project.path(), "docs/project/policy/owned.md", base_doc);
+        write_snippet(worktree.path(), "docs/project/policy/owned.md", pending_doc);
+
+        let home = Home::at_user_home(home_dir.path().to_path_buf());
+        let recorded = Grounding {
+            owned_snippets: vec![SnippetDigest {
+                id: SnippetId::parse("project/demo/policy/owned").unwrap(),
+                digest: Some(ContentDigest::of(pending_doc)),
+            }],
+            ..Default::default()
+        };
+        let mut reader = Current {
+            home: &home,
+            project_root: project.path(),
+            owned_root: worktree.path(),
+            canonical: None,
+            corpus: None,
+            owned_corpus: None,
+            prerequisites: &[],
+        };
+        let change = reader.change(&recorded).unwrap();
+        assert!(!change.snippets);
+        assert!(!change.unresolved);
+    }
+
+    #[test]
+    fn owned_snippet_change_in_active_worktree_reports_snippet_drift() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let worktree = tempfile::tempdir().unwrap();
+        init_project_dir(project.path());
+        init_project_dir(worktree.path());
+
+        let base_doc = "---\ndescription: spec.\n---\n# Owned\n\nBase body.\n";
+        let v1_doc = "---\ndescription: spec.\n---\n# Owned\n\n<!-- planned:my-todo -->\nv1.\n<!-- /planned:my-todo -->\n";
+        let v2_doc = "---\ndescription: spec.\n---\n# Owned\n\n<!-- planned:my-todo -->\nv2.\n<!-- /planned:my-todo -->\n";
+        write_snippet(project.path(), "docs/project/policy/owned.md", base_doc);
+        write_snippet(worktree.path(), "docs/project/policy/owned.md", v2_doc);
+
+        let home = Home::at_user_home(home_dir.path().to_path_buf());
+        let recorded = Grounding {
+            owned_snippets: vec![SnippetDigest {
+                id: SnippetId::parse("project/demo/policy/owned").unwrap(),
+                digest: Some(ContentDigest::of(v1_doc)),
+            }],
+            ..Default::default()
+        };
+        let mut reader = Current {
+            home: &home,
+            project_root: project.path(),
+            owned_root: worktree.path(),
+            canonical: None,
+            corpus: None,
+            owned_corpus: None,
+            prerequisites: &[],
+        };
+        let change = reader.change(&recorded).unwrap();
+        assert!(change.snippets);
+    }
+
+    #[test]
+    fn referenced_snippets_continue_reading_from_primary_project_checkout() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let worktree = tempfile::tempdir().unwrap();
+        init_project_dir(project.path());
+        init_project_dir(worktree.path());
+
+        let old_ref = "---\ndescription: ref.\n---\n# Ref\n\nOld upstream.\n";
+        let new_ref = "---\ndescription: ref.\n---\n# Ref\n\nNew upstream on main.\n";
+        write_snippet(project.path(), "docs/project/policy/upstream.md", new_ref);
+        write_snippet(worktree.path(), "docs/project/policy/upstream.md", old_ref);
+
+        let home = Home::at_user_home(home_dir.path().to_path_buf());
+        let recorded = Grounding {
+            referenced_snippets: vec![SnippetDigest {
+                id: SnippetId::parse("project/demo/policy/upstream").unwrap(),
+                digest: Some(ContentDigest::of(old_ref)),
+            }],
+            ..Default::default()
+        };
+        let mut reader = Current {
+            home: &home,
+            project_root: project.path(),
+            owned_root: worktree.path(),
+            canonical: None,
+            corpus: None,
+            owned_corpus: None,
+            prerequisites: &[],
+        };
+        let change = reader.change(&recorded).unwrap();
+        assert!(change.snippets);
+        assert!(!change.unresolved);
+    }
+
+    #[test]
+    fn owned_snippets_fall_back_to_project_root_when_no_worktree_is_active() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        init_project_dir(project.path());
+
+        let integrated_doc = "---\ndescription: spec.\n---\n# Owned\n\nIntegrated clause.\n";
+        write_snippet(
+            project.path(),
+            "docs/project/policy/owned.md",
+            integrated_doc,
+        );
+
+        let home = Home::at_user_home(home_dir.path().to_path_buf());
+        let recorded = Grounding {
+            owned_snippets: vec![SnippetDigest {
+                id: SnippetId::parse("project/demo/policy/owned").unwrap(),
+                digest: Some(ContentDigest::of(integrated_doc)),
+            }],
+            ..Default::default()
+        };
+        let mut reader = Current {
+            home: &home,
+            project_root: project.path(),
+            owned_root: project.path(),
+            canonical: None,
+            corpus: None,
+            owned_corpus: None,
+            prerequisites: &[],
+        };
+        let change = reader.change(&recorded).unwrap();
+        assert!(!change.snippets);
+        assert!(!change.unresolved);
+    }
 }

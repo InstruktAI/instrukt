@@ -694,6 +694,7 @@ impl Work {
         let completion =
             super::_attempts::completion_binding(&record, session.as_ref(), cwd, request)?;
         if let Some((binding, _)) = completion
+            && !matches!(request, StampRequest::DriftReviewed { .. })
             && record.bindings[binding].attempt.released_at.is_some()
             && let Some(sequence) = record.bindings[binding].attempt.completion_sequence
             && let Some(stamp) = record
@@ -802,12 +803,17 @@ impl Work {
                 docs_changed: std::mem::take(&mut s.docs_changed),
             });
         }
-        if matches!(stamp.fact, StampFact::DiagnosisSettled { .. })
+        if (matches!(stamp.fact, StampFact::DiagnosisSettled { .. })
+            || matches!(stamp.fact, StampFact::DriftReviewed { .. }))
             && let Some(prior) = record
                 .stamps
                 .iter()
                 .rev()
-                .find(|prior| prior.fact == stamp.fact)
+                .find(|prior| {
+                    prior.fact == stamp.fact
+                        && (!matches!(stamp.fact, StampFact::DriftReviewed { .. })
+                            || prior.actor == stamp.actor)
+                })
                 .cloned()
         {
             if let Some((binding, _)) = completion
@@ -816,7 +822,7 @@ impl Work {
                 let now = s.now;
                 let completed_head = super::_stamps::head(cwd)?;
                 let sequence = prior.sequence;
-                s.commit("reconcile settled diagnoser attempt", |s| {
+                s.commit("reconcile completed read-only attempt", |s| {
                     let b = &mut s.items[index].record.bindings[binding];
                     b.attempt.completion_sequence = Some(sequence);
                     b.attempt.completed_head = Some(completed_head.clone());
@@ -876,7 +882,9 @@ impl Work {
                 let b = &mut record.bindings[binding];
                 b.attempt.completion_sequence = Some(stamp.sequence);
                 b.attempt.completed_head = Some(super::_stamps::head(cwd)?);
-                b.attempt.released_at = Some(now);
+                if b.attempt.released_at.is_none() {
+                    b.attempt.released_at = Some(now);
+                }
             }
             record.stamps.push(stamp);
             Ok(())
@@ -1595,9 +1603,13 @@ fn grounding_now(
         let record = &s.items[index].record;
         (record.slug.clone(), record.after.clone())
     };
+    let owned_root = &s.project.root;
+    let project_root = instrukt_core::repository::primary_worktree(owned_root)
+        .map_err(|err| WorkError::refused(err.to_string()))?;
     let mut grounding = super::_grounding::ground(
         s.home(),
-        &s.project.root,
+        &project_root,
+        owned_root,
         &s.project.slug,
         &s.base,
         &slug,

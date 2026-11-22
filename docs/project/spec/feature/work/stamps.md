@@ -153,7 +153,11 @@ Preparation doc writers (`intaker`, `architect`, `planner`) also record
 `--role-complete` against the required artifact digests and authored commit SHAs
 at the clean todo-worktree head. It releases that writer so the parent can dispatch independent
 review. Preparation verdict stamps release their corresponding reviewer attempts;
-commit reviews retain the exact SHA and report-note binding. Missing outputs keep
+commit reviews retain the exact SHA and report-note binding. Drift review
+stamps (`--drift-reviewed`) release their bound read-only `drift-analyzer`
+attempt against the clean captured head and admit additional artifact stamps
+from that attempt until later workspace work begins; exact replay reconciles an
+unreleased attempt without duplicating the stamp. Missing outputs keep
 the writer outstanding. Commit review remains owed after writer release.
 
 Review rounds count verdict stamps; repeated evaluation counts no round.
