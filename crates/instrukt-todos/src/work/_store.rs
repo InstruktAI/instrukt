@@ -611,39 +611,69 @@ pub(crate) fn cycle_in(
         }
     }
     for copy in load_copies(tx, path, project)? {
-        let record = copy.record;
-        if nodes.iter().any(|n| n.id == record.id) {
-            continue;
+        if !nodes.iter().any(|n| n.id == copy.record.id) {
+            nodes.push(WaitNode::of(&copy.record, false));
         }
-        nodes.push(WaitNode {
-            after: record.after.iter().map(|r| r.id.clone()).collect(),
-            group: record.group.as_ref().map(|g| g.id.clone()),
-            holder: record.status == TodoStatus::StructuralHolder,
-            live: record.is_live(),
-            local: false,
-            id: record.id,
-            slug: record.slug,
-        });
     }
     Ok(first_cycle(&nodes, through))
 }
 
-/// The first cycle of waiting through one of `through` in `graph`: a todo
-/// waits on its prerequisites, and a structural holder on its children (a
-/// listing copy's only while it is live), as the relationship checks judge
-/// it.
+impl WaitNode {
+    /// `record` as the waiting graph sees it; `local` for a local item's
+    /// record, rather than a listing copy's.
+    pub(crate) fn of(record: &TodoRecord, local: bool) -> Self {
+        Self {
+            id: record.id.clone(),
+            slug: record.slug.clone(),
+            after: record.after.iter().map(|r| r.id.clone()).collect(),
+            group: record.group.as_ref().map(|g| g.id.clone()),
+            holder: record.status == TodoStatus::StructuralHolder,
+            live: record.is_live(),
+            local,
+        }
+    }
+}
+
+/// What `of` waits on in `graph` (`dependencies-and-holds`): its
+/// prerequisites, and for a structural holder its children, a listing
+/// copy's only while it is live. A prerequisite the graph does not hold is
+/// named all the same; what it waits on is unknown.
+pub(crate) fn waits_on<'g>(graph: &'g [WaitNode], of: &'g WaitNode) -> Vec<&'g TodoId> {
+    let mut next: Vec<&TodoId> = of.after.iter().collect();
+    if of.holder {
+        next.extend(
+            graph
+                .iter()
+                .filter(|c| c.group.as_ref() == Some(&of.id) && (c.local || c.live))
+                .map(|c| &c.id),
+        );
+    }
+    next
+}
+
+/// Every todo waiting from `start` reaches in `graph` ([`waits_on`]),
+/// `start` included.
+pub(crate) fn reached(graph: &[WaitNode], start: &TodoId) -> std::collections::BTreeSet<TodoId> {
+    let mut found = std::collections::BTreeSet::new();
+    let mut frontier = vec![start.clone()];
+    while let Some(id) = frontier.pop() {
+        if !found.insert(id.clone()) {
+            continue;
+        }
+        if let Some(node) = graph.iter().find(|n| n.id == id) {
+            frontier.extend(waits_on(graph, node).into_iter().cloned());
+        }
+    }
+    found
+}
+
+/// The first cycle of waiting ([`waits_on`]) through one of `through` in
+/// `graph`: the one rule both a command's check of the graph it read and
+/// its transaction's check of the graph it commits to apply.
 pub(crate) fn first_cycle(graph: &[WaitNode], through: &[TodoId]) -> Option<Vec<TodoSlug>> {
     let node = |id: &TodoId| graph.iter().find(|n| &n.id == id);
     let waits = |of: &WaitNode| -> Vec<&WaitNode> {
-        let mut next: Vec<&WaitNode> = of.after.iter().filter_map(node).collect();
-        if of.holder {
-            next.extend(
-                graph
-                    .iter()
-                    .filter(|c| c.group.as_ref() == Some(&of.id) && (c.local || c.live)),
-            );
-        }
-        next
+        waits_on(graph, of).into_iter().filter_map(node).collect()
     };
     for start in through.iter().filter_map(node) {
         let mut stack: Vec<Vec<&WaitNode>> = waits(start)
@@ -1979,6 +2009,23 @@ mod tests {
         let cycle = first_cycle(&graph, &[graph[0].id.clone()]).unwrap();
         let names: Vec<&str> = cycle.iter().map(TodoSlug::as_str).collect();
         assert_eq!(names, ["alpha", "hold", "beta", "alpha"]);
+    }
+
+    #[test]
+    fn waiting_reaches_a_holder_s_children_and_a_prerequisite_the_graph_does_not_hold() {
+        let graph = [
+            node("alpha", &["hold"], None),
+            holder(node("hold", &[], None)),
+            node("beta", &["zulu"], Some("hold")),
+            node("xray", &[], None),
+        ];
+        let mut reached: Vec<String> = reached(&graph, &graph[0].id)
+            .iter()
+            .map(|id| id.as_str()[..2].to_owned())
+            .collect();
+        reached.sort();
+        // alpha, beta, hold and the unknown zulu; never the unrelated xray.
+        assert_eq!(reached, ["61", "62", "68", "7a"]);
     }
 
     #[test]

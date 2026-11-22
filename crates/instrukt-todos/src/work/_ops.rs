@@ -2051,68 +2051,40 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
     Ok(warnings)
 }
 
-/// What a todo waits on: its prerequisites, and for a structural holder
-/// its children (a holder's milestone is every child's).
-fn waits_on(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoRef> {
-    let Some(record) = s.record_current(id) else {
-        return Vec::new();
-    };
-    let mut next = record.after.clone();
-    if record.status == TodoStatus::StructuralHolder {
-        let mut children: Vec<TodoRef> = s
-            .items
-            .iter()
-            .map(|it| &it.record)
-            .filter(|r| r.group.as_ref().is_some_and(|g| &g.id == id))
-            .map(TodoRecord::reference)
+/// A cycle of waiting through `record`, if the project graph has one: the
+/// slugs from `record` back to itself ([`_store::first_cycle`]). Every todo
+/// the waiting from `record` reaches is refreshed first, once per command,
+/// so the graph is judged as GitHub holds it now.
+fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
+    loop {
+        let graph = wait_graph(s);
+        let unrefreshed: Vec<TodoId> = super::_store::reached(&graph, &record.id)
+            .into_iter()
+            .filter(|id| !s.consulted(id))
             .collect();
-        for copy in &s.copies {
-            let remote = &copy.record;
-            if remote.group.as_ref().is_some_and(|g| &g.id == id)
-                && remote.is_live()
-                && !children.iter().any(|c| c.id == remote.id)
-            {
-                children.push(remote.reference());
-            }
+        if unrefreshed.is_empty() {
+            return super::_store::first_cycle(&graph, std::slice::from_ref(&record.id));
         }
-        next.extend(children);
+        for id in &unrefreshed {
+            s.record_current(id);
+        }
     }
-    next
 }
 
-/// A cycle of waiting through `record`, if the project graph has one: the
-/// slugs from `record` back to itself. A holder waits on its children, so
-/// reaching one of `record`'s holders closes the cycle through its group.
-fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
-    let above = ancestors(s, &record.id);
-    let mut stack: Vec<(TodoRef, Vec<TodoSlug>)> = waits_on(s, &record.id)
-        .into_iter()
-        .map(|next| {
-            let path = vec![record.slug.clone(), next.slug.clone()];
-            (next, path)
-        })
+/// The waiting graph as the session holds it: every local item, and the
+/// listing copy of every todo that is not one.
+fn wait_graph(s: &Session<'_>) -> Vec<super::_store::WaitNode> {
+    let mut graph: Vec<super::_store::WaitNode> = s
+        .items
+        .iter()
+        .map(|it| super::_store::WaitNode::of(&it.record, true))
         .collect();
-    let mut seen: BTreeSet<TodoId> = BTreeSet::new();
-    while let Some((current, path)) = stack.pop() {
-        if current.id == record.id {
-            return Some(path);
-        }
-        if above.contains(&current.id) {
-            // The holder waits on its children down to `record`.
-            let mut path = path;
-            path.push(record.slug.clone());
-            return Some(path);
-        }
-        if !seen.insert(current.id.clone()) {
-            continue;
-        }
-        for next in waits_on(s, &current.id) {
-            let mut longer = path.clone();
-            longer.push(next.slug.clone());
-            stack.push((next, longer));
+    for copy in &s.copies {
+        if !graph.iter().any(|n| n.id == copy.record.id) {
+            graph.push(super::_store::WaitNode::of(&copy.record, false));
         }
     }
-    None
+    graph
 }
 
 fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>, WorkError> {

@@ -2031,6 +2031,12 @@ impl<'w> Session<'w> {
         self.record_by_id(id)
     }
 
+    /// Whether this command already refreshed todo `id` for its
+    /// relationship checks ([`Session::record_current`]).
+    pub fn consulted(&self, id: &TodoId) -> bool {
+        self.current.contains(id)
+    }
+
     /// The live todo `slug` names, a local item or a listing copy.
     pub fn live_ref(&mut self, slug: &TodoSlug) -> Option<TodoRecord> {
         if let Some(index) = self.find(slug, false) {
