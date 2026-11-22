@@ -56,6 +56,15 @@ check runs:
 - **`no_ci`:** nothing has reported for the candidate and the canonical
   head carries no status and no check run; the project has no CI.
 
+<!-- planned:event-driven-pr-review-gate -->
+The review status (`project/instrukt/spec/feature/work/github-apps`) is not a
+CI result: classification ignores it, and a project whose commits carry only
+review statuses has no CI. On a project that opted in to automatic review, a
+candidate's result is complete only once the reviewer bot's review status is
+reported on the candidate commit: it is pending while that status is absent,
+`failure` when that status is a failure, and otherwise the CI result.
+<!-- /planned:event-driven-pr-review-gate -->
+
 | Observed result | Integrator obligation |
 | --- | --- |
 | Required CI checks are green for the candidate | Fast-forward the canonical branch to that exact commit and push it. |
@@ -67,12 +76,49 @@ Any candidate altered by remediation is verified in its resulting form before
 promotion. The standing integrator drives this process; an automatic merge
 queue does not select, merge or discard candidates on its behalf.
 
+<!-- planned:event-driven-pr-review-gate -->
+### Review coverage of a candidate
+
+On a project that opted in to automatic review, each tick that observes an
+active candidate without the reviewer bot's review status derives whether the
+content the candidate adds to the canonical branch is covered. A commit the
+candidate adds is covered when one of these holds.
+
+| Covered commit | Evidence |
+| --- | --- |
+| Contained in a finalized commit or an approved preparation head | The todo's record: current independent approval of that exact head (`project/instrukt/spec/feature/workflow/delivery-cycle`, `project/instrukt/spec/feature/workflow/preparation`). |
+| Contained in any other head that carries the reviewer bot's approving review status | That status on the exact head commit, as GitHub carries it. |
+| A merge whose tree is the mechanical merge of its parents | Reproduced from its parents. A merge resolved by hand is not reproduced. |
+| A documentation fold | Reproduced by folding its parent's tree. |
+| A revert of a commit on the canonical branch | Reproduced from that commit and the revert's parent. |
+
+A candidate whose every added commit is covered receives a derived approval,
+which work publishes as the review status on the candidate commit
+(`project/instrukt/spec/feature/work/github-apps`). Any other candidate adds
+content beyond reviewed heads: the runner asks for an independent review of the
+exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`,
+Review activation), and that review's verdict is the candidate's review status.
+A candidate is never approved on its covered part alone, and a different
+candidate commit is derived afresh.
+
+Reproduction compares trees and judges no content
+(`general/principle/intelligence-boundaries`): a commit either equals what
+instrukt computes from its parents or the candidate is reviewed.
+<!-- /planned:event-driven-pr-review-gate -->
+
 ### Canonical-branch guard
 
 For a project with CI, GitHub branch protection requires the applicable green
 status checks on the candidate commit before a push can advance the canonical
 branch. A missing or failing required result supplies no admission. This is
 an integrity guard in addition to the integrator's judgment.
+
+<!-- planned:event-driven-pr-review-gate -->
+Where the repository owner also requires the review status from the reviewer
+bot, the same push needs that status on the candidate commit. Requiring it is
+the owner's administration act
+(`project/instrukt/spec/feature/runner/pull-request-review`).
+<!-- /planned:event-driven-pr-review-gate -->
 
 The canonical-branch push promotes the exact candidate without creating an
 untested merge commit. That push is also the publication boundary observed by
@@ -105,6 +151,11 @@ repairing the cause in a separate todo, and keeps subsequent deliveries from
 building on the known-red baseline. The integrator judges whether the failure
 warrants a bug, deduplicates against existing work and files it once when
 warranted; the runner never turns every red check into a bug automatically.
+
+<!-- planned:event-driven-pr-review-gate -->
+A revert is covered by reproduction, so on a project that requires the review
+status the restoring candidate carries it without waiting for a review.
+<!-- /planned:event-driven-pr-review-gate -->
 
 When the integrator cannot restore the baseline, the condition is an anomaly
 that can require notification. Ordinary approval and new-intent requests
@@ -202,6 +253,19 @@ When their integrator assesses that evidence
 Then it judges whether the failure warrants a bug
 And when warranted it records the bug work once, reusing matching existing work
 ```
+
+<!-- planned:event-driven-pr-review-gate -->
+### UC-IG7: A developer's reviewed work is promoted under a required review status
+
+```gherkin
+Given a developer's project has opted in to automatic review and requires the review status on its canonical branch
+When their integrator submits a candidate that only merges independently approved work
+Then that candidate carries the reviewer bot's approving review status without a further review
+When a candidate adds content that no approving review covers
+Then that exact candidate is reviewed independently before it carries a review status
+But a revert of a failing delivery carries the status without waiting for a review
+```
+<!-- /planned:event-driven-pr-review-gate -->
 
 ## Known caveats
 

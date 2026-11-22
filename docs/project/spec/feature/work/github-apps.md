@@ -132,9 +132,56 @@ reviewer bot in two places:
 | Approve | Approving review | Success |
 | Needs work | Change-requesting review carrying the findings | Failure |
 
-The status names the exact commit that was reviewed; a later head never inherits
-it. The reviewer bot is the status's only publisher; a status of the same name
-from another identity is not a verdict.
+The status is named `instrukt/review`. It names the exact commit that was
+reviewed; a later head never inherits it. The reviewer bot is the status's only
+publisher; a status of the same name from another identity is not a verdict.
+The reviewer identity is the App the `commit-reviewer` role selects.
+
+### Head verdicts
+
+A head verdict is work's record of an independent review's outcome for one
+exact commit of the project's repository that no todo's record carries: the
+commit, the verdict, the review report, the reviewing session and, when the
+review concerns a pull request, its number.
+
+| Command | Contract |
+| --- | --- |
+| `instrukt review record --head <sha> --verdict approve\|needs_work --report <file\|-> [--pull <number>]` | Records the verdict with its report, then publishes it. A later verdict for the same commit is a new version; the latest is current. A reviewer bound to one subject records verdicts for that subject only, and the refusal names the subject it holds. |
+| `instrukt review show <sha>` | The commit's verdict versions and their publication state, with the cause of a pending publication. |
+
+The record is written before anything is published. Publication writes the
+pull-request review, when a pull request is named, and the review status on the
+commit. It first recognises what GitHub already carries from the reviewer bot
+for that commit, so a retry writes neither twice. An unavailable or refusing
+GitHub leaves the verdict recorded and its publication pending with the cause;
+each tick's reflection flush retries it
+(`project/instrukt/spec/feature/work/github-record`). GitHub refuses the
+reviewer bot's approving review of a pull request it authored itself; that
+refusal stays reported and the status is published regardless.
+
+A derived approval is a head verdict without a report: workflow's finding that
+an integration candidate's content is covered by approving reviews
+(`project/instrukt/spec/feature/workflow/integration-gate`), recorded with the
+covering heads and published as the review status on the candidate commit. It
+names no pull request and publishes no review.
+
+Head verdicts are kept per computer; the review status on GitHub carries a
+verdict to other computers. A published verdict is retired once its commit is
+contained in the canonical branch, and otherwise ninety days after it was
+recorded. An unpublished verdict is kept.
+
+### Reviewer readiness for automatic review
+
+Publishing needs the reviewer identity's App installed on the project's
+repository with write access to pull requests and to commit statuses. Work
+verifies this by requesting an installation credential scoped to exactly those
+permissions, where the project's opt-in is admitted and in
+`instrukt install --check`
+(`project/instrukt/spec/feature/configuration/layered-configuration`). A
+missing installation or permission is an unmet finding naming the App, the
+repository, the missing permission and the configuration repair door. The
+credential that reflects build reviews is unchanged: a project that has not
+opted in needs no commit-status permission.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Use cases

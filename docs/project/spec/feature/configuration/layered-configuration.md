@@ -42,6 +42,37 @@ produces a plain validation finding naming that switch. An empty map adds no rec
 enable events. Installation and withdrawal are owned by
 `project/instrukt/spec/feature/runner/module-installation`; these schema rules install nothing.
 
+<!-- planned:event-driven-pr-review-gate -->
+### Automatic review enablement
+
+`review.automatic` is a boolean allowed in the project layer only and defaults
+off. On, it opts that project in to automatic independent review: the runner
+observes its pull requests and the integration candidate carries the review
+status (`project/instrukt/spec/feature/runner/pull-request-review`,
+`project/instrukt/spec/feature/workflow/integration-gate`). A global value is a
+finding: no machine setting opts a repository in.
+
+Each of these is a finding at `review.automatic`, in plain words naming what is
+missing:
+
+- the project's effective `modules.events` is off, since review activation is
+  an event response;
+- the project's code is not on GitHub
+  (`project/instrukt/spec/feature/work/github-record`);
+- the reviewer identity cannot publish pull-request reviews and commit statuses
+  on the project's repository, as work's readiness reports it
+  (`project/instrukt/spec/feature/work/github-apps`, Reviewer readiness for
+  automatic review).
+
+`config patch` refuses a write that would switch it on with such a finding,
+`config validate` and `install --check` report it, and a project layer that
+arrives with it through a commit is not admitted for automatic review on that
+computer; its other capabilities are unaffected
+(`project/instrukt/policy/checks-and-guards`). The readiness finding needs
+GitHub; while GitHub cannot be asked, admission waits and retries rather than
+refusing or admitting.
+<!-- /planned:event-driven-pr-review-gate -->
+
 ### Layer rules
 
 | Key | Layer | Meaning owned by |

@@ -101,6 +101,18 @@ not permission for an upstream module to depend on its consumer.
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
 
+<!-- planned:event-driven-pr-review-gate -->
+Automatic review adds these crossings; their composition is the review gate in
+`project/instrukt/design/architecture/overview`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner, work, workflow | Customer / Supplier | The per-project automatic-review opt-in |
+| work → configuration, runner | Customer / Supplier | The reviewer identity's publishing readiness, consulted where the opt-in is admitted and by installation inspection |
+| work → runner | Customer / Supplier | Whether a pull request is a todo's; recording a derived approval and flushing pending head-verdict publication through work's command contract |
+| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, the work record and the review statuses the runner observed |
+<!-- /planned:event-driven-pr-review-gate -->
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator

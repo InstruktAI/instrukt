@@ -66,6 +66,16 @@ runner owns dispatch, and the configured runtime owns conversations.
 **Eval fingerprint**
 : The identity of the process-document set in force when evidence is stamped.
 
+<!-- planned:event-driven-pr-review-gate -->
+**Head verdict**
+: An independent review's recorded outcome for one exact commit that no todo's
+  record carries, published as the reviewer bot's review status on that commit.
+
+**Derived approval**
+: A head verdict recorded for an integration candidate from workflow's finding
+  that approving reviews cover its content, with no review of its own.
+<!-- /planned:event-driven-pr-review-gate -->
+
 ## Ownership boundary
 
 - **Owns:** todo identity and record mutations; artifact versions; stamp
@@ -98,6 +108,16 @@ runner owns dispatch, and the configured runtime owns conversations.
 - **Implementation roots:** the `instrukt-todos` crate.
 
 Preparation head reviews belong to the todo record: exact clean head, complete findings digest, independent reviewer and immediate integration event. One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
+
+<!-- planned:event-driven-pr-review-gate -->
+Work also owns head verdicts, the review outcomes of exact commits that no
+todo's record carries, with their publication as the reviewer bot's
+pull-request review and review status; `instrukt review record` and
+`instrukt review show` are their published contract
+(`project/instrukt/spec/feature/work/github-apps`). Which heads are reviewed is
+the runner's decision and whether a candidate's content is covered is
+workflow's.
+<!-- /planned:event-driven-pr-review-gate -->
 
 ## Canonical fields
 
@@ -150,6 +170,23 @@ and issues installation credentials under
 - **Identifier:** project identity; relationships address durable todo identities.
 - **Lifecycle:** grows and changes as work is filed, grouped, reordered and
   retired; it preserves the context needed to read retained work.
+
+<!-- planned:event-driven-pr-review-gate -->
+#### Head verdict
+
+- **Root entity:** the verdict on one exact commit of a project's repository.
+- **Contains:** its versions, each with verdict, report or covering heads,
+  reviewing session and optional pull request, and what has been published of
+  the current version.
+- **Invariants:** a version is recorded before anything of it is published; a
+  verdict names one commit and no other commit inherits it; only the reviewer
+  identity publishes it. Recording, publication and readiness belong to
+  `project/instrukt/spec/feature/work/github-apps`.
+- **Identifier:** project and commit.
+- **Lifecycle:** recorded by the reviewer through `instrukt review record`, or
+  by the runner through work's command contract for a derived approval;
+  published by reflection; retired after publication under the same contract.
+<!-- /planned:event-driven-pr-review-gate -->
 
 ### Domain events emitted
 
@@ -222,6 +259,14 @@ owning design snippet or decision record is declared.
   through the core-declared interface wired by the CLI.
 - **Work → repository** — customer-supplier. Work supplies todo existence
   through the core-declared interface wired by the CLI when todos is enabled.
+
+<!-- planned:event-driven-pr-review-gate -->
+- **Work → runner (automatic review)** — customer-supplier. Work answers whether
+  a pull request is a todo's and whether the reviewer identity can publish, and
+  through its command contract records a derived approval, carrying the
+  coverage finding the runner read from workflow, and flushes pending verdict
+  publication.
+<!-- /planned:event-driven-pr-review-gate -->
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation
   references; work stores these without translating native runtime mechanics.

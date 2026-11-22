@@ -437,6 +437,54 @@ unavailable homes fail there.
 Runtime delivery retains procedure-first briefing, untrusted event provenance and
 session-fixed timing through A3's bounded batch log.
 
+<!-- planned:event-driven-pr-review-gate -->
+### Review gate
+
+On a project that opts in, every commit GitHub checks before the canonical
+branch advances carries the reviewer bot's review status, obtained without
+anyone asking: an eligible pull request's current head and the integrator's
+candidate. Four contexts take part and each keeps its own decision.
+
+| Context | Decides | Contract |
+| --- | --- | --- |
+| runner | Which heads need review; activation of the reviewer | `project/instrukt/spec/feature/runner/pull-request-review` |
+| work | The head verdict record, the reviewer identity and how a verdict is published | `project/instrukt/spec/feature/work/github-apps` |
+| workflow | Whether a candidate's content is covered by approving reviews | `project/instrukt/spec/feature/workflow/integration-gate` |
+| configuration | The per-project opt-in and where its prerequisite is refused | `project/instrukt/spec/feature/configuration/layered-configuration` |
+
+```mermaid
+sequenceDiagram
+  participant G as GitHub
+  participant R as runner (tick)
+  participant V as reviewer (agent)
+  participant W as work
+  participant F as workflow
+  participant I as integrator (agent)
+  R->>G: open pull requests, heads, reviewer statuses (conditional requests)
+  R-->>V: runner.review_needed for an exact head
+  V->>W: instrukt review record (verdict, report)
+  W->>G: review on the pull request and review status on the commit, as the reviewer bot
+  R->>F: active candidate: is its content covered?
+  alt covered by approving reviews
+    R->>W: record the derived approval
+    W->>G: review status on the candidate commit
+  else content beyond reviewed heads
+    R-->>V: runner.review_needed for the exact candidate
+  end
+  R-->>I: runner.ci_completed once CI and the review status are both reported
+```
+
+The runner reads GitHub and decides eligibility; it decides nothing about a
+verdict. A verdict is recorded locally before it is published, so publication
+is retried from the record and never repeats a review
+(`sdlc/policy/state-storage`). GitHub's review status carries a verdict between
+computers: an observer that finds the reviewer bot's status on a head starts no
+review, and coverage accepts the reviewer bot's approving status on a merged
+head whichever computer published it. Observation rides the tick's existing
+conditional GitHub pass, activation the event platform and publication work's
+reflection; the gate adds no webhook, queue or process.
+<!-- /planned:event-driven-pr-review-gate -->
+
 ## Failure modes
 
 - **The program panics:** the terminal shows only `instrukt stopped
@@ -484,3 +532,19 @@ session-fixed timing through A3's bounded batch log.
   `instrukt docs validate --no-todo-lookup` to omit the live existence lookup
   while keeping slug-form, pending-marker, workflow-role and all other
   structural checks (`project/instrukt/spec/feature/docs/snippet-validation`).
+
+<!-- planned:event-driven-pr-review-gate -->
+- **A reviewer records no verdict for a head it was handed:** that head keeps no
+  review status and, where the status is required, cannot merge; the same head
+  is not asked for again. A new push is a new head and is reviewed.
+- **GitHub is unavailable or refuses while a verdict waits for publication:**
+  the verdict stays recorded with its publication pending and its cause; a later
+  tick publishes it. The review is not repeated.
+- **The reviewer bot authored the pull request under review:** GitHub refuses
+  its approving review of its own pull request; the refusal stays reported on
+  the verdict and the review status is published regardless.
+- **A candidate adds content instrukt cannot reproduce from its parents:** it
+  receives no derived approval; the exact candidate is reviewed, and promotion
+  waits for that verdict.
+<!-- /planned:event-driven-pr-review-gate -->
+

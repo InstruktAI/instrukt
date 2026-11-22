@@ -69,6 +69,17 @@ of the same branch/head/run/conclusion is idempotent; a new head or failed rerun
 is fresh evidence. The source needs the existing Git remote and GitHub observation
 credentials, not a webhook or separate failure delivery service.
 
+<!-- planned:event-driven-pr-review-gate -->
+On a project that opted in to automatic review, the same conditional pass reads
+the repository's open pull requests and, for a head not yet asked for, that
+commit's statuses. An eligible unreviewed head produces `runner.review_needed`
+and wakes its subscribed reviewer; which heads are eligible is owned by
+`project/instrukt/spec/feature/runner/pull-request-review`. The review status
+is not a CI result: the candidate, canonical and dependency-update CI sources
+ignore it (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- /planned:event-driven-pr-review-gate -->
+
+
 State watching needs no public address; signed webhook sources additionally use the opt-in ingress receiver. Each tick considers watched upstream refs, CI
 status per active candidate SHA and the CI status of remote canonical main's
 head commit, plus dependency-update branch check runs, subject to the source poll interval. It does not depend on delivery guarantees: a missed

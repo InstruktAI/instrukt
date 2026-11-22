@@ -33,6 +33,10 @@ costs no rate quota, and a missed tick is caught by the next tick reading
 current state. The tick is the only trigger: observation needs no public
 address, and a webhook delivery starts no review.
 
+For an eligible head this computer has not yet asked to have reviewed, the tick
+also reads that commit's statuses, so a verdict the reviewer identity published
+from another computer is recognised and starts no second review.
+
 ### Which heads are reviewed
 
 | Pull request state | Outcome |
@@ -55,19 +59,57 @@ independent reviewer on that exact head under
 `sdlc/procedure/lifecycle/work/review-commits`, with no involvement from the
 authoring session.
 
+A bot account is a trusted author only as a configured App's verified bot
+identity, whatever association GitHub reports for it. A pull request is a
+dependency update when its head branch falls under the project's
+dependency-update branch selection
+(`project/instrukt/spec/feature/runner/event-activation`). Whether a pull
+request is owned by a todo's work lifecycle is work's answer
+(`project/instrukt/spec/feature/work/github-record`); the runner asks and does
+not derive it.
+
 A change-requesting review reaches an authoring thread that watches the pull
 request through its runtime's pull-request watch; the fix it pushes is a new
 head and is reviewed automatically.
 
+### Review activation
+
+A head that needs review is the fact `runner.review_needed`
+(`project/instrukt/spec/domain/runner`). Its subject is the head's ref in the
+project's remote, a repository ref: the pull request's head ref. Its data names
+the pull request and the exact head commit, and its occurrence identity is the
+project, that ref and that commit, so one head observed many times is one fact.
+
+The fact is a state. While a head's fact is still undelivered, a newer head of
+the same pull request takes its place and the superseded head is not reviewed.
+A review already handed to the reviewer runs on the head it was handed; the
+verdict it records names that commit alone.
+
+The subscribed commit-review responsibility has subject identity
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`): one reviewer
+per pull request, which receives each later head of that pull request and
+judges the author's fixes against its own earlier findings. It works in the
+project's registered checkout, reads the exact head without changing that
+checkout and records its verdict through work
+(`project/instrukt/spec/feature/work/github-apps`).
+
+The same fact with the integration branch as its subject asks for review of an
+integration candidate; when a candidate owes one is workflow's decision
+(`project/instrukt/spec/feature/workflow/integration-gate`).
+
 ### Enablement and prerequisites
 
-The capability is enabled per project. For a project that has not opted in it
-observes no pull requests, starts no reviews and publishes nothing; reviews the
-project already receives are unaffected. Opting in requires the configured
-reviewer identity to be able to publish pull-request reviews and commit statuses
-on the project's repository. That ability is checked where the setting is admitted and by the installation
-check, under `project/instrukt/policy/checks-and-guards`; a missing permission
-is refused there with its repair, and nothing running handles it.
+The capability is enabled per project with the project-layer setting
+`review.automatic`
+(`project/instrukt/spec/feature/configuration/layered-configuration`). For a
+project that has not opted in it observes no pull requests, starts no reviews
+and publishes nothing; reviews the project already receives are unaffected.
+Opting in requires the configured reviewer identity to be able to publish
+pull-request reviews and commit statuses on the project's repository. That
+ability is checked where the setting is admitted and by the installation check,
+under `project/instrukt/policy/checks-and-guards`; a missing permission is
+refused there with its repair, and nothing running handles it. What is verified
+is work's (`project/instrukt/spec/feature/work/github-apps`).
 
 Requiring the review status on the canonical branch, with the reviewer bot as
 its expected source, is the repository owner's administration act; instrukt
@@ -116,7 +158,13 @@ Then no review is started for it
 - An automatically activated reviewer has no authoring session to ask for
   intent the diff does not show; it relies on the pull request's description and
   commits.
-- Every new head of every eligible pull request starts a review.
+- Every new head of every eligible pull request starts a review, except a head
+  superseded before its review was handed over.
+- Each reviewed pull request keeps its own reviewer thread, which automation
+  never settles (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+- A reviewer that records no verdict for a head it was handed leaves that head
+  without a review status; the same head is not asked for again, and a new push
+  is reviewed as a new head.
 - A pull request outside eligibility starts no review, so no review status is
   published on its account. The status belongs to the commit and answers only
   the review check. Where a canonical branch requires that check, it is unmet

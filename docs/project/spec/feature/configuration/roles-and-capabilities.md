@@ -73,6 +73,14 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
 
+<!-- planned:event-driven-pr-review-gate -->
+Head verdicts belong to the Evidence family: `instrukt review record` is
+`stamp` and `instrukt review show` is `artifact-read`, addressing the head
+verdicts of the project the caller stands in
+(`project/instrukt/spec/feature/work/github-apps`). At `own`, a subscribed
+reviewer reaches the verdicts of its assignment's subject.
+<!-- /planned:event-driven-pr-review-gate -->
+
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
 reaches only objects bound by the recorded assignment. For machine-wide

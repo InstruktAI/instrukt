@@ -49,6 +49,13 @@ runner and event capability. Workflow stores no phase.
 **Canonical branch**
 : The shared branch advanced only through the integration gate.
 
+<!-- planned:event-driven-pr-review-gate -->
+**Review coverage**
+: Whether every commit an integration candidate adds to the canonical branch
+  lies within an independently approved head or is reproduced mechanically from
+  its parents.
+<!-- /planned:event-driven-pr-review-gate -->
+
 ## Ownership boundary
 
 - **Owns:** definition evaluation, condition semantics, fact interpretation for
@@ -241,6 +248,15 @@ remain agent judgments.
   verification, then promoted or remediated. Remediation that changes the
   commit produces a candidate requiring its own verification.
 
+<!-- planned:event-driven-pr-review-gate -->
+A candidate's review coverage is derived on request from the repository, the
+work record and the reviewer bot's review statuses the runner observed; it is a
+derived value and is stored nowhere by workflow. Its rule belongs to
+`project/instrukt/spec/feature/workflow/integration-gate`; the approval it
+earns is work's record and the review it otherwise owes is the runner's
+activation.
+<!-- /planned:event-driven-pr-review-gate -->
+
 The todo itself remains a work-record aggregate. An evaluation result is a
 derived value, not another durable aggregate.
 
@@ -336,6 +352,12 @@ The context map indexes the cross-cutting architecture design.
 - **Runner → workflow — Published language:** `runner.ci_completed` and `workflow.preparation_reviewed` wake the
   integrator to assess candidates and reviewed preparation heads; `runner.main_failing`
   wakes it to restore a failing canonical branch.
+
+<!-- planned:event-driven-pr-review-gate -->
+- **Workflow → runner (review coverage) — Customer / Supplier:** workflow
+  supplies an active candidate's review coverage; the runner supplies the
+  reviewer bot's review statuses it observed on the heads the candidate merges.
+<!-- /planned:event-driven-pr-review-gate -->
 
 
 

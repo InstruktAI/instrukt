@@ -274,6 +274,24 @@ reflection. Key: `todo_id`.
 | `pull_number` | The linked pull request. |
 | `issue_id`, `record_comment`, `etag`, `pull_outstanding`, `reviews_reflected`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
 
+<!-- planned:event-driven-pr-review-gate -->
+**`head_verdicts`** — independent review outcomes for exact commits that no
+todo's record carries (`project/instrukt/spec/feature/work/github-apps`, Head
+verdicts). Key: `(project, commit, version)`.
+
+| Column | Meaning |
+| --- | --- |
+| `project`, `commit` | The project and the exact reviewed commit. |
+| `version` | Place among that commit's verdicts; the highest is current. |
+| `verdict` | `approve` or `needs_work`. |
+| `report` | The review report; `NULL` for a derived approval. |
+| `covering` | A derived approval's covering heads; `NULL` for a reviewed verdict. |
+| `pull_number` | The pull request the review concerns, or `NULL`. |
+| `at`, `actor`, `role`, `model`, `model_version`, `model_provenance`, `eval_fingerprint` | Attribution as on a stamp; a derived approval's actor is the runner invocation. |
+| `review_published`, `status_published` | Whether GitHub carries the reviewer bot's pull-request review and review status for this version. |
+| `failure` | The cause of the last failed publication; `NULL` once published. |
+<!-- /planned:event-driven-pr-review-gate -->
+
 **`inbound_commands`** — processed `/instrukt` comment identities and their
 confirmation replies. Key: `(todo_id, comment_id)`. `reply` retains the fixed
 response and `reply_pending` distinguishes a committed decision from its remote
@@ -881,6 +899,12 @@ operator, refused at renewal or unusable. A closed sign-in loses its code
 verifier, nonce and link at once and its row a day after `closed_at`. A
 retired registration is kept while a login or a sign-in uses it. A
 connector's private message is kept as long as its conversation.
+
+<!-- planned:event-driven-pr-review-gate -->
+A published head verdict's rows go once its commit is contained in the
+canonical branch, and otherwise ninety days after it was recorded; a verdict
+whose publication is pending is kept.
+<!-- /planned:event-driven-pr-review-gate -->
 
 ### Agent capacity
 
