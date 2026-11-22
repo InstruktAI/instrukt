@@ -317,11 +317,15 @@ impl<'w> Session<'w> {
     ///
     /// No lock is held across the request. The row is re-read before it
     /// and the result is committed only while the row is unchanged; a row
-    /// that changed meanwhile is pulled once more. A conflict judgment is
-    /// committed only while this command holds the reflection lock, taken
-    /// without waiting: a reflection holding it may be this computer's own,
-    /// between posting a revision of this todo and recording it. A busy
-    /// lock leaves the head unjudged and the command proceeds on the local
+    /// that changed meanwhile is pulled once more. A head whose revision is
+    /// later than the row's is another computer's: a reflection on this
+    /// computer posts only a revision this computer has already committed,
+    /// and a todo's committed revision never falls while one is posted. That
+    /// conflict is committed at once, and the command refuses. Any other
+    /// head may be this computer's own, posted by a reflection that has not
+    /// recorded it yet, so its conflict judgment is committed only while
+    /// this command holds the reflection lock, taken without waiting. A busy
+    /// lock leaves that head unjudged and the command proceeds on the local
     /// record; the revision check of this todo's next reflection, the
     /// command's own flush included, judges it (`github-record`,
     /// "Interest-driven refresh"). An item carrying this command's
@@ -358,7 +362,9 @@ impl<'w> Session<'w> {
                 _ => {}
             }
             let mut judging = None;
-            if matches!(&result, Some(Ok(Pulled::Conflicted))) {
+            if let Some(Ok(Pulled::Conflicted { head })) = &result
+                && *head <= base.record.revision
+            {
                 judging = ReflectionLock::try_acquire(self.work.home())?;
                 if judging.is_none() {
                     tracing::info!(

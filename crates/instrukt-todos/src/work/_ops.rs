@@ -488,7 +488,9 @@ impl Work {
         slug: &TodoSlug,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
-        let index = s.find(slug, false).ok_or_else(|| unknown(&s, slug))?;
+        // The door a conflicted todo names, withdrawn work included: its
+        // reactivation refuses until it is refreshed.
+        let index = s.find(slug, true).ok_or_else(|| unknown(&s, slug))?;
         s.refresh(index)?;
         s.flush()?;
         Ok(Outcome {

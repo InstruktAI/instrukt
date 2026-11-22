@@ -84,8 +84,9 @@ pub(crate) enum Pulled {
     Current,
     /// A newer remote revision entered the local record.
     Adopted,
-    /// A newer remote revision met pending local changes.
-    Conflicted,
+    /// A newer remote revision met pending local changes; the revision of
+    /// GitHub's head.
+    Conflicted { head: u64 },
 }
 
 /// The committed record on an issue: the head of its revision chain.
@@ -221,7 +222,9 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
     }
     if item.reflection.pending {
         item.reflection.conflicted = true;
-        return Ok(Pulled::Conflicted);
+        return Ok(Pulled::Conflicted {
+            head: head.record.revision,
+        });
     }
     let record = with_contents(gh, issue.number, head.record, &item.record)?;
     item.record = record;
