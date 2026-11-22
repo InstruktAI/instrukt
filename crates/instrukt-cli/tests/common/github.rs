@@ -46,8 +46,9 @@
 //! relays each connection to its HTTP server on a private address while it
 //! answers; a failure of that transport fails the test when the fake is
 //! dropped, and a [`FakeGitHub::resume`] once nothing accepts on the
-//! address fails at once with it. Rate limiting and other failures are one-shot answers queued
-//! with [`FakeGitHub::respond_once`] or [`FakeGitHub::rate_limit_next`].
+//! address fails at once with it. Rate limiting and other failures are
+//! one-shot answers queued with [`FakeGitHub::respond_once`] or
+//! [`FakeGitHub::rate_limit_next`].
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
@@ -193,10 +194,10 @@ impl StatusState {
 
 /// The running fake. Dropping it stops the server and releases its
 /// address. A failure of the fake's own transport is recorded with its
-/// operation and cause: an operation on a socket that failed, a relay thread
-/// that could not be started, a panic in any of the fake's threads, or a
-/// drop that could not end the accept thread and so leaves the address
-/// held. Dropping the fake then fails the test, or, when the test is
+/// operation and cause: an operation on a socket that failed, a relay or
+/// request-copy thread that could not be started, a panic in any of the
+/// fake's threads, or a drop that could not end the accept thread and so
+/// leaves the address held. Dropping the fake then fails the test, or, when the test is
 /// already failing, adds the report to its output.
 pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
