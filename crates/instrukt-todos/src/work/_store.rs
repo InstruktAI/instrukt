@@ -175,17 +175,24 @@ impl Store {
         }
     }
 
-    /// Runs `read` against a current-schema reader; `empty` when no
+    /// Runs `read` against a current-schema reader, inside one read
+    /// transaction: every query of a compound read sees the same committed
+    /// state, while writers still commit beside it. `empty` when no
     /// database exists yet.
     fn read<T>(
         &self,
         empty: T,
         read: impl FnOnce(&Connection, &Path, &ProjectSlug) -> Result<T, WorkError>,
     ) -> Result<T, WorkError> {
-        match StateRead::open(&self.home)? {
-            Some(db) => read(db.conn(), db.path(), &self.project),
-            None => Ok(empty),
-        }
+        let Some(db) = StateRead::open(&self.home)? else {
+            return Ok(empty);
+        };
+        let snapshot = db
+            .conn()
+            .unchecked_transaction()
+            .map_err(StateDbError::sqlite(db.path()))?;
+        // Dropping the transaction ends the read; it wrote nothing.
+        read(&snapshot, db.path(), &self.project)
     }
 
     /// Runs `change` in one transaction under the writer lock, released
