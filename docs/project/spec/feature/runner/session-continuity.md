@@ -3,6 +3,7 @@ description: Unattended runtime adapter operations, native agent delegation and 
 visibility: public
 binding_reservations:
   UC-SS26: fix-antigravity-thought-level
+  UC-SS27: fix-false-recovery-on-released-executions
 ---
 # Session Continuity — Spec
 
@@ -523,7 +524,28 @@ a native follow-up to it. An ended turn can leave a reusable
 conversation within that active attempt. A released finalizer's record-only
 readiness write uses its retained binding after confirmed completion and release; further
 workspace work requires a new attempt. Artifact writers and stamps retain `<runtime>:<id>` identity. A
-step is complete only with its required artifact and stamp. For a runner-owned
+step is complete only with its required artifact and stamp.
+
+A runner-owned execution lasts while its session holds the todo's execution claim
+(`project/instrukt/spec/feature/work/dependencies-and-holds`). Release of that
+claim, or its transfer to another session, ends the execution. The runner acts on
+that at the first observation that finds the claim released or held by another
+session: from that observation on it sends the former session no recovery and
+raises no anomaly for it, whether its thread is present, settled or gone
+(`general/principle/session-lifecycle`: release of a claim, end of an execution
+and loss of a session are separate facts). While the todo waits on a person, as
+work decides for its `Needs you` marker
+(`project/instrukt/spec/feature/work/github-record`), the session owes no evidence:
+an ended turn receives no recovery send and raises no anomaly, whichever state its
+thread reports (`general/principle/session-lifecycle`: runtime silence alone
+establishes no missing work). For a todo that work offers for pickup, the offer
+itself shows that no session holds the claim: that observation treats the
+execution as ended without reading workflow's assignment. An observation that
+reads workflow's current assignment for the todo
+(`project/instrukt/spec/domain/workflow`) takes the claim holder and the person
+wait from that one assignment and acts on what it read.
+
+For every other runner-owned
 execution, a present thread ending without evidence receives one recovery send;
 a repeated ending raises an anomaly. Confirmed native archive/deletion with an
 eligible active assignment uses the common successor and work-claim transaction.
@@ -746,6 +768,16 @@ Then the runtime binding, work binding and claim move to one successor atomicall
 And a lost acknowledgement replays that successor with the same IDs
 ```
 
+### UC-SS27: A handed-off orchestrator's conversation stays settled
+
+```gherkin
+Given a developer's orchestrator released its todo at the approved preparation handoff and settled its conversation
+And the todo still awaits integration of its preparation
+When the runner next considers the project's work
+Then that conversation receives no recovery message and stays settled
+And no stopped execution is reported for it
+```
+
 ### UC-SS25: Keyed recovery commands (retired)
 
 Retired: the former operator/title-discovery goal is removed.
@@ -801,6 +833,33 @@ And those options carry no other effort option
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
   a visible gap; the operational session surface is independent of extracted
   history under `project/instrukt/spec/feature/runner/history`.
+
+- T3 reports a turn that ended on a plain message, with no pending request, as
+  `input-ready`; nothing in the thread tells a session that paused there from
+  one that stopped. This bears only on an execution that still lasts: a session
+  that an observation finds without the todo's execution claim is not weighed,
+  whatever its thread shows. For a session that holds the claim, such an ending
+  is left alone while the work record shows the todo waiting on a person. Outside that
+  wait, when the workflow state has not advanced, it receives the one recovery
+  send and a repeated ending raises the anomaly. A thread reported as `running`
+  or `needs-input` is sent no recovery, and that state alone raises no anomaly.
+  An earlier recovery input that ended unconfirmed is a separate ground
+  (`project/instrukt/spec/feature/runner/anomaly-notification`): with the
+  workflow state unmoved and outside a person wait, it raises the anomaly where
+  the execution reaches the recovery decision, a thread reported as `running`
+  or `needs-input` included. Confirmed native archive or deletion with an
+  eligible active assignment does not reach that decision: the successor
+  transaction comes first, and that input raises no anomaly there.
+- An observation that reads the claim holder and the person wait acts on what
+  it read. A release, a transfer or the start of a person wait that lands after
+  that reading is taken up by the next observation; the observation under way
+  can still send the recovery it decided on. The decision to send a recovery is
+  taken at observation and is not taken again at delivery, so a recovery input
+  already recorded can still reach a session whose claim was released, or whose
+  todo began waiting on a person, after it was recorded.
+  Whether and when it is delivered follows the ordinary delivery rules of
+  `project/instrukt/spec/feature/runner/procedure-event-delivery`, those for a
+  batch it shares with other entries included.
 
 ## See Also
 
