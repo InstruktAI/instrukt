@@ -583,6 +583,11 @@ Scenario Outline: Receive the complete answer when it can be read
   (`project/instrukt/spec/feature/runner/company-containers`). A company's
   container is not confinement enough for an agent that answers people outside
   the company, and no such agent exists here.
+<!-- planned:fix-flaky-conversation-unavailable-notice-test -->
+- The notice is decided at an eligibility evaluation, not at the moment the
+  minute elapses. An outage whose no-work interval ends before the first
+  evaluation after its minute earns no notice.
+<!-- /planned:fix-flaky-conversation-unavailable-notice-test -->
 
 ## See Also
 
