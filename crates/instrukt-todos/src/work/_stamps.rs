@@ -351,15 +351,10 @@ pub(crate) fn resolve(
                 .base_head
                 .clone()
                 .ok_or_else(|| WorkError::refused("role base is absent"))?;
-            let artifacts = match binding.role.as_str() {
-                "intaker" => vec![artifact_names::PRD],
-                "architect" => vec![artifact_names::ARCHITECTURE],
-                "planner" => vec![artifact_names::IMPLEMENTATION_PLAN],
-                _ => vec![],
-            }
-            .into_iter()
-            .map(|name| Ok((ArtifactName::new(name), current(record, name)?)))
-            .collect::<Result<Vec<_>, WorkError>>()?;
+            let artifacts = super::_attempts::writer_artifact(binding.role.as_str())
+                .into_iter()
+                .map(|name| Ok((ArtifactName::new(name), current(record, name)?)))
+                .collect::<Result<Vec<_>, WorkError>>()?;
             let commits = git::run(
                 inputs.cwd,
                 ["log", "--format=%H", &format!("{}..HEAD", base)],

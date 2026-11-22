@@ -32,7 +32,13 @@ states:
 transitions:
 - from: start
   to: not_prepared
-  when: {equals: [preparation.integrated, false]}
+  when:
+    any:
+    - equals: [preparation.integrated, false]
+    - all:
+      - not: {equals: [kind, task]}
+      - exists: preparation.head
+      - equals: [preparation.review_current, false]
   action: await-prepare
 - from: start
   to: delivered_cleanup
@@ -86,23 +92,6 @@ transitions:
       - plan_review.cleared_by_substantive_drift
       - true
   action: return-to-prepare-kickback
-- from: start
-  to: drift_analysis
-  when:
-    all:
-    - not:
-        exists: build.start_base_sha
-    - any:
-      - equals:
-        - drift.prd
-        - pending
-      - equals:
-        - drift.architecture
-        - pending
-      - equals:
-        - drift.implementation_plan
-        - pending
-  action: analyze-drift
 - from: start
   to: not_prepared
   when:
@@ -165,6 +154,23 @@ transitions:
             - implementation_plan.seeded
             - true
   action: await-prepare
+- from: start
+  to: drift_analysis
+  when:
+    all:
+    - not:
+        exists: build.start_base_sha
+    - any:
+      - equals:
+        - drift.prd
+        - pending
+      - equals:
+        - drift.architecture
+        - pending
+      - equals:
+        - drift.implementation_plan
+        - pending
+  action: analyze-drift
 - from: start
   to: workspace_request
   when:

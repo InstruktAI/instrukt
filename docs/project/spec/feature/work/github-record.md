@@ -1,6 +1,9 @@
 ---
 description: Local-leading work records reflected to required GitHub issues with versioned native artifacts and revision checks; todos need the project's code on GitHub, and GitHub is read only for the todos this computer has an interest in.
 visibility: public
+binding_reservations:
+  UC-GR11: public-repo-board-visibility
+  UC-GR12: public-repo-board-visibility
 ---
 # GitHub Record — Spec
 
@@ -90,6 +93,21 @@ the committed project layer
 reference calls for setup, never silently disables the cockpit. Repeated setup,
 on any computer, reconciles existing resources instead of creating duplicate
 boards or views.
+
+A board instrukt creates for a public repository is made public when it is
+created; the board of any other repository stays private. Whether the
+repository is public is read from GitHub before the board is created; while
+GitHub's answer does not establish it, no board is created and setup stays
+pending. instrukt sets a board's visibility only at its creation: it never
+changes the visibility of a board it found or that the developer named, and
+later setup never changes it again, so a maintainer who makes the board private
+keeps it private. When GitHub declines to make the new board public, for
+example because the organization lets only its owners change project
+visibility, the board stays private, setup and reflection continue, and the
+operator is told that a project admin or organization owner can make it public
+in the project's settings. Any other failure of that request is a setup failure
+like any other: setup stays pending, and the retry finds the board and leaves
+its visibility as it is.
 
 instrukt adds every reflected issue and maintains its owned single-select
 `Record status` field and required options (active, iceboxed, held, delivered,
@@ -432,7 +450,34 @@ But a newer schema refuses before any dependent mutation and names the upgrade d
 And the remote record and existing local evidence remain intact
 ```
 
+### UC-GR11: A developer's public project gets a public board
+
+```gherkin
+Given a developer's project is public and reflects its todos to GitHub
+When their todos are reflected without a board already set up
+Then the board instrukt creates is public
+When a maintainer makes that board private
+Then it stays private as the project's todos are reflected again, from this computer and from another
+And a board the developer then names in the project layer keeps its visibility
+```
+
+### UC-GR12: A developer follows their work on a new board GitHub would not make public
+
+```gherkin
+Given a developer's project is public and GitHub does not let instrukt change the visibility of projects
+When their todos are reflected without a board already set up
+Then instrukt sets up the board and it stays private
+And their todos appear on it with their record status
+```
+
 ## Known caveats
+
+- A new board is made public in a request that follows its creation. When that
+  request ends without GitHub's answer, or GitHub is limiting requests at that
+  moment, the board keeps whichever visibility GitHub gave it, which instrukt
+  does not know, and nothing changes it later: a later pass cannot tell an
+  interrupted request from a maintainer's choice. The board's visibility is
+  read and changed in the project's settings.
 
 - Code hosted anywhere but GitHub is not supported for todos.
 - Whether `github.repository` names the repository the remote reaches is

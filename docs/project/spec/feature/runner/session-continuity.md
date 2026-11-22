@@ -1,6 +1,8 @@
 ---
 description: Unattended runtime adapter operations, native agent delegation and record bindings, native keyed launch, automatic succession and settled-thread inspection.
 visibility: public
+binding_reservations:
+  UC-SS26: fix-antigravity-thought-level
 ---
 # Session Continuity — Spec
 
@@ -771,6 +773,15 @@ remain retired.
 ### UC-SS7: Agent-owned session ending (retired)
 
 Retired: the runtime owns session ending; its test bindings have been removed.
+
+### UC-SS26: Native delegation translates Antigravity effort to T3's thought_level option
+
+```gherkin
+Given a developer configures an Antigravity profile with xhigh effort in agents.yaml
+When instrukt prepares native delegation inputs for a role using that profile on T3
+Then the resolved native options map that effort to thought_level with value xhigh
+And those options carry no other effort option
+```
 
 ## Known caveats
 

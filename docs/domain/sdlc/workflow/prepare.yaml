@@ -284,7 +284,13 @@ transitions:
   action: await-preparation-integration
 - from: preparation_head_review
   to: prepared_release_pending
-  when: {equals: [preparation.integrated, true]}
+  when:
+    all:
+    - equals: [preparation.integrated, true]
+    - not:
+        all:
+        - exists: preparation.head
+        - equals: [preparation.review_current, false]
   action: release-prepared
 - from: preparation_integration
   to: prepared_release_pending

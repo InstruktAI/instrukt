@@ -694,6 +694,7 @@ impl Work {
         let completion =
             super::_attempts::completion_binding(&record, session.as_ref(), cwd, request)?;
         if let Some((binding, _)) = completion
+            && !matches!(request, StampRequest::DriftReviewed { .. })
             && record.bindings[binding].attempt.released_at.is_some()
             && let Some(sequence) = record.bindings[binding].attempt.completion_sequence
             && let Some(stamp) = record
@@ -735,12 +736,14 @@ impl Work {
         {
             // The judgment holds only while what it assessed is unchanged:
             // record the grounding current now.
-            let content = record
+            let latest_version = record
                 .artifact(artifact.as_str())
-                .and_then(|a| a.versions.last())
+                .and_then(|a| a.versions.last());
+            let content = latest_version
                 .and_then(|v| v.content.clone())
                 .unwrap_or_default();
-            *grounding = grounding_now(&mut s, index, artifact.as_str(), &content)?;
+            let prior_owned = prior_owned_for_version(&record, artifact);
+            *grounding = grounding_now(&mut s, index, artifact.as_str(), &content, &prior_owned)?;
         }
         let stamp = StampRecord {
             source_comment: None,
@@ -802,21 +805,24 @@ impl Work {
                 docs_changed: std::mem::take(&mut s.docs_changed),
             });
         }
-        if matches!(stamp.fact, StampFact::DiagnosisSettled { .. })
-            && let Some(prior) = record
+        let replay_prior = if matches!(stamp.fact, StampFact::DiagnosisSettled { .. }) {
+            record
                 .stamps
                 .iter()
                 .rev()
                 .find(|prior| prior.fact == stamp.fact)
                 .cloned()
-        {
+        } else {
+            current_drift_replay(&record, &stamp.fact, &stamp.actor).cloned()
+        };
+        if let Some(prior) = replay_prior {
             if let Some((binding, _)) = completion
                 && record.bindings[binding].attempt.released_at.is_none()
             {
                 let now = s.now;
                 let completed_head = super::_stamps::head(cwd)?;
                 let sequence = prior.sequence;
-                s.commit("reconcile settled diagnoser attempt", |s| {
+                s.commit("reconcile completed read-only attempt", |s| {
                     let b = &mut s.items[index].record.bindings[binding];
                     b.attempt.completion_sequence = Some(sequence);
                     b.attempt.completed_head = Some(completed_head.clone());
@@ -874,9 +880,11 @@ impl Work {
             stamp.sequence = record.next_sequence();
             if let Some((binding, _)) = completion {
                 let b = &mut record.bindings[binding];
-                b.attempt.completion_sequence = Some(stamp.sequence);
-                b.attempt.completed_head = Some(super::_stamps::head(cwd)?);
-                b.attempt.released_at = Some(now);
+                if b.attempt.released_at.is_none() {
+                    b.attempt.completion_sequence = Some(stamp.sequence);
+                    b.attempt.completed_head = Some(super::_stamps::head(cwd)?);
+                    b.attempt.released_at = Some(now);
+                }
             }
             record.stamps.push(stamp);
             Ok(())
@@ -933,7 +941,7 @@ impl Work {
                 digest: record.current_digest(upstream).cloned(),
             })
             .collect();
-        let grounding = grounding_now(&mut s, index, name, content)?;
+        let grounding = grounding_now(&mut s, index, name, content, &[])?;
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
@@ -1556,12 +1564,15 @@ impl Work {
         // a reused slug never stands in for the todo a grounding recorded.
         let others = crate::workflow::related_evidence(self, project, &evidence)
             .map_err(|err| WorkError::refused(err.to_string()))?;
-        crate::workflow::preparation_complete(self.home(), &project.root, &evidence, &others)
-            .map_err(|err| {
+        let primary = instrukt_core::repository::primary_worktree(&project.root)
+            .map_err(|err| WorkError::refused(err.to_string()))?;
+        crate::workflow::preparation_complete(self.home(), &primary, &evidence, &others).map_err(
+            |err| {
                 WorkError::refused(format!(
                     "workflow cannot tell whether `{parent}` completed preparation: {err}"
                 ))
-            })
+            },
+        )
     }
 }
 
@@ -1581,27 +1592,118 @@ impl Work {
     }
 }
 
+/// Pure selection of previously-owned snippet IDs applicable to `artifact`'s
+/// current version: the current version's recorded owned IDs plus any owned IDs
+/// carried by a drift judgment recorded *after* that version (ignoring older
+/// judgments that predate an artifact rewrite).
+fn prior_owned_for_version(
+    record: &TodoRecord,
+    artifact: &ArtifactName,
+) -> Vec<instrukt_core::ids::SnippetId> {
+    let mut prior_owned = Vec::new();
+    let latest_version = record
+        .artifact(artifact.as_str())
+        .and_then(|a| a.versions.last());
+    let version_seq = latest_version.map_or(0, |v| v.sequence);
+    if let Some(version) = latest_version {
+        for snippet in &version.grounding.owned_snippets {
+            if !prior_owned.contains(&snippet.id) {
+                prior_owned.push(snippet.id.clone());
+            }
+        }
+    }
+    if let Some(prior_grounding) = record.stamps.iter().rev().find_map(|s| match &s.fact {
+        StampFact::DriftReviewed {
+            artifact: prior_artifact,
+            grounding,
+            ..
+        } if prior_artifact == artifact && s.sequence > version_seq => Some(grounding),
+        _ => None,
+    }) {
+        for snippet in &prior_grounding.owned_snippets {
+            if !prior_owned.contains(&snippet.id) {
+                prior_owned.push(snippet.id.clone());
+            }
+        }
+    }
+    prior_owned
+}
+
+/// Pure replay check for `StampFact::DriftReviewed`: only the latest drift
+/// judgment for the artifact, matching fact and actor, with neither the
+/// artifact itself nor any upstream artifact rewritten after that stamp,
+/// counts as an idempotent replay.
+fn current_drift_replay<'a>(
+    record: &'a TodoRecord,
+    fact: &StampFact,
+    actor: &Actor,
+) -> Option<&'a StampRecord> {
+    let StampFact::DriftReviewed { artifact, .. } = fact else {
+        return None;
+    };
+    let latest = record.stamps.iter().rev().find(|prior| {
+        matches!(
+            &prior.fact,
+            StampFact::DriftReviewed { artifact: prior_artifact, .. }
+                if prior_artifact == artifact
+        )
+    })?;
+    if &latest.fact != fact || &latest.actor != actor {
+        return None;
+    }
+    let rewritten_after = |name: &str| {
+        record
+            .artifact(name)
+            .and_then(|a| a.versions.last())
+            .is_some_and(|v| v.sequence > latest.sequence)
+    };
+    if rewritten_after(artifact.as_str())
+        || upstream_of(artifact.as_str())
+            .iter()
+            .any(|u| rewritten_after(u))
+    {
+        return None;
+    }
+    Some(latest)
+}
+
 /// The grounding of artifact `name` of item `index` with `content`, as it
 /// stands now (`artifact-currency`, "Drift evidence"): canonical head,
-/// declared paths and snippets, owned snippets, and each prerequisite's
-/// artifacts of the kinds `name` derives from.
+/// declared paths and snippets, owned snippets (retaining deleted `prior_owned`
+/// IDs as absent), and each prerequisite's artifacts of the kinds `name` derives
+/// from.
 fn grounding_now(
     s: &mut Session<'_>,
     index: usize,
     name: &str,
     content: &str,
+    prior_owned: &[instrukt_core::ids::SnippetId],
 ) -> Result<crate::evidence::Grounding, WorkError> {
-    let (slug, after) = {
+    let (slug, after, bindings) = {
         let record = &s.items[index].record;
-        (record.slug.clone(), record.after.clone())
+        (
+            record.slug.clone(),
+            record.after.clone(),
+            record.bindings.clone(),
+        )
     };
+    let project_root = instrukt_core::repository::primary_worktree(&s.project.root)
+        .map_err(|err| WorkError::refused(err.to_string()))?;
+    let candidates = super::_grounding::candidate_worktrees(
+        bindings
+            .iter()
+            .map(|b| (b.attempt.lane, b.worktree.as_deref())),
+    );
+    let owned_root = super::_grounding::owned_snippet_root(&project_root, &candidates)?;
     let mut grounding = super::_grounding::ground(
         s.home(),
-        &s.project.root,
+        &project_root,
+        &owned_root,
         &s.project.slug,
         &s.base,
         &slug,
         content,
+        prior_owned,
     )?;
     for prerequisite in &after {
         let found = s.record_by_id(&prerequisite.id);
@@ -1988,5 +2090,183 @@ mod tests {
             change_kind(&mut started, TodoKind::Bug, true),
             Err(WorkError::Refused(_))
         ));
+    }
+
+    fn drift_stamp(
+        sequence: u64,
+        artifact: &str,
+        class: crate::evidence::DriftClass,
+        actor: &Actor,
+    ) -> StampRecord {
+        StampRecord {
+            source_comment: None,
+            fact: StampFact::DriftReviewed {
+                artifact: ArtifactName::new(artifact),
+                class,
+                reason: "assessed".into(),
+                examined: ContentDigest::of("plan-v1"),
+                grounding: Default::default(),
+            },
+            at: jiff::Timestamp::UNIX_EPOCH,
+            actor: actor.clone(),
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+            sequence,
+            model_provenance: Default::default(),
+        }
+    }
+
+    fn artifact_with_seq(name: &str, sequence: u64) -> Artifact {
+        Artifact {
+            name: ArtifactName::new(name),
+            address: None,
+            versions: vec![Version {
+                digest: ContentDigest::of(name),
+                writer: Actor::Person { name: "dev".into() },
+                created: jiff::Timestamp::UNIX_EPOCH,
+                derived_from: Vec::new(),
+                sequence,
+                grounding: Default::default(),
+                remote: None,
+                content: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn current_drift_replay_returns_matching_latest_stamp_when_unrewritten() {
+        let mut rec = record("demo", 1, &[]);
+        let actor = Actor::Person { name: "dev".into() };
+        rec.artifacts
+            .push(artifact_with_seq(artifact_names::INPUT, 1));
+        rec.artifacts
+            .push(artifact_with_seq(artifact_names::IMPLEMENTATION_PLAN, 2));
+        let stamp = drift_stamp(
+            3,
+            artifact_names::IMPLEMENTATION_PLAN,
+            crate::evidence::DriftClass::Cosmetic,
+            &actor,
+        );
+        rec.stamps.push(stamp.clone());
+        assert_eq!(
+            current_drift_replay(&rec, &stamp.fact, &actor).map(|s| s.sequence),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn current_drift_replay_returns_none_after_upstream_artifact_rewrite() {
+        let mut rec = record("demo", 1, &[]);
+        let actor = Actor::Person { name: "dev".into() };
+        rec.artifacts
+            .push(artifact_with_seq(artifact_names::INPUT, 5));
+        rec.artifacts
+            .push(artifact_with_seq(artifact_names::IMPLEMENTATION_PLAN, 2));
+        let stamp = drift_stamp(
+            3,
+            artifact_names::IMPLEMENTATION_PLAN,
+            crate::evidence::DriftClass::Cosmetic,
+            &actor,
+        );
+        rec.stamps.push(stamp.clone());
+        assert!(current_drift_replay(&rec, &stamp.fact, &actor).is_none());
+    }
+
+    #[test]
+    fn current_drift_replay_returns_none_after_target_artifact_rewrite() {
+        let mut rec = record("demo", 1, &[]);
+        let actor = Actor::Person { name: "dev".into() };
+        rec.artifacts
+            .push(artifact_with_seq(artifact_names::IMPLEMENTATION_PLAN, 5));
+        let stamp = drift_stamp(
+            3,
+            artifact_names::IMPLEMENTATION_PLAN,
+            crate::evidence::DriftClass::Cosmetic,
+            &actor,
+        );
+        rec.stamps.push(stamp.clone());
+        assert!(current_drift_replay(&rec, &stamp.fact, &actor).is_none());
+    }
+
+    #[test]
+    fn current_drift_replay_returns_none_when_a_later_contrary_judgment_exists() {
+        let mut rec = record("demo", 1, &[]);
+        let actor = Actor::Person { name: "dev".into() };
+        let cosmetic = drift_stamp(
+            3,
+            artifact_names::IMPLEMENTATION_PLAN,
+            crate::evidence::DriftClass::Cosmetic,
+            &actor,
+        );
+        let substantive = drift_stamp(
+            4,
+            artifact_names::IMPLEMENTATION_PLAN,
+            crate::evidence::DriftClass::Substantive,
+            &actor,
+        );
+        rec.stamps.push(cosmetic.clone());
+        rec.stamps.push(substantive);
+        assert!(current_drift_replay(&rec, &cosmetic.fact, &actor).is_none());
+    }
+
+    #[test]
+    fn prior_owned_for_version_ignores_judgments_predating_artifact_rewrite() {
+        let mut rec = record("demo", 1, &[]);
+        let actor = Actor::Person { name: "dev".into() };
+        let old_owned = instrukt_core::ids::SnippetId::parse("project/demo/policy/old").unwrap();
+        let cur_owned = instrukt_core::ids::SnippetId::parse("project/demo/policy/cur").unwrap();
+        rec.stamps.push(StampRecord {
+            source_comment: None,
+            fact: StampFact::DriftReviewed {
+                artifact: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
+                class: crate::evidence::DriftClass::Cosmetic,
+                reason: "prior version".into(),
+                examined: ContentDigest::of("plan-v1"),
+                grounding: crate::evidence::Grounding {
+                    owned_snippets: vec![crate::evidence::SnippetDigest {
+                        id: old_owned,
+                        digest: Some(ContentDigest::of("parent")),
+                    }],
+                    ..Default::default()
+                },
+            },
+            at: jiff::Timestamp::UNIX_EPOCH,
+            actor,
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+            sequence: 3,
+            model_provenance: Default::default(),
+        });
+        rec.artifacts.push(Artifact {
+            name: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
+            address: None,
+            versions: vec![Version {
+                digest: ContentDigest::of("plan-v2"),
+                writer: Actor::Person { name: "dev".into() },
+                created: jiff::Timestamp::UNIX_EPOCH,
+                derived_from: Vec::new(),
+                sequence: 5,
+                grounding: crate::evidence::Grounding {
+                    owned_snippets: vec![crate::evidence::SnippetDigest {
+                        id: cur_owned.clone(),
+                        digest: Some(ContentDigest::of("cur")),
+                    }],
+                    ..Default::default()
+                },
+                remote: None,
+                content: None,
+            }],
+        });
+        assert_eq!(
+            prior_owned_for_version(
+                &rec,
+                &ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN)
+            ),
+            vec![cur_owned]
+        );
     }
 }

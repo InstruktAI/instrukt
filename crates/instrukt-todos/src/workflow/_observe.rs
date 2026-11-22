@@ -4,12 +4,12 @@
 
 use std::path::{Path, PathBuf};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use instrukt_core::docs::{Corpus, DocsError};
 use instrukt_core::git::{self, GitError};
 use instrukt_core::home::Home;
-use instrukt_core::ids::{CommitSha, SnippetId};
+use instrukt_core::ids::{CommitSha, SnippetId, TodoSlug};
 use instrukt_core::repository::RepositoryError;
 
 use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
@@ -80,7 +80,9 @@ pub(crate) fn observe(
         }
         _ => None,
     };
-    let (grounding, judged_grounding) = grounding(home, project_root, evidence, prerequisites)?;
+    let owned_root = owned_snippet_root(project_root, evidence)?;
+    let (grounding, judged_grounding) =
+        grounding(home, project_root, &owned_root, evidence, prerequisites)?;
     let preparation_branch = evidence
         .bindings
         .iter()
@@ -284,10 +286,40 @@ fn classify(
     Ok(ChangeSinceReview::CleanUpstreamMerges)
 }
 
+impl From<crate::work::_grounding::GroundingIoError> for ObservationError {
+    fn from(err: crate::work::_grounding::GroundingIoError) -> Self {
+        match err {
+            crate::work::_grounding::GroundingIoError::Git(err) => ObservationError::Git(err),
+            crate::work::_grounding::GroundingIoError::Io { path, source } => {
+                ObservationError::Io { path, source }
+            }
+        }
+    }
+}
+
+/// The live checkout holding this todo's own pending snippets: the active
+/// work-lane or preparation-lane worktree when it exists, else `project_root`.
+fn owned_snippet_root(
+    project_root: &Path,
+    evidence: &TodoEvidence,
+) -> Result<PathBuf, ObservationError> {
+    let candidates = crate::work::_grounding::candidate_worktrees(
+        evidence
+            .bindings
+            .iter()
+            .map(|b| (b.attempt.lane, b.worktree().map(PathBuf::as_path))),
+    );
+    Ok(crate::work::_grounding::owned_snippet_root(
+        project_root,
+        &candidates,
+    )?)
+}
+
 /// What each tracked artifact's current version's grounding shows now.
 fn grounding(
     home: &Home,
     project_root: &Path,
+    owned_root: &Path,
     evidence: &TodoEvidence,
     prerequisites: &[TodoEvidence],
 ) -> Result<(Changes, Changes), ObservationError> {
@@ -296,8 +328,11 @@ fn grounding(
     let mut reader = Current {
         home,
         project_root,
+        owned_root,
+        todo: &evidence.slug,
         canonical,
         corpus: None,
+        owned_corpus: None,
         prerequisites,
     };
     let mut versions = BTreeMap::new();
@@ -341,8 +376,11 @@ type Changes = BTreeMap<String, GroundingChange>;
 struct Current<'a> {
     home: &'a Home,
     project_root: &'a Path,
+    owned_root: &'a Path,
+    todo: &'a TodoSlug,
     canonical: Option<CommitSha>,
     corpus: Option<Corpus>,
+    owned_corpus: Option<Corpus>,
     prerequisites: &'a [TodoEvidence],
 }
 
@@ -352,9 +390,12 @@ impl Current<'_> {
         let code = code_change(self.project_root, recorded, self.canonical.as_ref());
         let mut unresolved = self.missing_path(recorded)?;
         let mut snippets = false;
-        let referenced = recorded.referenced_snippets.iter().map(|s| (true, s));
-        let owned = recorded.owned_snippets.iter().map(|s| (false, s));
-        for (is_reference, snippet) in referenced.chain(owned) {
+        let owned_ids: BTreeSet<&SnippetId> =
+            recorded.owned_snippets.iter().map(|s| &s.id).collect();
+        for snippet in &recorded.referenced_snippets {
+            if owned_ids.contains(&snippet.id) {
+                continue;
+            }
             if self.corpus.is_none() {
                 self.corpus = Some(Corpus::load(self.project_root, self.home)?);
             }
@@ -362,7 +403,37 @@ impl Current<'_> {
                 Some(corpus) => snippet_digest(self.home, self.project_root, corpus, &snippet.id)?,
                 None => None,
             };
-            unresolved |= is_reference && current.is_none();
+            unresolved |= current.is_none();
+            snippets |= current != snippet.digest;
+        }
+        for snippet in &recorded.owned_snippets {
+            let current = if self.owned_root == self.project_root {
+                if self.corpus.is_none() {
+                    self.corpus = Some(Corpus::load(self.project_root, self.home)?);
+                }
+                match &self.corpus {
+                    Some(corpus) => crate::work::_grounding::owned_snippet_digest(
+                        self.project_root,
+                        corpus,
+                        self.todo,
+                        &snippet.id,
+                    )?,
+                    None => None,
+                }
+            } else {
+                if self.owned_corpus.is_none() {
+                    self.owned_corpus = Some(Corpus::load(self.owned_root, self.home)?);
+                }
+                match &self.owned_corpus {
+                    Some(corpus) => crate::work::_grounding::owned_snippet_digest(
+                        self.owned_root,
+                        corpus,
+                        self.todo,
+                        &snippet.id,
+                    )?,
+                    None => None,
+                }
+            };
             snippets |= current != snippet.digest;
         }
         let (dependencies, dependency_unresolved) =

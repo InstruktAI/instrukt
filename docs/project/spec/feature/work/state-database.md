@@ -1,6 +1,8 @@
 ---
 description: The one SQLite database holding a computer's work record, runner state and conversations — its tables, its migrations, and instrukt as its single, transactional writer.
 visibility: public
+binding_reservations:
+  UC-SD5: fix-reflection-holds-writer-lock
 ---
 # State Database — Spec
 
@@ -30,9 +32,10 @@ meaning and the writes of the conversation tables.
 - **Protection:** the database and the files SQLite keeps beside it are
   readable and writable by their owner only.
 - **Stays outside it:** the blueprint graph store (one complete graph per
-  revision, as files under `~/.instrukt/state/blueprint/`), publication
-  state, the global index, eval fingerprints, hook outcomes and the
-  machine id. Their owners' contracts place them.
+  revision, as files under `~/.instrukt/state/blueprint/`), the history store
+  (`state/history.db`), publication state, the global index, eval
+  fingerprints, hook outcomes and the machine id. Their owners' contracts
+  place them.
 - **No file stores:** the work record and the runner's state have no other
   home. Directories left by earlier builds (`state/work/`, `state/runner/`)
   are neither read nor migrated.
@@ -62,6 +65,11 @@ meaning and the writes of the conversation tables.
   the reflection lock. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
   before consuming it, except during status inspection.
+- A change to a todo is computed from the record its command read and is
+  written only while that record is unchanged. When another command changed it
+  in between, the later write is refused whole, naming the todo and its door:
+  run the command again, which acts on the current record
+  (`general/principle/trust-and-guardrails`, interference).
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
@@ -130,6 +138,30 @@ turn ended (`conversation_messages.admitted_at`, `unavailable_since`,
 `turn_update`, `turn_ended_at`).
 Messages stored before it have none of them: none has an interval open, and
 the relay-wide failure counts for one from that failure's start.
+
+Version 32 removes the history tables (`history_conversations`, `history_fts`,
+`history_projection_records`, `history_source_positions` and `history_sources`)
+when none of them holds a row, so a database created at the current schema
+holds none. Tables that hold rows stay until the history store has copied them
+(`project/instrukt/spec/feature/runner/history`); it then drops them in one
+transaction and has this database reclaim the freed space, in one hold of the
+writer lock. Nothing but that move invokes reclaiming. A database past version
+31 is refused by earlier builds, so no earlier build writes history here once
+the move has begun, and the history store creates a missing database at the
+current schema for the same reason.
+
+Reclaiming rewrites the database without its free pages and then runs one
+checkpoint; it is not a transaction, and the writer lock is held across both.
+The rewrite commits to the write-ahead log: from then on the database holds no
+free pages, while the database file keeps its length until a checkpoint has
+applied every committed change to it. The checkpoint that follows the rewrite
+does that and shortens the file, unless another connection is then reading a
+snapshot taken before the rewrite; it does not wait for that reader. Where
+such a reader prevents it, the file shortens at the next checkpoint that
+reaches the end of the log, which SQLite runs after a commit once the log
+passes its automatic threshold and when the last connection to the database
+closes. Reclaiming does not truncate the log file `-wal`, which keeps its
+length and is reused by later writes.
 
 Persisted runtime requests and manual standing reservations enter domain code
 with a required captured title. Migration fills a missing or null title with
@@ -316,17 +348,11 @@ Owned by the runner and written through its interface, in the same
 transactions as the reactions they record. Work invokes that interface for
 finalized publication and approval attention committed with their stamps.
 
-**History tables** — `history_sources` records selected-source legacy import
-completion. `history_source_positions` stores each runtime source's opaque
-committed position; history does not interpret adapter cursor fields.
-`history_projection_records` retains normalized native records by source, kind
-and native id, including records delivered by earlier batches. Completed
-conversation views, archive aliases, original source documents and FTS5 changes
-commit with the source position. Migration from the previous history shape
-preserves retained native records before the new source position begins.
-`history_conversations` and `history_fts` serve local search and document lookup.
-These tables are owned by `project/instrukt/spec/feature/runner/history`, survive
-source removal and are never reflected to GitHub or stored centrally in Redis.
+**History** — retained history is not stored in this database. It lives in the
+history store owned by `project/instrukt/spec/feature/runner/history`, which
+survives source removal and is never reflected to GitHub or stored centrally in
+Redis. History tables an earlier build left here with rows stay only until that
+store has moved them (version 32).
 
 **`events`** — the local event log, oldest first. `seq` is a monotone local
 position, never a transport or occurrence identity. Rows hold the stable event
@@ -921,9 +947,19 @@ And newer state is reported with the installer command while configuration is st
 And a write against newer state is refused with the installer command
 ```
 
+### UC-SD5: Local work and runner writes proceed while GitHub reflection is in flight
+
+```gherkin
+Given a developer has a project reflecting work to GitHub
+And a GitHub reflection request for one of its todos is in flight on their computer
+When other commands on the same computer list the local work, read that todo and its artifacts, and record a local change to it
+Then the local change completes without waiting for the in-flight GitHub request
+And listing the work and reading an artifact complete without waiting for that request or for a local write that is still open
+And the reflected change and the concurrent local change both reach GitHub intact, with no conflict between them
+```
+
 ## Known caveats
 
-- Work's per-computer writer lock remains held during point refresh and stamp model observation; slow provider or runtime reads can delay other work commands.
 - UC-SD1 is retired: reading the database directly is not a feature; agents use instrukt's commands. Its id is not reused.
 
 - The local event log grows with activity; retaining it does not extend Redis replay or occurrence duplicate protection.

@@ -50,9 +50,17 @@ An artifact declares its grounding in its own content:
   accepts.
 
 When a version is written, its provenance records the canonical branch's head
-commit, the referenced paths, the digest of each referenced snippet, and,
-derived without declaration, the digests of the snippets the todo owns and of
-its prerequisites' artifacts.
+commit, the referenced paths, the digest of each non-owned referenced snippet
+(read from the project's primary checkout or published store), and, derived
+without declaration, the digests of the snippets the todo owns (read solely
+from the todo's active worktree when present, else the primary checkout, never
+from the published store, combining any todo companion file with its parent)
+and of its prerequisites' artifacts. Drift observation compares each class
+against the same source, ignoring any overlap where an earlier grounding also
+listed an owned snippet as referenced. A drift judgment retains previously owned snippet IDs at their current state in
+the selected checkout — absent if the snippet was deleted, or the surviving
+parent digest if only its companion was removed — so restoring either requires
+reassessment.
 
 An artifact has drifted when a non-merge commit between its recorded head and
 the current canonical head changes a referenced path (exactly, or under a

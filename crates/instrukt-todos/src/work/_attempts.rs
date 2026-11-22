@@ -677,6 +677,70 @@ fn diagnosis_settlement_binding(
     Ok(Some(index))
 }
 
+/// Pure binding selection for `StampRequest::DriftReviewed`: resolves the
+/// active bound `drift-analyzer` attempt (or its released attempt before any
+/// later child/workspace work starts, for multi-artifact drift stamps and
+/// idempotent replay), enforces caller identity when an attempt is reserved,
+/// and returns `Ok(None)` when no `drift-analyzer` attempt is bound.
+fn drift_review_binding(
+    record: &TodoRecord,
+    caller: Option<&SessionRef>,
+) -> Result<Option<usize>, WorkError> {
+    if let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
+        b.role.as_str() == "drift-analyzer"
+            && matches!(
+                b.attempt.assignment,
+                AssignmentKind::Child | AssignmentKind::Workspace
+            )
+            && b.attempt.released_at.is_none()
+    }) {
+        let bound = b.session.as_ref().ok_or_else(|| {
+            WorkError::refused("drift-analyzer attempt must be bound before recording drift review")
+        })?;
+        if caller != Some(bound) {
+            return Err(WorkError::refused(
+                "only the bound drift-analyzer session may complete its active drift review attempt",
+            ));
+        }
+        return Ok(Some(index));
+    }
+    let Some(caller) = caller else {
+        return Ok(None);
+    };
+    let Some((index, _)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
+        b.role.as_str() == "drift-analyzer"
+            && matches!(
+                b.attempt.assignment,
+                AssignmentKind::Child | AssignmentKind::Workspace
+            )
+            && b.session.as_ref() == Some(caller)
+    }) else {
+        return Ok(None);
+    };
+    if record.bindings[index + 1..].iter().any(|later| {
+        matches!(
+            later.attempt.assignment,
+            AssignmentKind::Child | AssignmentKind::Workspace
+        )
+    }) {
+        return Err(WorkError::refused(
+            "superseded drift-analyzer attempt cannot stamp after later work began",
+        ));
+    }
+    Ok(Some(index))
+}
+
+/// The artifact a preparation doc writer owes for its role, or `None` when
+/// the role is not a preparation doc writer.
+pub(super) fn writer_artifact(role: &str) -> Option<&'static str> {
+    match role {
+        "intaker" => Some(artifact_names::PRD),
+        "architect" => Some(artifact_names::ARCHITECTURE),
+        "planner" => Some(artifact_names::IMPLEMENTATION_PLAN),
+        _ => None,
+    }
+}
+
 /// Match completion to the caller's reserved shared workspace.
 pub(super) fn completion_binding(
     record: &TodoRecord,
@@ -688,6 +752,11 @@ pub(super) fn completion_binding(
     let (index, b) =
         if matches!(request, StampRequest::DiagnosisSettled) {
             let Some(index) = diagnosis_settlement_binding(record, caller)? else {
+                return Ok(None);
+            };
+            (index, &record.bindings[index])
+        } else if matches!(request, StampRequest::DriftReviewed { .. }) {
+            let Some(index) = drift_review_binding(record, caller)? else {
                 return Ok(None);
             };
             (index, &record.bindings[index])
@@ -724,7 +793,7 @@ pub(super) fn completion_binding(
             if matches!(request, StampRequest::PreparationHeadVerdict { .. })
                 && record.bindings.iter().any(|writer| {
                     writer.session.as_ref() == Some(caller)
-                        && matches!(writer.role.as_str(), "intaker" | "architect" | "planner")
+                        && writer_artifact(writer.role.as_str()).is_some()
                 })
             {
                 return Err(WorkError::refused(
@@ -758,6 +827,7 @@ pub(super) fn completion_binding(
         StampRequest::BuildVerdict { .. }
             | StampRequest::DeferralsProcessed
             | StampRequest::DiagnosisSettled
+            | StampRequest::DriftReviewed { .. }
             | StampRequest::PreparationVerdict { .. }
             | StampRequest::PreparationHeadVerdict { .. }
     );
@@ -792,19 +862,12 @@ pub(super) fn completion_binding(
             "finalizer completion needs matching published todo head",
         ));
     }
-    if matches!(b.role.as_str(), "intaker" | "architect" | "planner") {
-        let artifact = match b.role.as_str() {
-            "intaker" => artifact_names::PRD,
-            "architect" => artifact_names::ARCHITECTURE,
-            _ => artifact_names::IMPLEMENTATION_PLAN,
-        };
-        if record.current_digest(artifact).is_none()
-            || b.attempt.base_head.as_ref() == Some(&current)
-        {
-            return Err(WorkError::refused(
-                "writer completion requires its artifact and authored commit evidence",
-            ));
-        }
+    if let Some(artifact) = writer_artifact(b.role.as_str())
+        && record.current_digest(artifact).is_none()
+    {
+        return Err(WorkError::refused(format!(
+            "writer completion requires a version of its {artifact} artifact"
+        )));
     }
     Ok(Some((index, true)))
 }
@@ -1314,5 +1377,108 @@ mod tests {
             diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
             None
         );
+    }
+
+    fn drift_binding(bound: Option<SessionRef>, released: Option<u64>) -> Binding {
+        Binding {
+            role: RoleName::parse("drift-analyzer").unwrap(),
+            session: bound,
+            worktree: None,
+            attempt: Attempt {
+                assignment: AssignmentKind::Child,
+                number: 1,
+                semantic_key: "demo/bug-fix:drift-analyzer:1".into(),
+                completion_sequence: released,
+                released_at: released.map(|_| jiff::Timestamp::from_second(3).unwrap()),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn drift_review_selects_active_bound_analyzer_for_matching_caller() {
+        let mut record = base_record();
+        let analyzer = session("drift-1");
+        record
+            .bindings
+            .push(drift_binding(Some(analyzer.clone()), None));
+        assert_eq!(
+            drift_review_binding(&record, Some(&analyzer)).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn drift_review_refuses_wrong_caller_while_analyzer_attempt_is_active() {
+        let mut record = base_record();
+        record
+            .bindings
+            .push(drift_binding(Some(session("drift-1")), None));
+        let other = session("driver-1");
+        assert!(matches!(
+            drift_review_binding(&record, Some(&other)),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn drift_review_refuses_unbound_analyzer_reservation() {
+        let mut record = base_record();
+        record.bindings.push(drift_binding(None, None));
+        let caller = session("drift-1");
+        assert!(matches!(
+            drift_review_binding(&record, Some(&caller)),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn drift_review_returns_none_without_analyzer_binding() {
+        let record = base_record();
+        let caller = session("driver-1");
+        assert_eq!(drift_review_binding(&record, Some(&caller)).unwrap(), None);
+    }
+
+    #[test]
+    fn drift_review_returns_none_without_caller_when_no_active_analyzer_exists() {
+        let record = base_record();
+        assert_eq!(drift_review_binding(&record, None).unwrap(), None);
+    }
+
+    #[test]
+    fn drift_review_selects_released_analyzer_before_later_attempt_for_multi_artifact_stamps() {
+        let mut record = base_record();
+        let analyzer = session("drift-1");
+        record
+            .bindings
+            .push(drift_binding(Some(analyzer.clone()), Some(4)));
+        assert_eq!(
+            drift_review_binding(&record, Some(&analyzer)).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn drift_review_refuses_released_analyzer_after_later_workspace_attempt_begins() {
+        let mut record = base_record();
+        let analyzer = session("drift-1");
+        record
+            .bindings
+            .push(drift_binding(Some(analyzer.clone()), Some(4)));
+        record.bindings.push(Binding {
+            role: RoleName::parse("planner").unwrap(),
+            session: Some(session("planner-2")),
+            worktree: None,
+            attempt: Attempt {
+                assignment: AssignmentKind::Workspace,
+                number: 2,
+                semantic_key: "demo/bug-fix:planner:2".into(),
+                ..Default::default()
+            },
+        });
+        assert!(matches!(
+            drift_review_binding(&record, Some(&analyzer)),
+            Err(WorkError::Refused(_))
+        ));
     }
 }
