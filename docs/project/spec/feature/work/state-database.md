@@ -142,12 +142,16 @@ the relay-wide failure counts for one from that failure's start.
 
 Version 32 removes the history tables (`history_conversations`, `history_fts`,
 `history_projection_records`, `history_source_positions` and `history_sources`)
-when none of them holds a row. Tables that hold rows stay until the history
-store has copied them; it then removes them in one transaction under the writer
-lock and reclaims their space
-(`project/instrukt/spec/feature/runner/history`). A database past version 31 is
-refused by earlier builds, so no earlier build writes history here once the
-move has begun.
+when none of them holds a row, so a database created at the current schema
+holds none. Tables that hold rows stay until the history store has copied them
+(`project/instrukt/spec/feature/runner/history`); it then drops them in one
+transaction under the writer lock and has this database reclaim the freed
+space. Reclaiming rewrites the database without its free pages and checkpoints
+it, under the writer lock; the file shrinks at the first complete checkpoint,
+and nothing but that move invokes it. A database past version 31 is refused by
+earlier builds, so no earlier build writes history here once the move has
+begun, and the history store creates a missing database at the current schema
+for the same reason.
 <!-- /planned:history-isolated-store-and-batched-import -->
 
 Persisted runtime requests and manual standing reservations enter domain code

@@ -108,6 +108,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
 
 ## Ownership boundary
 
+<!-- planned-change:history-isolated-store-and-batched-import -->
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
   activation from events; the runtime-adapter trait, operational session inspection and session reuse behavior;
@@ -121,7 +122,6 @@ Native agent-operation prose is supplied by configuration and rendered through `
   agents'
   access to declared MCP servers (which declarations a caller sees and the
   login a call carries), people's sign-ins to them and the logins kept from
-<!-- planned-change:history-isolated-store-and-batched-import -->
   them; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
@@ -129,6 +129,19 @@ Native agent-operation prose is supplied by configuration and rendered through `
   conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls, plus retained history, source positions and import provenance), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`.
 <!-- change:history-isolated-store-and-batched-import -->
+- **Owns:** Per-computer history extraction/search and merged history queries;
+  module-aware runner execution; todo dispatch policy; procedure
+  activation from events; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  runtime capability translation, conversation-link membership, identity-envelope
+  vocabulary and deterministic turn-end relay;
+  unattended event/approval delivery and runner-owned execution observation; time
+  eligibility and missed-run decisions; anomaly-notification routing; the
+  container each company's sessions run in on a host, its state, its tools,
+  its shared defaults and the export and import of its irreplaceable state; resolving
+  a session's assignment from work's, its own and the company context's facts;
+  agents'
+  access to declared MCP servers (which declarations a caller sees and the
+  login a call carries), people's sign-ins to them and the logins kept from
   them; the
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,

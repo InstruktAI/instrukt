@@ -215,9 +215,19 @@ owning design snippet or decision record is declared.
 - **Runner → work** — customer-supplier. The finalize-ready stamp appends
   `workflow.finalized` through the runner's event-log interface, in the
   stamp's own transaction.
+<!-- planned-change:history-isolated-store-and-batched-import -->
 - **Work → runner (state database)** — customer-supplier. The runner's tables
   live in work's state database, under its writer lock and migrations; the
   runner owns their meaning and is their only writer.
+<!-- change:history-isolated-store-and-batched-import -->
+- **Work → runner (state database)** — customer-supplier. The runner's
+  operational tables live in work's state database, under its writer lock and
+  migrations; the runner owns their meaning and is their only writer. The
+  runner's history store lies outside it, with its own file, lock and
+  migrations (`project/instrukt/spec/feature/runner/history`). History reaches
+  the state database only to move earlier history out of it, through work's
+  open, its migrations and its space reclamation.
+<!-- /planned-change:history-isolated-store-and-batched-import -->
 - **Work → docs** — customer-supplier. Work supplies pending todo-slug existence
   through the core-declared interface wired by the CLI.
 - **Work → repository** — customer-supplier. Work supplies todo existence
