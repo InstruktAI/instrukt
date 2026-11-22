@@ -259,9 +259,18 @@ impl Home {
         self.state_dir().join("runner-service.json")
     }
 
-    /// Serializes history catch-up and legacy imports without holding the database writer lock.
+    /// `~/.instrukt/state/history.lock` — the history store's
+    /// write-isolation unit: every history write runs under it, and none
+    /// takes the state database's writer lock.
     pub fn history_lock_file(&self) -> PathBuf {
         self.state_dir().join("history.lock")
+    }
+
+    /// `~/.instrukt/state/history.db` — the history store: retained
+    /// conversations, their index and extraction positions, kept apart from
+    /// the state database (`project/instrukt/spec/feature/runner/history`).
+    pub fn history_db_file(&self) -> PathBuf {
+        self.state_dir().join("history.db")
     }
 
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.

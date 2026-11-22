@@ -42,7 +42,47 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v29),
     Sql(V30),
     Step(v31),
+    Step(v32),
 ];
+
+/// Drops every history table earlier versions created; the history store
+/// owns retained history (`project/instrukt/spec/feature/runner/history`).
+/// The full-text index goes with the conversations it indexes.
+pub(super) const DROP_HISTORY: &str = "DROP TABLE IF EXISTS history_fts;
+DROP TABLE IF EXISTS history_conversations;
+DROP TABLE IF EXISTS history_projection_records;
+DROP TABLE IF EXISTS history_source_positions;
+DROP TABLE IF EXISTS history_sources;";
+
+/// Version 32: history tables that hold no row are removed; tables that
+/// hold rows stay until the history store has moved them.
+fn v32(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    // The full-text index is derived from `history_conversations` and holds
+    // a row only when that table does.
+    for table in [
+        "history_conversations",
+        "history_projection_records",
+        "history_source_positions",
+        "history_sources",
+    ] {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get(0),
+        )?;
+        if present {
+            let held: bool = tx.query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM {table})"),
+                [],
+                |row| row.get(0),
+            )?;
+            if held {
+                return Ok(());
+            }
+        }
+    }
+    tx.execute_batch(DROP_HISTORY)
+}
 
 /// Version 31: preserve unmatched-input findings while fixing source bindings.
 fn v31(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {

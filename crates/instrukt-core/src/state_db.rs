@@ -1,6 +1,8 @@
 //! The state database `~/.instrukt/state/instrukt.db`
 //! (`project/instrukt/spec/feature/work/state-database`): one SQLite file in
 //! WAL journal mode holding the local work record and the runner's state.
+//! Retained history is not here: it lives in the runner's history store, and
+//! moving it out of an earlier database is the only history use of this one.
 //!
 //! instrukt is its only writer. Every write runs while the process holds
 //! the per-computer writer lock `~/.instrukt/state/writer.lock`; SQLite's
@@ -439,6 +441,37 @@ impl StateDb {
         tx.commit().map_err(StateDbError::sqlite(&path))?;
         Ok(value)
     }
+
+    /// Drops, in one transaction, whichever history tables an earlier
+    /// version left here (version 32); the history store calls it once it
+    /// holds their rows.
+    pub fn remove_history(&mut self) -> Result<(), StateDbError> {
+        let path = self.path().to_path_buf();
+        self.write(|tx| {
+            tx.execute_batch(_schema::DROP_HISTORY)
+                .map_err(StateDbError::sqlite(&path))
+        })
+    }
+
+    /// Reclaims the database's free pages under the writer lock this handle
+    /// holds: a rewrite without them (`VACUUM`), then one passive checkpoint.
+    /// Once the rewrite has committed no free page remains. The checkpoint
+    /// shortens the file unless a reader holds a snapshot from before the
+    /// rewrite; it waits for no reader, stopping short of the end of the log
+    /// is not a failure, and the log is not truncated.
+    pub fn reclaim(&mut self) -> Result<(), StateDbError> {
+        let sql = StateDbError::sqlite(self.db.path());
+        self.conn().execute_batch("VACUUM").map_err(&sql)?;
+        // (busy, frames in the log, frames checkpointed): a short or busy
+        // checkpoint leaves the shortening to SQLite's next one.
+        let _: (i64, i64, i64) = self
+            .conn()
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(&sql)?;
+        Ok(())
+    }
 }
 
 /// A current-schema reader; older owned state migrates under its writer lock.
@@ -775,6 +808,68 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn version_32_keeps_every_history_table_while_one_holds_a_row_and_drops_them_when_all_are_empty()
+     {
+        let path = Path::new(":memory:");
+        let at_31 = || {
+            let mut conn = Connection::open_in_memory().unwrap();
+            for migration in _schema::MIGRATIONS.iter().take(31) {
+                let tx = conn.transaction().unwrap();
+                match migration {
+                    _schema::Migration::Sql(script) => tx.execute_batch(script),
+                    _schema::Migration::Step(step) => step(&tx),
+                }
+                .unwrap();
+                tx.commit().unwrap();
+            }
+            conn.pragma_update(None, "user_version", 31).unwrap();
+            conn
+        };
+        let history = |conn: &Connection| -> Vec<String> {
+            conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'history%' ORDER BY name")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        // One retained row keeps every history table, the row included.
+        let mut retained = at_31();
+        retained
+            .execute(
+                "INSERT INTO history_sources(source,position,imported) VALUES('teleclaude:kept',1,1)",
+                [],
+            )
+            .unwrap();
+        migrate(&mut retained, path).unwrap();
+        insta::assert_debug_snapshot!(history(&retained), @r#"
+        [
+            "history_conversations",
+            "history_fts",
+            "history_fts_config",
+            "history_fts_data",
+            "history_fts_docsize",
+            "history_fts_idx",
+            "history_projection_records",
+            "history_source_positions",
+            "history_sources",
+        ]
+        "#);
+        let kept: (i64, bool) = retained
+            .query_row(
+                "SELECT position,imported FROM history_sources WHERE source='teleclaude:kept'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, (1, true));
+        // Tables that hold nothing are removed, the index's own included.
+        let mut empty = at_31();
+        migrate(&mut empty, path).unwrap();
+        assert_eq!(history(&empty), Vec::<String>::new());
     }
 
     #[test]

@@ -15,6 +15,18 @@ fn stable_sources(mut result: Value) -> Value {
     result
 }
 
+/// Removes the history store and its sidecars, so the next history operation
+/// finds only what the state database holds, as after upgrading from a build
+/// that kept history there.
+fn remove_history_store(env: &TestEnv) {
+    for name in ["history.db", "history.db-wal", "history.db-shm"] {
+        let file = env.instrukt_home().join("state").join(name);
+        if file.exists() {
+            std::fs::remove_file(file).unwrap();
+        }
+    }
+}
+
 fn search(env: &TestEnv, query: &str) -> Value {
     let out = env.run(env.home(), ["history", "search", query, "--json"]);
     let out = out.success();
@@ -520,6 +532,7 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
     let source_id = found["matches"][0]["source"].as_str().unwrap();
     let file = env.instrukt_home().join("state/instrukt.db");
     std::fs::remove_file(&file).unwrap();
+    remove_history_store(&env);
     let db = instrukt_core::state_db::rusqlite::Connection::open(&file).unwrap();
     db.execute_batch(include_str!("../fixtures/state-v6.sql"))
         .unwrap();
@@ -527,9 +540,55 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
         .unwrap();
     let document = serde_json::json!({"thread":{"id":"child","title":"Retained child","lineage":{"parentThreadId":"parent"}},"messages":[{"id":"pre-upgrade","threadId":"child","role":"assistant","text":"Upgradetoken retained only in history."}],"turnItems":[{"id":"retained-tool","threadId":"child","type":"command_execution","text":"Textonlytoken","input":"Inputonlytoken","output":"Outputonlytoken","markdown":"Markdownonlytoken","diffStr":"Diffonlytoken"}]});
     db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'child','aaaaaaaaaaaaaaaa','Retained child','parent','[]',?2,'Upgradetoken retained only in history. Textonlytoken Inputonlytoken Outputonlytoken Markdownonlytoken Diffonlytoken','[]')",instrukt_core::state_db::rusqlite::params![source_id,document.to_string()]).unwrap();
+    // A TeleClaude import that completed before upgrading, whose mirror store
+    // is gone since.
+    let mirrors = env.home().join("retired/mirrors.db");
+    let teleclaude = format!(
+        "teleclaude:{}",
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+            mirrors.to_str().unwrap().as_bytes()
+        ))
+    );
+    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'archive-session','old-computer','Retained archive',NULL,'[\"source-alias\"]','{}','Archivedtoken kept from the mirrors.','[]')",[&teleclaude]).unwrap();
+    db.execute(
+        "INSERT INTO history_sources(source,position,imported) VALUES(?1,1,1)",
+        [&teleclaude],
+    )
+    .unwrap();
     drop(db);
     assert_eq!(
         search(&env, "Upgradetoken")["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // The moved tables and the pages they freed have left the state database.
+    let length = std::fs::metadata(&file).unwrap().len();
+    let db = instrukt_core::state_db::rusqlite::Connection::open(&file).unwrap();
+    let (tables, free, pages, page): (i64, i64, u64, u64) = db
+        .query_row(
+            "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('history_conversations','history_fts','history_projection_records','history_source_positions','history_sources')),(SELECT freelist_count FROM pragma_freelist_count),(SELECT page_count FROM pragma_page_count),(SELECT page_size FROM pragma_page_size)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    drop(db);
+    assert_eq!((tables, free, pages * page), (0, 0, length));
+    // The completed import is preserved without its mirror store.
+    env.run(
+        env.home(),
+        [
+            "history",
+            "import-teleclaude",
+            "--source",
+            mirrors.to_str().unwrap(),
+            "--json",
+        ],
+    )
+    .success();
+    assert_eq!(
+        search(&env, "Archivedtoken")["matches"]
             .as_array()
             .unwrap()
             .len(),
@@ -694,6 +753,7 @@ fn repairing_v8_recovers_retained_only_output_and_diff_without_source_refresh() 
     let source_id = found["matches"][0]["source"].as_str().unwrap();
     let file = env.instrukt_home().join("state/instrukt.db");
     std::fs::remove_file(&file).unwrap();
+    remove_history_store(&env);
     let db = instrukt_core::state_db::rusqlite::Connection::open(&file).unwrap();
     db.execute_batch(include_str!("../fixtures/state-v6.sql"))
         .unwrap();
@@ -751,7 +811,7 @@ fn a_delivered_timestamp_position_migrates_to_complete_conversation_detection() 
     let found = search(&env, "jewels");
     let source_id = found["matches"][0]["source"].as_str().unwrap();
     let db = instrukt_core::state_db::rusqlite::Connection::open(
-        env.instrukt_home().join("state/instrukt.db"),
+        env.instrukt_home().join("state/history.db"),
     )
     .unwrap();
     db.execute("UPDATE history_source_positions SET position_json=?2 WHERE source=?1",instrukt_core::state_db::rusqlite::params![source_id,serde_json::json!({"version":1,"cursors":{"messages":{"updated_at":"2099-01-01T00:00:00.000Z","native_id":"z-seen"}},"pending":[],"pending_after":null}).to_string()]).unwrap();
@@ -790,7 +850,7 @@ fn a_baseline_v2_position_preserves_loaded_observations_when_adding_the_current_
     let native = instrukt_core::state_db::rusqlite::Connection::open(&source.file).unwrap();
     native.execute_batch("DELETE FROM orchestration_v2_projection_messages WHERE thread_id='retired';DELETE FROM orchestration_v2_projection_threads WHERE thread_id='retired';").unwrap();
     let db = instrukt_core::state_db::rusqlite::Connection::open(
-        env.instrukt_home().join("state/instrukt.db"),
+        env.instrukt_home().join("state/history.db"),
     )
     .unwrap();
     let old: Value =

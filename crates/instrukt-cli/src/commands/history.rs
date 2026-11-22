@@ -49,10 +49,10 @@ pub fn run(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     );
     execute(args, ctx).map_err(|error| {
         tracing::error!(event="history_command_failed",error=%format!("{error:#}"));
-        let detail = error
-            .downcast_ref::<history::HistoryError>()
-            .map(history::HistoryError::public_message)
-            .unwrap_or("history operation failed; inspect this computer's history logs");
+        let detail = error.downcast_ref::<history::HistoryError>().map_or_else(
+            || "history operation failed; inspect this computer's history logs".into(),
+            history::HistoryError::public_message,
+        );
         anyhow::anyhow!(detail)
     })
 }

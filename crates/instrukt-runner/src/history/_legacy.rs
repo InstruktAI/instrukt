@@ -1,4 +1,5 @@
 use super::{
+    _db,
     _store::{self, Conversation},
     Extraction, HistoryError,
 };
@@ -30,9 +31,8 @@ pub(super) fn import(home: &Home, path: Option<&Path>) -> Result<Extraction, His
         "teleclaude:{}",
         hex::encode(Sha256::digest(path.to_string_lossy().as_bytes()))
     );
-    let _lock =
-        instrukt_core::fsx::LockGuard::acquire(&home.history_lock_file(), Duration::from_secs(30))?;
-    if _store::position(home, &source)?.1 {
+    let mut store = _db::open(home)?;
+    if _store::imported(&store, &source)? {
         return Ok(Extraction::default());
     }
     let mut db = instrukt_core::fsx::open_database(
@@ -125,7 +125,7 @@ pub(super) fn import(home: &Home, path: Option<&Path>) -> Result<Extraction, His
     }
     tx.commit()?;
     _store::load(
-        home,
+        &mut store,
         &source,
         conversations.len() as u64,
         true,
