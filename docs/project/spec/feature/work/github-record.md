@@ -93,14 +93,19 @@ boards or views.
 
 <!-- planned:public-repo-board-visibility -->
 A board instrukt creates for a public repository is made public when it is
-created; a private repository's board stays private. instrukt sets a board's
-visibility only at its creation: it never changes the visibility of a board it
-found or that the developer named, and later setup never changes it again, so a
-maintainer who makes the board private keeps it private. When GitHub refuses to
-make the new board public, for example because the organization lets only its
-owners change project visibility, the board stays private, setup and reflection
-continue, and the operator is told that a project admin or organization owner
-can make it public in the project's settings.
+created; the board of any other repository stays private. Whether the
+repository is public is read from GitHub before the board is created; while
+GitHub's answer does not establish it, no board is created and setup stays
+pending. instrukt sets a board's visibility only at its creation: it never
+changes the visibility of a board it found or that the developer named, and
+later setup never changes it again, so a maintainer who makes the board private
+keeps it private. When GitHub declines to make the new board public, for
+example because the organization lets only its owners change project
+visibility, the board stays private, setup and reflection continue, and the
+operator is told that a project admin or organization owner can make it public
+in the project's settings. Any other failure of that request is a setup failure
+like any other: setup stays pending, and the retry finds the board and leaves
+its visibility as it is.
 <!-- /planned:public-repo-board-visibility -->
 
 instrukt adds every reflected issue and maintains its owned single-select
@@ -449,14 +454,20 @@ And the remote record and existing local evidence remain intact
 
 ```gherkin
 Given a developer's project is public and reflects its todos to GitHub
-When instrukt sets up the project's board automatically
-Then the board is public
-When a maintainer later makes that board private
-Then it stays private as reflection continues
-But when the project is private, or the developer named the board in the project layer
-Then instrukt leaves the board's visibility as it is
-But when GitHub refuses to make the new board public
-Then the board stays private and their todos are still reflected on it
+When their todos are reflected without a board already set up
+Then the board instrukt creates is public
+When a maintainer makes that board private
+Then it stays private as the project's todos are reflected again, from this computer and from another
+And a board the developer then names in the project layer keeps its visibility
+```
+
+### UC-GR12: A developer follows their work on a new board GitHub would not make public
+
+```gherkin
+Given a developer's project is public and GitHub does not let instrukt change the visibility of projects
+When their todos are reflected without a board already set up
+Then instrukt sets up the board and it stays private
+And their todos appear on it with their record status
 ```
 <!-- /planned:public-repo-board-visibility -->
 
@@ -464,9 +475,11 @@ Then the board stays private and their todos are still reflected on it
 
 <!-- planned:public-repo-board-visibility -->
 - A new board is made public in a request that follows its creation. When that
-  request is lost, the board stays private and nothing makes it public later:
-  a later pass cannot tell a lost request from a maintainer's choice to keep the
-  board private.
+  request ends without GitHub's answer, or GitHub is limiting requests at that
+  moment, the board keeps whichever visibility GitHub gave it, which instrukt
+  does not know, and nothing changes it later: a later pass cannot tell an
+  interrupted request from a maintainer's choice. The board's visibility is
+  read and changed in the project's settings.
 <!-- /planned:public-repo-board-visibility -->
 
 - Code hosted anywhere but GitHub is not supported for todos.
