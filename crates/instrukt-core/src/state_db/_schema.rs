@@ -54,8 +54,9 @@ DROP TABLE IF EXISTS history_projection_records;
 DROP TABLE IF EXISTS history_source_positions;
 DROP TABLE IF EXISTS history_sources;";
 
-/// Version 32: history tables that hold no row are removed; tables that
-/// hold rows stay until the history store has moved them.
+/// Version 32: when no history table holds a row, every history table is
+/// removed; while any one holds a row, all of them stay until the history
+/// store has moved them.
 fn v32(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     // The full-text index is derived from `history_conversations` and holds
     // a row only when that table does.
