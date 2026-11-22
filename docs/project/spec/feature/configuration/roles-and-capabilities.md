@@ -118,6 +118,11 @@ evidence. No second session registry or login identity is introduced.
 A recognized session with no instrukt assignment is roleless; an unreadable,
 contradictory or partially lost known assignment is a resolution failure, not a
 roleless fallback. Recovery names the affected binding/attempt or standing key.
+When one native session is reused across sequential attempts of the same
+project, todo, role and worker class, an active unreleased attempt supersedes
+earlier released attempts and released history resolves to the highest attempt;
+contradictory binding facts or attempts spanning different active assignments
+or scopes remain resolution failures.
 Assignment facts remain fixed for that assignment; reading another procedure
 inline changes none. Current role configuration supplies its grants and model
 preferences; configuration edits do not rewrite an assignment's recorded role,

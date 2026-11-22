@@ -10,6 +10,71 @@ use instrukt_core::{
     },
 };
 
+const CONFLICT_MESSAGE: &str =
+    "session has conflicting recorded assignments; recover its binding/attempt";
+
+struct AssignmentCandidate {
+    active: bool,
+    attempt: i64,
+    assignment: Assignment,
+}
+
+fn select_assignment(
+    candidates: Vec<AssignmentCandidate>,
+) -> Result<Option<Assignment>, &'static str> {
+    let Some(first) = candidates.first() else {
+        return Ok(None);
+    };
+    let scope = (
+        &first.assignment.project,
+        &first.assignment.todo,
+        &first.assignment.role,
+        first.assignment.worker,
+    );
+    if candidates.iter().any(|candidate| {
+        (
+            &candidate.assignment.project,
+            &candidate.assignment.todo,
+            &candidate.assignment.role,
+            candidate.assignment.worker,
+        ) != scope
+    }) {
+        return Err(CONFLICT_MESSAGE);
+    }
+    let mut active_chosen: Option<Assignment> = None;
+    let mut released = Vec::new();
+    for candidate in candidates {
+        if candidate.active {
+            if active_chosen
+                .as_ref()
+                .is_some_and(|previous| previous != &candidate.assignment)
+            {
+                return Err(CONFLICT_MESSAGE);
+            }
+            active_chosen = Some(candidate.assignment);
+        } else {
+            released.push(candidate);
+        }
+    }
+    if active_chosen.is_some() {
+        return Ok(active_chosen);
+    }
+    let Some(max_attempt) = released.iter().map(|candidate| candidate.attempt).max() else {
+        return Ok(None);
+    };
+    let mut latest: Option<Assignment> = None;
+    for candidate in released.into_iter().filter(|c| c.attempt == max_attempt) {
+        if latest
+            .as_ref()
+            .is_some_and(|previous| previous != &candidate.assignment)
+        {
+            return Err(CONFLICT_MESSAGE);
+        }
+        latest = Some(candidate.assignment);
+    }
+    Ok(latest)
+}
+
 pub fn recorded_assignment(
     home: &Home,
     caller: &SessionRef,
@@ -17,7 +82,7 @@ pub fn recorded_assignment(
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0").map_err(StateDbError::sqlite(db.path()))?;
+    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0").map_err(StateDbError::sqlite(db.path()))?;
     let rows = stmt
         .query_map([caller.to_string()], |r| {
             Ok((
@@ -28,12 +93,14 @@ pub fn recorded_assignment(
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
                 r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?,
+                r.get::<_, i64>(8)?,
             ))
         })
         .map_err(StateDbError::sqlite(db.path()))?;
-    let mut found = None;
+    let mut candidates = Vec::new();
     for row in rows {
-        let (role, key, workspace, evidence, project, todo, current_session) =
+        let (role, key, workspace, evidence, project, todo, current_session, released_at, attempt) =
             row.map_err(StateDbError::sqlite(db.path()))?;
         let binding: Binding = serde_json::from_str(&evidence).map_err(|e| {
             StateDbError::invalid(
@@ -50,6 +117,8 @@ pub fn recorded_assignment(
             || binding.session != current_session
             || binding.attempt.semantic_key != key
             || binding.worktree.as_deref() != workspace.as_deref().map(std::path::Path::new)
+            || u64::try_from(attempt).ok() != Some(binding.attempt.number)
+            || binding.attempt.released_at.map(|t| t.to_string()) != released_at
             || binding.attempt.assignment
                 == instrukt_runner::interfaces::AssignmentKind::Unspecified
         {
@@ -91,18 +160,13 @@ pub fn recorded_assignment(
             company: None,
             dispatcher,
         };
-        if found
-            .as_ref()
-            .is_some_and(|previous| previous != &assignment)
-        {
-            return Err(StateDbError::invalid(
-                db.path(),
-                "session has conflicting recorded assignments; recover its binding/attempt",
-            ));
-        }
-        found = Some(assignment);
+        candidates.push(AssignmentCandidate {
+            active: released_at.is_none(),
+            attempt,
+            assignment,
+        });
     }
-    Ok(found)
+    select_assignment(candidates).map_err(|message| StateDbError::invalid(db.path(), message))
 }
 
 pub fn target_identity(
@@ -149,5 +213,101 @@ pub fn target_identity(
             db.path(),
             "ambiguous todo target; address the retained todo by durable identity",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use instrukt_core::ids::{ProjectSlug, RoleName};
+
+    fn candidate(
+        active: bool,
+        attempt: i64,
+        role: &str,
+        todo: &str,
+        worker: bool,
+    ) -> AssignmentCandidate {
+        AssignmentCandidate {
+            active,
+            attempt,
+            assignment: Assignment {
+                worker,
+                role: RoleName::parse(role).unwrap(),
+                key: format!("instrukt:todo:demo/{todo}:{role}:{attempt}"),
+                procedure: None,
+                workspace: Some(format!("/tmp/wt/{todo}").into()),
+                project: Some(ProjectSlug::parse("demo").unwrap()),
+                todo: Some(todo.into()),
+                platform: false,
+                company: None,
+                dispatcher: None,
+            },
+        }
+    }
+
+    #[test]
+    fn empty_candidates_return_none() {
+        assert_eq!(select_assignment(Vec::new()), Ok(None));
+    }
+
+    #[test]
+    fn active_attempt_supersedes_released_attempt_on_same_session() {
+        let released = candidate(false, 1, "prepare-orchestrator", "todo-a", false);
+        let active = candidate(true, 2, "prepare-orchestrator", "todo-a", false);
+        let expected = active.assignment.clone();
+        assert_eq!(
+            select_assignment(vec![released, active]),
+            Ok(Some(expected))
+        );
+    }
+
+    #[test]
+    fn conflicting_active_attempts_return_error() {
+        let first = candidate(true, 1, "prepare-orchestrator", "todo-a", false);
+        let second = candidate(true, 2, "prepare-orchestrator", "todo-a", false);
+        assert_eq!(
+            select_assignment(vec![first, second]),
+            Err(CONFLICT_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn identical_active_rows_deduplicate() {
+        let first = candidate(true, 2, "prepare-orchestrator", "todo-a", false);
+        let duplicate = candidate(true, 2, "prepare-orchestrator", "todo-a", false);
+        let expected = first.assignment.clone();
+        assert_eq!(
+            select_assignment(vec![first, duplicate]),
+            Ok(Some(expected))
+        );
+    }
+
+    #[test]
+    fn active_attempt_with_released_attempt_from_other_todo_returns_conflict_error() {
+        let released = candidate(false, 1, "prepare-orchestrator", "todo-a", false);
+        let active = candidate(true, 1, "prepare-orchestrator", "todo-b", false);
+        assert_eq!(
+            select_assignment(vec![released, active]),
+            Err(CONFLICT_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn released_attempts_of_same_role_and_todo_select_latest() {
+        let first = candidate(false, 1, "prepare-orchestrator", "todo-a", false);
+        let second = candidate(false, 2, "prepare-orchestrator", "todo-a", false);
+        let expected = second.assignment.clone();
+        assert_eq!(select_assignment(vec![second, first]), Ok(Some(expected)));
+    }
+
+    #[test]
+    fn released_attempts_of_different_roles_return_conflict_error() {
+        let first = candidate(false, 1, "prepare-orchestrator", "todo-a", false);
+        let second = candidate(false, 2, "work-orchestrator", "todo-a", false);
+        assert_eq!(
+            select_assignment(vec![first, second]),
+            Err(CONFLICT_MESSAGE)
+        );
     }
 }

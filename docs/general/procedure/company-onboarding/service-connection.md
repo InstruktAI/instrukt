@@ -37,10 +37,13 @@ repository.
 1. **Take the company's services.** Ask which services the company's work runs
    on and what each is used for, or read it from the company's documents.
 2. **Record them as company knowledge.** Write the services and what each is
-   used for into the company's documents in its home and commit the change
-   there. Write no address, login or connection state into them: the
-   company's agent works from these documents and from what `instrukt mcp
-   list` shows it (`general/procedure/company-assistance`).
+   used for into documents under `docs/` in a separate worktree (leaving the
+   serving company home checkout on the reviewed default branch), following the
+   authoring and review rules of `general/procedure/company-onboarding/overview`,
+   and commit the change in that worktree. Write no address, login or
+   connection state into them: the company's agent works from these documents
+   and from what `instrukt mcp list` shows it
+   (`general/procedure/company-assistance`).
 3. **Establish each service's server from its own documentation.** For each
    service, read the service's own current documentation of its MCP server and
    its authorization: whether it offers a remote server and its address;
@@ -105,8 +108,9 @@ repository.
 
 ## Outputs
 
-- The company's documents in its home, with a commit naming the services the
-  company works with and what for.
+- The company's documents in a separate worktree, with a commit naming the
+  services the company works with and what for, ready for pull request, review,
+  and integration.
 - A declaration in the home's settings document for each connectable service,
   and the values it references in the home's secrets file.
 - The report of step 10.

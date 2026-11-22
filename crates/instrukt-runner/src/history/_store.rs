@@ -1,8 +1,8 @@
-use super::{Extraction, HistoryError, Match};
+use super::{_db, HistoryError, Match};
 use instrukt_core::{
     home::Home,
     state_db::{
-        StateDb, StateRead,
+        StoreDb,
         rusqlite::{OptionalExtension, params},
     },
 };
@@ -19,41 +19,52 @@ pub(super) struct Conversation {
     pub limitations: Vec<String>,
 }
 
-pub(super) fn position(home: &Home, source: &str) -> Result<(u64, bool), HistoryError> {
-    let Some(db) = StateRead::open(home)? else {
-        return Ok((0, false));
-    };
-    Ok(db
+/// Where the TeleClaude import of a source stands.
+pub(super) enum Import {
+    /// The import completed; its stored position is never read.
+    Complete,
+    /// The import continues after this mirror id; absent before a first
+    /// batch commits.
+    After(Option<i64>),
+}
+
+pub(super) fn position(db: &StoreDb, source: &str) -> Result<Import, HistoryError> {
+    let stored: Option<(bool, Option<i64>)> = db
         .conn()
         .query_row(
-            "SELECT position,imported FROM history_sources WHERE source=?1",
+            "SELECT imported,CASE WHEN imported THEN NULL ELSE position END FROM history_sources WHERE source=?1",
             [source],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .optional()?
-        .unwrap_or((0, false)))
+        .optional()?;
+    Ok(match stored {
+        Some((true, _)) => Import::Complete,
+        Some((false, cursor)) => Import::After(cursor),
+        None => Import::After(None),
+    })
 }
 
+/// Commits one import batch's conversations with the source's position and
+/// completion, in one transaction.
 pub(super) fn load(
-    home: &Home,
+    db: &mut StoreDb,
     source: &str,
-    position: u64,
+    position: Option<i64>,
     imported: bool,
     conversations: &[Conversation],
-) -> Result<Extraction, HistoryError> {
-    let mut db = StateDb::open(home)?;
+) -> Result<(), HistoryError> {
     db.write(|tx| -> Result<_,HistoryError> {
         for c in conversations { write_conversation(tx,source,c)?; }
-        tx.execute("INSERT INTO history_sources(source,position,imported) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET position=max(history_sources.position,excluded.position),imported=max(history_sources.imported,excluded.imported)",params![source,position,imported])?;
-        Ok(Extraction {loaded:conversations.len(),position:serde_json::json!(position)})
+        tx.execute("INSERT INTO history_sources(source,position,imported) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET position=excluded.position,imported=excluded.imported",params![source,position,imported])?;
+        Ok(())
     })
 }
 
 pub(super) fn search(home: &Home, query: &str, limit: usize) -> Result<Vec<Match>, HistoryError> {
-    let Some(db) = StateRead::open(home)? else {
+    let Some(db) = _db::read(home)? else {
         return Ok(Vec::new());
     };
-    let mut stmt = db.conn().prepare("SELECT c.computer,c.source,c.native_id,c.title,c.parent,c.aliases,snippet(history_fts,1,'','', '…',24),c.limitations FROM history_fts JOIN history_conversations c ON c.id=history_fts.rowid WHERE history_fts MATCH ?1 ORDER BY rank,c.source,c.native_id LIMIT ?2")?;
+    let mut stmt = db.prepare("SELECT c.computer,c.source,c.native_id,c.title,c.parent,c.aliases,snippet(history_fts,1,'','', '…',24),c.limitations FROM history_fts JOIN history_conversations c ON c.id=history_fts.rowid WHERE history_fts MATCH ?1 ORDER BY rank,c.source,c.native_id LIMIT ?2")?;
     let rows = stmt.query_map(params![query, limit as u64], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -84,10 +95,10 @@ pub(super) fn search(home: &Home, query: &str, limit: usize) -> Result<Vec<Match
 }
 
 pub(super) fn show(home: &Home, source: &str, conversation: &str) -> Result<Value, HistoryError> {
-    let Some(db) = StateRead::open(home)? else {
+    let Some(db) = _db::read(home)? else {
         return Err(HistoryError::Source("conversation not retained".into()));
     };
-    let mut statement=db.conn().prepare("SELECT native_id,document FROM history_conversations WHERE source=?1 AND (native_id=?2 OR EXISTS(SELECT 1 FROM json_each(aliases) WHERE value=?2)) ORDER BY native_id=?2 DESC LIMIT 2")?;
+    let mut statement=db.prepare("SELECT native_id,document FROM history_conversations WHERE source=?1 AND (native_id=?2 OR EXISTS(SELECT 1 FROM json_each(aliases) WHERE value=?2)) ORDER BY native_id=?2 DESC LIMIT 2")?;
     let found = statement
         .query_map(params![source, conversation], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))

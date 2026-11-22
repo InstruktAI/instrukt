@@ -24,7 +24,7 @@ mod _diff;
 mod _envelope;
 mod _error;
 mod _github;
-mod _grounding;
+pub(crate) mod _grounding;
 mod _inbound;
 mod _model;
 mod _ops;

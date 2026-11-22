@@ -490,12 +490,14 @@ pub fn preparation_complete(
     if !dir.is_dir() {
         return Ok(None);
     }
+    let project_root = primary_worktree(project_root)?;
+    let config = Configuration::load(home, Some(&project_root))?;
     let reading = Reading {
         flavor: Flavor::load(&dir)?,
         config,
         project: ProjectRef {
             slug,
-            root: project_root.to_path_buf(),
+            root: project_root,
         },
     };
     let facts = facts_with(home, &reading, evidence, others)?;

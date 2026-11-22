@@ -4,13 +4,15 @@
 //! todo owns. Prerequisite artifacts are added by the caller, which holds
 //! the project's records.
 
+use std::collections::BTreeSet;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use instrukt_core::docs::{Corpus, RefTarget};
 use instrukt_core::git;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug, SnippetId, TodoSlug};
+use instrukt_runner::interfaces::Lane;
 
 use super::_error::WorkError;
 use crate::evidence::{ContentDigest, Grounding, SnippetDigest};
@@ -18,20 +20,204 @@ use crate::evidence::{ContentDigest, Grounding, SnippetDigest};
 /// The language tag of a fenced block declaring referenced code.
 const REFERENCED_PATHS: &str = "referenced-paths";
 
+/// Candidate worktree paths for a todo's own pending carriers, newest
+/// work-lane placement first, then newest preparation-lane placement.
+pub(crate) fn candidate_worktrees<'a>(
+    placements: impl DoubleEndedIterator<Item = (Option<Lane>, Option<&'a Path>)> + Clone,
+) -> Vec<&'a Path> {
+    let mut out = Vec::new();
+    for target in [Lane::Work, Lane::Prepare] {
+        for (lane, path) in placements.clone().rev() {
+            if lane == Some(target)
+                && let Some(path) = path
+                && !out.contains(&path)
+            {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// Low-level I/O or git failure while resolving a todo's owned-snippet checkout
+/// or hashing an owned snippet and its companion.
+#[derive(Debug)]
+pub(crate) enum GroundingIoError {
+    Git(git::GitError),
+    Io { path: PathBuf, source: io::Error },
+}
+
+impl From<git::GitError> for GroundingIoError {
+    fn from(err: git::GitError) -> Self {
+        Self::Git(err)
+    }
+}
+
+impl From<GroundingIoError> for WorkError {
+    fn from(err: GroundingIoError) -> Self {
+        match err {
+            GroundingIoError::Git(err) => WorkError::Git(err),
+            GroundingIoError::Io { path, source } => WorkError::Io { path, source },
+        }
+    }
+}
+
+/// Resolve the live checkout that holds a todo's own pending snippets: the
+/// newest existing work-lane or preparation-lane worktree rooted exactly at
+/// its recorded path, falling back to `project_root` once removed or absent.
+pub(crate) fn owned_snippet_root(
+    project_root: &Path,
+    candidates: &[&Path],
+) -> Result<PathBuf, GroundingIoError> {
+    for candidate in candidates {
+        let joined = project_root.join(candidate);
+        let canon = match joined.canonicalize() {
+            Ok(path) => path,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(GroundingIoError::Io {
+                    path: joined,
+                    source,
+                });
+            }
+        };
+        let Some(root) = git::worktree_root(&canon)? else {
+            continue;
+        };
+        let root = root.canonicalize().map_err(|source| GroundingIoError::Io {
+            path: root.clone(),
+            source,
+        })?;
+        if root == canon {
+            return Ok(canon);
+        }
+    }
+    Ok(project_root.to_path_buf())
+}
+
+/// Deterministic digest combining a live parent snippet with its todo companion
+/// file so companion-only edits and empty retirement companions are distinct
+/// from both each other and from a companion-less parent.
+fn combine_owned_digest(parent: &str, companion: &str) -> ContentDigest {
+    let mut combined = String::with_capacity(parent.len() + companion.len() + 32);
+    combined.push_str("parent:");
+    combined.push_str(&parent.len().to_string());
+    combined.push('\n');
+    combined.push_str(parent);
+    combined.push_str("\ncompanion:");
+    combined.push_str(&companion.len().to_string());
+    combined.push('\n');
+    combined.push_str(companion);
+    ContentDigest::of(&combined)
+}
+
+/// Digest of a todo-owned snippet read solely from `root` (never falling back
+/// to the published store). When `todo` has a companion `<stem>.<slug>.md`,
+/// hashes parent and companion together; when none exists, hashes the snippet
+/// file directly.
+pub(crate) fn owned_snippet_digest(
+    root: &Path,
+    corpus: &Corpus,
+    todo: &TodoSlug,
+    id: &SnippetId,
+) -> Result<Option<ContentDigest>, GroundingIoError> {
+    let Some(snippet) = corpus.snippet(id) else {
+        return Ok(None);
+    };
+    let parent_path = root.join(snippet.path());
+    let parent_text = match std::fs::read_to_string(&parent_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(GroundingIoError::Io {
+                path: parent_path,
+                source,
+            });
+        }
+    };
+    let Some(companion) = snippet.companions().iter().find(|c| c.slug() == todo) else {
+        return Ok(Some(ContentDigest::of(&parent_text)));
+    };
+    let companion_path = root.join(companion.path());
+    let companion_text = match std::fs::read_to_string(&companion_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(GroundingIoError::Io {
+                path: companion_path,
+                source,
+            });
+        }
+    };
+    Ok(Some(combine_owned_digest(&parent_text, &companion_text)))
+}
+
+/// Retain previously-owned snippet IDs that are no longer owned (either deleted
+/// outright -> `None`, or companion-deleted with a surviving parent -> parent
+/// digest) using the same digest function observation uses, so a cosmetic
+/// judgment settles the current state and restoring the deleted file or
+/// companion requires reassessment.
+fn append_prior_owned<E>(
+    owned_snippets: &mut Vec<SnippetDigest>,
+    owned_ids: &mut BTreeSet<SnippetId>,
+    prior_owned: &[SnippetId],
+    mut current_digest: impl FnMut(&SnippetId) -> Result<Option<ContentDigest>, E>,
+) -> Result<(), E> {
+    for id in prior_owned {
+        if owned_ids.insert(id.clone()) {
+            let digest = current_digest(id)?;
+            owned_snippets.push(SnippetDigest {
+                id: id.clone(),
+                digest,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// The grounding of `content`, an artifact of todo `todo` in the project
-/// rooted at `root`, whose canonical branch is `base_branch`.
+/// rooted at `project_root`, with todo-owned pending snippets read solely from
+/// `owned_root` (the active todo worktree when present, else `project_root`),
+/// whose canonical branch is `base_branch`. `prior_owned` retains previously
+/// recorded owned IDs at their current state in `owned_root` (`None` when
+/// deleted, or the surviving parent digest when only its companion was removed).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ground(
     home: &Home,
-    root: &Path,
+    project_root: &Path,
+    owned_root: &Path,
     project: &ProjectSlug,
     base_branch: &str,
     todo: &TodoSlug,
     content: &str,
+    prior_owned: &[SnippetId],
 ) -> Result<Grounding, WorkError> {
-    let corpus = Corpus::load(root, home)?;
-    let digest_of = |id: &SnippetId| -> Result<Option<ContentDigest>, WorkError> {
-        let path = match corpus.snippet(id) {
-            Some(snippet) => root.join(snippet.path()),
+    let project_corpus = Corpus::load(project_root, home)?;
+    let separate_owned = owned_root != project_root;
+    let owned_corpus = if separate_owned {
+        Some(Corpus::load(owned_root, home)?)
+    } else {
+        None
+    };
+    let active_corpus = owned_corpus.as_ref().unwrap_or(&project_corpus);
+    let mut owned_snippets = Vec::new();
+    let mut owned_ids = BTreeSet::new();
+    for snippet in active_corpus.snippets() {
+        if snippet.has_material_for(todo) {
+            let digest = owned_snippet_digest(owned_root, active_corpus, todo, snippet.id())?;
+            owned_ids.insert(snippet.id().clone());
+            owned_snippets.push(SnippetDigest {
+                id: snippet.id().clone(),
+                digest,
+            });
+        }
+    }
+    append_prior_owned(&mut owned_snippets, &mut owned_ids, prior_owned, |id| {
+        owned_snippet_digest(owned_root, active_corpus, todo, id)
+    })?;
+    let digest_in_project = |id: &SnippetId| -> Result<Option<ContentDigest>, WorkError> {
+        let path = match project_corpus.snippet(id) {
+            Some(snippet) => project_root.join(snippet.path()),
             None => home.docs_dir().join(format!("{id}.md")),
         };
         match std::fs::read_to_string(&path) {
@@ -43,26 +229,17 @@ pub(crate) fn ground(
     let mut referenced_snippets = Vec::new();
     for reference in instrukt_core::docs::references(content, Some(project), home.user_home()) {
         if let Some(RefTarget::Snippet(id)) = reference.target
+            && !owned_ids.contains(&id)
             && !referenced_snippets
                 .iter()
                 .any(|s: &SnippetDigest| s.id == id)
         {
-            let digest = digest_of(&id)?;
+            let digest = digest_in_project(&id)?;
             referenced_snippets.push(SnippetDigest { id, digest });
         }
     }
-    let mut owned_snippets = Vec::new();
-    for snippet in corpus.snippets() {
-        if snippet.has_material_for(todo) {
-            let digest = digest_of(snippet.id())?;
-            owned_snippets.push(SnippetDigest {
-                id: snippet.id().clone(),
-                digest,
-            });
-        }
-    }
     Ok(Grounding {
-        head: head(root, base_branch)?,
+        head: head(project_root, base_branch)?,
         referenced_paths: referenced_paths(content),
         referenced_snippets,
         owned_snippets,
@@ -100,4 +277,88 @@ pub(crate) fn referenced_paths(content: &str) -> Vec<String> {
         }
     }
     paths.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_worktrees_prefers_newest_work_then_prepare_and_deduplicates() {
+        let prep_old = Path::new("/wt/prep-1");
+        let prep_new = Path::new("/wt/prep-2");
+        let work_tree = Path::new("/wt/work-1");
+        let placements = [
+            (Some(Lane::Prepare), Some(prep_old)),
+            (Some(Lane::Prepare), Some(prep_new)),
+            (Some(Lane::Work), Some(work_tree)),
+            (Some(Lane::Prepare), Some(prep_new)),
+            (None, Some(Path::new("/wt/ignored"))),
+        ];
+        assert_eq!(
+            candidate_worktrees(placements.into_iter()),
+            vec![work_tree, prep_new, prep_old]
+        );
+    }
+
+    #[test]
+    fn candidate_worktrees_selects_prepare_tree_when_no_work_binding_exists() {
+        let prep = Path::new("/wt/prep-only");
+        let placements = [(Some(Lane::Prepare), Some(prep))];
+        assert_eq!(candidate_worktrees(placements.into_iter()), vec![prep]);
+    }
+
+    #[test]
+    fn combine_owned_digest_distinguishes_companion_edit_and_empty_retirement_companion() {
+        let parent = "# Spec\n\nLive body.\n";
+        let parent_only = ContentDigest::of(parent);
+        let with_v1 = combine_owned_digest(parent, "# Spec\n\nNext v1.\n");
+        let with_v2 = combine_owned_digest(parent, "# Spec\n\nNext v2.\n");
+        let empty_retire = combine_owned_digest(parent, "");
+        assert_ne!(with_v1, with_v2);
+        assert_ne!(empty_retire, parent_only);
+        assert_ne!(empty_retire, with_v1);
+    }
+
+    #[test]
+    fn append_prior_owned_retains_deleted_as_none_and_surviving_parent_with_its_digest() {
+        let present = SnippetId::parse("project/demo/policy/present").unwrap();
+        let deleted = SnippetId::parse("project/demo/policy/deleted").unwrap();
+        let parent_only = SnippetId::parse("project/demo/policy/parent").unwrap();
+        let mut owned = vec![SnippetDigest {
+            id: present.clone(),
+            digest: Some(ContentDigest::of("body")),
+        }];
+        let mut ids: BTreeSet<SnippetId> = [present.clone()].into_iter().collect();
+        append_prior_owned::<()>(
+            &mut owned,
+            &mut ids,
+            &[present, deleted.clone(), parent_only.clone()],
+            |id| {
+                Ok(if id == &parent_only {
+                    Some(ContentDigest::of("surviving parent"))
+                } else {
+                    None
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            owned,
+            vec![
+                SnippetDigest {
+                    id: SnippetId::parse("project/demo/policy/present").unwrap(),
+                    digest: Some(ContentDigest::of("body")),
+                },
+                SnippetDigest {
+                    id: deleted,
+                    digest: None,
+                },
+                SnippetDigest {
+                    id: parent_only,
+                    digest: Some(ContentDigest::of("surviving parent")),
+                },
+            ]
+        );
+    }
 }
