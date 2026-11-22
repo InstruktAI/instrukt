@@ -107,9 +107,6 @@ const UPDATE_VIEW: &str = "mutation($view:ID!,$layout:ProjectV2ViewLayout!,$filt
 const DELETE_VIEW: &str = "mutation($view:ID!) {
   deleteProjectV2View(input:{viewId:$view}) {projectV2View{id}}
 }";
-const SET_VISIBILITY: &str = "mutation($project:ID!,$public:Boolean!) {
-  updateProjectV2(input:{projectId:$project,public:$public}) {projectV2{id}}
-}";
 const CLEAR_VALUE: &str = "mutation($project:ID!,$item:ID!,$field:ID!) {
   clearProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field}) {projectV2Item{id}}
 }";
@@ -492,7 +489,10 @@ pub(crate) fn setup(
         let id = project["id"]
             .as_str()
             .ok_or_else(|| created_field("node id"))?;
-        match gh.graphql(SET_VISIBILITY, &json!({"project": id, "public": true})) {
+        match gh.graphql(
+            "mutation($project:ID!,$public:Boolean!){ updateProjectV2(input:{projectId:$project,public:$public}){projectV2{id}}}",
+            &json!({"project": id, "public": true}),
+        ) {
             Ok(_) => {}
             Err(error) if declined(&error) => tracing::warn!(
                 event = "work_board_left_private",
