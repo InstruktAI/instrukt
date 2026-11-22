@@ -144,6 +144,7 @@ commit in one transaction. Exact replay reports the retained outcome without a
 second release. Missing or stale evidence keeps the attempt outstanding. These
 commands change no Git ref: each role commits directly on the todo branch.
 
+<!-- planned-change:fix-role-complete-artifact-only-revision -->
 A build-review verdict binds the current shared worktree head and complete
 findings digest and releases its reviewer in the same transaction. That tree
 must remain clean at the head captured for review. Deferral processing likewise
@@ -155,6 +156,24 @@ at the clean todo-worktree head. It releases that writer so the parent can dispa
 review. Preparation verdict stamps release their corresponding reviewer attempts;
 commit reviews retain the exact SHA and report-note binding. Missing outputs keep
 the writer outstanding. Commit review remains owed after writer release.
+<!-- change:fix-role-complete-artifact-only-revision -->
+A build-review verdict binds the current shared worktree head and complete
+findings digest and releases its reviewer in the same transaction. That tree
+must remain clean at the head captured for review. Deferral processing likewise
+releases its bound read-only attempt only against current dispositions. New
+workspace work after release requires a new attempt with shared isolation.
+Preparation doc writers (`intaker`, `architect`, `planner`) also record
+`--role-complete` at the clean preparation-worktree head. The stamp binds the
+current digest of the writer's required artifact (`prd`, `architecture` or
+`implementation-plan`), that head, and the commits the attempt authored since
+its captured head. The commit list is empty when the attempt changed no
+repository file, and the writer then completes at its captured head. It
+releases that writer so the parent can dispatch independent review. Preparation
+verdict stamps release their corresponding reviewer attempts; commit reviews
+retain the exact SHA and report-note binding. A required artifact with no
+version keeps the writer outstanding. Commit review remains owed after writer
+release.
+<!-- /planned-change:fix-role-complete-artifact-only-revision -->
 
 Review rounds count verdict stamps; repeated evaluation counts no round.
 

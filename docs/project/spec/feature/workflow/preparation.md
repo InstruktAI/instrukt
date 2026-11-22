@@ -156,6 +156,18 @@ Then the decision remains recorded for the next pickup or deliberate start
 And no orchestrator is started solely to deliver the decision
 ```
 
+<!-- planned:fix-role-complete-artifact-only-revision -->
+### UC-PR3: A derivation that changes no repository file proceeds to its review
+
+```gherkin
+Given a developer's todo is in preparation
+When the author of a derivation records it without changing any repository file
+And records role completion at the unchanged preparation head
+Then that attempt is released without a repository change
+And the derivation's independent review can start
+```
+<!-- /planned:fix-role-complete-artifact-only-revision -->
+
 ## Known caveats
 
 - Preparation integration does not deliver the build. Review and integration of the work candidate remain owed independently.
