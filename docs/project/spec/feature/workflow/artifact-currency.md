@@ -67,8 +67,11 @@ the current canonical head changes a referenced path (exactly, or under a
 directory prefix), when a referenced or owned snippet's digest changed, or
 when a prerequisite artifact's digest changed. When git cannot compare the two
 commits, or there is no current canonical head, the classification is
-pending. An artifact that references no paths has no code drift. A referenced
-path or snippet that cannot be resolved is incomplete provenance.
+pending. An artifact that references no paths has no code drift. A path absent
+at both heads is a planned creation. Its absence alone leaves the artifact
+fresh. A path missing from the current head is incomplete provenance if it
+existed at the recorded head or its prior absence cannot be established.
+An unresolved snippet is also incomplete provenance.
 
 Each tracked artifact has one effective drift classification: fresh, pending
 analysis, cosmetic or substantive. Where evidence classes disagree,

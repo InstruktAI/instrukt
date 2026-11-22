@@ -14,7 +14,7 @@ native dispatch (orchestrator): Use native delegated-task dispatch with shared i
 
 effects: none
 instructions:
-Judge the drift of quoted-lists: PRD pending, plan pending.
+Judge the drift of quoted-lists: PRD pending, plan fresh.
 =====
 todo: quoted-lists (demo)
 flow: prepare
