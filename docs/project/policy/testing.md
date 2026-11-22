@@ -110,7 +110,6 @@ Cursor/Grok/Antigravity default-only outputs are not filesystem-delivery
 fixtures against a real home. Existing pure/source evidence covers their
 planning/format; relocated Claude/fx file checks do not prove context receipt.
 
-Because the isolated Instrukt root holds no work database or GitHub App setup,
 `.pre-commit-config.yaml`'s document validation check runs `instrukt docs
 validate --no-todo-lookup` (`project/instrukt/spec/feature/docs/snippet-validation`),
 checking pending-slug form, marker structure, workflow roles and all other
@@ -123,6 +122,10 @@ a fake agreeing with itself cannot detect upstream drift. Isolating the release
 suite keeps ordinary checks independent of release availability and credentials.
 One test per use-case situation keeps its acceptance evidence predictable and
 reviewable without splitting the required outcomes among several bindings.
+Running the document validation hook with `--no-todo-lookup` keeps commit checks
+service-free: the isolated Instrukt root holds neither a work database nor
+GitHub App configuration, while live todo-slug existence lookup stays on
+configured interactive runs and `instrukt sync`.
 
 The real CLI, filesystem and git boundaries are the behavior developers adopt.
 Isolating them in temporary homes protects the machine while preserving those
