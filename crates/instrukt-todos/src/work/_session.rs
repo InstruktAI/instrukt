@@ -1098,6 +1098,74 @@ impl<'w> Session<'w> {
         Ok(docs)
     }
 
+    /// Commits a change of item `index` whose making has local effects that
+    /// may run only once the change is admitted, all in one writer
+    /// transaction: the live row is judged against the row this command
+    /// read first, so a refused change runs none of them; then `effect`
+    /// makes the change on the item's record, running its effects, and the
+    /// record commits as a new revision pending reflection. An error from
+    /// `effect` writes nothing; it answers for whatever effects it already
+    /// had. `effect` runs under the writer lock and so makes no network
+    /// request.
+    pub fn commit_admitted<T>(
+        &mut self,
+        what: &'static str,
+        index: usize,
+        effect: impl FnOnce(&mut TodoRecord) -> Result<T, WorkError>,
+    ) -> Result<T, WorkError> {
+        self.schema_ready()?;
+        let mut mine = self.items[index].clone();
+        let Some(base) = self.bases.get(&mine.record.id).cloned() else {
+            return Err(WorkError::refused(format!(
+                "`{}` has no stored record to change",
+                mine.record.slug
+            )));
+        };
+        let outcome = self.store.write(|tx, path, project| {
+            if let Err(refusal) = _store::admit(tx, path, project, &base)? {
+                return Ok(Err(refusal));
+            }
+            let value = effect(&mut mine.record)?;
+            mine.record.revision += 1;
+            mine.reflection.pending = true;
+            Ok(
+                _store::commit_local(tx, path, project, Some(&base), &mine, &[])?
+                    .map(|row| (value, row)),
+            )
+        })?;
+        let (value, row) = match outcome {
+            Ok(done) => done,
+            Err(Refusal::Conflicted(live)) => {
+                let todo = live.record.slug.clone();
+                self.take_row(index, *live);
+                return Err(WorkError::Conflicted { todo });
+            }
+            Err(Refusal::Changed(now)) => {
+                return Err(self.changed_refusal(&mine, Some(&base), now));
+            }
+            Err(Refusal::Taken) => {
+                return Err(WorkError::refused(format!(
+                    "a live todo is already named `{}`; nothing of this change was written",
+                    mine.record.slug
+                )));
+            }
+        };
+        let inbound = std::mem::take(&mut self.items[index].reflection.inbound);
+        self.take_row(index, row);
+        self.items[index].reflection.inbound = inbound;
+        let item = &self.items[index];
+        tracing::info!(
+            event = "work_recorded",
+            change = what,
+            project = %item.record.project,
+            todo = %item.record.slug,
+            id = %item.record.id,
+            revision = item.record.revision,
+            "work record changed"
+        );
+        Ok(value)
+    }
+
     /// The refusal of a change whose write found the live row of `mine`,
     /// read as `base`, changed by another command; `now` is the slug the
     /// live row carries, `None` when it is gone. The todo is named as read,

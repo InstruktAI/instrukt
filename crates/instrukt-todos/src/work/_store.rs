@@ -442,22 +442,19 @@ pub(crate) fn commit_local(
     others: &[TodoId],
 ) -> Result<Result<LocalItem, Refusal>, WorkError> {
     let id = &mine.record.id;
-    // An identity another project's row holds is never written over, nor
-    // its row handed to this project's session.
-    let live = match load_one(tx, path, id)? {
-        Some(other) if &other.record.project != project => {
-            return Ok(Err(Refusal::Changed(None)));
-        }
-        live => live,
-    };
-    let next = match (base, live) {
-        (None, None) => mine.clone(),
-        (Some(_), None) => return Ok(Err(Refusal::Changed(None))),
-        (None, Some(live)) => return Ok(Err(Refusal::Changed(Some(live.record.slug)))),
-        (Some(base), Some(live)) => match admission(&live, base) {
-            Admission::Conflicted => return Ok(Err(Refusal::Conflicted(Box::new(live)))),
-            Admission::Changed => return Ok(Err(Refusal::Changed(Some(live.record.slug)))),
-            Admission::Admitted => rebase_local(&live, mine),
+    let next = match base {
+        Some(base) => match admit(tx, path, project, base)? {
+            Ok(live) => rebase_local(&live, mine),
+            Err(refusal) => return Ok(Err(refusal)),
+        },
+        // An identity another project's row holds is never written over,
+        // nor its row handed to this project's session.
+        None => match load_one(tx, path, id)? {
+            None => mine.clone(),
+            Some(other) if &other.record.project != project => {
+                return Ok(Err(Refusal::Changed(None)));
+            }
+            Some(live) => return Ok(Err(Refusal::Changed(Some(live.record.slug)))),
         },
     };
     let renamed = base.is_none_or(|base| base.record.slug != mine.record.slug);
@@ -474,6 +471,26 @@ pub(crate) fn commit_local(
     }
     save_in(tx, path, &next)?;
     Ok(Ok(written(tx, path, id)?))
+}
+
+/// Judges, inside `tx`, a change computed from `base`, the row the command
+/// last read or wrote, against its todo's live row ([`admission`]): the
+/// live row when the change is admitted, else why it is refused. A row of
+/// the identity that belongs to another project is reported gone.
+pub(crate) fn admit(
+    tx: &Transaction<'_>,
+    path: &Path,
+    project: &ProjectSlug,
+    base: &LocalItem,
+) -> Result<Result<LocalItem, Refusal>, WorkError> {
+    Ok(match load_one(tx, path, &base.record.id)? {
+        Some(live) if &live.record.project == project => match admission(&live, base) {
+            Admission::Conflicted => Err(Refusal::Conflicted(Box::new(live))),
+            Admission::Changed => Err(Refusal::Changed(Some(live.record.slug))),
+            Admission::Admitted => Ok(live),
+        },
+        _ => Err(Refusal::Changed(None)),
+    })
 }
 
 /// A todo as the waiting graph sees it (`dependencies-and-holds`): its
