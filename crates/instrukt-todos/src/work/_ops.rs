@@ -1019,20 +1019,23 @@ impl Work {
         Ok(Store::new(&self.home, &project.slug))
     }
 
-    /// The record of the local item `address` names, read from this
-    /// computer alone with no lock (`github-record`, "Artifacts and
-    /// stamps"): a plain slug is the live item, `<slug>@<identity-prefix>`
-    /// an exact entry, retained ones included. `None` when no local item
-    /// answers the address.
+    /// The record `address` names as this computer holds it (`github-record`,
+    /// "Artifacts and stamps"), from one snapshot of the local items and the
+    /// listing copies, with no GitHub request and, on a current schema, no
+    /// lock (an older one migrates once under the writer lock). It resolves
+    /// as [`Session::locate`] does: a plain slug is the live local item, else
+    /// the live listing copy; `<slug>@<identity-prefix>` an exact local
+    /// entry, retained ones included, else the one listing copy it names.
+    /// `None` when neither answers the address.
     fn local_record(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
     ) -> Result<Option<TodoRecord>, WorkError> {
         let store = self.local_store_checked(project)?;
+        let (items, copies, _) = store.existence()?;
         let now = self.now();
-        let items: Vec<LocalItem> = store
-            .items()?
+        let items: Vec<LocalItem> = items
             .into_iter()
             .filter(|it| !past_recovery(&it.record, now))
             .collect();
@@ -1040,14 +1043,29 @@ impl Work {
             None => find_in(&items, &address.slug, false),
             Some(_) => exact_local(&items, address)?,
         };
-        Ok(found.map(|index| items[index].record.clone()))
+        if let Some(index) = found {
+            return Ok(Some(items[index].record.clone()));
+        }
+        let mut copied =
+            copies
+                .into_iter()
+                .map(|copy| copy.record)
+                .filter(|r| match address.identity {
+                    None => r.slug == address.slug && r.is_live(),
+                    Some(_) => address.names(r),
+                });
+        Ok(match (address.identity.is_some(), copied.next()) {
+            (true, Some(record)) => copied.next().is_none().then_some(record),
+            (_, found) => found,
+        })
     }
 
     /// The record `address` names for an artifact read, and whether GitHub
-    /// was read for it. A local item holding what `enough` asks answers
-    /// from the local record alone. Otherwise the todo is shown as
-    /// [`Work::show`] shows it: a listing copy or a retained entry
-    /// resolves, and verified content GitHub still serves is restored.
+    /// was read for it. A record this computer holds, a local item's or a
+    /// listing copy's, that holds what `enough` asks answers alone
+    /// ([`Work::local_record`]). Otherwise the todo is shown as
+    /// [`Work::show`] shows it, and verified content GitHub still serves is
+    /// restored.
     fn artifact_record(
         &self,
         project: &ProjectRef,
