@@ -1598,6 +1598,11 @@ fn a_public_projects_new_board_is_public_and_a_maintainers_later_choice_is_kept(
     let elsewhere = project.other_computer();
     without_board(elsewhere.repo.path());
     elsewhere.ok(["update", "cockpit"]);
+    assert_eq!(
+        project.github.project_numbers("acme"),
+        [1, 2],
+        "the other computer reuses the board instead of creating one"
+    );
     assert!(
         !project.github.project_public("acme", 2),
         "a board found by its title keeps the maintainer's choice"
