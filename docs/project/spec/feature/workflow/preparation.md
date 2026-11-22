@@ -1,5 +1,7 @@
 ---
 description: Preparation derives the required artifacts, independent reviews and configured approvals before releasing a todo for execution.
+binding_reservations:
+  UC-PR3: fix-role-complete-artifact-only-revision
 ---
 # Preparation — Spec
 
@@ -154,6 +156,15 @@ And re-derives the next preparation obligation from the record
 But when no live orchestrator exists
 Then the decision remains recorded for the next pickup or deliberate start
 And no orchestrator is started solely to deliver the decision
+```
+
+### UC-PR3: A derivation that changes no repository file proceeds to its review
+
+```gherkin
+Given a developer's todo is in preparation
+When the author of a derivation records it without changing any repository file
+And records role completion at the unchanged preparation head
+Then the derivation's independent review can start
 ```
 
 ## Known caveats
