@@ -2,7 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main, "wave/**", "build/**", "fix/**"]
+    branches: [main]
+  # A pull request runs the checks its changed files reach
+  # (scripts/ci-changes.sh); every required check still reports.
   pull_request:
   # A release runs these checks on the tagged revision before it builds.
   workflow_call:
@@ -14,125 +16,213 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every required check depends on `changes` and gates its steps, never its job:
+# a check whose steps are skipped still reports success under its own name,
+# where a skipped matrix job would leave its expanded names pending. Each job
+# runs unless cancelled, and its steps read the outputs of `changes` only when
+# that job succeeded: a step runs unless its output is `false`, and nothing is
+# left out of the commit checks unless `changes` succeeded. A `changes` job that
+# fails, even after writing some outputs, runs every check.
 jobs:
+  changes:
+    name: changed inputs
+    runs-on: ubuntu-latest
+    outputs:
+      shell: ${{ steps.changes.outputs.shell }}
+      rust: ${{ steps.changes.outputs.rust }}
+      docs: ${{ steps.changes.outputs.docs }}
+      deps: ${{ steps.changes.outputs.deps }}
+      graphify: ${{ steps.changes.outputs.graphify }}
+      t3: ${{ steps.changes.outputs.t3 }}
+      validate: ${{ steps.changes.outputs.validate }}
+      precommit_skip: ${{ steps.changes.outputs.precommit_skip }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Classify the changed files
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/ci-changes.sh >> "$GITHUB_OUTPUT"
+
   shell:
     name: shellcheck
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.shell != 'false' }}
       - name: Read pinned test tools
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.shell != 'false' }}
         id: test-tools
         run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.shell != 'false' }}
         with:
           version: ${{ steps.test-tools.outputs.UV_VERSION }}
       - name: Install the commit-check framework
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.shell != 'false' }}
         run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
       - name: shellcheck
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.shell != 'false' }}
         run: pre-commit run shellcheck --all-files
 
   check:
     name: fmt, clippy, test (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          # Document and configuration validation is OS-independent: a change
+          # that reaches no Rust input validates on Linux alone.
+          - os: ubuntu-latest
+            validate: validate
+          - os: macos-latest
+            validate: rust
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
       - name: Read pinned test tools
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         id: test-tools
         run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
         with:
           tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
       - name: Install disposable-test Redis (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
         run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
       - name: Install disposable-test Redis (macOS)
-        if: runner.os == 'macOS'
+        if: ${{ runner.os == 'macOS' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
         run: brew install redis shellcheck
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         with:
           version: ${{ steps.test-tools.outputs.UV_VERSION }}
       - name: Install the commit-check framework
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
       # Every check of .pre-commit-config.yaml over every file, document and
-      # configuration validation with an instrukt built from this revision.
+      # configuration validation with an instrukt built from this revision;
+      # on a pull request, without the Rust, shell or Python checks whose inputs
+      # did not change (precommit_skip).
       - name: commit checks over every file
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
+        env:
+          SKIP: ${{ needs.changes.result == 'success' && needs.changes.outputs.precommit_skip || '' }}
         run: scripts/commit-checks.sh --all-files
       - name: test
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
         run: cargo nextest run --workspace --locked --profile ci
       - name: doctests
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
         run: cargo test --workspace --locked --doc
       - name: use-case coverage
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         run: scripts/check-coverage.sh
       - name: committed configuration
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         run: scripts/check-committed-config.sh
       - name: committed instruction files
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         run: scripts/check-entrypoints.sh
 
   dependencies:
     name: dependency audit
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.deps != 'false' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.deps != 'false' }}
       - name: Read pinned test tools
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.deps != 'false' }}
         id: test-tools
         run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.deps != 'false' }}
         with:
           tool: cargo-deny@${{ steps.test-tools.outputs.DENY_VERSION }}
       - name: dependency audit
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.deps != 'false' }}
         run: cargo deny --locked check
 
   graphify-contract:
     name: pinned Graphify contract
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
       - name: Read pinned test tools
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
         id: test-tools
         run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
         with:
           version: ${{ steps.test-tools.outputs.UV_VERSION }}
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
         with:
           tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
       - name: Install disposable-test Redis
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
         run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
       - name: Install and check the release pin against the real graph contract
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
         run: cargo nextest run --locked -p instrukt-cli --features graphify-contract --test integration -E 'test(=graph_engine::real_pinned_graphify_contract)'
 
   t3-contract:
     name: pinned T3 contract
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
       - name: Read pinned test tools
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
         id: test-tools
         run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
         with:
           tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
       - name: Install shared CLI harness prerequisites
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
         run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
       - name: Check the real pinned release and its fake
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
         env:
           T3_CONTRACT_REPORT: ${{ runner.temp }}/t3-contract.json
         run: cargo nextest run --locked -p instrukt-cli --features t3-contract --test integration -E 'test(=t3_contract::a_release_and_its_fake_are_checked_without_a_model_account)' --success-output immediate
       - name: Retain the contract result
-        if: always()
+        if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pinned-t3-contract-result
