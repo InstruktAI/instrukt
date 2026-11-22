@@ -993,7 +993,9 @@ impl<'w> Session<'w> {
     /// everything succeeded: documentation moves only once every row is
     /// written, and a failing transfer writes nothing of its own. A todo a
     /// reflection marked conflicted since this command read it refuses the
-    /// whole change, returning its live row.
+    /// whole change, returning its live row. A change that moves waiting
+    /// edges is refused whole when the graph the transaction holds, local
+    /// rows and listing copies alike, would wait on itself through them.
     fn write_change(
         &mut self,
         changed: &[usize],
@@ -1004,34 +1006,25 @@ impl<'w> Session<'w> {
             .iter()
             .map(|&index| self.items[index].record.id.clone())
             .collect();
-        // A change to a todo's prerequisites or group was judged against
-        // the todos its relationship checks consulted; they must still hold
-        // what was judged, or two such changes could each pass against the
-        // same graph (`dependencies-and-holds`).
-        let edges_changed = changed.iter().any(|&index| {
-            let mine = &self.items[index].record;
-            match self.bases.get(&mine.id) {
-                Some(base) => base.record.after != mine.after || base.record.group != mine.group,
+        // The todos whose waiting edges this change moves: prerequisites, a
+        // group, or becoming or ceasing to be a holder, which waits on its
+        // children (`dependencies-and-holds`).
+        let rewired: Vec<TodoId> = changed
+            .iter()
+            .map(|&index| &self.items[index].record)
+            .filter(|mine| match self.bases.get(&mine.id) {
+                Some(base) => {
+                    base.record.after != mine.after
+                        || base.record.group != mine.group
+                        || (base.record.status == TodoStatus::StructuralHolder)
+                            != (mine.status == TodoStatus::StructuralHolder)
+                }
                 None => !mine.after.is_empty() || mine.group.is_some(),
-            }
-        });
-        let reads: Vec<&LocalItem> = if edges_changed {
-            self.current
-                .iter()
-                .filter(|id| !others.contains(id))
-                .filter_map(|id| self.bases.get(id))
-                .collect()
-        } else {
-            Vec::new()
-        };
+            })
+            .map(|mine| mine.id.clone())
+            .collect();
         let mut conflicted = None;
         let result = self.store.write(|tx, path, project| {
-            if let Some(read) = _store::changed_read(tx, path, reads)? {
-                return Err(WorkError::refused(format!(
-                    "`{}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record",
-                    read.record.slug
-                )));
-            }
             let mut rows = Vec::new();
             for &index in changed {
                 let mine = &self.items[index];
@@ -1052,6 +1045,19 @@ impl<'w> Session<'w> {
                         )));
                     }
                 }
+            }
+            // The change was judged against the graph as this command read
+            // it; what commits is the graph this transaction holds, with
+            // every edge and membership other commands committed since.
+            if !rewired.is_empty()
+                && let Some(cycle) = _store::cycle_in(tx, path, project, &rewired)?
+            {
+                let names: Vec<String> = cycle.iter().map(ToString::to_string).collect();
+                return Err(WorkError::refused(format!(
+                    "this change makes `{}` wait on itself: {}; nothing of it was written",
+                    names[0],
+                    names.join(" → ")
+                )));
             }
             write_related(tx)?;
             let docs = match transfer {

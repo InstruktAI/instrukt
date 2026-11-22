@@ -469,21 +469,146 @@ pub(crate) fn commit_local(
     Ok(Ok(written(tx, path, id)?))
 }
 
-/// The first of `reads`, rows a change's relationship judgment consulted,
-/// whose live record inside `tx` is no longer the one judged, ignoring what
-/// reflection learns of artifact versions; `None` while every one holds.
-pub(crate) fn changed_read<'r>(
+/// A todo as the waiting graph sees it (`dependencies-and-holds`): its
+/// prerequisites, its group, and whether it is a structural holder, which
+/// waits on its children.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaitNode {
+    pub id: TodoId,
+    pub slug: TodoSlug,
+    pub after: Vec<TodoId>,
+    pub group: Option<TodoId>,
+    pub holder: bool,
+    pub live: bool,
+    /// A local item, rather than a listing copy.
+    pub local: bool,
+}
+
+/// A cycle of waiting through one of `through` in `project`'s graph as
+/// `tx` holds it: every local row and every listing copy of a todo that is
+/// not one. The slugs from the todo back to itself; `None` when the graph
+/// is acyclic through each of them.
+pub(crate) fn cycle_in(
     tx: &Transaction<'_>,
     path: &Path,
-    reads: impl IntoIterator<Item = &'r LocalItem>,
-) -> Result<Option<&'r LocalItem>, WorkError> {
-    for read in reads {
-        let live = load_one(tx, path, &read.record.id)?;
-        if live.is_none_or(|live| unlearned(&live.record) != unlearned(&read.record)) {
-            return Ok(Some(read));
+    project: &ProjectSlug,
+    through: &[TodoId],
+) -> Result<Option<Vec<TodoSlug>>, WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let mut nodes: Vec<WaitNode> = Vec::new();
+    {
+        let mut rows = tx
+            .prepare("SELECT id, slug, status, group_id FROM todos WHERE project = ?1 ORDER BY id")
+            .map_err(&sql)?;
+        let found = rows
+            .query_map(params![project.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(&sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(&sql)?;
+        for (id, slug, status, group) in found {
+            let status = value_of::<TodoStatus>(path, &status)?;
+            nodes.push(WaitNode {
+                id: TodoId::parse(&id).ok_or_else(|| invalid(path, "a todo identity"))?,
+                slug: TodoSlug::parse(&slug).map_err(|e| invalid(path, e.to_string()))?,
+                after: Vec::new(),
+                group: group
+                    .map(|g| TodoId::parse(&g).ok_or_else(|| invalid(path, "a todo identity")))
+                    .transpose()?,
+                holder: status == TodoStatus::StructuralHolder,
+                live: matches!(
+                    status,
+                    TodoStatus::Active | TodoStatus::Iceboxed | TodoStatus::StructuralHolder
+                ),
+                local: true,
+            });
+        }
+        let mut edges = tx
+            .prepare(
+                "SELECT p.todo_id, p.prerequisite_id FROM prerequisites p
+                 JOIN todos t ON t.id = p.todo_id WHERE t.project = ?1 ORDER BY p.rowid",
+            )
+            .map_err(&sql)?;
+        let edges = edges
+            .query_map(params![project.as_str()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(&sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(&sql)?;
+        for (todo, prerequisite) in edges {
+            let prerequisite =
+                TodoId::parse(&prerequisite).ok_or_else(|| invalid(path, "a todo identity"))?;
+            if let Some(node) = nodes.iter_mut().find(|n| n.id.as_str() == todo) {
+                node.after.push(prerequisite);
+            }
         }
     }
-    Ok(None)
+    for copy in load_copies(tx, path, project)? {
+        let record = copy.record;
+        if nodes.iter().any(|n| n.id == record.id) {
+            continue;
+        }
+        nodes.push(WaitNode {
+            after: record.after.iter().map(|r| r.id.clone()).collect(),
+            group: record.group.as_ref().map(|g| g.id.clone()),
+            holder: record.status == TodoStatus::StructuralHolder,
+            live: record.is_live(),
+            local: false,
+            id: record.id,
+            slug: record.slug,
+        });
+    }
+    Ok(first_cycle(&nodes, through))
+}
+
+/// The first cycle of waiting through one of `through` in `graph`: a todo
+/// waits on its prerequisites, and a structural holder on its children (a
+/// listing copy's only while it is live), as the relationship checks judge
+/// it.
+pub(crate) fn first_cycle(graph: &[WaitNode], through: &[TodoId]) -> Option<Vec<TodoSlug>> {
+    let node = |id: &TodoId| graph.iter().find(|n| &n.id == id);
+    let waits = |of: &WaitNode| -> Vec<&WaitNode> {
+        let mut next: Vec<&WaitNode> = of.after.iter().filter_map(node).collect();
+        if of.holder {
+            next.extend(
+                graph
+                    .iter()
+                    .filter(|c| c.group.as_ref() == Some(&of.id) && (c.local || c.live)),
+            );
+        }
+        next
+    };
+    for start in through.iter().filter_map(node) {
+        let mut stack: Vec<Vec<&WaitNode>> = waits(start)
+            .into_iter()
+            .map(|next| vec![start, next])
+            .collect();
+        let mut seen: std::collections::BTreeSet<&TodoId> = std::collections::BTreeSet::new();
+        while let Some(path) = stack.pop() {
+            let Some(last) = path.last().copied() else {
+                continue;
+            };
+            if last.id == start.id {
+                return Some(path.iter().map(|n| n.slug.clone()).collect());
+            }
+            if !seen.insert(&last.id) {
+                continue;
+            }
+            for next in waits(last) {
+                let mut longer = path.clone();
+                longer.push(next);
+                stack.push(longer);
+            }
+        }
+    }
+    None
 }
 
 /// What a local change's precondition finds on the live row.
@@ -1759,6 +1884,63 @@ mod tests {
         item.reflection.remote_revision = Some(item.record.revision);
         item.reflection.pending = false;
         item
+    }
+
+    /// A node of the waiting graph named `slug`, its identity derived from
+    /// the slug's first letter.
+    fn node(slug: &str, after: &[&str], group: Option<&str>) -> WaitNode {
+        let id = |slug: &str| TodoId::parse(&format!("{:02x}", slug.as_bytes()[0]).repeat(16));
+        WaitNode {
+            id: id(slug).unwrap(),
+            slug: TodoSlug::parse(slug).unwrap(),
+            after: after.iter().map(|a| id(a).unwrap()).collect(),
+            group: group.map(|g| id(g).unwrap()),
+            holder: false,
+            live: true,
+            local: true,
+        }
+    }
+
+    fn holder(mut node: WaitNode) -> WaitNode {
+        node.holder = true;
+        node
+    }
+
+    #[test]
+    fn a_prerequisite_on_a_holder_whose_member_waits_on_the_dependent_is_a_cycle() {
+        // H holds X and, through a membership committed meanwhile, B; B
+        // waits on A; A now waits on H.
+        let graph = [
+            node("alpha", &["hold"], None),
+            node("beta", &["alpha"], Some("hold")),
+            holder(node("hold", &[], None)),
+            node("xray", &[], Some("hold")),
+        ];
+        let cycle = first_cycle(&graph, &[graph[0].id.clone()]).unwrap();
+        let names: Vec<&str> = cycle.iter().map(TodoSlug::as_str).collect();
+        assert_eq!(names, ["alpha", "hold", "beta", "alpha"]);
+    }
+
+    #[test]
+    fn edges_committed_from_both_ends_of_a_pair_are_a_cycle() {
+        let graph = [
+            node("alpha", &["beta"], None),
+            node("beta", &["alpha"], None),
+        ];
+        assert!(first_cycle(&graph, &[graph[0].id.clone()]).is_some());
+    }
+
+    #[test]
+    fn a_withdrawn_listing_copy_is_no_member_its_holder_waits_on() {
+        let mut gone = node("beta", &["alpha"], Some("hold"));
+        gone.local = false;
+        gone.live = false;
+        let graph = [
+            node("alpha", &["hold"], None),
+            gone,
+            holder(node("hold", &[], None)),
+        ];
+        assert_eq!(first_cycle(&graph, &[graph[0].id.clone()]), None);
     }
 
     #[test]
