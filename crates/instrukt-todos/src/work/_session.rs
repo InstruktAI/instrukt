@@ -1110,7 +1110,10 @@ impl<'w> Session<'w> {
     /// re-read under the lock, reflected from a working copy with no writer
     /// lock held, and what reflection learned is committed onto the live
     /// row (`_store::merge_reflection`). A reflection another process holds
-    /// for longer than the wait leaves the committed local work pending.
+    /// for longer than the wait reflects nothing for this command; the
+    /// session takes the reflection state the store records, so a revision
+    /// that reflection confirmed meanwhile reads as reflected, and work still
+    /// unconfirmed stays pending for a later flush.
     pub fn flush(&mut self) -> Result<(), WorkError> {
         let lock = match ReflectionLock::acquire(self.work.home()) {
             Ok(lock) => lock,
@@ -1119,9 +1122,12 @@ impl<'w> Session<'w> {
                     event = "work_reflection_busy",
                     project = %self.project.slug,
                     error = %busy,
-                    "another reflection holds the reflection lock; the local record stays pending"
+                    "another reflection holds the reflection lock; this command reflects nothing and leaves what is unconfirmed to a later flush"
                 );
                 self.reflection_busy = Some(busy.to_string());
+                for row in self.store.items()? {
+                    self.learned(Some(row));
+                }
                 return Ok(());
             }
             Err(error) => return Err(error),
