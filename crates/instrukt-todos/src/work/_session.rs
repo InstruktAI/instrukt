@@ -1029,9 +1029,11 @@ impl<'w> Session<'w> {
                         return Err(WorkError::Conflicted { todo });
                     }
                     Err(Refusal::Changed) => {
+                        // Named as read: a rename's new slug was never
+                        // written.
+                        let slug = base.map_or(&mine.record.slug, |base| &base.record.slug);
                         return Err(WorkError::refused(format!(
-                            "`{}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record",
-                            mine.record.slug
+                            "`{slug}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record"
                         )));
                     }
                 }
