@@ -1,7 +1,5 @@
 ---
 description: Preparation derives the required artifacts, independent reviews and configured approvals before releasing a todo for execution.
-binding_reservations:
-  UC-PR3: fix-role-complete-artifact-only-revision
 ---
 # Preparation — Spec
 
