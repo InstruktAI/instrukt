@@ -576,8 +576,7 @@ fn migrate_store(conn: &mut Connection, store: &Store) -> Result<(), StoreError>
             store = store.name,
             path = %path.display(),
             version,
-            "{} moved to a new schema version",
-            store.name
+            "a store moved to a new schema version"
         );
     }
     Ok(())
