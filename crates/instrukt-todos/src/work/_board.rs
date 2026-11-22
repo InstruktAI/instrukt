@@ -5,11 +5,15 @@
 //! missing status options are added. The owned Needs you field and cockpit
 //! views are reconciled; user fields, views and built-in workflows are preserved.
 //!
-//! Visibility is set only when instrukt creates the board: a board created for
-//! a repository GitHub reports as public is made public, every other new board
-//! keeps GitHub's private default, and a found or named board's visibility is
-//! never read or changed. When GitHub refuses that change for this viewer, the
-//! board stays private and the operator is told where it can be changed.
+//! Visibility is requested only once, right after instrukt creates the board:
+//! for a repository GitHub reports as public, setup asks GitHub to make the new
+//! board public; every other new board keeps GitHub's private default, and a
+//! found or named board's visibility is never read or changed. When GitHub
+//! refuses that request for this viewer, the board stays private and the
+//! operator is told where it can be changed. Any other failure of the request
+//! fails setup and leaves the board as GitHub left it, which instrukt does not
+//! know; a later setup finds the board and never asks again (`github-record`,
+//! Known caveats).
 
 use instrukt_core::config::BoardRef;
 use serde_json::{Value, json};
