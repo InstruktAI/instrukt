@@ -951,3 +951,89 @@ fn rejected_preparation_head_routes_complete_findings_to_remediation_before_revi
         redact(&format!("{rejected}---\n{corrected}"))
     );
 }
+
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR3
+#[test]
+fn a_revision_that_changes_no_repository_file_proceeds_to_its_review() {
+    let crew = Crew::new();
+    let slug = "unchanged-revision";
+    crew.project
+        .create(slug, "change", "Keep list depth inside block quotes.");
+    crew.next("prepare", slug);
+    // An earlier planner attempt committed its doc change on the prepare
+    // branch and completed.
+    let first = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let tree = std::path::Path::new(first["worktree"].as_str().unwrap());
+    let session = first["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    std::fs::create_dir_all(tree.join("docs/project/spec")).unwrap();
+    std::fs::write(tree.join("docs/project/spec/quoted-lists.md"),"---\ndescription: Quoted lists keep their depth.\n---\n# Quoted lists — Spec\n\n## What it is\n\nLists inside block quotes.\n\n## Canonical fields\n\nDepth survives quoting.\n").unwrap();
+    crew.project.env.git(tree, ["add", "docs"]);
+    crew.project.env.git(
+        tree,
+        ["commit", "--quiet", "-m", "docs: specify quoted lists"],
+    );
+    for args in [
+        &[
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            artifact_names::IMPLEMENTATION_PLAN,
+            "1. Parse quotes first.",
+        ][..],
+        &["todo", "stamp", slug, "--role-complete"][..],
+    ] {
+        crew.project
+            .env
+            .instrukt(tree)
+            .env("T3CODE_THREAD_ID", session)
+            .args(args)
+            .assert()
+            .success();
+    }
+    crew.write(
+        slug,
+        artifact_names::PLAN_REVIEW_FINDINGS,
+        "Nested quotes are unplanned.",
+    );
+    crew.stamp(slug, &["--verdict", "needs_work", "--phase", "plan_review"]);
+
+    // The revision answers the findings in the plan alone: no repository
+    // file changes, and completion is recorded at the unchanged head.
+    let revision = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let tree = std::path::Path::new(revision["worktree"].as_str().unwrap());
+    let session = revision["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    for args in [
+        &[
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            artifact_names::IMPLEMENTATION_PLAN,
+            "1. Parse quotes first, nested quotes included.",
+        ][..],
+        &["todo", "stamp", slug, "--role-complete"][..],
+    ] {
+        crew.project
+            .env
+            .instrukt(tree)
+            .env("T3CODE_THREAD_ID", session)
+            .args(args)
+            .assert()
+            .success();
+    }
+
+    // The revised plan's independent review is owed, and its reviewer is
+    // admitted.
+    let next = crew.next("prepare", slug);
+    crew.worker(slug, "plan-reviewer", Some("crew/procedure/review-plan"));
+    insta::assert_snapshot!("unchanged-revision-review", redact(&next));
+}

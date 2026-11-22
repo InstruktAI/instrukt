@@ -863,12 +863,11 @@ pub(super) fn completion_binding(
         ));
     }
     if let Some(artifact) = writer_artifact(b.role.as_str())
-        && (record.current_digest(artifact).is_none()
-            || b.attempt.base_head.as_ref() == Some(&current))
+        && record.current_digest(artifact).is_none()
     {
-        return Err(WorkError::refused(
-            "writer completion requires its artifact and authored commit evidence",
-        ));
+        return Err(WorkError::refused(format!(
+            "writer completion requires a version of its {artifact} artifact"
+        )));
     }
     Ok(Some((index, true)))
 }
