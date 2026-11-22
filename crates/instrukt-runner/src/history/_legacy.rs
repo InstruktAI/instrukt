@@ -116,7 +116,7 @@ fn read_batch(db: &mut Connection, cursor: Option<i64>) -> Result<Batch, History
             let id = mirror["id"]
                 .as_i64()
                 .ok_or_else(|| HistoryError::Source("mirror lacks integer id".into()))?;
-            let conversation = conversation(&tx, mirror, version)?;
+            let conversation = conversation(&tx, id, mirror, version)?;
             let size = conversation.document.to_string().len() + conversation.body.len();
             if !batch.conversations.is_empty() && bytes + size > BATCH_BYTES {
                 batch.more = true;
@@ -130,15 +130,13 @@ fn read_batch(db: &mut Connection, cursor: Option<i64>) -> Result<Batch, History
     Ok(batch)
 }
 
-/// The retained view of one mirror, with its session, sources and messages.
+/// The retained view of mirror `id`, with its session, sources and messages.
 fn conversation(
     tx: &Connection,
+    id: i64,
     mirror: Value,
     version: u64,
 ) -> Result<Conversation, HistoryError> {
-    let id = mirror["id"]
-        .as_i64()
-        .ok_or_else(|| HistoryError::Source("mirror lacks integer id".into()))?;
     let session = if let Some(session) = mirror["session"].as_i64() {
         rows(tx, "SELECT * FROM mirror_sessions WHERE id=?1", session)?
             .into_iter()
