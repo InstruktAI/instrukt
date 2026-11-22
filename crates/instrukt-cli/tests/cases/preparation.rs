@@ -281,14 +281,7 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         .commit("integrator: enable preparation delivery");
     project.repo.git(["push", "--quiet", "origin", "main"]);
     project.env.run(crew.root(), ["sync"]).success();
-    project.create(slug, "change", "Publish the contract before building it.");
-    crew.write(
-        slug,
-        "implementation-plan",
-        "Implement the published contract.",
-    );
-    crew.write(slug, "plan-review-findings", "Approved plan.");
-    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    project.create(slug, "feature", "Publish the contract before building it.");
     let writer = crew.worker(slug, "planner", Some("crew/procedure/plan"));
     let prepare = std::path::Path::new(writer["worktree"].as_str().unwrap());
     let file = prepare.join("docs/project/spec/feature/early-contract.md");
@@ -308,6 +301,24 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         prepare,
         ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
     );
+    crew.write(slug, artifact_names::PRD, "Publish the early contract.");
+    crew.write(slug, artifact_names::PRD_REVIEW_FINDINGS, "Approved PRD.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+    crew.stamp(
+        slug,
+        &["--prd-approved", "--by", "human", "--session", "t3:lead-1"],
+    );
+    // Write the plan from the primary checkout referencing both the owned
+    // pending carrier (only in prepare) and README.md: grounding resolves owned
+    // snippets from the live prepare worktree and excludes owned IDs from
+    // upstream references.
+    crew.write(
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "Implement @docs/project/spec/feature/early-contract.md.\n\n```referenced-paths\nREADME.md\n```\n",
+    );
+    crew.write(slug, artifact_names::PLAN_REVIEW_FINDINGS, "Approved plan.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
     let stamp = |session: &str, args: &[&str]| {
         project
             .env
@@ -318,6 +329,7 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
             .assert()
     };
     stamp(writer["session"].as_str().unwrap(), &["--role-complete"]).success();
+
     assert!(
         !crew
             .root()
@@ -344,6 +356,104 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
             "[TMP]"
         ))
     );
+
+    // Advance both README.md on origin/main and input so both PRD and plan
+    // drift while the owned pending carrier exists only in docs-first/prepare.
+    std::fs::write(crew.root().join("README.md"), "# demo\n\nUpdated.\n").unwrap();
+    project.repo.commit("update readme");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    crew.write(
+        slug,
+        artifact_names::INPUT,
+        "Publish the contract before building it, round 1.",
+    );
+    let at_drift = crew.next("prepare", slug);
+
+    // Bound drift-analyzer stamps both artifacts in one attempt: the first
+    // stamp releases drift-analyzer/1, the second preserves that releasing
+    // completion sequence, exact current replay does not duplicate, and the
+    // owned carrier settles without re-pending.
+    let analyzer = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    let analyzer_session = analyzer["session"].as_str().unwrap();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    let settled_v1 = crew.next("prepare", slug);
+    let show_v1 = String::from_utf8_lossy(
+        &project
+            .env
+            .run(crew.root(), ["todo", "show", slug])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .into_owned();
+
+    // A second upstream input rewrite makes the earlier stamps obsolete:
+    // reassessing with the same reason records fresh stamps that settle again.
+    crew.write(
+        slug,
+        artifact_names::INPUT,
+        "Publish the contract before building it, round 2.",
+    );
+    let re_drifted = crew.next("prepare", slug);
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    let settled_v2 = crew.next("prepare", slug);
+    let tmp_root = project.env.path("");
+    let tmp = tmp_root.to_str().unwrap().trim_end_matches('/');
+    insta::assert_snapshot!(
+        "owned-carrier-drift-settlement-and-release",
+        redact(&format!(
+            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{}",
+            show_v1.replace(tmp, "[TMP]")
+        ))
+    );
     project
         .env
         .instrukt(crew.root())
@@ -355,6 +465,13 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         "commit-reviewer",
         Some("crew/procedure/review-commits"),
     );
+    // Once a subsequent role attempt starts, the superseded drift-analyzer
+    // attempt is refused.
+    stamp(
+        analyzer_session,
+        &["--drift-reviewed", artifact_names::PRD, "cosmetic", "late"],
+    )
+    .failure();
     crew.write(
         slug,
         "preparation-review-findings",

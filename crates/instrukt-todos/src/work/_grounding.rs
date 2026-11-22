@@ -4,13 +4,15 @@
 //! todo owns. Prerequisite artifacts are added by the caller, which holds
 //! the project's records.
 
+use std::collections::BTreeSet;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use instrukt_core::docs::{Corpus, RefTarget};
 use instrukt_core::git;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug, SnippetId, TodoSlug};
+use instrukt_runner::interfaces::Lane;
 
 use super::_error::WorkError;
 use crate::evidence::{ContentDigest, Grounding, SnippetDigest};
@@ -18,9 +20,61 @@ use crate::evidence::{ContentDigest, Grounding, SnippetDigest};
 /// The language tag of a fenced block declaring referenced code.
 const REFERENCED_PATHS: &str = "referenced-paths";
 
+/// Candidate worktree paths for a todo's own pending carriers, newest
+/// work-lane placement first, then newest preparation-lane placement.
+pub(crate) fn candidate_worktrees<'a>(
+    placements: impl DoubleEndedIterator<Item = (Option<Lane>, Option<&'a Path>)> + Clone,
+) -> Vec<&'a Path> {
+    let mut out = Vec::new();
+    for target in [Lane::Work, Lane::Prepare] {
+        for (lane, path) in placements.clone().rev() {
+            if lane == Some(target)
+                && let Some(path) = path
+                && !out.contains(&path)
+            {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// Resolve the live checkout that holds a todo's own pending snippets: the
+/// newest existing work-lane or preparation-lane worktree rooted exactly at
+/// its recorded path, falling back to `project_root` once removed or absent.
+pub(crate) fn owned_snippet_root(
+    project_root: &Path,
+    candidates: &[&Path],
+) -> Result<PathBuf, WorkError> {
+    for candidate in candidates {
+        let joined = project_root.join(candidate);
+        let canon = match joined.canonicalize() {
+            Ok(path) => path,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(WorkError::Io {
+                    path: joined,
+                    source,
+                });
+            }
+        };
+        let Some(root) = git::worktree_root(&canon)? else {
+            continue;
+        };
+        let root = root.canonicalize().map_err(|source| WorkError::Io {
+            path: root.clone(),
+            source,
+        })?;
+        if root == canon {
+            return Ok(canon);
+        }
+    }
+    Ok(project_root.to_path_buf())
+}
+
 /// The grounding of `content`, an artifact of todo `todo` in the project
-/// rooted at `project_root`, with todo-owned pending snippets read from
-/// `owned_root` (the active worktree when present, else `project_root`),
+/// rooted at `project_root`, with todo-owned pending snippets read solely from
+/// `owned_root` (the active todo worktree when present, else `project_root`),
 /// whose canonical branch is `base_branch`.
 pub(crate) fn ground(
     home: &Home,
@@ -32,12 +86,33 @@ pub(crate) fn ground(
     content: &str,
 ) -> Result<Grounding, WorkError> {
     let project_corpus = Corpus::load(project_root, home)?;
-    let digest_in = |corpus: &Corpus,
-                     root: &Path,
-                     id: &SnippetId|
-     -> Result<Option<ContentDigest>, WorkError> {
-        let path = match corpus.snippet(id) {
-            Some(snippet) => root.join(snippet.path()),
+    let separate_owned = owned_root != project_root;
+    let owned_corpus = if separate_owned {
+        Some(Corpus::load(owned_root, home)?)
+    } else {
+        None
+    };
+    let active_corpus = owned_corpus.as_ref().unwrap_or(&project_corpus);
+    let mut owned_snippets = Vec::new();
+    let mut owned_ids = BTreeSet::new();
+    for snippet in active_corpus.snippets() {
+        if snippet.has_material_for(todo) {
+            let path = owned_root.join(snippet.path());
+            let digest = match std::fs::read_to_string(&path) {
+                Ok(text) => Some(ContentDigest::of(&text)),
+                Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+                Err(source) => return Err(WorkError::Io { path, source }),
+            };
+            owned_ids.insert(snippet.id().clone());
+            owned_snippets.push(SnippetDigest {
+                id: snippet.id().clone(),
+                digest,
+            });
+        }
+    }
+    let digest_in_project = |id: &SnippetId| -> Result<Option<ContentDigest>, WorkError> {
+        let path = match project_corpus.snippet(id) {
+            Some(snippet) => project_root.join(snippet.path()),
             None => home.docs_dir().join(format!("{id}.md")),
         };
         match std::fs::read_to_string(&path) {
@@ -49,29 +124,13 @@ pub(crate) fn ground(
     let mut referenced_snippets = Vec::new();
     for reference in instrukt_core::docs::references(content, Some(project), home.user_home()) {
         if let Some(RefTarget::Snippet(id)) = reference.target
+            && !owned_ids.contains(&id)
             && !referenced_snippets
                 .iter()
                 .any(|s: &SnippetDigest| s.id == id)
         {
-            let digest = digest_in(&project_corpus, project_root, &id)?;
+            let digest = digest_in_project(&id)?;
             referenced_snippets.push(SnippetDigest { id, digest });
-        }
-    }
-    let separate_owned = owned_root != project_root;
-    let owned_corpus = if separate_owned {
-        Some(Corpus::load(owned_root, home)?)
-    } else {
-        None
-    };
-    let active_corpus = owned_corpus.as_ref().unwrap_or(&project_corpus);
-    let mut owned_snippets = Vec::new();
-    for snippet in active_corpus.snippets() {
-        if snippet.has_material_for(todo) {
-            let digest = digest_in(active_corpus, owned_root, snippet.id())?;
-            owned_snippets.push(SnippetDigest {
-                id: snippet.id().clone(),
-                digest,
-            });
         }
     }
     Ok(Grounding {
@@ -120,72 +179,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ground_reads_referenced_snippets_from_primary_and_owned_snippets_from_worktree() {
-        let home_dir = tempfile::tempdir().unwrap();
-        let primary = tempfile::tempdir().unwrap();
-        let worktree = tempfile::tempdir().unwrap();
-        for dir in [primary.path(), worktree.path()] {
-            std::fs::write(dir.join("instrukt.yaml"), "project: demo\n").unwrap();
-            std::fs::create_dir_all(dir.join("docs/project/policy")).unwrap();
-        }
-        let primary_ref = "---\ndescription: ref.\n---\n# Upstream\n\nNew main text.\n";
-        let stale_ref = "---\ndescription: ref.\n---\n# Upstream\n\nOld worktree text.\n";
-        let primary_owned = "---\ndescription: owned.\n---\n# Owned\n\nBase.\n";
-        let worktree_owned = "---\ndescription: owned.\n---\n# Owned\n\nBase.\n<!-- planned:my-todo -->\nPending.\n<!-- /planned:my-todo -->\n";
-        std::fs::write(
-            primary.path().join("docs/project/policy/upstream.md"),
-            primary_ref,
-        )
-        .unwrap();
-        std::fs::write(
-            worktree.path().join("docs/project/policy/upstream.md"),
-            stale_ref,
-        )
-        .unwrap();
-        std::fs::write(
-            primary.path().join("docs/project/policy/owned.md"),
-            primary_owned,
-        )
-        .unwrap();
-        std::fs::write(
-            worktree.path().join("docs/project/policy/owned.md"),
-            worktree_owned,
-        )
-        .unwrap();
-
-        git::run(primary.path(), ["init", "-b", "main"]).unwrap();
-        git::run(primary.path(), ["config", "user.name", "Test"]).unwrap();
-        git::run(primary.path(), ["config", "user.email", "test@example.com"]).unwrap();
-        git::run(primary.path(), ["add", "."]).unwrap();
-        git::run(primary.path(), ["commit", "-m", "init"]).unwrap();
-
-        let home = Home::at_user_home(home_dir.path().to_path_buf());
-        let project = ProjectSlug::parse("demo").unwrap();
-        let todo = TodoSlug::parse("my-todo").unwrap();
-        let artifact = "See @docs/project/policy/upstream.md for the upstream rule.\n";
-        let grounding = ground(
-            &home,
-            primary.path(),
-            worktree.path(),
-            &project,
-            "main",
-            &todo,
-            artifact,
-        )
-        .unwrap();
+    fn candidate_worktrees_prefers_newest_work_then_prepare_and_deduplicates() {
+        let prep_old = Path::new("/wt/prep-1");
+        let prep_new = Path::new("/wt/prep-2");
+        let work_tree = Path::new("/wt/work-1");
+        let placements = [
+            (Some(Lane::Prepare), Some(prep_old)),
+            (Some(Lane::Prepare), Some(prep_new)),
+            (Some(Lane::Work), Some(work_tree)),
+            (Some(Lane::Prepare), Some(prep_new)),
+            (None, Some(Path::new("/wt/ignored"))),
+        ];
         assert_eq!(
-            grounding.referenced_snippets,
-            vec![SnippetDigest {
-                id: SnippetId::parse("project/demo/policy/upstream").unwrap(),
-                digest: Some(ContentDigest::of(primary_ref)),
-            }]
+            candidate_worktrees(placements.into_iter()),
+            vec![work_tree, prep_new, prep_old]
         );
-        assert_eq!(
-            grounding.owned_snippets,
-            vec![SnippetDigest {
-                id: SnippetId::parse("project/demo/policy/owned").unwrap(),
-                digest: Some(ContentDigest::of(worktree_owned)),
-            }]
-        );
+    }
+
+    #[test]
+    fn candidate_worktrees_selects_prepare_tree_when_no_work_binding_exists() {
+        let prep = Path::new("/wt/prep-only");
+        let placements = [(Some(Lane::Prepare), Some(prep))];
+        assert_eq!(candidate_worktrees(placements.into_iter()), vec![prep]);
     }
 }

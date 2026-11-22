@@ -1,0 +1,103 @@
+---
+source: crates/instrukt-cli/tests/cases/preparation.rs
+expression: "redact(&format!(\"{at_drift}---\\n{settled_v1}---\\n{re_drifted}---\\n{settled_v2}---\\n{}\",\nshow_v1.replace(tmp, \"[TMP]\")))"
+---
+todo: docs-first (demo)
+flow: prepare
+claim: held by this session
+state: drift_analysis
+transition: plan_review -> drift_analysis (#8)
+action: analyze-drift
+responsible: drift-analyzer (crew/procedure/drift-analyze)
+command: instrukt todo attempt docs-first --role drift-analyzer --procedure crew/procedure/drift-analyze --args docs-first --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
+effects: none
+instructions:
+Judge the drift of docs-first: PRD pending, plan pending.
+---
+todo: docs-first (demo)
+flow: prepare
+claim: held by this session
+state: prepared
+transition: plan_review -> prepared (#9)
+action: release-prepared
+responsible: prepare-lead (orchestrator step)
+command: instrukt todo update docs-first --unclaim
+effects: none
+instructions:
+docs-first is prepared: release the claim.
+---
+todo: docs-first (demo)
+flow: prepare
+claim: held by this session
+state: drift_analysis
+transition: plan_review -> drift_analysis (#8)
+action: analyze-drift
+responsible: drift-analyzer (crew/procedure/drift-analyze)
+command: instrukt todo attempt docs-first --role drift-analyzer --procedure crew/procedure/drift-analyze --args docs-first --brief -
+native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
+
+effects: none
+instructions:
+Judge the drift of docs-first: PRD pending, plan pending.
+---
+todo: docs-first (demo)
+flow: prepare
+claim: held by this session
+state: prepared
+transition: plan_review -> prepared (#9)
+action: release-prepared
+responsible: prepare-lead (orchestrator step)
+command: instrukt todo update docs-first --unclaim
+effects: none
+instructions:
+docs-first is prepared: release the claim.
+---
+docs-first · feature · active
+identity: <id 1>
+record status: active
+created: <time> by session t3:lead-1
+revision: 18
+intent:
+  Publish the contract before building it, round 1.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:lead-1
+hold: none
+sessions:
+  prepare-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:prepare-lead:1
+    branch: docs-first/prepare; base: <commit 1>
+    worktree: [TMP]/team-docs-first-prepare
+  planner/1: t3:planner-1
+    key: instrukt:todo:demo/<id 1>:planner:1
+    branch: docs-first/prepare; base: <commit 1>
+    worktree: [TMP]/team-docs-first-prepare
+    completion: stamp #9; head: <commit 2>
+    released: <time>
+  drift-analyzer/1: t3:drift-analyzer-1
+    key: instrukt:todo:demo/<id 1>:drift-analyzer:1
+    branch: docs-first/prepare; base: <commit 2>
+    worktree: [TMP]/team-docs-first-prepare
+    completion: stamp #11; head: <commit 2>
+    released: <time>
+artifacts:
+  input (2 versions)
+    <digest 1> by session t3:lead-1 at <time>
+    <digest 2> by session t3:lead-1 at <time>
+  prd (1 version)
+    <digest 3> by session t3:lead-1 at <time>
+  prd-review-findings (1 version)
+    <digest 4> by session t3:lead-1 at <time>
+  implementation-plan (1 version)
+    <digest 5> by session t3:lead-1 at <time>
+  plan-review-findings (1 version)
+    <digest 6> by session t3:lead-1 at <time>
+stamps:
+  #4 <time> prd_review verdict approve — target <digest 3>, report <digest 4> — by session t3:lead-1 as prepare-lead, model unknown, eval <digest 7>
+  #5 <time> prd approved by a human — <digest 3> — by session t3:lead-1 as prepare-lead, model unknown, eval <digest 7>
+  #8 <time> plan_review verdict approve — target <digest 5>, report <digest 6> — by session t3:lead-1 as prepare-lead, model unknown, eval <digest 7>
+  #9 <time> role complete — planner/1 head <commit 2> — by session t3:planner-1 as planner, model codex gpt-test, eval <digest 7>
+  #11 <time> drift in prd reviewed as cosmetic: refinement fits — examined <digest 3> — by session t3:drift-analyzer-1 as drift-analyzer, model codex gpt-test, eval <digest 7>
+  #12 <time> drift in implementation-plan reviewed as cosmetic: refinement fits — examined <digest 5> — by session t3:drift-analyzer-1 as drift-analyzer, model codex gpt-test, eval <digest 7>
