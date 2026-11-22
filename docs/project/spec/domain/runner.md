@@ -125,8 +125,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
-  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls, plus retained history, source positions and import provenance), whose schema is published in
-  `project/instrukt/spec/feature/work/state-database`.
+  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
+  `project/instrukt/spec/feature/work/state-database`; the history store with
+  its file, lock and migrations, holding retained history, source positions and
+  import progress (`project/instrukt/spec/feature/runner/history`).
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;

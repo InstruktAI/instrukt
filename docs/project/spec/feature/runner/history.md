@@ -12,8 +12,9 @@ query responder. Existing stored history and source positions survive disable.
 
 instrukt makes past conversations searchable through a store on each computer.
 An extract-and-load step reads T3's local state into instrukt's own history;
-TeleClaude's existing mirrors are imported idempotently: importing a mirror
-again adds what it gained since. A search across computers
+TeleClaude's existing mirrors are imported once, in bounded batches: an import
+that stops continues after the last batch it committed, and a completed import
+is never read again. A search across computers
 merges results from their local stores. History needs no central service or
 Postgres deployment and does not replace the runtime's live conversations.
 
@@ -112,6 +113,100 @@ detailed internal errors remain in the responding computer's logs. Each committe
 extraction batch emits a DEBUG operation summary identifying its source, loaded
 count, committed position and duration, without conversation content.
 
+### History store
+
+A computer's history lives in its own store, `state/history.db` in the
+canonical state directory: one SQLite database in WAL journal mode, readable
+and writable by its owner only, with its own schema version and migrations. A
+committed write survives a process crash and a power loss.
+
+A store whose schema is newer than the running instrukt knows is refused, and
+so is a symbolic link at the store or at one of its sidecars. The refusal a
+caller receives names its recovery — the command that installs the current
+instrukt, or linking the instrukt home or its `state/` directory instead — and
+carries no path or version. The local command and this computer's failure in a
+merged search carry the same text; the detailed error stays in this computer's
+log.
+
+The history lock `state/history.lock` is the store's write-isolation unit
+(`sdlc/policy/state-storage`). Every history write runs while its process holds
+it: a catch-up section, one import batch, or moving earlier history in. Readers
+take no lock, and work's writes never wait on the history lock. Once the store
+records that earlier history has been moved in, no history read or write opens
+the state database or takes its writer lock. Moving earlier history in is the
+only history operation that does, as described below.
+
+| Table | Holds | Nature and loss cost |
+| --- | --- | --- |
+| `history_conversations` | completed conversation views with their archive aliases and original source documents | authoritative; a conversation no source still holds cannot be extracted again |
+| `history_projection_records` | normalized native records by source, kind and native id, including records delivered by earlier batches | authoritative for the same reason |
+| `history_fts` | the full-text index over each retained conversation's title and text | derived from `history_conversations` and written only by that table's triggers; rebuilt on this computer from the retained rows, without any source |
+| `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
+| `history_sources` | for each TeleClaude source an import selected, whether the import completed and its position: the id of the last mirror it committed, absent until a first batch commits. Rows moved from the state database keep other values, described below | external bookkeeping; losing it reads the mirror store again |
+
+A conversation's completed view, archive aliases and original source document
+commit, with the index entries the triggers write for them, in the transaction
+that commits the source position that delivered them. The store also records
+how far moving earlier history in has progressed.
+
+Earlier builds kept history in the state database. Opening the history store
+for writing completes the move of that history before anything else is
+written, and a reader that finds the move not recorded complete takes that path
+before it reads. The move holds the history lock throughout and proceeds by
+what the state database holds:
+
+- **No state database exists.** It is created at its current schema, which
+  holds no history tables and which earlier builds refuse to open, and the move
+  is recorded complete.
+- **The state database is at its current schema and holds no history tables.**
+  The move is recorded complete without taking the writer lock.
+- **The state database holds history tables.** An older database is first
+  brought to its current schema under the writer lock, which earlier builds
+  then refuse to open. The retained rows are copied and then removed.
+
+Copying reads the state database without the writer lock. Rows of
+`history_conversations` and `history_projection_records` are written
+unchanged, with their keys, in bounded batches, each committed with its
+progress; a copy that stops continues after its last committed batch. Rows of
+`history_source_positions` and `history_sources` are written unchanged in the
+transaction that records the copy finished and the removal pending. The
+full-text index is not copied: the store's triggers build it from the copied
+conversations.
+
+Rows of `history_sources` moved from the state database keep the values they
+held there, with the meanings they had. A TeleClaude source whose row comes
+from there is complete, and its position is the number of conversations its
+import wrote, not a mirror id. A source whose identity begins `t3:` holds a
+position the runtime source kept in this table before
+`history_source_positions` held it.
+Neither value is read as a mirror id: an import looks up only its own source,
+a completed import ends before its position is read, opens no mirror store and
+reports no position, and nothing reads a `t3:` row.
+
+Removal starts only after that record is committed. In one hold of the writer
+lock, one state-database transaction drops the history tables still present
+and the state database then reclaims the freed space
+(`project/instrukt/spec/feature/work/state-database`). The move is recorded
+complete once that database has been rewritten without the freed pages. A move
+that stops after the copy finished continues with removal and reclamation
+whether or not the tables are already gone, so space freed by a drop is
+reclaimed even when the process stopped between the two. No retained
+row is discarded (`project/instrukt/policy/checks-and-guards`). While history
+is off nothing moves, and the rows stay in the state database until history is
+switched on.
+
+The TeleClaude import reads the selected mirror store strictly read-only and
+never writes or migrates it. It imports mirrors in ascending id order, starting
+at the lowest id the store holds whatever its sign, in batches bounded both in
+mirror count and in retained text, at least one mirror each. A batch is read in
+its own read-only source transaction, which ends before the batch is written;
+the batch's conversations and the id of its last mirror commit in one
+transaction under the history lock, which is released between batches. The
+import is marked complete in the transaction that commits the last mirror the
+store holds, or at once when it holds none past the last committed mirror. A
+rerun continues after the last committed mirror and reads no mirror at or
+before it; a completed import never opens the mirror store again.
+
 ## Use cases
 
 ### UC-HI1: Search conversations extracted on one computer
@@ -132,8 +227,12 @@ And stored history survives disabling and can be searched after re-enabling
 Given a developer has existing TeleClaude conversation mirrors
 When the one-time history import completes
 Then those conversations are searchable in instrukt's local history
+And the mirror store is unchanged
 And later extraction uses T3 local state rather than ongoing TeleClaude mirroring
 And rerunning the completed import does not duplicate those conversations
+But when the import stops before it completes
+Then the conversations it already imported are searchable
+And rerunning the import adds the remaining conversations without duplicating any
 ```
 
 ### UC-HI3: Search history held by multiple computers
@@ -180,6 +279,39 @@ Then that conversation is in the developer's instrukt history without a search o
   backend or new daemon is introduced. Searches remain an explicit catch-up
   boundary.
 - This contract introduces neither the held central-service design nor Postgres.
+- The history store grows with every conversation its sources held. Nothing
+  retires a retained conversation: outliving its source is the store's purpose.
+- Moving earlier history out of the state database holds the history lock from
+  its start until it is recorded complete. It holds the writer lock while it
+  creates a missing state database or brings an older one to its current
+  schema, and again, in one hold, while it drops the copied tables and the
+  freed space is reclaimed. Each lock bounds only how long another process
+  waits to acquire it, 30 seconds for the history lock and 60 for the writer
+  lock; it does not bound the move, whose copying takes as long as the retained
+  history needs, whose removal grows with the space freed and whose reclamation
+  grows with the data that remains. Meanwhile an extraction, an import or a
+  document lookup fails visibly when its wait ends, the runner's extraction
+  records the failure and retries, and a work command that waits out the writer
+  lock fails with its lock timeout. The move continues, and operations started
+  after it completes succeed.
+- A search waits for the history lock twice while another process moves earlier
+  history, once for its catch-up and once for its read. It answers in full when
+  the move ends during the first wait, answers with the retained matches and a
+  catch-up failure when the move ends during the second, and otherwise fails
+  when the second wait ends. A computer asked by a merged search answers in the
+  same three ways, its failure travelling as its answer, and a computer whose
+  own catch-up performs the move answers when the move ends. The requester
+  shows the answer that arrives before its deadline, 10 seconds by default and
+  at most 120, and reports a computer whose answer has not arrived by then as
+  not having answered before the deadline.
+- The move is complete once the state database has been rewritten without the
+  freed pages. When the database file itself shortens is that database's rule
+  (`project/instrukt/spec/feature/work/state-database`) and can come after the
+  move is complete; the move does not return to it.
+- A mirror is never split across import batches, so a single mirror larger than
+  a batch's text bound is read and written whole.
+- A mirror added to the mirror store below the last committed id while an
+  import is incomplete is not imported.
 
 ## See Also
 
