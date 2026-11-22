@@ -537,17 +537,20 @@ workspace work requires a new attempt. Artifact writers and stamps retain `<runt
 step is complete only with its required artifact and stamp.
 
 A runner-owned execution lasts while its session holds the todo's execution claim
-(`project/instrukt/spec/feature/work/dependencies-and-holds`). Once that claim is
-released or held by another session, the execution has ended: its former session
-receives no recovery send and raises no anomaly, whether its thread is present,
-settled or gone (`general/principle/session-lifecycle`: release of a claim, end of
-an execution and loss of a session are separate facts). While the todo waits on a
-person, as work decides for its `Needs you` marker
+(`project/instrukt/spec/feature/work/dependencies-and-holds`). Release of that
+claim, or its transfer to another session, ends the execution. The runner acts on
+that at the first observation that finds the claim released or held by another
+session: from that observation on it sends the former session no recovery and
+raises no anomaly for it, whether its thread is present, settled or gone
+(`general/principle/session-lifecycle`: release of a claim, end of an execution
+and loss of a session are separate facts). While the todo waits on a person, as
+work decides for its `Needs you` marker
 (`project/instrukt/spec/feature/work/github-record`), the session owes no evidence:
 an ended turn receives no recovery send and raises no anomaly, whichever state its
 thread reports (`general/principle/session-lifecycle`: runtime silence alone
-establishes no missing work). The runner reads both facts from workflow's current
-assignment for the todo (`project/instrukt/spec/domain/workflow`). For a todo that
+establishes no missing work). Each observation of the execution reads both facts
+from workflow's current assignment for the todo
+(`project/instrukt/spec/domain/workflow`) and acts on what it read. For a todo that
 work offers for pickup, the offer itself shows that no session holds the claim.
 
 For every other runner-owned
@@ -837,9 +840,9 @@ Retired: the runtime owns session ending; its test bindings have been removed.
 - T3 reports a turn that ended on a plain message, with no pending request, as
   `input-ready`; nothing in the thread tells a session that paused there from
   one that stopped. This bears only on an execution that still lasts: a session
-  that no longer holds the todo's execution claim is not weighed, whatever its
-  thread shows. For a session that holds the claim, such an ending is left
-  alone while the work record shows the todo waiting on a person. Outside that
+  that an observation finds without the todo's execution claim is not weighed,
+  whatever its thread shows. For a session that holds the claim, such an ending
+  is left alone while the work record shows the todo waiting on a person. Outside that
   wait, when the workflow state has not advanced, it receives the one recovery
   send and a repeated ending raises the anomaly. A thread reported as `running`
   or `needs-input` is sent no recovery, and that state alone raises no anomaly.
@@ -850,6 +853,13 @@ Retired: the runtime owns session ending; its test bindings have been removed.
   or `needs-input` included. Confirmed native archive or deletion with an
   eligible active assignment does not reach that decision: the successor
   transaction comes first, and that input raises no anomaly there.
+- An observation acts on the claim holder and the person wait it read. A
+  release, a transfer or the start of a person wait that lands after that
+  reading is taken up by the next observation; the observation under way can
+  still send the recovery it decided on. A recovery input already recorded for
+  delivery is delivered as it stands, without a second reading of the claim or
+  the person wait, so it can reach a session whose claim was released, or whose
+  todo began waiting on a person, after it was recorded.
 <!-- /planned:fix-false-recovery-on-released-executions -->
 
 ## See Also
