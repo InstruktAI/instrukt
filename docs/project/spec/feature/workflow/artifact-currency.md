@@ -54,9 +54,12 @@ commit, the referenced paths, the digest of each non-owned referenced snippet
 (read from the project's primary checkout or published store), and, derived
 without declaration, the digests of the snippets the todo owns (read solely
 from the todo's active worktree when present, else the primary checkout, never
-from the published store) and of its prerequisites' artifacts. Drift
-observation compares each class against the same source, ignoring any overlap
-where an earlier grounding also listed an owned snippet as referenced.
+from the published store, combining any todo companion file with its parent)
+and of its prerequisites' artifacts. Drift observation compares each class
+against the same source, ignoring any overlap where an earlier grounding also
+listed an owned snippet as referenced. A drift judgment retains any previously
+owned snippet that has since been deleted as absent so restoring it requires
+reassessment.
 
 An artifact has drifted when a non-merge commit between its recorded head and
 the current canonical head changes a referenced path (exactly, or under a

@@ -445,12 +445,59 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
     )
     .success();
     let settled_v2 = crew.next("prepare", slug);
+
+    // Deleting the owned pending carrier triggers drift; judging the deletion
+    // cosmetic retains the absence so restoring the carrier triggers drift
+    // again before final settlement.
+    let original_contract = std::fs::read_to_string(&file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    project.env.git(prepare, ["add", "-A", "docs"]);
+    project
+        .env
+        .git(prepare, ["commit", "--quiet", "-m", "docs: remove carrier"]);
+    let deleted_drift = crew.next("prepare", slug);
+    let analyzer2 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer2["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "deletion assessed",
+        ],
+    )
+    .success();
+    let deleted_settled = crew.next("prepare", slug);
+    std::fs::write(&file, &original_contract).unwrap();
+    project.env.git(prepare, ["add", "docs"]);
+    project.env.git(
+        prepare,
+        ["commit", "--quiet", "-m", "docs: restore carrier"],
+    );
+    project.env.git(
+        prepare,
+        ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
+    );
+    let restored_drift = crew.next("prepare", slug);
+    let analyzer3 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer3["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "restoration assessed",
+        ],
+    )
+    .success();
+    let restored_settled = crew.next("prepare", slug);
+
     let tmp_root = project.env.path("");
     let tmp = tmp_root.to_str().unwrap().trim_end_matches('/');
     insta::assert_snapshot!(
         "owned-carrier-drift-settlement-and-release",
         redact(&format!(
-            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{}",
+            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{deleted_drift}---\n{deleted_settled}---\n{restored_drift}---\n{restored_settled}---\n{}",
             show_v1.replace(tmp, "[TMP]")
         ))
     );

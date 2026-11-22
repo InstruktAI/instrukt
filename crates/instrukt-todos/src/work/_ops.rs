@@ -736,12 +736,35 @@ impl Work {
         {
             // The judgment holds only while what it assessed is unchanged:
             // record the grounding current now.
-            let content = record
+            let latest_version = record
                 .artifact(artifact.as_str())
-                .and_then(|a| a.versions.last())
+                .and_then(|a| a.versions.last());
+            let content = latest_version
                 .and_then(|v| v.content.clone())
                 .unwrap_or_default();
-            *grounding = grounding_now(&mut s, index, artifact.as_str(), &content)?;
+            let mut prior_owned = Vec::new();
+            if let Some(version) = latest_version {
+                for snippet in &version.grounding.owned_snippets {
+                    if !prior_owned.contains(&snippet.id) {
+                        prior_owned.push(snippet.id.clone());
+                    }
+                }
+            }
+            if let Some(prior_grounding) = record.stamps.iter().rev().find_map(|s| match &s.fact {
+                StampFact::DriftReviewed {
+                    artifact: prior_artifact,
+                    grounding,
+                    ..
+                } if prior_artifact == artifact => Some(grounding),
+                _ => None,
+            }) {
+                for snippet in &prior_grounding.owned_snippets {
+                    if !prior_owned.contains(&snippet.id) {
+                        prior_owned.push(snippet.id.clone());
+                    }
+                }
+            }
+            *grounding = grounding_now(&mut s, index, artifact.as_str(), &content, &prior_owned)?;
         }
         let stamp = StampRecord {
             source_comment: None,
@@ -939,7 +962,7 @@ impl Work {
                 digest: record.current_digest(upstream).cloned(),
             })
             .collect();
-        let grounding = grounding_now(&mut s, index, name, content)?;
+        let grounding = grounding_now(&mut s, index, name, content, &[])?;
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,
@@ -1562,12 +1585,15 @@ impl Work {
         // a reused slug never stands in for the todo a grounding recorded.
         let others = crate::workflow::related_evidence(self, project, &evidence)
             .map_err(|err| WorkError::refused(err.to_string()))?;
-        crate::workflow::preparation_complete(self.home(), &project.root, &evidence, &others)
-            .map_err(|err| {
+        let primary = instrukt_core::repository::primary_worktree(&project.root)
+            .map_err(|err| WorkError::refused(err.to_string()))?;
+        crate::workflow::preparation_complete(self.home(), &primary, &evidence, &others).map_err(
+            |err| {
                 WorkError::refused(format!(
                     "workflow cannot tell whether `{parent}` completed preparation: {err}"
                 ))
-            })
+            },
+        )
     }
 }
 
@@ -1587,10 +1613,6 @@ impl Work {
     }
 }
 
-/// The grounding of artifact `name` of item `index` with `content`, as it
-/// stands now (`artifact-currency`, "Drift evidence"): canonical head,
-/// declared paths and snippets, owned snippets, and each prerequisite's
-/// artifacts of the kinds `name` derives from.
 /// Pure replay check for `StampFact::DriftReviewed`: only the latest drift
 /// judgment for the artifact, matching fact and actor, with neither the
 /// artifact itself nor any upstream artifact rewritten after that stamp,
@@ -1629,11 +1651,17 @@ fn current_drift_replay<'a>(
     Some(latest)
 }
 
+/// The grounding of artifact `name` of item `index` with `content`, as it
+/// stands now (`artifact-currency`, "Drift evidence"): canonical head,
+/// declared paths and snippets, owned snippets (retaining deleted `prior_owned`
+/// IDs as absent), and each prerequisite's artifacts of the kinds `name` derives
+/// from.
 fn grounding_now(
     s: &mut Session<'_>,
     index: usize,
     name: &str,
     content: &str,
+    prior_owned: &[instrukt_core::ids::SnippetId],
 ) -> Result<crate::evidence::Grounding, WorkError> {
     let (slug, after, bindings) = {
         let record = &s.items[index].record;
@@ -1659,6 +1687,7 @@ fn grounding_now(
         &s.base,
         &slug,
         content,
+        prior_owned,
     )?;
     for prerequisite in &after {
         let found = s.record_by_id(&prerequisite.id);

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use instrukt_core::docs::{Corpus, DocsError};
 use instrukt_core::git::{self, GitError};
 use instrukt_core::home::Home;
-use instrukt_core::ids::{CommitSha, SnippetId};
+use instrukt_core::ids::{CommitSha, SnippetId, TodoSlug};
 use instrukt_core::repository::RepositoryError;
 
 use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
@@ -286,6 +286,17 @@ fn classify(
     Ok(ChangeSinceReview::CleanUpstreamMerges)
 }
 
+impl From<crate::work::_grounding::GroundingIoError> for ObservationError {
+    fn from(err: crate::work::_grounding::GroundingIoError) -> Self {
+        match err {
+            crate::work::_grounding::GroundingIoError::Git(err) => ObservationError::Git(err),
+            crate::work::_grounding::GroundingIoError::Io { path, source } => {
+                ObservationError::Io { path, source }
+            }
+        }
+    }
+}
+
 /// The live checkout holding this todo's own pending snippets: the active
 /// work-lane or preparation-lane worktree when it exists, else `project_root`.
 fn owned_snippet_root(
@@ -298,30 +309,10 @@ fn owned_snippet_root(
             .iter()
             .map(|b| (b.attempt.lane, b.worktree().map(PathBuf::as_path))),
     );
-    for candidate in candidates {
-        let joined = project_root.join(candidate);
-        let canon = match joined.canonicalize() {
-            Ok(path) => path,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(source) => {
-                return Err(ObservationError::Io {
-                    path: joined,
-                    source,
-                });
-            }
-        };
-        let Some(root) = git::worktree_root(&canon)? else {
-            continue;
-        };
-        let root = root.canonicalize().map_err(|source| ObservationError::Io {
-            path: root.clone(),
-            source,
-        })?;
-        if root == canon {
-            return Ok(canon);
-        }
-    }
-    Ok(project_root.to_path_buf())
+    Ok(crate::work::_grounding::owned_snippet_root(
+        project_root,
+        &candidates,
+    )?)
 }
 
 /// What each tracked artifact's current version's grounding shows now.
@@ -338,6 +329,7 @@ fn grounding(
         home,
         project_root,
         owned_root,
+        todo: &evidence.slug,
         canonical,
         corpus: None,
         owned_corpus: None,
@@ -385,6 +377,7 @@ struct Current<'a> {
     home: &'a Home,
     project_root: &'a Path,
     owned_root: &'a Path,
+    todo: &'a TodoSlug,
     canonical: Option<CommitSha>,
     corpus: Option<Corpus>,
     owned_corpus: Option<Corpus>,
@@ -419,7 +412,12 @@ impl Current<'_> {
                     self.corpus = Some(Corpus::load(self.project_root, self.home)?);
                 }
                 match &self.corpus {
-                    Some(corpus) => owned_snippet_digest(self.project_root, corpus, &snippet.id)?,
+                    Some(corpus) => crate::work::_grounding::owned_snippet_digest(
+                        self.project_root,
+                        corpus,
+                        self.todo,
+                        &snippet.id,
+                    )?,
                     None => None,
                 }
             } else {
@@ -427,7 +425,12 @@ impl Current<'_> {
                     self.owned_corpus = Some(Corpus::load(self.owned_root, self.home)?);
                 }
                 match &self.owned_corpus {
-                    Some(corpus) => owned_snippet_digest(self.owned_root, corpus, &snippet.id)?,
+                    Some(corpus) => crate::work::_grounding::owned_snippet_digest(
+                        self.owned_root,
+                        corpus,
+                        self.todo,
+                        &snippet.id,
+                    )?,
                     None => None,
                 }
             };
@@ -527,24 +530,6 @@ fn snippet_digest(
         Some(snippet) => project_root.join(snippet.path()),
         None => home.docs_dir().join(format!("{id}.md")),
     };
-    match std::fs::read_to_string(&path) {
-        Ok(text) => Ok(Some(ContentDigest::of(&text))),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(ObservationError::Io { path, source }),
-    }
-}
-
-/// An owned snippet's current digest, read solely from the selected checkout
-/// (never falling back to the published store so removal stays observable).
-fn owned_snippet_digest(
-    root: &Path,
-    corpus: &Corpus,
-    id: &SnippetId,
-) -> Result<Option<ContentDigest>, ObservationError> {
-    let Some(snippet) = corpus.snippet(id) else {
-        return Ok(None);
-    };
-    let path = root.join(snippet.path());
     match std::fs::read_to_string(&path) {
         Ok(text) => Ok(Some(ContentDigest::of(&text))),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),

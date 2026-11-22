@@ -39,20 +39,43 @@ pub(crate) fn candidate_worktrees<'a>(
     out
 }
 
+/// Low-level I/O or git failure while resolving a todo's owned-snippet checkout
+/// or hashing an owned snippet and its companion.
+#[derive(Debug)]
+pub(crate) enum GroundingIoError {
+    Git(git::GitError),
+    Io { path: PathBuf, source: io::Error },
+}
+
+impl From<git::GitError> for GroundingIoError {
+    fn from(err: git::GitError) -> Self {
+        Self::Git(err)
+    }
+}
+
+impl From<GroundingIoError> for WorkError {
+    fn from(err: GroundingIoError) -> Self {
+        match err {
+            GroundingIoError::Git(err) => WorkError::Git(err),
+            GroundingIoError::Io { path, source } => WorkError::Io { path, source },
+        }
+    }
+}
+
 /// Resolve the live checkout that holds a todo's own pending snippets: the
 /// newest existing work-lane or preparation-lane worktree rooted exactly at
 /// its recorded path, falling back to `project_root` once removed or absent.
 pub(crate) fn owned_snippet_root(
     project_root: &Path,
     candidates: &[&Path],
-) -> Result<PathBuf, WorkError> {
+) -> Result<PathBuf, GroundingIoError> {
     for candidate in candidates {
         let joined = project_root.join(candidate);
         let canon = match joined.canonicalize() {
             Ok(path) => path,
             Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
             Err(source) => {
-                return Err(WorkError::Io {
+                return Err(GroundingIoError::Io {
                     path: joined,
                     source,
                 });
@@ -61,7 +84,7 @@ pub(crate) fn owned_snippet_root(
         let Some(root) = git::worktree_root(&canon)? else {
             continue;
         };
-        let root = root.canonicalize().map_err(|source| WorkError::Io {
+        let root = root.canonicalize().map_err(|source| GroundingIoError::Io {
             path: root.clone(),
             source,
         })?;
@@ -72,10 +95,86 @@ pub(crate) fn owned_snippet_root(
     Ok(project_root.to_path_buf())
 }
 
+/// Deterministic digest combining a live parent snippet with its todo companion
+/// file so companion-only edits and empty retirement companions are distinct
+/// from both each other and from a companion-less parent.
+fn combine_owned_digest(parent: &str, companion: &str) -> ContentDigest {
+    let mut combined = String::with_capacity(parent.len() + companion.len() + 32);
+    combined.push_str("parent:");
+    combined.push_str(&parent.len().to_string());
+    combined.push('\n');
+    combined.push_str(parent);
+    combined.push_str("\ncompanion:");
+    combined.push_str(&companion.len().to_string());
+    combined.push('\n');
+    combined.push_str(companion);
+    ContentDigest::of(&combined)
+}
+
+/// Digest of a todo-owned snippet read solely from `root` (never falling back
+/// to the published store). When `todo` has a companion `<stem>.<slug>.md`,
+/// hashes parent and companion together; when none exists, hashes the snippet
+/// file directly.
+pub(crate) fn owned_snippet_digest(
+    root: &Path,
+    corpus: &Corpus,
+    todo: &TodoSlug,
+    id: &SnippetId,
+) -> Result<Option<ContentDigest>, GroundingIoError> {
+    let Some(snippet) = corpus.snippet(id) else {
+        return Ok(None);
+    };
+    let parent_path = root.join(snippet.path());
+    let parent_text = match std::fs::read_to_string(&parent_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(GroundingIoError::Io {
+                path: parent_path,
+                source,
+            });
+        }
+    };
+    let Some(companion) = snippet.companions().iter().find(|c| c.slug() == todo) else {
+        return Ok(Some(ContentDigest::of(&parent_text)));
+    };
+    let companion_path = root.join(companion.path());
+    let companion_text = match std::fs::read_to_string(&companion_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(GroundingIoError::Io {
+                path: companion_path,
+                source,
+            });
+        }
+    };
+    Ok(Some(combine_owned_digest(&parent_text, &companion_text)))
+}
+
+/// Record absent previously-owned snippet IDs with `digest: None` so a drift
+/// judgment that accepted deletion detects later restoration.
+fn append_absent_owned(
+    owned_snippets: &mut Vec<SnippetDigest>,
+    owned_ids: &mut BTreeSet<SnippetId>,
+    prior_owned: &[SnippetId],
+) {
+    for id in prior_owned {
+        if owned_ids.insert(id.clone()) {
+            owned_snippets.push(SnippetDigest {
+                id: id.clone(),
+                digest: None,
+            });
+        }
+    }
+}
+
 /// The grounding of `content`, an artifact of todo `todo` in the project
 /// rooted at `project_root`, with todo-owned pending snippets read solely from
 /// `owned_root` (the active todo worktree when present, else `project_root`),
-/// whose canonical branch is `base_branch`.
+/// whose canonical branch is `base_branch`. `prior_owned` retains previously
+/// recorded owned IDs as absent (`digest: None`) when deleted.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ground(
     home: &Home,
     project_root: &Path,
@@ -84,6 +183,7 @@ pub(crate) fn ground(
     base_branch: &str,
     todo: &TodoSlug,
     content: &str,
+    prior_owned: &[SnippetId],
 ) -> Result<Grounding, WorkError> {
     let project_corpus = Corpus::load(project_root, home)?;
     let separate_owned = owned_root != project_root;
@@ -97,12 +197,7 @@ pub(crate) fn ground(
     let mut owned_ids = BTreeSet::new();
     for snippet in active_corpus.snippets() {
         if snippet.has_material_for(todo) {
-            let path = owned_root.join(snippet.path());
-            let digest = match std::fs::read_to_string(&path) {
-                Ok(text) => Some(ContentDigest::of(&text)),
-                Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-                Err(source) => return Err(WorkError::Io { path, source }),
-            };
+            let digest = owned_snippet_digest(owned_root, active_corpus, todo, snippet.id())?;
             owned_ids.insert(snippet.id().clone());
             owned_snippets.push(SnippetDigest {
                 id: snippet.id().clone(),
@@ -110,6 +205,7 @@ pub(crate) fn ground(
             });
         }
     }
+    append_absent_owned(&mut owned_snippets, &mut owned_ids, prior_owned);
     let digest_in_project = |id: &SnippetId| -> Result<Option<ContentDigest>, WorkError> {
         let path = match project_corpus.snippet(id) {
             Some(snippet) => project_root.join(snippet.path()),
@@ -201,5 +297,42 @@ mod tests {
         let prep = Path::new("/wt/prep-only");
         let placements = [(Some(Lane::Prepare), Some(prep))];
         assert_eq!(candidate_worktrees(placements.into_iter()), vec![prep]);
+    }
+
+    #[test]
+    fn combine_owned_digest_distinguishes_companion_edit_and_empty_retirement_companion() {
+        let parent = "# Spec\n\nLive body.\n";
+        let parent_only = ContentDigest::of(parent);
+        let with_v1 = combine_owned_digest(parent, "# Spec\n\nNext v1.\n");
+        let with_v2 = combine_owned_digest(parent, "# Spec\n\nNext v2.\n");
+        let empty_retire = combine_owned_digest(parent, "");
+        assert_ne!(with_v1, with_v2);
+        assert_ne!(empty_retire, parent_only);
+        assert_ne!(empty_retire, with_v1);
+    }
+
+    #[test]
+    fn append_absent_owned_retains_deleted_prior_ids_as_none_without_duplicating_present() {
+        let present = SnippetId::parse("project/demo/policy/present").unwrap();
+        let deleted = SnippetId::parse("project/demo/policy/deleted").unwrap();
+        let mut owned = vec![SnippetDigest {
+            id: present.clone(),
+            digest: Some(ContentDigest::of("body")),
+        }];
+        let mut ids: BTreeSet<SnippetId> = [present.clone()].into_iter().collect();
+        append_absent_owned(&mut owned, &mut ids, &[present, deleted.clone()]);
+        assert_eq!(
+            owned,
+            vec![
+                SnippetDigest {
+                    id: SnippetId::parse("project/demo/policy/present").unwrap(),
+                    digest: Some(ContentDigest::of("body")),
+                },
+                SnippetDigest {
+                    id: deleted,
+                    digest: None,
+                },
+            ]
+        );
     }
 }
