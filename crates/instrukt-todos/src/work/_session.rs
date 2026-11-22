@@ -119,6 +119,10 @@ pub(crate) struct Session<'w> {
     listed: Option<Vec<(TodoRecord, IssueRef)>>,
     /// The todos refreshed for this command's relationship checks.
     current: Vec<TodoId>,
+    /// The todo the command acts on: the first one it entered. A refusal
+    /// of a change that also writes related todos sends the caller back to
+    /// it.
+    target: Option<TodoId>,
     /// A listing of reflected work GitHub failed this command, short of
     /// being unreachable: what is not local is then undetermined, never
     /// absent.
@@ -196,6 +200,7 @@ impl<'w> Session<'w> {
             copies,
             listed: None,
             current: Vec::new(),
+            target: None,
             lookup_failed: None,
             incompatible: Default::default(),
             now,
@@ -276,6 +281,9 @@ impl<'w> Session<'w> {
             Some(index) => index,
             None => self.localize_slug(slug)?,
         };
+        if self.target.is_none() {
+            self.target = Some(self.items[index].record.id.clone());
+        }
         self.pull_through(index)?;
         Ok(index)
     }
@@ -1049,19 +1057,7 @@ impl<'w> Session<'w> {
                         return Err(WorkError::Conflicted { todo });
                     }
                     Err(Refusal::Changed(now)) => {
-                        // Named as read, since a rename this change makes
-                        // was never written, and by the slug it carries now
-                        // when another command renamed it: that is where
-                        // the command runs again.
-                        let read = base.map_or(&mine.record.slug, |base| &base.record.slug);
-                        return Err(WorkError::refused(match now {
-                            Some(now) if &now != read => format!(
-                                "`{read}` changed while this command ran and is now named `{now}`; nothing of it was written. Run the command again on `{now}`: it acts on the todo's current record"
-                            ),
-                            _ => format!(
-                                "`{read}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record"
-                            ),
-                        }));
+                        return Err(self.changed_refusal(mine, base, now));
                     }
                     Err(Refusal::Taken) => {
                         return Err(WorkError::refused(format!(
@@ -1100,6 +1096,53 @@ impl<'w> Session<'w> {
             self.items[index].reflection.inbound = inbound;
         }
         Ok(docs)
+    }
+
+    /// The refusal of a change whose write found the live row of `mine`,
+    /// read as `base`, changed by another command; `now` is the slug the
+    /// live row carries, `None` when it is gone. The todo is named as read,
+    /// since a rename this change makes was never written, and by the slug
+    /// it carries now when another command renamed it. The door is the
+    /// command run again on its target: under the target's current name
+    /// when the changed row is the target, and on the target as the caller
+    /// named it when the changed row is a related todo the change also wrote.
+    fn changed_refusal(
+        &self,
+        mine: &LocalItem,
+        base: Option<&LocalItem>,
+        now: Option<TodoSlug>,
+    ) -> WorkError {
+        let read = base.map_or(&mine.record.slug, |base| &base.record.slug);
+        let renamed = now.filter(|now| now != read);
+        let related = self
+            .target
+            .as_ref()
+            .filter(|target| *target != &mine.record.id);
+        let Some(target) = related else {
+            return WorkError::refused(match renamed {
+                Some(now) => format!(
+                    "`{read}` changed while this command ran and is now named `{now}`; nothing of it was written. Run the command again on `{now}`: it acts on the todo's current record"
+                ),
+                None => format!(
+                    "`{read}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record"
+                ),
+            });
+        };
+        let changed = match renamed {
+            Some(now) => format!(
+                "`{read}`, which this change also writes, changed while this command ran and is now named `{now}`"
+            ),
+            None => {
+                format!("`{read}`, which this change also writes, changed while this command ran")
+            }
+        };
+        let door = match self.bases.get(target) {
+            Some(target) => format!("Run the command again on `{}`", target.record.slug),
+            None => "Run the command again".to_owned(),
+        };
+        WorkError::refused(format!(
+            "{changed}; nothing of it was written. {door}: it acts on the todos' current records"
+        ))
     }
 
     /// Appends `event` to the runner's event log in a transaction of its
