@@ -117,7 +117,7 @@ worker-ending or approval notice.
 | `--verdict approve\|needs_work --phase prd_review\|architecture_review\|plan_review` | Current phase target and complete phase-specific findings digest. |
 | `--verdict approve\|changes_requested --phase build_review` | Reviewed commit, complete build findings digest and review round. |
 | `--architecture-skipped <reason>` | Applicable preparation and the recorded skip reason. |
-| `--diagnosis-settled` | Current diagnosis digest. |
+| `--diagnosis-settled` | Current diagnosis digest; when a diagnoser attempt is bound, verifies the clean read-only shared worktree and releases that attempt atomically without duplicating the stamp on replay. |
 | `--diagnosis-unresolved --reason <text>` | Current diagnosis and the unresolved reason; establishes the dispatch hold. |
 | `--drift-reviewed <artifact> cosmetic\|substantive <reason>` | Artifact, classification, reason and examined evidence anchor. |
 | `--intent-checked` | Current input version, originating conversation and checking session. |
