@@ -87,16 +87,6 @@ impl Pickup for Work {
                 && (r.claim.is_none() || pending_here.contains(&r.id))
                 && kinds.contains(&r.kind)
         });
-        records.retain(|record| {
-            let handed_off = record.claim.is_none()
-                && record.bindings.iter().rev().find(|binding|binding.attempt.assignment==instrukt_runner::interfaces::AssignmentKind::Driver && binding.attempt.lane==Some(instrukt_runner::interfaces::Lane::Prepare)).is_some_and(|binding|binding.attempt.released_at.is_some())
-                && record.stamps.iter().rev().find(|stamp|matches!(stamp.fact,StampFact::PreparationHeadReviewed {..})).is_some_and(|stamp|matches!(&stamp.fact,StampFact::PreparationHeadReviewed {verdict:crate::evidence::ReviewVerdict::Approve,report,..} if record.current_digest("preparation-review-findings")==Some(report)));
-            if handed_off && let Err(error)=super::_attempts::preparation_integrated(record,&project.root) {
-                tracing::info!(event="preparation_handoff_pending",todo=%record.slug,reason=%error);
-                return false;
-            }
-            true
-        });
         records.sort_by_key(|r| r.created);
         let mut ordered: Vec<TodoRecord> = Vec::with_capacity(records.len());
         while !records.is_empty() {
@@ -515,70 +505,57 @@ impl SessionBindings for Work {
                 worktree: retained.worktree,
             }));
         }
-        let placement =
-            (|| -> Result<_, WorkError> {
-                if *lane == instrukt_runner::interfaces::Lane::TaskRun {
-                    return Ok(None);
-                }
-                let branch = format!(
-                    "{}/{}",
-                    record.slug,
-                    if *lane == instrukt_runner::interfaces::Lane::Prepare {
-                        "prepare"
-                    } else {
-                        "work"
-                    }
-                );
-                if let Some(pending) = record
-                    .bindings
-                    .iter()
-                    .rev()
-                    .find(|b| b.role == *role && b.attempt.released_at.is_none())
-                {
-                    return Ok(Some(instrukt_runner::runtime::WorktreeRequest {
-                        branch: pending.attempt.branch.clone().ok_or_else(|| {
-                            WorkError::refused("retained phase branch is missing")
-                        })?,
-                        from: pending
-                            .attempt
-                            .start_from
-                            .clone()
-                            .ok_or_else(|| WorkError::refused("retained start base is missing"))?,
-                        base: pending
-                            .attempt
-                            .base_head
-                            .as_ref()
-                            .ok_or_else(|| WorkError::refused("retained starting head is missing"))?
-                            .to_string(),
-                    }));
-                }
-                if instrukt_core::git::succeeds(
-                    &project.root,
-                    [
-                        "show-ref",
-                        "--verify",
-                        "--quiet",
-                        &format!("refs/heads/{branch}"),
-                    ],
-                )? {
-                    return Err(WorkError::refused(format!(
-                        "phase branch `{branch}` already exists; no replacement worktree is created"
-                    )));
-                }
-                let (from, base) = super::_attempts::phase_base(
-                    &project.root,
-                    &branch,
-                    *lane == instrukt_runner::interfaces::Lane::Prepare,
-                )?;
-                if *lane == instrukt_runner::interfaces::Lane::Work {
-                    super::_attempts::preparation_integrated(record, &project.root)?;
-                }
-                Ok(Some(instrukt_runner::runtime::WorktreeRequest {
-                    branch,
-                    base: base.to_string(),
-                    from,
-                }))
-            })()?;
+        let placement = (|| -> Result<_, WorkError> {
+            if *lane == instrukt_runner::interfaces::Lane::TaskRun || record.kind == TodoKind::Task
+            {
+                return Ok(None);
+            }
+            let branch = format!("{}/work", record.slug);
+            if let Some(pending) = record
+                .bindings
+                .iter()
+                .rev()
+                .find(|b| b.role == *role && b.attempt.released_at.is_none())
+            {
+                return Ok(Some(instrukt_runner::runtime::WorktreeRequest {
+                    branch: pending
+                        .attempt
+                        .branch
+                        .clone()
+                        .ok_or_else(|| WorkError::refused("retained todo branch is missing"))?,
+                    from: pending
+                        .attempt
+                        .start_from
+                        .clone()
+                        .ok_or_else(|| WorkError::refused("retained start base is missing"))?,
+                    base: pending
+                        .attempt
+                        .base_head
+                        .as_ref()
+                        .ok_or_else(|| WorkError::refused("retained starting head is missing"))?
+                        .to_string(),
+                }));
+            }
+            if instrukt_core::git::succeeds(
+                &project.root,
+                [
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{branch}"),
+                ],
+            )? {
+                return Err(WorkError::refused(format!(
+                    "todo branch `{branch}` already exists; no replacement worktree is created"
+                )));
+            }
+            let (from, base) = super::_attempts::phase_base(&project.root, &branch)?;
+            Ok(Some(instrukt_runner::runtime::WorktreeRequest {
+                branch,
+                base: base.to_string(),
+                from,
+            }))
+        })()?;
         let selected_runtime = s.config.runner_runtime().map_err(WorkError::from)?;
         if record.bindings.iter().any(|b| {
             b.role == *role
@@ -671,11 +648,6 @@ impl SessionBindings for Work {
             },
         };
         s.commit("dispatch reserved", |s| {
-            if let Some(placement) = &placement
-                && *lane == instrukt_runner::interfaces::Lane::Work
-            {
-                s.items[index].record.branch = Some(placement.branch.clone());
-            }
             s.items[index].record.bindings.push(binding);
             Ok(())
         })?;

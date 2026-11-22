@@ -143,10 +143,13 @@ fn target_workspace(
         });
     }
     let branch: Option<String> = state.conn().query_row(
-        "SELECT json_extract(b.evidence,'$.branch') FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE t.project=?1 AND t.slug=?2 AND json_extract(b.evidence,'$.assignment')='driver' AND json_extract(b.evidence,'$.lane')='prepare' ORDER BY b.attempt DESC LIMIT 1",
+        "SELECT json_extract(b.evidence,'$.branch') FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE t.project=?1 AND t.slug=?2 AND json_extract(b.evidence,'$.assignment')='driver' AND json_extract(b.evidence,'$.lane') IN ('work','prepare') ORDER BY CASE WHEN json_extract(b.evidence,'$.lane')='work' THEN 0 ELSE 1 END, b.attempt DESC LIMIT 1",
         params![project.as_str(),target.as_str()], |r|r.get(0)
     ).optional().map_err(StateDbError::sqlite(state.path()))?.flatten();
-    let branch = branch.unwrap_or_else(|| format!("{target}/prepare"));
+    let candidates = match branch {
+        Some(branch) => vec![branch],
+        None => vec![format!("{target}/work"), format!("{target}/prepare")],
+    };
     let root = caller
         .repo_root
         .as_ref()
@@ -155,17 +158,26 @@ fn target_workspace(
             reason: "target needs a registered checkout".into(),
         })?;
     let listing = git::run(root, ["worktree", "list", "--porcelain"])?;
-    let path = listing
-        .split("\n\n")
-        .find(|entry| {
-            entry
-                .lines()
-                .any(|l| l == format!("branch refs/heads/{branch}"))
-        })
-        .and_then(|entry| entry.lines().find_map(|l| l.strip_prefix("worktree ")))
-        .map(PathBuf::from);
-    let Some(path) = path else {
-        let approved:Option<String>=state.conn().query_row("SELECT json_extract(s.evidence,'$.head') FROM stamps s JOIN todos t ON t.id=s.todo_id WHERE t.project=?1 AND t.slug=?2 AND s.fact='preparation_head_reviewed' AND json_extract(s.evidence,'$.verdict')='approve' ORDER BY s.sequence DESC LIMIT 1",params![project.as_str(),target.as_str()],|r|r.get(0)).optional().map_err(StateDbError::sqlite(state.path()))?.flatten();
+    let found = candidates.iter().find_map(|branch| {
+        listing
+            .split("\n\n")
+            .find(|entry| {
+                entry
+                    .lines()
+                    .any(|l| l == format!("branch refs/heads/{branch}"))
+            })
+            .and_then(|entry| entry.lines().find_map(|l| l.strip_prefix("worktree ")))
+            .map(|p| (branch.clone(), PathBuf::from(p)))
+    });
+    let Some((branch, path)) = found else {
+        let approved: Option<String> = state.conn().query_row(
+            "SELECT COALESCE(
+                (SELECT delivery_commit FROM todos WHERE project=?1 AND slug=?2 AND delivery_commit IS NOT NULL),
+                (SELECT json_extract(s.evidence,'$.head') FROM stamps s JOIN todos t ON t.id=s.todo_id WHERE t.project=?1 AND t.slug=?2 AND s.fact='preparation_head_reviewed' AND json_extract(s.evidence,'$.verdict')='approve' ORDER BY s.sequence DESC LIMIT 1)
+            )",
+            params![project.as_str(), target.as_str()],
+            |r| r.get(0),
+        ).optional().map_err(StateDbError::sqlite(state.path()))?.flatten();
         if let Some(head) = approved {
             let main = crate::github::default_branch(root)?;
             let remote = format!("refs/remotes/origin/{main}");
@@ -178,11 +190,12 @@ fn target_workspace(
                 return Ok(None);
             }
         }
-        return Err(DocsError::ConfigUnresolved{path:target.to_string(),reason:"preparation worktree is missing and its integration is unconfirmed; no main-checkout fallback".into()});
+        return Err(DocsError::ConfigUnresolved{path:target.to_string(),reason:"todo worktree is missing and its integration is unconfirmed; no main-checkout fallback".into()});
     };
     let mut prior_slugs=state.conn().prepare("SELECT a.slug FROM todo_aliases a JOIN todos t ON t.id=a.todo_id WHERE t.project=?1 AND t.slug=?2 ORDER BY a.rowid").map_err(StateDbError::sqlite(state.path()))?.query_map(params![project.as_str(),target.as_str()],|r|r.get::<_,String>(0)).map_err(StateDbError::sqlite(state.path()))?.collect::<Result<Vec<_>,_>>().map_err(StateDbError::sqlite(state.path()))?.into_iter().map(|slug|TodoSlug::parse(&slug).map_err(|error|DocsError::ConfigUnresolved {path:target.to_string(),reason:error.to_string()})).collect::<Result<Vec<_>,_>>()?;
     if let Some(original) = branch
-        .strip_suffix("/prepare")
+        .strip_suffix("/work")
+        .or_else(|| branch.strip_suffix("/prepare"))
         .and_then(|slug| TodoSlug::parse(slug).ok())
         && !prior_slugs.contains(&original)
     {

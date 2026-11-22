@@ -2,40 +2,75 @@
 source: crates/instrukt-cli/tests/cases/preparation.rs
 expression: "redact(&steps.join(\"=====\\n\"))"
 ---
-todo: render-lists (demo)
-flow: prepare
-claim: claimed by this session
-state: prepared
-transition: plan_review -> prepared (#9)
-action: release-prepared
-responsible: prepare-lead (orchestrator step)
-command: instrukt todo update render-lists --unclaim
-effects: none
-instructions:
-render-lists is prepared: release the claim.
+pickup: held by this session
+todo: render-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: render-lists/work
+  worktree: [TMP]/team-render-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v1): <digest 2> [drift: fresh]
+  prd-review-findings (v1): <digest 3>
+  implementation-plan (v1): <digest 4> [drift: fresh]
+  plan-review-findings (v1): <digest 3>
+reviews:
+  prd_review: approve (current; target <digest 2>, report <digest 3>)
+  plan_review: approve (current; target <digest 4>, report <digest 3>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 2>)
+  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: render-lists (demo)
-flow: prepare
-claim: held by this session
-state: prepared
-transition: plan_review -> prepared (#9)
-action: release-prepared
-responsible: prepare-lead (orchestrator step)
-command: instrukt todo update render-lists --unclaim
-effects: none
-instructions:
-render-lists is prepared: release the claim.
+pickup: held by this session
+todo: render-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: render-lists/work
+  worktree: [TMP]/team-render-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v1): <digest 2> [drift: fresh]
+  prd-review-findings (v1): <digest 3>
+  implementation-plan (v1): <digest 4> [drift: fresh]
+  plan-review-findings (v1): <digest 3>
+reviews:
+  prd_review: approve (current; target <digest 2>, report <digest 3>)
+  plan_review: approve (current; target <digest 4>, report <digest 3>)
+prerequisites (blocked): parse-lists (undelivered)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 2>)
+  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: render-lists (demo)
-flow: prepare
-claim: held by this session
-state: drift_analysis
-transition: plan_review -> drift_analysis (#8)
-action: analyze-drift
-responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt todo attempt render-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args render-lists --brief -
-native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
-
-effects: none
-instructions:
-Judge the drift of render-lists: PRD fresh, plan pending.
+pickup: held by this session
+todo: render-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: render-lists/work
+  worktree: [TMP]/team-render-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v1): <digest 2> [drift: fresh]
+  prd-review-findings (v1): <digest 3>
+  implementation-plan (v1): <digest 4> [drift: fresh]
+  plan-review-findings (v1): <digest 3>
+reviews:
+  prd_review: approve (current; target <digest 2>, report <digest 3>)
+  plan_review: approve (current; target <digest 4>, report <digest 3>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 2>)
+  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)

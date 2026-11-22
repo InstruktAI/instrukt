@@ -397,7 +397,7 @@ correction satisfying
 
 ### 6. PRD review and approval
 
-After writing the PRD, call `instrukt todo prepare {slug}`. The state machine
+After writing the PRD, check `instrukt todo show {slug}` and proceed per the lifecycle playbook.
 routes to a dispatched `sdlc/procedure/lifecycle/prepare/review-prd` worker before human approval.
 
 The reviewer reads the input and PRD. It checks that the PRD's product and
@@ -418,7 +418,7 @@ and the reviewer stamps the digest-bound `prd_review` verdict.
   and genuine human-owned decisions. The human approves or refines product
   intent. A human refinement rewrites the PRD and therefore re-runs review.
   When the current review report concludes that an earlier human approval
-  carries (`sdlc/procedure/lifecycle/prepare/overview`), nothing is presented:
+  carries (`sdlc/procedure/lifecycle/overview`), nothing is presented:
   the claimant records the carry and stamps `prd_approved`.
 
 An agent may shape a draft but never reviews or approves its own output. The
@@ -438,7 +438,7 @@ earlier approval — along with any size-based
 skip stamp (`architecture_skipped`), call:
 
 ```
-instrukt todo prepare {slug}
+instrukt todo show {slug}
 ```
 
 The state machine routes the next action — typically loading the next phase's

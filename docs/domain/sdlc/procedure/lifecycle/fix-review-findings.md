@@ -22,7 +22,7 @@ Typical phase/artifact combinations:
 
 Legacy todos may still reference `requirements-review-findings` → `requirements`;
 current feature preparation reviews the PRD under
-`sdlc/procedure/lifecycle/prepare/overview`.
+`sdlc/procedure/lifecycle/overview`.
 
 The artifact targets (`prd`, `architecture`, `implementation-plan`) are writable only
 during the prepare review-fix loops, which the prepare orchestrator runs. In the

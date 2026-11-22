@@ -34,7 +34,7 @@ Use `instrukt <command> -h` for individual commands.
 ### 1. Identify pending artifacts and pending classes
 
 Read the dispatching orchestrator's action and rendered template, obtained
-with `instrukt todo prepare {slug}` or `instrukt todo work {slug}`, and read
+with `instrukt todo show {slug}` or `instrukt todo work {slug}`, and read
 `instrukt todo show {slug}` to
 enumerate which artifacts are pending drift review and, for each, which
 classes are pending. The collapsed per-artifact status is the
@@ -197,4 +197,4 @@ evidence.
 
 ## See Also
 
-- [sdlc/procedure/lifecycle/prepare/overview](overview.md)
+- [sdlc/procedure/lifecycle/overview](../overview.md)

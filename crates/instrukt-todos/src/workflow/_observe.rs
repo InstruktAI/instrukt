@@ -15,8 +15,8 @@ use instrukt_core::repository::RepositoryError;
 use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
 
 use super::_provider::{
-    ChangeSinceReview, CodeChange, DRIFT_FACTS, GroundingChange, Observations, WorktreeObservation,
-    current_build_verdict, dependency_change,
+    ChangeSinceReview, CodeChange, DRIFT_ARTIFACTS, GroundingChange, Observations,
+    WorktreeObservation, current_build_verdict, dependency_change, is_independent_reviewer,
 };
 
 /// The remote todo branches are published to (the sdlc flavor's
@@ -58,19 +58,17 @@ pub(crate) fn observe(
         }),
         None => None,
     };
-    let branch_head = resolve(
-        project_root,
-        &format!(
-            "refs/heads/{}",
-            evidence.branch.as_deref().unwrap_or(slug.as_str())
-        ),
-    )?;
+    let branch_name = evidence
+        .branch
+        .as_deref()
+        .or_else(|| {
+            super::_provider::selected_workspace(evidence).and_then(|b| b.attempt.branch.as_deref())
+        })
+        .unwrap_or(slug.as_str());
+    let branch_head = resolve(project_root, &format!("refs/heads/{branch_name}"))?;
     let remote_head = resolve(
         project_root,
-        &format!(
-            "refs/remotes/{REMOTE}/{}",
-            evidence.branch.as_deref().unwrap_or(slug.as_str())
-        ),
+        &format!("refs/remotes/{REMOTE}/{branch_name}"),
     )?;
     let current_head = branch_head.clone();
     let reviewed_change = match (current_build_verdict(evidence), &current_head) {
@@ -83,42 +81,7 @@ pub(crate) fn observe(
     let owned_root = owned_snippet_root(project_root, evidence)?;
     let (grounding, judged_grounding) =
         grounding(home, project_root, &owned_root, evidence, prerequisites)?;
-    let preparation_branch = evidence
-        .bindings
-        .iter()
-        .rev()
-        .find(|b| b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Prepare))
-        .and_then(|b| b.attempt.branch.as_deref());
-    let preparation_head = preparation_branch
-        .map(|branch| resolve(project_root, branch))
-        .transpose()?
-        .flatten()
-        .or_else(|| {
-            evidence.stamps.iter().rev().find_map(|s| match &s.fact {
-                StampFact::PreparationHeadReviewed { head, .. } => Some(head.clone()),
-                _ => None,
-            })
-        });
-    let preparation_integrated = preparation_head
-        .as_ref()
-        .map(|head| {
-            let main = instrukt_core::github::default_branch(project_root)?;
-            let remote = format!("refs/remotes/origin/{main}");
-            let reference =
-                if git::succeeds(project_root, ["show-ref", "--verify", "--quiet", &remote])? {
-                    remote
-                } else {
-                    main
-                };
-            git::succeeds(
-                project_root,
-                ["merge-base", "--is-ancestor", head.as_str(), &reference],
-            )
-        })
-        .transpose()?;
     Ok(Observations {
-        preparation_head,
-        preparation_integrated,
         worktree_path: worktree_dir,
         worktree,
         branch_head,
@@ -337,7 +300,7 @@ fn grounding(
     };
     let mut versions = BTreeMap::new();
     let mut judged = BTreeMap::new();
-    for (name, _) in DRIFT_FACTS {
+    for name in DRIFT_ARTIFACTS {
         let Some(version) = evidence
             .artifacts
             .iter()
@@ -346,7 +309,7 @@ fn grounding(
         else {
             continue;
         };
-        versions.insert((*name).to_owned(), reader.change(&version.grounding)?);
+        versions.insert(name.to_owned(), reader.change(&version.grounding)?);
         // The evidence the latest drift judgment of the artifact assessed,
         // when it recorded any.
         let assessed = evidence
@@ -362,7 +325,7 @@ fn grounding(
                 _ => None,
             });
         if let Some(assessed) = assessed.filter(|g| **g != Grounding::default()) {
-            judged.insert((*name).to_owned(), reader.change(assessed)?);
+            judged.insert(name.to_owned(), reader.change(assessed)?);
         }
     }
     Ok((versions, judged))
@@ -560,10 +523,11 @@ fn snippet_digest(
     }
 }
 
-/// Readiness consumes the same review currency interpretation as derivation.
+/// Invariant 2: readiness requires an independent reviewer's `APPROVE` stamp
+/// bound to the exact candidate commit SHA and current `review-findings` digest.
 pub(crate) fn readiness_approved(
     record: &crate::work::TodoRecord,
-    root: &Path,
+    _root: &Path,
     candidate: &CommitSha,
     caller: &instrukt_core::ids::SessionRef,
 ) -> bool {
@@ -572,21 +536,33 @@ pub(crate) fn readiness_approved(
         return false;
     };
     if verdict != crate::evidence::BuildVerdict::Approve
+        || target != candidate
         || record.current_digest(crate::evidence::artifact_names::REVIEW_FINDINGS) != Some(report)
     {
         return false;
     }
-    let independent = record
+    let bindings: Vec<(
+        instrukt_core::ids::RoleName,
+        instrukt_runner::interfaces::AssignmentKind,
+        Option<&instrukt_core::ids::SessionRef>,
+    )> = record
+        .bindings
+        .iter()
+        .map(|b| (b.role.clone(), b.attempt.assignment, b.session.as_ref()))
+        .collect();
+    record
         .stamps
         .iter()
         .rev()
         .find(|s| matches!(s.fact, StampFact::BuildVerdict { .. }))
-        .is_some_and(|s| s.actor != crate::evidence::Actor::Session(caller.clone()));
-    independent
-        && matches!(
-            change_since(root, root, target, candidate),
-            ChangeSinceReview::Unchanged | ChangeSinceReview::CleanUpstreamMerges
-        )
+        .is_some_and(|s| {
+            is_independent_reviewer(
+                record.claim.as_ref().and_then(|c| c.session.as_ref()),
+                &bindings,
+                &s.actor,
+                Some(caller),
+            )
+        })
 }
 
 #[cfg(test)]

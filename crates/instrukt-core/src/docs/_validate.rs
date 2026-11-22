@@ -1503,10 +1503,9 @@ fn check_procedures(
         let membership = lookup.declared(env.repo_root)?;
         let declared: BTreeSet<&str> = membership.roles.iter().map(RoleName::as_str).collect();
         let dispatched: BTreeSet<&SnippetId> = membership.dispatched_procedures.iter().collect();
-        for s in states
-            .iter()
-            .filter(|s| !s.subscribed && dispatched.contains(&s.id))
-        {
+        for s in states.iter().filter(|s| {
+            !s.subscribed && (dispatched.contains(&s.id) || s.id.as_str().starts_with("project/"))
+        }) {
             let (Some(role), Some(path)) = (&s.role, &s.repo_path) else {
                 continue;
             };

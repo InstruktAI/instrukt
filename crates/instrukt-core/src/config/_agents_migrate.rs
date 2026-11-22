@@ -31,7 +31,7 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
             current: super::_agents::VERSION,
         });
     }
-    let retired = retire_session_recover(&mut value);
+    let retired = retire_session_recover(&mut value) | migrate_orchestrator_roles(&mut value);
     let from = match found {
         Some(from @ (1 | 2)) => from,
         Some(3) if retired => 3,
@@ -51,6 +51,43 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
         .unwrap_or_default();
     out.extend_from_slice(text.as_bytes());
     Ok(Some(Converted { from, bytes: out }))
+}
+
+/// Replace retired split orchestrators (`prepare-orchestrator`, `work-orchestrator`)
+/// with the unified `todo-orchestrator` entry, preserving customized model/tier/app
+/// settings when `todo-orchestrator` is not already configured.
+fn migrate_orchestrator_roles(value: &mut Value) -> bool {
+    let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) else {
+        return false;
+    };
+    let has_prepare = roles.contains_key("prepare-orchestrator");
+    let has_work = roles.contains_key("work-orchestrator");
+    if !has_prepare && !has_work {
+        return false;
+    }
+    let has_unified = roles.contains_key("todo-orchestrator");
+    let preferred = roles
+        .get("work-orchestrator")
+        .or_else(|| roles.get("prepare-orchestrator"))
+        .cloned();
+    let mut inserted = has_unified;
+    *roles = std::mem::take(roles)
+        .into_iter()
+        .filter_map(|(key, entry)| match key.as_str() {
+            Some("prepare-orchestrator" | "work-orchestrator") => {
+                if !inserted {
+                    inserted = true;
+                    preferred
+                        .clone()
+                        .map(|unified| (Value::from("todo-orchestrator"), unified))
+                } else {
+                    None
+                }
+            }
+            _ => Some((key, entry)),
+        })
+        .collect();
+    true
 }
 
 /// A removed command grants no continuing action. All other grants are retained.

@@ -16,9 +16,9 @@ issue: #1
 claim: held since <time> by session t3:instrukt:launch:<event 1>
 hold: none
 sessions:
-  prepare-orchestrator/1: t3:instrukt:launch:<event 1>
-    key: instrukt:todo:demo/<id 2>:prepare-orchestrator:1
-    branch: tidy-imports/prepare; base: <commit 1>
+  todo-orchestrator/1: t3:instrukt:launch:<event 1>
+    key: instrukt:todo:demo/<id 2>:todo-orchestrator:1
+    branch: tidy-imports/work; base: <commit 1>
     worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1>
 released holds:
   the import order is being agreed (released <time> by Other Developer)
@@ -27,6 +27,10 @@ artifacts:
     <digest 1> by Test Developer at <time>
 stamps:
   none
+workspace:
+  branch: tidy-imports/work
+  worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1> (clean)
+  head: <commit 1>
 ---
 [instrukt record · tidy-imports · rev 1 on rev 0]
 [instrukt record · tidy-imports · rev 2 on rev 1]

@@ -97,7 +97,7 @@ wait for the driver to challenge or accept the evidence.
 
 This session is the dispatched diagnosis peer, never the prepare driver. Do not perform
 triage, dispatch another diagnoser, interrogate your own artifact, stamp a verdict, or call
-`instrukt todo prepare`; those acts belong to the driving session. Follow evidence backward to
+`instrukt todo work`; those acts belong to the driving session. Follow evidence backward to
 the earliest violated contract, write only what the observations carry, and stop before a
 fix or verification approach.
 

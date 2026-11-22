@@ -162,5 +162,5 @@ Exit condition:
 
 ## See Also
 
-- [sdlc/procedure/lifecycle/work/overview](../../procedure/lifecycle/work/overview.md) —
-  operational steps for executing the work phase
+- [sdlc/procedure/lifecycle/overview](../../procedure/lifecycle/overview.md) —
+  operational steps for executing the unified lifecycle

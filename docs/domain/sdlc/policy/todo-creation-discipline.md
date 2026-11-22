@@ -142,7 +142,7 @@ once, deduplicated, while preserving the existing restoration obligation.
   this boundary; remaining judgment does. A small change whose correctness is
   genuinely contested still belongs in the lifecycle. A `change` todo created
   despite meeting these criteria may still take the in-context path at prepare
-  entry (`sdlc/procedure/lifecycle/prepare/overview`).
+  entry (`sdlc/procedure/lifecycle/overview`).
 
 - **Use the todo's `log` artifact for a breadcrumb.** A minimal FYI that
   changes neither scope nor a decision does not justify a new todo or a rewrite

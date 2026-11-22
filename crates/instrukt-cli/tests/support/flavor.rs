@@ -26,74 +26,19 @@ use crate::fixtures::runtime::{FakeRuntime, global_layer};
 /// The GitHub repository the project's work is reflected to.
 pub const REPOSITORY: &str = "acme/demo";
 
-const ACTIONS: &str = "\
+const WORKFLOW: &str = "\
+orchestrator: todo-orchestrator
+requires: []
 roles:
-  - prepare-orchestrator
-  - work-orchestrator
+  - todo-orchestrator
   - planner
   - task-preparer
   - task-runner
   - integrator
+  - builder
+  - fixer
   - finalizer
   - build-reviewer
-draft-plan:
-  command: instrukt todo attempt {slug} --role planner --procedure acme/procedure/plan --args {slug} --brief -
-  template: templates/draft-plan.md
-prepare-task:
-  command: instrukt todo attempt {slug} --role task-preparer --procedure acme/procedure/prepare-task --args {slug} --brief -
-  template: templates/prepare-task.md
-release-prepared:
-  command: instrukt todo update {slug} --unclaim
-  template: templates/release-prepared.md
-build:
-  command: instrukt todo show {slug}
-  template: templates/build.md
-await-task-runner:
-  command: instrukt todo show {slug}
-  template: templates/await-task-runner.md
-";
-
-const PREPARE: &str = "\
-flow: prepare
-orchestrator: prepare-orchestrator
-requires: []
-initial: start
-states: [start, task_preparation, task_released, planning]
-transitions:
-- from: start
-  to: task_preparation
-  when: {equals: [kind, task]}
-  action: prepare-task
-- from: start
-  to: planning
-  when: {not: {exists: implementation_plan.digest}}
-  action: draft-plan
-- from: task_preparation
-  to: task_released
-  when:
-    all:
-    - same: [task_plan.digest, task_approved.target_digest]
-    - any:
-      - equals: [task_approved.by, human]
-      - equals: [task_approved.by, peer]
-  action: release-prepared
-";
-
-const WORK: &str = "\
-flow: work
-orchestrator: work-orchestrator
-requires: []
-initial: start
-states: [start, task_runner_route, building]
-transitions:
-- from: start
-  to: task_runner_route
-  when: {equals: [kind, task]}
-  action: await-task-runner
-- from: start
-  to: building
-  when: {exists: implementation_plan.digest}
-  action: build
 ";
 
 /// The project, its fake GitHub and the machine's fake runtime.
@@ -173,27 +118,13 @@ impl Tracked {
                 schema = instrukt_core::config::CURRENT_SCHEMA_VERSION
             ),
         );
-        repo.write("docs/domain/acme/workflow/actions.yaml", ACTIONS);
-        repo.write("docs/domain/acme/workflow/prepare.yaml", PREPARE);
-        repo.write("docs/domain/acme/workflow/work.yaml", WORK);
-        for template in [
-            "draft-plan",
-            "prepare-task",
-            "release-prepared",
-            "build",
-            "await-task-runner",
-        ] {
-            repo.write(
-                &format!("docs/domain/acme/workflow/templates/{template}.md"),
-                &format!("{template} for {{slug}}\n"),
-            );
-        }
+        repo.write("docs/domain/acme/workflow/workflow.yaml", WORKFLOW);
         for (name, role, parameters) in [
-            ("prepare-overview", "prepare-orchestrator", true),
-            ("work-overview", "work-orchestrator", true),
+            ("overview", "todo-orchestrator", true),
             ("plan", "planner", true),
             ("prepare-task", "task-preparer", true),
             ("run-task", "task-runner", true),
+            ("build", "builder", true),
             ("finalize", "finalizer", true),
             ("review-build", "build-reviewer", true),
         ] {
@@ -255,7 +186,7 @@ impl Tracked {
             &crate::fixtures::runtime::NativePlacement {
                 cwd: &folder,
                 slug,
-                role: "work-orchestrator",
+                role: "todo-orchestrator",
                 session: caller,
             },
         );

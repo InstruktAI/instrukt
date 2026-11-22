@@ -235,7 +235,7 @@ one-off silently.
 When the architecture artifact is written, call:
 
 ```
-instrukt todo prepare {slug}
+instrukt todo show {slug}
 ```
 
 The state machine routes the next action. It will direct you to dispatch the

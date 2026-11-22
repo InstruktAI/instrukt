@@ -346,3 +346,160 @@ fn delivered_cleanup_retains_each_failed_or_incomplete_deletion() {
         0
     );
 }
+
+// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC9
+#[test]
+fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enforces_three_invariants()
+ {
+    let crew = Crew::new();
+    let slug = "quick-fix";
+    crew.project
+        .create(slug, "change", "Fix off-by-one in small parser helper.");
+    // Enter single <slug>/work worktree directly: no implementation-plan, no setup, no quality-checklist!
+    let ledger_out = crew.next("work", slug);
+    assert!(ledger_out.contains("interference lock: free"));
+    assert!(ledger_out.contains("prd approval: not required"));
+
+    // Dispatch builder directly in <slug>/work.
+    let builder_assignment = crew.worker(slug, "builder", Some("crew/procedure/build"));
+    let builder_id = builder_assignment["session"].as_str().unwrap().to_owned();
+    let builder_path = PathBuf::from(builder_assignment["worktree"].as_str().unwrap());
+
+    // Invariant 1 (no interference): a second concurrent workspace attempt is refused.
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "build-reviewer",
+            "--procedure",
+            "crew/procedure/review-build",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+        ])
+        .write_stdin("Concurrent review attempt.")
+        .assert()
+        .failure();
+
+    // Commit fix, push, and complete builder atomically.
+    std::fs::write(
+        builder_path.join("fix.rs"),
+        "pub fn ok() -> bool { true }\n",
+    )
+    .unwrap();
+    crew.project.env.git(&builder_path, ["add", "fix.rs"]);
+    crew.project.env.git(
+        &builder_path,
+        ["commit", "--quiet", "-m", "fix: off-by-one"],
+    );
+    crew.project.env.git(
+        &builder_path,
+        ["push", "--quiet", "origin", "HEAD:quick-fix/work"],
+    );
+    crew.project.repo.git(["fetch", "--quiet", "origin"]);
+    crew.project
+        .env
+        .instrukt(&builder_path)
+        .env("T3CODE_THREAD_ID", builder_id.strip_prefix("t3:").unwrap())
+        .args(["todo", "stamp", slug, "--build-complete"])
+        .assert()
+        .success();
+
+    // Invariant 2 (no self-approval): orchestrator cannot finalize without independent APPROVE.
+    crew.project
+        .env
+        .instrukt(&builder_path)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["todo", "stamp", slug, "--finalize-ready"])
+        .assert()
+        .failure();
+
+    // Independent build-reviewer approves exact HEAD.
+    let reviewer_assignment =
+        crew.worker(slug, "build-reviewer", Some("crew/procedure/review-build"));
+    let reviewer_id = reviewer_assignment["session"].as_str().unwrap().to_owned();
+    let reviewer_path = PathBuf::from(reviewer_assignment["worktree"].as_str().unwrap());
+    crew.write(slug, "review-findings", "Independent full-depth approval.");
+    crew.project
+        .env
+        .instrukt(&reviewer_path)
+        .env("T3CODE_THREAD_ID", reviewer_id.strip_prefix("t3:").unwrap())
+        .args([
+            "todo",
+            "stamp",
+            slug,
+            "--verdict",
+            "approve",
+            "--phase",
+            "build_review",
+        ])
+        .assert()
+        .success();
+
+    // Claim-holding orchestrator stamps --finalize-ready directly (no separate finalizer needed).
+    crew.project
+        .env
+        .instrukt(&builder_path)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["todo", "stamp", slug, "--finalize-ready"])
+        .assert()
+        .success();
+
+    let shown_json: serde_json::Value =
+        serde_json::from_str(&crew.todo(["show", slug, "--json"])).unwrap();
+    assert_eq!(
+        shown_json["ledger"]["gates"]["integrate_review_gate"]["status"],
+        "ready"
+    );
+    assert_eq!(
+        shown_json["ledger"]["gates"]["integrate_review_gate"]["finalize_stamped"],
+        true
+    );
+}
+
+// spec: project/instrukt/spec/feature/workflow/preparation UC-PR4
+#[test]
+fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
+    let crew = Crew::new();
+    let slug = "gated-feature";
+    crew.project
+        .create(slug, "feature", "Add multi-level heading anchor links.");
+    crew.next("work", slug);
+    crew.write(slug, "prd", "Headings receive stable slug anchors.");
+    crew.write(slug, "prd-review-findings", "PRD reviewed and approved.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+
+    // Invariant 3: without human PRD approval, builder reservation is refused.
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "builder",
+            "--procedure",
+            "crew/procedure/build",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+        ])
+        .write_stdin("Start building before approval.")
+        .assert()
+        .failure();
+
+    // Once human PRD approval is stamped, builder reservation succeeds immediately.
+    crew.stamp(
+        slug,
+        &["--prd-approved", "--by", "human", "--session", "t3:lead-1"],
+    );
+    let builder_assignment = crew.worker(slug, "builder", Some("crew/procedure/build"));
+    assert_eq!(builder_assignment["role"], "builder");
+}

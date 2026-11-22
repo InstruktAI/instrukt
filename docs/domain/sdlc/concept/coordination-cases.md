@@ -147,7 +147,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 - **Evidence available:** Prepare refusal, the process delta and rationale, the human
   decision record or its absence, and current delivery state
-  (`sdlc/procedure/lifecycle/prepare/overview`).
+  (`sdlc/procedure/lifecycle/overview`).
 
 - **Ownership:** Human owns only a consequence on the closed list of
   `general/policy/human-contract` that the process delta carries
@@ -200,7 +200,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 - **Evidence available:** live Work Orchestrator, nonterminal slug, last state-machine
   output, relevant artifacts/child state, and terminal-handoff/recovery contracts in
-  `sdlc/procedure/lifecycle/work/overview`.
+  `sdlc/procedure/lifecycle/overview`.
 
 - **Ownership:** Work Orchestrator judges and executes its next work/recovery act; the
   Work state machine owns phase state.
@@ -364,7 +364,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 - **Evidence available:** grounding stamps, artifact path references, current path
   fingerprints, and any state-machine drift report
-  (`sdlc/procedure/lifecycle/prepare/overview`, Handle drift).
+  (`sdlc/procedure/lifecycle/overview`, Handle drift).
 - **Ownership:** the dispatched drift analyzer exclusively judges and stamps impact;
   Prepare Orchestrator executes dispatch/re-entry when its state machine requests it;
   the Prepare state machine owns phase invalidation and progression.
@@ -490,7 +490,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 - **Evidence available:** reviewed PRD, Prepare gate state, approval absence, current
   delivery record, and Prepare session
-  (`sdlc/procedure/lifecycle/prepare/overview`).
+  (`sdlc/procedure/lifecycle/overview`).
 - **Ownership:** Human judges approval; Prepare Orchestrator executes the recorded
   decision; Prepare state machine owns approval/progression state.
 - **Coordinator:** leave a delivered gate alone. Otherwise add the source-linked PRD
@@ -502,9 +502,9 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 - **Evidence available:** builder's unbuildable-plan reason, Work Orchestrator's read,
   reviewed plan, current state and delivery record
-  (`sdlc/procedure/lifecycle/work/overview`, Kickback).
+  (`sdlc/procedure/lifecycle/overview`, Kickback).
 - **Ownership:** Work Orchestrator owns the technical kickback decision and executes
-  the stamp (`sdlc/procedure/lifecycle/work/overview`, Kickback); Work state machine
+  the stamp (`sdlc/procedure/lifecycle/overview`, Kickback); Work state machine
   mutates lifecycle state.
 - **Coordinator:** never stamp, recommend kickback from plausibility, or bypass the
   orchestrator.

@@ -1,12 +1,11 @@
 ---
-description: 'Integrate exact verified candidates, publish reviewed preparation and one-off worktree heads through the same gate, restore a red main before repair, and assess failed dependency updates.'
+description: 'Integrate exact verified candidates carrying independent exact-SHA review approval, restore a red main before repair, and assess failed dependency updates.'
 visibility: 'public'
 role: integrator
 parameters:
   - name: slug
 subscriptions:
   - workflow.finalized
-  - workflow.preparation_reviewed
   - runner.ci_completed
   - runner.main_failing
   - runner.dependency_failing
@@ -23,8 +22,8 @@ interruptible: false
 
 ## Goal
 
-Merge finalized work and reviewed preparation and one-off worktree heads into a verified candidate,
-advance canonical main to exactly that commit, and recover a red baseline
+Merge finalized work and reviewed one-off worktree heads into a verified candidate,
+advance canonical main to exactly that commit, recover a red baseline
 before repairing its cause, and assess failed dependency updates for bug work.
 The standing integrator owns composition,
 failure interpretation, promotion and recovery.
@@ -32,8 +31,7 @@ failure interpretation, promotion and recovery.
 ## Preconditions
 
 - Main names the repository's canonical default branch; use its actual ref.
-- `workflow.preparation_reviewed` identifies an approved preparation head and report,
-  or `workflow.finalized` identifies a todo and finalized commit, or
+- `workflow.finalized` identifies a todo and finalized commit, or
   `runner.ci_completed` identifies the submitted candidate and result, or
   `runner.main_failing` identifies remote main's head commit whose CI completed red,
   or `runner.dependency_failing` identifies a dependency branch, commit and failed check run for assessment.
@@ -41,7 +39,10 @@ failure interpretation, promotion and recovery.
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
   `trees/_integration/`, separately from the project checkout and todo worktrees.
-- A work candidate has finalized evidence. Preparation arrives as `workflow.preparation_reviewed` with the exact reviewed head and report; integrate it as soon as possible before build, then remove its clean worktree and delete `<slug>/prepare` locally and on origin. Keep any failed cleanup owed. Ad hoc candidates likewise retain exact-head review.
+- Every work or ad hoc candidate MUST carry an independent reviewer's `APPROVE`
+  stamp (or digest-bound cross-model review report for human-directed ad hoc
+  branches) bound to that **exact commit SHA** plus green CI before advancing
+  `main`. Only `integrate` writes `main`.
 - Project CI and required checks, or the documented project test command when CI is
   absent, provide verification. GitHub branch protection guards main where CI exists.
 
@@ -61,10 +62,10 @@ Apply these configured action values to the identified assignment and session.
 
 ### 1. Route the activating event
 
-- **`workflow.finalized`:** read the todo's artifacts, approval and matching
-  finalized commit. Reconcile the handoff against repository state. A replay
-  of the same project, todo and commit is the same logical handoff.
-- **`workflow.preparation_reviewed`:** verify the exact reviewed preparation head and complete report, then integrate its docs as soon as possible before build. Confirm the preparer released its claim while its worktree existed. Fold its pending markers in the integration worktree before candidate verification. After confirmed integration remove the clean prepare worktree and delete `<slug>/prepare` locally and on origin; retain any failed cleanup as owed work.
+- **`workflow.finalized`:** read the todo's factual ledger, independent
+  exact-SHA `build_review` `approve` stamp, and matching finalized commit.
+  Reconcile the handoff against repository state. A replay of the same project,
+  todo and commit is the same logical handoff.
 - **`runner.ci_completed`:** reconcile the result with the exact submitted
   candidate and current GitHub check state. Proceed under Step 3 only when
   the required result is complete for that commit.
@@ -188,16 +189,10 @@ may deliver only a reference to the session, never its failure content.
 
 ### 6. Complete the handoff and park
 
-The preparation occurrence is emitted by the preparer's claim release, after approving review. Confirm that release before touching its resources; never remove a claimed preparation workspace. After preparation promotion, confirm the reviewed head is integrated on canonical
-main and publication completed. Remove its clean worktree and delete `<slug>/prepare`
-locally and on origin; keep failed cleanup owed. This delivers documentation,
-not the implementation: do not mark the todo delivered. Work begins later from
-that updated main in `<slug>/work`.
-
 After work promotion, confirm the exact remote commit and record delivery evidence
 with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed delivered
-commit under the work-record contract. Preserve working resources until their
-delivery and cleanup obligations are established.
+commit under the work-record contract. Remove the clean `<slug>/work` worktree and
+delete `<slug>/work` locally and on `origin`; keep any failed cleanup owed.
 
 Re-run `instrukt todo work <slug>` after delivery: the flavor owes
 `worktree.remove`, running `git worktree remove {worktree.path}` until
@@ -209,7 +204,7 @@ owed until the corresponding head is absent. Preserve the runtime thread record 
 todo cleanup is separate from the persistent integration workspace.
 
 When all current work is settled, park as the standing integrator. The next
-`workflow.finalized`, `workflow.preparation_reviewed`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
+`workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
 binding.
 
 ## Outputs

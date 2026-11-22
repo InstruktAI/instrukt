@@ -94,7 +94,7 @@ Apply these configured action values to the identified assignment and session.
 6. When any recorded approval binds an earlier digest of this PRD
    (`approved_digest` in `instrukt todo show {slug}`), judge whether that
    approval carries to this revision under the carry rule owned by
-   `sdlc/procedure/lifecycle/prepare/overview`. Compare the two versions with
+   `sdlc/procedure/lifecycle/overview`. Compare the two versions with
    `instrukt todo artifacts diff {slug} prd <approved-digest> <current-digest>`.
    In an `## Approval carry` section, state for each change the ground it
    carries on or why it returns to the configured approval gate, and conclude

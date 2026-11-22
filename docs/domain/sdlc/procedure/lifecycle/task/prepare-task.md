@@ -21,7 +21,7 @@ parameters:
 Turn a `kind=task` todo's raw `input` into a `task-plan` — the durable,
 authorized instruction set the task executes on every run — and then request
 the configured authorization. This procedure does not execute the task or
-create other todos. It is the task route of `instrukt todo prepare {slug}`.
+create other todos. It is the task route of `instrukt todo work {slug}`.
 A task is non-SDLC: no PRD, architecture, implementation-plan, or reviewer
 verdict applies.
 
@@ -87,7 +87,7 @@ Use `instrukt <command> -h` for individual commands.
 
 5. **Write the `task-plan`.** `instrukt todo artifacts write {slug} task-plan "…"`.
 
-6. **Request configured authorization.** Call `instrukt todo prepare {slug}`
+6. **Request configured authorization.** Inspect `instrukt todo show {slug}` and release the claim when human approval is pending.
    after writing the plan and follow its rendered authorization instructions. Human approval is
    the default: the responsible session presents the `task-plan` and asks in
    its thread. A peer gate uses a separate peer session to check the boundary,

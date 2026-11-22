@@ -379,11 +379,17 @@ fn a_filing_refused_for_a_cycle_leaves_the_planned_documentation_with_the_origin
 
 // spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH3
 #[test]
-fn a_filing_under_a_todo_whose_preparation_workflow_cannot_judge_is_refused_naming_why() {
-    // No flavor is selected: workflow cannot say whether list-depth is
-    // still before prepared.
+fn a_filing_under_a_todo_whose_implementation_has_started_is_refused_naming_why() {
     let project = Project::new();
     plan_list_depth(&project);
+    project.ok([
+        "artifacts",
+        "write",
+        "list-depth",
+        "implementation-plan",
+        "Track list depth.",
+    ]);
+    project.ok(["stamp", "list-depth", "--build-started"]);
 
     let refusal = refused_filing(&project, &project.repo.path().join("docs"));
 

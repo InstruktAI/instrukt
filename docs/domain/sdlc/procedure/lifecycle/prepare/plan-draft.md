@@ -114,7 +114,7 @@ references it; otherwise the plan carries that section itself.
 
 Re-entry is the base case for plan drafting — fresh production is the special
 case (first time only). Read the action and rendered template returned by
-`instrukt todo prepare {slug}`, then ground that obligation in current
+`instrukt todo show {slug}`, then ground that obligation in current
 artifacts, findings, provenance and stamps. Wording belongs to the flavor's
 actions and templates; no dispatch-reason header or token selects behavior.
 
@@ -549,7 +549,7 @@ executed via `instrukt todo create ... --approved --group` and each child's fili
 reports it created), call:
 
 ```
-instrukt todo prepare {slug}
+instrukt todo show {slug}
 ```
 
 The returned action and rendered template carry the next obligation. Dispatch

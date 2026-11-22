@@ -375,9 +375,12 @@ pub(crate) fn resolve(
                     .ok_or_else(|| WorkError::refused("role base is absent"))?,
             })
         }
-        StampRequest::BuildComplete => plain(StampFact::BuildComplete {
-            head: head(inputs.cwd)?,
-        }),
+        StampRequest::BuildComplete => Resolved {
+            branch: record.branch.clone().or_else(|| branch(inputs.cwd).ok()),
+            ..plain(StampFact::BuildComplete {
+                head: head(inputs.cwd)?,
+            })
+        },
         StampRequest::DeferralsProcessed => plain(StampFact::DeferralsProcessed {
             deferrals: current(record, artifact_names::DEFERRALS)?,
         }),
@@ -394,6 +397,7 @@ pub(crate) fn resolve(
                 })
                 .unwrap_or(false);
             Resolved {
+                branch: record.branch.clone().or_else(|| branch(inputs.cwd).ok()),
                 already_recorded,
                 ..plain(StampFact::FinalizeReady { commit })
             }

@@ -352,7 +352,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
              @~/.instrukt/docs/acme/principle/care.md\n",
         )
         // Workflow flavor
-        .write("docs/domain/acme/workflow/actions.yaml", "roles: not-a-list\n")
+        .write("docs/domain/acme/workflow/workflow.yaml", "roles: not-a-list\n")
         // Third-party
         .write(
             "docs/third-party/tool/broken.md",
@@ -495,28 +495,26 @@ fn local_snippets_in_a_repository_without_a_project_have_no_identity() {
 fn publish_crew_flavor(env: &TestEnv) {
     let flows = env.git_repo("flows");
     flows
+        .write("instrukt.yaml", "schema_version: 1\nproject: flows\n")
         .write(
-            "instrukt.yaml",
-            "schema_version: 1\nproject: flows\n",
-        )
-        .write(
-            "docs/domain/crew/workflow/actions.yaml",
-            "roles: [lead, reviewer, checker]\n\
-             review:\n  command: instrukt docs get crew/procedure/review\n  template: templates/review.md\n",
-        )
-        .write("docs/domain/crew/workflow/templates/review.md", "Review {slug}.\n")
-        .write(
-            "docs/domain/crew/workflow/work.yaml",
-            "flow: work\norchestrator: lead\nrequires: []\ninitial: start\nstates: [start, reviewing]\n\
-             transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
+            "docs/domain/crew/workflow/workflow.yaml",
+            "orchestrator: lead\nrequires: []\nroles: [lead, reviewer, checker]\n",
         )
         .write(
             "docs/domain/crew/procedure/lead.md",
-            &snippet("procedure", "role: lead\nactivation_trigger: When work is led.\n", ""),
+            &snippet(
+                "procedure",
+                "role: lead\nactivation_trigger: When work is led.\n",
+                "",
+            ),
         )
         .write(
             "docs/domain/crew/procedure/review.md",
-            &snippet("procedure", "role: reviewer\nactivation_trigger: When work is reviewed.\n", ""),
+            &snippet(
+                "procedure",
+                "role: reviewer\nactivation_trigger: When work is reviewed.\n",
+                "",
+            ),
         );
     flows.commit("publish the crew flavor");
     env.run(flows.path(), ["sync"]).success();
@@ -532,24 +530,24 @@ fn with_todos_on_a_procedure_role_the_selected_flavor_does_not_declare_is_report
         "schema_version: 1\nproject: demo\nmodules: {todos: true}\nworkflow: {domain: crew}\n",
     )
     .write(
-        "docs/domain/crew/workflow/actions.yaml",
-        "roles: [lead, reviewer, checker]\n\
-         review:\n  command: instrukt docs get crew/procedure/review\n  template: templates/review.md\n\
-         haunt:\n  command: instrukt docs get project/demo/procedure/haunt\n  template: templates/review.md\n",
-    )
-    .write("docs/domain/crew/workflow/templates/review.md", "Review {slug}.\n")
-    .write(
-        "docs/domain/crew/workflow/work.yaml",
-        "flow: work\norchestrator: lead\nrequires: []\ninitial: start\nstates: [start, reviewing]\n\
-         transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
+        "docs/domain/crew/workflow/workflow.yaml",
+        "orchestrator: lead\nrequires: []\nroles: [lead, reviewer, checker]\n",
     )
     .write(
         "docs/domain/crew/procedure/lead.md",
-        &snippet("procedure", "role: lead\nactivation_trigger: When work is led.\n", ""),
+        &snippet(
+            "procedure",
+            "role: lead\nactivation_trigger: When work is led.\n",
+            "",
+        ),
     )
     .write(
         "docs/domain/crew/procedure/review.md",
-        &snippet("procedure", "role: reviewer\nactivation_trigger: When work is reviewed.\n", ""),
+        &snippet(
+            "procedure",
+            "role: reviewer\nactivation_trigger: When work is reviewed.\n",
+            "",
+        ),
     )
     .write(
         "docs/general/procedure/company-assistance.md",
@@ -988,19 +986,8 @@ fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
         ),
     )
     .write(
-        "docs/domain/crew/workflow/actions.yaml",
-        "roles: [lead, reviewer, checker]\n\
-         review:\n  command: instrukt docs get crew/procedure/review\n  template: templates/review.md\n\
-         check:\n  command: instrukt docs get project/demo/procedure/check\n  template: templates/review.md\n",
-    )
-    .write(
-        "docs/domain/crew/workflow/templates/review.md",
-        "Review {slug}.\n",
-    )
-    .write(
-        "docs/domain/crew/workflow/work.yaml",
-        "flow: work\norchestrator: lead\nrequires: []\ninitial: start\nstates: [start, reviewing]\n\
-         transitions:\n- from: start\n  to: reviewing\n  when: {exists: prd.digest}\n  action: review\n",
+        "docs/domain/crew/workflow/workflow.yaml",
+        "orchestrator: lead\nrequires: []\nroles: [lead, reviewer, checker]\n",
     )
     .write(
         "docs/domain/crew/procedure/lead.md",

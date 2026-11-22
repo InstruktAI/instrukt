@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -581,79 +581,41 @@ pub enum WorkflowInterfaceError {
     /// The selected flavor could not be loaded from the published domain.
     #[error("workflow flavor: {message}")]
     Flavor { message: String },
-    /// Evaluation was invalid (an unknown flow, a revisited state).
-    #[error("workflow evaluation of `{todo}`: {message}")]
-    Evaluation { todo: TodoSlug, message: String },
-    /// A command, template or effect could not be rendered.
-    #[error("workflow rendering for `{todo}`: {message}")]
-    Render { todo: TodoSlug, message: String },
+    /// Observing the repository or facts failed.
+    #[error("workflow observation for `{todo}`: {message}")]
+    Observation { todo: TodoSlug, message: String },
     /// The work record could not supply the evidence.
     #[error(transparent)]
     Work(#[from] WorkInterfaceError),
 }
 
-/// The lane workflow derives for a todo (`work-dispatch`, "Todo pickup";
-/// `preparation`, "Kind routing").
+/// The dispatch lane for a todo (`work-dispatch`, "Todo pickup").
+///
+/// `Prepare` is retained for deserializing legacy bindings and envelopes;
+/// all new todo orchestrator dispatches use `Work`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Lane {
-    /// The `prepare` flow is owed; dispatch its orchestrator.
+    /// Legacy preparation lane (deserialization compatibility only).
     Prepare,
-    /// The `work` flow is owed; dispatch its orchestrator.
+    /// Unified todo orchestrator lane (`todo-orchestrator`).
     Work,
-    /// A prepared, authorized task: it runs as a `run-task` dispatch when
-    /// task timing finds it due (`task-timing`, "Task and schedule").
+    /// An authorized task ready to run as `task-runner` when due
+    /// (`task-timing`, "Task and schedule").
     TaskRun,
 }
 
-/// Who an obligation's action belongs to, as the engine reports it
-/// (`workflow-definition`, "Flavor source"). The runner resolves a
-/// procedure's role from the docs index (`instrukt_core::index`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Responsibility {
-    Role(RoleName),
-    /// The action's command names this procedure; the action belongs to
-    /// that procedure's `role`.
-    Procedure(SnippetId),
-    /// The command names no procedure; the action is a step of the flow's
-    /// orchestrator, executed by the session holding the claim.
-    Orchestrator(RoleName),
-}
-
-/// An effect owed along the selected walk, rendered.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssignedEffect {
-    pub name: String,
-    pub command: String,
-}
-
-/// The obligation at the derived state: the selected action, rendered.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssignedObligation {
-    pub dispatch_instruction: Option<String>,
-    pub action: String,
-    pub responsible: Responsibility,
-    /// The action's command with placeholders filled.
-    pub command: String,
-    /// The action's rendered template: the instructions.
-    pub brief: String,
-    /// Effects still owed, in listed order.
-    pub effects: Vec<AssignedEffect>,
-}
-
-/// Workflow's current assignment for a todo, derived from the record on
-/// this call (`workflow` domain, "Published contracts").
+/// Workflow's current dispatch assignment for a todo, derived from current
+/// facts (`workflow` domain, "Published contracts").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assignment {
     pub lane: Lane,
-    /// The orchestrator role the lane's flow declares; `None` for
+    /// The flavor's orchestrator role for `Lane::Work`; `None` for
     /// [`Lane::TaskRun`].
     pub orchestrator: Option<RoleName>,
-    /// The state where derivation stopped.
+    /// A factual progress fingerprint over record & workspace state, used by
+    /// the runner to detect whether a dispatched session made progress.
     pub state: String,
-    /// The obligation at that state; `None` when no transition was
-    /// selected (nothing owed now).
-    pub obligation: Option<AssignedObligation>,
 }
 
 /// Reading workflow's derived state for dispatch.

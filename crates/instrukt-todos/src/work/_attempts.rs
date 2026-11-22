@@ -25,26 +25,21 @@ fn head(root: &Path, revision: &str) -> Result<CommitSha, WorkError> {
     )
     .map_err(|e| WorkError::refused(e.to_string()))
 }
-/// Fetch before a new phase is placed. A retained remote work branch is continuation
-/// of the existing phase; otherwise only freshly fetched canonical main supplies its base.
-pub(super) fn phase_base(
-    root: &Path,
-    branch: &str,
-    preparation: bool,
-) -> Result<(String, CommitSha), WorkError> {
+/// Fetch before a todo workspace is placed. A retained remote work branch
+/// continues that branch; otherwise freshly fetched canonical main supplies its base.
+pub(super) fn phase_base(root: &Path, branch: &str) -> Result<(String, CommitSha), WorkError> {
     git::run(root, ["fetch", "--prune", "origin"])?;
     let main = instrukt_core::github::default_branch(root)?;
     let remote = format!("origin/{branch}");
-    let from = if !preparation
-        && git::succeeds(
-            root,
-            [
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/remotes/{remote}"),
-            ],
-        )? {
+    let from = if git::succeeds(
+        root,
+        [
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/remotes/{remote}"),
+        ],
+    )? {
         remote
     } else {
         format!("origin/{main}")
@@ -105,69 +100,21 @@ fn orchestrator(s: &Session<'_>, index: usize) -> Result<(), WorkError> {
     }
     Ok(())
 }
-fn prepared(record: &TodoRecord) -> Result<(), WorkError> {
-    let target = record
-        .current_digest(artifact_names::IMPLEMENTATION_PLAN)
-        .ok_or_else(|| WorkError::refused("current approved preparation is required"))?;
-    super::_stamps::supporting_review(record, PreparationReview::PlanReview, target)
-        .map_err(WorkError::refused)?;
-    Ok(())
-}
-pub(super) fn preparation_integrated(record: &TodoRecord, root: &Path) -> Result<(), WorkError> {
-    let retained = record
-        .bindings
-        .iter()
-        .rev()
-        .find(|b| b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Prepare))
-        .and_then(|b| b.attempt.branch.as_deref());
-    let derived = format!("{}/prepare", record.slug);
-    let branch = retained.unwrap_or(&derived);
-    let local = git::succeeds(
-        root,
-        [
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
-        ],
-    )?;
-    let remote = git::succeeds(
-        root,
-        [
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/remotes/origin/{branch}"),
-        ],
-    )?;
-    let source = if local {
-        Some(head(root, branch)?)
-    } else {
-        record.stamps.iter().rev().find_map(|s| match &s.fact {
-            crate::evidence::StampFact::PreparationHeadReviewed { head, .. } => Some(head.clone()),
-            _ => None,
-        })
-    };
-    if let Some(source) = source {
-        let main = instrukt_core::github::default_branch(root)?;
-        let remote_main = format!("refs/remotes/origin/{main}");
-        let reference = if git::succeeds(root, ["show-ref", "--verify", "--quiet", &remote_main])? {
-            remote_main
-        } else {
-            main
+/// Invariant 3: enforce configured `approvals.prd` before implementation or
+/// finalization for features and any todo carrying a `prd` artifact.
+fn require_prd_approval(
+    record: &TodoRecord,
+    approver: instrukt_core::config::Approver,
+) -> Result<(), WorkError> {
+    let evidence = super::_ports::to_evidence(record.clone(), Vec::new());
+    if !crate::workflow::prd_approval_satisfied(&evidence, approver) {
+        let by = match approver {
+            instrukt_core::config::Approver::Human => "human",
+            instrukt_core::config::Approver::Peer => "peer",
         };
-        if !git::succeeds(
-            root,
-            ["merge-base", "--is-ancestor", source.as_str(), &reference],
-        )? {
-            return Err(WorkError::refused(
-                "preparation documentation awaits integration to main; no build workspace is admitted",
-            ));
-        }
-    }
-    if local || remote {
         return Err(WorkError::refused(format!(
-            "preparation cleanup remains owed for `{branch}`; the integrator must remove its worktree and local/remote branch before work starts"
+            "PRD approval is required before implementation or finalization; record it with `instrukt todo stamp {} --prd-approved --by {by}`",
+            record.slug
         )));
     }
     Ok(())
@@ -270,7 +217,6 @@ pub struct WorkspaceRequest<'a> {
     pub todo: &'a TodoSlug,
     pub role: &'a RoleName,
     pub cwd: &'a Path,
-    pub preparation: bool,
     pub evidence: Option<&'a DriverPlacement>,
 }
 
@@ -355,37 +301,22 @@ impl Work {
         let lane = driver
             .attempt
             .lane
-            .ok_or_else(|| WorkError::refused("driver phase is unknown"))?;
-        let work = lane == instrukt_runner::interfaces::Lane::Work;
-        if work {
-            prepared(record)?;
-            preparation_integrated(record, &project.root)?;
-        }
-        if role.as_str() == "setup" && !work {
-            return Err(WorkError::refused("setup belongs to the work phase"));
+            .unwrap_or(instrukt_runner::interfaces::Lane::Work);
+        if matches!(role.as_str(), "builder" | "fixer" | "finalizer") {
+            let prd_approver = s
+                .config
+                .approver(instrukt_core::config::ApprovalGate::Prd)?;
+            require_prd_approval(record, prd_approver)?;
         }
         let path = driver
             .worktree
             .clone()
-            .ok_or_else(|| WorkError::refused("phase workspace missing"))?;
+            .ok_or_else(|| WorkError::refused("todo workspace missing"))?;
         let branch = driver
             .attempt
             .branch
             .clone()
-            .ok_or_else(|| WorkError::refused("phase branch missing"))?;
-        if matches!(role.as_str(), "builder" | "fixer")
-            && (!record
-                .stamps
-                .iter()
-                .any(|s| matches!(s.fact, crate::evidence::StampFact::BuildStarted { .. }))
-                || record
-                    .current_digest(artifact_names::QUALITY_CHECKLIST)
-                    .is_none())
-        {
-            return Err(WorkError::refused(
-                "builder admission needs build-start and quality-checklist",
-            ));
-        }
+            .ok_or_else(|| WorkError::refused("todo branch missing"))?;
         clean(&path)?;
         if git::run(&path, ["branch", "--show-current"])? != branch {
             return Err(WorkError::refused(
@@ -749,59 +680,93 @@ pub(super) fn completion_binding(
     request: &super::StampRequest,
 ) -> Result<Option<(usize, bool)>, WorkError> {
     use super::StampRequest;
-    let (index, b) =
-        if matches!(request, StampRequest::DiagnosisSettled) {
-            let Some(index) = diagnosis_settlement_binding(record, caller)? else {
-                return Ok(None);
-            };
-            (index, &record.bindings[index])
-        } else if matches!(request, StampRequest::DriftReviewed { .. }) {
-            let Some(index) = drift_review_binding(record, caller)? else {
-                return Ok(None);
-            };
-            (index, &record.bindings[index])
-        } else {
-            let roles: &[&str] = match request {
-                StampRequest::PreparationHeadVerdict { .. } => &["commit-reviewer"],
-                StampRequest::RoleComplete => {
-                    &["setup", "finalizer", "intaker", "architect", "planner"]
-                }
-                StampRequest::BuildComplete => &["builder", "fixer"],
-                StampRequest::BuildVerdict { .. } => &["build-reviewer"],
-                StampRequest::DeferralsProcessed => &["deferrer"],
-                StampRequest::PreparationVerdict { phase, .. } => match phase {
-                    PreparationReview::PrdReview => &["prd-reviewer"],
-                    PreparationReview::ArchitectureReview => &["architecture-reviewer"],
-                    PreparationReview::PlanReview => &["plan-reviewer"],
-                },
-                _ => return Ok(None),
-            };
-            if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
+    let (index, b) = if matches!(request, StampRequest::DiagnosisSettled) {
+        let Some(index) = diagnosis_settlement_binding(record, caller)? else {
+            return Ok(None);
+        };
+        (index, &record.bindings[index])
+    } else if matches!(request, StampRequest::DriftReviewed { .. }) {
+        let Some(index) = drift_review_binding(record, caller)? else {
+            return Ok(None);
+        };
+        (index, &record.bindings[index])
+    } else {
+        let roles: &[&str] = match request {
+            StampRequest::PreparationHeadVerdict { .. } => &["commit-reviewer"],
+            StampRequest::RoleComplete => &[
+                "setup",
+                "finalizer",
+                "intaker",
+                "architect",
+                "planner",
+                "task-preparer",
+            ],
+            StampRequest::BuildComplete => &["builder", "fixer"],
+            StampRequest::BuildVerdict { .. } => &["build-reviewer"],
+            StampRequest::DeferralsProcessed => &["deferrer"],
+            StampRequest::PreparationVerdict { phase, .. } => match phase {
+                PreparationReview::PrdReview => &["prd-reviewer"],
+                PreparationReview::ArchitectureReview => &["architecture-reviewer"],
+                PreparationReview::PlanReview => &["plan-reviewer"],
+            },
+            _ => return Ok(None),
+        };
+        if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
+            return Ok(None);
+        }
+        let caller =
+            caller.ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
+        let Some((index, b)) =
+            record.bindings.iter().enumerate().rev().find(|(_, b)| {
+                b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
+            })
+        else {
+            // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
+            if matches!(request, StampRequest::PreparationVerdict { .. }) {
                 return Ok(None);
             }
-            let caller = caller
-                .ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
-            let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
-                b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
-            }) else {
-                // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
-                if matches!(request, StampRequest::PreparationVerdict { .. }) {
-                    return Ok(None);
-                }
-                return Err(WorkError::refused("caller has no bound completion role"));
-            };
-            if matches!(request, StampRequest::PreparationHeadVerdict { .. })
-                && record.bindings.iter().any(|writer| {
-                    writer.session.as_ref() == Some(caller)
-                        && writer_artifact(writer.role.as_str()).is_some()
+            return Err(WorkError::refused("caller has no bound completion role"));
+        };
+        if matches!(
+            request,
+            StampRequest::BuildVerdict {
+                verdict: crate::evidence::BuildVerdict::Approve
+            }
+        ) {
+            let tuples: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = record
+                .bindings
+                .iter()
+                .map(|item| {
+                    (
+                        item.role.clone(),
+                        item.attempt.assignment,
+                        item.session.as_ref(),
+                    )
                 })
-            {
+                .collect();
+            if !crate::workflow::is_independent_reviewer(
+                record.claim.as_ref().and_then(|c| c.session.as_ref()),
+                &tuples,
+                &crate::evidence::Actor::Session(caller.clone()),
+                None,
+            ) {
                 return Err(WorkError::refused(
-                    "preparation head review requires an independent reviewer",
+                    "build approval requires an independent reviewer distinct from the orchestrator and writers",
                 ));
             }
-            (index, b)
-        };
+        }
+        if matches!(request, StampRequest::PreparationHeadVerdict { .. })
+            && record.bindings.iter().any(|writer| {
+                writer.session.as_ref() == Some(caller)
+                    && writer_artifact(writer.role.as_str()).is_some()
+            })
+        {
+            return Err(WorkError::refused(
+                "preparation head review requires an independent reviewer",
+            ));
+        }
+        (index, b)
+    };
     let path = b
         .worktree
         .as_ref()
@@ -854,6 +819,7 @@ pub(super) fn completion_binding(
                 record
                     .branch
                     .as_deref()
+                    .or(b.attempt.branch.as_deref())
                     .ok_or_else(|| WorkError::refused("todo branch missing"))?
             ),
         )? != current
@@ -877,29 +843,52 @@ pub(super) fn readiness(
     caller: Option<&SessionRef>,
     cwd: &Path,
     root: &Path,
+    prd_approver: instrukt_core::config::Approver,
 ) -> Result<(), WorkError> {
-    let caller =
-        caller.ok_or_else(|| WorkError::refused("readiness requires the retained finalizer"))?;
+    let caller = caller.ok_or_else(|| {
+        WorkError::refused(
+            "readiness requires the claim-holding orchestrator or retained finalizer",
+        )
+    })?;
+    // Invariant 1: no active unreleased workspace/child attempt.
     if record.bindings.iter().any(|b| {
-        b.attempt.assignment == AssignmentKind::Workspace
-            && b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Work)
-            && b.attempt.released_at.is_none()
+        matches!(
+            b.attempt.assignment,
+            AssignmentKind::Workspace | AssignmentKind::Child
+        ) && b.attempt.released_at.is_none()
     }) {
         return Err(WorkError::refused(
             "outstanding workspace attempt blocks readiness",
         ));
     }
-    let b = record
-        .bindings
-        .iter()
-        .rev()
-        .find(|b| {
+    // Invariant 3: configured PRD approval must hold when required.
+    require_prd_approval(record, prd_approver)?;
+    // Admissible callers: a retained completed finalizer OR the claim-holding driver orchestrator.
+    let finalizer = record.bindings.iter().rev().find(|b| {
+        b.session.as_ref() == Some(caller)
+            && b.role.as_str() == "finalizer"
+            && b.attempt.completion_sequence.is_some()
+            && b.attempt.failed_at.is_none()
+    });
+    let driver = if finalizer.is_none()
+        && record
+            .claim
+            .as_ref()
+            .is_some_and(|c| c.session.as_ref() == Some(caller))
+    {
+        record.bindings.iter().rev().find(|b| {
             b.session.as_ref() == Some(caller)
-                && b.role.as_str() == "finalizer"
-                && b.attempt.completion_sequence.is_some()
-                && b.attempt.failed_at.is_none()
+                && b.attempt.assignment == AssignmentKind::Driver
+                && b.attempt.released_at.is_none()
         })
-        .ok_or_else(|| WorkError::refused("readiness requires successful finalizer completion"))?;
+    } else {
+        None
+    };
+    let b = finalizer.or(driver).ok_or_else(|| {
+        WorkError::refused(
+            "readiness requires the claim-holding orchestrator or a completed finalizer",
+        )
+    })?;
     let path = b
         .worktree
         .as_ref()
@@ -908,22 +897,26 @@ pub(super) fn readiness(
     let branch = record
         .branch
         .as_deref()
+        .or(b.attempt.branch.as_deref())
         .ok_or_else(|| WorkError::refused("todo branch missing"))?;
     clean(path)?;
+    let finalizer_head_ok =
+        finalizer.is_none_or(|f| f.attempt.completed_head.as_ref() == Some(&candidate));
     if canonical(
         &git::worktree_root(cwd)?.ok_or_else(|| WorkError::refused("caller outside worktree"))?,
     )? != canonical(path)?
         || head(root, branch)? != candidate
         || head(root, &format!("refs/remotes/origin/{branch}"))? != candidate
-        || b.attempt.completed_head.as_ref() != Some(&candidate)
+        || !finalizer_head_ok
     {
         return Err(WorkError::refused(
-            "readiness requires matching clean shared, completed, local and published candidate",
+            "readiness requires matching clean shared, local and published candidate",
         ));
     }
+    // Invariant 2: exact-SHA independent reviewer APPROVE stamp.
     if !crate::workflow::readiness_approved(record, root, &candidate, caller) {
         return Err(WorkError::refused(
-            "readiness requires current independent build approval",
+            "readiness requires an independent reviewer's APPROVE stamp bound to this exact commit SHA and current review-findings",
         ));
     }
     Ok(())
@@ -953,7 +946,6 @@ impl Work {
             todo,
             role,
             cwd,
-            preparation,
             evidence,
         } = *request;
         let mut s = Session::open(self, project)?;
@@ -972,9 +964,6 @@ impl Work {
         {
             return Ok(None);
         }
-        if !preparation {
-            prepared(record)?;
-        }
         if record.hold.is_some() {
             return Err(WorkError::refused("held work admits no orchestrator entry"));
         }
@@ -988,11 +977,7 @@ impl Work {
                 "work is already claimed; await its verified startup binding or resume its current orchestrator",
             ));
         }
-        let lane = if preparation {
-            instrukt_runner::interfaces::Lane::Prepare
-        } else {
-            instrukt_runner::interfaces::Lane::Work
-        };
+        let lane = instrukt_runner::interfaces::Lane::Work;
         let existing = record.bindings.iter().rev().find(|b| {
             b.role == *role
                 && b.attempt.assignment == AssignmentKind::Driver
@@ -1000,7 +985,7 @@ impl Work {
         });
         let branch = existing
             .and_then(|b| b.attempt.branch.clone())
-            .unwrap_or_else(|| format!("{todo}/{}", if preparation { "prepare" } else { "work" }));
+            .unwrap_or_else(|| format!("{todo}/work"));
         let default = instrukt_core::github::default_branch(&project.root)?;
         let listing = git::run(&project.root, ["worktree", "list", "--porcelain"])?;
         let path = listing
@@ -1109,7 +1094,7 @@ impl Work {
         let (from, base) = if already_bound {
             (format!("origin/{default}"), head(&project.root, &branch)?)
         } else {
-            let (from, base) = phase_base(&project.root, &branch, preparation)?;
+            let (from, base) = phase_base(&project.root, &branch)?;
             (
                 from,
                 if admitted {
@@ -1119,35 +1104,26 @@ impl Work {
                 },
             )
         };
-        if !preparation {
-            preparation_integrated(record, &project.root)?;
-        }
-        if (!preparation && record.branch.as_ref() != Some(&branch)) || (admitted && !already_bound)
-        {
+        if admitted && !already_bound {
             let runtime = s.config.runner_runtime()?;
             s.commit("todo workspace placement", |s| {
                 let record = &mut s.items[index].record;
-                if !preparation {
-                    record.branch = Some(branch.clone());
-                }
-                if admitted && !already_bound {
-                    record.bindings.push(Binding {
-                        role: role.clone(),
-                        session: caller.clone(),
-                        worktree: path.clone(),
-                        attempt: Attempt {
-                            runtime: Some(runtime),
-                            native_placement: evidence.cloned(),
-                            assignment: AssignmentKind::Driver,
-                            lane: Some(lane),
-                            number,
-                            semantic_key: key.clone(),
-                            branch: Some(branch.clone()),
-                            base_head: Some(base.clone()),
-                            ..Default::default()
-                        },
-                    });
-                }
+                record.bindings.push(Binding {
+                    role: role.clone(),
+                    session: caller.clone(),
+                    worktree: path.clone(),
+                    attempt: Attempt {
+                        runtime: Some(runtime),
+                        native_placement: evidence.cloned(),
+                        assignment: AssignmentKind::Driver,
+                        lane: Some(lane),
+                        number,
+                        semantic_key: key.clone(),
+                        branch: Some(branch.clone()),
+                        base_head: Some(base.clone()),
+                        ..Default::default()
+                    },
+                });
                 Ok(())
             })?;
             s.flush()?;

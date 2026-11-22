@@ -8,8 +8,7 @@ role: coordinator
 
 ## Required reads
 
-- [sdlc/procedure/lifecycle/prepare/overview](prepare/overview.md)
-- [sdlc/procedure/lifecycle/work/overview](work/overview.md)
+- [sdlc/procedure/lifecycle/overview](overview.md)
 - [sdlc/procedure/lifecycle/work/build](work/build.md)
 - [sdlc/procedure/lifecycle/work/review-build](work/review-build.md)
 - [sdlc/procedure/lifecycle/work/finalize](work/finalize.md)

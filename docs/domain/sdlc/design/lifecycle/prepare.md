@@ -57,7 +57,7 @@ human, who is the sole authority on intent.
   advance.
 - The PRD is the only human approval gate. The human reviews the PRD and
   stamps `prd_approved`; a later revision can carry that approval
-  (`sdlc/procedure/lifecycle/prepare/overview`). Architecture and plan advance
+  (`sdlc/procedure/lifecycle/overview`). Architecture and plan advance
   on reviewer verdict alone.
 - The architecture phase may be skipped when it doesn't earn its place.
   During intake, the BA stamps `architecture_skipped` with
@@ -89,9 +89,9 @@ turn of the same driving session.
 | Architecture | `sdlc/procedure/lifecycle/prepare/architecture` | Architect | `architecture_review` verdict `approve` |
 | Plan         | `sdlc/procedure/lifecycle/prepare/plan-draft`   | Planner   | `plan_review` verdict `approve`         |
 
-Each phase ends by calling `instrukt todo prepare {slug}`. The state machine
-routes the next action — load the next procedure, dispatch a reviewer, pause for
-human approval, or terminate at `PREPARED` / `BLOCKED`.
+Each phase ends by checking `instrukt todo show {slug}`. The unified
+`todo-orchestrator` routes the next primitive in prose — load the next
+procedure, dispatch a reviewer, pause for human approval, or advance to build.
 
 ### Intake
 
@@ -158,8 +158,8 @@ PREPARED terminal requires fresh grounding.
 
 ## See Also
 
-- [sdlc/procedure/lifecycle/prepare/overview](../../procedure/lifecycle/prepare/overview.md) —
-  the executable procedure for driving the prepare lifecycle
+- [sdlc/procedure/lifecycle/overview](../../procedure/lifecycle/overview.md) —
+  the unified prose-routed lifecycle playbook
 - [sdlc/procedure/lifecycle/prepare/intake](../../procedure/lifecycle/prepare/intake.md)
 - [sdlc/procedure/lifecycle/prepare/architecture](../../procedure/lifecycle/prepare/architecture.md)
 - [sdlc/procedure/lifecycle/prepare/plan-draft](../../procedure/lifecycle/prepare/plan-draft.md)

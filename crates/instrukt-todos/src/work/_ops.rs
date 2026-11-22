@@ -164,12 +164,7 @@ impl Work {
         project: &ProjectRef,
         request: CreateRequest,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
-        let preparation = match &request.group {
-            Some(parent) => self.parent_preparation(project, parent)?,
-            None => ParentPreparation::NotAsked,
-        };
         let mut s = Session::open(self, project)?;
-        s.parent_preparation = preparation;
         if request.content.trim().is_empty() {
             return Err(WorkError::refused(
                 "a todo records substantive intent; the content is empty",
@@ -427,36 +422,13 @@ impl Work {
         request: UpdateRequest,
         events: Option<&dyn EventLog>,
     ) -> Result<Outcome<UpdateReport>, WorkError> {
-        let preparation = match &request.group {
-            Some(Some(parent)) => self.parent_preparation(project, parent)?,
-            _ => ParentPreparation::NotAsked,
-        };
         let mut s = Session::open(self, project)?;
-        s.parent_preparation = preparation;
         let index = s.enter(slug)?;
         let actor = s.actor()?;
-        let record = &s.items[index].record;
-        let preparation_head = if request.unclaim {
-            preparation_release_head(record)?
-        } else {
-            None
-        };
-        let handoff = preparation_head.map(|revision| Event::PreparationReviewed {
-            project: project.slug.clone(),
-            todo: slug.clone(),
-            revision,
-        });
-        if handoff.is_some() && events.is_none() {
-            return Err(WorkError::refused(
-                "preparation release requires the integrator event log",
-            ));
-        }
-        let handoff_events: Vec<Event> = handoff.into_iter().collect();
-        let warnings = s.commit_with_events(
-            "updated",
-            events.map(|log| (log, handoff_events.as_slice())),
-            |s| apply_update(s, index, &request, &actor),
-        )?;
+        let warnings =
+            s.commit_with_events("updated", events.map(|log| (log, [].as_slice())), |s| {
+                apply_update(s, index, &request, &actor)
+            })?;
         s.flush()?;
         Ok(Outcome {
             value: UpdateReport {
@@ -709,7 +681,16 @@ impl Work {
             });
         }
         if matches!(request, StampRequest::FinalizeReady) {
-            super::_attempts::readiness(&record, session.as_ref(), cwd, &project.root)?;
+            let prd_approver = s
+                .config
+                .approver(instrukt_core::config::ApprovalGate::Prd)?;
+            super::_attempts::readiness(
+                &record,
+                session.as_ref(),
+                cwd,
+                &project.root,
+                prd_approver,
+            )?;
         }
         let base = s.base.clone();
         let resolved = _stamps::resolve(
@@ -1201,50 +1182,6 @@ fn apply_update(
     Ok(warnings)
 }
 
-/// Only the current approved preparation head can hand off to the integrator.
-fn preparation_release_head(record: &TodoRecord) -> Result<Option<CommitSha>, WorkError> {
-    let Some(session) = record
-        .claim
-        .as_ref()
-        .and_then(|claim| claim.session.as_ref())
-    else {
-        return Ok(None);
-    };
-    let Some(driver) = record.bindings.iter().rev().find(|binding| {
-        binding.session.as_ref() == Some(session)
-            && binding.attempt.lane == Some(instrukt_runner::interfaces::Lane::Prepare)
-    }) else {
-        return Ok(None);
-    };
-    let Some(stamp) = record
-        .stamps
-        .iter()
-        .rev()
-        .find(|stamp| matches!(stamp.fact, StampFact::PreparationHeadReviewed { .. }))
-    else {
-        return Ok(None);
-    };
-    let StampFact::PreparationHeadReviewed {
-        verdict: crate::evidence::ReviewVerdict::Approve,
-        head,
-        report,
-    } = &stamp.fact
-    else {
-        return Ok(None);
-    };
-    if record.current_digest("preparation-review-findings") != Some(report) {
-        return Ok(None);
-    }
-    let tree=driver.worktree.as_ref().ok_or_else(||WorkError::refused("approved preparation has no recorded workspace; preserve the claim until the handoff is reconciled"))?;
-    let current = git::run(tree, ["rev-parse", "HEAD"])?;
-    if current != head.as_str() {
-        return Err(WorkError::refused(
-            "preparation head changed after review; obtain current review before the integration handoff",
-        ));
-    }
-    Ok(Some(head.clone()))
-}
-
 /// Releases the working resources a withdrawn todo owns (`todos`,
 /// "Parking, withdrawal and delivery"): each worktree its session bindings
 /// returned that is a worktree of this project, then its work branch.
@@ -1460,26 +1397,11 @@ fn join_group(
     let now = s.now;
     let holder = &mut s.items[p].record;
     let convertible = matches!(holder.status, TodoStatus::Active | TodoStatus::Iceboxed);
-    if convertible {
-        // Only work still before prepared becomes a holder; workflow says
-        // which, and a grouping it cannot judge is refused, naming why.
-        let cause = match &s.parent_preparation {
-            ParentPreparation::Determined(false) => None,
-            ParentPreparation::Determined(true) => Some("it has completed preparation".to_owned()),
-            ParentPreparation::Undetermined(cause) => Some(format!(
-                "workflow cannot determine whether it completed preparation: {cause}"
-            )),
-            ParentPreparation::NotAsked => Some(
-                "workflow was not asked whether it completed preparation: its record could not be read before the change"
-                    .to_owned(),
-            ),
-        };
-        if let Some(cause) = cause {
-            return Err(WorkError::refused(format!(
-                "`{}` cannot become a group: {cause}",
-                parent.slug
-            )));
-        }
+    if convertible && holder.implementation_started() {
+        return Err(WorkError::refused(format!(
+            "`{}` cannot become a group: implementation has already started",
+            parent.slug
+        )));
     }
     let holder = &mut s.items[p].record;
     match holder.status {
@@ -1538,57 +1460,6 @@ pub(super) fn transfer_documentation(
             )))
         }
         Err(err) => Err(err.into()),
-    }
-}
-
-impl Work {
-    /// Whether `parent` has completed preparation, as workflow determines
-    /// it (`dependencies-and-holds`, "Structural holders": only work still
-    /// before prepared becomes a holder; workflow owns that determination).
-    /// `None` when workflow cannot say (no published flavor with a
-    /// `prepare` or `work` flow). Asked before the write session opens:
-    /// workflow reads the evidence through work.
-    fn preparation_of(
-        &self,
-        project: &ProjectRef,
-        parent: &TodoSlug,
-    ) -> Result<Option<bool>, WorkError> {
-        let read = |slug: &TodoSlug| {
-            crate::evidence::WorkEvidence::evidence(self, project, slug)
-                .map_err(|err| WorkError::refused(err.to_string()))
-        };
-        let Some(evidence) = read(parent)? else {
-            return Ok(None);
-        };
-        // Prerequisites by slug, grounding dependencies by durable identity:
-        // a reused slug never stands in for the todo a grounding recorded.
-        let others = crate::workflow::related_evidence(self, project, &evidence)
-            .map_err(|err| WorkError::refused(err.to_string()))?;
-        let primary = instrukt_core::repository::primary_worktree(&project.root)
-            .map_err(|err| WorkError::refused(err.to_string()))?;
-        crate::workflow::preparation_complete(self.home(), &primary, &evidence, &others).map_err(
-            |err| {
-                WorkError::refused(format!(
-                    "workflow cannot tell whether `{parent}` completed preparation: {err}"
-                ))
-            },
-        )
-    }
-}
-
-impl Work {
-    /// [`Work::preparation_of`] as grouping uses it.
-    fn parent_preparation(
-        &self,
-        project: &ProjectRef,
-        parent: &TodoSlug,
-    ) -> Result<ParentPreparation, WorkError> {
-        Ok(match self.preparation_of(project, parent)? {
-            Some(prepared) => ParentPreparation::Determined(prepared),
-            None => ParentPreparation::Undetermined(
-                "the project selects no published flavor with a prepare or work flow".to_owned(),
-            ),
-        })
     }
 }
 
@@ -1719,18 +1590,6 @@ fn grounding_now(
         }
     }
     Ok(grounding)
-}
-
-/// What grouping knows of the parent's preparation, asked of workflow.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ParentPreparation {
-    /// No grouping in this change, or no parent record to ask about.
-    NotAsked,
-    /// Workflow's determination.
-    Determined(bool),
-    /// Workflow could not determine it, for the reason given: a conversion
-    /// is refused rather than decided on a work-side guess.
-    Undetermined(String),
 }
 
 /// The structural holders above `id`, nearest first.

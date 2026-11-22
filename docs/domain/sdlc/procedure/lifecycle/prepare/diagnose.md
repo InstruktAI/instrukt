@@ -147,7 +147,7 @@ strongest rival check out against them, and confirming needed no investigation o
 own, settle: write the account and its source references into `diagnosis` unchanged in
 substance; add a confirmation record naming, per transition, the source opened and what it
 showed; state why further discovery adds nothing; stamp `--diagnosis-settled` as step 4
-does; then call `instrukt todo prepare {slug}`.
+does; then inspect `instrukt todo show {slug}`.
 
 A gap, a source that does not show what the account says, a rival the evidence leaves
 standing, or any check that would take an investigation means discovery remains: dispatch
@@ -248,7 +248,7 @@ the settled cause with `instrukt todo stamp {slug} --diagnosis-settled`. The dri
 claim remains unchanged before and after peer revisions. The stamp binds to the artifact's
 current digest, so a later revision invalidates it and the cause must be settled again.
 
-Then call `instrukt todo prepare {slug}`. The engine derives the next action
+Then inspect `instrukt todo show {slug}` to verify the settled diagnosis in the ledger.
 from the settled evidence; the planner consumes the root cause and derives the fix.
 
 Plan review then applies the same standard again, and that is depth rather than repetition:

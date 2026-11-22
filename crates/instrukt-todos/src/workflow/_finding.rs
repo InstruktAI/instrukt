@@ -1,15 +1,15 @@
-//! Validation findings: what is wrong with a flavor, and where.
+//! Validation findings: what is wrong with a workflow flavor's `workflow.yaml`, and where.
 
 use std::fmt;
 use std::path::PathBuf;
 
-/// One problem in a flavor's files.
+/// One problem in a flavor's workflow declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     /// The file, relative to the flavor's `workflow/` directory.
     pub file: PathBuf,
-    /// Where in the file: a key path such as `transitions[3].when.all[1]`,
-    /// a `line:column` for unparsable YAML, or empty for the whole file.
+    /// Where in the file: a key path, a `line:column` for unparsable YAML,
+    /// or empty for the whole file.
     pub location: String,
     pub problem: Problem,
 }
@@ -51,32 +51,10 @@ pub enum Problem {
     DuplicateRole(String),
     #[error("{0}")]
     InvalidRole(String),
-    #[error("the command names procedure `{id}`, which is not a valid snippet id: {reason}")]
-    InvalidProcedure { id: String, reason: String },
-    #[error("orchestrator role `{0}` is not declared under `roles` in actions.yaml")]
+    #[error("orchestrator role `{0}` is not declared under `roles`")]
     UndeclaredOrchestrator(String),
-    #[error("declared `flow: {declared}` does not match the file name `{expected}`")]
-    FlowMismatch { declared: String, expected: String },
-    #[error("state `{0}` is declared more than once")]
-    DuplicateState(String),
-    #[error("state `{0}` is not declared in `states`")]
-    UndeclaredState(String),
-    #[error("action `{0}` is not configured in actions.yaml")]
-    UnknownAction(String),
-    #[error("effect `{0}` is not configured under `effects` in actions.yaml")]
-    UnknownEffect(String),
-    #[error("`{0}` is not a fact the workflow declares")]
-    UnknownFact(String),
-    #[error("unknown condition operator `{0}`")]
-    UnknownOperator(String),
-    #[error("a condition needs at least one operator")]
-    EmptyCondition,
-    #[error("a literal must be a string, boolean or number")]
-    InvalidLiteral,
-    #[error("template path `{0}` must stay within workflow/")]
-    TemplateOutside(String),
-    #[error("template `{0}` does not exist")]
-    TemplateMissing(String),
-    #[error("`{{brief}}` is the rendered template and is not available here")]
-    BriefUnavailable,
+    #[error("invalid capability: {0}")]
+    InvalidCapability(String),
+    #[error("unexpected workflow file `{0}`; prose-routed workflows declare only `workflow.yaml`")]
+    UnexpectedFile(String),
 }

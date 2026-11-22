@@ -8,7 +8,6 @@ visibility: 'public'
 
 ## Required reads
 
-- [sdlc/procedure/lifecycle/overview](../../domain/sdlc/procedure/lifecycle/overview.md)
 - [general/procedure/ai-to-ai-operations](ai-to-ai-operations.md)
 
 ## Goal
@@ -52,42 +51,31 @@ actually did the work recorded there.
 
 ### Orchestration Loop
 
-1. Call `instrukt todo prepare {slug}` or `instrukt todo work {slug}` for the
-   current target. Work orchestration is slug-scoped; future pickup belongs
-   to the runner.
-2. Read the derived state, transition, action, rendered template and owed
-   effects. The engine evaluates facts; it stores no lifecycle phase and owns
-   no session or worktree mutation.
-3. Execute the configured commands in their listed order. Effects are
-   idempotent. An effect remains owed while its optional `done_when` condition
-   is absent or does not hold; the next call re-derives what is still owed.
-   Record failures and their recovery rather than treating a silent skip as success.
-4. Reserve a new worker through the selected `instrukt todo attempt` action.
-   Use its rendered brief, role, attempt, semantic key, display title and captured shared head with the
-   configured runtime delegation instruction under
+1. Call `instrukt todo work {slug}` (or `instrukt todo show {slug} --json`) to
+   claim the active todo and inspect its current factual ledger. Orchestration
+   is slug-scoped; future pickup belongs to the runner.
+2. Read the factual ledger: artifacts, digests, stamps, claims, bindings, git
+   state, open findings, and gate status. Code enforces only the three hard
+   integrity invariants; choose the next composable primitive from the prose
+   playbook in `sdlc/procedure/lifecycle/overview`.
+3. Reserve a new worker through `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`.
+   Use its rendered brief, role, attempt, semantic key, display title and
+   captured shared head with the configured runtime delegation instruction under
    `general/procedure/ai-to-ai-operations`; immediately record `todo bind` with
-   the native child id and matching shared workspace evidence. Continue active attempts
-   with native child messaging. The runtime supplies parent linkage and result
-   attention. Yield while valid work continues; read the native result and current
-   record before choosing the next contribution. Selection follows the procedure's
-   role mapping in `~/.instrukt/agents.yaml`, with per-task overrides first,
-   where natively supported. A proven rejection
-   before creation permits fallback; ambiguous native starts retain their attempt.
+   the native child id and matching shared workspace evidence. Continue active
+   attempts with native child messaging. Yield while valid work continues; read
+   the native result and current factual ledger before choosing the next move.
+4. Assess current session and work evidence. A step is complete only when the
+   record carries its required artifact and stamp with current target bindings.
+   A reply or ended run alone supplies neither.
+5. Re-read `instrukt todo show {slug}` after every material outcome or recovery.
+   At handoff, stamp `--finalize-ready` and release the claim with
+   `instrukt todo update {slug} --unclaim`.
 
-5. Assess current session and work evidence under the sections below. A step
-   is complete only when the record carries its required artifact and stamp,
-   with current target bindings. A reply or ended run alone supplies neither.
-6. Re-enter the flow after a material outcome or recovery. Terminal handoff
-   closes this assignment; remaining session obligations follow
-   `general/principle/session-lifecycle`.
-
-The orchestrator routes workspace preparation, upstream merges and publication
-to the admitted shared child. It coordinates stale evidence, findings relay,
-kickback and lane release through configured record commands. A work team shares
-its orchestrator's one todo worktree and branch; preparation children share the
-preparation orchestrator's `<slug>/prepare` worktree. Completion stamps release workspace attempts
-atomically before the next role is admitted. The runtime adapter supplies capabilities rather than workflow policy.
-The record supplies facts rather than a second stored phase.
+A todo shares its unified `todo-orchestrator`'s single `<slug>/work` worktree
+and branch. Completion stamps release workspace attempts atomically before the
+next role is admitted. The runtime adapter supplies capabilities rather than
+workflow policy; the record supplies facts rather than a stored phase machine.
 
 ### Terminal Child Cleanup
 

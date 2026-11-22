@@ -11,8 +11,7 @@ roles:
   project-analyst: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
   third-party-researcher: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
   config-assessor: {github_app: author, class: focused, can: [read, configure, worker, record], order: [claude, codex, antigravity], tier: strong}
-  prepare-orchestrator: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
-  work-orchestrator: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  todo-orchestrator: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
   intaker: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
   architect: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
   planner: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}

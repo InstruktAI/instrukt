@@ -1,27 +1,22 @@
 ---
 source: crates/instrukt-cli/tests/cases/workflow-definition.rs
-expression: "redact(&format!(\"{before}=====\\n{after}\"))"
+expression: redact(&before)
 ---
-todo: tidy-config (demo)
-flow: prepare
-claim: claimed by this session
-state: plan_drafting
-transition: start -> plan_drafting (#1)
-action: draft-plan
-responsible: planner (crew/procedure/plan)
-command: instrukt docs get crew/procedure/plan
-effects: none
-instructions:
-Draft the implementation plan of tidy-config.
-=====
-todo: tidy-config (demo)
-flow: prepare
-claim: held by this session
-state: prd_drafting
-transition: start -> prd_drafting (#1)
-action: draft-prd
-responsible: prepare-lead (crew/procedure/prepare-lead)
-command: instrukt docs get crew/procedure/prepare-lead --closure
-effects: none
-instructions:
-Write down what tidy-config must achieve before planning it.
+pickup: claimed by this session
+todo: tidy-config (demo) [change · active]
+claim: held by t3:lead-1
+workspace:
+  branch: tidy-config/work
+  worktree: [TMP]/team-tidy-config-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+reviews:
+  none
+gates:
+  interference lock: free
+  prd approval: not required
+  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
