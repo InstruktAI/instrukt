@@ -612,7 +612,9 @@ fn refuse_database_links(store: &'static str, path: &Path) -> Result<(), StoreEr
     Ok(())
 }
 
-fn refuse_link(store: &'static str, path: &Path) -> Result<(), StoreError> {
+/// Refuses a symbolic link at `path`, a file of `store`: a link would put
+/// one store, or one lock, under two lock domains. A missing file is fine.
+pub fn refuse_link(store: &'static str, path: &Path) -> Result<(), StoreError> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Err(StoreError::Symlink { path: path.into() }),
         Ok(_) => Ok(()),

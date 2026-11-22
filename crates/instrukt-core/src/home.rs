@@ -240,6 +240,14 @@ impl Home {
         self.state_dir().join("writer.lock")
     }
 
+    /// `~/.instrukt/state/reflection.lock` — the per-computer reflection
+    /// lock: GitHub reflection holds it across its requests and takes the
+    /// writer lock only for each local transaction recording what it learned
+    /// (lock order reflection → writer).
+    pub fn reflection_lock_file(&self) -> PathBuf {
+        self.state_dir().join("reflection.lock")
+    }
+
     /// `~/.instrukt/state/runner.lock` — serializes runner invocations; it
     /// guards no data.
     pub fn runner_lock_file(&self) -> PathBuf {
@@ -332,6 +340,7 @@ mod tests {
             home.retired_hook_records_dir(),
             home.state_db_file(),
             home.writer_lock_file(),
+            home.reflection_lock_file(),
             home.runner_lock_file(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
