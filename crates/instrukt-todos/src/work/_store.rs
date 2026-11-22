@@ -1,17 +1,21 @@
 //! The local work record in the state database's work tables
 //! (`state-database`, "Work tables"): each local item is one `todos` row
 //! with its prerequisites, artifacts and versions, stamps, holds, session
-//! bindings, reflection state and answered inbound commands. Every write
-//! runs under the per-computer writer lock the store holds for as long as
-//! it is open, and one accepted change commits in one transaction.
+//! bindings, reflection state and answered inbound commands. Reads take no
+//! lock; each write takes the per-computer writer lock for its one
+//! transaction alone, and one accepted change commits in one transaction.
+//! GitHub reflection serializes on the separate reflection lock, taken
+//! before the writer lock and never while it is held.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use instrukt_core::fsx::LockGuard;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::machine::MachineId;
 use instrukt_core::state_db::rusqlite::{self, Connection, OptionalExtension, Transaction, params};
-use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+use instrukt_core::state_db::{self, StateDb, StateDbError, StateRead};
 use instrukt_runner::interfaces::{AgentPreference, CatchUp, TaskSchedule, Tier, TodoKind};
 use jiff::Timestamp;
 use serde::de::DeserializeOwned;
@@ -94,62 +98,151 @@ pub(crate) struct ProviderState {
     pub deferred_until: Option<Timestamp>,
 }
 
-/// One project's local items, open for writing: the writer lock is held
-/// while the store lives.
+/// How long a reflection waits for another process's reflection to let go
+/// of the reflection lock.
+pub(crate) const REFLECTION_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The per-computer reflection lock `state/reflection.lock`: it serializes
+/// GitHub reflection across processes and is held across GitHub requests.
+/// Lock order is reflection → writer: it is never requested while the
+/// writer lock is held, and it is not re-entrant.
+pub(crate) struct ReflectionLock {
+    _guard: LockGuard,
+}
+
+impl ReflectionLock {
+    /// Takes the lock, waiting at most [`REFLECTION_LOCK_TIMEOUT`] for
+    /// another reflection; still held then is
+    /// [`instrukt_core::fsx::FsError::LockTimeout`],
+    /// told apart from a link or an OS failure.
+    pub fn acquire(home: &Home) -> Result<Self, WorkError> {
+        let path = Self::path(home)?;
+        Ok(Self {
+            _guard: LockGuard::acquire(&path, REFLECTION_LOCK_TIMEOUT)?,
+        })
+    }
+
+    /// Takes the lock only when no reflection holds it; never waits.
+    pub fn try_acquire(home: &Home) -> Result<Option<Self>, WorkError> {
+        let path = Self::path(home)?;
+        Ok(LockGuard::try_acquire(&path)?.map(|guard| Self { _guard: guard }))
+    }
+
+    fn path(home: &Home) -> Result<PathBuf, WorkError> {
+        let path = home.reflection_lock_file();
+        state_db::refuse_link(REFLECTION_LOCK, &path).map_err(StateDbError::from)?;
+        Ok(path)
+    }
+}
+
+/// The name the reflection lock's errors use.
+const REFLECTION_LOCK: &str = "the reflection lock";
+
+/// Why a local change was not written: the row it was computed from
+/// changed in between (`state-database`, "Writing").
+pub(crate) enum Refusal {
+    /// A reflection marked the todo conflicted after the command read it;
+    /// the live row.
+    Conflicted(Box<LocalItem>),
+    /// Another command changed the todo's record.
+    Changed,
+}
+
+/// What a [`Store::swap`] found.
+pub(crate) enum Swapped {
+    /// The row was as judged; the written row.
+    Applied(Box<LocalItem>),
+    /// The row changed; the live row, `None` when it is gone.
+    Changed(Option<Box<LocalItem>>),
+}
+
+/// One project's local items in the state database. It holds no lock:
+/// each read opens a current-schema reader, and each write takes the writer
+/// lock for one transaction and lets it go before returning, so no caller
+/// can hold it across GitHub, git or runtime I/O. A writer never saves its
+/// copy of a row; it commits its own contribution against the live row,
+/// re-read inside its transaction.
 pub(crate) struct Store {
-    db: StateDb,
+    home: Home,
     project: ProjectSlug,
 }
 
 impl Store {
-    /// Takes the writer lock and opens the state database for `project`.
-    pub fn open(home: &Home, project: &ProjectSlug) -> Result<Self, WorkError> {
-        Ok(Self {
-            db: StateDb::open(home)?,
+    pub fn new(home: &Home, project: &ProjectSlug) -> Self {
+        Self {
+            home: home.clone(),
             project: project.clone(),
-        })
+        }
     }
 
-    pub fn path(&self) -> &Path {
-        self.db.path()
+    /// Runs `read` against a current-schema reader; `empty` when no
+    /// database exists yet.
+    fn read<T>(
+        &self,
+        empty: T,
+        read: impl FnOnce(&Connection, &Path, &ProjectSlug) -> Result<T, WorkError>,
+    ) -> Result<T, WorkError> {
+        match StateRead::open(&self.home)? {
+            Some(db) => read(db.conn(), db.path(), &self.project),
+            None => Ok(empty),
+        }
     }
 
-    /// Retain an answered command and its fixed confirmation atomically.
-    pub fn save_with_reply(
-        &mut self,
-        item: &LocalItem,
-        comment: u64,
-        answer: &str,
-    ) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        self.db.write(|tx| {
-            save_in(tx, &path, item)?;
-            retain_reply(tx, &path, item.record.id.as_str(), comment, answer)
-        })
+    /// Runs `change` in one transaction under the writer lock, released
+    /// before this returns; an error rolls everything back.
+    pub fn write<T>(
+        &self,
+        change: impl FnOnce(&Transaction<'_>, &Path, &ProjectSlug) -> Result<T, WorkError>,
+    ) -> Result<T, WorkError> {
+        let mut db = StateDb::open(&self.home)?;
+        let path = db.path().to_path_buf();
+        let tx = db.transaction()?;
+        let value = change(&tx, &path, &self.project)?;
+        tx.commit().map_err(StateDbError::sqlite(&path))?;
+        Ok(value)
     }
+
+    /// Every local item of the project, in identity order.
+    pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
+        self.read(Vec::new(), load_items)
+    }
+
+    /// The stored row of `id`, `None` when there is none.
+    pub fn item(&self, id: &TodoId) -> Result<Option<LocalItem>, WorkError> {
+        self.read(None, |conn, path, _| load_one(conn, path, id))
+    }
+
     pub fn pending_replies(&self, todo: &str) -> Result<Vec<(u64, String)>, WorkError> {
-        query(
-            self.db.conn(),
-            self.db.path(),
-            "SELECT comment_id,reply FROM inbound_commands WHERE todo_id=?1 AND reply_pending=1 ORDER BY comment_id",
-            todo,
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+        self.read(Vec::new(), |conn, path, _| {
+            query(
+                conn,
+                path,
+                "SELECT comment_id,reply FROM inbound_commands WHERE todo_id=?1 AND reply_pending=1 ORDER BY comment_id",
+                todo,
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+        })
     }
-    pub fn reply_sent(&mut self, todo: &str, comment: u64) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        self.db.write(|tx| {
+
+    pub fn reply_sent(&self, todo: &str, comment: u64) -> Result<(), WorkError> {
+        self.write(|tx, path, _| {
             tx.execute(
                 "UPDATE inbound_commands SET reply_pending=0 WHERE todo_id=?1 AND comment_id=?2",
                 params![todo, comment],
             )
-            .map_err(StateDbError::sqlite(&path))?;
+            .map_err(StateDbError::sqlite(path))?;
             Ok(())
         })
     }
 
+    /// Records the answered command `comment` of `todo` and its fixed
+    /// reply, without saving the item.
+    pub fn retain_reply(&self, todo: &str, comment: u64, answer: &str) -> Result<(), WorkError> {
+        self.write(|tx, path, _| retain_reply(tx, path, todo, comment, answer))
+    }
+
     pub fn ignore_label(
-        &mut self,
+        &self,
         issue: u64,
         action: u64,
         todo: &str,
@@ -157,72 +250,64 @@ impl Store {
         login: &str,
         at: &str,
     ) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        let project = &self.project;
-        self.db.write(|tx| {tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,todo,kind,login,at]).map_err(StateDbError::sqlite(&path))?;Ok(())})
+        self.write(|tx, path, project| {tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,todo,kind,login,at]).map_err(StateDbError::sqlite(path))?;Ok(())})
     }
+
     pub fn label_seen(&self, issue: u64, action: u64) -> Result<bool, WorkError> {
-        self.db.conn().query_row("SELECT EXISTS(SELECT 1 FROM github_label_actions WHERE project=?1 AND issue_number=?2 AND action_id=?3)",params![self.project.as_str(),issue,action],|r|r.get(0)).map_err(StateDbError::sqlite(self.db.path())).map_err(Into::into)
+        self.read(false, |conn, path, project| {
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM github_label_actions WHERE project=?1 AND issue_number=?2 AND action_id=?3)",params![project.as_str(),issue,action],|r|r.get(0)).map_err(StateDbError::sqlite(path)).map_err(Into::into)
+        })
     }
+
     /// The board reflection last set up or found for the project, recorded
     /// on this computer; `None` before the first.
     pub fn recorded_board(&self) -> Result<Option<String>, WorkError> {
-        self.db
-            .conn()
-            .query_row(
+        self.read(None, |conn, path, project| {
+            conn.query_row(
                 "SELECT board FROM project_boards WHERE project=?1",
-                params![self.project.as_str()],
+                params![project.as_str()],
                 |r| r.get(0),
             )
             .optional()
-            .map_err(StateDbError::sqlite(self.db.path()))
+            .map_err(StateDbError::sqlite(path))
             .map_err(Into::into)
+        })
     }
 
     /// Records `board` (`<owner>/<number>`) as the project's board.
-    pub fn record_board(&mut self, board: &str) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        let project = &self.project;
-        self.db.write(|tx| {
+    pub fn record_board(&self, board: &str) -> Result<(), WorkError> {
+        self.write(|tx, path, project| {
             tx.execute(
                 "INSERT INTO project_boards(project,board) VALUES (?1,?2) ON CONFLICT(project) DO UPDATE SET board=excluded.board",
                 params![project.as_str(), board],
             )
-            .map_err(StateDbError::sqlite(&path))?;
+            .map_err(StateDbError::sqlite(path))?;
             Ok(())
         })
     }
 
-    /// Every local item of the project, in identity order.
-    pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
-        load_items(self.db.conn(), self.db.path(), &self.project)
-    }
-
-    /// Writes `item` in a transaction of its own.
-    pub fn save(&mut self, item: &LocalItem) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        self.db.write(|tx| save_in(tx, &path, item))
-    }
-
-    /// Removes `id` and every row that belongs to it.
-    pub fn delete(&mut self, id: &TodoId) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        self.db.write(|tx| delete_in(tx, &path, id))
-    }
-
-    /// Begins one transaction for a change spanning several records.
-    pub fn transaction(&mut self) -> Result<Transaction<'_>, WorkError> {
-        Ok(self.db.transaction()?)
+    /// Removes `id` and every row that belongs to it while `expired` still
+    /// holds for its live row; whether it was removed.
+    pub fn delete_if(
+        &self,
+        id: &TodoId,
+        expired: impl FnOnce(&LocalItem) -> bool,
+    ) -> Result<bool, WorkError> {
+        self.write(|tx, path, _| match load_one(tx, path, id)? {
+            Some(live) if expired(&live) => {
+                delete_in(tx, path, id)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        })
     }
 
     pub fn provider(&self) -> Result<ProviderState, WorkError> {
-        load_provider(self.db.conn(), self.db.path(), &self.project)
+        self.read(ProviderState::default(), load_provider)
     }
 
-    pub fn save_provider(&mut self, state: &ProviderState) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        let project = self.project.clone();
-        self.db.write(|tx| {
+    pub fn save_provider(&self, state: &ProviderState) -> Result<(), WorkError> {
+        self.write(|tx, path, project| {
             let sql = match state.deferred_until {
                 Some(until) => tx.execute(
                     "INSERT INTO provider_deferrals (project, until) VALUES (?1, ?2)
@@ -234,10 +319,271 @@ impl Store {
                     params![project.as_str()],
                 ),
             };
-            sql.map_err(StateDbError::sqlite(&path))?;
+            sql.map_err(StateDbError::sqlite(path))?;
             Ok(())
         })
     }
+
+    /// Writes `next`, a pull result, a listing acceptance or a refresh
+    /// judged against `base`, only while the live row still equals `base`.
+    pub fn swap(&self, base: &LocalItem, next: &LocalItem) -> Result<Swapped, WorkError> {
+        let id = &base.record.id;
+        self.write(|tx, path, _| {
+            let live = load_one(tx, path, id)?;
+            if live.as_ref().map(stored) != Some(stored(base)) {
+                return Ok(Swapped::Changed(live.map(Box::new)));
+            }
+            save_in(tx, path, next)?;
+            Ok(Swapped::Applied(Box::new(written(tx, path, id)?)))
+        })
+    }
+
+    /// Commits what one flush learned of `loaded`, the row it re-read
+    /// under the reflection lock, as `reflected`, onto the live row
+    /// ([`merge_reflection`]). `None` when the row is gone.
+    pub fn commit_reflection(
+        &self,
+        loaded: &LocalItem,
+        reflected: &LocalItem,
+    ) -> Result<Option<LocalItem>, WorkError> {
+        let id = &loaded.record.id;
+        self.write(|tx, path, _| {
+            let Some(live) = load_one(tx, path, id)? else {
+                return Ok(None);
+            };
+            save_in(tx, path, &merge_reflection(&live, loaded, reflected))?;
+            Ok(Some(written(tx, path, id)?))
+        })
+    }
+
+    /// Applies `amend` to the live row's reflection state: a note
+    /// reflection keeps on its own. `None` when the row is gone.
+    pub fn amend_reflection(
+        &self,
+        id: &TodoId,
+        amend: impl FnOnce(&mut ReflectionState),
+    ) -> Result<Option<LocalItem>, WorkError> {
+        self.write(|tx, path, _| {
+            let Some(mut live) = load_one(tx, path, id)? else {
+                return Ok(None);
+            };
+            amend(&mut live.reflection);
+            save_in(tx, path, &live)?;
+            Ok(Some(written(tx, path, id)?))
+        })
+    }
+
+    /// Makes `item`, a todo read from GitHub, a local item when no row of
+    /// its identity exists; the written or the live row.
+    pub fn adopt(&self, item: &LocalItem) -> Result<LocalItem, WorkError> {
+        let id = &item.record.id;
+        self.write(|tx, path, _| {
+            if load_one(tx, path, id)?.is_none() {
+                save_in(tx, path, item)?;
+            }
+            written(tx, path, id)
+        })
+    }
+}
+
+/// Commits the local change `mine` inside `tx`, computed from `base`, the
+/// row the command last read or wrote (`None` for a todo it creates),
+/// against the live row ([`admission`], [`rebase_local`]). `others` are
+/// the todos the same change writes, whose slugs are judged in memory.
+/// Returns the written row, or why the change was refused.
+pub(crate) fn commit_local(
+    tx: &Transaction<'_>,
+    path: &Path,
+    project: &ProjectSlug,
+    base: Option<&LocalItem>,
+    mine: &LocalItem,
+    others: &[TodoId],
+) -> Result<Result<LocalItem, Refusal>, WorkError> {
+    let id = &mine.record.id;
+    let live = load_one(tx, path, id)?;
+    let next = match (base, live) {
+        (None, None) => mine.clone(),
+        (Some(_), None) | (None, Some(_)) => return Ok(Err(Refusal::Changed)),
+        (Some(base), Some(live)) => match admission(&live, base) {
+            Admission::Conflicted => return Ok(Err(Refusal::Conflicted(Box::new(live)))),
+            Admission::Changed => return Ok(Err(Refusal::Changed)),
+            Admission::Admitted => rebase_local(&live, mine),
+        },
+    };
+    let renamed = base.is_none_or(|base| base.record.slug != mine.record.slug);
+    if renamed && mine.record.is_live() {
+        let taken = load_items(tx, path, project)?.into_iter().any(|other| {
+            &other.record.id != id
+                && !others.contains(&other.record.id)
+                && other.record.slug == mine.record.slug
+                && other.record.is_live()
+        });
+        if taken {
+            return Ok(Err(Refusal::Changed));
+        }
+    }
+    save_in(tx, path, &next)?;
+    Ok(Ok(written(tx, path, id)?))
+}
+
+/// What a local change's precondition finds on the live row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Admission {
+    Admitted,
+    /// A reflection marked the todo conflicted since the command read it.
+    Conflicted,
+    /// Another command changed the record.
+    Changed,
+}
+
+/// The precondition of a local change computed from `base` on the `live`
+/// row. A conflict mark that appeared since the read comes first: its door
+/// replaces the record, so running the command again would only meet the
+/// conflict. Otherwise the records must be equal, ignoring what reflection
+/// learns of artifact versions.
+pub(crate) fn admission(live: &LocalItem, base: &LocalItem) -> Admission {
+    if live.reflection.conflicted && !base.reflection.conflicted {
+        Admission::Conflicted
+    } else if unlearned(&live.record) != unlearned(&base.record) {
+        Admission::Changed
+    } else {
+        Admission::Admitted
+    }
+}
+
+/// `record` without what reflection learns of its artifact versions: the
+/// provider's artifact address, the remote version number and the content.
+fn unlearned(record: &TodoRecord) -> TodoRecord {
+    let mut bare = record.without_contents();
+    for artifact in &mut bare.artifacts {
+        artifact.address = None;
+        for version in &mut artifact.versions {
+            version.remote = None;
+        }
+    }
+    bare
+}
+
+/// The carrying step: `mine`'s record with the `live` row's reflection
+/// state, and the live artifact address, remote version and content
+/// wherever `mine` holds none.
+pub(crate) fn carry(live: &LocalItem, mine: &LocalItem) -> LocalItem {
+    let mut record = mine.record.clone();
+    learn(&mut record, &live.record);
+    LocalItem {
+        record,
+        reflection: live.reflection.clone(),
+    }
+}
+
+/// Fills in `record` what `from` learned of the same artifact versions,
+/// matched by artifact name and version sequence and digest, wherever
+/// `record` holds none.
+fn learn(record: &mut TodoRecord, from: &TodoRecord) {
+    for artifact in &mut record.artifacts {
+        let Some(source) = from.artifacts.iter().find(|a| a.name == artifact.name) else {
+            continue;
+        };
+        if artifact.address.is_none() {
+            artifact.address = source.address;
+        }
+        for version in &mut artifact.versions {
+            let Some(known) = source
+                .versions
+                .iter()
+                .find(|v| v.sequence == version.sequence && v.digest == version.digest)
+            else {
+                continue;
+            };
+            if version.remote.is_none() {
+                version.remote = known.remote;
+            }
+            if version.content.is_none() {
+                version.content.clone_from(&known.content);
+            }
+        }
+    }
+}
+
+/// A local change `mine` rebased on the `live` row: the carrying step,
+/// pending reflection, and every command either has answered.
+pub(crate) fn rebase_local(live: &LocalItem, mine: &LocalItem) -> LocalItem {
+    let mut next = carry(live, mine);
+    next.reflection.pending = true;
+    for comment in &mine.reflection.commands_seen {
+        if !next.reflection.commands_seen.contains(comment) {
+            next.reflection.commands_seen.push(*comment);
+        }
+    }
+    next
+}
+
+/// What a flush of `loaded` that produced `reflected` leaves on the `live`
+/// row: every reflection field the flush changed takes its value, every
+/// other keeps the live one, and the artifact values it learned attach to
+/// the matching versions. Pending clears only while the live record is the
+/// one reflected; a newer local record stays pending and loses its `ETag`.
+pub(crate) fn merge_reflection(
+    live: &LocalItem,
+    loaded: &LocalItem,
+    reflected: &LocalItem,
+) -> LocalItem {
+    let mut next = live.clone();
+    learn(&mut next.record, &reflected.record);
+    let (to, from, was) = (
+        &mut next.reflection,
+        &reflected.reflection,
+        &loaded.reflection,
+    );
+    macro_rules! changed {
+        ($($field:ident),*) => {$(
+            if from.$field != was.$field {
+                to.$field.clone_from(&from.$field);
+            }
+        )*};
+    }
+    changed!(
+        refreshed_at,
+        issue,
+        record_comment,
+        etag,
+        remote_revision,
+        pull_outstanding,
+        board_item,
+        board,
+        board_status,
+        board_failure,
+        pending,
+        conflicted,
+        pull,
+        reviews_reflected,
+        pull_closed,
+        failure
+    );
+    for comment in &from.commands_seen {
+        if !to.commands_seen.contains(comment) {
+            to.commands_seen.push(*comment);
+        }
+    }
+    if unlearned(&live.record) != unlearned(&loaded.record) {
+        to.pending = true;
+        to.etag = None;
+    }
+    next
+}
+
+/// `item` as its row stores it: commands found on the last pull are never
+/// stored.
+pub(crate) fn stored(item: &LocalItem) -> LocalItem {
+    let mut row = item.clone();
+    row.reflection.inbound = Vec::new();
+    row
+}
+
+/// The row of `id` as `tx` holds it now, once written.
+fn written(tx: &Connection, path: &Path, id: &TodoId) -> Result<LocalItem, WorkError> {
+    load_one(tx, path, id)?
+        .ok_or_else(|| invalid(path, format!("todo {id} vanished as it was written")))
 }
 
 /// The last known copy of a todo that is not a local item here, as the
@@ -253,24 +599,17 @@ pub(crate) struct ListingCopy {
 }
 
 impl Store {
-    /// The project's listing copies, oldest todo first.
-    pub fn copies(&self) -> Result<Vec<ListingCopy>, WorkError> {
-        load_copies(self.db.conn(), self.db.path(), &self.project)
-    }
-
     /// Replaces the project's listing copies with `copies`: what one
     /// pickup listing read.
-    pub fn replace_copies(&mut self, copies: &[ListingCopy]) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        let project = self.project.clone();
-        self.db.write(|tx| {
+    pub fn replace_copies(&self, copies: &[ListingCopy]) -> Result<(), WorkError> {
+        self.write(|tx, path, project| {
             tx.execute(
                 "DELETE FROM listing_copies WHERE project = ?1",
                 params![project.as_str()],
             )
-            .map_err(StateDbError::sqlite(&path))?;
+            .map_err(StateDbError::sqlite(path))?;
             for copy in copies {
-                save_copy_in(tx, &path, &project, copy)?;
+                save_copy_in(tx, path, project, copy)?;
             }
             Ok(())
         })
@@ -278,22 +617,18 @@ impl Store {
 
     /// Replaces the one copy of `copy`'s issue: what a refresh of a todo
     /// that is not a local item read.
-    pub fn save_copy(&mut self, copy: &ListingCopy) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        let project = self.project.clone();
-        self.db.write(|tx| save_copy_in(tx, &path, &project, copy))
+    pub fn save_copy(&self, copy: &ListingCopy) -> Result<(), WorkError> {
+        self.write(|tx, path, project| save_copy_in(tx, path, project, copy))
     }
 
     /// Removes the copy of issue `number`: its todo became a local item.
-    pub fn drop_copy(&mut self, number: u64) -> Result<(), WorkError> {
-        let path = self.db.path().to_path_buf();
-        let project = self.project.clone();
-        self.db.write(|tx| {
+    pub fn drop_copy(&self, number: u64) -> Result<(), WorkError> {
+        self.write(|tx, path, project| {
             tx.execute(
                 "DELETE FROM listing_copies WHERE project = ?1 AND issue_number = ?2",
                 params![project.as_str(), number],
             )
-            .map_err(StateDbError::sqlite(&path))?;
+            .map_err(StateDbError::sqlite(path))?;
             Ok(())
         })
     }
@@ -421,7 +756,7 @@ pub(crate) fn read_existence_state(
 /// Writes every row of `item` inside `tx`: the `todos` row first, then the
 /// rows that belong to it. Artifact versions are retained and never
 /// rewritten; only what reflection learns of them changes.
-pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<(), WorkError> {
+fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<(), WorkError> {
     let r = &item.record;
     let id = r.id.as_str();
     let sql = StateDbError::sqlite(path);
@@ -636,7 +971,7 @@ pub(crate) fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<
 }
 
 /// Removes `id`'s row; the rows that belong to it go with it.
-pub(crate) fn delete_in(tx: &Connection, path: &Path, id: &TodoId) -> Result<(), WorkError> {
+fn delete_in(tx: &Connection, path: &Path, id: &TodoId) -> Result<(), WorkError> {
     tx.execute("DELETE FROM todos WHERE id = ?1", params![id.as_str()])
         .map_err(StateDbError::sqlite(path))?;
     Ok(())
@@ -711,18 +1046,34 @@ fn load_items(
     path: &Path,
     project: &ProjectSlug,
 ) -> Result<Vec<LocalItem>, WorkError> {
+    load_rows(conn, path, "project = ?1", project.as_str())
+}
+
+/// The stored row of `id`, `None` when there is none.
+fn load_one(conn: &Connection, path: &Path, id: &TodoId) -> Result<Option<LocalItem>, WorkError> {
+    Ok(load_rows(conn, path, "id = ?1", id.as_str())?.pop())
+}
+
+/// The `todos` rows matching `filter` (one `?1` parameter, `value`), in
+/// identity order, each with the rows that belong to it.
+fn load_rows(
+    conn: &Connection,
+    path: &Path,
+    filter: &str,
+    value: &str,
+) -> Result<Vec<LocalItem>, WorkError> {
     let sql = StateDbError::sqlite(path);
     let mut statement = conn
-        .prepare(
+        .prepare_cached(&format!(
             "SELECT id, project, slug, kind, status, created_at, created_by, human_involved,
                 revision, group_id, group_slug, schedule, catch_up, agent, tier,
                 claim_machine, claim_session, claim_at, branch, delivered_commit, delivered_at,
                 delivered_by, removed_at, removed_from, removal, sequence
-             FROM todos WHERE project = ?1 ORDER BY id",
-        )
+             FROM todos WHERE {filter} ORDER BY id"
+        ))
         .map_err(&sql)?;
     let rows = statement
-        .query_map(params![project.as_str()], |row| {
+        .query_map(params![value], |row| {
             Ok(TodoRow {
                 id: row.get(0)?,
                 project: row.get(1)?,
@@ -1263,4 +1614,210 @@ fn parse_json<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T, WorkErr
 
 fn invalid(path: &Path, message: impl std::fmt::Display) -> WorkError {
     WorkError::StateDb(StateDbError::invalid(path, message.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::{Grounding, TodoStatus};
+    use crate::work::_model::SCHEMA;
+    use instrukt_runner::interfaces::{CatchUp, TodoKind};
+
+    fn version(sequence: u64, content: &str) -> Version {
+        Version {
+            digest: ContentDigest::of(content),
+            writer: Actor::Person { name: "dev".into() },
+            created: Timestamp::from_second(sequence as i64).unwrap(),
+            derived_from: Vec::new(),
+            sequence,
+            grounding: Grounding::default(),
+            remote: None,
+            content: Some(content.to_owned()),
+        }
+    }
+
+    /// A reflected todo at `revision` whose `log` holds one version per
+    /// entry of `contents`.
+    fn item(revision: u64, contents: &[&str]) -> LocalItem {
+        LocalItem {
+            record: TodoRecord {
+                schema: SCHEMA,
+                id: TodoId::parse(&"11".repeat(16)).unwrap(),
+                project: ProjectSlug::parse("demo").unwrap(),
+                slug: TodoSlug::parse("list-depth").unwrap(),
+                prior_slugs: Vec::new(),
+                kind: TodoKind::Feature,
+                status: TodoStatus::Active,
+                created: Timestamp::from_second(1).unwrap(),
+                created_by: Actor::Person { name: "dev".into() },
+                human_involved: None,
+                revision,
+                sequence: contents.len() as u64,
+                artifacts: vec![Artifact {
+                    name: ArtifactName::new("log"),
+                    address: None,
+                    versions: contents
+                        .iter()
+                        .enumerate()
+                        .map(|(at, content)| version(at as u64 + 1, content))
+                        .collect(),
+                }],
+                stamps: Vec::new(),
+                claim: None,
+                bindings: Vec::new(),
+                hold: None,
+                hold_history: Vec::new(),
+                label_actions: Vec::new(),
+                after: Vec::new(),
+                group: None,
+                schedule: None,
+                catch_up: CatchUp::Once,
+                agent: None,
+                branch: None,
+                delivery: None,
+                removal: None,
+            },
+            reflection: ReflectionState {
+                issue: Some(IssueRef { number: 1, id: 101 }),
+                record_comment: Some(10),
+                remote_revision: Some(1),
+                ..ReflectionState::default()
+            },
+        }
+    }
+
+    /// `item` as reflection left it once GitHub accepted its revision: the
+    /// artifact's address and every version's remote number learned.
+    fn learned(mut item: LocalItem, comment: u64) -> LocalItem {
+        let artifact = &mut item.record.artifacts[0];
+        artifact.address = Some(7);
+        for version in &mut artifact.versions {
+            version.remote = Some(version.sequence);
+        }
+        item.reflection.record_comment = Some(comment);
+        item.reflection.remote_revision = Some(item.record.revision);
+        item.reflection.pending = false;
+        item
+    }
+
+    #[test]
+    fn a_todo_marked_conflicted_since_the_read_refuses_the_change_though_its_record_is_unchanged() {
+        let read = item(1, &["started"]);
+        let mut live = read.clone();
+        live.reflection.conflicted = true;
+        assert_eq!(admission(&live, &read), Admission::Conflicted);
+    }
+
+    #[test]
+    fn a_record_another_command_changed_refuses_the_change() {
+        let read = item(1, &["started"]);
+        let live = item(2, &["started", "joined"]);
+        assert_eq!(admission(&live, &read), Admission::Changed);
+    }
+
+    #[test]
+    fn a_change_is_admitted_onto_a_row_reflection_filled_in_since_the_read() {
+        let mut read = item(1, &["started"]);
+        read.reflection.pending = true;
+        let live = learned(read.clone(), 11);
+        assert_eq!(admission(&live, &read), Admission::Admitted);
+    }
+
+    #[test]
+    fn a_todo_already_conflicted_when_read_is_judged_by_its_record() {
+        let mut read = item(1, &["started"]);
+        read.reflection.conflicted = true;
+        let live = read.clone();
+        assert_eq!(admission(&live, &read), Admission::Admitted);
+    }
+
+    #[test]
+    fn carrying_keeps_the_command_s_own_record_over_a_newer_live_one() {
+        let mine = item(2, &["started", "mine"]);
+        let live = learned(item(3, &["started", "mine", "theirs"]), 12);
+        let carried = carry(&live, &mine);
+        assert_eq!(carried.record.revision, 2);
+        assert_eq!(carried.record.artifacts[0].versions.len(), 2);
+        assert_eq!(carried.reflection, live.reflection);
+        assert_eq!(carried.record.artifacts[0].address, Some(7));
+        assert_eq!(carried.record.artifacts[0].versions[0].remote, Some(1));
+    }
+
+    #[test]
+    fn a_rebased_change_keeps_what_reflection_committed_and_is_pending() {
+        let read = item(1, &["started"]);
+        let live = learned(read.clone(), 11);
+        let mut mine = read.clone();
+        mine.record.revision = 2;
+        mine.record.artifacts[0].versions.push(version(2, "joined"));
+        mine.reflection.commands_seen.push(40);
+        let next = rebase_local(&live, &mine);
+        assert_eq!(next.record.revision, 2);
+        assert_eq!(next.reflection.record_comment, Some(11));
+        assert_eq!(next.reflection.remote_revision, Some(1));
+        assert!(next.reflection.pending);
+        assert_eq!(next.reflection.commands_seen, vec![40]);
+        let versions = &next.record.artifacts[0].versions;
+        assert_eq!(next.record.artifacts[0].address, Some(7));
+        assert_eq!(
+            versions.iter().map(|v| v.remote).collect::<Vec<_>>(),
+            vec![Some(1), None]
+        );
+    }
+
+    #[test]
+    fn a_flush_of_the_live_record_clears_pending_and_attaches_what_it_learned() {
+        let mut loaded = item(2, &["started", "joined"]);
+        loaded.reflection.pending = true;
+        loaded.reflection.etag = Some("old".into());
+        let mut live = loaded.clone();
+        live.reflection.refreshed_at = Some(Timestamp::from_second(99).unwrap());
+        let mut reflected = learned(loaded.clone(), 12);
+        reflected.reflection.etag = None;
+        let next = merge_reflection(&live, &loaded, &reflected);
+        assert!(!next.reflection.pending);
+        assert_eq!(next.reflection.record_comment, Some(12));
+        assert_eq!(next.reflection.remote_revision, Some(2));
+        assert_eq!(next.reflection.etag, None);
+        assert_eq!(next.reflection.refreshed_at, live.reflection.refreshed_at);
+        assert_eq!(next.record, reflected.record);
+    }
+
+    #[test]
+    fn a_flush_overtaken_by_a_newer_local_record_keeps_it_pending() {
+        let mut loaded = item(2, &["started", "joined"]);
+        loaded.reflection.pending = true;
+        loaded.reflection.etag = Some("old".into());
+        let mut live = item(3, &["started", "joined", "later"]);
+        live.reflection = loaded.reflection.clone();
+        let reflected = learned(loaded.clone(), 12);
+        let next = merge_reflection(&live, &loaded, &reflected);
+        assert_eq!(next.record.revision, 3);
+        assert_eq!(next.record.artifacts[0].versions.len(), 3);
+        assert!(next.reflection.pending);
+        assert_eq!(next.reflection.etag, None);
+        assert_eq!(next.reflection.record_comment, Some(12));
+        assert_eq!(next.reflection.remote_revision, Some(2));
+        let remotes: Vec<_> = next.record.artifacts[0]
+            .versions
+            .iter()
+            .map(|v| v.remote)
+            .collect();
+        assert_eq!(remotes, vec![Some(1), Some(2), None]);
+    }
+
+    #[test]
+    fn the_reflection_lock_refuses_a_symbolic_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        let lock = home.reflection_lock_file();
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        let elsewhere = dir.path().join("elsewhere.lock");
+        std::fs::write(&elsewhere, "").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &lock).unwrap();
+        assert!(matches!(
+            ReflectionLock::acquire(&home),
+            Err(WorkError::StateDb(StateDbError::Symlink { .. }))
+        ));
+    }
 }

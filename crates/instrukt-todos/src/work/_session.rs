@@ -1,7 +1,9 @@
-//! One command's hold on a project's work record: the writer lock, the
-//! loaded local items, the GitHub client and its reach, and the shared
-//! steps every operation composes — entering an item, pulling it through,
-//! committing a change and flushing pending reflection.
+//! One command's view of a project's work record: the loaded local items
+//! with the rows they were read from, the GitHub client and its reach, and
+//! the shared steps every operation composes — entering an item, pulling it
+//! through, committing a change and flushing pending reflection. It holds
+//! no lock: each local write takes the writer lock for its transaction,
+//! and reflection takes the reflection lock across its GitHub requests.
 
 use instrukt_core::config::{BoardRef, Configuration};
 use instrukt_core::git;
@@ -17,7 +19,9 @@ use super::_github::{GitHub, GitHubError};
 use super::_inbound;
 use super::_model::{TodoAddress, TodoId, TodoRecord, TodoRef};
 use super::_reflect::{self, Pulled};
-use super::_store::{self, IssueRef, ListingCopy, LocalItem, Store};
+use super::_store::{
+    self, IssueRef, ListingCopy, LocalItem, ProviderState, ReflectionLock, Refusal, Store, Swapped,
+};
 use super::Work;
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ModelIdentity, ModelProvenance, StampFact, StampRecord,
@@ -90,6 +94,12 @@ pub(crate) struct Session<'w> {
     pub config: Configuration,
     store: Store,
     pub items: Vec<LocalItem>,
+    /// Each stored item's row as this session last read or wrote it: the
+    /// base every commit of the item is judged against.
+    bases: std::collections::BTreeMap<TodoId, LocalItem>,
+    /// Why this command's reflection could not take the reflection lock:
+    /// another process reflected for longer than the wait.
+    reflection_busy: Option<String>,
     remote: Remote,
     /// The last known copies of the project's todos that are not local
     /// items (`listing_copies`).
@@ -121,12 +131,10 @@ pub(crate) struct Session<'w> {
 }
 
 impl<'w> Session<'w> {
-    /// Takes the writer lock and loads the project's local record. Purges
-    /// withdrawn work whose recovery window has expired.
+    /// Loads the project's local record, taking no lock. Purges withdrawn
+    /// work whose recovery window has expired.
     pub fn open(work: &'w Work, project: &ProjectRef) -> Result<Self, WorkError> {
-        // Opening the store takes the writer lock, held for the whole
-        // command.
-        let store = Store::open(work.home(), &project.slug)?;
+        let store = Store::new(work.home(), &project.slug);
         let config = Configuration::load(work.home(), Some(&project.root))?;
         // The address the token is sent to comes from the machine's own
         // layer, never from a repository's.
@@ -137,14 +145,11 @@ impl<'w> Session<'w> {
                 return Err(WorkError::CodeNotOnGitHub { reason });
             }
         };
-        let items = store.items()?;
-        let copies = store.copies()?;
+        let (items, copies, provider) = _store::read_existence_state(work.home(), &project.slug)?;
         let now = work.now();
-        let remote = match store.provider()?.deferred_until {
-            Some(until) if until > now => {
-                Remote::Unavailable(PendingReason::RateLimited { until: Some(until) })
-            }
-            _ => match GitHub::for_app(
+        let remote = match unavailable(work, &provider, now) {
+            Some(reason) => Remote::Unavailable(reason),
+            None => match GitHub::for_app(
                 {
                     work.github.begin_pass().map_err(GitHubError::from)?;
                     work.github.clone()
@@ -163,12 +168,18 @@ impl<'w> Session<'w> {
             },
         };
         let base = github::default_branch(&project.root)?;
+        let bases = items
+            .iter()
+            .map(|item| (item.record.id.clone(), item.clone()))
+            .collect();
         let mut session = Self {
             work,
             project: project.clone(),
             config,
             store,
             items,
+            bases,
+            reflection_busy: None,
             remote,
             copies,
             listed: None,
@@ -301,50 +312,124 @@ impl<'w> Session<'w> {
     /// todo's current state. A newer revision meeting a pending local
     /// change marks it conflicted, and a conflicted item refuses. A GitHub
     /// that cannot be read leaves the item as this computer holds it.
+    ///
+    /// No lock is held across the request. The row is re-read before it
+    /// and the result is committed only while the row is unchanged; a row
+    /// that changed meanwhile is pulled once more. A conflict judgment is
+    /// committed only while this command holds the reflection lock, taken
+    /// without waiting: a reflection holding it may be between posting a
+    /// revision and recording it, and its own revision check judges the
+    /// head instead. An item carrying this command's uncommitted change is
+    /// judged as held here.
     pub fn pull_through(&mut self, index: usize) -> Result<(), WorkError> {
         let id = self.items[index].record.id.clone();
         if !self.current.contains(&id) {
-            self.current.push(id);
+            self.current.push(id.clone());
         }
-        let before = self.items[index].clone();
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => Some(_reflect::pull(gh, &mut self.items[index])),
-            _ => None,
-        };
-        if matches!(&result, Some(Ok(_))) && self.items[index].reflection.issue.is_some() {
-            self.items[index].reflection.refreshed_at = Some(self.now);
+        if self.uncommitted(index) {
+            return self.refuse_conflicted(index);
         }
-        match result {
-            Some(Ok(Pulled::Adopted)) => tracing::info!(
-                event = "work_pulled",
-                project = %self.project.slug,
-                todo = %self.items[index].record.slug,
-                revision = self.items[index].record.revision,
-                "a newer remote revision entered the local record"
-            ),
-            Some(Err(err @ GitHubError::RecordSchema { .. })) => {
-                self.incompatible
-                    .insert(self.items[index].record.id.clone());
-                self.lookup_failure(err.clone());
-                return Err(err.into());
+        if let Some(live) = self.store.item(&id)? {
+            self.take_row(index, live);
+        }
+        for attempt in 0..2 {
+            let base = self.items[index].clone();
+            let mut pulled = base.clone();
+            let result = match &self.remote {
+                Remote::Client { gh, down: None } => Some(_reflect::pull(gh, &mut pulled)),
+                _ => None,
+            };
+            if matches!(&result, Some(Ok(_))) && pulled.reflection.issue.is_some() {
+                pulled.reflection.refreshed_at = Some(self.now);
             }
-            Some(Err(err)) => self.note(err),
-            _ => {}
-        }
-        if self.items[index] != before {
-            self.store.save(&self.items[index])?;
+            match &result {
+                Some(Ok(Pulled::Adopted)) => tracing::info!(
+                    event = "work_pulled",
+                    project = %self.project.slug,
+                    todo = %pulled.record.slug,
+                    revision = pulled.record.revision,
+                    "a newer remote revision entered the local record"
+                ),
+                Some(Err(err @ GitHubError::RecordSchema { .. })) => {
+                    self.incompatible.insert(id.clone());
+                    self.lookup_failure(err.clone());
+                    return Err(err.clone().into());
+                }
+                Some(Err(err)) => self.note(err.clone()),
+                _ => {}
+            }
+            let mut judging = None;
+            if matches!(&result, Some(Ok(Pulled::Conflicted))) {
+                judging = ReflectionLock::try_acquire(self.work.home())?;
+                if judging.is_none() {
+                    tracing::info!(
+                        event = "work_conflict_left_to_reflection",
+                        project = %self.project.slug,
+                        todo = %pulled.record.slug,
+                        "a reflection is in flight; its revision check judges the head"
+                    );
+                    pulled = base.clone();
+                }
+            }
+            let inbound = std::mem::take(&mut pulled.reflection.inbound);
+            if _store::stored(&pulled) == _store::stored(&base) {
+                self.items[index].reflection.inbound = inbound;
+                break;
+            }
+            let swapped = self.store.swap(&base, &pulled)?;
+            drop(judging);
+            match swapped {
+                Swapped::Applied(row) => {
+                    self.take_row(index, *row);
+                    self.items[index].reflection.inbound = inbound;
+                    break;
+                }
+                Swapped::Changed(Some(live)) => {
+                    self.take_row(index, *live);
+                    if attempt > 0 {
+                        tracing::info!(
+                            event = "work_pull_superseded",
+                            project = %self.project.slug,
+                            todo = %self.items[index].record.slug,
+                            "the todo kept changing; the command acts on the local record"
+                        );
+                    }
+                }
+                Swapped::Changed(None) => break,
+            }
         }
         if !self.items[index].reflection.conflicted {
             self.answer_label_actions(index)?;
             self.answer_commands(index)?;
             self.restore_output_labels(index)?;
         }
+        self.refuse_conflicted(index)
+    }
+
+    /// Refuses a command on item `index` when it is conflicted.
+    fn refuse_conflicted(&self, index: usize) -> Result<(), WorkError> {
         if self.items[index].reflection.conflicted {
             return Err(WorkError::Conflicted {
                 todo: self.items[index].record.slug.clone(),
             });
         }
         Ok(())
+    }
+
+    /// Whether item `index` carries a change of this command not yet
+    /// committed: its record differs from the row it was read from, or it
+    /// has no row yet.
+    fn uncommitted(&self, index: usize) -> bool {
+        let item = &self.items[index];
+        self.bases
+            .get(&item.record.id)
+            .is_none_or(|base| base.record != item.record)
+    }
+
+    /// Makes `row`, read or written just now, item `index` and its base.
+    fn take_row(&mut self, index: usize, row: LocalItem) {
+        self.bases.insert(row.record.id.clone(), row.clone());
+        self.items[index] = row;
     }
 
     /// Whether GitHub could be read for this command's refreshes so far.
@@ -409,11 +494,7 @@ impl<'w> Session<'w> {
                     ),
                     None => format!("@{original_login}: recorded your change request on {gate}."),
                 };
-                if !self.items[index].reflection.commands_seen.contains(&id) {
-                    self.items[index].reflection.commands_seen.push(id);
-                }
-                self.store
-                    .save_with_reply(&self.items[index], id, &answer)?;
+                self.answered(index, id, &answer)?;
                 continue;
             }
             let write_access = if approvers.contains(&login) {
@@ -425,8 +506,7 @@ impl<'w> Session<'w> {
                     Ok(allowed) => allowed,
                     Err(error) => {
                         tracing::warn!(event="approval_actor_unverified",login,error=%error);
-                        self.items[index].reflection.etag = None;
-                        self.store.save(&self.items[index])?;
+                        self.amend(index, |reflection| reflection.etag = None)?;
                         self.note(error);
                         break;
                     }
@@ -450,27 +530,65 @@ impl<'w> Session<'w> {
                     )?,
                 }
             };
-            if !self.items[index].reflection.commands_seen.contains(&id) {
-                self.items[index].reflection.commands_seen.push(id);
-            }
-            self.store
-                .save_with_reply(&self.items[index], id, &answer)?;
+            self.answered(index, id, &answer)?;
         }
-        self.flush_command_replies(index)
-    }
-
-    fn flush_command_replies(&mut self, index: usize) -> Result<(), WorkError> {
+        // Replies are posted by the holder of the reflection lock; a
+        // reflection holding it posts them itself.
+        let todo = self.items[index].record.id.to_string();
         let Some(issue) = self.items[index].reflection.issue else {
             return Ok(());
         };
-        let todo = self.items[index].record.id.to_string();
-        for (source, text) in self.store.pending_replies(&todo)? {
+        if self.store.pending_replies(&todo)?.is_empty() {
+            return Ok(());
+        }
+        match ReflectionLock::try_acquire(self.work.home())? {
+            Some(lock) => self.post_replies(issue, &todo, &lock),
+            None => Ok(()),
+        }
+    }
+
+    /// Records command `comment` of item `index` as answered with `answer`.
+    fn answered(&mut self, index: usize, comment: u64, answer: &str) -> Result<(), WorkError> {
+        let id = self.items[index].record.id.clone();
+        self.store.retain_reply(id.as_str(), comment, answer)?;
+        let rows = std::iter::once(&mut self.items[index]).chain(self.bases.get_mut(&id));
+        for item in rows {
+            if !item.reflection.commands_seen.contains(&comment) {
+                item.reflection.commands_seen.push(comment);
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies `amend` to item `index`'s stored reflection state and takes
+    /// the row it leaves.
+    fn amend(
+        &mut self,
+        index: usize,
+        amend: impl Fn(&mut _store::ReflectionState),
+    ) -> Result<(), WorkError> {
+        amend(&mut self.items[index].reflection);
+        let id = self.items[index].record.id.clone();
+        let row = self.store.amend_reflection(&id, &amend)?;
+        self.learned(row);
+        Ok(())
+    }
+
+    /// Posts the pending command replies of `todo` on `issue`; the
+    /// reflection lock is the proof that no other holder posts them.
+    fn post_replies(
+        &mut self,
+        issue: IssueRef,
+        todo: &str,
+        _proof: &ReflectionLock,
+    ) -> Result<(), WorkError> {
+        for (source, text) in self.store.pending_replies(todo)? {
             let result = match &self.remote {
                 Remote::Client { gh, down: None } => _reflect::reply(gh, issue, source, &text),
                 _ => break,
             };
             match result {
-                Ok(()) => self.store.reply_sent(&todo, source)?,
+                Ok(()) => self.store.reply_sent(todo, source)?,
                 Err(error) => {
                     tracing::warn!(event="github_command_reply_pending",source,error=%error);
                     self.note(error);
@@ -508,8 +626,7 @@ impl<'w> Session<'w> {
             })
             .unwrap_or_default();
         if actual != expected.iter().map(String::as_str).collect() {
-            self.items[index].reflection.pending = true;
-            self.store.save(&self.items[index])?;
+            self.amend(index, |reflection| reflection.pending = true)?;
         }
         Ok(())
     }
@@ -790,6 +907,8 @@ impl<'w> Session<'w> {
 
     /// Commits a work change and its related runner rows together. The
     /// runner owns the additional writes; work owns their transaction.
+    /// `change` runs before the transaction, holding no lock, so the GitHub
+    /// reads it makes wait on nothing local.
     pub fn commit_with<T>(
         &mut self,
         what: &'static str,
@@ -798,15 +917,16 @@ impl<'w> Session<'w> {
     ) -> Result<T, WorkError> {
         self.schema_ready()?;
         let before: Vec<LocalItem> = self.items.clone();
+        let bases_before = self.bases.clone();
         let value = match change(self) {
             Ok(value) => value,
             Err(err) => {
-                self.restore(before);
+                self.restore(before, &bases_before);
                 return Err(err);
             }
         };
         if let Err(error) = self.schema_ready() {
-            self.restore(before);
+            self.restore(before, &bases_before);
             return Err(error);
         }
         let mut changed = Vec::new();
@@ -825,8 +945,13 @@ impl<'w> Session<'w> {
         let written = self.write_change(&changed, write_related, transfer.as_ref());
         let docs = match written {
             Ok(docs) => docs,
-            Err(err) => {
-                self.restore(before);
+            Err((err, conflicted)) => {
+                self.restore(before, &bases_before);
+                if let Some(live) = conflicted
+                    && let Some(index) = self.find_id(&live.record.id)
+                {
+                    self.take_row(index, *live);
+                }
                 return Err(err);
             }
         };
@@ -848,40 +973,65 @@ impl<'w> Session<'w> {
 
     /// Writes the changed items, related runner rows and documentation
     /// transfer in one transaction; returns the documentation files the transfer
-    /// rewrote. Nothing commits unless everything succeeded: documentation
-    /// moves only once every row is written, and a failing transfer writes
-    /// nothing of its own.
+    /// rewrote. Each item commits against its live row, re-read inside the
+    /// transaction (`_store::commit_local`). Nothing commits unless
+    /// everything succeeded: documentation moves only once every row is
+    /// written, and a failing transfer writes nothing of its own. A todo a
+    /// reflection marked conflicted since this command read it refuses the
+    /// whole change, returning its live row.
     fn write_change(
         &mut self,
         changed: &[usize],
         write_related: impl FnOnce(&Transaction<'_>) -> Result<(), WorkError>,
         transfer: Option<&(TodoSlug, TodoSlug)>,
-    ) -> Result<Vec<std::path::PathBuf>, WorkError> {
-        let path = self.store.path().to_path_buf();
-        let tx = self.store.transaction()?;
-        for &index in changed {
-            _store::save_in(&tx, &path, &self.items[index])?;
-        }
-        write_related(&tx)?;
-        let docs = match transfer {
-            Some((parent, child)) => {
-                super::_ops::transfer_documentation(&self.project, parent, child)?
+    ) -> Result<Vec<std::path::PathBuf>, (WorkError, Option<Box<LocalItem>>)> {
+        let others: Vec<TodoId> = changed
+            .iter()
+            .map(|&index| self.items[index].record.id.clone())
+            .collect();
+        let mut conflicted = None;
+        let result = self.store.write(|tx, path, project| {
+            let mut rows = Vec::new();
+            for &index in changed {
+                let mine = &self.items[index];
+                let base = self.bases.get(&mine.record.id);
+                match _store::commit_local(tx, path, project, base, mine, &others)? {
+                    Ok(row) => rows.push((index, row)),
+                    Err(Refusal::Conflicted(live)) => {
+                        let todo = live.record.slug.clone();
+                        conflicted = Some(live);
+                        return Err(WorkError::Conflicted { todo });
+                    }
+                    Err(Refusal::Changed) => {
+                        return Err(WorkError::refused(format!(
+                            "`{}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record",
+                            mine.record.slug
+                        )));
+                    }
+                }
             }
-            None => Vec::new(),
-        };
-        tx.commit()
-            .map_err(instrukt_core::state_db::StateDbError::sqlite(&path))?;
+            write_related(tx)?;
+            let docs = match transfer {
+                Some((parent, child)) => {
+                    super::_ops::transfer_documentation(&self.project, parent, child)?
+                }
+                None => Vec::new(),
+            };
+            Ok((rows, docs))
+        });
+        let (rows, docs) = result.map_err(|err| (err, conflicted))?;
+        for (index, row) in rows {
+            let inbound = std::mem::take(&mut self.items[index].reflection.inbound);
+            self.take_row(index, row);
+            self.items[index].reflection.inbound = inbound;
+        }
         Ok(docs)
     }
 
     /// Appends `event` to the runner's event log in a transaction of its
     /// own.
     pub fn log_event(&mut self, log: &dyn EventLog, event: &Event) -> Result<(), WorkError> {
-        let path = self.store.path().to_path_buf();
-        let tx = self.store.transaction()?;
-        let appended = log.append(&tx, event)?;
-        tx.commit()
-            .map_err(instrukt_core::state_db::StateDbError::sqlite(&path))?;
+        let appended = self.store.write(|tx, _, _| Ok(log.append(tx, event)?))?;
         tracing::info!(
             event = "work_event_logged",
             name = event.name(),
@@ -893,14 +1043,46 @@ impl<'w> Session<'w> {
     }
 
     /// Puts the in-memory record set back as it was before a change, and
-    /// drops the change's pending documentation transfer.
-    fn restore(&mut self, before: Vec<LocalItem>) {
+    /// drops the change's pending documentation transfer. A row a pull
+    /// committed during the change stays the item, as the store holds it.
+    fn restore(
+        &mut self,
+        before: Vec<LocalItem>,
+        bases_before: &std::collections::BTreeMap<TodoId, LocalItem>,
+    ) {
         self.items = before;
         self.pending_transfer = None;
+        for index in 0..self.items.len() {
+            let id = &self.items[index].record.id;
+            if let Some(row) = self.bases.get(id)
+                && bases_before.get(id) != Some(row)
+            {
+                self.items[index] = row.clone();
+            }
+        }
     }
 
-    /// Flushes pending reflection of every local item under the lock.
+    /// Flushes pending reflection of every stored item of the project under
+    /// the reflection lock (`work-dispatch`, `github-record`): each row is
+    /// re-read under the lock, reflected from a working copy with no writer
+    /// lock held, and what reflection learned is committed onto the live
+    /// row (`_store::merge_reflection`). A reflection another process holds
+    /// for longer than the wait leaves the committed local work pending.
     pub fn flush(&mut self) -> Result<(), WorkError> {
+        let lock = match ReflectionLock::acquire(self.work.home()) {
+            Ok(lock) => lock,
+            Err(WorkError::Fs(busy @ instrukt_core::fsx::FsError::LockTimeout { .. })) => {
+                tracing::warn!(
+                    event = "work_reflection_busy",
+                    project = %self.project.slug,
+                    error = %busy,
+                    "another reflection holds the reflection lock; the local record stays pending"
+                );
+                self.reflection_busy = Some(busy.to_string());
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         let board_result = (|| {
             // A board the developer names in the project layer leads; otherwise
             // the one this computer recorded. Setup reconciles either with
@@ -944,117 +1126,114 @@ impl<'w> Session<'w> {
             }
         };
         self.board_setup_failure = board_error.clone();
-        for index in 0..self.items.len() {
+        for loaded in self.store.items()? {
+            let id = loaded.record.id.clone();
             // A known incompatible remote must stop before acknowledgements.
             if let Remote::Client { gh, down: None } = &self.remote
-                && self.items[index].reflection.issue.is_some()
+                && loaded.reflection.issue.is_some()
             {
-                match _reflect::check_compatible(gh, &self.items[index]) {
+                match _reflect::check_compatible(gh, &loaded) {
                     Err(error @ GitHubError::RecordSchema { .. }) => {
-                        self.items[index].reflection.failure = Some(error.to_string());
-                        self.store.save(&self.items[index])?;
+                        let failure = error.to_string();
+                        let row = self
+                            .store
+                            .amend_reflection(&id, |r| r.failure = Some(failure))?;
+                        self.learned(row);
                         continue;
                     }
                     Err(error) => self.note(error),
                     Ok(_) => {}
                 }
             }
-            if !self.items[index].reflection.pending {
-                self.items[index].reflection.failure = None;
+            let mut reflected = loaded.clone();
+            if !reflected.reflection.pending {
+                reflected.reflection.failure = None;
             }
-            let before_setup = self.items[index].clone();
             if let Some(error) = &board_error {
-                self.items[index].reflection.board_failure = Some(error.clone());
+                reflected.reflection.board_failure = Some(error.clone());
             }
-            if self.items[index] != before_setup {
-                self.store.save(&self.items[index])?;
+            if let Some(issue) = reflected.reflection.issue {
+                self.post_replies(issue, id.as_str(), &lock)?;
             }
-            self.flush_command_replies(index)?;
-            let owed = self.items[index].reflection.pending
-                || _reflect::pull_request_owed(&self.items[index])
-                || (board.is_some() && self.items[index].reflection.issue.is_some());
-            if !owed || self.items[index].reflection.conflicted {
-                continue;
-            }
-            let before = self.items[index].clone();
-            let needs_you = super::_envelope::record_status(&self.items[index].record) == "held"
-                || crate::workflow::waiting_for_human_approval(
-                    &super::_ports::to_evidence(self.items[index].record.clone(), Vec::new()),
-                    self.config
-                        .approver(instrukt_core::config::ApprovalGate::Prd)?,
-                    self.config
-                        .approver(instrukt_core::config::ApprovalGate::Task)?,
-                );
-            let result = match &self.remote {
-                Remote::Client { gh, down: None } => Some(_reflect::flush(
-                    gh,
-                    &mut self.items[index],
-                    &self.base,
-                    board.as_ref(),
-                    needs_you,
-                )),
-                _ => None,
-            };
-            if let Some(Err(err)) = result {
-                if err.is_reach() {
-                    self.note(err);
-                } else {
-                    tracing::warn!(
-                        event = "work_reflection_pending",
-                        project = %self.project.slug,
-                        todo = %self.items[index].record.slug,
-                        error = %err,
-                        "reflection failed; the local record keeps the change"
+            let owed = reflected.reflection.pending
+                || _reflect::pull_request_owed(&reflected)
+                || (board.is_some() && reflected.reflection.issue.is_some());
+            if owed && !reflected.reflection.conflicted {
+                let needs_you = super::_envelope::record_status(&reflected.record) == "held"
+                    || crate::workflow::waiting_for_human_approval(
+                        &super::_ports::to_evidence(reflected.record.clone(), Vec::new()),
+                        self.config
+                            .approver(instrukt_core::config::ApprovalGate::Prd)?,
+                        self.config
+                            .approver(instrukt_core::config::ApprovalGate::Task)?,
                     );
-                    self.items[index].reflection.failure = Some(err.to_string());
+                let result = match &self.remote {
+                    Remote::Client { gh, down: None } => Some(_reflect::flush(
+                        gh,
+                        &mut reflected,
+                        &self.base,
+                        board.as_ref(),
+                        needs_you,
+                    )),
+                    _ => None,
+                };
+                if let Some(Err(err)) = result {
+                    if err.is_reach() {
+                        self.note(err);
+                    } else {
+                        tracing::warn!(
+                            event = "work_reflection_pending",
+                            project = %self.project.slug,
+                            todo = %reflected.record.slug,
+                            error = %err,
+                            "reflection failed; the local record keeps the change"
+                        );
+                        reflected.reflection.failure = Some(err.to_string());
+                    }
+                }
+                if let Some(error) = &board_error {
+                    reflected.reflection.board_failure = Some(error.clone());
                 }
             }
-            if let Some(error) = &board_error {
-                self.items[index].reflection.board_failure = Some(error.clone());
-            }
-            if self.items[index] != before {
-                self.store.save(&self.items[index])?;
+            if _store::stored(&reflected) != _store::stored(&loaded) {
+                let row = self.store.commit_reflection(&loaded, &reflected)?;
+                self.learned(row);
             }
         }
+        drop(lock);
         Ok(())
+    }
+
+    /// Gives the session's own item of `row`, a row reflection just
+    /// committed, what reflection learned: its reflection state and learned
+    /// artifact values, on the session's own record. A record another
+    /// command wrote meanwhile is never taken.
+    fn learned(&mut self, row: Option<LocalItem>) {
+        let Some(row) = row else { return };
+        let Some(index) = self.find_id(&row.record.id) else {
+            return;
+        };
+        let inbound = std::mem::take(&mut self.items[index].reflection.inbound);
+        let item = _store::carry(&row, &self.items[index]);
+        if item.record == row.record {
+            self.bases.insert(row.record.id.clone(), row);
+        }
+        self.items[index] = item;
+        self.items[index].reflection.inbound = inbound;
     }
 
     /// Where item `index`'s reflection stands.
     pub fn status(&self, index: usize) -> ReflectionStatus {
-        let reflection = &self.items[index].reflection;
-        if reflection.conflicted {
-            return ReflectionStatus::Conflicted;
-        }
-        if let Some(error) = &reflection.failure {
-            return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
-        }
-        // Outstanding pull-request creation, reviews or closing are
-        // reflection still owed.
-        let pull_owed = _reflect::pull_request_owed(&self.items[index]);
-        if let Some(error) = &reflection.board_failure {
-            return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
-        }
-        if !reflection.pending && !pull_owed {
-            return ReflectionStatus::Reflected;
-        }
-        ReflectionStatus::Pending(match &self.remote {
-            Remote::Unavailable(reason) => reason.clone(),
+        let unread = match &self.remote {
+            Remote::Unavailable(reason) => Some(reason.clone()),
             Remote::Client {
                 down: Some(err), ..
-            } => reason_of(err),
-            Remote::Client { down: None, .. } if reflection.pending => PendingReason::Failed(
-                reflection
-                    .failure
-                    .clone()
-                    .unwrap_or_else(|| "not yet reflected".to_owned()),
-            ),
-            Remote::Client { down: None, .. } => PendingReason::Failed(
-                reflection
-                    .pull_outstanding
-                    .clone()
-                    .unwrap_or_else(|| "the pull request is not yet reflected".to_owned()),
-            ),
-        })
+            } => Some(reason_of(err)),
+            Remote::Client { down: None, .. } => {
+                self.reflection_busy.clone().map(PendingReason::Failed)
+            }
+        };
+        status_of(&self.items[index], unread)
     }
 
     /// Whether GitHub answered this command so far.
@@ -1102,12 +1281,25 @@ impl<'w> Session<'w> {
             }
         };
         for (record, issue) in &records {
-            if let Some(index) = self.find_id(&record.id) {
-                let before = self.items[index].clone();
-                if _reflect::accept_listing(&mut self.items[index], record, *issue, self.now)
-                    && let Err(error) = self.store.save(&self.items[index])
-                {
-                    self.items[index] = before;
+            let Some(index) = self.find_id(&record.id) else {
+                continue;
+            };
+            let Some(base) = self.bases.get(&record.id).cloned() else {
+                continue;
+            };
+            if self.uncommitted(index) {
+                continue;
+            }
+            let mut accepted = base.clone();
+            if !_reflect::accept_listing(&mut accepted, record, *issue, self.now) {
+                continue;
+            }
+            match self.store.swap(&base, &accepted) {
+                Ok(Swapped::Applied(row) | Swapped::Changed(Some(row))) => {
+                    self.take_row(index, *row);
+                }
+                Ok(Swapped::Changed(None)) => {}
+                Err(error) => {
                     tracing::warn!(event="local_pickup_copy_unsaved",todo=%record.slug,error=%error);
                 }
             }
@@ -1411,12 +1603,14 @@ impl<'w> Session<'w> {
 
     /// Makes a reflected record found by [`Session::locate`] a local item.
     pub fn adopt(&mut self, item: LocalItem) -> Result<usize, WorkError> {
-        // Saving drops its listing copy (`listing_copies`).
-        self.store.save(&item)?;
+        // Saving drops its listing copy (`listing_copies`). A todo another
+        // command made a local item meanwhile is taken as stored.
+        let row = self.store.adopt(&item)?;
         if let Some(issue) = item.reflection.issue {
             self.copies.retain(|c| c.issue_number != issue.number);
         }
-        self.items.push(item);
+        self.bases.insert(row.record.id.clone(), row.clone());
+        self.items.push(row);
         Ok(self.items.len() - 1)
     }
 
@@ -1438,10 +1632,19 @@ impl<'w> Session<'w> {
         }
     }
 
-    /// Replaces item `index` with GitHub's committed record.
+    /// Replaces item `index` with GitHub's committed record, under the
+    /// reflection lock: the head it reads is settled, never one another
+    /// reflection posted and has not recorded.
     pub fn refresh(&mut self, index: usize) -> Result<(), WorkError> {
+        let _reflecting = ReflectionLock::acquire(self.work.home())?;
+        let id = self.items[index].record.id.clone();
+        if let Some(live) = self.store.item(&id)? {
+            self.take_row(index, live);
+        }
+        let base = self.items[index].clone();
+        let mut refreshed = base.clone();
         let result = match &self.remote {
-            Remote::Client { gh, down: None } => _reflect::refresh(gh, &mut self.items[index]),
+            Remote::Client { gh, down: None } => _reflect::refresh(gh, &mut refreshed),
             Remote::Client {
                 down: Some(err), ..
             } => Err(err.clone()),
@@ -1453,7 +1656,15 @@ impl<'w> Session<'w> {
             }
         };
         result.map_err(|err| self.github_failure(err))?;
-        self.store.save(&self.items[index])?;
+        match self.store.swap(&base, &refreshed)? {
+            Swapped::Applied(row) => self.take_row(index, *row),
+            Swapped::Changed(_) => {
+                return Err(WorkError::refused(format!(
+                    "`{}` changed while it was refreshed; nothing was replaced. Run the command again: it reads the todo's current record",
+                    base.record.slug
+                )));
+            }
+        }
         tracing::info!(
             event = "work_refreshed",
             project = %self.project.slug,
@@ -1513,12 +1724,8 @@ impl<'w> Session<'w> {
         self.known_copy(slug).map(|copy| copy.record)
     }
 
-    /// Deletes the item from the local record and this session.
-    fn delete(&mut self, index: usize) -> Result<(), WorkError> {
-        let item = self.items.remove(index);
-        self.store.delete(&item.record.id)
-    }
-
+    /// Deletes withdrawn work past its recovery window from the local record
+    /// and this session. A session with nothing expired writes nothing.
     fn purge(&mut self) -> Result<(), WorkError> {
         let now = self.now;
         let mut index = 0;
@@ -1526,7 +1733,10 @@ impl<'w> Session<'w> {
             if past_recovery(&self.items[index].record, now) {
                 let slug = self.items[index].record.slug.clone();
                 let id = self.items[index].record.id.clone();
-                self.delete(index)?;
+                self.store
+                    .delete_if(&id, |live| past_recovery(&live.record, now))?;
+                self.items.remove(index);
+                self.bases.remove(&id);
                 tracing::info!(
                     event = "work_purged",
                     project = %self.project.slug,
@@ -1597,9 +1807,63 @@ pub(crate) fn several<'r>(what: &str, records: impl Iterator<Item = &'r TodoReco
     ))
 }
 
+/// Where `item`'s reflection stands; `unread` is why GitHub cannot be
+/// reflected to this command, `None` when it can.
+pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> ReflectionStatus {
+    let reflection = &item.reflection;
+    if reflection.conflicted {
+        return ReflectionStatus::Conflicted;
+    }
+    if let Some(error) = &reflection.failure {
+        return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
+    }
+    // Outstanding pull-request creation, reviews or closing are
+    // reflection still owed.
+    let pull_owed = _reflect::pull_request_owed(item);
+    if let Some(error) = &reflection.board_failure {
+        return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
+    }
+    if !reflection.pending && !pull_owed {
+        return ReflectionStatus::Reflected;
+    }
+    ReflectionStatus::Pending(match unread {
+        Some(reason) => reason,
+        None if reflection.pending => PendingReason::Failed(
+            reflection
+                .failure
+                .clone()
+                .unwrap_or_else(|| "not yet reflected".to_owned()),
+        ),
+        None => PendingReason::Failed(
+            reflection
+                .pull_outstanding
+                .clone()
+                .unwrap_or_else(|| "the pull request is not yet reflected".to_owned()),
+        ),
+    })
+}
+
+/// Why GitHub cannot be reached for `work` at `now`, read from this
+/// computer alone: a rate limit GitHub set, or App credentials that cannot
+/// be used. `None` when a client can be built.
+pub(crate) fn unavailable(
+    work: &Work,
+    provider: &ProviderState,
+    now: Timestamp,
+) -> Option<PendingReason> {
+    match provider.deferred_until {
+        Some(until) if until > now => Some(PendingReason::RateLimited { until: Some(until) }),
+        _ => work
+            .github
+            .validate()
+            .err()
+            .map(|err| reason_of(&GitHubError::from(err))),
+    }
+}
+
 /// Whether `record` is withdrawn work whose recovery window has passed at
 /// `now`.
-fn past_recovery(record: &TodoRecord, now: Timestamp) -> bool {
+pub(crate) fn past_recovery(record: &TodoRecord, now: Timestamp) -> bool {
     matches!(
         (&record.status, &record.removal),
         (TodoStatus::Removed, Some(removal))
