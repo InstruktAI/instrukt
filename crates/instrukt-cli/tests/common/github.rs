@@ -697,10 +697,16 @@ impl Drop for FakeGitHub {
                 .fail("serve the HTTP server's requests", &"the thread panicked");
         }
         let failures = std::mem::take(&mut lock_front(&self.front).failures);
-        // A test already unwinding reports its own failure; a second panic
-        // here would abort it.
-        if !failures.is_empty() && !std::thread::panicking() {
-            panic!("the fake GitHub failed:\n{}", failures.join("\n"));
+        if failures.is_empty() {
+            return;
+        }
+        let report = format!("the fake GitHub failed:\n{}", failures.join("\n"));
+        if std::thread::panicking() {
+            // A second panic would abort the test; its captured output
+            // carries the fake's failure beside the test's own.
+            eprintln!("{report}");
+        } else {
+            panic!("{report}");
         }
     }
 }
