@@ -217,6 +217,9 @@ struct Front {
     reach: Reach,
     next_connection: u64,
     relayed: BTreeMap<u64, TcpStream>,
+    /// Failures of the fake's own transport, each with its operation and
+    /// cause, reported to the test when the fake ends.
+    failures: Vec<String>,
 }
 
 impl Front {
@@ -226,6 +229,10 @@ impl Front {
             // A client that already closed its side leaves nothing to end.
             let _closed = client.shutdown(Shutdown::Both);
         }
+    }
+
+    fn fail(&mut self, operation: &str, cause: &dyn std::fmt::Display) {
+        self.failures.push(format!("{operation}: {cause}"));
     }
 }
 
@@ -244,6 +251,7 @@ impl FakeGitHub {
             reach: Reach::Answering,
             next_connection: 0,
             relayed: BTreeMap::new(),
+            failures: Vec::new(),
         }));
         let accepting = accept(Arc::clone(&listener), backend, Arc::clone(&front));
         let serving = serve_requests(Arc::clone(&server), Arc::clone(&front), Arc::clone(&state));
@@ -576,14 +584,23 @@ impl Drop for FakeGitHub {
         // is the fake's until its fields drop, so the connect only lands in
         // its backlog when the accepting thread has already ended.
         let _wake_accept = TcpStream::connect(self.addr);
-        // A panic in a fake thread already failed a request; the test
-        // reports its own failure.
-        if let Some(accepting) = self.accepting.take() {
-            let _joined = accepting.join();
+        if let Some(accepting) = self.accepting.take()
+            && accepting.join().is_err()
+        {
+            lock_front(&self.front).fail("accept on the public address", &"the thread panicked");
         }
         self.server.unblock();
-        if let Some(serving) = self.serving.take() {
-            let _joined = serving.join();
+        if let Some(serving) = self.serving.take()
+            && serving.join().is_err()
+        {
+            lock_front(&self.front)
+                .fail("serve the HTTP server's requests", &"the thread panicked");
+        }
+        let failures = std::mem::take(&mut lock_front(&self.front).failures);
+        // A test already unwinding reports its own failure; a second panic
+        // here would abort it.
+        if !failures.is_empty() && !std::thread::panicking() {
+            panic!("the fake GitHub failed:\n{}", failures.join("\n"));
         }
     }
 }
@@ -623,9 +640,16 @@ fn accept(
     std::thread::spawn(move || {
         let mut relays: Vec<JoinHandle<()>> = Vec::new();
         for connection in listener.incoming() {
-            // A connection that failed before it was accepted has no client
-            // left to answer.
-            let Ok(client) = connection else { continue };
+            let client = match connection {
+                Ok(client) => client,
+                // A connection its client ended before it was accepted
+                // leaves no one to answer.
+                Err(cause) if peer_left_or_interrupted(&cause) => continue,
+                Err(cause) => {
+                    lock_front(&front).fail("accept on the public address", &cause);
+                    break;
+                }
+            };
             let mut transport = lock_front(&front);
             match transport.reach {
                 Reach::Ending => break,
@@ -633,8 +657,12 @@ fn accept(
                 Reach::Stopped => continue,
                 Reach::Answering => {}
             }
-            let Ok(registered) = client.try_clone() else {
-                continue;
+            let registered = match client.try_clone() {
+                Ok(registered) => registered,
+                Err(cause) => {
+                    transport.fail("hold a relayed connection", &cause);
+                    continue;
+                }
             };
             let id = transport.next_connection;
             transport.next_connection += 1;
@@ -658,21 +686,34 @@ fn relay(
     front: Arc<Mutex<Front>>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        // A server that cannot be reached leaves the client's connection to
-        // end unanswered.
-        if let Ok(server) = TcpStream::connect(backend) {
-            pipe(client, server);
+        match TcpStream::connect(backend) {
+            Ok(server) => pipe(client, server, &front),
+            Err(cause) => lock_front(&front).fail("connect to the HTTP server", &cause),
         }
         lock_front(&front).relayed.remove(&id);
     })
 }
 
+/// Whether an accept failed only because the connection's client left
+/// first or a signal interrupted the call.
+fn peer_left_or_interrupted(cause: &io::Error) -> bool {
+    matches!(
+        cause.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted
+    )
+}
+
 /// Copies bytes both ways between `client` and `server`; when the server
 /// side ends, both connections end.
-fn pipe(mut client: TcpStream, mut server: TcpStream) {
-    let (Ok(mut request_from), Ok(mut request_to)) = (client.try_clone(), server.try_clone())
-    else {
-        return;
+fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Mutex<Front>) {
+    let (mut request_from, mut request_to) = match (client.try_clone(), server.try_clone()) {
+        (Ok(from), Ok(to)) => (from, to),
+        (Err(cause), _) | (_, Err(cause)) => {
+            lock_front(front).fail("relay a connection", &cause);
+            return;
+        }
     };
     let upstream = std::thread::spawn(move || {
         // Either side closing ends the copy; the half-close tells the
