@@ -1537,11 +1537,9 @@ fn older_remote_schema_converts_without_losing_retained_evidence() {
 fn missing_board_is_set_up_automatically_and_reused() {
     let project = Project::new();
     // This project has no board reference; the existing unrelated board is preserved.
+    without_board(project.repo.path());
     let file = project.repo.path().join("instrukt.yaml");
-    let config = std::fs::read_to_string(&file)
-        .unwrap()
-        .replace("board: acme/1\n", "");
-    std::fs::write(&file, &config).unwrap();
+    let config = std::fs::read_to_string(&file).unwrap();
     project.create("cockpit", "bug", INTENT);
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
