@@ -1,5 +1,5 @@
 ---
-description: Every open pull request's current head is independently reviewed without anyone asking, and its verdict reaches GitHub where branch protection can require it.
+description: Pull requests from a project's trusted authors have their current head independently reviewed without anyone asking, and the verdict reaches GitHub where branch protection can require it.
 delivered_by:
   - event-driven-pr-review-gate
 ---
@@ -7,11 +7,12 @@ delivered_by:
 
 ## What it is
 
-A project that opts in has every open, non-draft pull request's current head
-reviewed independently, on instrukt's own initiative. Nobody has to launch the
-reviewer or chase a stalled pull request. instrukt owns the trigger and the
-review state; GitHub carries the verdict and enforces it. The reviewer bot
-publishes the verdict on the pull request and on the exact reviewed commit under
+A project that opts in has the current head of every open, non-draft pull
+request from its trusted authors reviewed independently, on instrukt's own
+initiative. Nobody has to launch the reviewer or chase a stalled pull request.
+instrukt owns the trigger and the review state; GitHub carries the verdict and
+enforces it. The reviewer bot publishes the verdict on the pull request and on
+the exact reviewed commit under
 `project/instrukt/spec/feature/work/github-apps`, where the canonical branch's
 required status checks can demand it before the pull request merges.
 
@@ -29,21 +30,25 @@ and their current heads, with conditional requests, under the same source
 acquisition rules as the other GitHub sources in
 `project/instrukt/spec/feature/runner/event-activation`. An unchanged repository
 costs no rate quota, and a missed tick is caught by the next tick reading
-current state. Where the project has GitHub webhook ingress, a pull-request
-change reaches the same decision without waiting for the next tick; the tick
-still reconciles whatever a delivery missed.
+current state. The tick is the only trigger: observation needs no public
+address, and a webhook delivery starts no review.
 
 ### Which heads are reviewed
 
 | Pull request state | Outcome |
 | --- | --- |
-| Open, not draft, current head carries no verdict from the configured reviewer identity | One review activation for that exact head. |
+| Open, not draft, head branch in the project's repository, trusted author, current head carries no verdict from the configured reviewer identity | One review activation for that exact head. |
 | Current head already carries the reviewer identity's verdict | None. |
 | Draft | None until it is marked ready. |
 | Owned by a todo's work lifecycle | None; that lifecycle reviews it. |
+| Head branch in a fork | None. |
+| Author outside the project's trusted authors | None. |
+| Opened by an automated dependency-update bot | None; a failed dependency update is assessed under `project/instrukt/spec/feature/workflow/integration-gate`. |
 
-Eligibility follows the pull request's state: a head branch in a fork is
-reviewed like one in the project's repository. A head is reviewed once, however
+A trusted author is the repository's owner, a member of its organization, a
+collaborator, or the bot of one of the project's configured GitHub Apps,
+recognised by its verified bot identity under
+`project/instrukt/spec/feature/work/github-apps`. A head is reviewed once, however
 often it is observed. A new push is a new head and is reviewed in its own right;
 an earlier head's verdict never stands in for it. The activation starts an
 independent reviewer on that exact head under
@@ -80,7 +85,7 @@ reported to the operator (`project/instrukt/policy/checks-and-guards`).
 
 ```gherkin
 Given a developer's project has opted in to pull-request review
-When they open a pull request that is ready for review
+When they open a pull request from a branch in the project's repository that is ready for review
 Then its current head is reviewed independently without anyone starting a reviewer
 When they push a fix to that pull request
 Then the new head is reviewed in its own right
@@ -98,13 +103,22 @@ But when the reviewer identity cannot publish reviews or commit statuses there
 Then enabling it is refused with a message naming the missing permission and its repair
 ```
 
+### UC-RV3: A developer's reviewers are not spent on outside contributions
+
+```gherkin
+Given a developer's project has opted in to pull-request review
+When a pull request arrives from a fork, from an author outside the project's trusted authors, or from a dependency-update bot
+Then no review is started for it
+```
+
 ## Known caveats
 
 - An automatically activated reviewer has no authoring session to ask for
   intent the diff does not show; it relies on the pull request's description and
   commits.
-- Every new head of every opted-in pull request starts a review, including
-  dependency-update pull requests that are open and ready.
+- Every new head of every eligible pull request starts a review.
+- A pull request outside eligibility receives no review status. A canonical
+  branch that requires the status does not admit it.
 
 ## See Also
 
