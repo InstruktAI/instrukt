@@ -140,21 +140,17 @@ fn conversation(
         .as_i64()
         .ok_or_else(|| HistoryError::Source("mirror lacks integer id".into()))?;
     let session = if let Some(session) = mirror["session"].as_i64() {
-        rows(
-            tx,
-            "SELECT * FROM mirror_sessions WHERE id=?1",
-            Some(session),
-        )?
-        .into_iter()
-        .next()
-        .ok_or_else(|| HistoryError::Source("mirror session attribution is missing".into()))?
+        rows(tx, "SELECT * FROM mirror_sessions WHERE id=?1", session)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| HistoryError::Source("mirror session attribution is missing".into()))?
     } else {
         Value::Null
     };
     let mut sources = rows(
         tx,
         "SELECT * FROM mirror_sources WHERE mirror=?1 ORDER BY position,id",
-        Some(id),
+        id,
     )?;
     let mut aliases = Vec::new();
     let mut body = mirror["conversation_text"]
@@ -184,7 +180,7 @@ fn conversation(
         let messages = rows(
             tx,
             "SELECT * FROM mirror_messages WHERE source=?1 ORDER BY ordinal",
-            Some(id),
+            id,
         )?;
         if needs_source_text && let Some(s) = source["archival_text"].as_str() {
             body.push('\n');
@@ -223,14 +219,10 @@ fn conversation(
     })
 }
 
-fn rows(db: &Connection, sql: &str, id: Option<i64>) -> Result<Vec<Value>, HistoryError> {
+fn rows(db: &Connection, sql: &str, id: i64) -> Result<Vec<Value>, HistoryError> {
     let mut stmt = db.prepare(sql)?;
     let names: Vec<String> = stmt.column_names().map(str::to_owned).collect();
-    let mut rows = if let Some(id) = id {
-        stmt.query(params![id])?
-    } else {
-        stmt.query([])?
-    };
+    let mut rows = stmt.query(params![id])?;
     let mut values = Vec::new();
     while let Some(row) = rows.next()? {
         values.push(value(row, &names)?);
