@@ -81,8 +81,9 @@ fn open_source(path: &Path) -> Result<Connection, HistoryError> {
     Ok(db)
 }
 
-/// Reads the mirrors after `cursor` (all of them when absent) in one
-/// read-only source transaction, which ends before the batch is written.
+/// Reads one bounded batch of mirrors after `cursor`, from the lowest id
+/// when it is absent, in one read-only source transaction, which ends
+/// before the batch is written.
 fn read_batch(db: &mut Connection, cursor: Option<i64>) -> Result<Batch, HistoryError> {
     let tx = db.transaction()?;
     let version: u64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
