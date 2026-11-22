@@ -842,11 +842,14 @@ Retired: the runtime owns session ending; its test bindings have been removed.
   alone while the work record shows the todo waiting on a person. Outside that
   wait, when the workflow state has not advanced, it receives the one recovery
   send and a repeated ending raises the anomaly. A thread reported as `running`
-  or `needs-input` is sent no recovery, and that state raises no anomaly. An
-  earlier recovery input that ended unconfirmed is a separate ground
+  or `needs-input` is sent no recovery, and that state alone raises no anomaly.
+  An earlier recovery input that ended unconfirmed is a separate ground
   (`project/instrukt/spec/feature/runner/anomaly-notification`): with the
-  workflow state unmoved and outside a person wait, it raises the anomaly
-  whichever state the thread reports.
+  workflow state unmoved and outside a person wait, it raises the anomaly where
+  the execution reaches the recovery decision, a thread reported as `running`
+  or `needs-input` included. Confirmed native archive or deletion with an
+  eligible active assignment does not reach that decision: the successor
+  transaction comes first, and that input raises no anomaly there.
 <!-- /planned:fix-false-recovery-on-released-executions -->
 
 ## See Also
