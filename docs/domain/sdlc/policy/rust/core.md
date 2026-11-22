@@ -188,6 +188,34 @@ visibility: 'public'
     cleaner.** Take ownership and return the modified value when it
     expresses intent better.
 
+<!-- planned:reduce-worktree-disk-usage -->
+### Build output
+
+51. **Dev and test builds keep line tables for workspace crates and no debug
+    info for dependencies.** The workspace root `Cargo.toml` declares:
+
+    ```toml
+    [profile.dev]
+    debug = "line-tables-only"
+
+    [profile.dev.package."*"]
+    debug = 0
+    ```
+
+    The manifest declares no `debug` setting for the test profile, so tests
+    build with these. Panic locations and backtrace frames in workspace
+    crates keep their file and line.
+52. **Each live worktree builds into its own target directory.**
+    `CARGO_TARGET_DIR` never points at a directory another live worktree
+    builds into.
+53. **A cold build in a new worktree is accelerated with a bounded local
+    `sccache`.** Where a faster cold build is wanted, `sccache` runs as the
+    compiler wrapper (`RUSTC_WRAPPER`) with its local disk cache capped
+    (`SCCACHE_CACHE_SIZE`). It serves compiled dependencies to every worktree
+    by content while each keeps its own target directory. Using it is
+    optional.
+<!-- /planned:reduce-worktree-disk-usage -->
+
 ## Rationale
 
 Rust's compiler is the discipline mechanism. The rules above lean into that —
@@ -202,6 +230,21 @@ model and reintroduce hidden coupling.
 The `dyn` vs generics default (use `dyn`) reflects the actual workload (I/O
 bound, not CPU bound) — dynamic dispatch cost is negligible compared to the
 I/O it wraps, and `dyn` is simpler.
+
+<!-- planned:reduce-worktree-disk-usage -->
+Debug info is most of a dev build's size, and nearly all of it describes
+dependency code nobody steps through. Line tables for workspace crates keep
+what a failure report needs, the file and line of a panic or a backtrace
+frame, at a fraction of that size, and the saving is paid once per worktree
+that builds.
+
+A target directory holds one build at a time. Builds that share one take
+turns on its lock, and its executables are whichever worktree built last, so
+a worktree can run or test another branch's binary. Separate directories keep
+concurrent worktrees independent and correct. A content-addressed compilation
+cache returns the shared compilation without sharing that mutable directory,
+and its size cap keeps the cache itself bounded.
+<!-- /planned:reduce-worktree-disk-usage -->
 
 ## Scope
 
@@ -232,3 +275,11 @@ infrastructure crates, test code, build scripts.
 - The "two real implementations or test double" rule for traits has a
   carve-out for marker traits (`Send`, `Sync`, etc.) and for stdlib trait
   implementations.
+
+<!-- planned:reduce-worktree-disk-usage -->
+## See Also
+
+- https://doc.rust-lang.org/cargo/reference/profiles.html — Cargo profiles: the `debug` levels, per-package overrides and profile inheritance.
+- https://doc.rust-lang.org/cargo/reference/build-cache.html — Cargo build cache: the target directory and the shared-cache route through `sccache`.
+- https://github.com/mozilla/sccache — `sccache`: the Rust wrapper setup, what it caches, and the local disk cache settings.
+<!-- /planned:reduce-worktree-disk-usage -->
