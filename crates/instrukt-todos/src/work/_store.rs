@@ -145,8 +145,12 @@ pub(crate) enum Refusal {
     /// A reflection marked the todo conflicted after the command read it;
     /// the live row.
     Conflicted(Box<LocalItem>),
-    /// Another command changed the todo's record.
-    Changed,
+    /// Another command changed the todo's record; the slug the live row
+    /// carries now, `None` when the todo is gone from the project.
+    Changed(Option<TodoSlug>),
+    /// Another live todo of the project carries the slug the change gives
+    /// this one.
+    Taken,
 }
 
 /// What a [`Store::swap`] found.
@@ -441,15 +445,18 @@ pub(crate) fn commit_local(
     // An identity another project's row holds is never written over, nor
     // its row handed to this project's session.
     let live = match load_one(tx, path, id)? {
-        Some(other) if &other.record.project != project => return Ok(Err(Refusal::Changed)),
+        Some(other) if &other.record.project != project => {
+            return Ok(Err(Refusal::Changed(None)));
+        }
         live => live,
     };
     let next = match (base, live) {
         (None, None) => mine.clone(),
-        (Some(_), None) | (None, Some(_)) => return Ok(Err(Refusal::Changed)),
+        (Some(_), None) => return Ok(Err(Refusal::Changed(None))),
+        (None, Some(live)) => return Ok(Err(Refusal::Changed(Some(live.record.slug)))),
         (Some(base), Some(live)) => match admission(&live, base) {
             Admission::Conflicted => return Ok(Err(Refusal::Conflicted(Box::new(live)))),
-            Admission::Changed => return Ok(Err(Refusal::Changed)),
+            Admission::Changed => return Ok(Err(Refusal::Changed(Some(live.record.slug)))),
             Admission::Admitted => rebase_local(&live, mine),
         },
     };
@@ -462,7 +469,7 @@ pub(crate) fn commit_local(
                 && other.record.is_live()
         });
         if taken {
-            return Ok(Err(Refusal::Changed));
+            return Ok(Err(Refusal::Taken));
         }
     }
     save_in(tx, path, &next)?;

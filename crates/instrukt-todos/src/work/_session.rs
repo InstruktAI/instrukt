@@ -1036,12 +1036,25 @@ impl<'w> Session<'w> {
                         conflicted = Some(live);
                         return Err(WorkError::Conflicted { todo });
                     }
-                    Err(Refusal::Changed) => {
-                        // Named as read: a rename's new slug was never
-                        // written.
-                        let slug = base.map_or(&mine.record.slug, |base| &base.record.slug);
+                    Err(Refusal::Changed(now)) => {
+                        // Named as read, since a rename this change makes
+                        // was never written, and by the slug it carries now
+                        // when another command renamed it: that is where
+                        // the command runs again.
+                        let read = base.map_or(&mine.record.slug, |base| &base.record.slug);
+                        return Err(WorkError::refused(match now {
+                            Some(now) if &now != read => format!(
+                                "`{read}` changed while this command ran and is now named `{now}`; nothing of it was written. Run the command again on `{now}`: it acts on the todo's current record"
+                            ),
+                            _ => format!(
+                                "`{read}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record"
+                            ),
+                        }));
+                    }
+                    Err(Refusal::Taken) => {
                         return Err(WorkError::refused(format!(
-                            "`{slug}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record"
+                            "a live todo is already named `{}`; nothing of this change was written",
+                            mine.record.slug
                         )));
                     }
                 }
