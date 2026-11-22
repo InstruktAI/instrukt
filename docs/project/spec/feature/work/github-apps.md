@@ -120,6 +120,23 @@ The App boundary supplies verified bot actor facts; commit-author resolution,
 precedence and refusal belong to
 `project/instrukt/spec/feature/repository/attributed-commit`.
 
+<!-- planned:event-driven-pr-review-gate -->
+### Review verdict on the reviewed commit
+
+A verdict of an automatically started pull-request review
+(`project/instrukt/spec/feature/runner/pull-request-review`) is published by the
+reviewer bot in two places:
+
+| Verdict | Pull-request review | Review status on the reviewed commit |
+| --- | --- | --- |
+| Approve | Approving review | Success |
+| Needs work | Change-requesting review carrying the findings | Failure |
+
+The status names the exact commit that was reviewed; a later head never inherits
+it. The reviewer bot is the status's only publisher; a status of the same name
+from another identity is not a verdict.
+<!-- /planned:event-driven-pr-review-gate -->
+
 ## Use cases
 
 ### UC-GA1: See bot authorship and receive an independent native review
@@ -140,6 +157,18 @@ Then the bot's NONE association does not exclude its valid record revisions
 And schema, artifact and evidence checks still apply
 But a similarly named unconfigured actor gains no record trust
 ```
+
+<!-- planned:event-driven-pr-review-gate -->
+### UC-GA3: See an automatic review's verdict where GitHub can enforce it
+
+```gherkin
+Given a developer's pull request head has been reviewed automatically
+When the reviewer's verdict is published
+Then the pull request shows the reviewer bot's approving or change-requesting review with its findings
+And the reviewed commit carries the reviewer bot's matching success or failure review status
+But a later head of that pull request carries no status from that verdict
+```
+<!-- /planned:event-driven-pr-review-gate -->
 
 ## Known caveats
 

@@ -1,5 +1,5 @@
 ---
-description: Every open pull request's current head is independently reviewed without anyone asking, and its verdict is reflected on GitHub as a native review and a required commit status.
+description: Every open pull request's current head is independently reviewed without anyone asking, and its verdict reaches GitHub where branch protection can require it.
 delivered_by:
   - event-driven-pr-review-gate
 ---
@@ -10,10 +10,10 @@ delivered_by:
 A project that opts in has every open, non-draft pull request's current head
 reviewed independently, on instrukt's own initiative. Nobody has to launch the
 reviewer or chase a stalled pull request. instrukt owns the trigger and the
-review state; GitHub carries the verdict and enforces it. The verdict appears on
-the pull request as a review by the reviewer bot and as a review status on the
-exact reviewed commit, which the canonical branch's required status checks can
-demand of every commit that reaches it.
+review state; GitHub carries the verdict and enforces it. The reviewer bot
+publishes the verdict on the pull request and on the exact reviewed commit under
+`project/instrukt/spec/feature/work/github-apps`, where the canonical branch's
+required status checks can demand it before the pull request merges.
 
 Pull requests a todo's work lifecycle owns are outside this capability: their
 build review is reflected on them by
@@ -41,50 +41,38 @@ still reconciles whatever a delivery missed.
 | Current head already carries the reviewer identity's verdict | None. |
 | Draft | None until it is marked ready. |
 | Owned by a todo's work lifecycle | None; that lifecycle reviews it. |
-| Head superseded by a new push before its review starts | None for the old head; the new head is reviewed. |
 
-A head is reviewed once, however often it is observed. A new push is a new head
-and is reviewed in its own right. The activation starts an independent reviewer
-on that exact head under `sdlc/procedure/lifecycle/work/review-commits`, with no
-involvement from the authoring session.
+Eligibility follows the pull request's state: a head branch in a fork is
+reviewed like one in the project's repository. A head is reviewed once, however
+often it is observed. A new push is a new head and is reviewed in its own right;
+an earlier head's verdict never stands in for it. The activation starts an
+independent reviewer on that exact head under
+`sdlc/procedure/lifecycle/work/review-commits`, with no involvement from the
+authoring session.
 
-### Verdict reflection
-
-The reviewer publishes as the reviewer bot, an identity distinct from the pull
-request's author and from the human
-(`project/instrukt/spec/feature/work/github-apps`):
-
-| Verdict | Pull-request review | Review status on the reviewed commit |
-| --- | --- | --- |
-| Approve | Approving review | Success |
-| Needs work | Change-requesting review carrying the findings | Failure |
-
-The status names the exact commit that was reviewed; a later head never inherits
-it. A change-requesting review reaches an authoring thread that watches the
-pull request through its runtime's pull-request watch; the fix it pushes is a
-new head and is reviewed automatically.
+A change-requesting review reaches an authoring thread that watches the pull
+request through its runtime's pull-request watch; the fix it pushes is a new
+head and is reviewed automatically.
 
 ### Enablement and prerequisites
 
-The capability is enabled per project and is inert for a project that has not
-opted in: no pull requests are observed and no reviews or statuses are
-published. Opting in requires the configured reviewer identity to be able to
-publish pull-request reviews and commit statuses on the project's repository.
-That ability is checked where the setting is admitted and by the installation
+The capability is enabled per project. For a project that has not opted in it
+observes no pull requests, starts no reviews and publishes nothing; reviews the
+project already receives are unaffected. Opting in requires the configured
+reviewer identity to be able to publish pull-request reviews and commit statuses
+on the project's repository. That ability is checked where the setting is admitted and by the installation
 check, under `project/instrukt/policy/checks-and-guards`; a missing permission
 is refused there with its repair, and nothing running handles it.
 
-Making the review status a required check on the canonical branch is the
-repository owner's administration act; instrukt publishes the status and does
-not change branch protection.
+Requiring the review status on the canonical branch, with the reviewer bot as
+its expected source, is the repository owner's administration act; instrukt
+publishes the status and does not change branch protection.
 
 ### Availability
 
 When GitHub or the runtime is unavailable, observation, activation and
-publication retry until the service returns
-(`project/instrukt/policy/checks-and-guards`). A head whose review or verdict
-publication has not completed stays visible to the operator as waiting, so no
-pull request is left blocked without a cause anyone can see.
+publication retry until the service returns, and the unavailable service is
+reported to the operator (`project/instrukt/policy/checks-and-guards`).
 
 ## Use cases
 
@@ -94,8 +82,6 @@ pull request is left blocked without a cause anyone can see.
 Given a developer's project has opted in to pull-request review
 When they open a pull request that is ready for review
 Then its current head is reviewed independently without anyone starting a reviewer
-And the pull request shows the reviewer bot's approving or change-requesting review with its findings
-And the reviewed commit carries a matching success or failure review status
 When they push a fix to that pull request
 Then the new head is reviewed in its own right
 But observing an already reviewed head again starts no second review
