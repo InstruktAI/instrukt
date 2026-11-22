@@ -21,7 +21,7 @@ use crate::fixtures::work::{Project, REPOSITORY, stdout};
 
 /// The flavor's procedures: path below `procedure/`, and the role each
 /// declares.
-const PROCEDURES: [(&str, &str); 13] = [
+const PROCEDURES: [(&str, &str); 12] = [
     ("prepare-lead", "prepare-lead"),
     ("review-commits", "commit-reviewer"),
     ("work-lead", "work-lead"),
@@ -34,11 +34,10 @@ const PROCEDURES: [(&str, &str); 13] = [
     ("deferrals", "deferrer"),
     ("finalize", "finalizer"),
     ("drift-analyze", "drift-analyzer"),
-    ("diagnose", "diagnoser"),
 ];
 
 const ACTIONS: &str = "\
-roles: [commit-reviewer, integrator, prepare-lead, work-lead, intaker, prd-reviewer, planner, plan-reviewer, builder, build-reviewer, deferrer, finalizer, drift-analyzer, diagnoser]
+roles: [commit-reviewer, integrator, prepare-lead, work-lead, intaker, prd-reviewer, planner, plan-reviewer, builder, build-reviewer, deferrer, finalizer, drift-analyzer]
 draft-prd:
   command: instrukt docs get crew/procedure/intake
   template: templates/draft-prd.md

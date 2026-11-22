@@ -628,6 +628,55 @@ impl Work {
     }
 }
 
+/// Pure binding selection for `StampRequest::DiagnosisSettled`: resolves the
+/// active or matching-replay `diagnoser` workspace attempt, enforces caller
+/// separation from the bound peer and claim-holder authority while claimed, and
+/// returns `Ok(None)` when Step 1a settles without a diagnoser reservation.
+fn diagnosis_settlement_binding(
+    record: &TodoRecord,
+    caller: Option<&SessionRef>,
+) -> Result<Option<usize>, WorkError> {
+    let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
+        b.role.as_str() == "diagnoser"
+            && matches!(
+                b.attempt.assignment,
+                AssignmentKind::Child | AssignmentKind::Workspace
+            )
+    }) else {
+        return Ok(None);
+    };
+    let current_diagnosis = record.current_digest(artifact_names::DIAGNOSIS);
+    if b.attempt.released_at.is_some() {
+        let matches_current = b.attempt.completion_sequence.is_some_and(|sequence| {
+            record.stamps.iter().any(|stamp| {
+                stamp.sequence == sequence
+                    && matches!(
+                        &stamp.fact,
+                        crate::evidence::StampFact::DiagnosisSettled { diagnosis }
+                            if current_diagnosis == Some(diagnosis)
+                    )
+            })
+        });
+        return Ok(matches_current.then_some(index));
+    }
+    let bound = b.session.as_ref().ok_or_else(|| {
+        WorkError::refused("diagnoser attempt must be bound before settling its diagnosis")
+    })?;
+    if caller == Some(bound) {
+        return Err(WorkError::refused(
+            "diagnoser cannot settle its own diagnosis; the driving session stamps --diagnosis-settled",
+        ));
+    }
+    if let Some(claim) = &record.claim
+        && claim.session.as_ref() != caller
+    {
+        return Err(WorkError::refused(
+            "only the claim-holding orchestrator may settle a bound diagnoser attempt",
+        ));
+    }
+    Ok(Some(index))
+}
+
 /// Match completion to the caller's reserved shared workspace.
 pub(super) fn completion_binding(
     record: &TodoRecord,
@@ -636,94 +685,54 @@ pub(super) fn completion_binding(
     request: &super::StampRequest,
 ) -> Result<Option<(usize, bool)>, WorkError> {
     use super::StampRequest;
-    let (index, b) = if matches!(request, StampRequest::DiagnosisSettled) {
-        let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
-            b.role.as_str() == "diagnoser"
-                && matches!(
-                    b.attempt.assignment,
-                    AssignmentKind::Child | AssignmentKind::Workspace
-                )
-        }) else {
-            // Step 1a settles a reporter's evidenced cause without reserving a diagnoser attempt.
-            return Ok(None);
-        };
-        let current_diagnosis = record.current_digest(artifact_names::DIAGNOSIS);
-        if b.attempt.released_at.is_some() {
-            let matches_current = b.attempt.completion_sequence.is_some_and(|sequence| {
-                record.stamps.iter().any(|stamp| {
-                    stamp.sequence == sequence
-                        && matches!(
-                            &stamp.fact,
-                            crate::evidence::StampFact::DiagnosisSettled { diagnosis }
-                                if current_diagnosis == Some(diagnosis)
-                        )
-                })
-            });
-            if !matches_current {
+    let (index, b) =
+        if matches!(request, StampRequest::DiagnosisSettled) {
+            let Some(index) = diagnosis_settlement_binding(record, caller)? else {
+                return Ok(None);
+            };
+            (index, &record.bindings[index])
+        } else {
+            let roles: &[&str] = match request {
+                StampRequest::PreparationHeadVerdict { .. } => &["commit-reviewer"],
+                StampRequest::RoleComplete => {
+                    &["setup", "finalizer", "intaker", "architect", "planner"]
+                }
+                StampRequest::BuildComplete => &["builder", "fixer"],
+                StampRequest::BuildVerdict { .. } => &["build-reviewer"],
+                StampRequest::DeferralsProcessed => &["deferrer"],
+                StampRequest::PreparationVerdict { phase, .. } => match phase {
+                    PreparationReview::PrdReview => &["prd-reviewer"],
+                    PreparationReview::ArchitectureReview => &["architecture-reviewer"],
+                    PreparationReview::PlanReview => &["plan-reviewer"],
+                },
+                _ => return Ok(None),
+            };
+            if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
                 return Ok(None);
             }
-        } else {
-            let bound = b.session.as_ref().ok_or_else(|| {
-                WorkError::refused("diagnoser attempt must be bound before settling its diagnosis")
-            })?;
-            if caller == Some(bound) {
-                return Err(WorkError::refused(
-                    "diagnoser cannot settle its own diagnosis; the driving session stamps --diagnosis-settled",
-                ));
-            }
-            if let Some(claim) = &record.claim
-                && claim.session.as_ref() != caller
+            let caller = caller
+                .ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
+            let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
+                b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
+            }) else {
+                // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
+                if matches!(request, StampRequest::PreparationVerdict { .. }) {
+                    return Ok(None);
+                }
+                return Err(WorkError::refused("caller has no bound completion role"));
+            };
+            if matches!(request, StampRequest::PreparationHeadVerdict { .. })
+                && record.bindings.iter().any(|writer| {
+                    writer.session.as_ref() == Some(caller)
+                        && matches!(writer.role.as_str(), "intaker" | "architect" | "planner")
+                })
             {
                 return Err(WorkError::refused(
-                    "only the claim-holding orchestrator may settle a bound diagnoser attempt",
+                    "preparation head review requires an independent reviewer",
                 ));
             }
-        }
-        (index, b)
-    } else {
-        let roles: &[&str] = match request {
-            StampRequest::PreparationHeadVerdict { .. } => &["commit-reviewer"],
-            StampRequest::RoleComplete => {
-                &["setup", "finalizer", "intaker", "architect", "planner"]
-            }
-            StampRequest::BuildComplete => &["builder", "fixer"],
-            StampRequest::BuildVerdict { .. } => &["build-reviewer"],
-            StampRequest::DeferralsProcessed => &["deferrer"],
-            StampRequest::PreparationVerdict { phase, .. } => match phase {
-                PreparationReview::PrdReview => &["prd-reviewer"],
-                PreparationReview::ArchitectureReview => &["architecture-reviewer"],
-                PreparationReview::PlanReview => &["plan-reviewer"],
-            },
-            _ => return Ok(None),
+            (index, b)
         };
-        if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
-            return Ok(None);
-        }
-        let caller =
-            caller.ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
-        let Some((index, b)) =
-            record.bindings.iter().enumerate().rev().find(|(_, b)| {
-                b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
-            })
-        else {
-            // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
-            if matches!(request, StampRequest::PreparationVerdict { .. }) {
-                return Ok(None);
-            }
-            return Err(WorkError::refused("caller has no bound completion role"));
-        };
-        if matches!(request, StampRequest::PreparationHeadVerdict { .. })
-            && record.bindings.iter().any(|writer| {
-                writer.session.as_ref() == Some(caller)
-                    && matches!(writer.role.as_str(), "intaker" | "architect" | "planner")
-            })
-        {
-            return Err(WorkError::refused(
-                "preparation head review requires an independent reviewer",
-            ));
-        }
-        (index, b)
-    };
     let path = b
         .worktree
         .as_ref()
@@ -1108,5 +1117,202 @@ impl Work {
             worktree: path,
             admitted,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::{
+        Actor, ArtifactName, ContentDigest, Grounding, ModelProvenance, StampFact, StampRecord,
+    };
+    use crate::work::_model::SCHEMA;
+    use crate::work::{Artifact, Claim, TodoId, Version};
+    use instrukt_core::{ids::ProjectSlug, machine::MachineId};
+    use instrukt_runner::interfaces::{CatchUp, TodoKind};
+
+    fn session(name: &str) -> SessionRef {
+        SessionRef::parse(&format!("t3:{name}")).unwrap()
+    }
+
+    fn base_record() -> TodoRecord {
+        TodoRecord {
+            schema: SCHEMA,
+            id: TodoId::parse(&"11".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("bug-fix").unwrap(),
+            prior_slugs: Vec::new(),
+            kind: TodoKind::Bug,
+            status: TodoStatus::Active,
+            created: jiff::Timestamp::from_second(1).unwrap(),
+            created_by: Actor::Person { name: "dev".into() },
+            human_involved: None,
+            revision: 1,
+            sequence: 1,
+            artifacts: vec![Artifact {
+                name: ArtifactName::new(artifact_names::DIAGNOSIS),
+                address: None,
+                versions: vec![Version {
+                    digest: ContentDigest::of("cause-v1"),
+                    writer: Actor::Session(session("diagnoser-1")),
+                    created: jiff::Timestamp::from_second(2).unwrap(),
+                    derived_from: Vec::new(),
+                    sequence: 1,
+                    grounding: Grounding::default(),
+                    remote: None,
+                    content: None,
+                }],
+            }],
+            stamps: Vec::new(),
+            claim: Some(Claim {
+                machine: MachineId::parse("0123456789abcdef").unwrap(),
+                session: Some(session("driver-1")),
+                at: jiff::Timestamp::from_second(1).unwrap(),
+            }),
+            bindings: Vec::new(),
+            hold: None,
+            hold_history: Vec::new(),
+            label_actions: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: CatchUp::Once,
+            agent: None,
+            branch: None,
+            delivery: None,
+            removal: None,
+        }
+    }
+
+    fn diagnoser_binding(bound: Option<SessionRef>, released: Option<u64>) -> Binding {
+        Binding {
+            role: RoleName::parse("diagnoser").unwrap(),
+            session: bound,
+            worktree: None,
+            attempt: Attempt {
+                assignment: AssignmentKind::Workspace,
+                number: 1,
+                semantic_key: "demo/bug-fix:diagnoser:1".into(),
+                completion_sequence: released,
+                released_at: released.map(|_| jiff::Timestamp::from_second(3).unwrap()),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn diagnosis_settlement_selects_bound_diagnoser_for_claimant() {
+        let mut record = base_record();
+        record
+            .bindings
+            .push(diagnoser_binding(Some(session("diagnoser-1")), None));
+        let driver = session("driver-1");
+        assert_eq!(
+            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn diagnosis_settlement_refuses_diagnoser_self_settlement() {
+        let mut record = base_record();
+        let peer = session("diagnoser-1");
+        record
+            .bindings
+            .push(diagnoser_binding(Some(peer.clone()), None));
+        assert!(matches!(
+            diagnosis_settlement_binding(&record, Some(&peer)),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn diagnosis_settlement_refuses_other_caller_while_claimed() {
+        let mut record = base_record();
+        record
+            .bindings
+            .push(diagnoser_binding(Some(session("diagnoser-1")), None));
+        let outsider = session("other-session");
+        assert!(matches!(
+            diagnosis_settlement_binding(&record, Some(&outsider)),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn diagnosis_settlement_refuses_unbound_diagnoser_reservation() {
+        let mut record = base_record();
+        record.bindings.push(diagnoser_binding(None, None));
+        let driver = session("driver-1");
+        assert!(matches!(
+            diagnosis_settlement_binding(&record, Some(&driver)),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn diagnosis_settlement_returns_none_without_diagnoser_binding() {
+        let record = base_record();
+        let driver = session("driver-1");
+        assert_eq!(
+            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn diagnosis_settlement_replay_selects_released_binding_for_matching_digest() {
+        let mut record = base_record();
+        let digest = record
+            .current_digest(artifact_names::DIAGNOSIS)
+            .unwrap()
+            .clone();
+        record.stamps.push(StampRecord {
+            source_comment: None,
+            fact: StampFact::DiagnosisSettled { diagnosis: digest },
+            at: jiff::Timestamp::from_second(3).unwrap(),
+            role: None,
+            actor: Actor::Session(session("driver-1")),
+            model: None,
+            eval_fingerprint: None,
+            human_involved: None,
+            sequence: 2,
+            model_provenance: ModelProvenance::default(),
+        });
+        record
+            .bindings
+            .push(diagnoser_binding(Some(session("diagnoser-1")), Some(2)));
+        let driver = session("driver-1");
+        assert_eq!(
+            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn diagnosis_settlement_returns_none_when_released_binding_settled_an_older_digest() {
+        let mut record = base_record();
+        record.stamps.push(StampRecord {
+            source_comment: None,
+            fact: StampFact::DiagnosisSettled {
+                diagnosis: ContentDigest::of("older-cause"),
+            },
+            at: jiff::Timestamp::from_second(3).unwrap(),
+            role: None,
+            actor: Actor::Session(session("driver-1")),
+            model: None,
+            eval_fingerprint: None,
+            human_involved: None,
+            sequence: 2,
+            model_provenance: ModelProvenance::default(),
+        });
+        record
+            .bindings
+            .push(diagnoser_binding(Some(session("diagnoser-1")), Some(2)));
+        let driver = session("driver-1");
+        assert_eq!(
+            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
+            None
+        );
     }
 }
