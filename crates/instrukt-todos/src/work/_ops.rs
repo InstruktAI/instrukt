@@ -2147,12 +2147,14 @@ fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>,
 }
 
 /// The refusal for an artifact version whose content this computer does
-/// not hold, saying what GitHub's answer for it established: that GitHub
-/// no longer serves it, or that it could not be read for it.
+/// not hold, saying why restoring it failed ([`Unrestored`]).
 fn content_missing(name: &str, digest: &str, why: Option<&Unrestored>) -> WorkError {
     let held = format!("this computer does not hold the content of `{name}` version {digest}");
     WorkError::refused(match why {
         Some(Unrestored::NotServed) => format!("{held}, and GitHub no longer serves it"),
+        Some(Unrestored::NotReflected) => {
+            format!("{held}, and it records no GitHub copy of it to restore it from")
+        }
         Some(Unrestored::Unread(reason)) => format!(
             "{held}, and GitHub could not be read for it: {}",
             super::_session::describe(reason)

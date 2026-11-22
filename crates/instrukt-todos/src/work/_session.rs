@@ -67,13 +67,19 @@ pub enum GitHubRead {
     NotRead(PendingReason),
 }
 
-/// Why an artifact version's content is still missing after GitHub was
-/// asked for it.
+/// Why an artifact version's content is still missing once restoring it
+/// from GitHub was attempted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Unrestored {
-    /// GitHub answered and does not serve the recorded content.
+    /// GitHub answered for the artifact and does not serve the recorded
+    /// content, or serves content that fails its digest.
     NotServed,
-    /// GitHub could not be read for it, for the reason given.
+    /// This computer records no GitHub coordinates for the version — its
+    /// todo's issue, the artifact's address or the version's number — so
+    /// GitHub was not asked for it.
+    NotReflected,
+    /// GitHub was not read for it, for the reason given: it could not be
+    /// read this command, or the request for the artifact failed.
     Unread(PendingReason),
 }
 
@@ -1766,9 +1772,11 @@ impl<'w> Session<'w> {
     /// Restores from GitHub the content of each version of artifact `name`
     /// in `record`, a todo on `issue`, whose digest `digests` names and
     /// whose content `record` lacks, verified against that digest. Returns
-    /// why each version still lacks it: only GitHub's answer for the
-    /// artifact establishes that it does not serve a version, and a request
-    /// that failed, or a GitHub that cannot be read, leaves it unread.
+    /// why each version still lacks it ([`Unrestored`]): a version with no
+    /// GitHub coordinates recorded here is not asked for; GitHub that cannot
+    /// be read, or a failed request for the artifact, leaves the rest
+    /// unread; and only GitHub's answer for the artifact establishes that it
+    /// does not serve a version.
     pub fn restore_contents(
         &mut self,
         issue: Option<IssueRef>,
@@ -1801,13 +1809,12 @@ impl<'w> Session<'w> {
             .filter(|v| v.content.is_none() && digests.iter().any(|d| d == v.digest.as_str()));
         for version in wanted {
             let digest = version.digest.as_str().to_owned();
+            let (Some(issue), Some(address), Some(number)) = (issue, address, version.remote)
+            else {
+                missing.insert(digest, Unrestored::NotReflected);
+                continue;
+            };
             if served.is_none() {
-                // GitHub's record holds no copy of a version it carries no
-                // provider address for; there is nothing to ask for.
-                let (Some(issue), Some(address), Some(_)) = (issue, address, version.remote) else {
-                    missing.insert(digest, Unrestored::NotServed);
-                    continue;
-                };
                 let Remote::Client { gh, down: None } = &self.remote else {
                     // Unreachable: a GitHub that cannot be read set `served`.
                     continue;
@@ -1819,13 +1826,13 @@ impl<'w> Session<'w> {
                     Unrestored::Unread(reason)
                 }));
             }
-            let body = match (&served, version.remote) {
-                (Some(Ok(bodies)), Some(number)) => bodies.get(&number),
-                (Some(Err(why)), _) => {
+            let body = match &served {
+                Some(Ok(bodies)) => bodies.get(&number),
+                Some(Err(why)) => {
                     missing.insert(digest, why.clone());
                     continue;
                 }
-                _ => None,
+                None => None,
             };
             match body {
                 Some(body) if super::_model::digest_of(body) == version.digest => {
