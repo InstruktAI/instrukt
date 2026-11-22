@@ -152,7 +152,7 @@ only history operation that does, as described below.
 | `history_projection_records` | normalized native records by source, kind and native id, including records delivered by earlier batches | authoritative for the same reason |
 | `history_fts` | the full-text index over each retained conversation's title and text | derived from `history_conversations` and written only by that table's triggers; rebuilt on this computer from the retained rows, without any source |
 | `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
-| `history_sources` | for each selected TeleClaude source, the id of the last mirror it committed, which is absent until its first batch commits, and whether the import completed | external bookkeeping; losing it reads the mirror store again |
+| `history_sources` | for each TeleClaude source an import selected, whether the import completed and its position: the id of the last mirror it committed, absent until a first batch commits. Rows moved from the state database keep other values, described below | external bookkeeping; losing it reads the mirror store again |
 
 A conversation's completed view, archive aliases and original source document
 commit, with the index entries the triggers write for them, in the transaction
@@ -183,13 +183,24 @@ transaction that records the copy finished and the removal pending. The
 full-text index is not copied: the store's triggers build it from the copied
 conversations.
 
-Removal starts only after that record is committed. Under the writer lock, one
-state-database transaction drops the history tables still present, the state
-database then reclaims the freed space
-(`project/instrukt/spec/feature/work/state-database`), and the move is recorded
-complete. A move that stops after the copy finished continues with removal and
-reclamation whether or not the tables are already gone, so space freed by a
-drop is reclaimed even when the process stopped between the two. No retained
+Rows of `history_sources` moved from the state database keep the values they
+held there, with the meanings they had. A TeleClaude source whose row comes
+from there is complete, and its position is the number of conversations its
+import wrote, not a mirror id. A source whose identity begins `t3:` holds a
+position the runtime source kept in this table before
+`history_source_positions` held it.
+Neither value is read as a mirror id: an import looks up only its own source,
+a completed import ends before its position is read, opens no mirror store and
+reports no position, and nothing reads a `t3:` row.
+
+Removal starts only after that record is committed. In one hold of the writer
+lock, one state-database transaction drops the history tables still present
+and the state database then reclaims the freed space
+(`project/instrukt/spec/feature/work/state-database`). The move is recorded
+complete once that database has been rewritten without the freed pages. A move
+that stops after the copy finished continues with removal and reclamation
+whether or not the tables are already gone, so space freed by a drop is
+reclaimed even when the process stopped between the two. No retained
 row is discarded (`project/instrukt/policy/checks-and-guards`). While history
 is off nothing moves, and the rows stay in the state database until history is
 switched on.
@@ -295,20 +306,30 @@ Then that conversation is in the developer's instrukt history without a search o
 - Moving earlier history out of the state database holds the history lock from
   its start until it is recorded complete. It holds the writer lock while it
   creates a missing state database or brings an older one to its current
-  schema, and again while it drops the copied tables and the freed space is
-  reclaimed. Each lock bounds only how long another process waits to acquire
-  it, 30 seconds for the history lock and 60 for the writer lock; it does not
-  bound the move, whose copying, removal and reclamation take as long as the
-  retained history needs. Meanwhile a history command fails visibly when its
-  wait ends, the runner's extraction records the failure and retries, and a
-  work command that waits out the writer lock fails with its lock timeout. A
-  computer asked by a merged search answers only when its own waits end, so a
-  requester whose deadline is shorter, 10 seconds by default, reports that
-  computer as not having answered before the deadline. The move continues, and
-  operations started after it completes succeed.
-- Reclaimed space leaves the state database file at SQLite's next complete
-  checkpoint; a reader holding an earlier snapshot at that moment defers it to
-  a later one.
+  schema, and again, in one hold, while it drops the copied tables and the
+  freed space is reclaimed. Each lock bounds only how long another process
+  waits to acquire it, 30 seconds for the history lock and 60 for the writer
+  lock; it does not bound the move, whose copying takes as long as the retained
+  history needs, whose removal grows with the space freed and whose reclamation
+  grows with the data that remains. Meanwhile an extraction, an import or a
+  document lookup fails visibly when its wait ends, the runner's extraction
+  records the failure and retries, and a work command that waits out the writer
+  lock fails with its lock timeout. The move continues, and operations started
+  after it completes succeed.
+- A search waits for the history lock twice while another process moves earlier
+  history, once for its catch-up and once for its read. It answers in full when
+  the move ends during the first wait, answers with the retained matches and a
+  catch-up failure when the move ends during the second, and otherwise fails
+  when the second wait ends. A computer asked by a merged search answers in the
+  same three ways, its failure travelling as its answer, and a computer whose
+  own catch-up performs the move answers when the move ends. The requester
+  shows the answer that arrives before its deadline, 10 seconds by default and
+  at most 120, and reports a computer whose answer has not arrived by then as
+  not having answered before the deadline.
+- The move is complete once the state database has been rewritten without the
+  freed pages. When the database file itself shortens is that database's rule
+  (`project/instrukt/spec/feature/work/state-database`) and can come after the
+  move is complete; the move does not return to it.
 - A mirror is never split across import batches, so a single mirror larger than
   a batch's text bound is read and written whole.
 - A mirror added to the mirror store below the last committed id while an

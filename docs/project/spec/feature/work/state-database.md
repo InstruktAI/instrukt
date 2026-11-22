@@ -145,13 +145,24 @@ Version 32 removes the history tables (`history_conversations`, `history_fts`,
 when none of them holds a row, so a database created at the current schema
 holds none. Tables that hold rows stay until the history store has copied them
 (`project/instrukt/spec/feature/runner/history`); it then drops them in one
-transaction under the writer lock and has this database reclaim the freed
-space. Reclaiming rewrites the database without its free pages and checkpoints
-it, under the writer lock; the file shrinks at the first complete checkpoint,
-and nothing but that move invokes it. A database past version 31 is refused by
-earlier builds, so no earlier build writes history here once the move has
-begun, and the history store creates a missing database at the current schema
-for the same reason.
+transaction and has this database reclaim the freed space, in one hold of the
+writer lock. Nothing but that move invokes reclaiming. A database past version
+31 is refused by earlier builds, so no earlier build writes history here once
+the move has begun, and the history store creates a missing database at the
+current schema for the same reason.
+
+Reclaiming rewrites the database without its free pages and then runs one
+checkpoint; it is not a transaction, and the writer lock is held across both.
+The rewrite commits to the write-ahead log: from then on the database holds no
+free pages, while the database file keeps its length until a checkpoint has
+applied every committed change to it. The checkpoint that follows the rewrite
+does that and shortens the file, unless another connection is then reading a
+snapshot taken before the rewrite; it does not wait for that reader. Where
+such a reader prevents it, the file shortens at the next checkpoint that
+reaches the end of the log, which SQLite runs after a commit once the log
+passes its automatic threshold and when the last connection to the database
+closes. Reclaiming does not truncate the log file `-wal`, which keeps its
+length and is reused by later writes.
 <!-- /planned:history-isolated-store-and-batched-import -->
 
 Persisted runtime requests and manual standing reservations enter domain code
