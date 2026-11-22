@@ -53,7 +53,8 @@ runner and event capability. Workflow stores no phase.
 **Review coverage**
 : Whether every commit an integration candidate adds to the canonical branch
   is an independently approved head, reproduced mechanically from approved or
-  canonical content, or exempted by its author.
+  canonical content, a reproduced revert of a failing delivery, or exempted by
+  its author.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -250,8 +251,9 @@ remain agent judgments.
 
 <!-- planned:event-driven-pr-review-gate -->
 A candidate's review coverage is derived on request from the repository,
-work's records and what the runner observed on GitHub; it is a derived value
-and is stored nowhere by workflow. Its rule belongs to
+work's answer on each commit's current review evidence and the runner's red
+observation of the canonical head; it is a derived value and is stored nowhere
+by workflow. Its rule belongs to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
 earns is work's record and the review it otherwise owes is the runner's
 request.
@@ -355,9 +357,11 @@ The context map indexes the cross-cutting architecture design.
 
 <!-- planned:event-driven-pr-review-gate -->
 - **Workflow → runner (review coverage) — Customer / Supplier:** workflow
-  supplies an active candidate's review coverage; the runner supplies what it
-  observed on GitHub: the reviewer bot's review statuses on the heads the
-  candidate merges and the canonical head's CI result.
+  supplies an active candidate's review coverage; the runner supplies the
+  canonical head's CI result as it observed it.
+- **Work → workflow (review coverage) — Customer / Supplier:** work supplies
+  which review evidence is current for a commit; the review status a commit
+  carries on GitHub is no input to coverage.
 <!-- /planned:event-driven-pr-review-gate -->
 
 

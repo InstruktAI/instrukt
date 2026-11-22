@@ -69,17 +69,26 @@ runner owns dispatch, and the configured runtime owns conversations.
 <!-- planned:event-driven-pr-review-gate -->
 **Head verdict**
 : An independent review's recorded outcome for one exact commit that no todo's
-  record carries: a judgment of that commit, delivered to GitHub as the
-  reviewer bot's review status on it and as a review on each pull request it
-  heads.
+  record carries: a judgment of the commits from its pinned base up to that
+  commit, delivered to GitHub as the reviewer bot's review status on it and as
+  a review on each pull request it heads.
+
+**Pinned base**
+: The commit a review starts from, fixed by instrukt and never chosen by the
+  reviewer: the review request's base, or for an unrequested review the head's
+  merge base with the canonical branch.
 
 **Exemption**
-: The recorded decision of a commit's own author that it owes no independent
-  review under `general/policy/commits`.
+: The recorded decision that a commit owes no independent review under
+  `general/policy/commits`, made by its author.
 
 **Derived approval**
 : The record that an integration candidate's content is covered, from
   workflow's finding and with no review of its own.
+
+**Evidence record**
+: Review evidence as GitHub carries it on the commit it is about: the form in
+  which it reaches another computer.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -117,13 +126,15 @@ Preparation head reviews belong to the todo record: exact clean head, complete f
 
 <!-- planned:event-driven-pr-review-gate -->
 Work also owns review evidence for exact commits that no todo's record
-carries: head verdicts, exemptions and derived approvals, their admission and
-their publication as the reviewer bot's pull-request review and review status.
-`instrukt review record`, `instrukt review exempt` and `instrukt review show`
-are their published contract
+carries: head verdicts, exemptions and derived approvals, their admission,
+which of them is current for a commit, their reflection as evidence records
+and their publication as the reviewer bot's pull-request review and review
+status. `instrukt review record`, `instrukt review exempt` and
+`instrukt review show` are their published contract
 (`project/instrukt/spec/feature/work/github-apps`). Which commits are owed a
-review is the runner's decision, whether a candidate's content is covered is
-workflow's, and how a head is reviewed is its review procedure's.
+review and which review requests exist is the runner's decision, whether a
+candidate's content is covered is workflow's, and how a head is reviewed is its
+review procedure's.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Canonical fields
@@ -183,20 +194,26 @@ and issues installation credentials under
 
 - **Root entity:** the review evidence of one exact commit of a project's
   repository.
-- **Contains:** its head verdict versions, each with verdict, base, report and
-  reviewing session; its exemption; for an integration candidate its derived
-  approval with the coverage it rests on; and what has been published of the
-  current version to each destination.
-- **Invariants:** evidence is recorded before anything of it is published; a
-  verdict names one commit and no other commit inherits it; a verdict's
-  reviewing session authored none of the reviewed commits; only the reviewer
-  identity publishes it. Admission, publication, storage and readiness belong
-  to `project/instrukt/spec/feature/work/github-apps`.
+- **Contains:** its head verdict versions, each with verdict, pinned base,
+  report, reviewing session and the request it answers; its exemption; for an
+  integration candidate its derived approval with the coverage it rests on;
+  its evidence records; and what has been published of the current evidence to
+  each destination.
+- **Invariants:** evidence is recorded before anything of it is published, and
+  its evidence record before its status and reviews; a verdict names one
+  commit and no other commit inherits it; a verdict covers every commit from
+  its pinned base, which its reviewer cannot narrow; no reviewed commit names
+  the verdict's reviewing session as its author; a commit's review is settled
+  by the first verdict admitted for it; a verdict recorded on this computer
+  leads what GitHub still shows of an earlier one; only the reviewer identity
+  publishes it. Admission, currency, reflection, publication, storage and
+  readiness belong to `project/instrukt/spec/feature/work/github-apps`.
 - **Identifier:** project and commit.
 - **Lifecycle:** recorded by the reviewing session, by the commit's author for
   an exemption, or by the runner through work's command contract for a derived
-  approval; published on ticks; kept while current and retired as history
-  under the same contract.
+  approval; reflected and published on ticks; read from its evidence records
+  by a computer that starts serving the project; kept while current and
+  retired as history under the same contract.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Domain events emitted
@@ -277,14 +294,17 @@ owning design snippet or decision record is declared.
 
 <!-- planned:event-driven-pr-review-gate -->
 - **Work → runner (automatic review)** — customer-supplier. Work answers whether
-  a pull request is a todo's, whether a commit's verdict is recognised and
+  a pull request is a todo's, which review evidence is current for a commit and
   whether both identities are ready. Through its command contract it records a
   derived approval, carrying the coverage finding the runner read from
-  workflow, and publishes outstanding verdicts to the pull requests the runner
-  observed.
+  workflow, and reflects and publishes outstanding evidence to the pull
+  requests the runner observed.
 - **Runner → work (automatic review)** — customer-supplier. The runner supplies
-  the review requests it delivered to a session, which a head verdict's
-  admission consults.
+  a commit's review requests with their standing and pinned base, which a head
+  verdict's admission consults, and the evidence records it read from GitHub.
+- **Work → workflow (review coverage)** — customer-supplier. Work answers which
+  evidence is current for a commit; workflow reads approval of a head that is
+  not a todo's, and exemptions, from that answer alone.
 <!-- /planned:event-driven-pr-review-gate -->
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation

@@ -109,10 +109,10 @@ Automatic review adds these crossings; their composition is the review gate in
 | --- | --- | --- |
 | configuration → runner, work, workflow | Customer / Supplier | The per-project automatic-review opt-in |
 | work → configuration, runner | Customer / Supplier | The readiness of the project identity to observe and of the reviewer identity to publish, consulted where the opt-in is admitted and by installation inspection |
-| work → runner | Customer / Supplier | Whether a pull request is a todo's and whether a commit's verdict is recognised; recording a derived approval and publishing outstanding verdicts through work's command contract |
-| runner → work | Customer / Supplier | The review requests the runner delivered to a session, consulted when a head verdict is admitted |
-| work → workflow | Customer / Supplier | Head verdicts and exemptions as coverage evidence |
-| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's records and what the runner observed on GitHub |
+| work → runner | Customer / Supplier | Whether a pull request is a todo's and which review evidence is current for a commit; recording a derived approval and reflecting and publishing outstanding evidence through work's command contract |
+| runner → work | Customer / Supplier | A commit's review requests, each with its number, whether it is queued, handed to a session or ended before reaching one, and its pinned base, consulted when a head verdict is admitted; the evidence records the runner read from GitHub |
+| work → workflow | Customer / Supplier | Which review evidence is current for a commit: the only source of a non-todo head's approval and of exemptions in coverage |
+| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
 <!-- /planned:event-driven-pr-review-gate -->
 
 Workflow and runner coordinate integration without making the workflow engine

@@ -60,10 +60,15 @@ missing:
   an event response;
 - the project's code is not on GitHub
   (`project/instrukt/spec/feature/work/github-record`);
-- no published procedure answers `runner.review_needed` for the project
-  (`project/instrukt/spec/feature/runner/procedure-subscription-routing`);
-- the project identity cannot read the repository's pull requests and commit
-  statuses, or the reviewer identity cannot publish pull-request reviews and
+- the published set for the project does not hold exactly one procedure that
+  subscribes to `runner.review_needed` by that exact type under the
+  `commit-reviewer` role, the role whose App publishes the verdict
+  (`project/instrukt/spec/feature/runner/procedure-subscription-routing`,
+  `project/instrukt/spec/feature/work/github-apps`). A pattern that merely
+  matches the type, a procedure of another role and a second such procedure
+  each leave the finding standing;
+- the project identity cannot read the repository's pull requests, or the
+  reviewer identity cannot publish evidence records, pull-request reviews and
   commit statuses there, as work's readiness reports each
   (`project/instrukt/spec/feature/work/github-apps`, Readiness for automatic
   review).

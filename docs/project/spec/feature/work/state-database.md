@@ -41,7 +41,10 @@ meaning and the writes of the conversation tables.
   in `state/review.db` and their publication records in
   `state/review-publication.db`, each under its own lock and never under the
   writer lock (`project/instrukt/spec/feature/work/github-apps`, Review
-  evidence storage).
+  evidence storage). The pages the runner reads for automatic review live in
+  `state/review-observation.db` under its own lock
+  (`project/instrukt/spec/feature/runner/pull-request-review`, Observation
+  store).
 <!-- /planned:event-driven-pr-review-gate -->
 - **No file stores:** the work record and the runner's state have no other
   home. Directories left by earlier builds (`state/work/`, `state/runner/`)

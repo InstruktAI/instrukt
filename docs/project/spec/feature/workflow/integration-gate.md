@@ -82,33 +82,43 @@ queue does not select, merge or discard candidates on its behalf.
 ### Review coverage of a candidate
 
 On a project that opted in to automatic review, each tick that observes an
-active candidate without the reviewer bot's review status derives whether the
-content the candidate adds to the canonical branch is covered. Coverage applies
-the review-currency derivation of
+active candidate with no verdict of its own and no review request queued or in
+flight derives whether the content the candidate adds to the canonical branch
+is covered. Coverage applies the
+review-currency derivation of
 `project/instrukt/spec/feature/workflow/artifact-currency` to the candidate: it
 follows the candidate's first-parent commits back to the canonical branch, and
 each of them must be one of these.
 
 | Commit on the candidate's first-parent line | Covered when | Evidence |
 | --- | --- | --- |
-| An approved head | It is exactly a head that holds a current independent approval. It covers every commit it contains. | A finalized commit's or a preparation head's approval in the todo's record (`project/instrukt/spec/feature/workflow/delivery-cycle`, `project/instrukt/spec/feature/workflow/preparation`); for any other head, an approving head verdict in work's record or the reviewer bot's approving review status on that commit (`project/instrukt/spec/feature/work/github-apps`). |
+| An approved head | It is exactly a head that holds a current independent approval of everything it adds to the canonical branch. It covers every commit it contains. | A finalized commit's or a preparation head's approval in the todo's record (`project/instrukt/spec/feature/workflow/delivery-cycle`, `project/instrukt/spec/feature/workflow/preparation`). For any other head, work's current evidence for that commit is an approving head verdict whose pinned base the canonical branch contains (`project/instrukt/spec/feature/work/github-apps`). |
 | A merge of an approved head | Its second parent is exactly such a head, and its tree is what git's own merge of its two parents produces. A commit that an approved head merely contains, and a head that contains an approved commit, are not approved heads. | The head's approval as above; the merge reproduced from its parents. |
 | A merge of the canonical branch | Its second parent is contained in the canonical branch, and its tree is what git's own merge of its two parents produces. | Reproduced from its parents. |
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
-| A commit its author exempted | The session that authored it recorded that it owes no independent review under `general/policy/commits`. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
+| A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
+| A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
 
-A candidate that restores a failing canonical branch is covered as a whole:
-the canonical head it is based on is one the runner observed red, and its tree
-equals the tree of an earlier commit on the canonical branch's first-parent
-line. Such a candidate adds no content the canonical branch has not held. A
-revert that keeps later deliveries is a new combination and is derived commit
-by commit like any other candidate.
+Approval of a head that is not a todo's is read from work's answer alone
+(`project/instrukt/spec/feature/work/github-apps`, Evidence records on GitHub).
+That answer puts a verdict recorded on this computer before whatever GitHub
+still shows of an earlier one, and the review status a head carries is never
+read as its approval: a head whose current verdict is needs-work is not an
+approved head, whatever status an earlier verdict left on it.
+
+The commits a red head's promotion added are the first-parent commits after
+the canonical head it was promoted from, up to that head. Where work holds no
+evidence of the red head as a candidate, that extent is not known and no
+commit is covered as a revert. A revert that reaches further back than that
+promotion, or a tree some earlier point of the canonical branch once had,
+removes deliveries the red observation says nothing about and is not covered
+this way.
 
 | Finding | What follows |
 | --- | --- |
-| Every commit is covered | Work records a derived approval with the canonical head and every covering item, and publishes the review status on the candidate commit (`project/instrukt/spec/feature/work/github-apps`). |
-| A commit is not covered | The candidate owes a review. The runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Review requests), and that review's verdict is the candidate's review status. |
-| The repository cannot answer | Nothing is recorded and nothing is asked; the next tick derives again. |
+| Every commit is covered | Work records a derived approval with the canonical head and every covering item, and publishes it (`project/instrukt/spec/feature/work/github-apps`). |
+| A commit is not covered | The candidate owes a review. The runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
+| The repository cannot answer, or the evidence records of a commit the finding depends on have not been read from GitHub yet | Nothing is recorded and nothing is asked; the next tick derives again. |
 
 A candidate is never approved on its covered part alone, and a different
 candidate commit is derived afresh. Whether a commit owes review stays its
@@ -168,10 +178,11 @@ warrants a bug, deduplicates against existing work and files it once when
 warranted; the runner never turns every red check into a bug automatically.
 
 <!-- planned:event-driven-pr-review-gate -->
-On a project that requires the review status, a candidate that restores the
-canonical branch to content it held before is covered as a restoration and
-carries the status without waiting for a review (Review coverage of a
-candidate). How far to restore remains the integrator's judgment.
+On a project that requires the review status, a candidate that reverts the
+failing delivery of a red canonical head is covered by reproduction and carries
+the status without waiting for a review (Review coverage of a candidate). Which
+delivery to revert remains the integrator's judgment; a recovery that removes
+more than the red head's own promotion added is reviewed as an exact candidate.
 <!-- /planned:event-driven-pr-review-gate -->
 
 When the integrator cannot restore the baseline, the condition is an anomaly

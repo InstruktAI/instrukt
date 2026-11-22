@@ -71,11 +71,12 @@ credentials, not a webhook or separate failure delivery service.
 
 <!-- planned:event-driven-pr-review-gate -->
 On a project that opted in to automatic review, the same conditional pass reads
-the repository's open pull requests, every page, and, for an eligible head
-without a recorded verdict, that commit's statuses and that pull request's
-reviews, with a credential scoped to those reads. An owed head produces
-`runner.review_needed` and wakes its subscribed reviewer; which heads are owed
-and how a request is repeated are owned by
+the repository's open pull requests, every page, and, for a commit work holds
+no review evidence for, the evidence records GitHub carries on it, with a
+credential scoped to those reads. These pages and their validators are kept in
+that source's own store, not in the state database. An owed head produces
+`runner.review_needed` for the procedure subscribed to it; which heads are
+owed, how a request is repeated and where the pages are kept are owned by
 `project/instrukt/spec/feature/runner/pull-request-review`. On such a project
 the reviewer bot's review status is not a CI result: the candidate, canonical
 and dependency-update CI sources leave it out
