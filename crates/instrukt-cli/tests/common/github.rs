@@ -45,7 +45,8 @@
 //! stay received. The fake listens on its address for its whole life and
 //! relays each connection to its HTTP server on a private address while it
 //! answers; a failure of that transport fails the test when the fake is
-//! dropped. Rate limiting and other failures are one-shot answers queued
+//! dropped, and a [`FakeGitHub::resume`] once nothing accepts on the
+//! address fails at once with it. Rate limiting and other failures are one-shot answers queued
 //! with [`FakeGitHub::respond_once`] or [`FakeGitHub::rate_limit_next`].
 
 use std::collections::{BTreeMap, VecDeque};
@@ -191,8 +192,12 @@ impl StatusState {
 }
 
 /// The running fake. Dropping it stops the server and releases its
-/// address. Any failure of the fake's own transport or threads, including
-/// one that leaves the address held, then fails the test.
+/// address. A failure of the fake's own transport is recorded with its
+/// operation and cause: an operation on a socket that failed, a relay thread
+/// that could not be started, a panic in any of the fake's threads, or a
+/// drop that could not end the accept thread and so leaves the address
+/// held. Dropping the fake then fails the test, or, when the test is
+/// already failing, adds the report to its output.
 pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
@@ -248,16 +253,30 @@ struct Relayed {
     server: Option<(SocketAddr, TcpStream)>,
 }
 
+impl Relayed {
+    /// Ends the connection on both sides, whatever exchange it is in.
+    fn close(self) {
+        // A side its peer already closed leaves nothing to end.
+        let _client_closed = self.client.shutdown(Shutdown::Both);
+        if let Some((_, server)) = self.server {
+            let _server_closed = server.shutdown(Shutdown::Both);
+        }
+    }
+}
+
 impl Front {
     /// Ends every relayed connection on both sides, whatever exchange it is
     /// in, and forgets it.
     fn close_relayed(&mut self) {
         for relayed in std::mem::take(&mut self.relayed).into_values() {
-            // A side its peer already closed leaves nothing to end.
-            let _client_closed = relayed.client.shutdown(Shutdown::Both);
-            if let Some((_, server)) = relayed.server {
-                let _server_closed = server.shutdown(Shutdown::Both);
-            }
+            relayed.close();
+        }
+    }
+
+    /// Ends relayed connection `id` on both sides and forgets it.
+    fn close(&mut self, id: u64) {
+        if let Some(relayed) = self.relayed.remove(&id) {
+            relayed.close();
         }
     }
 
@@ -694,11 +713,9 @@ impl Drop for FakeGitHub {
                 TcpStream::connect(self.addr).map(Some)
             };
             match woken {
+                // The thread records its own panic.
                 Ok(_wake) => {
-                    if accepting.join().is_err() {
-                        lock_front(&self.front)
-                            .fail("accept on the public address", &"the thread panicked");
-                    }
+                    let _ended = accepting.join();
                 }
                 // Joining a thread nothing can wake would wait for a client
                 // that may never come. The thread is left blocked, holding
@@ -710,11 +727,9 @@ impl Drop for FakeGitHub {
             }
         }
         self.server.unblock();
-        if let Some(serving) = self.serving.take()
-            && serving.join().is_err()
-        {
-            lock_front(&self.front)
-                .fail("serve the HTTP server's requests", &"the thread panicked");
+        if let Some(serving) = self.serving.take() {
+            // The thread records its own panic.
+            let _ended = serving.join();
         }
         let failures = std::mem::take(&mut lock_front(&self.front).failures);
         if failures.is_empty() {
@@ -776,8 +791,9 @@ fn accept(
             transport.reach = Reach::Unattended;
         }
         drop(transport);
+        // Each relay records its own panic.
         for relay in relays {
-            let _joined = relay.join();
+            let _ended = relay.join();
         }
     })
 }
@@ -833,8 +849,17 @@ fn accept_connections(
             },
         );
         drop(transport);
+        // A finished relay recorded its own panic; its handle has nothing
+        // left to tell.
         relays.retain(|relay| !relay.is_finished());
-        relays.push(relay(client, backend, id, Arc::clone(front)));
+        match relay(client, backend, id, Arc::clone(front)) {
+            Ok(relay) => relays.push(relay),
+            Err(cause) => {
+                let mut transport = lock_front(front);
+                transport.fail("start a relay for a connection", &cause);
+                transport.close(id);
+            }
+        }
     }
 }
 
@@ -853,23 +878,25 @@ fn run_part(front: &Mutex<Front>, operation: &str, part: impl FnOnce()) {
 }
 
 /// Relays one client connection to the HTTP server until either side ends
-/// it, then forgets it.
+/// it, then ends and forgets it, also after a panic in the relay.
 fn relay(
     client: TcpStream,
     backend: SocketAddr,
     id: u64,
     front: Arc<Mutex<Front>>,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        match TcpStream::connect(backend) {
-            Ok(server) => {
-                if hold_server_side(&front, id, &server) {
-                    pipe(client, server, &front);
+) -> io::Result<JoinHandle<()>> {
+    std::thread::Builder::new().spawn(move || {
+        run_part(&front, "relay a connection", || {
+            match TcpStream::connect(backend) {
+                Ok(server) => {
+                    if hold_server_side(&front, id, &server) {
+                        pipe(client, server, &front);
+                    }
                 }
+                Err(cause) => lock_front(&front).fail("connect to the HTTP server", &cause),
             }
-            Err(cause) => lock_front(&front).fail("connect to the HTTP server", &cause),
-        }
-        lock_front(&front).relayed.remove(&id);
+        });
+        lock_front(&front).close(id);
     })
 }
 
@@ -910,7 +937,7 @@ fn peer_left_or_interrupted(cause: &io::Error) -> bool {
 
 /// Copies bytes both ways between `client` and `server`; when the server
 /// side ends, both connections end.
-fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Mutex<Front>) {
+fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Arc<Mutex<Front>>) {
     let (mut request_from, mut request_to) = match (client.try_clone(), server.try_clone()) {
         (Ok(from), Ok(to)) => (from, to),
         (Err(cause), _) | (_, Err(cause)) => {
@@ -918,18 +945,30 @@ fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Mutex<Front>) {
             return;
         }
     };
-    let upstream = std::thread::spawn(move || {
-        // Either side closing ends the copy; the half-close tells the
-        // server no further request follows.
-        let _copied = io::copy(&mut request_from, &mut request_to);
-        let _closed = request_to.shutdown(Shutdown::Write);
+    let copying = Arc::clone(front);
+    let upstream = std::thread::Builder::new().spawn(move || {
+        run_part(&copying, "copy a relayed request", || {
+            // Either side closing ends the copy; the half-close tells the
+            // server no further request follows.
+            let _copied = io::copy(&mut request_from, &mut request_to);
+            let _closed = request_to.shutdown(Shutdown::Write);
+        });
     });
+    let upstream = match upstream {
+        Ok(upstream) => upstream,
+        // The relay ends both sides of the connection when this returns.
+        Err(cause) => {
+            lock_front(front).fail("start a relay's request copy", &cause);
+            return;
+        }
+    };
     // Either side closing ends the copy, and ending both connections
     // releases the upstream copy.
     let _copied = io::copy(&mut server, &mut client);
     let _client_closed = client.shutdown(Shutdown::Both);
     let _server_closed = server.shutdown(Shutdown::Both);
-    let _joined = upstream.join();
+    // The copy records its own panic.
+    let _ended = upstream.join();
 }
 
 /// Serves the HTTP server's requests until it is unblocked.
@@ -939,9 +978,11 @@ fn serve_requests(
     state: Arc<Mutex<State>>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        for request in server.incoming_requests() {
-            serve(request, &state, &front);
-        }
+        run_part(&front, "serve the HTTP server's requests", || {
+            for request in server.incoming_requests() {
+                serve(request, &state, &front);
+            }
+        });
     })
 }
 
