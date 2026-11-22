@@ -250,6 +250,7 @@ erase the associated GitHub issue or its history. The withdrawing agent
 removes that slug's pending documentation markers in a doc commit; withdrawal
 does not remove them automatically.
 
+<!-- planned-change:archive-terminal-todo-sessions -->
 `instrukt todo deliver <slug> --commit <sha>` records the confirmed completion evidence.
 Repository-work delivery requires the actual delivered commit, supplied by the
 integrator after the integration gate succeeds. Delivery evidence belongs in
@@ -260,6 +261,19 @@ changes no delivered record. The integrator executes removal outside evaluation.
 Claim release belongs to the work lane before integration handoff. After delivery,
 the integrator removes the todo's one worktree from the project folder, retaining
 failed removal as owed work and preserving the runtime thread record.
+<!-- change:archive-terminal-todo-sessions -->
+`instrukt todo deliver <slug> --commit <sha>` records the confirmed completion evidence.
+Repository-work delivery requires the actual delivered commit, supplied by the
+integrator after the integration gate succeeds. Delivery evidence belongs in
+the record; deciding whether a candidate passes the integration gate belongs
+to workflow. Delivered entries are read-only. `instrukt todo work <slug>` may derive and
+return the delivered workspace-removal obligation from retained evidence; it
+changes no delivered record. The integrator executes removal outside evaluation.
+Claim release belongs to the work lane before integration handoff. After delivery
+or withdrawal, the work record retains its recorded `sessions:` bindings and
+attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
+for audit and for terminal session retirement under `general/principle/session-lifecycle`.
+<!-- /planned-change:archive-terminal-todo-sessions -->
 
 Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded phase assignment, preserving original preparation branches and ownership across successive renames.
 
