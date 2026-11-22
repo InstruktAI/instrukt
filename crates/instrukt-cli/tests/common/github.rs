@@ -211,24 +211,47 @@ enum Reach {
     Ending,
 }
 
-/// The public address's transport state: its reach and the client side of
-/// every connection it is relaying.
+/// The public address's transport state: its reach and both sides of every
+/// connection it is relaying.
 struct Front {
     reach: Reach,
     next_connection: u64,
-    relayed: BTreeMap<u64, TcpStream>,
+    relayed: BTreeMap<u64, Relayed>,
     /// Failures of the fake's own transport, each with its operation and
     /// cause, reported to the test when the fake ends.
     failures: Vec<String>,
 }
 
+/// One connection the fake is relaying.
+struct Relayed {
+    client: TcpStream,
+    /// The relay's connection to the HTTP server once it is made, with the
+    /// address the HTTP server sees its requests come from.
+    server: Option<(SocketAddr, TcpStream)>,
+}
+
 impl Front {
-    /// Ends every relayed connection for the client.
+    /// Ends every relayed connection on both sides, whatever exchange it is
+    /// in, and forgets it.
     fn close_relayed(&mut self) {
-        for client in std::mem::take(&mut self.relayed).into_values() {
-            // A client that already closed its side leaves nothing to end.
-            let _closed = client.shutdown(Shutdown::Both);
+        for relayed in std::mem::take(&mut self.relayed).into_values() {
+            // A side its peer already closed leaves nothing to end.
+            let _client_closed = relayed.client.shutdown(Shutdown::Both);
+            if let Some((_, server)) = relayed.server {
+                let _server_closed = server.shutdown(Shutdown::Both);
+            }
         }
+    }
+
+    /// Whether the HTTP server's request from `peer` came over a connection
+    /// the fake is still relaying.
+    fn relays_from(&self, peer: SocketAddr) -> bool {
+        self.relayed.values().any(|relayed| {
+            relayed
+                .server
+                .as_ref()
+                .is_some_and(|(from, _)| *from == peer)
+        })
     }
 
     fn fail(&mut self, operation: &str, cause: &dyn std::fmt::Display) {
@@ -298,9 +321,15 @@ impl FakeGitHub {
     /// response, and no request reaches the fake's state or its request
     /// record. The address stays the fake's.
     pub fn stop(&mut self) {
-        let mut front = lock_front(&self.front);
-        front.reach = Reach::Stopped;
-        front.close_relayed();
+        {
+            let mut front = lock_front(&self.front);
+            front.reach = Reach::Stopped;
+            front.close_relayed();
+        }
+        // A request admitted before the switch does its model work under
+        // the state lock; taking that lock once lets it finish before this
+        // returns, and every later request finds its connection closed.
+        drop(self.state.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
     /// Answers again on the same address, with the state it had.
@@ -681,7 +710,13 @@ fn accept(
             };
             let id = transport.next_connection;
             transport.next_connection += 1;
-            transport.relayed.insert(id, registered);
+            transport.relayed.insert(
+                id,
+                Relayed {
+                    client: registered,
+                    server: None,
+                },
+            );
             drop(transport);
             relays.retain(|relay| !relay.is_finished());
             relays.push(relay(client, backend, id, Arc::clone(&front)));
@@ -702,11 +737,39 @@ fn relay(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         match TcpStream::connect(backend) {
-            Ok(server) => pipe(client, server, &front),
+            Ok(server) => {
+                if hold_server_side(&front, id, &server) {
+                    pipe(client, server, &front);
+                }
+            }
             Err(cause) => lock_front(&front).fail("connect to the HTTP server", &cause),
         }
         lock_front(&front).relayed.remove(&id);
     })
+}
+
+/// Registers the relay's connection to the HTTP server with relayed
+/// connection `id`, before any request crosses it. False when the fake
+/// stopped since it accepted the connection, which closed it, or when the
+/// server side cannot be held.
+fn hold_server_side(front: &Mutex<Front>, id: u64, server: &TcpStream) -> bool {
+    let held = server
+        .local_addr()
+        .and_then(|from| Ok((from, server.try_clone()?)));
+    let mut transport = lock_front(front);
+    match held {
+        Ok(held) => match transport.relayed.get_mut(&id) {
+            Some(relayed) => {
+                relayed.server = Some(held);
+                true
+            }
+            None => false,
+        },
+        Err(cause) => {
+            transport.fail("hold a relayed connection", &cause);
+            false
+        }
+    }
 }
 
 /// Whether an accept failed only because the connection's client left
@@ -744,9 +807,7 @@ fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Mutex<Front>) {
     let _joined = upstream.join();
 }
 
-/// Serves the HTTP server's requests until it is unblocked. Holding the
-/// transport state across each request is what keeps a request that was in
-/// flight when the fake stopped away from its state.
+/// Serves the HTTP server's requests until it is unblocked.
 fn serve_requests(
     server: Arc<tiny_http::Server>,
     front: Arc<Mutex<Front>>,
@@ -754,10 +815,7 @@ fn serve_requests(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         for request in server.incoming_requests() {
-            let transport = lock_front(&front);
-            if transport.reach == Reach::Answering {
-                serve(request, &state);
-            }
+            serve(request, &state, &front);
         }
     })
 }
@@ -1281,7 +1339,7 @@ impl Reply {
     }
 }
 
-fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
+fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front: &Mutex<Front>) {
     let method = request.method().as_str().to_owned();
     let url = request.url().to_owned();
     let (path, query) = match url.split_once('?') {
@@ -1300,8 +1358,15 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         .collect();
     let mut body = String::new();
     let _read = request.as_reader().read_to_string(&mut body);
+    let peer = request.remote_addr().copied();
 
     let mut guard = state.lock().unwrap();
+    // Only a request on a connection the fake still relays reaches its
+    // state. One whose connection `stop` closed is dropped unanswered; the
+    // answer the HTTP server then writes meets a closed connection.
+    if !peer.is_some_and(|peer| lock_front(front).relays_from(peer)) {
+        return;
+    }
     let canned = guard
         .canned
         .iter()
