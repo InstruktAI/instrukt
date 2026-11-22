@@ -1,50 +1,56 @@
 //! Sidecar-free SQLite inspection. A stable main/WAL image is reconstructed in
 //! memory through the last checksum-valid commit, then opened by SQLite itself.
 //! WAL framing/checksums: https://www.sqlite.org/fileformat2.html#walformat
-use super::{Connection, StateDbError};
+use super::{Connection, StoreError};
 use std::path::{Path, PathBuf};
 pub(super) fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
     name.into()
 }
-fn bytes(path: &Path) -> Result<Vec<u8>, StateDbError> {
+fn bytes(store: &'static str, path: &Path) -> Result<Vec<u8>, StoreError> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => Err(StateDbError::invalid(path, e.to_string())),
+        Err(e) => Err(StoreError::invalid(store, path, e.to_string())),
     }
 }
-pub(super) fn read(path: &Path) -> Result<Connection, StateDbError> {
+pub(super) fn read(store: &'static str, path: &Path) -> Result<Connection, StoreError> {
     let wal_path = sidecar(path, "-wal");
     let journal = sidecar(path, "-journal");
     for _ in 0..8 {
-        let main = bytes(path)?;
-        let wal = bytes(&wal_path)?;
-        let rollback = bytes(&journal)?;
-        if main != bytes(path)? || wal != bytes(&wal_path)? || rollback != bytes(&journal)? {
+        let main = bytes(store, path)?;
+        let wal = bytes(store, &wal_path)?;
+        let rollback = bytes(store, &journal)?;
+        if main != bytes(store, path)?
+            || wal != bytes(store, &wal_path)?
+            || rollback != bytes(store, &journal)?
+        {
             continue;
         }
         if rollback.iter().any(|b| *b != 0) {
-            return Err(StateDbError::invalid(
+            return Err(StoreError::invalid(
+                store,
                 path,
                 "rollback recovery is pending; inspect after the writing operation completes",
             ));
         }
-        let image = fold(path, main, &wal)?;
-        let mut conn = Connection::open_in_memory().map_err(StateDbError::sqlite(path))?;
+        let image = fold(store, path, main, &wal)?;
+        let sql = StoreError::sqlite(store, path);
+        let mut conn = Connection::open_in_memory().map_err(&sql)?;
         conn.pragma_update(None, "temp_store", "MEMORY")
-            .map_err(StateDbError::sqlite(path))?;
+            .map_err(&sql)?;
         conn.deserialize_read_exact(
             super::rusqlite::MAIN_DB,
             image.as_slice(),
             image.len(),
             false,
         )
-        .map_err(StateDbError::sqlite(path))?;
+        .map_err(&sql)?;
         return Ok(conn);
     }
-    Err(StateDbError::invalid(
+    Err(StoreError::invalid(
+        store,
         path,
         "state changed during inspection; retry the read",
     ))
@@ -66,9 +72,15 @@ fn checksum(bytes: &[u8], big: bool, mut sum: (u32, u32)) -> (u32, u32) {
     }
     sum
 }
-fn fold(path: &Path, mut main: Vec<u8>, wal: &[u8]) -> Result<Vec<u8>, StateDbError> {
+fn fold(
+    store: &'static str,
+    path: &Path,
+    mut main: Vec<u8>,
+    wal: &[u8],
+) -> Result<Vec<u8>, StoreError> {
     let invalid = || {
-        StateDbError::invalid(
+        StoreError::invalid(
+            store,
             path,
             "invalid SQLite/WAL snapshot; retry after the writer completes recovery",
         )

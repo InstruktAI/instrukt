@@ -51,15 +51,29 @@ the services it touched, then step 10.
    the messaging to step 5, and the services to step 6.
 2. **Give the company its repository and its home.** Create the company's
    private repository, one per company, and check it out at
-   `~/.instrukt/companies/<name>/`, where `<name>` is the company's key. In it,
-   run `instrukt config init --company <name>`, then `instrukt hooks install`:
-   instrukt's pre-commit section renders the home's `AGENTS.md` into every
-   commit made there. Run `instrukt config validate --company <name>`.
-3. **Write the company's knowledge.** In the home, write `AGENTS.master.md`:
-   what the company does, how its people work, who owns and who organizes it,
-   and where its people find the agent; a longer part goes into a document in
-   the home's `docs/` folder that the master names as a required read by its
-   path. Commit it in the home.
+   `~/.instrukt/companies/<name>/`, where `<name>` is the company's key.
+   Protect its default branch under `general/policy/commits` so human and agent
+   changes land through reviewed worktree heads and integration rather than
+   direct pushes. Automated skill publication must use a route compatible with
+   `general/policy/commits`'s single-writer rule rather than granting a second
+   direct writer on the default branch; where the repository's skill publisher
+   still requires pushing directly to the default branch, leave that part of
+   rollout open and report it in step 10. In the home, run `instrukt config
+   init --company <name>`, then `instrukt hooks install`: instrukt's pre-commit
+   section renders the home's `AGENTS.md` into every commit made there. Run
+   `instrukt config validate --company <name>`.
+3. **Write the company's knowledge.** Author the company's knowledge in a
+   separate worktree rather than in the serving checkout at
+   `~/.instrukt/companies/<name>/`, so the serving home stays on the reviewed
+   default branch throughout authoring and review (`general/policy/commits`).
+   Create `AGENTS.master.md` for the company's purpose and top-level required
+   reads, and place the company's knowledge — what it does, how its people
+   work, who owns and organizes it, and where people reach the agent — in
+   documents under `docs/` referenced by relative path. Follow the company home
+   knowledge rules in `general/procedure/doc-snippet-authoring` and
+   `general/policy/snippet-value-contract` (present-tense current truth without
+   historical narration; self-contained with no references outside the
+   company's own documents). Commit in the worktree.
 4. **Choose the agent's profiles, where the company needs its own.** When the
    company's agent is to run on other agent profiles than the computer's,
    declare `profiles` as `instrukt config schema --company <name> profiles`
@@ -95,12 +109,23 @@ the services it touched, then step 10.
    `instrukt sync` in it. Then run `instrukt install`, then
    `instrukt install --check` and `instrukt events status`. Each names what is
    unmet or not connected; correct what it names and run them again.
-8. **Publish the company's final knowledge.** In the home, run `instrukt docs
-   render --check`; it names a stale `AGENTS.md` or a reference the rendering
-   refuses, which you correct and commit before going on. With the working
-   tree clean, push the home's main to the company's repository and read that
-   the repository's main is the home's head. The proof below runs on that
-   revision.
+8. **Publish the company's final knowledge.** In the separate worktree holding
+   the company's committed documents, run `instrukt docs render --check`; it
+   names a stale `AGENTS.md` or a reference the rendering refuses, which you
+   correct (running `instrukt docs render` if hooks did not regenerate
+   `AGENTS.md`) and commit before going on. Push the worktree branch and open
+   the pull request so PR validation checks run, and obtain independent commit
+   review bound to that committed head (`general/policy/documentation-discipline`,
+   `general/policy/commits`). When the repository can verify and promote its
+   exact integration candidate under `general/policy/commits`, hand the
+   reviewed head to integration once checks and review pass, fast-forward the
+   serving company home checkout to the repository's updated default branch,
+   and remove the authoring worktree; the proof below runs on that revision.
+   When the repository carries only PR checks (no candidate verification for
+   integration) or its automated publisher is not yet compatible with
+   `general/policy/commits`, retain the reviewed worktree, keep the serving
+   home checkout at its current default branch, and report publication as open
+   in step 10.
 9. **Prove that a person is answered.** With a person of the company present,
    have them address the agent where they talk, and read:
    - the answer arrives in the same conversation and nowhere else;
@@ -132,8 +157,9 @@ the services it touched, then step 10.
 
 - The company's private repository, checked out as its home on this computer,
   with instrukt's hook sections installed and its settings validated.
-- The company's final knowledge, its services included, rendered, committed
-  and pushed to the company's repository.
+- The company's final knowledge, its services included, rendered, reviewed,
+  merged to the company repository's default branch, and checked out in the
+  home.
 - The company's connector declared and connected, or reported as unfinished,
   and its services declared.
 - The proof of step 9 and the report of step 10.

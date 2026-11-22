@@ -262,11 +262,16 @@ change at the owner leaves every copy stale.
 
 ## Scope
 
-Applies to all snippet authoring contexts:
+Applies to all snippet authoring contexts and company home knowledge:
 
 - Manual snippet authoring via `general/procedure/doc-snippet-authoring`.
 - Automated authoring during `sdlc/procedure/project-analysis` via
   `sdlc/procedure/project-analysis`.
+- Company home knowledge (`AGENTS.master.md` and documents anywhere under
+  `docs/` in a company repository): the value test,
+  `general/policy/agent-facing-text`, and all anti-patterns (including
+  Narration) apply in full while company documents remain self-contained
+  without taxonomy IDs or external doctrine references.
 - Future authoring flows (scaffolding, manual updates).
 
 The contract is procedural, not structural. It is enforced by the author

@@ -447,24 +447,47 @@ impl Current<'_> {
         })
     }
 
-    /// Whether a referenced path does not exist on the current canonical
-    /// head: unresolved, so incomplete provenance. Without a canonical head
-    /// nothing resolves; the code comparison already reports that.
+    /// A missing path is unresolved unless its absence at the recorded head
+    /// establishes it as a planned creation. Code comparison handles a missing
+    /// canonical head and intervening commits that touched a planned path.
     fn missing_path(&self, recorded: &Grounding) -> Result<bool, ObservationError> {
-        let Some(head) = &self.canonical else {
+        let Some(now) = &self.canonical else {
             return Ok(false);
         };
         for path in &recorded.referenced_paths {
-            let object = format!("{head}:{}", path.trim_end_matches('/'));
-            if !git::run_output(self.project_root, ["cat-file", "-e", object.as_str()])?
-                .status
-                .success()
-            {
+            let path = path.trim_end_matches('/');
+            match tree_contains_path(self.project_root, now, path)? {
+                Some(true) => continue,
+                None => return Ok(true),
+                Some(false) => {}
+            }
+            let Some(then) = &recorded.head else {
+                return Ok(true);
+            };
+            if then != now && tree_contains_path(self.project_root, then, path)? != Some(false) {
                 return Ok(true);
             }
         }
         Ok(false)
     }
+}
+
+/// A successful empty listing proves absence. An unreadable commit or tree
+/// cannot establish whether the path existed.
+fn tree_contains_path(dir: &Path, head: &CommitSha, path: &str) -> Result<Option<bool>, GitError> {
+    let commit = format!("{head}^{{commit}}");
+    let output = git::run_output(
+        dir,
+        [
+            "--literal-pathspecs",
+            "ls-tree",
+            "--full-tree",
+            &commit,
+            "--",
+            path,
+        ],
+    )?;
+    Ok(output.status.success().then_some(!output.stdout.is_empty()))
 }
 
 /// Whether a non-merge commit between the recorded canonical head and the
@@ -564,4 +587,140 @@ pub(crate) fn readiness_approved(
             change_since(root, root, target, candidate),
             ChangeSinceReview::Unchanged | ChangeSinceReview::CleanUpstreamMerges
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    struct History {
+        repo: TempDir,
+        then: CommitSha,
+        now: CommitSha,
+    }
+
+    impl History {
+        fn new() -> Self {
+            let repo = tempfile::tempdir().unwrap();
+            let dir = repo.path();
+            git::run(dir, ["init", "-q", "-b", "main"]).unwrap();
+            git::run(dir, ["config", "user.name", "Test"]).unwrap();
+            git::run(dir, ["config", "user.email", "test@example.com"]).unwrap();
+            git::run(dir, ["config", "commit.gpgsign", "false"]).unwrap();
+            std::fs::create_dir(dir.join("old")).unwrap();
+            std::fs::write(dir.join("old/file"), "tracked").unwrap();
+            std::fs::write(dir.join("stable.txt"), "tracked").unwrap();
+            git::run(dir, ["add", "old/file", "stable.txt"]).unwrap();
+            git::run(dir, ["commit", "-qm", "record original files"]).unwrap();
+            let then = resolve(dir, "HEAD").unwrap().unwrap();
+            git::run(dir, ["mv", "old", "new"]).unwrap();
+            git::run(dir, ["commit", "-qm", "move original file"]).unwrap();
+            let now = resolve(dir, "HEAD").unwrap().unwrap();
+            Self { repo, then, now }
+        }
+
+        fn change(&self, head: Option<&CommitSha>, paths: &[&str]) -> GroundingChange {
+            let root = self.repo.path();
+            let mut current = Current {
+                home: &Home::at_user_home(root.to_owned()),
+                project_root: root,
+                owned_root: root,
+                todo: &TodoSlug::parse("planned-file").unwrap(),
+                canonical: Some(self.now.clone()),
+                corpus: None,
+                owned_corpus: None,
+                prerequisites: &[],
+            };
+            current
+                .change(&Grounding {
+                    head: head.cloned(),
+                    referenced_paths: paths.iter().map(|path| (*path).to_owned()).collect(),
+                    ..Grounding::default()
+                })
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn an_unrelated_commit_leaves_planned_paths_fresh() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["future.snap", "planned/"]),
+            GroundingChange::default()
+        );
+    }
+
+    #[test]
+    fn an_unrelated_commit_leaves_an_existing_file_fresh() {
+        let history = History::new();
+        let change = history.change(Some(&history.then), &["stable.txt"]);
+        assert!(!change.unresolved);
+        assert_eq!(change.code, CodeChange::Unchanged);
+    }
+
+    #[test]
+    fn creating_a_planned_file_is_code_drift() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["new/file"]),
+            GroundingChange {
+                code: CodeChange::Changed,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn deleting_a_grounded_file_is_unresolved_code_drift() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["future.snap", "old/file"]),
+            GroundingChange {
+                code: CodeChange::Changed,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn deleting_a_grounded_directory_prefix_is_unresolved_code_drift() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["old/"]),
+            GroundingChange {
+                code: CodeChange::Changed,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_path_without_a_recorded_head_remains_unresolved() {
+        let history = History::new();
+        assert_eq!(
+            history.change(None, &["future.snap"]),
+            GroundingChange {
+                code: CodeChange::Uncomparable,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_path_with_an_unknown_recorded_head_remains_unresolved() {
+        let history = History::new();
+        let unknown = super::super::_testing::sha('a');
+        assert_eq!(
+            history.change(Some(&unknown), &["future.snap"]),
+            GroundingChange {
+                code: CodeChange::Uncomparable,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
 }

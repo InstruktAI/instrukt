@@ -224,9 +224,10 @@ pub(crate) struct GroundingChange {
     pub snippets: bool,
     /// A prerequisite artifact's current digest differs.
     pub dependencies: bool,
-    /// A referenced snippet or path does not resolve now: incomplete
-    /// provenance (`artifact-currency`, "Cosmetic settlement with
-    /// incomplete provenance"), never fresh until a judgment assesses it.
+    /// Incomplete provenance (such as a missing referenced snippet) requires
+    /// a drift judgment. A referenced path missing at the canonical head is
+    /// unresolved if it existed at the recorded head or that head is absent
+    /// or unreadable. Absence at both heads establishes a planned creation.
     pub unresolved: bool,
 }
 

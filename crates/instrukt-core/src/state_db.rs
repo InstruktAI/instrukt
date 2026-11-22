@@ -1,6 +1,8 @@
 //! The state database `~/.instrukt/state/instrukt.db`
 //! (`project/instrukt/spec/feature/work/state-database`): one SQLite file in
 //! WAL journal mode holding the local work record and the runner's state.
+//! Retained history is not here: it lives in the runner's history store, and
+//! moving it out of an earlier database is the only history use of this one.
 //!
 //! instrukt is its only writer. Every write runs while the process holds
 //! the per-computer writer lock `~/.instrukt/state/writer.lock`; SQLite's
@@ -13,6 +15,11 @@
 //! The work context owns the file, its migrations and the work tables; the
 //! runner context owns the runner tables. Both reach the file through this
 //! module, which sits in core because both depend on core.
+//!
+//! The machinery is described by [`Store`] — file, lock, migrations and the
+//! name its errors use — so another context's store reuses the same opening,
+//! protection, WAL, migration, refusal and snapshot reading; [`StateDb`] and
+//! [`StateRead`] are the state database's users of it.
 
 mod _schema;
 mod _snapshot;
@@ -22,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+pub use _schema::Migration;
 pub use rusqlite;
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
@@ -35,6 +43,9 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a statement waits on SQLite's own lock, which only another
 /// tool or a crashed writer's recovery holds.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The name the state database's errors use.
+const STATE_DATABASE: &str = "the state database";
 
 /// The schema version this build writes: the number of migrations it
 /// ships.
@@ -89,6 +100,166 @@ impl StateDbError {
     }
 }
 
+/// A store described by [`Store`] could not be opened, migrated, read or
+/// written. Its text names the store it was raised for.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("{store} at {} failed: {source}", path.display())]
+    Sqlite {
+        store: &'static str,
+        path: PathBuf,
+        source: rusqlite::Error,
+    },
+    #[error(
+        "{store} at {} is at schema version {found}, newer than the {known} this instrukt knows; upgrade with `{}`",
+        path.display(), crate::INSTALLER_COMMAND
+    )]
+    Newer {
+        store: &'static str,
+        path: PathBuf,
+        found: u32,
+        known: u32,
+    },
+    #[error("{} is a symbolic link; link the instrukt home or state/ directory instead", path.display())]
+    Symlink { path: PathBuf },
+    #[error(transparent)]
+    Lock(#[from] FsError),
+    #[error("{store} at {} holds a value this build cannot read: {message}", path.display())]
+    Invalid {
+        store: &'static str,
+        path: PathBuf,
+        message: String,
+    },
+}
+
+impl StoreError {
+    fn sqlite<'a>(store: &'static str, path: &'a Path) -> impl Fn(rusqlite::Error) -> Self + 'a {
+        move |source| Self::Sqlite {
+            store,
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+
+    fn invalid(store: &'static str, path: &Path, message: impl Into<String>) -> Self {
+        Self::Invalid {
+            store,
+            path: path.to_path_buf(),
+            message: message.into(),
+        }
+    }
+}
+
+impl From<StoreError> for StateDbError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::Sqlite { path, source, .. } => Self::Sqlite { path, source },
+            StoreError::Newer {
+                path, found, known, ..
+            } => Self::Newer { path, found, known },
+            StoreError::Symlink { path } => Self::Symlink { path },
+            StoreError::Lock(error) => Self::Lock(error),
+            ref invalid @ StoreError::Invalid { ref path, .. } => Self::Invalid {
+                message: invalid.to_string(),
+                path: path.clone(),
+            },
+        }
+    }
+}
+
+/// One SQLite store reached through this module: its file, how its writers
+/// take turns, the migrations it ships (its schema version is their count)
+/// and the name its errors use.
+#[derive(Clone)]
+pub struct Store {
+    pub name: &'static str,
+    pub file: PathBuf,
+    pub lock: StoreLock,
+    pub migrations: &'static [Migration],
+}
+
+/// How a store's writers take turns.
+#[derive(Debug, Clone)]
+pub enum StoreLock {
+    /// The process-re-entrant lock at this file ([`WriterLock`]): a write
+    /// nested in one that already holds it shares the hold. Another process
+    /// is waited for at most `LOCK_TIMEOUT`.
+    Reentrant(PathBuf),
+    /// A plain exclusive lock at this file, owned by the write handle alone
+    /// and waited for at most the given time. A second handle waits for the
+    /// first one, in this process as in another.
+    Exclusive(PathBuf, Duration),
+}
+
+/// What reading a store found when it holds a schema.
+pub enum Read {
+    /// A connection at the store's current schema version.
+    Current(Connection),
+    /// The store is at an older schema version; it is brought forward
+    /// through [`StoreDb::open`] before it is read.
+    Behind,
+}
+
+impl Store {
+    fn state(home: &Home) -> Self {
+        Self {
+            name: STATE_DATABASE,
+            file: home.state_db_file(),
+            lock: StoreLock::Reentrant(home.writer_lock_file()),
+            migrations: _schema::MIGRATIONS,
+        }
+    }
+
+    /// The schema version this build writes for the store.
+    pub fn version(&self) -> u32 {
+        self.migrations.len() as u32
+    }
+
+    /// Opens the store for reading without its lock; `None` when no file
+    /// (or no schema) exists yet, which is empty state. With `snapshot`, an
+    /// existing file is read without opening it on disk or creating
+    /// sidecars, and older state is brought forward in memory only;
+    /// otherwise older state is [`Read::Behind`]. A newer store is refused.
+    pub fn read(&self, snapshot: bool) -> Result<Option<Read>, StoreError> {
+        let path = &self.file;
+        refuse_database_links(self.name, path)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let mut conn = if snapshot {
+            _snapshot::read(self.name, path)?
+        } else {
+            crate::fsx::open_database(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(StoreError::sqlite(self.name, path))?
+        };
+        configure(&conn, self.name, path)?;
+        let found = stored_version(&conn, self.name, path)?;
+        let known = self.version();
+        if found == 0 {
+            return Ok(None);
+        }
+        if found > known {
+            return Err(StoreError::Newer {
+                store: self.name,
+                path: path.clone(),
+                found,
+                known,
+            });
+        }
+        if snapshot {
+            migrate_store(&mut conn, self)?;
+            conn.pragma_update(None, "query_only", true)
+                .map_err(StoreError::sqlite(self.name, path))?;
+        } else if found < known {
+            return Ok(Some(Read::Behind));
+        }
+        Ok(Some(Read::Current(conn)))
+    }
+}
+
 /// The per-computer writer lock. Re-entrant within one process: a write
 /// nested in a command that already holds it shares the hold, so nothing
 /// in-process ever waits for itself.
@@ -103,37 +274,59 @@ impl WriterLock {
     /// Takes `home`'s writer lock, waiting a bounded time for another
     /// process holding it.
     pub fn acquire(home: &Home) -> Result<Self, StateDbError> {
-        let path = home.writer_lock_file();
-        refuse_link(&path)?;
+        Ok(Self::acquire_file(
+            STATE_DATABASE,
+            &home.writer_lock_file(),
+        )?)
+    }
+
+    fn acquire_file(store: &'static str, path: &Path) -> Result<Self, StoreError> {
+        refuse_link(store, path)?;
         let mut held = HELD
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let map = held.get_or_insert_with(HashMap::new);
-        if let Some(guard) = map.get(&path).and_then(Weak::upgrade) {
+        if let Some(guard) = map.get(path).and_then(Weak::upgrade) {
             return Ok(Self { _held: guard });
         }
-        let guard = Arc::new(LockGuard::acquire(&path, LOCK_TIMEOUT)?);
-        map.insert(path, Arc::downgrade(&guard));
+        let guard = Arc::new(LockGuard::acquire(path, LOCK_TIMEOUT)?);
+        map.insert(path.to_path_buf(), Arc::downgrade(&guard));
         Ok(Self { _held: guard })
     }
 }
 
-/// A connection opened for writing, at the current schema version, with the
-/// writer lock held for as long as it lives.
+/// The lock a write handle holds for as long as it lives.
 #[derive(Debug)]
-pub struct StateDb {
-    conn: Connection,
-    path: PathBuf,
-    _lock: WriterLock,
+enum Held {
+    Reentrant(#[allow(dead_code, reason = "held only for its lock")] WriterLock),
+    Exclusive(#[allow(dead_code, reason = "held only for its lock")] LockGuard),
 }
 
-impl StateDb {
-    /// Takes the writer lock and opens `home`'s database, creating it and
-    /// applying every pending migration.
-    pub fn open(home: &Home) -> Result<Self, StateDbError> {
-        let lock = WriterLock::acquire(home)?;
-        let path = home.state_db_file();
-        refuse_database_links(&path)?;
+/// A store's connection opened for writing, at its current schema version,
+/// with the store's lock held for as long as it lives.
+#[derive(Debug)]
+pub struct StoreDb {
+    conn: Connection,
+    path: PathBuf,
+    store: &'static str,
+    _lock: Held,
+}
+
+impl StoreDb {
+    /// Takes the store's lock and opens its file, creating it and applying
+    /// every pending migration.
+    pub fn open(store: &Store) -> Result<Self, StoreError> {
+        let lock = match &store.lock {
+            StoreLock::Reentrant(file) => {
+                Held::Reentrant(WriterLock::acquire_file(store.name, file)?)
+            }
+            StoreLock::Exclusive(file, timeout) => {
+                refuse_link(store.name, file)?;
+                Held::Exclusive(LockGuard::acquire(file, *timeout)?)
+            }
+        };
+        let path = store.file.clone();
+        refuse_database_links(store.name, &path)?;
         if let Some(parent) = path.parent() {
             crate::fsx::create_dir_all(parent).map_err(|source| FsError::Write {
                 path: parent.to_path_buf(),
@@ -141,23 +334,29 @@ impl StateDb {
             })?;
         }
         let mut conn = crate::fsx::open_database(&path, OpenFlags::default())
-            .map_err(StateDbError::sqlite(&path))?;
-        let found = user_version(&conn, &path)?;
-        let known = schema_version();
+            .map_err(StoreError::sqlite(store.name, &path))?;
+        let found = stored_version(&conn, store.name, &path)?;
+        let known = store.version();
         if found > known {
-            return Err(StateDbError::Newer { path, found, known });
+            return Err(StoreError::Newer {
+                store: store.name,
+                path,
+                found,
+                known,
+            });
         }
         // SQLite gives the files it keeps beside the database the database's
         // own permissions; protecting the database first protects them too.
         protect(&path)?;
-        configure(&conn, &path)?;
+        configure(&conn, store.name, &path)?;
         conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(StateDbError::sqlite(&path))?;
+            .map_err(StoreError::sqlite(store.name, &path))?;
         protect(&path)?;
-        migrate(&mut conn, &path)?;
+        migrate_store(&mut conn, store)?;
         Ok(Self {
             conn,
             path,
+            store: store.name,
             _lock: lock,
         })
     }
@@ -172,10 +371,55 @@ impl StateDb {
 
     /// Begins one write transaction: everything written through it
     /// commits together or not at all.
-    pub fn transaction(&mut self) -> Result<Transaction<'_>, StateDbError> {
+    pub fn transaction(&mut self) -> Result<Transaction<'_>, StoreError> {
         self.conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(StateDbError::sqlite(&self.path))
+            .map_err(StoreError::sqlite(self.store, &self.path))
+    }
+
+    /// Runs `change` in one transaction and commits it; an error rolls
+    /// everything back.
+    pub fn write<T, E: From<StoreError>>(
+        &mut self,
+        change: impl FnOnce(&Transaction<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let store = self.store;
+        let path = self.path.clone();
+        let tx = self.transaction()?;
+        let value = change(&tx)?;
+        tx.commit().map_err(StoreError::sqlite(store, &path))?;
+        Ok(value)
+    }
+}
+
+/// A connection opened for writing, at the current schema version, with the
+/// writer lock held for as long as it lives.
+#[derive(Debug)]
+pub struct StateDb {
+    db: StoreDb,
+}
+
+impl StateDb {
+    /// Takes the writer lock and opens `home`'s database, creating it and
+    /// applying every pending migration.
+    pub fn open(home: &Home) -> Result<Self, StateDbError> {
+        Ok(Self {
+            db: StoreDb::open(&Store::state(home))?,
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        self.db.path()
+    }
+
+    pub fn conn(&self) -> &Connection {
+        self.db.conn()
+    }
+
+    /// Begins one write transaction: everything written through it
+    /// commits together or not at all.
+    pub fn transaction(&mut self) -> Result<Transaction<'_>, StateDbError> {
+        Ok(self.db.transaction()?)
     }
 
     /// Runs `change` in one transaction and commits it; an error rolls
@@ -184,11 +428,42 @@ impl StateDb {
         &mut self,
         change: impl FnOnce(&Transaction<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
-        let path = self.path.clone();
+        let path = self.path().to_path_buf();
         let tx = self.transaction()?;
         let value = change(&tx)?;
         tx.commit().map_err(StateDbError::sqlite(&path))?;
         Ok(value)
+    }
+
+    /// Drops, in one transaction, whichever history tables an earlier
+    /// version left here (version 32); the history store calls it once it
+    /// holds their rows.
+    pub fn remove_history(&mut self) -> Result<(), StateDbError> {
+        let path = self.path().to_path_buf();
+        self.write(|tx| {
+            tx.execute_batch(_schema::DROP_HISTORY)
+                .map_err(StateDbError::sqlite(&path))
+        })
+    }
+
+    /// Reclaims the database's free pages under the writer lock this handle
+    /// holds: a rewrite without them (`VACUUM`), then one passive checkpoint.
+    /// Once the rewrite has committed no free page remains. The checkpoint
+    /// shortens the file unless a reader holds a snapshot from before the
+    /// rewrite; it waits for no reader, stopping short of the end of the log
+    /// is not a failure, and the log is not truncated.
+    pub fn reclaim(&mut self) -> Result<(), StateDbError> {
+        let sql = StateDbError::sqlite(self.db.path());
+        self.conn().execute_batch("VACUUM").map_err(&sql)?;
+        // (busy, frames in the log, frames checkpointed): a short or busy
+        // checkpoint leaves the shortening to SQLite's next one.
+        let _: (i64, i64, i64) = self
+            .conn()
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(&sql)?;
+        Ok(())
     }
 }
 
@@ -203,39 +478,18 @@ impl StateRead {
     /// Opens `home`'s database for reading; `None` when no database (or no
     /// schema) exists yet, which is empty state.
     pub fn open(home: &Home) -> Result<Option<Self>, StateDbError> {
-        let path = home.state_db_file();
-        refuse_database_links(&path)?;
-        if !path.exists() {
-            return Ok(None);
+        let store = Store::state(home);
+        match store.read(home.is_state_read_only())? {
+            None => Ok(None),
+            Some(Read::Current(conn)) => Ok(Some(Self {
+                conn,
+                path: store.file,
+            })),
+            Some(Read::Behind) => {
+                drop(StateDb::open(home)?);
+                Self::open(home)
+            }
         }
-        let mut conn = if home.is_state_read_only() {
-            _snapshot::read(&path)?
-        } else {
-            crate::fsx::open_database(
-                &path,
-                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )
-            .map_err(StateDbError::sqlite(&path))?
-        };
-        configure(&conn, &path)?;
-        let found = user_version(&conn, &path)?;
-        let known = schema_version();
-        if found == 0 {
-            return Ok(None);
-        }
-        if found > known {
-            return Err(StateDbError::Newer { path, found, known });
-        }
-        if home.is_state_read_only() {
-            migrate(&mut conn, &path)?;
-            conn.pragma_update(None, "query_only", true)
-                .map_err(StateDbError::sqlite(&path))?;
-        } else if found < known {
-            drop(conn);
-            drop(StateDb::open(home)?);
-            return Self::open(home);
-        }
-        Ok(Some(Self { conn, path }))
     }
 
     pub fn path(&self) -> &Path {
@@ -249,7 +503,7 @@ impl StateRead {
 
 /// Makes the database and the files SQLite keeps beside it readable and
 /// writable by their owner only.
-fn protect(path: &Path) -> Result<(), StateDbError> {
+fn protect(path: &Path) -> Result<(), StoreError> {
     use std::os::unix::fs::PermissionsExt as _;
     let mut files = vec![path.to_path_buf()];
     for side in ["-wal", "-shm", "-journal"] {
@@ -267,85 +521,103 @@ fn protect(path: &Path) -> Result<(), StateDbError> {
     Ok(())
 }
 
-fn configure(conn: &Connection, path: &Path) -> Result<(), StateDbError> {
-    conn.busy_timeout(BUSY_TIMEOUT)
-        .map_err(StateDbError::sqlite(path))?;
+fn configure(conn: &Connection, store: &'static str, path: &Path) -> Result<(), StoreError> {
+    let sql = StoreError::sqlite(store, path);
+    conn.busy_timeout(BUSY_TIMEOUT).map_err(&sql)?;
     conn.pragma_update(None, "foreign_keys", true)
-        .map_err(StateDbError::sqlite(path))?;
+        .map_err(&sql)?;
     conn.pragma_update(None, "synchronous", "FULL")
-        .map_err(StateDbError::sqlite(path))?;
+        .map_err(&sql)?;
     Ok(())
 }
 
-fn user_version(conn: &Connection, path: &Path) -> Result<u32, StateDbError> {
+fn stored_version(conn: &Connection, store: &'static str, path: &Path) -> Result<u32, StoreError> {
     conn.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
-        .map_err(StateDbError::sqlite(path))
+        .map_err(StoreError::sqlite(store, path))
 }
 
-/// Applies each migration past the stored version, each in its own
-/// transaction that sets `user_version` too.
-fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
-    let found = user_version(conn, path)?;
-    let known = schema_version();
+/// Applies each of `store`'s migrations past the stored version, each in
+/// its own transaction that sets `user_version` too.
+fn migrate_store(conn: &mut Connection, store: &Store) -> Result<(), StoreError> {
+    let path = &store.file;
+    let sql = StoreError::sqlite(store.name, path);
+    let found = stored_version(conn, store.name, path)?;
+    let known = store.version();
     if found > known {
-        return Err(StateDbError::Newer {
-            path: path.to_path_buf(),
+        return Err(StoreError::Newer {
+            store: store.name,
+            path: path.clone(),
             found,
             known,
         });
     }
-    for (index, migration) in _schema::MIGRATIONS.iter().enumerate().skip(found as usize) {
+    for (index, migration) in store.migrations.iter().enumerate().skip(found as usize) {
         let version = index as u32 + 1;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(StateDbError::sqlite(path))?;
+            .map_err(&sql)?;
         match migration {
-            _schema::Migration::Sql(script) => tx.execute_batch(script),
-            _schema::Migration::Step(step) => step(&tx),
+            Migration::Sql(script) => tx.execute_batch(script),
+            Migration::Step(step) => step(&tx),
         }
-        .map_err(StateDbError::sqlite(path))?;
+        .map_err(&sql)?;
         tx.pragma_update(None, "user_version", version)
-            .map_err(StateDbError::sqlite(path))?;
-        tx.commit().map_err(StateDbError::sqlite(path))?;
+            .map_err(&sql)?;
+        tx.commit().map_err(&sql)?;
         tracing::info!(
             event = "state_db_migrated",
+            store = store.name,
             path = %path.display(),
             version,
-            "the state database moved to a new schema version"
+            "a store moved to a new schema version"
         );
     }
     Ok(())
 }
 
+/// The state database's stored schema version, for its migration tests.
+#[cfg(test)]
+fn user_version(conn: &Connection, path: &Path) -> Result<u32, StateDbError> {
+    Ok(stored_version(conn, STATE_DATABASE, path)?)
+}
+
+/// Applies the state database's pending migrations, for its migration tests.
+#[cfg(test)]
+fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
+    let store = Store {
+        file: path.to_path_buf(),
+        ..Store::state(&Home::at_user_home(PathBuf::from("/")))
+    };
+    Ok(migrate_store(conn, &store)?)
+}
+
 /// Inspect an existing SQLite store without opening a disk connection or
 /// creating sidecars. The in-memory connection permits queries only.
 pub fn inspect_file(path: &Path) -> Result<Option<Connection>, StateDbError> {
-    refuse_database_links(path)?;
+    refuse_database_links(STATE_DATABASE, path)?;
     if !path.exists() {
         return Ok(None);
     }
-    let conn = _snapshot::read(path)?;
+    let conn = _snapshot::read(STATE_DATABASE, path)?;
     conn.pragma_update(None, "query_only", true)
         .map_err(StateDbError::sqlite(path))?;
     Ok(Some(conn))
 }
 
-fn refuse_database_links(path: &Path) -> Result<(), StateDbError> {
-    refuse_link(path)?;
+fn refuse_database_links(store: &'static str, path: &Path) -> Result<(), StoreError> {
+    refuse_link(store, path)?;
     for suffix in ["-wal", "-shm", "-journal"] {
-        refuse_link(&_snapshot::sidecar(path, suffix))?;
+        refuse_link(store, &_snapshot::sidecar(path, suffix))?;
     }
     Ok(())
 }
 
-fn refuse_link(path: &Path) -> Result<(), StateDbError> {
+fn refuse_link(store: &'static str, path: &Path) -> Result<(), StoreError> {
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            Err(StateDbError::Symlink { path: path.into() })
-        }
+        Ok(meta) if meta.file_type().is_symlink() => Err(StoreError::Symlink { path: path.into() }),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(StateDbError::invalid(path, error.to_string())),
+        Err(error) => Err(StoreError::invalid(store, path, error.to_string())),
     }
 }
 
@@ -528,6 +800,65 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn version_32_keeps_every_history_table_while_one_holds_a_row_and_drops_them_when_all_are_empty()
+     {
+        let path = Path::new(":memory:");
+        let at_31 = || {
+            let mut conn = Connection::open_in_memory().unwrap();
+            for migration in _schema::MIGRATIONS.iter().take(31) {
+                let tx = conn.transaction().unwrap();
+                match migration {
+                    _schema::Migration::Sql(script) => tx.execute_batch(script),
+                    _schema::Migration::Step(step) => step(&tx),
+                }
+                .unwrap();
+                tx.commit().unwrap();
+            }
+            conn.pragma_update(None, "user_version", 31).unwrap();
+            conn
+        };
+        let history = |conn: &Connection| -> [bool; 5] {
+            [
+                "history_conversations",
+                "history_fts",
+                "history_projection_records",
+                "history_source_positions",
+                "history_sources",
+            ]
+            .map(|table| {
+                conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap()
+            })
+        };
+        // One retained row keeps every history table, the row included.
+        let mut retained = at_31();
+        retained
+            .execute(
+                "INSERT INTO history_sources(source,position,imported) VALUES('teleclaude:kept',1,1)",
+                [],
+            )
+            .unwrap();
+        migrate(&mut retained, path).unwrap();
+        assert_eq!(history(&retained), [true; 5]);
+        let kept: (i64, bool) = retained
+            .query_row(
+                "SELECT position,imported FROM history_sources WHERE source='teleclaude:kept'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, (1, true));
+        // Tables that hold nothing are removed, the full-text index included.
+        let mut empty = at_31();
+        migrate(&mut empty, path).unwrap();
+        assert_eq!(history(&empty), [false; 5]);
     }
 
     #[test]

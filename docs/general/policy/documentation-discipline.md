@@ -89,8 +89,16 @@ restart, then check the logs` is directive. One string reaching a human and an
 
   Every check is reviewer judgment, never prose scanning. A typo, formatting or
   link repair changes neither, and its author stamps it
-  (`general/policy/commits`). Standalone descriptive prose outside the snippet system,
-  such as a README, is not governed content; directive text is, wherever it lives.
+  (`general/policy/commits`). Company home knowledge (`AGENTS.master.md` and
+  documents anywhere under `docs/` in a company repository) is governed
+  content: it renders into the company's committed `AGENTS.md` and published
+  skills, so its content follows `general/policy/snippet-value-contract` and
+  `general/policy/agent-facing-text`, and its changes are authored in a
+  separate worktree (keeping the serving company home checkout on the reviewed
+  default branch) and put through independent review before reaching the
+  default branch (`general/policy/commits`). Standalone descriptive prose
+  outside the snippet system and company knowledge, such as a README, is not
+  governed content; directive text is, wherever it lives.
 
 - **Cross-project doc work preserves the authoring session.** The session holding
   the design context writes the complete content to caller-owned temporary files
@@ -125,7 +133,10 @@ A reviewer handed only the diff can judge form, and a directive change can be
 well formed while it steers every later session the wrong way. Its intent lives
 in the authoring conversation, so it reaches the reviewer only when the author
 carries it there. A change that only refines what a snippet establishes steers
-no one, so its error costs less and a lighter review catches it.
+no one, so its error costs less and a lighter review catches it. Company home
+documents reach every company agent and skill session on merge, so unreviewed
+direct commits publish stale history and unverified instructions straight to
+every reader.
 
 Moving a mechanical write to another project must not move authorship with it:
 the files carry the already-authored document, and the receiving session owns
