@@ -485,3 +485,13 @@ session-fixed timing through A3's bounded batch log.
   `instrukt docs validate --no-todo-lookup` to omit the live existence lookup
   while keeping slug-form, pending-marker, workflow-role and all other
   structural checks (`project/instrukt/spec/feature/docs/snippet-validation`).
+- **Concurrent reflection is slow or busy:** `state/reflection.lock` serializes
+  GitHub reflection across commands and ticks without holding `state/writer.lock`;
+  local state-database reads and writes proceed immediately, and a command whose
+  reflection wait times out keeps its committed local write as pending reflection
+  for the next flush.
+- **A reflection is interrupted after GitHub accepted its revision:** this
+  computer recognises the landed revision afterwards only while its local
+  record still equals it. Otherwise the todo is marked conflicted, and
+  `instrukt todo refresh <slug>` is its door
+  (`project/instrukt/spec/feature/work/github-record`).

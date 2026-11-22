@@ -37,7 +37,7 @@ url = "2"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 hex = "0.4"
 hmac = "=0.12.1"
-form_urlencoded = "=1.2.2"
+form_urlencoded = "=1.2.3"
 dotenvy = "=0.15.7"
 indexmap = { version = "2", features = ["serde"] }
 jiff = { version = "0.2", features = ["serde"] }

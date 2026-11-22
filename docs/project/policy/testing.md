@@ -76,12 +76,6 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   pins when it enables the hook, or by the first commit or every-file run
   that needs it. That installation and the tool's first run after it are not
   counted in the ten seconds. No commit is refused because a tool is missing.
-<!-- planned-change:speed-up-pr-ci -->
-- GitHub CI runs that configuration over every file, and the whole test
-  suite, on every pull request, on Linux and macOS, exercising filesystem case
-  behavior, hooks and paths. `main` requires these checks, so a functional
-  test that fails stops a pull request, not a commit.
-<!-- change:speed-up-pr-ci -->
 - GitHub CI runs every check in `.pre-commit-config.yaml` over every file
   without running colocated unit tests more than once per selected platform
   or repeating OS-independent checks across platforms:
@@ -97,7 +91,6 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     in a non-platform-specific test that manifests only on macOS is detected
     by the full macOS job on `main` pushes and tagged releases and blocks
     tagged release publication, not pull requests.
-<!-- /planned-change:speed-up-pr-ci -->
 - A version tag produces release binaries for macOS arm64 and Linux
   x86_64/arm64, and only from a revision that passed those checks.
 - Parity against the corpus instrukt was extracted from is a one-off
@@ -167,12 +160,10 @@ A missing tool is installed, not asked for: installing it is idempotent, and
 a refusal would only make a developer run the command the check could have
 run itself.
 
-<!-- planned:speed-up-pr-ci -->
 Running OS-independent checks once on Linux, compiling the Linux test archive
 once for parallel shards, and scoping macOS pull-request runs to
 platform-specific surfaces keeps pull-request feedback fast while preserving
 full cross-platform verification on `main` and every tagged release.
-<!-- /planned:speed-up-pr-ci -->
 
 ## Scope
 

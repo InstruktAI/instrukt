@@ -730,6 +730,17 @@ fn drift_review_binding(
     Ok(Some(index))
 }
 
+/// The artifact a preparation doc writer owes for its role, or `None` when
+/// the role is not a preparation doc writer.
+pub(super) fn writer_artifact(role: &str) -> Option<&'static str> {
+    match role {
+        "intaker" => Some(artifact_names::PRD),
+        "architect" => Some(artifact_names::ARCHITECTURE),
+        "planner" => Some(artifact_names::IMPLEMENTATION_PLAN),
+        _ => None,
+    }
+}
+
 /// Match completion to the caller's reserved shared workspace.
 pub(super) fn completion_binding(
     record: &TodoRecord,
@@ -782,7 +793,7 @@ pub(super) fn completion_binding(
             if matches!(request, StampRequest::PreparationHeadVerdict { .. })
                 && record.bindings.iter().any(|writer| {
                     writer.session.as_ref() == Some(caller)
-                        && matches!(writer.role.as_str(), "intaker" | "architect" | "planner")
+                        && writer_artifact(writer.role.as_str()).is_some()
                 })
             {
                 return Err(WorkError::refused(
@@ -851,19 +862,12 @@ pub(super) fn completion_binding(
             "finalizer completion needs matching published todo head",
         ));
     }
-    if matches!(b.role.as_str(), "intaker" | "architect" | "planner") {
-        let artifact = match b.role.as_str() {
-            "intaker" => artifact_names::PRD,
-            "architect" => artifact_names::ARCHITECTURE,
-            _ => artifact_names::IMPLEMENTATION_PLAN,
-        };
-        if record.current_digest(artifact).is_none()
-            || b.attempt.base_head.as_ref() == Some(&current)
-        {
-            return Err(WorkError::refused(
-                "writer completion requires its artifact and authored commit evidence",
-            ));
-        }
+    if let Some(artifact) = writer_artifact(b.role.as_str())
+        && record.current_digest(artifact).is_none()
+    {
+        return Err(WorkError::refused(format!(
+            "writer completion requires a version of its {artifact} artifact"
+        )));
     }
     Ok(Some((index, true)))
 }
