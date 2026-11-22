@@ -618,6 +618,42 @@ pub(crate) fn cycle_in(
     Ok(first_cycle(&nodes, through))
 }
 
+/// How each of `ids` stands in `project` as `tx` holds it, for judging a
+/// reference to it: its local row's slug and status, else its listing
+/// copy's. A todo this computer holds neither of is absent.
+pub(crate) fn referenced(
+    tx: &Transaction<'_>,
+    path: &Path,
+    project: &ProjectSlug,
+    ids: &[TodoId],
+) -> Result<std::collections::BTreeMap<TodoId, (TodoSlug, TodoStatus)>, WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let mut found = std::collections::BTreeMap::new();
+    for id in ids {
+        let row: Option<(String, String)> = tx
+            .query_row(
+                "SELECT slug, status FROM todos WHERE id = ?1 AND project = ?2",
+                params![id.as_str(), project.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(&sql)?;
+        if let Some((slug, status)) = row {
+            let slug = TodoSlug::parse(&slug).map_err(|e| invalid(path, e.to_string()))?;
+            found.insert(id.clone(), (slug, value_of::<TodoStatus>(path, &status)?));
+        }
+    }
+    if found.len() < ids.len() {
+        for copy in load_copies(tx, path, project)? {
+            let record = copy.record;
+            if ids.contains(&record.id) && !found.contains_key(&record.id) {
+                found.insert(record.id, (record.slug, record.status));
+            }
+        }
+    }
+    Ok(found)
+}
+
 impl WaitNode {
     /// `record` as the waiting graph sees it; `local` for a local item's
     /// record, rather than a listing copy's.

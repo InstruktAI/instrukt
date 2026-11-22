@@ -1047,6 +1047,28 @@ impl<'w> Session<'w> {
             })
             .map(|mine| mine.id.clone())
             .collect();
+        // The prerequisites and groups of the rewired todos as this command
+        // read them, the todos the change itself writes aside: what it
+        // records — the slug on an edge, an iceboxed prerequisite's
+        // warning — follows from their slug and status, so a target another
+        // command renamed, parked, released or withdrawn meanwhile refuses
+        // the change whole.
+        let known = self.known_records();
+        let mut read: Vec<(TodoId, TodoSlug, TodoStatus)> = Vec::new();
+        for record in changed
+            .iter()
+            .map(|&index| &self.items[index].record)
+            .filter(|record| rewired.contains(&record.id))
+        {
+            for target in record.after.iter().chain(record.group.iter()) {
+                if others.contains(&target.id) || read.iter().any(|(id, _, _)| id == &target.id) {
+                    continue;
+                }
+                if let Some(held) = known.iter().find(|r| r.id == target.id) {
+                    read.push((held.id.clone(), held.slug.clone(), held.status));
+                }
+            }
+        }
         let mut conflicted = None;
         let result = self.store.write(|tx, path, project| {
             let mut rows = Vec::new();
@@ -1069,6 +1091,21 @@ impl<'w> Session<'w> {
                             mine.record.slug
                         )));
                     }
+                }
+            }
+            let ids: Vec<TodoId> = read.iter().map(|(id, _, _)| id.clone()).collect();
+            let now = _store::referenced(tx, path, project, &ids)?;
+            for (id, slug, status) in &read {
+                if now.get(id) != Some(&(slug.clone(), *status)) {
+                    let renamed = now
+                        .get(id)
+                        .map(|(now, _)| now)
+                        .filter(|now| *now != slug)
+                        .map_or_else(String::new, |now| format!(" and is now named `{now}`"));
+                    return Err(WorkError::refused(format!(
+                        "`{slug}`, which this change refers to, changed while this command ran{renamed}; nothing of it was written. {}: it acts on the todos' current records",
+                        self.door()
+                    )));
                 }
             }
             // The change was judged against the graph as this command read
@@ -1190,7 +1227,7 @@ impl<'w> Session<'w> {
             .target
             .as_ref()
             .filter(|target| *target != &mine.record.id);
-        let Some(target) = related else {
+        if related.is_none() {
             return WorkError::refused(match renamed {
                 Some(now) => format!(
                     "`{read}` changed while this command ran and is now named `{now}`; nothing of it was written. Run the command again on `{now}`: it acts on the todo's current record"
@@ -1199,7 +1236,7 @@ impl<'w> Session<'w> {
                     "`{read}` changed while this command ran; nothing of it was written. Run the command again: it acts on the todo's current record"
                 ),
             });
-        };
+        }
         let changed = match renamed {
             Some(now) => format!(
                 "`{read}`, which this change also writes, changed while this command ran and is now named `{now}`"
@@ -1208,13 +1245,23 @@ impl<'w> Session<'w> {
                 format!("`{read}`, which this change also writes, changed while this command ran")
             }
         };
-        let door = match self.bases.get(target) {
+        WorkError::refused(format!(
+            "{changed}; nothing of it was written. {}: it acts on the todos' current records",
+            self.door()
+        ))
+    }
+
+    /// The door of a change refused for a related record: the command run
+    /// again on its target, as the caller named it.
+    fn door(&self) -> String {
+        match self
+            .target
+            .as_ref()
+            .and_then(|target| self.bases.get(target))
+        {
             Some(target) => format!("Run the command again on `{}`", target.record.slug),
             None => "Run the command again".to_owned(),
-        };
-        WorkError::refused(format!(
-            "{changed}; nothing of it was written. {door}: it acts on the todos' current records"
-        ))
+        }
     }
 
     /// Appends `event` to the runner's event log in a transaction of its
