@@ -548,10 +548,12 @@ work decides for its `Needs you` marker
 (`project/instrukt/spec/feature/work/github-record`), the session owes no evidence:
 an ended turn receives no recovery send and raises no anomaly, whichever state its
 thread reports (`general/principle/session-lifecycle`: runtime silence alone
-establishes no missing work). Each observation of the execution reads both facts
-from workflow's current assignment for the todo
-(`project/instrukt/spec/domain/workflow`) and acts on what it read. For a todo that
-work offers for pickup, the offer itself shows that no session holds the claim.
+establishes no missing work). For a todo that work offers for pickup, the offer
+itself shows that no session holds the claim: that observation treats the
+execution as ended without reading workflow's assignment. An observation that
+reads workflow's current assignment for the todo
+(`project/instrukt/spec/domain/workflow`) takes the claim holder and the person
+wait from that one assignment and acts on what it read.
 
 For every other runner-owned
 execution, a present thread ending without evidence receives one recovery send;
@@ -853,13 +855,16 @@ Retired: the runtime owns session ending; its test bindings have been removed.
   or `needs-input` included. Confirmed native archive or deletion with an
   eligible active assignment does not reach that decision: the successor
   transaction comes first, and that input raises no anomaly there.
-- An observation acts on the claim holder and the person wait it read. A
-  release, a transfer or the start of a person wait that lands after that
-  reading is taken up by the next observation; the observation under way can
-  still send the recovery it decided on. A recovery input already recorded for
-  delivery is delivered as it stands, without a second reading of the claim or
-  the person wait, so it can reach a session whose claim was released, or whose
+- An observation that reads the claim holder and the person wait acts on what
+  it read. A release, a transfer or the start of a person wait that lands after
+  that reading is taken up by the next observation; the observation under way
+  can still send the recovery it decided on. The decision to send a recovery is
+  taken at observation and is not taken again at delivery, so a recovery input
+  already recorded can still reach a session whose claim was released, or whose
   todo began waiting on a person, after it was recorded.
+  Whether and when it is delivered follows the ordinary delivery rules of
+  `project/instrukt/spec/feature/runner/procedure-event-delivery`, those for a
+  batch it shares with other entries included.
 <!-- /planned:fix-false-recovery-on-released-executions -->
 
 ## See Also
