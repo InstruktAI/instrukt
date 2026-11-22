@@ -152,28 +152,35 @@ pub(crate) fn owned_snippet_digest(
     Ok(Some(combine_owned_digest(&parent_text, &companion_text)))
 }
 
-/// Record absent previously-owned snippet IDs with `digest: None` so a drift
-/// judgment that accepted deletion detects later restoration.
-fn append_absent_owned(
+/// Retain previously-owned snippet IDs that are no longer owned (either deleted
+/// outright -> `None`, or companion-deleted with a surviving parent -> parent
+/// digest) using the same digest function observation uses, so a cosmetic
+/// judgment settles the current state and restoring the deleted file or
+/// companion requires reassessment.
+fn append_prior_owned<E>(
     owned_snippets: &mut Vec<SnippetDigest>,
     owned_ids: &mut BTreeSet<SnippetId>,
     prior_owned: &[SnippetId],
-) {
+    mut current_digest: impl FnMut(&SnippetId) -> Result<Option<ContentDigest>, E>,
+) -> Result<(), E> {
     for id in prior_owned {
         if owned_ids.insert(id.clone()) {
+            let digest = current_digest(id)?;
             owned_snippets.push(SnippetDigest {
                 id: id.clone(),
-                digest: None,
+                digest,
             });
         }
     }
+    Ok(())
 }
 
 /// The grounding of `content`, an artifact of todo `todo` in the project
 /// rooted at `project_root`, with todo-owned pending snippets read solely from
 /// `owned_root` (the active todo worktree when present, else `project_root`),
 /// whose canonical branch is `base_branch`. `prior_owned` retains previously
-/// recorded owned IDs as absent (`digest: None`) when deleted.
+/// recorded owned IDs at their current state in `owned_root` (`None` when
+/// deleted, or the surviving parent digest when only its companion was removed).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn ground(
     home: &Home,
@@ -205,7 +212,9 @@ pub(crate) fn ground(
             });
         }
     }
-    append_absent_owned(&mut owned_snippets, &mut owned_ids, prior_owned);
+    append_prior_owned(&mut owned_snippets, &mut owned_ids, prior_owned, |id| {
+        owned_snippet_digest(owned_root, active_corpus, todo, id)
+    })?;
     let digest_in_project = |id: &SnippetId| -> Result<Option<ContentDigest>, WorkError> {
         let path = match project_corpus.snippet(id) {
             Some(snippet) => project_root.join(snippet.path()),
@@ -312,15 +321,28 @@ mod tests {
     }
 
     #[test]
-    fn append_absent_owned_retains_deleted_prior_ids_as_none_without_duplicating_present() {
+    fn append_prior_owned_retains_deleted_as_none_and_surviving_parent_with_its_digest() {
         let present = SnippetId::parse("project/demo/policy/present").unwrap();
         let deleted = SnippetId::parse("project/demo/policy/deleted").unwrap();
+        let parent_only = SnippetId::parse("project/demo/policy/parent").unwrap();
         let mut owned = vec![SnippetDigest {
             id: present.clone(),
             digest: Some(ContentDigest::of("body")),
         }];
         let mut ids: BTreeSet<SnippetId> = [present.clone()].into_iter().collect();
-        append_absent_owned(&mut owned, &mut ids, &[present, deleted.clone()]);
+        append_prior_owned::<()>(
+            &mut owned,
+            &mut ids,
+            &[present, deleted.clone(), parent_only.clone()],
+            |id| {
+                Ok(if id == &parent_only {
+                    Some(ContentDigest::of("surviving parent"))
+                } else {
+                    None
+                })
+            },
+        )
+        .unwrap();
         assert_eq!(
             owned,
             vec![
@@ -331,6 +353,10 @@ mod tests {
                 SnippetDigest {
                     id: deleted,
                     digest: None,
+                },
+                SnippetDigest {
+                    id: parent_only,
+                    digest: Some(ContentDigest::of("surviving parent")),
                 },
             ]
         );

@@ -276,6 +276,10 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         .read("instrukt.yaml")
         .replace("todos: true", "todos: true\n  events: true");
     project.repo.write("instrukt.yaml", &config);
+    project.repo.write(
+        "docs/project/spec/feature/live-parent.md",
+        "---\ndescription: Live parent snippet with a pending companion.\n---\n# Live parent — Spec\n\n## What it is\n\nLive parent body.\n\n## Canonical fields\n\nLive value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n",
+    );
     project
         .repo
         .commit("integrator: enable preparation delivery");
@@ -287,6 +291,9 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
     let file = prepare.join("docs/project/spec/feature/early-contract.md");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file,"---\ndescription: Contract available before its implementation.\ndelivered_by: [docs-first]\n---\n# Early contract — Spec\n\n## What it is\n\nAvailable before build.\n\n## Canonical fields\n\nA documented value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n").unwrap();
+    let companion = prepare.join("docs/project/spec/feature/live-parent.docs-first.md");
+    let companion_body = "---\ndescription: Pending companion update for live parent.\n---\n# Live parent — Spec\n\n## What it is\n\nPending companion body.\n\n## Canonical fields\n\nPending value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n";
+    std::fs::write(&companion, companion_body).unwrap();
     project.env.git(prepare, ["add", "docs"]);
     project.env.git(
         prepare,
@@ -492,12 +499,78 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
     .success();
     let restored_settled = crew.next("prepare", slug);
 
+    // Deleting only the companion file (while its live parent survives) also
+    // triggers drift, settles when judged cosmetic (recording the surviving
+    // parent digest), and triggers drift again if the companion is restored.
+    std::fs::remove_file(&companion).unwrap();
+    project.env.git(prepare, ["add", "-A", "docs"]);
+    project.env.git(
+        prepare,
+        ["commit", "--quiet", "-m", "docs: remove companion"],
+    );
+    let companion_deleted_drift = crew.next("prepare", slug);
+    let analyzer4 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer4["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "companion deletion assessed",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer4["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "companion deletion assessed",
+        ],
+    )
+    .success();
+    let companion_deleted_settled = crew.next("prepare", slug);
+    std::fs::write(&companion, companion_body).unwrap();
+    project.env.git(prepare, ["add", "docs"]);
+    project.env.git(
+        prepare,
+        ["commit", "--quiet", "-m", "docs: restore companion"],
+    );
+    project.env.git(
+        prepare,
+        ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
+    );
+    let companion_restored_drift = crew.next("prepare", slug);
+    let analyzer5 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer5["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "companion restoration assessed",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer5["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "companion restoration assessed",
+        ],
+    )
+    .success();
+    let companion_restored_settled = crew.next("prepare", slug);
+
     let tmp_root = project.env.path("");
     let tmp = tmp_root.to_str().unwrap().trim_end_matches('/');
     insta::assert_snapshot!(
         "owned-carrier-drift-settlement-and-release",
         redact(&format!(
-            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{deleted_drift}---\n{deleted_settled}---\n{restored_drift}---\n{restored_settled}---\n{}",
+            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{deleted_drift}---\n{deleted_settled}---\n{restored_drift}---\n{restored_settled}---\n{companion_deleted_drift}---\n{companion_deleted_settled}---\n{companion_restored_drift}---\n{companion_restored_settled}---\n{}",
             show_v1.replace(tmp, "[TMP]")
         ))
     );

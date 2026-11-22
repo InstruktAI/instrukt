@@ -57,8 +57,9 @@ from the todo's active worktree when present, else the primary checkout, never
 from the published store, combining any todo companion file with its parent)
 and of its prerequisites' artifacts. Drift observation compares each class
 against the same source, ignoring any overlap where an earlier grounding also
-listed an owned snippet as referenced. A drift judgment retains any previously
-owned snippet that has since been deleted as absent so restoring it requires
+listed an owned snippet as referenced. A drift judgment retains previously owned snippet IDs at their current state in
+the selected checkout — absent if the snippet was deleted, or the surviving
+parent digest if only its companion was removed — so restoring either requires
 reassessment.
 
 An artifact has drifted when a non-merge commit between its recorded head and
