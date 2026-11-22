@@ -18,7 +18,7 @@ use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_inbound;
 use super::_model::{TodoAddress, TodoId, TodoRecord, TodoRef};
-use super::_reflect::{self, Pulled};
+use super::_reflect::{self, HeadOrigin, Pulled};
 use super::_store::{
     self, IssueRef, ListingCopy, LocalItem, ProviderState, ReflectionLock, Refusal, Store, Swapped,
 };
@@ -327,14 +327,13 @@ impl<'w> Session<'w> {
     ///
     /// No lock is held across the request. The row is re-read before it
     /// and the result is committed only while the row is unchanged; a row
-    /// that changed meanwhile is pulled once more. A head whose revision is
-    /// later than the row's is another computer's: a reflection on this
-    /// computer posts only a revision this computer has already committed,
-    /// and a todo's committed revision never falls while one is posted. That
-    /// conflict is committed at once, and the command refuses. Any other
-    /// head may be this computer's own, posted by a reflection that has not
-    /// recorded it yet, so its conflict judgment is committed only while
-    /// this command holds the reflection lock, taken without waiting. A busy
+    /// that changed meanwhile is pulled once more. A head that cannot be
+    /// this computer's own post ([`_reflect::origin`]) is another
+    /// computer's: that conflict is committed at once, and the command
+    /// refuses. A head that may be this computer's own, posted by a
+    /// reflection that has not recorded it yet, has its conflict judgment
+    /// committed only while this command holds the reflection lock, taken
+    /// without waiting. A busy
     /// lock leaves that head unjudged and the command proceeds on the local
     /// record; the revision check of this todo's next reflection, the
     /// command's own flush included, judges it (`github-record`,
@@ -372,8 +371,9 @@ impl<'w> Session<'w> {
                 _ => {}
             }
             let mut judging = None;
-            if let Some(Ok(Pulled::Conflicted { head })) = &result
-                && *head <= base.record.revision
+            if let Some(Ok(Pulled::Conflicted {
+                origin: HeadOrigin::PossiblyOwn,
+            })) = &result
             {
                 judging = ReflectionLock::try_acquire(self.work.home())?;
                 if judging.is_none() {

@@ -84,9 +84,52 @@ pub(crate) enum Pulled {
     Current,
     /// A newer remote revision entered the local record.
     Adopted,
-    /// A newer remote revision met pending local changes; the revision of
-    /// GitHub's head.
-    Conflicted { head: u64 },
+    /// A head this computer does not know met pending local changes; who
+    /// can have posted it ([`origin`]).
+    Conflicted { origin: HeadOrigin },
+}
+
+/// Who can have posted a committed head that differs from the pending
+/// local record, judged from what the head carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeadOrigin {
+    /// Another computer: this computer never committed that state.
+    Foreign,
+    /// Possibly this computer, by a reflection that has not recorded its
+    /// post yet.
+    PossiblyOwn,
+}
+
+/// Who can have posted `head`, GitHub's committed head, which differs from
+/// `item`'s pending record. A reflection on this computer posts only a
+/// revision this computer committed after the last one GitHub confirmed,
+/// and a todo's stamps and artifact versions are only ever added: its own
+/// post is a revision strictly between the confirmed remote revision and the
+/// local one, whose stamps and versions the local record still holds. A head
+/// at the local revision differs from the one this computer committed under
+/// that number, and one at or below the confirmed revision forks the chain
+/// this computer confirmed; either, like a head carrying evidence the local
+/// record lacks, is another computer's.
+pub(crate) fn origin(item: &LocalItem, head: &TodoRecord) -> HeadOrigin {
+    let local = &item.record;
+    let confirmed = item.reflection.remote_revision.unwrap_or(0);
+    let between = confirmed < head.revision && head.revision < local.revision;
+    let held = head.sequence <= local.sequence
+        && head.stamps.iter().all(|stamp| local.stamps.contains(stamp))
+        && head.artifacts.iter().all(|artifact| {
+            artifact.versions.iter().all(|version| {
+                local.artifact(artifact.name.as_str()).is_some_and(|mine| {
+                    mine.versions
+                        .iter()
+                        .any(|v| v.sequence == version.sequence && v.digest == version.digest)
+                })
+            })
+        });
+    if between && held {
+        HeadOrigin::PossiblyOwn
+    } else {
+        HeadOrigin::Foreign
+    }
 }
 
 /// The committed record on an issue: the head of its revision chain.
@@ -221,10 +264,9 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
         return Ok(Pulled::Current);
     }
     if item.reflection.pending {
+        let origin = origin(item, &head.record);
         item.reflection.conflicted = true;
-        return Ok(Pulled::Conflicted {
-            head: head.record.revision,
-        });
+        return Ok(Pulled::Conflicted { origin });
     }
     let record = with_contents(gh, issue.number, head.record, &item.record)?;
     item.record = record;
@@ -1065,6 +1107,70 @@ mod tests {
         ];
         let head = committed(&comments, &first.id, &[]).unwrap().unwrap();
         assert_eq!((head.comment, head.record), (11, theirs));
+    }
+
+    /// A pending local record at `revision`, confirmed on GitHub at
+    /// `confirmed`, holding one artifact version per digest in `versions`.
+    fn pending(revision: u64, confirmed: u64, versions: &[&str]) -> LocalItem {
+        let mut record = record(revision, "depth");
+        record.sequence = versions.len() as u64;
+        if !versions.is_empty() {
+            record.artifacts.push(super::super::_model::Artifact {
+                name: crate::evidence::ArtifactName::new("log"),
+                address: None,
+                versions: versions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, text)| super::super::_model::Version {
+                        digest: super::super::_model::digest_of(text),
+                        writer: Actor::Person { name: "dev".into() },
+                        created: jiff::Timestamp::UNIX_EPOCH,
+                        derived_from: Vec::new(),
+                        sequence: i as u64 + 1,
+                        grounding: Default::default(),
+                        remote: None,
+                        content: Some((*text).to_owned()),
+                    })
+                    .collect(),
+            });
+        }
+        LocalItem {
+            record,
+            reflection: ReflectionState {
+                pending: true,
+                remote_revision: Some(confirmed),
+                ..ReflectionState::default()
+            },
+        }
+    }
+
+    #[test]
+    fn an_earlier_state_of_the_local_record_after_the_confirmed_one_may_be_this_computer_s_post() {
+        let local = pending(4, 2, &["one", "two"]);
+        let posted = pending(3, 2, &["one"]).record;
+        assert_eq!(origin(&local, &posted), HeadOrigin::PossiblyOwn);
+    }
+
+    #[test]
+    fn a_different_head_at_the_local_revision_is_another_computer_s() {
+        let local = pending(2, 1, &["mine"]);
+        let mut theirs = pending(2, 1, &["mine"]).record;
+        theirs.slug = TodoSlug::parse("theirs").unwrap();
+        assert_eq!(origin(&local, &theirs), HeadOrigin::Foreign);
+    }
+
+    #[test]
+    fn a_head_carrying_a_version_the_local_record_lacks_is_another_computer_s() {
+        let local = pending(4, 2, &["one", "two"]);
+        let theirs = pending(3, 2, &["one", "else"]).record;
+        assert_eq!(origin(&local, &theirs), HeadOrigin::Foreign);
+    }
+
+    #[test]
+    fn a_head_at_or_below_the_confirmed_revision_is_another_computer_s() {
+        let local = pending(4, 3, &["one"]);
+        let forked = pending(3, 2, &["one"]).record;
+        assert_eq!(origin(&local, &forked), HeadOrigin::Foreign);
     }
 
     #[test]
