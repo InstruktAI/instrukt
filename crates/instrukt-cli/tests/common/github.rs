@@ -2504,6 +2504,26 @@ fn field_payload(field: &ProjectField) -> Value {
     field.json()
 }
 
+/// The value `query` gives `field` in the `input` object of its
+/// `mutation(input:{...})` call, as GitHub reads it: a `$variable` resolved
+/// from `vars`, or a literal. `None` when that input does not set the field.
+fn input_field(query: &str, mutation: &str, field: &str, vars: &Value) -> Option<Value> {
+    let call = &query[query.find(&format!("{mutation}("))?..];
+    let input = &call[call.find('{')? + 1..];
+    let input = &input[..input.find('}')?];
+    input.split(',').find_map(|entry| {
+        let (name, value) = entry.split_once(':')?;
+        if name.trim() != field {
+            return None;
+        }
+        let value = value.trim();
+        match value.strip_prefix('$') {
+            Some(variable) => Some(vars[variable].clone()),
+            None => serde_json::from_str(value).ok(),
+        }
+    })
+}
+
 /// Serves the GraphQL documents the work record sends; any other document
 /// is an error.
 fn graphql(state: &mut State, input: &Value) -> Reply {
@@ -2564,7 +2584,8 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
         );
     }
     if query.contains("updateProjectV2(input:") {
-        if state.project_visibility_refused {
+        let public = input_field(query, "updateProjectV2", "public", vars);
+        if public.is_some() && state.project_visibility_refused {
             // What GitHub was observed to answer an App the organization's
             // visibility policy does not admit.
             return Reply::ok(json!({"data": {"updateProjectV2": null}, "errors": [{
@@ -2580,7 +2601,7 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
         else {
             return graphql_error("no such project");
         };
-        if let Some(public) = vars["public"].as_bool() {
+        if let Some(public) = public.as_ref().and_then(Value::as_bool) {
             project.public = public;
         }
         return Reply::ok(json!({"data": {"updateProjectV2": {"projectV2": {"id": project.id}}}}));
