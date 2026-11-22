@@ -580,14 +580,29 @@ impl Drop for FakeGitHub {
             front.reach = Reach::Ending;
             front.close_relayed();
         }
-        // Wakes the blocking accept, which then sees `Ending`. The listener
-        // is the fake's until its fields drop, so the connect only lands in
-        // its backlog when the accepting thread has already ended.
-        let _wake_accept = TcpStream::connect(self.addr);
-        if let Some(accepting) = self.accepting.take()
-            && accepting.join().is_err()
-        {
-            lock_front(&self.front).fail("accept on the public address", &"the thread panicked");
+        if let Some(accepting) = self.accepting.take() {
+            // A blocking accept ends only on a connection, which then meets
+            // `Ending`. An accept thread that already ended needs none.
+            let woken = if accepting.is_finished() {
+                Ok(None)
+            } else {
+                TcpStream::connect(self.addr).map(Some)
+            };
+            match woken {
+                Ok(_wake) => {
+                    if accepting.join().is_err() {
+                        lock_front(&self.front)
+                            .fail("accept on the public address", &"the thread panicked");
+                    }
+                }
+                // Joining a thread nothing can wake would wait for a client
+                // that may never come. The thread is left blocked, holding
+                // the address until the test process exits, and the test
+                // fails below.
+                Err(cause) => {
+                    lock_front(&self.front).fail("wake the accept thread to end it", &cause)
+                }
+            }
         }
         self.server.unblock();
         if let Some(serving) = self.serving.take()
