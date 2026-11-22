@@ -201,12 +201,22 @@ pub struct FakeGitHub {
 }
 
 /// What the fake's public address does with a connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 enum Reach {
     /// Relays it to the HTTP server.
     Answering,
     /// Ends it before any byte of a response.
     Stopped,
+    /// Still ends it, until the accept thread takes `marker`, the
+    /// connection `resume` made, from the listen queue. The queue hands
+    /// connections over in the order they were made (first in, first out
+    /// on Linux and macOS), so every one taken before `marker` was made
+    /// while the fake was stopped. Taking `marker` answers again and tells
+    /// `resumed`.
+    Resuming {
+        marker: SocketAddr,
+        resumed: Sender<()>,
+    },
     /// The fake is being dropped: accepting ends.
     Ending,
 }
@@ -252,6 +262,16 @@ impl Front {
                 .as_ref()
                 .is_some_and(|(from, _)| *from == peer)
         })
+    }
+
+    /// Answers again and tells the waiting `resume`.
+    fn answer_again(&mut self) {
+        if let Reach::Resuming { resumed, .. } =
+            std::mem::replace(&mut self.reach, Reach::Answering)
+        {
+            // A `resume` that is no longer waiting has nothing to learn.
+            let _told = resumed.send(());
+        }
     }
 
     fn fail(&mut self, operation: &str, cause: &dyn std::fmt::Display) {
@@ -332,9 +352,38 @@ impl FakeGitHub {
         drop(self.state.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
-    /// Answers again on the same address, with the state it had.
+    /// Answers again on the same address, with the state it had. A
+    /// connection made while the fake was stopped stays unanswered even when
+    /// it is accepted only now; from the moment this returns, every new
+    /// connection is answered.
     pub fn resume(&mut self) {
-        lock_front(&self.front).reach = Reach::Answering;
+        let (resumed, answering) = mpsc::channel();
+        let marker = {
+            let mut front = lock_front(&self.front);
+            if !matches!(front.reach, Reach::Stopped) {
+                return;
+            }
+            // Made under the lock, so the accept thread can only classify
+            // this connection once it knows it is the marker.
+            let marker = TcpStream::connect(self.addr).unwrap_or_else(|cause| {
+                panic!("the fake GitHub could not resume: connect to its address: {cause}")
+            });
+            let from = marker.local_addr().unwrap_or_else(|cause| {
+                panic!("the fake GitHub could not resume: read its marker's address: {cause}")
+            });
+            front.reach = Reach::Resuming {
+                marker: from,
+                resumed,
+            };
+            marker
+        };
+        // The accept thread tells this wait once it takes the marker; if it
+        // ends first, the wait ends with it.
+        if answering.recv().is_err() {
+            let failures = lock_front(&self.front).failures.join("\n");
+            panic!("the fake GitHub stopped accepting before it answered again:\n{failures}");
+        }
+        drop(marker);
     }
 
     // --- seeding -----------------------------------------------------
@@ -695,10 +744,17 @@ fn accept(
                 }
             };
             let mut transport = lock_front(&front);
-            match transport.reach {
+            match &transport.reach {
                 Reach::Ending => break,
                 // Dropping the connection ends it before any response.
                 Reach::Stopped => continue,
+                Reach::Resuming { marker, .. } => {
+                    let marker = *marker;
+                    if client.peer_addr().ok() == Some(marker) {
+                        transport.answer_again();
+                    }
+                    continue;
+                }
                 Reach::Answering => {}
             }
             let registered = match client.try_clone() {
@@ -721,6 +777,12 @@ fn accept(
             relays.retain(|relay| !relay.is_finished());
             relays.push(relay(client, backend, id, Arc::clone(&front)));
         }
+        // A `resume` waiting for the marker learns that accepting ended.
+        let mut transport = lock_front(&front);
+        if matches!(transport.reach, Reach::Resuming { .. }) {
+            transport.reach = Reach::Stopped;
+        }
+        drop(transport);
         for relay in relays {
             let _joined = relay.join();
         }
