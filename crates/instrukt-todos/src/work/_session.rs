@@ -556,9 +556,11 @@ impl<'w> Session<'w> {
             };
             self.answered(index, id, &answer)?;
         }
-        // Replies are posted by the holder of the reflection lock. A busy
-        // lock leaves them pending for the next flush of this project, which
-        // posts every item's pending replies.
+        // Replies are posted only by the holder of the reflection lock. A
+        // busy lock leaves them pending: a later flush of this project that
+        // takes the lock attempts the pending replies of each item whose
+        // remote record is compatible, and any it cannot post stay pending
+        // for the flush after it.
         let todo = self.items[index].record.id.to_string();
         let Some(issue) = self.items[index].reflection.issue else {
             return Ok(());
