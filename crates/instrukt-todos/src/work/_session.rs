@@ -1223,10 +1223,14 @@ impl<'w> Session<'w> {
                     reflected.reflection.board_failure = Some(error.clone());
                 }
             }
-            if _store::stored(&reflected) != _store::stored(&loaded) {
-                let row = self.store.commit_reflection(&loaded, &reflected)?;
-                self.learned(row);
-            }
+            // A row this flush left as it was may still be news to the
+            // session: another process can have reflected it already.
+            let row = if _store::stored(&reflected) != _store::stored(&loaded) {
+                self.store.commit_reflection(&loaded, &reflected)?
+            } else {
+                Some(loaded)
+            };
+            self.learned(row);
         }
         drop(lock);
         Ok(())
