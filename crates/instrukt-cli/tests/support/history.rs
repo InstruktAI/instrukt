@@ -778,9 +778,10 @@ INSERT INTO mirror_sources VALUES(1,1,'source-alias','native-session','claude','
 }
 /// The mirrors `mirrors` adds beside the archive mirror: more than one import
 /// batch, ids from below zero through zero and on past it, each carrying
-/// [`BATCHED_TERM`].
+/// [`BATCHED_TERM`]; those up to zero carry [`NONPOSITIVE_TERM`] as well.
 pub const BATCHED: std::ops::RangeInclusive<i64> = -5..=125;
 pub const BATCHED_TERM: &str = "Batchtoken";
+pub const NONPOSITIVE_TERM: &str = "Lowtoken";
 /// A mirror after the first batch the importer cannot read: it has no title.
 pub const UNREADABLE: i64 = 125;
 
@@ -791,9 +792,10 @@ pub fn mirrors(env: &TestEnv) -> PathBuf {
     let db = Connection::open(&file).unwrap();
     for id in BATCHED.filter(|id| *id != 1) {
         let title = (id != UNREADABLE).then(|| format!("Batched {id}"));
+        let low = if id <= 0 { NONPOSITIVE_TERM } else { "" };
         db.execute(
             "INSERT INTO mirrors(id,computer,title,conversation_text,metadata) VALUES(?1,'old-computer',?2,?3,'{}')",
-            params![id, title, format!("{BATCHED_TERM} mirror {id}.")],
+            params![id, title, format!("{BATCHED_TERM} {low} mirror {id}.")],
         )
         .unwrap();
     }

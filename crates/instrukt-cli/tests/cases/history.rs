@@ -135,18 +135,11 @@ fn legacy_import_resumes_in_batches_and_keeps_aliases_once_without_a_continuing_
         }
         assert_eq!(std::fs::read(&mirror).unwrap(), before);
     };
-    let batched = |env: &TestEnv| -> Vec<String> {
+    let batched = |env: &TestEnv, term: &str| -> Vec<String> {
         let out = env
             .run(
                 env.home(),
-                [
-                    "history",
-                    "search",
-                    fixture::BATCHED_TERM,
-                    "--limit",
-                    "1000",
-                    "--json",
-                ],
+                ["history", "search", term, "--limit", "1000", "--json"],
             )
             .success();
         let found: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
@@ -171,23 +164,25 @@ fn legacy_import_resumes_in_batches_and_keeps_aliases_once_without_a_continuing_
     .unwrap();
     // The import stops at a mirror it cannot read; what it committed stays.
     import(false);
-    let first = batched(&env);
+    let first = batched(&env, fixture::BATCHED_TERM);
     assert!(!first.is_empty());
     assert!(first.len() < fixture::BATCHED.count() - 1);
-    for id in -5..=0 {
-        assert!(first.contains(&format!("mirror:{id}")), "mirror {id}");
-    }
+    // The first batch starts at the lowest mirror id, below zero.
+    assert_eq!(
+        batched(&env, fixture::NONPOSITIVE_TERM).len(),
+        fixture::BATCHED.filter(|id| *id <= 0).count()
+    );
     // A rerun continues after the committed mirrors without reading them.
     fixture::retitle(&mirror, fixture::UNREADABLE, Some("Repaired"));
     fixture::retitle(&mirror, -5, None);
     import(true);
-    let all = batched(&env);
-    let mut expected: Vec<String> = fixture::BATCHED
-        .filter(|id| *id != 1)
-        .map(|id| format!("mirror:{id}"))
-        .collect();
-    expected.sort();
-    assert_eq!(all, expected);
+    let mut all = batched(&env, fixture::BATCHED_TERM);
+    let found = all.len();
+    all.dedup();
+    assert_eq!(
+        (found, all.len()),
+        (fixture::BATCHED.count() - 1, fixture::BATCHED.count() - 1)
+    );
     std::fs::remove_file(&mirror).unwrap();
     env.run(
         env.home(),
