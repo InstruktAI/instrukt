@@ -190,7 +190,7 @@ pub struct Store {
 pub enum StoreLock {
     /// The process-re-entrant lock at this file ([`WriterLock`]): a write
     /// nested in one that already holds it shares the hold. Another process
-    /// is waited for at most 60 seconds.
+    /// is waited for at most `LOCK_TIMEOUT`.
     Reentrant(PathBuf),
     /// A plain exclusive lock at this file, owned by the write handle alone
     /// and waited for at most the given time. A second handle waits for the
