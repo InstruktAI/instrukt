@@ -157,9 +157,14 @@ its captured head. The commit list is empty when the attempt changed no
 repository file, and the writer then completes at its captured head. It
 releases that writer so the parent can dispatch independent review. Preparation
 verdict stamps release their corresponding reviewer attempts; commit reviews
-retain the exact SHA and report-note binding. A required artifact with no
-version keeps the writer outstanding. Commit review remains owed after writer
-release.
+retain the exact SHA and report-note binding. Drift review stamps
+(`--drift-reviewed`) release their bound read-only `drift-analyzer` attempt
+against the clean captured head on the first judgment and admit additional
+artifact stamps from that attempt (preserving the original releasing completion
+sequence) until later workspace work begins; exact replay of a still-current
+judgment reconciles an unreleased attempt without duplicating the stamp. A
+required artifact with no version keeps the writer outstanding. Commit review
+remains owed after writer release.
 
 Review rounds count verdict stamps; repeated evaluation counts no round.
 

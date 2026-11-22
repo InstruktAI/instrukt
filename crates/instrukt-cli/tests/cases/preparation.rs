@@ -276,24 +276,24 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         .read("instrukt.yaml")
         .replace("todos: true", "todos: true\n  events: true");
     project.repo.write("instrukt.yaml", &config);
+    project.repo.write(
+        "docs/project/spec/feature/live-parent.md",
+        "---\ndescription: Live parent snippet with a pending companion.\n---\n# Live parent — Spec\n\n## What it is\n\nLive parent body.\n\n## Canonical fields\n\nLive value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n",
+    );
     project
         .repo
         .commit("integrator: enable preparation delivery");
     project.repo.git(["push", "--quiet", "origin", "main"]);
     project.env.run(crew.root(), ["sync"]).success();
-    project.create(slug, "change", "Publish the contract before building it.");
-    crew.write(
-        slug,
-        "implementation-plan",
-        "Implement the published contract.",
-    );
-    crew.write(slug, "plan-review-findings", "Approved plan.");
-    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    project.create(slug, "feature", "Publish the contract before building it.");
     let writer = crew.worker(slug, "planner", Some("crew/procedure/plan"));
     let prepare = std::path::Path::new(writer["worktree"].as_str().unwrap());
     let file = prepare.join("docs/project/spec/feature/early-contract.md");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file,"---\ndescription: Contract available before its implementation.\ndelivered_by: [docs-first]\n---\n# Early contract — Spec\n\n## What it is\n\nAvailable before build.\n\n## Canonical fields\n\nA documented value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n").unwrap();
+    let companion = prepare.join("docs/project/spec/feature/live-parent.docs-first.md");
+    let companion_body = "---\ndescription: Pending companion update for live parent.\n---\n# Live parent — Spec\n\n## What it is\n\nPending companion body.\n\n## Canonical fields\n\nPending value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n";
+    std::fs::write(&companion, companion_body).unwrap();
     project.env.git(prepare, ["add", "docs"]);
     project.env.git(
         prepare,
@@ -308,6 +308,24 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         prepare,
         ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
     );
+    crew.write(slug, artifact_names::PRD, "Publish the early contract.");
+    crew.write(slug, artifact_names::PRD_REVIEW_FINDINGS, "Approved PRD.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+    crew.stamp(
+        slug,
+        &["--prd-approved", "--by", "human", "--session", "t3:lead-1"],
+    );
+    // Write the plan from the primary checkout referencing both the owned
+    // pending carrier (only in prepare) and README.md: grounding resolves owned
+    // snippets from the live prepare worktree and excludes owned IDs from
+    // upstream references.
+    crew.write(
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "Implement @docs/project/spec/feature/early-contract.md.\n\n```referenced-paths\nREADME.md\n```\n",
+    );
+    crew.write(slug, artifact_names::PLAN_REVIEW_FINDINGS, "Approved plan.");
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
     let stamp = |session: &str, args: &[&str]| {
         project
             .env
@@ -318,6 +336,7 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
             .assert()
     };
     stamp(writer["session"].as_str().unwrap(), &["--role-complete"]).success();
+
     assert!(
         !crew
             .root()
@@ -344,6 +363,276 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
             "[TMP]"
         ))
     );
+
+    // Advance both README.md on origin/main and input so both PRD and plan
+    // drift while the owned pending carrier exists only in docs-first/prepare.
+    std::fs::write(crew.root().join("README.md"), "# demo\n\nUpdated.\n").unwrap();
+    project.repo.commit("update readme");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    crew.write(
+        slug,
+        artifact_names::INPUT,
+        "Publish the contract before building it, round 1.",
+    );
+    let at_drift = crew.next("prepare", slug);
+
+    // Bound drift-analyzer stamps both artifacts in one attempt: the first
+    // stamp releases drift-analyzer/1, the second preserves that releasing
+    // completion sequence, exact current replay does not duplicate, and the
+    // owned carrier settles without re-pending.
+    let analyzer = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    let analyzer_session = analyzer["session"].as_str().unwrap();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    let settled_v1 = crew.next("prepare", slug);
+    let show_v1 = String::from_utf8_lossy(
+        &project
+            .env
+            .run(crew.root(), ["todo", "show", slug])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .into_owned();
+
+    // A second upstream input rewrite makes the earlier stamps obsolete:
+    // reassessing with the same reason records fresh stamps that settle again.
+    crew.write(
+        slug,
+        artifact_names::INPUT,
+        "Publish the contract before building it, round 2.",
+    );
+    let re_drifted = crew.next("prepare", slug);
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer_session,
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "refinement fits",
+        ],
+    )
+    .success();
+    let settled_v2 = crew.next("prepare", slug);
+
+    // Deleting the owned pending carrier triggers drift; judging the deletion
+    // cosmetic retains the absence so restoring the carrier triggers drift
+    // again before final settlement.
+    let original_contract = std::fs::read_to_string(&file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    project.env.git(prepare, ["add", "-A", "docs"]);
+    project
+        .env
+        .git(prepare, ["commit", "--quiet", "-m", "docs: remove carrier"]);
+    let deleted_drift = crew.next("prepare", slug);
+    let analyzer2 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer2["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "deletion assessed",
+        ],
+    )
+    .success();
+    let deleted_settled = crew.next("prepare", slug);
+    std::fs::write(&file, &original_contract).unwrap();
+    project.env.git(prepare, ["add", "docs"]);
+    project.env.git(
+        prepare,
+        ["commit", "--quiet", "-m", "docs: restore carrier"],
+    );
+    project.env.git(
+        prepare,
+        ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
+    );
+    let restored_drift = crew.next("prepare", slug);
+    let analyzer3 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer3["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "restoration assessed",
+        ],
+    )
+    .success();
+    let restored_settled = crew.next("prepare", slug);
+
+    // Deleting only the companion file (while its live parent survives) also
+    // triggers drift, settles when judged cosmetic (recording the surviving
+    // parent digest), and triggers drift again if the companion is restored.
+    std::fs::remove_file(&companion).unwrap();
+    project.env.git(prepare, ["add", "-A", "docs"]);
+    project.env.git(
+        prepare,
+        ["commit", "--quiet", "-m", "docs: remove companion"],
+    );
+    let companion_deleted_drift = crew.next("prepare", slug);
+    let analyzer4 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer4["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "companion deletion assessed",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer4["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "companion deletion assessed",
+        ],
+    )
+    .success();
+    let companion_deleted_settled = crew.next("prepare", slug);
+    std::fs::write(&companion, companion_body).unwrap();
+    project.env.git(prepare, ["add", "docs"]);
+    project.env.git(
+        prepare,
+        ["commit", "--quiet", "-m", "docs: restore companion"],
+    );
+    project.env.git(
+        prepare,
+        ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
+    );
+    let companion_restored_drift = crew.next("prepare", slug);
+    let analyzer5 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer5["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::PRD,
+            "cosmetic",
+            "companion restoration assessed",
+        ],
+    )
+    .success();
+    stamp(
+        analyzer5["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "companion restoration assessed",
+        ],
+    )
+    .success();
+    let companion_restored_settled = crew.next("prepare", slug);
+
+    // After removing the companion and rewriting the plan to reference its
+    // surviving parent as an ordinary upstream snippet, a cosmetic judgment
+    // must not import the pre-rewrite owned ID back onto the prepare tree:
+    // editing the parent on main must return the plan to pending drift.
+    std::fs::remove_file(&companion).unwrap();
+    project.env.git(prepare, ["add", "-A", "docs"]);
+    project
+        .env
+        .git(prepare, ["commit", "--quiet", "-m", "docs: drop companion"]);
+    project.env.git(
+        prepare,
+        ["push", "--quiet", "origin", "HEAD:docs-first/prepare"],
+    );
+    crew.write(
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "Implement @docs/project/spec/feature/early-contract.md referencing @docs/project/spec/feature/live-parent.md.\n\n```referenced-paths\nREADME.md\n```\n",
+    );
+    crew.write(
+        slug,
+        artifact_names::PLAN_REVIEW_FINDINGS,
+        "Re-approved plan.",
+    );
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    std::fs::write(crew.root().join("README.md"), "# demo\n\nUpdated twice.\n").unwrap();
+    project.repo.commit("update readme again");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    let analyzer6 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer6["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "second readme update assessed",
+        ],
+    )
+    .success();
+    // Edit the referenced parent on main: the rewritten plan must detect it.
+    project.repo.write(
+        "docs/project/spec/feature/live-parent.md",
+        "---\ndescription: Live parent snippet with a pending companion.\n---\n# Live parent — Spec\n\n## What it is\n\nUpdated live parent on main.\n\n## Canonical fields\n\nLive value.\n\n## Known caveats\n\nNone.\n\n## See Also\n\n",
+    );
+    project.repo.commit("docs: update live parent on main");
+    project.repo.git(["push", "--quiet", "origin", "main"]);
+    let parent_main_edit_drift = crew.next("prepare", slug);
+    let analyzer7 = crew.worker(slug, "drift-analyzer", Some("crew/procedure/drift-analyze"));
+    stamp(
+        analyzer7["session"].as_str().unwrap(),
+        &[
+            "--drift-reviewed",
+            artifact_names::IMPLEMENTATION_PLAN,
+            "cosmetic",
+            "live parent update on main assessed",
+        ],
+    )
+    .success();
+    let parent_main_edit_settled = crew.next("prepare", slug);
+
+    let tmp_root = project.env.path("");
+    let tmp = tmp_root.to_str().unwrap().trim_end_matches('/');
+    insta::assert_snapshot!(
+        "owned-carrier-drift-settlement-and-release",
+        redact(&format!(
+            "{at_drift}---\n{settled_v1}---\n{re_drifted}---\n{settled_v2}---\n{deleted_drift}---\n{deleted_settled}---\n{restored_drift}---\n{restored_settled}---\n{companion_deleted_drift}---\n{companion_deleted_settled}---\n{companion_restored_drift}---\n{companion_restored_settled}---\n{parent_main_edit_drift}---\n{parent_main_edit_settled}---\n{}",
+            show_v1.replace(tmp, "[TMP]")
+        ))
+    );
     project
         .env
         .instrukt(crew.root())
@@ -355,6 +644,13 @@ fn reviewed_preparation_integrates_before_work_and_pending_reads_use_its_own_tre
         "commit-reviewer",
         Some("crew/procedure/review-commits"),
     );
+    // Once a subsequent role attempt starts, the superseded drift-analyzer
+    // attempt is refused.
+    stamp(
+        analyzer_session,
+        &["--drift-reviewed", artifact_names::PRD, "cosmetic", "late"],
+    )
+    .failure();
     crew.write(
         slug,
         "preparation-review-findings",
