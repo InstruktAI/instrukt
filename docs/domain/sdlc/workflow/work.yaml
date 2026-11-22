@@ -36,6 +36,7 @@ transitions:
     any:
     - equals: [preparation.integrated, false]
     - all:
+      - not: {equals: [kind, task]}
       - exists: preparation.head
       - equals: [preparation.review_current, false]
   action: await-prepare

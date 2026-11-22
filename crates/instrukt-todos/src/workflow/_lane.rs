@@ -252,6 +252,67 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_approved_change_with_unreviewed_preparation_head_owes_head_review_in_prepare() {
+        let head = instrukt_core::ids::CommitSha::parse(&"ab".repeat(20)).unwrap();
+        let evidence = prepared_change().build();
+        let observed = Observations {
+            preparation_head: Some(head),
+            preparation_integrated: Some(true),
+            ..Observations::default()
+        };
+        let flavor = Flavor::load(&sdlc_dir()).unwrap();
+        let facts = derive_facts(&ProviderInput {
+            evidence: &evidence,
+            prerequisites: &[PrerequisiteStanding::Delivered],
+            approvers: Approvers {
+                prd: Approver::Human,
+                task: Approver::Human,
+            },
+            observed: &observed,
+        })
+        .unwrap();
+        let subject = Subject {
+            project: evidence.project.clone(),
+            slug: evidence.slug.clone(),
+            facts,
+        };
+        let (lane, _work, prepare) =
+            derive_lane(&flavor, evidence.kind, &subject, &no_config, &indexed)
+                .unwrap()
+                .unwrap();
+        assert_eq!(lane, Lane::Prepare);
+        assert_eq!(prepare.state.as_str(), "preparation_head_review");
+        assert_eq!(
+            prepare.obligation.as_ref().map(|o| o.action.as_str()),
+            Some("review-preparation-head")
+        );
+    }
+
+    #[test]
+    fn an_authorized_task_with_an_unreviewed_preparation_head_on_main_routes_to_task_run() {
+        let head = instrukt_core::ids::CommitSha::parse(&"ab".repeat(20)).unwrap();
+        let evidence = todo(TodoKind::Task)
+            .artifact(artifact_names::TASK_PLAN, "task-1")
+            .stamp(StampFact::Approval {
+                gate: ApprovalGate::Task,
+                by: ApprovedBy::Human,
+                target: digest("task-1"),
+                carried_from: None,
+                reasoning: None,
+            })
+            .build();
+        let observed = Observations {
+            preparation_head: Some(head),
+            preparation_integrated: Some(true),
+            ..Observations::default()
+        };
+        assert_eq!(
+            lane_with_observed(&evidence, &observed, &indexed),
+            Lane::TaskRun
+        );
+    }
+
+    #[test]
     fn a_work_obligation_of_the_prepare_orchestrator_routes_to_preparation() {
         // The plan was reviewed and needs work: the work flow owes the
         // prepare overview (await-prepare), whose role is the prepare
