@@ -805,13 +805,7 @@ impl Session<'_> {
                 }
             }
             ArtifactsCommand::Read { slug, name } => {
-                let version = work.read_artifact(project, &slug, &name)?;
-                let Some(content) = version.content else {
-                    bail!(
-                        "this computer does not hold the content of `{name}` version {}, and GitHub no longer serves it",
-                        version.digest
-                    );
-                };
+                let content = work.read_artifact(project, &slug, &name)?;
                 ctx.out.text(&content)?;
                 if !content.ends_with('\n') {
                     ctx.out.line("")?;
