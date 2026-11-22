@@ -242,7 +242,7 @@ impl OwnedView {
             Self::Board => {
                 let database_id=targets.status["databaseId"].as_u64().ok_or_else(||unreadable("Record status has no REST field id; update GitHub's Projects API capability"))?;
                 let created=gh.post_api(&format!("/orgs/{}/projectsV2/{}/views",board.owner,board.number),&json!({"name":self.name(),"layout":"board","filter":self.filter(),"vertical_group_by":[database_id]}))?;
-                created["value"]["node_id"]
+                created["node_id"]
                     .as_str()
                     .map(str::to_owned)
                     .ok_or_else(|| unreadable("created Board view has no node id"))
@@ -433,8 +433,10 @@ pub(crate) fn setup(gh: &GitHub, configured: Option<&BoardRef>) -> Result<BoardR
                 .to_owned();
         }
     };
-    let repository = gh.read("")?;
-    let created=gh.graphql("mutation($owner:ID!,$title:String!,$repository:ID!){ createProjectV2(input:{ownerId:$owner,title:$title,repositoryId:$repository}){projectV2{id number}}}",&json!({"owner":owner_id,"title":title,"repository":repository["node_id"]}))?;
+    let created = gh.graphql(
+        "mutation($owner:ID!,$title:String!){ createProjectV2(input:{ownerId:$owner,title:$title}){projectV2{id number}}}",
+        &json!({"owner":owner_id,"title":title}),
+    )?;
     let number = created["createProjectV2"]["projectV2"]["number"]
         .as_u64()
         .ok_or_else(|| GitHubError::Decode {

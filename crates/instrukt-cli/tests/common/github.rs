@@ -1434,7 +1434,7 @@ fn route(state: &mut State, method: &str, path: &str, query: &str, body: &str) -
             + 1;
         let view = json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":input["name"],"layout":input["layout"],"filter":input["filter"].as_str().unwrap_or(""),"vertical_group_by":columns});
         project.views.push(view.clone());
-        return Reply::created(json!({"value":view}));
+        return Reply::created(view);
     }
     let ["repos", owner, name, rest @ ..] = segs.as_slice() else {
         return Reply::not_found();
@@ -2475,6 +2475,14 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
         );
     }
     if query.contains("createProjectV2(input:") {
+        let has_repo_access = state
+            .active_token
+            .as_deref()
+            .and_then(|t| state.tokens.get(t))
+            .is_none_or(|(_, _, has_repo)| *has_repo);
+        if query.contains("repositoryId") && !has_repo_access {
+            return graphql_error("Resource not accessible by integration");
+        }
         let owner = vars["owner"]
             .as_str()
             .unwrap()
