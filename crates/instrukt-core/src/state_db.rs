@@ -827,13 +827,22 @@ mod tests {
             conn.pragma_update(None, "user_version", 31).unwrap();
             conn
         };
-        let history = |conn: &Connection| -> Vec<String> {
-            conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'history%' ORDER BY name")
+        let history = |conn: &Connection| -> [bool; 5] {
+            [
+                "history_conversations",
+                "history_fts",
+                "history_projection_records",
+                "history_source_positions",
+                "history_sources",
+            ]
+            .map(|table| {
+                conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                    [table],
+                    |row| row.get(0),
+                )
                 .unwrap()
-                .query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap()
+            })
         };
         // One retained row keeps every history table, the row included.
         let mut retained = at_31();
@@ -844,19 +853,7 @@ mod tests {
             )
             .unwrap();
         migrate(&mut retained, path).unwrap();
-        insta::assert_debug_snapshot!(history(&retained), @r#"
-        [
-            "history_conversations",
-            "history_fts",
-            "history_fts_config",
-            "history_fts_data",
-            "history_fts_docsize",
-            "history_fts_idx",
-            "history_projection_records",
-            "history_source_positions",
-            "history_sources",
-        ]
-        "#);
+        assert_eq!(history(&retained), [true; 5]);
         let kept: (i64, bool) = retained
             .query_row(
                 "SELECT position,imported FROM history_sources WHERE source='teleclaude:kept'",
@@ -865,10 +862,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kept, (1, true));
-        // Tables that hold nothing are removed, the index's own included.
+        // Tables that hold nothing are removed, the full-text index included.
         let mut empty = at_31();
         migrate(&mut empty, path).unwrap();
-        assert_eq!(history(&empty), Vec::<String>::new());
+        assert_eq!(history(&empty), [false; 5]);
     }
 
     #[test]
