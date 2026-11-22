@@ -1,4 +1,4 @@
-use super::{_db, Extraction, HistoryError, Match};
+use super::{_db, HistoryError, Match};
 use instrukt_core::{
     home::Home,
     state_db::{
@@ -52,11 +52,11 @@ pub(super) fn load(
     position: Option<i64>,
     imported: bool,
     conversations: &[Conversation],
-) -> Result<Extraction, HistoryError> {
+) -> Result<(), HistoryError> {
     db.write(|tx| -> Result<_,HistoryError> {
         for c in conversations { write_conversation(tx,source,c)?; }
         tx.execute("INSERT INTO history_sources(source,position,imported) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET position=excluded.position,imported=excluded.imported",params![source,position,imported])?;
-        Ok(Extraction {loaded:conversations.len(),position:serde_json::json!(position)})
+        Ok(())
     })
 }
 
