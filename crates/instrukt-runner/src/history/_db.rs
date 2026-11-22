@@ -521,21 +521,23 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
 
     #[test]
     fn a_move_stopped_while_copying_continues_after_its_last_committed_batch() {
-        let (_dir, home) = upgraded(130, 16);
+        // More conversations than one batch takes.
+        let total = BATCH_ROWS as u32 + 2;
+        let (_dir, home) = upgraded(total, 16);
         // The move stopped once its first batch had committed.
-        {
+        let last = {
             let mut db = StoreDb::open(&store(&home)).unwrap();
             let state = StateRead::open(&home).unwrap().unwrap();
-            assert_eq!(
-                copy_conversations(state.conn(), &mut db, (None, None)).unwrap(),
-                Some(128)
-            );
-        }
+            copy_conversations(state.conn(), &mut db, (None, None))
+                .unwrap()
+                .unwrap()
+        };
+        assert!(last < i64::from(total));
         // The rows it copied change in the state database afterwards.
         raw(&home.state_db_file())
             .execute(
-                "UPDATE history_conversations SET body='Changedtoken' WHERE id<=128",
-                [],
+                "UPDATE history_conversations SET body='Changedtoken' WHERE id<=?1",
+                [last],
             )
             .unwrap();
         let db = open(&home).unwrap();
@@ -553,7 +555,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
             count(db.conn(), "SELECT count(*) FROM history_projection_records"),
             count(db.conn(), "SELECT count(*) FROM history_source_positions"),
         );
-        assert_eq!(moved, (130, 0, 130, 2, 1));
+        assert_eq!(moved, (i64::from(total), 0, i64::from(total), 2, 1));
         let sources: Vec<(String, Option<i64>, i64)> = db
             .conn()
             .prepare("SELECT source,position,imported FROM history_sources ORDER BY source")
