@@ -207,6 +207,23 @@ impl Store {
         self.read(Vec::new(), load_items)
     }
 
+    /// Every local item, the listing copies and the provider state of the
+    /// project, from one reader.
+    pub fn existence(
+        &self,
+    ) -> Result<(Vec<LocalItem>, Vec<ListingCopy>, ProviderState), WorkError> {
+        self.read(
+            (Vec::new(), Vec::new(), ProviderState::default()),
+            |conn, path, project| {
+                Ok((
+                    load_items(conn, path, project)?,
+                    load_copies(conn, path, project)?,
+                    load_provider(conn, path, project)?,
+                ))
+            },
+        )
+    }
+
     /// The stored row of `id`, `None` when there is none.
     pub fn item(&self, id: &TodoId) -> Result<Option<LocalItem>, WorkError> {
         self.read(None, |conn, path, _| load_one(conn, path, id))
@@ -731,10 +748,7 @@ fn load_provider(
 /// Every local item of `project`, read without the writer lock; no
 /// database yet is no items.
 pub(crate) fn read_items(home: &Home, project: &ProjectSlug) -> Result<Vec<LocalItem>, WorkError> {
-    match StateRead::open(home)? {
-        Some(read) => load_items(read.conn(), read.path(), project),
-        None => Ok(Vec::new()),
-    }
+    Store::new(home, project).items()
 }
 
 /// Local items, listing copies and provider state of `project`, read
@@ -743,14 +757,7 @@ pub(crate) fn read_existence_state(
     home: &Home,
     project: &ProjectSlug,
 ) -> Result<(Vec<LocalItem>, Vec<ListingCopy>, ProviderState), WorkError> {
-    match StateRead::open(home)? {
-        Some(read) => Ok((
-            load_items(read.conn(), read.path(), project)?,
-            load_copies(read.conn(), read.path(), project)?,
-            load_provider(read.conn(), read.path(), project)?,
-        )),
-        None => Ok((Vec::new(), Vec::new(), ProviderState::default())),
-    }
+    Store::new(home, project).existence()
 }
 
 /// Writes every row of `item` inside `tx`: the `todos` row first, then the

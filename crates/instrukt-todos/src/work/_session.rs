@@ -145,7 +145,7 @@ impl<'w> Session<'w> {
                 return Err(WorkError::CodeNotOnGitHub { reason });
             }
         };
-        let (items, copies, provider) = _store::read_existence_state(work.home(), &project.slug)?;
+        let (items, copies, provider) = store.existence()?;
         let now = work.now();
         let remote = match unavailable(work, &provider, now) {
             Some(reason) => Remote::Unavailable(reason),
@@ -1445,41 +1445,10 @@ impl<'w> Session<'w> {
             if let Some(copy) = self.known_copy(slug) {
                 return self.located_copy(copy);
             }
-            let retained: Vec<String> = self
-                .items
-                .iter()
-                .map(|it| &it.record)
-                .filter(|r| &r.slug == slug)
-                .map(|r| format!("`{}` ({})", TodoAddress::exact(r), status_word(r.status)))
-                .collect();
-            if retained.is_empty() {
-                return Err(self.absent(slug));
-            }
-            return Err(WorkError::refused(format!(
-                "no live todo is named `{slug}`; address a retained entry exactly: {}",
-                retained.join(", ")
-            )));
+            return Err(retained_only(&self.items, slug).unwrap_or_else(|| self.absent(slug)));
         }
-        let local: Vec<usize> = self
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(_, it)| address.names(&it.record))
-            .map(|(i, _)| i)
-            .collect();
-        match local.as_slice() {
-            [index] => return Ok(Located::Local(*index)),
-            [] => {}
-            many => {
-                let ids: Vec<String> = many
-                    .iter()
-                    .map(|i| self.items[*i].record.id.to_string())
-                    .collect();
-                return Err(WorkError::refused(format!(
-                    "`{address}` names several entries; give more of the identity: {}",
-                    ids.join(", ")
-                )));
-            }
+        if let Some(index) = exact_local(&self.items, address)? {
+            return Ok(Located::Local(index));
         }
         let copied: Vec<ListingCopy> = self
             .copies
@@ -1869,6 +1838,51 @@ pub(crate) fn past_recovery(record: &TodoRecord, now: Timestamp) -> bool {
         (TodoStatus::Removed, Some(removal))
             if removal.at.checked_add(RECOVERY_WINDOW).is_ok_and(|end| end <= now)
     )
+}
+
+/// The refusal for a plain `slug` that names no live item in `items` but
+/// retained ones: each by its exact address. `None` when it names none.
+pub(crate) fn retained_only(items: &[LocalItem], slug: &TodoSlug) -> Option<WorkError> {
+    let retained: Vec<String> = items
+        .iter()
+        .map(|it| &it.record)
+        .filter(|r| &r.slug == slug)
+        .map(|r| format!("`{}` ({})", TodoAddress::exact(r), status_word(r.status)))
+        .collect();
+    (!retained.is_empty()).then(|| {
+        WorkError::refused(format!(
+            "no live todo is named `{slug}`; address a retained entry exactly: {}",
+            retained.join(", ")
+        ))
+    })
+}
+
+/// The one item of `items` an exact `address` names; several are refused
+/// naming their identities.
+pub(crate) fn exact_local(
+    items: &[LocalItem],
+    address: &TodoAddress,
+) -> Result<Option<usize>, WorkError> {
+    let local: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| address.names(&it.record))
+        .map(|(i, _)| i)
+        .collect();
+    match local.as_slice() {
+        [index] => Ok(Some(*index)),
+        [] => Ok(None),
+        many => {
+            let ids: Vec<String> = many
+                .iter()
+                .map(|i| items[*i].record.id.to_string())
+                .collect();
+            Err(WorkError::refused(format!(
+                "`{address}` names several entries; give more of the identity: {}",
+                ids.join(", ")
+            )))
+        }
+    }
 }
 
 /// The local item addressed by `slug` in `items`: the live one, or with

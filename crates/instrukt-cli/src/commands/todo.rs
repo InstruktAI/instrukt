@@ -452,11 +452,47 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         project: &project,
         cwd: ctx.cwd.clone(),
     };
+    // A local read closes no work transaction, so no approval attention
+    // is owed after it, and it waits on no writer.
+    let writes = command.can_change_the_record();
     let result = session.dispatch(command, ctx);
-    if let Err(error) = instrukt_runner::deliver_approval_attention(&ctx.home, ctx.clock.now()) {
+    if writes
+        && let Err(error) = instrukt_runner::deliver_approval_attention(&ctx.home, ctx.clock.now())
+    {
         tracing::warn!(event="approval_attention_pending",error=%error);
     }
     result
+}
+
+impl TodoCommand {
+    /// Whether the command can change the work record, and so be followed
+    /// by approval attention: every command but the reads of the local
+    /// record alone. `show` refreshes from GitHub, where an approver's
+    /// command can be recorded.
+    fn can_change_the_record(&self) -> bool {
+        match self {
+            TodoCommand::List(_) => false,
+            TodoCommand::Artifacts(args) => match &args.command {
+                ArtifactsCommand::List { .. }
+                | ArtifactsCommand::Read { .. }
+                | ArtifactsCommand::Diff { .. } => false,
+                ArtifactsCommand::Write { .. } => true,
+            },
+            TodoCommand::Create(_)
+            | TodoCommand::Show(_)
+            | TodoCommand::Update(_)
+            | TodoCommand::Refresh(_)
+            | TodoCommand::Freeze(_)
+            | TodoCommand::Unfreeze(_)
+            | TodoCommand::Remove(_)
+            | TodoCommand::Reactivate(_)
+            | TodoCommand::Deliver(_)
+            | TodoCommand::Attempt(_)
+            | TodoCommand::Bind(_)
+            | TodoCommand::Stamp(_)
+            | TodoCommand::Flow(_) => true,
+        }
+    }
 }
 
 struct Session<'a> {
@@ -760,11 +796,11 @@ impl Session<'_> {
         let (work, project) = (self.work, self.project);
         match command {
             ArtifactsCommand::List { slug } => {
-                let view = work.show(project, &slug)?;
-                if view.record.artifacts.is_empty() {
+                let artifacts = work.list_artifacts(project, &slug)?;
+                if artifacts.is_empty() {
                     ctx.out.line("no artifacts")?;
                 }
-                for artifact in &view.record.artifacts {
+                for artifact in &artifacts {
                     ctx.out.text(&render_artifact(artifact))?;
                 }
             }

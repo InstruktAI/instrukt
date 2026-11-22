@@ -6,10 +6,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use instrukt_core::git;
+use instrukt_core::config::Configuration;
 use instrukt_core::ids::{CommitSha, TodoSlug};
 use instrukt_core::machine;
 use instrukt_core::publication::EvalFingerprint;
+use instrukt_core::{git, github};
 use instrukt_runner::events::{Event, EventLog};
 use instrukt_runner::interfaces::{AgentPreference, CatchUp, ProjectRef, TaskSchedule, TodoKind};
 
@@ -19,8 +20,12 @@ use super::_model::{
     Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef,
     Version, digest_of, valid_artifact_name,
 };
-use super::_session::{GitHubRead, Located, ReflectionStatus, Session};
+use super::_session::{
+    GitHubRead, Located, ReflectionStatus, Session, exact_local, find_in, past_recovery,
+    retained_only, status_of,
+};
 use super::_stamps::{self, StampInputs, StampRequest};
+use super::_store::{LocalItem, Store};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, StampFact, StampRecord,
@@ -362,8 +367,18 @@ impl Work {
     /// the local record; every other todo as last known, labelled with the
     /// computer its claim names and the copy's age.
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {
-        let s = Session::open(self, project)?;
-        let machine = s.machine()?;
+        // A local read: neither lock, no GitHub request (`state-database`,
+        // "Writing"). Withdrawn work past its recovery window is left out;
+        // a writing command purges it.
+        let store = self.local_store_checked(project)?;
+        let (items, copies, provider) = store.existence()?;
+        let now = self.now();
+        let items: Vec<LocalItem> = items
+            .into_iter()
+            .filter(|it| !past_recovery(&it.record, now))
+            .collect();
+        let unread = super::_session::unavailable(self, &provider, now);
+        let machine = machine::machine_id(&self.home)?;
         let wanted = match selection {
             Selection::Active => vec![TodoStatus::Active, TodoStatus::StructuralHolder],
             Selection::Iceboxed => vec![TodoStatus::Iceboxed],
@@ -371,17 +386,15 @@ impl Work {
             Selection::Delivered => vec![TodoStatus::Delivered],
         };
         let runs_on = |record: &TodoRecord| record.claim.as_ref().map(|c| c.machine.clone());
-        let mut entries: Vec<ListEntry> = s
-            .items
+        let mut entries: Vec<ListEntry> = items
             .iter()
-            .enumerate()
-            .filter(|(_, it)| wanted.contains(&it.record.status))
-            .map(|(index, it)| {
+            .filter(|it| wanted.contains(&it.record.status))
+            .map(|it| {
                 let here = runs_on(&it.record).as_ref() == Some(&machine);
                 ListEntry {
                     record: it.record.clone(),
                     local: true,
-                    reflection: Some(s.status(index)),
+                    reflection: Some(status_of(it, unread.clone())),
                     ready: false,
                     last_known: (!here).then(|| LastKnown {
                         runs_on: runs_on(&it.record),
@@ -390,8 +403,8 @@ impl Work {
                 }
             })
             .collect();
-        let local_ids: BTreeSet<TodoId> = s.items.iter().map(|it| it.record.id.clone()).collect();
-        for copy in &s.copies {
+        let local_ids: BTreeSet<TodoId> = items.iter().map(|it| it.record.id.clone()).collect();
+        for copy in &copies {
             if !local_ids.contains(&copy.record.id) && wanted.contains(&copy.record.status) {
                 entries.push(ListEntry {
                     last_known: Some(LastKnown {
@@ -405,12 +418,13 @@ impl Work {
                 });
             }
         }
-        let delivered: BTreeSet<TodoId> = s
-            .known_records()
-            .into_iter()
-            .chain(entries.iter().map(|e| e.record.clone()))
+        let delivered: BTreeSet<TodoId> = items
+            .iter()
+            .map(|it| &it.record)
+            .chain(copies.iter().map(|copy| &copy.record))
+            .chain(entries.iter().map(|e| &e.record))
             .filter(|r| r.status == TodoStatus::Delivered)
-            .map(|r| r.id)
+            .map(|r| r.id.clone())
             .collect();
         for entry in &mut entries {
             entry.ready = entry.record.after.iter().all(|r| delivered.contains(&r.id));
@@ -984,16 +998,74 @@ impl Work {
         })
     }
 
-    /// The current version of artifact `name`.
+    /// The project's local store, for a read of the local record alone: its
+    /// configuration loaded and its code checked to be on GitHub, with no
+    /// lock taken and no GitHub request.
+    fn local_store_checked(&self, project: &ProjectRef) -> Result<Store, WorkError> {
+        let config = Configuration::load(&self.home, Some(&project.root))?;
+        let api_url = github::api_url(&self.home)?;
+        if let github::CodeHost::Elsewhere { reason } =
+            github::code_host(&config, &api_url, &project.root)?
+        {
+            return Err(WorkError::CodeNotOnGitHub { reason });
+        }
+        Ok(Store::new(&self.home, &project.slug))
+    }
+
+    /// The record of the local item `address` names, read from this
+    /// computer alone (`github-record`, "Artifacts and stamps"): a plain
+    /// slug is the live item, `<slug>@<identity-prefix>` an exact entry,
+    /// retained ones included.
+    fn local_record(
+        &self,
+        project: &ProjectRef,
+        address: &TodoAddress,
+    ) -> Result<TodoRecord, WorkError> {
+        let store = self.local_store_checked(project)?;
+        let now = self.now();
+        let items: Vec<LocalItem> = store
+            .items()?
+            .into_iter()
+            .filter(|it| !past_recovery(&it.record, now))
+            .collect();
+        let slug = &address.slug;
+        let found = match address.identity {
+            None => match find_in(&items, slug, false) {
+                Some(index) => Some(index),
+                None => {
+                    return Err(
+                        retained_only(&items, slug).unwrap_or_else(|| unknown_here(project, slug))
+                    );
+                }
+            },
+            Some(_) => exact_local(&items, address)?,
+        };
+        match found {
+            Some(index) => Ok(items[index].record.clone()),
+            None => Err(unknown_here(project, slug)),
+        }
+    }
+
+    /// A todo's artifacts and their retained versions, from the local
+    /// record.
+    pub fn list_artifacts(
+        &self,
+        project: &ProjectRef,
+        address: &TodoAddress,
+    ) -> Result<Vec<Artifact>, WorkError> {
+        Ok(self.local_record(project, address)?.artifacts)
+    }
+
+    /// The current version of artifact `name`, from the local record.
     pub fn read_artifact(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
         name: &str,
     ) -> Result<Version, WorkError> {
-        let view = self.show(project, address)?;
+        let record = self.local_record(project, address)?;
         let slug = &address.slug;
-        view.record
+        record
             .artifact(name)
             .and_then(|a| a.versions.last())
             .cloned()
@@ -1009,10 +1081,9 @@ impl Work {
         old: &str,
         new: &str,
     ) -> Result<Vec<DiffLine>, WorkError> {
-        let view = self.show(project, address)?;
+        let record = self.local_record(project, address)?;
         let slug = &address.slug;
-        let artifact = view
-            .record
+        let artifact = record
             .artifact(name)
             .ok_or_else(|| no_artifact(slug, name))?;
         let content = |digest: &str| -> Result<String, WorkError> {
@@ -1846,6 +1917,14 @@ fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>,
         }
     }
     Ok(refs)
+}
+
+/// The refusal for a todo this computer holds no local item of.
+fn unknown_here(project: &ProjectRef, slug: &TodoSlug) -> WorkError {
+    WorkError::UnknownTodo {
+        project: project.slug.clone(),
+        todo: slug.clone(),
+    }
 }
 
 fn ensure_slug_free(
