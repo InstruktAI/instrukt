@@ -539,12 +539,22 @@ status or recorded cause.
 
 | Column | Meaning |
 | --- | --- |
-| `company`, `server`, `issuer` | The company home, the server and the authorization server it was made for. |
-| `declared` | `1` for a client declared under `sign_in.client`, whose secret is read from the home's secrets file; `0` for a client instrukt registered. |
+| `company`, `server`, `issuer` | The company home, the server and the authorization server it was made for; `company` and `server` are `NULL` for a host-level shared OAuth client (`mcp_clients.<name>`), which shares one `return_id` across every company referencing it. |
+| `host_client` | The global `mcp_clients.<name>` key for a shared host client registration; `NULL` for a company-scoped registration. |
+| `declared` | `1` for a client declared under `sign_in.client` or global `mcp_clients.<name>`, whose secret is read from its owning secrets file; `0` for a client instrukt registered dynamically. |
 | `client_id` | The client's identifier, for a declared client as it was declared when the registration was made. |
 | `client_secret`, `secret_digest` | A registered client's secret, `NULL` for a public client and for a declared one; for a declared client the SHA-256 digest of its secret, `NULL` when it has none. |
 | `return_address` | The return address the client was registered with. |
 | `registered_at`, `retired_at` | When it was made, and when a newer registration replaced it; `NULL` while current. |
+
+**`company_issuers`** — durable identity of each company's built-in OIDC issuer. Key: `company`.
+
+| Column | Meaning |
+| --- | --- |
+| `company` | The company home name. |
+| `issuer_id` | Stable 32-character lowercase hexadecimal identifier from 128 random bits, forming `<ingress.url>/hooks/inbound/issuers/<issuer_id>`. Generated once and retained across restarts. |
+| `public_jwks_json` | Public ES256 JWK Set JSON matching the private signing key stored in the company home's `secrets.env`. Never contains private key material. |
+| `updated_at` | RFC 3339 UTC timestamp when the public key set was last updated. |
 
 **`mcp_generations`** — Key: `(company, person, server)`. Column:
 `generation`, raised by every removal of that person's login or open sign-ins
@@ -716,6 +726,7 @@ and `message`, the connector's identity of that message.
 | --- | --- |
 | `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
 | `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
+| `sender_is_admin`, `is_direct` | Booleans (`0` or `1`) recorded at admission: whether the provider reported the sender as a workspace administrator (`sender_is_admin`) and whether the conversation is a direct message (`is_direct`). Migrated rows default to `0`. Once written they do not change. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
 | `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice eligibility without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
