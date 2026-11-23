@@ -10,8 +10,6 @@ expanded:
   - general/policy/leadership
   - general/policy/human-contract
   - general/policy/context-retrieval
-  - general/policy/documentation-discipline
-  - general/policy/commits
   - general/policy/conflict-resolution
   - general/policy/message-identity-headers
   - general/policy/no-output-turn
@@ -22,6 +20,8 @@ listed:
   - general/principle/intelligence-boundaries
   - general/policy/referencing-doc-snippets
   - general/policy/adr-discipline
+  - general/policy/commits
+  - general/policy/documentation-discipline
   - general/spec/snippet-authoring-schema
   - general/spec/third-party-docs
   - general/concept/failure-modes
