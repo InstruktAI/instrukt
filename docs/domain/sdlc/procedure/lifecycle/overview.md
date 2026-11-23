@@ -138,6 +138,8 @@ so the runner does not re-dispatch a fresh turn on every tick.
 
 <!-- @config: runtime.inspect_thread -->
 
+<!-- @config: runtime.retire_thread -->
+
 1. **Read current facts and claim the todo.** Run `instrukt todo work {slug}`
    (or `instrukt todo show {slug} --json` to inspect). For deliberate entry
    outside `<slug>/work`, follow the returned native placement instruction and
@@ -159,7 +161,14 @@ so the runner does not re-dispatch a fresh turn on every tick.
    independently approved HEAD commit SHA, and all required approvals hold.
    Record `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
    `workflow.finalized`) and release the claim with
-   `instrukt todo update {slug} --unclaim`.
+   `instrukt todo update {slug} --unclaim`. Keep this orchestrator thread
+   wakeable (never retire it before delivery — `integrate` retires it once the
+   todo is delivered). If this orchestrator instead withdraws or removes a todo
+   directly, finish all record writes (`log`, `instrukt todo remove {slug}`)
+   first, preserve any unfinished human or worker obligations, and then retire
+   this terminal orchestrator thread via the configured `runtime.retire_thread`
+   action (converging idempotently on replay and never retiring standing
+   agents).
 
 ## Outputs
 

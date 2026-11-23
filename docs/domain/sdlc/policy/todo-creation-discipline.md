@@ -22,6 +22,8 @@ Apply these configured action values to the identified assignment and session.
 
 <!-- @config: runtime.inspect_thread -->
 
+<!-- @config: runtime.retire_thread -->
+
 ### Progress, hold, or retire
 
 - **Keep active work actionable.** Each active todo has an authorized outcome,
@@ -50,6 +52,14 @@ Apply these configured action values to the identified assignment and session.
   owed keeps its owner and gates. Withdrawing a human-owned outcome follows
   `general/policy/human-contract`; lack of a technical path does not confer
   that authority on the agent.
+- **Retire terminal orchestrator threads after recording terminal state.** Once
+  a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
+  recorded phase orchestrator thread(s) (`todo-orchestrator`, plus legacy
+  `prepare-orchestrator` and `work-orchestrator` bindings) through the
+  configured `runtime.retire_thread` action. Complete all record writes and
+  handoffs first when self-retiring, converge idempotently on already-retired
+  threads, preserve unfinished human or worker obligations, never gate
+  retirement on unrelated resource cleanup, and never retire standing agents.
 - **Reassess a hold when its basis changes.** Resume when its condition is
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is

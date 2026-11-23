@@ -88,11 +88,19 @@ lifecycle contract.
 
    <!-- @config: runtime.dispatch_remote -->
 
-   A mandate that calls for cancelling a child or settling a conversation uses:
+   A mandate that calls for cancelling a child or dormantly settling a
+   wakeable conversation uses:
 
    <!-- @config: runtime.cancel_child -->
 
    <!-- @config: runtime.finish_thread -->
+
+   Once a todo reaches a terminal state (`delivered` or `withdrawn`), retire
+   its phase orchestrator thread(s) — never standing agents — after confirming
+   all record writes and handoffs (converging idempotently on already-retired
+   threads, and completing remaining writes first before self-retiring):
+
+   <!-- @config: runtime.retire_thread -->
 
    Work artifacts and stamps establish workflow completion. Runtime state,
    conversation text and silence establish none of those record writes.

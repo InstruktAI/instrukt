@@ -84,15 +84,25 @@ workflow policy; the record supplies facts rather than a stored phase machine.
 
 ### Terminal Child Cleanup
 
-At terminal handoff, execute `instrukt todo update <slug> --unclaim` and confirm
-its outcome. The next owner waits on claim release, not on the
-end of this session. An unfinished human conversation retains the session,
-never the claim. A refused release remains unresolved.
+At handoff, execute `instrukt todo update <slug> --unclaim` and confirm its
+outcome. The next owner waits on claim release, not on the end of this
+session. An unfinished human conversation retains the session, never the
+claim. A refused release remains unresolved.
 
 Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
 conversation needs the child, record the contribution and handoff. Close
-discussion through the configured runtime discussion instruction.
+discussion through the configured runtime discussion instruction. Keep active,
+held, and between-phase orchestrators wakeable (using dormant settling only);
+once a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
+phase orchestrator threads (`todo-orchestrator`, plus legacy
+`prepare-orchestrator` and `work-orchestrator` bindings) through the
+configured terminal retirement instruction, completing all record writes first
+when self-retiring, converging idempotently on replay, never gating retirement
+on unrelated resource cleanup, and never retiring standing agents:
+
+<!-- @config: runtime.retire_thread -->
+
 Session ending and cleanup belong to the runtime. Preserve any unresolved
 cleanup with its responsible owner.
 

@@ -60,6 +60,8 @@ Apply these configured action values to the identified assignment and session.
 
 <!-- @config: runtime.inspect_thread -->
 
+<!-- @config: runtime.retire_thread -->
+
 ### 1. Route the activating event
 
 - **`workflow.finalized`:** read the todo's factual ledger, independent
@@ -202,15 +204,27 @@ with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed deli
 commit under the work-record contract. Remove the clean `<slug>/work` worktree and
 delete `<slug>/work` locally and on `origin`; keep any failed cleanup owed.
 
-Inspect `instrukt todo show <slug> --json` after delivery: while the ledger's
-`workspace.worktree_exists` is true, remove the clean `<slug>/work` worktree
-(`git worktree remove <workspace.worktree_path>`). Select only the todo's one
-shared worktree; retained role-attempt rows refer to that same path. A dirty or
-in-use worktree or failed removal remains owed. Then delete `<slug>/work`
-locally (`git branch -D <workspace.branch>`) and on `origin`
-(`git push origin --delete <workspace.branch>`) until both refs are absent.
-Preserve the runtime thread record and retained attempt evidence; todo cleanup
-is separate from the persistent integration workspace.
+Inspect `instrukt todo show <slug> --json` (or `instrukt todo show <slug>@<id-prefix> --json`
+once delivered) after delivery:
+
+1. **Retire terminal orchestrator threads.** Read the delivered todo's recorded
+   phase orchestrator bindings (`todo-orchestrator`, plus any legacy
+   `prepare-orchestrator` or `work-orchestrator` bindings) and retire each
+   non-standing orchestrator thread through the configured `runtime.retire_thread`
+   action. Converge idempotently on already-retired threads (distinguishing an
+   already-retired thread from a failed observation), preserve any unfinished
+   human or worker obligations, and never retire standing agents (including this
+   integrator session). Unrelated worktree or branch cleanup failures do not
+   gate retiring the delivered todo's orchestrator threads, and vice versa.
+2. **Clean up the worktree and branch.** While the ledger's
+   `workspace.worktree_exists` is true, remove the clean `<slug>/work` worktree
+   (`git worktree remove <workspace.worktree_path>`). Select only the todo's one
+   shared worktree; retained role-attempt rows refer to that same path. A dirty or
+   in-use worktree or failed removal remains owed. Then delete `<slug>/work`
+   locally (`git branch -D <workspace.branch>`) and on `origin`
+   (`git push origin --delete <workspace.branch>`) until both refs are absent.
+   Preserve the runtime thread record and retained attempt evidence; todo cleanup
+   is separate from the persistent integration workspace.
 
 When all current work is settled, park as the standing integrator. The next
 `workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
