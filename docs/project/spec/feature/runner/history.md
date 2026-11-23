@@ -83,6 +83,17 @@ performs its own catch-up before answering. There is no tick-driven
 extraction, no periodic reading of T3's state and no scheduled reconciliation
 fallback.
 
+<!-- planned:fix-flaky-conversation-links-wait-tests -->
+After it subscribes, after each watch it establishes and after each native
+notification, the T3 adapter follows the database's change counter on one
+read-only connection for the confirmation bound its notification producer
+owns, and the runner catches up again each time the counter moves: a commit
+whose write was notified before it became readable is read once it is. A
+counter read that fails is tried again within the same bound and fails
+nothing. Once the bound has passed without a further native notification, the
+connection is closed and nothing is read.
+<!-- /planned:fix-flaky-conversation-links-wait-tests -->
+
 Extraction and the query responder each retry inside themselves when their
 source or transport fails after they started, and report their state in
 `instrukt events status`; their failure ends neither the other nor the runner.
@@ -312,6 +323,15 @@ Then that conversation is in the developer's instrukt history without a search o
   a batch's text bound is read and written whole.
 - A mirror added to the mirror store below the last committed id while an
   import is incomplete is not imported.
+<!-- planned:fix-flaky-conversation-links-wait-tests -->
+- A commit that becomes readable later than the confirmation bound after the
+  last native notification of its write is caught up at the next native
+  notification, explicit extraction, search or runner start.
+- While the adapter follows the change counter, the runner holds one read-only
+  connection to T3's database, and with it SQLite's shared lock on the
+  database file. An operation that needs the database exclusively waits until
+  that connection closes.
+<!-- /planned:fix-flaky-conversation-links-wait-tests -->
 
 ## See Also
 
@@ -319,3 +339,6 @@ Then that conversation is in the developer's instrukt history without a search o
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/work/github-record](../work/github-record.md)
 - https://github.com/pingdotgg/t3code/blob/6417151c093e54dbba0e6c824c69d03983793b9a/apps/server/src/orchestration-v2/ProjectionStore.ts — T3's projection writer, the vendor contract the T3 adapter's source reads are verified against.
+<!-- planned:fix-flaky-conversation-links-wait-tests -->
+- https://www.sqlite.org/pragma.html#pragma_data_version — SQLite's change counter, the vendor contract the adapter's confirmation reads.
+<!-- /planned:fix-flaky-conversation-links-wait-tests -->

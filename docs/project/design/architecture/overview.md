@@ -500,3 +500,14 @@ session-fixed timing through A3's bounded batch log.
   `instrukt todo refresh <slug>` is its door
   (`project/instrukt/spec/feature/work/github-record`).
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
+<!-- planned:fix-flaky-conversation-links-wait-tests -->
+- **A turn's commit becomes readable after the read its notification triggered:**
+  the read finds nothing new and ends successfully, and no native notification
+  marks the moment the commit becomes readable. The T3 adapter's notifications
+  follow the database's change counter after each notification and report again
+  when it moves (`project/instrukt/spec/feature/runner/history`, Freshness and
+  participation), so linked threads, history and company conversations read the
+  turn then. A commit that becomes readable later than that contract's
+  confirmation bound stays unrelayed and unextracted, with no failure recorded,
+  until the next native change, search or runner start.
+<!-- /planned:fix-flaky-conversation-links-wait-tests -->
