@@ -516,7 +516,17 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
         "<slug>/prepare",
         "state machine routes",
         "integrated to main before build",
-        "Work-phase doc freeze",
+        "integrated as soon as possible before build",
+        "separate preparation and work worktrees",
+        "when reviewed preparation integrates",
+        "preparation folding",
+        "work-delivery folding",
+        "work-phase doc freeze",
+        "prepare orchestrator",
+        "work orchestrator",
+        "prepare-orchestrator",
+        "work-orchestrator",
+        "next workflow call",
     ];
     let mut stack = vec![repo_docs.join("domain/sdlc"), repo_docs.join("general")];
     while let Some(dir) = stack.pop() {
@@ -526,9 +536,14 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
                 stack.push(path);
             } else if path.extension().is_some_and(|ext| ext == "md") {
                 let text = std::fs::read_to_string(&path).unwrap();
+                let normalized = text
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_ascii_lowercase();
                 for needle in forbidden {
                     assert!(
-                        !text.contains(needle),
+                        !normalized.contains(needle),
                         "shipped directive doc {} still contains retired phrase {needle:?}",
                         path.display()
                     );

@@ -710,7 +710,7 @@ docs/project/spec/feature/workflow/todo-rename#scenario-rename-conflict`. The ta
   `implementation-plan`, and readiness reports.
 - Applies to all agents creating or reviewing these artifacts: intake,
   architecture, plan, reviewers, and gate assessors.
-- Applies to builders, build reviewers, and work orchestrators where an
+- Applies to builders, build reviewers, and `todo-orchestrator` sessions where an
   implementation meets the plan that anticipated it.
 
 ## Enforcement

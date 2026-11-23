@@ -627,8 +627,8 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 ## Why
 
 The loaded lifecycle contracts describe how each role _executes_; they do not
-say how an outsider reads its session states. That a work orchestrator alive
-and idle means unfinished work, or that a prepare session parked at the PRD
+say how an outsider reads its session states. That a `todo-orchestrator` alive
+and idle means unfinished work, or that one parked at the PRD
 gate is waiting correctly, is observer knowledge and is not derivable from
 those contracts — so it is recorded here, once, instead of being re-derived
 each sweep or hand-copied into the procedure. Cases are recognition semantics,

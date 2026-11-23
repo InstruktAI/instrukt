@@ -9,7 +9,7 @@ visibility: public
 
 ## Rules
 
-Main has one writer: the integrator. Every other agent authors and commits in a worktree: a todo's separate preparation and work worktrees, or a short-lived one-off worktree for ad hoc work. Where independent review is owed under the routing rule below, it binds the exact worktree head before integration. Reviewed preparation docs are integrated as soon as possible before build; work later starts from that updated main. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
+Main has one writer: the integrator. Every other agent authors and commits in a worktree: a todo's single `<slug>/work` worktree, or a short-lived one-off worktree for ad hoc work. Where independent review is owed under the routing rule below, it binds the exact worktree head before integration. Pending documentation edits authored on `<slug>/work` are reviewed alongside implementation and folded by the integrator at delivery. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
 
 This is the canonical source of commit behavior. Other docs may reference it, but must not redefine commit policy.
 

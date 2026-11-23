@@ -763,7 +763,7 @@ Severity guidance:
 
 **Authority:** `sdlc/policy/todo-creation-discipline` and `general/policy/documentation-discipline`.
 
-Conditional lane. Triggers only for an ad-hoc commit review with no prepare artifacts; in a lifecycle work review the prepare phase owns doc reflection and this lane is a no-op.
+Conditional lane. Triggers for an ad-hoc commit review with no prepare artifacts, or for a fast-track lifecycle review where no separate preparation pass authored pending docs; when a todo's preparation pass already authored pending docs on `<slug>/work`, the Documentation and Doc-hygiene lanes assess them directly and this lane verifies no contract delta was missed.
 
 For an ad-hoc commit review, establish whether the work qualified for its execution route under the intake contract. Commit size, file count and absence of prepare artifacts do not establish a violation.
 

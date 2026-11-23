@@ -352,7 +352,7 @@ fn checked_replacement(
     Ok(index)
 }
 
-fn matches_driver_role(bound: &RoleName, requested: &RoleName) -> bool {
+pub(super) fn matches_driver_role(bound: &RoleName, requested: &RoleName) -> bool {
     bound == requested
         || (requested.as_str() == "todo-orchestrator" && bound.as_str() == "work-orchestrator")
 }

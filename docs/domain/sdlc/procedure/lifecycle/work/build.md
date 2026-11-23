@@ -128,7 +128,7 @@ with the governing contract.
    decomposition, which a plan anticipates rather than binds
    (`sdlc/policy/preparation-artifact-quality`). Record a departure from what
    the plan names, with its reason, in the todo `log`,
-   where the build reviewer reads it. Kick back to prepare when code reality invalidates
+   where the build reviewer reads it. Kick back to `todo-orchestrator` when code reality invalidates
    the contract or a reviewed decision — not whenever implementation differs
    from prose. Never revise the plan to fit what you built. A material decision
    discovered during build — one
@@ -137,7 +137,7 @@ with the governing contract.
    authorize the decision. When your own earlier action created the problem, the
    first remedy is to remove or undo that cause; no mechanism is added to
    accommodate a state, premise, or branch you introduced. Technical uncertainty
-   goes to the reviewer through evidence or to prepare through kickback; a
+   goes to the reviewer through evidence or to `todo-orchestrator` through kickback; a
    question to the human about anything outside their lane
    (`general/policy/human-contract`) is itself a defect.
 9. **Honor the structural ratchet on the change path.** Execute a planned

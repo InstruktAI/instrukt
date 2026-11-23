@@ -61,9 +61,18 @@ retaining thread and attempt records.
   that `<slug>/prepare` head so reviewed or in-progress pending docs carry
   forward with zero commit loss.
 - Retained `work-orchestrator` driver bindings on an existing `<slug>/work`
-  worktree are adopted automatically by `todo-orchestrator`; unreleased legacy
-  `prepare-orchestrator` driver bindings are retired when `todo-orchestrator`
-  takes over.
+  worktree are adopted automatically by `todo-orchestrator` (preserving the
+  existing session, worktree, and claim acceptance). Unreleased legacy
+  `prepare-orchestrator` driver bindings and unbound legacy `work-orchestrator`
+  driver reservations (`session: None`) do not block dispatch and are retired
+  automatically when `todo-orchestrator` takes over.
+- If an interrupted legacy start had already created a local `<slug>/work`
+  branch without a retained bound session/worktree, `reserve_dispatch` refuses
+  to overwrite the existing branch (`todo branch '<slug>/work' already exists;
+  no replacement worktree is created`); reconcile by attaching/resuming the
+  existing worktree via `instrukt todo work <slug> --placement-evidence ...`,
+  or remove the orphaned unstarted worktree/branch once confirmed empty so
+  `todo-orchestrator` can create `<slug>/work` cleanly.
 - If a legacy `prepare-orchestrator` session still holds an active claim on
   upgrade, release it with `instrukt todo update <slug> --unclaim` (or from the
   claiming computer) so `todo-orchestrator` can pick it up on `<slug>/work`,

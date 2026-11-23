@@ -1077,8 +1077,7 @@ impl Work {
         }
         let lane = instrukt_runner::interfaces::Lane::Work;
         let existing = record.bindings.iter().rev().find(|b| {
-            (b.role == *role
-                || (role.as_str() == "todo-orchestrator" && b.role.as_str() == "work-orchestrator"))
+            super::_ports::matches_driver_role(&b.role, role)
                 && b.attempt.assignment == AssignmentKind::Driver
                 && b.attempt.released_at.is_none()
         });
@@ -1209,11 +1208,13 @@ impl Work {
             s.commit("todo workspace placement", |s| {
                 let record = &mut s.items[index].record;
                 // Retire any unreleased legacy prepare-orchestrator driver binding
-                // now that the unified todo-orchestrator owns `<slug>/work`.
+                // (and any unbound legacy work-orchestrator reservation) now that
+                // the unified todo-orchestrator owns `<slug>/work`.
                 for b in &mut record.bindings {
-                    if b.role.as_str() == "prepare-orchestrator"
-                        && b.attempt.assignment == AssignmentKind::Driver
+                    if b.attempt.assignment == AssignmentKind::Driver
                         && b.attempt.released_at.is_none()
+                        && (b.role.as_str() == "prepare-orchestrator"
+                            || (b.role.as_str() == "work-orchestrator" && b.session.is_none()))
                     {
                         b.attempt.released_at = Some(now);
                     }

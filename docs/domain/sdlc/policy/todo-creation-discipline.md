@@ -195,7 +195,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   saw, where, and how it came to see it — through the channel its own
   procedure names, or else in its final report. The governing session decides
   each observation under this standard. A build's entries are decided by the
-  deferral worker the work orchestrator dispatches: deciding them, and
+  deferral worker `todo-orchestrator` dispatches: deciding them, and
   creating or filing what this policy admits, is that worker's job
   (`sdlc/procedure/lifecycle/work/deferrals`).
 

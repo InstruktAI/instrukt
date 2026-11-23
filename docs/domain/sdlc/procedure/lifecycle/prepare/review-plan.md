@@ -502,8 +502,8 @@ are the complete `plan-review-findings` artifact for every pass, the
 this reviewer is its first non-author recipient.
 
 When the plan has a localized defect, record it as a finding and stamp
-`needs_work`. The plan drafter owns the corrective edit and the next workflow call
-derives the re-review obligation.
+`needs_work`. The plan drafter owns the corrective edit, and `todo-orchestrator`
+routes the findings and follow-up re-review from the factual ledger.
 
 ### 8a. Forbidden reviewer moves
 
@@ -593,9 +593,9 @@ Review artifact: plan-review-findings
 
 ## Recovery
 
-- If any finding remains unresolved, mark `needs_work`. The
-  next workflow call routes the findings; whether another pass follows is the
-  prepare orchestrator's continuation judgment under the shared review procedure.
+- If any finding remains unresolved, mark `needs_work`. `todo-orchestrator`
+  routes the findings; whether another pass follows is `todo-orchestrator`'s
+  continuation judgment under the shared review procedure.
 - If upstream artifacts themselves are the problem (plan is correct but PRD,
   architecture, or in-scope feature specs are wrong), flag as blocker — the affected
   upstream artifact must be re-reviewed first.

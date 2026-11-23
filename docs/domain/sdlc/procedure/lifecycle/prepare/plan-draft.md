@@ -479,12 +479,13 @@ phase authors the pending snippets that describe the work's intended state. A
   — in-context `<!-- planned:{slug} -->` blocks for additions, or a
   `<stem>.{slug}.md` companion for a wholesale rework (see the doc-snippet
   authoring procedure).
-- Author no plan task for the snippets. Doc reflection is complete once prepare
-  has authored them; independent head review and the integrator's fold and
-  integration make them public before build. The work phase
-  never takes the doc layer's state as work. A plan that carries a documentation
-  task — including one that only confirms or verifies pending markers — has
-  misplaced prepare's own work, and the plan reviewer rejects it.
+- Author no plan task for the snippets. Doc reflection is complete once
+  preparation has authored them on `<slug>/work`; independent review validates
+  them alongside implementation and the integrator folds them at delivery. The
+  builder never takes doc-reflection authoring or pending-marker verification as
+  an implementation task. A plan that carries a documentation task — including
+  one that only confirms or verifies pending markers — has misplaced
+  preparation's own work, and the plan reviewer rejects it.
 - If the change genuinely has no documented-behavior impact, record an explicit
   `doc_impact_none: <reason>` note in the plan rather than silently omitting docs.
 - If the exact snippet region that must change is enclosed by a declared
