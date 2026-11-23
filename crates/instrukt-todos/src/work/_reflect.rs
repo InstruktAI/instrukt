@@ -817,7 +817,7 @@ fn reflect_pull_request(
         let bot = reviewer.bot()?;
         let pull_actor = gh.read(&format!("/pulls/{pull}"))?;
         if bot.matches(&pull_actor["user"]) {
-            return Err(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into()).into());
+            return Err(reviewer.app_failure(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into())));
         }
         let body = format!(
             "[instrukt build review] verdict: {verdict} · reviewed commit {commit} · report {report}"

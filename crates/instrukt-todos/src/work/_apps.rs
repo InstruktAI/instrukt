@@ -149,7 +149,7 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
 
 fn readiness_error(error: super::GitHubError) -> AppError {
     match error {
-        super::GitHubError::App(error) => error,
+        super::GitHubError::App(error) | super::GitHubError::OperationApp(error) => error,
         super::GitHubError::RateLimited { until } => AppError::RateLimited { until },
         super::GitHubError::Unreachable(_) => AppError::Unreachable,
         error => setup(&error.to_string()),
@@ -165,11 +165,18 @@ fn permissions(operation: Operation) -> Value {
         Operation::Observe => json!({"checks":"read","statuses":"read","contents":"read"}),
     }
 }
+/// The split orchestrator roles `todo-orchestrator` replaced. Work recorded
+/// under them keeps its binding's role; agents.yaml migration moves their
+/// settings, `github_app` included, to the unified role.
+const RETIRED_ORCHESTRATORS: [&str; 2] = ["prepare-orchestrator", "work-orchestrator"];
+const UNIFIED_ORCHESTRATOR: &str = "todo-orchestrator";
+
 #[derive(PartialEq, Eq)]
 struct IdentitySettings {
     apps: BTreeMap<String, App>,
     project: String,
     roles: BTreeMap<String, String>,
+    declared: BTreeSet<String>,
 }
 impl IdentitySettings {
     fn read(config: &Configuration, home: &Home) -> Result<Self, AppError> {
@@ -182,6 +189,7 @@ impl IdentitySettings {
             .ok_or_else(|| setup("github.project_app is missing"))?
             .to_owned();
         let agents = Agents::load(home).map_err(|_| setup("cannot read agents.yaml roles"))?;
+        let declared = agents.roles.keys().cloned().collect();
         let roles: BTreeMap<_, _> = agents
             .roles
             .into_iter()
@@ -196,13 +204,24 @@ impl IdentitySettings {
             apps,
             project,
             roles,
+            declared,
         })
     }
     fn selected(&self, role: Option<&str>) -> &App {
         let name = role
+            .map(|r| self.successor(r))
             .and_then(|r| self.roles.get(r))
             .unwrap_or(&self.project);
         &self.apps[name]
+    }
+    /// The role whose `github_app` a recorded `role` selects: a retired split
+    /// orchestrator agents.yaml no longer declares resolves to its successor.
+    fn successor<'r>(&self, role: &'r str) -> &'r str {
+        if RETIRED_ORCHESTRATORS.contains(&role) && !self.declared.contains(role) {
+            UNIFIED_ORCHESTRATOR
+        } else {
+            role
+        }
     }
 }
 struct Apps {
@@ -506,4 +525,73 @@ fn headers<B>(request: ureq::RequestBuilder<B>, bearer: &str) -> ureq::RequestBu
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28");
     request.header("Authorization", &format!("Bearer {bearer}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use instrukt_core::github::Bot;
+
+    fn app(id: u64, slug: &str) -> App {
+        App {
+            app_id: id,
+            slug: slug.into(),
+            bot: Bot {
+                id: id + 100,
+                node_id: format!("BOT_{id}"),
+                login: format!("{slug}[bot]"),
+            },
+            private_key: format!("${{APP_{id}}}"),
+        }
+    }
+
+    fn settings(roles: &[(&str, &str)], declared: &[&str]) -> IdentitySettings {
+        IdentitySettings {
+            apps: [
+                ("project".into(), app(1, "project")),
+                ("author".into(), app(2, "author")),
+                ("legacy".into(), app(3, "legacy")),
+            ]
+            .into(),
+            project: "project".into(),
+            roles: roles
+                .iter()
+                .map(|(role, app)| ((*role).into(), (*app).into()))
+                .collect(),
+            declared: declared.iter().map(|role| (*role).into()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_retired_orchestrator_binding_selects_the_unified_orchestrator_app() {
+        let identity = settings(&[("todo-orchestrator", "author")], &["todo-orchestrator"]);
+        for retired in RETIRED_ORCHESTRATORS {
+            assert_eq!(identity.selected(Some(retired)).app_id, 2, "{retired}");
+        }
+    }
+
+    #[test]
+    fn a_retired_orchestrator_agents_yaml_still_declares_keeps_its_own_selection() {
+        let identity = settings(
+            &[
+                ("todo-orchestrator", "author"),
+                ("work-orchestrator", "legacy"),
+            ],
+            &[
+                "todo-orchestrator",
+                "work-orchestrator",
+                "prepare-orchestrator",
+            ],
+        );
+        assert_eq!(identity.selected(Some("work-orchestrator")).app_id, 3);
+        // Declared without github_app: the omitted mapping is the project App.
+        assert_eq!(identity.selected(Some("prepare-orchestrator")).app_id, 1);
+    }
+
+    #[test]
+    fn an_unmapped_unified_orchestrator_leaves_retired_bindings_on_the_project_app() {
+        let identity = settings(&[], &[]);
+        assert_eq!(identity.selected(Some("work-orchestrator")).app_id, 1);
+        assert_eq!(identity.selected(None).app_id, 1);
+    }
 }

@@ -26,7 +26,10 @@ the GitHub boundary verifies the configured actor against GitHub.
 
 The actual recorded session role selects `roles.<role>.github_app` in
 `~/.instrukt/agents.yaml`. An omitted mapping uses `github.project_app`,
-including an unknown role resolved through `default`. No per-task model override,
+including an unknown role resolved through `default`. Work recorded under a
+retired split orchestrator role (`prepare-orchestrator`, `work-orchestrator`)
+that `agents.yaml` no longer declares selects `todo-orchestrator`'s mapping,
+which the agents migration carried its settings to. No per-task model override,
 command argument or profile order selects the GitHub actor. Background record,
 issue, bug and board maintenance uses the project identity. Role-driven pull
 request authoring and reviews use the selected role identity. Human work
@@ -87,7 +90,12 @@ export command or a permission gate for those external tools.
 
 Absent keys, an unavailable installation, identity/scope mismatch or failed
 issuance leaves the GitHub operation visibly pending/refused with a secret-safe
-cause. Rate limits retain their retry boundary. Locally accepted work and its
+cause. A failure of the project credential every reflection shares stops the
+command's remaining GitHub requests; a setup or refusal of the App one
+operation selects (a role's pull request or review, or the board account)
+leaves only that operation pending, and the other todos keep reflecting. An
+unreachable or rate-limited App API stops the command either way. Rate limits
+retain their retry boundary. Locally accepted work and its
 pending reflection survive; no credential failure is reported as remote success
 or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.

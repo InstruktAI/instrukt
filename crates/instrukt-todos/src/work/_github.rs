@@ -24,6 +24,11 @@ pub enum GitHubError {
     RecordSchema { message: String },
     #[error(transparent)]
     App(#[from] instrukt_core::github::AppError),
+    /// The App one operation selected (a role's App, or the board account)
+    /// is not set up for it or GitHub refused it: that operation fails, and
+    /// the command's other operations continue with their own credentials.
+    #[error(transparent)]
+    OperationApp(instrukt_core::github::AppError),
     #[error("GitHub is unreachable ({0})")]
     Unreachable(String),
     #[error("GitHub deferred requests (rate limited)")]
@@ -51,7 +56,9 @@ pub enum GitHubError {
 
 impl GitHubError {
     /// Whether the failure stops every further request of this command:
-    /// GitHub cannot be reached, deferred us, or refused the token.
+    /// GitHub cannot be reached, deferred us, or refused the token, or the
+    /// credential every request of the command shares could not be issued.
+    /// [`GitHubError::OperationApp`] is not one: it fails only its operation.
     pub(crate) fn is_reach(&self) -> bool {
         matches!(
             self,
@@ -81,6 +88,9 @@ pub(crate) struct GitHub {
     operation: instrukt_core::github::Operation,
     started: Instant,
     apps: Option<std::sync::Arc<super::GitHubAccess>>,
+    /// Whether this client's credential serves one operation rather than
+    /// every request of the command ([`GitHub::for_role`]).
+    scoped: bool,
     bots: std::cell::RefCell<Vec<instrukt_core::github::Bot>>,
     now: Timestamp,
 }
@@ -107,6 +117,7 @@ impl GitHub {
             operation: instrukt_core::github::Operation::Record,
             started: Instant::now(),
             apps: None,
+            scoped: false,
             bots: Default::default(),
             now: Timestamp::now(),
         }
@@ -136,6 +147,7 @@ impl GitHub {
     ) -> Result<Self, GitHubError> {
         let mut gh = Self::new(&self.api, &self.repository, String::new());
         gh.apps = self.apps.clone();
+        gh.scoped = true;
         gh.now = self.current_time()?;
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
@@ -181,14 +193,28 @@ impl GitHub {
             .as_ref()
             .is_none_or(|c| c.expires.as_second() <= now.as_second() + 30)
         {
-            let credential =
-                apps.issue(&self.repository, self.role.as_deref(), self.operation, now)?;
+            let credential = apps
+                .issue(&self.repository, self.role.as_deref(), self.operation, now)
+                .map_err(|error| self.app_failure(error))?;
             let bots = apps.verified_bots(&self.repository, now)?;
             *self.token.borrow_mut() = credential.token().to_owned();
             *self.credential.borrow_mut() = Some(credential);
             *self.bots.borrow_mut() = bots;
         }
         Ok(())
+    }
+
+    /// An App failure as this client's scope makes it: a setup or refusal of
+    /// an operation-scoped credential fails that operation alone, while an
+    /// unreachable or deferring App API stops the command either way.
+    pub(crate) fn app_failure(&self, error: instrukt_core::github::AppError) -> GitHubError {
+        use instrukt_core::github::AppError;
+        match error {
+            AppError::Setup(_) | AppError::Refused { .. } if self.scoped => {
+                GitHubError::OperationApp(error)
+            }
+            error => GitHubError::App(error),
+        }
     }
 
     pub fn can_write(&self, login: &str) -> Result<bool, GitHubError> {
@@ -568,5 +594,32 @@ mod tests {
     fn an_untyped_entry_stays_an_ordinary_status() {
         let error = failure(json!([{"message": "no type"}]), None);
         assert!(matches!(error, GitHubError::Status { status: 200, .. }));
+    }
+
+    #[test]
+    fn only_an_operation_scoped_app_setup_or_refusal_leaves_the_command_running() {
+        use instrukt_core::github::{AppError, Operation};
+        let shared = GitHub::new("http://127.0.0.1", "o/r", String::new());
+        let scoped = shared.for_role(Some("builder"), Operation::Author).unwrap();
+        let errors = [
+            AppError::Setup("mismatch".into()),
+            AppError::Refused {
+                operation: "/repos/o/r/installation".into(),
+                status: 404,
+            },
+            AppError::Unreachable,
+            AppError::RateLimited { until: None },
+        ];
+        let stops = |client: &GitHub| -> Vec<bool> {
+            errors
+                .iter()
+                .map(|error| client.app_failure(error.clone()).is_reach())
+                .collect()
+        };
+        // The credential every request shares stops the command on any failure.
+        assert_eq!(stops(&shared), [true, true, true, true]);
+        // One operation's App failure stops only that operation, unless the
+        // App API itself is unreachable or deferring.
+        assert_eq!(stops(&scoped), [false, false, true, true]);
     }
 }
