@@ -6,9 +6,8 @@ project layer (instrukt.yaml): created
 project docs (docs/project/): created
 project index (docs/project/index.yaml): created
 project schema (docs/project/schema.yaml): not written: sdlc is not published on this computer, so the project follows the root rules only
-master (AGENTS.master.md): created
 kept instructions (.instrukt/adopted/AGENTS.md): created: the hand-written AGENTS.md, byte for byte, kept until its instructions are placed in docs/project/
-  AGENTS.md is generated from now on: the next commit through instrukt's hook writes its rendering from AGENTS.master.md and docs/project/index.yaml over it
+  AGENTS.md is generated from now on: the next commit through instrukt's hook writes its rendering from docs/project/index.yaml over it
 editor schemas (.instrukt/schemas/): created
   .instrukt/schemas/general-index.schema.json: schema written
   .instrukt/schemas/domain-index.schema.json: schema written
