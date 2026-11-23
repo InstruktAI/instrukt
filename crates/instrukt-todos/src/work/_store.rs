@@ -187,6 +187,22 @@ pub(crate) struct IntentWorktree {
     pub released: bool,
 }
 
+/// The todo's empty workspace in a withdrawal (`withdrawal_intents`,
+/// `workspace`): whether there was one to release when the withdrawal
+/// checked, and whether it is released. Only a workspace recorded present
+/// is released, so one gone since is recognized as released rather than
+/// taken for one that never was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkspaceRelease {
+    /// There was none when the withdrawal checked: nothing to release.
+    Absent,
+    /// It was there, empty, and is not released yet.
+    Present,
+    /// It is released: removed by the withdrawal, or found gone.
+    Released,
+}
+
 /// A withdrawal's durable intent (`state-database`, `withdrawal_intents`):
 /// what it releases, recorded before anything is released, so an
 /// interrupted withdrawal is completed from it rather than from what
@@ -196,13 +212,13 @@ pub(crate) struct WithdrawalIntent {
     pub todo: TodoId,
     pub branch: Option<String>,
     /// The commit `branch` pointed at when the withdrawal last read it; the
-    /// branch is deleted only against this commit.
+    /// branch is deleted only against this commit, and it is the deleted
+    /// branch's recovery commit.
     pub branch_head: Option<CommitSha>,
     pub worktrees: Vec<IntentWorktree>,
-    /// Whether the todo's empty workspace was removed.
-    pub workspace_released: bool,
-    /// Whether `branch` is deleted: by this withdrawal, or gone or
-    /// recreated at an unrelated commit since it was recorded.
+    pub workspace: WorkspaceRelease,
+    /// Whether `branch` is deleted: by this withdrawal, or found gone or
+    /// recreated at a commit that does not descend from `branch_head`.
     pub branch_deleted: bool,
     pub started_at: Timestamp,
 }
@@ -211,7 +227,9 @@ impl WithdrawalIntent {
     /// Whether any working resource is released yet; only an intent with
     /// none may be abandoned.
     pub fn released_any(&self) -> bool {
-        self.workspace_released || self.branch_deleted || self.worktrees.iter().any(|w| w.released)
+        self.workspace == WorkspaceRelease::Released
+            || self.branch_deleted
+            || self.worktrees.iter().any(|w| w.released)
     }
 }
 
@@ -603,7 +621,9 @@ impl Store {
                 return Ok(Err(Refusal::Changed(now)));
             };
             match admission(live, base) {
-                Admission::Conflicted => return Ok(Err(Refusal::Conflicted(Box::new(live.clone())))),
+                Admission::Conflicted => {
+                    return Ok(Err(Refusal::Conflicted(Box::new(live.clone()))));
+                }
                 Admission::Changed => {
                     return Ok(Err(Refusal::Changed(Some(live.record.slug.clone()))));
                 }
@@ -614,14 +634,14 @@ impl Store {
             }
             tx.execute(
                 "INSERT INTO withdrawal_intents
-                    (todo_id, branch, branch_head, worktrees, workspace_released, branch_deleted, started_at)
+                    (todo_id, branch, branch_head, worktrees, workspace, branch_deleted, started_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     id.as_str(),
                     intent.branch,
                     intent.branch_head.as_ref().map(CommitSha::as_str),
                     json_of(&intent.worktrees)?,
-                    intent.workspace_released,
+                    text_of(&intent.workspace),
                     intent.branch_deleted,
                     intent.started_at.to_string(),
                 ],
@@ -642,13 +662,13 @@ impl Store {
             }
             tx.execute(
                 "UPDATE withdrawal_intents
-                 SET branch_head = ?2, worktrees = ?3, workspace_released = ?4, branch_deleted = ?5
+                 SET branch_head = ?2, worktrees = ?3, workspace = ?4, branch_deleted = ?5
                  WHERE todo_id = ?1",
                 params![
                     intent.todo.as_str(),
                     intent.branch_head.as_ref().map(CommitSha::as_str),
                     json_of(&intent.worktrees)?,
-                    intent.workspace_released,
+                    text_of(&intent.workspace),
                     intent.branch_deleted,
                 ],
             )
@@ -1220,10 +1240,10 @@ fn load_intent(
     project: &ProjectSlug,
     id: &TodoId,
 ) -> Result<Option<WithdrawalIntent>, WorkError> {
-    type Row = (Option<String>, Option<String>, String, bool, bool, String);
+    type Row = (Option<String>, Option<String>, String, String, bool, String);
     let row: Option<Row> = conn
         .query_row(
-            "SELECT w.branch, w.branch_head, w.worktrees, w.workspace_released, w.branch_deleted,
+            "SELECT w.branch, w.branch_head, w.worktrees, w.workspace, w.branch_deleted,
                     w.started_at
              FROM withdrawal_intents w JOIN todos t ON t.id = w.todo_id
              WHERE w.todo_id = ?1 AND t.project = ?2",
@@ -1241,8 +1261,7 @@ fn load_intent(
         )
         .optional()
         .map_err(StateDbError::sqlite(path))?;
-    let Some((branch, head, worktrees, workspace_released, branch_deleted, started_at)) = row
-    else {
+    let Some((branch, head, worktrees, workspace, branch_deleted, started_at)) = row else {
         return Ok(None);
     };
     Ok(Some(WithdrawalIntent {
@@ -1252,7 +1271,7 @@ fn load_intent(
             .map(|head| CommitSha::parse(&head).map_err(|e| invalid(path, e.to_string())))
             .transpose()?,
         worktrees: parse_json(path, &worktrees)?,
-        workspace_released,
+        workspace: value_of(path, &workspace)?,
         branch_deleted,
         started_at: time(path, &started_at)?,
     }))

@@ -538,10 +538,11 @@ impl Work {
     ///    are released. While the intent is open no other command changes
     ///    the record and nothing read from GitHub replaces it.
     /// 3. The resources are released outside the writer lock, the intent
-    ///    recording each outcome that must be recognized afterwards. A
-    ///    refusal before anything was released closes the intent and leaves
-    ///    the todo as it was; one after leaves the intent naming what was
-    ///    released, for the withdrawal run again to complete.
+    ///    recording each outcome that must be recognized afterwards
+    ///    ([`release`]). A refusal before any release was attempted, with
+    ///    nothing recorded released, closes the intent and leaves the todo
+    ///    as it was; any other leaves the intent naming what was released,
+    ///    for the withdrawal run again to complete.
     /// 4. One writer transaction commits the withdrawn record, with
     ///    `removal` naming exactly what was released, and closes the intent.
     /// 5. The withdrawal lock is released and the change flushed under the
@@ -549,8 +550,9 @@ impl Work {
     ///
     /// A withdrawal interrupted with its intent recorded is completed by
     /// running it again, which continues from the intent without reading
-    /// GitHub first: an action that arrived there meanwhile stays
-    /// outstanding until the first pull after the withdrawal commits.
+    /// GitHub first, after recognizing what the interrupted run did: an
+    /// action that arrived there meanwhile stays outstanding until the
+    /// first pull after the withdrawal commits.
     pub fn remove(
         &self,
         project: &ProjectRef,
@@ -586,7 +588,7 @@ impl Work {
         })?;
         let id = base.record.id.clone();
         let withdrawing = WithdrawalLock::acquire(&self.home)?;
-        let intent = match store.withdrawal_intent(&id)? {
+        let (intent, fresh) = match store.withdrawal_intent(&id)? {
             None if resuming.is_some() => {
                 return Err(WorkError::refused(format!(
                     "`{slug}`'s withdrawal ended while this command waited for it; nothing was done. See where it stands with `instrukt todo show {slug}`"
@@ -600,7 +602,7 @@ impl Work {
                     started = %intent.started_at,
                     "continuing an interrupted withdrawal from its recorded intent"
                 );
-                intent
+                (intent, false)
             }
             None => {
                 let checked = plan_release(&project.root, &base.record)?;
@@ -609,17 +611,17 @@ impl Work {
                     branch: checked.branch,
                     branch_head: checked.head,
                     worktrees: checked.worktrees,
-                    workspace_released: false,
+                    workspace: checked.workspace,
                     branch_deleted: false,
                     started_at: s.now,
                 };
                 if let Err(refusal) = store.open_withdrawal(&base, slug, &intent)? {
                     return Err(s.refusal(index, refusal));
                 }
-                intent
+                (intent, true)
             }
         };
-        let released = release(&project.root, slug, &store, intent)?;
+        let released = release(&project.root, slug, &store, intent, fresh)?;
         match store.complete_withdrawal(&id, s.now, released.branch, released.worktrees)? {
             Completed::Withdrawn(row) => s.take_written(index, *row, "removed"),
             Completed::NotLive(row) => {

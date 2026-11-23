@@ -677,21 +677,29 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
     // todo that does not exist, and goes with its todo.
     raw.execute_batch("PRAGMA foreign_keys = ON").unwrap();
     raw.execute(
-        "INSERT INTO withdrawal_intents(todo_id,branch,branch_head,worktrees,workspace_released,branch_deleted,started_at)
-         VALUES ('0123456789abcdef0123456789abcdef','depth/work',?1,'[]',1,0,'2026-11-21T09:00:00Z')",
+        "INSERT INTO withdrawal_intents(todo_id,branch,branch_head,worktrees,workspace,branch_deleted,started_at)
+         VALUES ('0123456789abcdef0123456789abcdef','depth/work',?1,'[]','released',0,'2026-11-21T09:00:00Z')",
         [&"e".repeat(40)],
     )
     .unwrap();
-    let read: (String, String, bool, bool) = raw
+    let read: (String, String, String, bool) = raw
         .query_row(
-            "SELECT branch, branch_head, workspace_released, branch_deleted FROM withdrawal_intents WHERE todo_id = '0123456789abcdef0123456789abcdef'",
+            "SELECT branch, branch_head, workspace, branch_deleted FROM withdrawal_intents WHERE todo_id = '0123456789abcdef0123456789abcdef'",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap();
-    assert_eq!(read, ("depth/work".to_owned(), "e".repeat(40), true, false));
+    assert_eq!(
+        read,
+        (
+            "depth/work".to_owned(),
+            "e".repeat(40),
+            "released".to_owned(),
+            false
+        )
+    );
     let orphan = raw.execute(
-        "INSERT INTO withdrawal_intents(todo_id,worktrees,started_at) VALUES ('ffffffffffffffffffffffffffffffff','[]','2026-11-21T09:00:00Z')",
+        "INSERT INTO withdrawal_intents(todo_id,worktrees,workspace,started_at) VALUES ('ffffffffffffffffffffffffffffffff','[]','absent','2026-11-21T09:00:00Z')",
         [],
     );
     assert!(matches!(

@@ -371,7 +371,7 @@ intent: it is never reflected to GitHub and never copied to another computer.
 | `branch` | The work branch the withdrawal releases, or `NULL` when there is none. |
 | `branch_head` | The commit that branch pointed at when the withdrawal last read it, or `NULL`. It is recorded before the branch is deleted, against that commit, and kept as the deleted branch's recovery commit. |
 | `worktrees` | The worktrees the withdrawal releases, as JSON: each with why it belongs to the todo (`bound`, named by a session binding, or `on_branch`, with the work branch checked out), the checkout it had when the withdrawal checked it (its branch, or the commit it was detached at), and whether it is released yet. |
-| `workspace_released` | Whether the todo's empty workspace was removed. |
+| `workspace` | The todo's empty workspace: `absent` when there was none to release when the withdrawal checked, `present` while it is there to release, `released` once removed or found gone. |
 | `branch_deleted` | Whether the work branch is deleted: by this withdrawal, or found gone or recreated at a commit that does not descend from `branch_head`. |
 | `started_at` | When the withdrawal began. |
 
@@ -394,20 +394,36 @@ status. The row is updated as each step whose outcome must be recognized
 afterwards happens: the branch's commit before the branch is deleted, and each
 worktree, the workspace and the branch once released. It is removed in the
 transaction that commits the withdrawn record, with `removal` naming exactly
-what was released, or on its own only when a refusal comes before anything was
-released, leaving the todo as it was. After any release a refusal keeps the row
-with everything it records, `branch_head` included.
+what was released, or on its own only when a refusal comes before the command
+attempted any release and the row records nothing released, leaving the todo
+as it was. Otherwise a refusal keeps the row with everything it records,
+`branch_head` included.
+
+The work branch is deleted in one git ref transaction, against the commit the
+row holds, that also creates the withdrawal's marker ref
+`refs/instrukt/withdrawals/<todo_id>` in the project's repository at that
+commit. Git applies the transaction whole, its creation before its deletion, so
+a marker shows the branch was deleted at the marker's commit even when the row
+was never told. The marker is removed once the row records the deletion.
 
 A withdrawal interrupted while the row exists is completed by running
 `instrukt todo remove <slug>` again, which continues from the row before reading
 GitHub: an action that arrived there meanwhile, such as a hold label, stays
-outstanding until the first pull after the withdrawal commits. What the row
-names as released stays released. A branch absent, or recreated at a commit
-that does not descend from `branch_head`, is recorded as deleted with the commit
-the row holds, and a recreated branch is left as it is; a branch that moved on
-to a descendant of `branch_head` is recorded at, and deleted against, the commit
-it moved to. A worktree whose checkout is no longer the one the row records is
-no longer the todo's: it is left where it is and leaves the withdrawal.
+outstanding until the first pull after the withdrawal commits. It first records
+what the interrupted command did without recording it, and what became of the
+resources since: a marker records the branch deleted at the marker's commit,
+and whatever branch carries its name now is left as it is; a worktree git no
+longer lists is released, and so is a workspace the row records present that
+is gone. Without a marker, a branch absent, or recreated at a commit that does
+not descend from `branch_head`, is recorded as deleted with the commit the row
+holds and a recreated branch is left as it is; a branch that moved on to a
+descendant of `branch_head` is recorded at, and deleted against, the commit it
+moved to. What the row names as released stays released. Each worktree is read
+again just before it is released: one whose checkout is no longer the one the
+row records, or that has the work branch checked out once that branch is
+recorded deleted, is no longer the todo's: it is left where it is and leaves
+the withdrawal. A git observation that fails decides nothing: the command
+refuses and the row keeps what it recorded, for the withdrawal to be run again.
 
 ### Runner tables
 
@@ -1067,6 +1083,13 @@ And the reflected change and the concurrent local change both reach GitHub intac
   start, the adapter discovers its semantic key through the adapter selected by `runner.runtime`; existing keyed
   threads are rebound rather than duplicated. A lost ambiguous start marker
   cannot be reconstructed when the runtime has no discoverable matching thread.
+- A git process stopped between creating a withdrawal's marker and deleting
+  the work branch leaves both. The withdrawal run again records the branch
+  deleted at the marker's commit and leaves the branch, which still points
+  there, as it is: nothing is lost, but the branch outlives the withdrawal.
+- Without a marker, a work branch deleted and recreated at a descendant of the
+  commit the withdrawal recorded is indistinguishable from the branch moving
+  on; the withdrawal deletes it against the commit it points at.
 
 ## See Also
 
