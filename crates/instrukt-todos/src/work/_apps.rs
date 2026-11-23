@@ -598,93 +598,76 @@ mod tests {
         }
     }
 
-    /// The moment an issuance begins in the tests below; the primary reset
-    /// their answers carry is ten minutes later.
+    /// A whole second the moments below count from; GitHub's primary reset
+    /// in them, 2025-12-31T23:50:10Z, is ten seconds later.
     const START: i64 = 1_767_225_000;
-    const RESET: i64 = START + 600;
+    const RESET: i64 = START + 10;
 
-    fn at(second: i64) -> Timestamp {
-        Timestamp::from_second(second).unwrap()
+    /// `second` plus `millis` milliseconds, which may be negative.
+    fn moment(second: i64, millis: i64) -> Timestamp {
+        Timestamp::from_second(second)
+            .unwrap()
+            .checked_add(jiff::SignedDuration::from_millis(millis))
+            .unwrap()
     }
 
-    /// The viewer query of an issuance, answered on loopback by HTTP 200
-    /// with GitHub's secondary rate limit in `errors`, requests remaining,
-    /// a later primary reset and `retry_after` when given.
-    fn viewer_throttled(retry_after: Option<u64>, clock: Clock) -> Result<Value, AppError> {
-        use std::io::{BufRead, BufReader, Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let api = format!("http://{}", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = BufReader::new(stream.try_clone().unwrap());
-            let mut length = 0;
-            loop {
-                let mut line = String::new();
-                request.read_line(&mut line).unwrap();
-                if line == "\r\n" {
-                    break;
-                }
-                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                    length = value.trim().parse().unwrap();
-                }
-            }
-            request.read_exact(&mut vec![0; length]).unwrap();
-            let body = r#"{"errors":[{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}]}"#;
-            let delay = retry_after.map_or(String::new(), |s| format!("Retry-After: {s}\r\n"));
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-RateLimit-Remaining: 4999\r\nX-RateLimit-Reset: {RESET}\r\n{delay}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
-        });
-        let home = tempfile::tempdir().unwrap();
-        let apps = Apps {
-            home: Home::at_user_home(home.path().into()),
-            api,
-            identity: settings(&[]),
-            agent: agent(),
-            auth_deferrals: Default::default(),
-            actors: Default::default(),
-            verified_apps: Default::default(),
-            installations: Default::default(),
-            credentials: Default::default(),
-        };
-        let query = json!({"query": "query { viewer { id login databaseId } }"});
-        let answer = apps.request(Method::Post, "/graphql", "token", Some(&query), clock);
-        server.join().unwrap();
-        answer
+    /// The throttling signals of an answer with these headers.
+    fn limits(headers: &[(&'static str, &str)]) -> crate::work::_github::Limits {
+        let mut map = ureq::http::HeaderMap::new();
+        for (name, value) in headers {
+            map.insert(*name, value.parse().unwrap());
+        }
+        crate::work::_github::Limits::read(&map)
+    }
+
+    /// App 1's deferral as issuance keeps it after a throttled answer with
+    /// `limits` received at `received`.
+    fn deferred(limits: &crate::work::_github::Limits, received: Timestamp) -> Deferrals {
+        let mut deferrals = Deferrals::default();
+        deferrals.record(
+            1,
+            &AppError::RateLimited {
+                until: limits.until(received),
+            },
+        );
+        deferrals
     }
 
     #[test]
-    fn a_throttled_answer_counts_its_delay_from_receipt_not_from_when_issuance_began() {
-        // Earlier issuance requests took three seconds before this answer.
-        let clock = Clock {
-            start: at(START),
-            started: Instant::now().checked_sub(Duration::from_secs(3)).unwrap(),
-        };
-        let Err(AppError::RateLimited { until: Some(until) }) = viewer_throttled(Some(2), clock)
-        else {
-            panic!("a secondary limit naming a delay is a rate limit");
-        };
-        assert!(
-            (at(START + 3 + 2)..at(START + 3 + 2 + 30)).contains(&until),
-            "{until} must permit the full delay after receipt"
-        );
+    fn a_clock_carries_a_fractional_start_forward_by_exactly_the_time_elapsed() {
+        let carried = carried(moment(START, 800), Duration::from_millis(800));
+        assert_eq!(carried, Some(moment(START, 1_600)));
     }
 
     #[test]
-    fn a_secondary_limit_naming_no_delay_defers_a_minute_and_is_no_actor_mismatch() {
-        let clock = Clock::starting(at(START));
-        let Err(AppError::RateLimited { until: Some(until) }) = viewer_throttled(None, clock)
-        else {
-            panic!("a secondary limit is a rate limit, never a viewer answer");
-        };
-        // GitHub's minute, not the primary reset that quota still allows.
-        assert!(
-            (at(START + 60)..at(START + 60 + 30)).contains(&until),
-            "{until} must be a minute after receipt"
+    fn a_cached_reset_defers_issuance_until_its_exact_instant() {
+        let reset = RESET.to_string();
+        let limits = limits(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", &reset),
+        ]);
+        let deferrals = deferred(&limits, moment(START, 0));
+        assert_eq!(
+            deferrals.until(1, moment(RESET, -200)),
+            Some(moment(RESET, 0))
         );
+        assert_eq!(deferrals.until(1, moment(RESET, 0)), None);
+        assert_eq!(deferrals.until(1, moment(RESET, 200)), None);
+    }
+
+    #[test]
+    fn a_cached_named_delay_defers_issuance_its_full_length_after_a_fractional_receipt() {
+        // Answered 0.8 s after a clock that began 0.8 s into its second.
+        let received = carried(moment(START, 800), Duration::from_millis(800)).unwrap();
+        let deferrals = deferred(&limits(&[("retry-after", "2")]), received);
+        // Two seconds from a receipt at START + 1.6 s end at START + 3.6 s;
+        // the deadline is the whole second after.
+        assert_eq!(
+            deferrals.until(1, moment(START + 3, 800)),
+            Some(moment(START + 4, 0))
+        );
+        assert_eq!(deferrals.until(1, moment(START + 4, 0)), None);
+        assert_eq!(deferrals.until(1, moment(START + 4, 200)), None);
     }
 
     #[test]

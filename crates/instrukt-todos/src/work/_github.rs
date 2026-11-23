@@ -686,8 +686,23 @@ mod tests {
     }
 
     fn answered(errors: Value, limits: &Limits) -> GitHubError {
+        answered_at(errors, limits, at(NOW))
+    }
+
+    fn answered_at(errors: Value, limits: &Limits, received: Timestamp) -> GitHubError {
         let errors = errors.as_array().cloned().unwrap_or_default();
-        graphql_failure(&errors, 200, limits, at(NOW), "secret")
+        graphql_failure(&errors, 200, limits, received, "secret")
+    }
+
+    /// An answer received 1.6 seconds after `NOW`.
+    fn within_a_second() -> Timestamp {
+        at(NOW)
+            .checked_add(jiff::SignedDuration::from_millis(1_600))
+            .unwrap()
+    }
+
+    fn secondary() -> Value {
+        json!([{"message": "You have exceeded a secondary rate limit."}])
     }
 
     fn failure(errors: Value, remaining: Option<&str>) -> GitHubError {
@@ -696,15 +711,39 @@ mod tests {
 
     #[test]
     fn an_ok_graphql_error_with_retry_after_defers_for_its_delay_though_quota_remains() {
-        let secondary = json!([{"message": "You have exceeded a secondary rate limit."}]);
-        let error = answered(secondary, &limits(Some("4999"), None, Some("120")));
+        let limits = limits(Some("4999"), None, Some("120"));
+        let error = answered_at(secondary(), &limits, within_a_second());
+        // The delay counts from the receipt rounded up to its second.
         assert_eq!(
             error,
             GitHubError::RateLimited {
-                until: Some(at(NOW + 120))
+                until: Some(at(NOW + 2 + 120))
             }
         );
         assert!(error.is_reach());
+    }
+
+    #[test]
+    fn an_ok_secondary_limit_naming_no_delay_waits_a_minute_not_the_primary_reset() {
+        let limits = limits(Some("4999"), Some(RESET), None);
+        let error = answered_at(secondary(), &limits, within_a_second());
+        assert_eq!(
+            error,
+            GitHubError::RateLimited {
+                until: Some(at(NOW + 2 + 60))
+            }
+        );
+    }
+
+    #[test]
+    fn an_ok_secondary_limit_with_no_requests_remaining_waits_for_the_exact_later_reset() {
+        let reset = GitHubError::RateLimited {
+            until: Some(at(RESET)),
+        };
+        let unnamed = limits(Some("0"), Some(RESET), None);
+        assert_eq!(answered_at(secondary(), &unnamed, within_a_second()), reset);
+        let named = limits(Some("0"), Some(RESET), Some("120"));
+        assert_eq!(answered_at(secondary(), &named, within_a_second()), reset);
     }
 
     #[test]
