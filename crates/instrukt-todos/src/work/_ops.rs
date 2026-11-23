@@ -1925,18 +1925,18 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
 }
 
 /// A cycle of waiting through `record`, if the project graph has one: the
-/// slugs from `record` back to itself ([`_store::first_cycle`]). Every todo
+/// slugs from `record` back to itself ([`super::_graph::first_cycle`]). Every todo
 /// the waiting from `record` reaches is refreshed first, once per command,
 /// so the graph is judged as GitHub holds it now.
 fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
     loop {
         let graph = wait_graph(s);
-        let unrefreshed: Vec<TodoId> = super::_store::reached(&graph, &record.id)
+        let unrefreshed: Vec<TodoId> = super::_graph::reached(&graph, &record.id)
             .into_iter()
             .filter(|id| !s.consulted(id))
             .collect();
         if unrefreshed.is_empty() {
-            return super::_store::first_cycle(&graph, std::slice::from_ref(&record.id));
+            return super::_graph::first_cycle(&graph, std::slice::from_ref(&record.id));
         }
         for id in &unrefreshed {
             s.record_current(id);
@@ -1946,15 +1946,15 @@ fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlu
 
 /// The waiting graph as the session holds it: every local item, and the
 /// listing copy of every todo that is not one.
-fn wait_graph(s: &Session<'_>) -> Vec<super::_store::WaitNode> {
-    let mut graph: Vec<super::_store::WaitNode> = s
+fn wait_graph(s: &Session<'_>) -> Vec<super::_graph::WaitNode> {
+    let mut graph: Vec<super::_graph::WaitNode> = s
         .items
         .iter()
-        .map(|it| super::_store::WaitNode::of(&it.record, true))
+        .map(|it| super::_graph::WaitNode::of(&it.record, true))
         .collect();
     for copy in &s.copies {
         if !graph.iter().any(|n| n.id == copy.record.id) {
-            graph.push(super::_store::WaitNode::of(&copy.record, false));
+            graph.push(super::_graph::WaitNode::of(&copy.record, false));
         }
     }
     graph
