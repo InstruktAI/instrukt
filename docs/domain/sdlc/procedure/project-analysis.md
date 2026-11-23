@@ -1,5 +1,5 @@
 ---
-activation_trigger: Analyze or re-analyze a project.
+activation_trigger: 'Use when adopting an existing (brownfield) repository into instrukt, migrating existing docs or `.instrukt/adopted/AGENTS.md` into `docs/project/`, or analyzing or re-analyzing a codebase to build or refresh its project documentation.'
 description: 'AI-driven project analysis procedure. Guides the analysis session through codebase discovery, convention inference, and snippet generation.'
 visibility: 'public'
 role: project-analyst
@@ -166,11 +166,12 @@ Sample recent git history for conventions:
 
 Catalog what documentation already exists:
 
+- Preserved hand-authored agent instructions at `.instrukt/adopted/AGENTS.md` (created by `instrukt init` when adopting a repo with an existing root `AGENTS.md`).
 - README files and their coverage.
 - API documentation (OpenAPI specs, generated docs).
 - Architecture decision records (ADRs).
 - Inline documentation density and style.
-- Existing `docs/` directory content.
+- Existing `docs/` directory content or documentation in other locations and formats.
 
 ### 11. Sampling Strategy for Large Codebases
 
@@ -246,33 +247,38 @@ over restating the contract.
 
 ### 15. Agent Bootstrap Content (AGENTS.master.md decision)
 
-The init analysis encounters one of four normal repository states. The
-decision determines whether to create or promote `AGENTS.master.md`. Apply
-the matching case; do not improvise.
+The analysis encounters one of four normal repository states. Apply the matching
+case; do not improvise.
 
-**Case 1 — `AGENTS.master.md` exists.** Respect it. Do not modify. The
-existing source is authoritative.
+**Case 1 — `.instrukt/adopted/AGENTS.md` exists (preserved by `instrukt init`).**
+Review `.instrukt/adopted/AGENTS.md` with the human: place the repository's
+purpose in `AGENTS.master.md`'s `## Purpose`, migrate every durable instruction
+into its appropriate snippet under `docs/project/` with its entry in
+`docs/project/index.yaml` (`expanded` for always-loaded baseline rules, `listed`
+for progressive retrieval), and remove `.instrukt/adopted/AGENTS.md` once
+nothing in it remains unplaced. On commit, instrukt overwrites the root
+`AGENTS.md` with the generated rendering.
 
-**Case 2 — Hand-authored `AGENTS.md` exists, no master.** Do not seed a master. Report that the content must first move into a `docs/project` snippet; the root master carries only Purpose, and `docs/project/index.yaml` selects the snippets. The next init run seeds the master.
+**Case 2 — `AGENTS.master.md` exists, no `.instrukt/adopted/AGENTS.md`.**
+Respect `AGENTS.master.md`'s `## Purpose`; do not move procedural or policy
+instructions into the master. Place project knowledge in snippets under
+`docs/project/` and select them through `docs/project/index.yaml`.
 
-**Case 3 — Substantive standalone runtime-specific instruction file, no `AGENTS.md`.** Respect by
-default. Do not auto-create a master — a substantive standalone runtime-specific instruction file
-is a deliberate choice of runtime-specific instructions. Promotion to a master is possible
-but only as an explicit human-driven step, never as part of automated init
-analysis.
+**Case 3 — Substantive standalone runtime-specific instruction file, no `.instrukt/adopted/AGENTS.md`.**
+Respect by default. Do not auto-migrate or delete a standalone runtime-specific
+instruction file — moving its content into `docs/project/` snippets is an
+explicit human-driven decision.
 
-**Case 4 (greenfield) — no `AGENTS.master.md`, no `AGENTS.md`, no
-substantive runtime-specific instruction file.** Generate a minimal project-specific
-`AGENTS.master.md` carrying only `## Purpose` with the project name. Select project snippets through `docs/project/index.yaml`; publication renders them into `AGENTS.md`.
+**Case 4 (greenfield) — minimal `AGENTS.master.md` and no prior instruction files.**
+Keep `AGENTS.master.md` carrying only `## Purpose` with the project name, and
+select project snippets through `docs/project/index.yaml` so publication renders
+`AGENTS.md`.
 
-**Anomaly — both substantive `AGENTS.md` and a substantive runtime-specific instruction file.** When the configured
-runtime loads both into the same session, two authored instruction sources
-compete. Halt automatic promotion and flag the conflict for human inspection.
-Do not auto-promote: which file is authoritative, and whether the runtime-specific instruction file's
-content moves into the master, is the human's call.
-
-The human must decide which file is authoritative before the analysis
-proceeds.
+**Anomaly — both `.instrukt/adopted/AGENTS.md` (or a hand-authored `AGENTS.md`) and a substantive runtime-specific instruction file exist.**
+When the configured runtime loads both into the same session, two authored
+instruction sources compete. Halt automatic migration and flag the conflict for
+human inspection; which source is authoritative is the human's call before
+analysis proceeds.
 
 ## Outputs
 
