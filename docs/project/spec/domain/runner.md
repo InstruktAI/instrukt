@@ -478,8 +478,9 @@ active candidate's content is covered. Through work's command contract the
 runner records a derived approval and has outstanding verdicts published,
 handing over the eligible pull requests it observed at each head. It supplies
 work with a commit's review requests, each with its number, standing and
-pinned base, with the input that opened a session's turn in progress, and with
-a named session's conversation (`project/instrukt/spec/domain/context-map`).
+pinned base, with the input that opened the turn a session had in progress at
+a stated moment, and with a named session's conversation
+(`project/instrukt/spec/domain/context-map`).
 <!-- /planned:event-driven-pr-review-gate -->
 
 The runtime adapter and the event-source boundary form an

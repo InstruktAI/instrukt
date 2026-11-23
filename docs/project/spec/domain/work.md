@@ -75,10 +75,11 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 **Pinned base**
 : The commit a review starts from, fixed by instrukt and never chosen by the
-  reviewer: the head's merge base with the canonical branch, so a head verdict
-  covers everything its head adds to that branch. A head that shares no history
-  with the canonical branch is pinned at its merge base with its pull
-  request's base branch, and its verdict does not cover the canonical branch.
+  reviewer. A head verdict covers the whole range from it, and covers the
+  canonical branch only when its pinned base lies on that branch. A review
+  request carries the pinned base the runner selected
+  (`project/instrukt/spec/feature/runner/pull-request-review`, Review
+  requests).
 
 **Exemption**
 : The recorded decision that a commit owes no independent review under
@@ -93,14 +94,24 @@ runner owns dispatch, and the configured runtime owns conversations.
 : A later version of a settled verdict, recorded by the session that recorded
   the current one in a turn that no review request for that commit opened.
 
+**Pending revision**
+: A revision offered while the runtime could not say which input opened its
+  turn. It is kept with the moment of the offer and is no version until that
+  turn is known.
+
 **Handed-over approval**
 : A head verdict admitted from the reviewing session's own conversation,
   entered by another session that adds no judgment.
 
 **Export**
 : One cut of a computer's review evidence for a project, written to a file
-  that another computer imports. The exported head verdicts are handed off:
+  for one named computer to import. The exported head verdicts are handed off:
   they stay current only where they were imported.
+
+**Hand-off number**
+: How often a commit's head verdict has been handed off. An import makes a
+  verdict current only at a higher number than the importing computer holds
+  for that commit.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -207,18 +218,22 @@ and issues installation credentials under
 - **Root entity:** the review evidence of one exact commit of a project's
   repository.
 - **Contains:** its head verdict versions, each with verdict, pinned base,
-  report, reviewing session and the request it answers; its exemption; for an
-  integration candidate its derived approval with the coverage it rests on;
-  and what GitHub shows of the current verdict at each destination.
+  report, reviewing session and the request it answers; a pending revision;
+  the head verdict's hand-off number; its exemption; for an integration
+  candidate its derived approval with the coverage it rests on; and what
+  GitHub shows of the current verdict at each destination.
 - **Invariants:** evidence is recorded before anything of it is published; a
   verdict names one commit and no other commit inherits it; a verdict covers
   the whole range from a pinned base its reviewer cannot narrow; no reviewed
   commit names the verdict's reviewing session as its author; a commit's
   review is settled by the first verdict admitted for it, and only its
   settling session revises it; a verdict and an exemption of one commit never
-  replace each other; each publication follows the current verdict; a head
-  verdict is current on one computer, the one that recorded it or last
-  imported it; only the reviewer identity publishes. Admission, publication,
+  replace each other; each publication follows the current verdict, and
+  nothing is published for a commit while a revision of it is pending; a head
+  verdict is current on one computer, the one that recorded it or the one it
+  was last handed to; an import never changes which verdict of a commit is
+  current where both sides hold a settlement, unless its operator states
+  which stands; only the reviewer identity publishes. Admission, publication,
   storage, transfer and readiness belong to
   `project/instrukt/spec/feature/work/github-apps`.
 - **Identifier:** project and commit.
@@ -312,8 +327,9 @@ owning design snippet or decision record is declared.
   outstanding to the pull requests the runner observed.
 - **Runner → work (automatic review)** — customer-supplier. The runner supplies
   a commit's review requests with their standing and pinned base, which input
-  opened a session's turn in progress, and a named session's conversation;
-  work consults them when it admits a head verdict.
+  opened the turn a session had in progress at a stated moment, and a named
+  session's conversation; work consults them when it admits a head verdict
+  and when a tick decides a pending revision.
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
   evidence is current for a commit; workflow reads approval of a head that is
   not a todo's, and exemptions, from that answer alone.

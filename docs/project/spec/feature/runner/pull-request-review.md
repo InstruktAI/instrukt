@@ -119,7 +119,8 @@ An owed commit is asked for with the fact `runner.review_needed`
 
 The pinned base is where the reviewed change starts: a commit, fixed for the
 request and computed in the project's repository after its remote was fetched
-for this request.
+for this request. How a request's pinned base is selected is defined here and
+nowhere else.
 
 | The head | Pinned base |
 | --- | --- |
@@ -183,18 +184,28 @@ pull request that has it as its head at that moment. Each further request for
 one commit waits longer than the one before, up to a bound, so a reviewer that
 cannot finish is not started in a loop and the commit is never given up.
 
-Work reads two answers from the runner when it admits a verdict.
+Work reads two answers from the runner when it admits a verdict, and the
+second again when a tick decides a revision the runtime could not judge at
+once (`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence).
 
 | Asked | Answered from |
 | --- | --- |
 | A commit's requests: each one's number, its standing, the session that holds a handed-over request, an ended request's disposition, and its pinned base | Delivery's own records. |
-| Which input opened a named session's turn in progress, with regard to that commit's requests handed over to that session | One read of the runtime for the input that opened the session's turn in progress, compared with the frozen content of those handovers. |
+| Which input opened the turn a named session had in progress at a stated moment, with regard to that commit's requests handed over to that session | One read of the runtime for the turn the session had in progress at that moment and the input that opened it, compared with the frozen content of those handovers. |
 
 The second answer is one of four: a request of that commit opened the turn,
-something else opened it, the session has no turn in progress, or the runtime
-cannot say. It costs one bounded read of the runtime and one keyed read of
-delivery's records, however long the session's history is. It is exact where a
-handover opens the turn it enters: a session started with the request,
+something else opened it, the session had no turn in progress at that moment,
+or the runtime cannot say. It costs one bounded read of the runtime and one
+keyed read of delivery's records, however long the session's history is. The
+moment is the asker's: the answer is about the turn in progress then, whichever
+turn the session is in when it is asked, so an ask repeated later for the same
+moment has the same answer once the runtime gives one. A runtime that is
+unavailable, or that keeps no record of the session's turn at that moment,
+cannot say.
+
+The answer is exact where a handover opens the turn it enters: a session
+started with the request,
 only-at-entry delivery, and as-soon-as-possible delivery on a runtime that
 queues a handover for the next turn
 (`project/instrukt/spec/feature/runner/procedure-event-delivery`, Intent,
@@ -202,7 +213,8 @@ capability and bounded batches). A handover that a runtime steers into a
 running turn is not that turn's opening input and is not seen by this answer.
 
 A request's records are kept while it is live, while its commit is still owed,
-and while a session it was selected for can still take it up.
+while a session it was selected for can still take it up, and while work holds
+a pending revision of its commit.
 
 ### Placement and consumer
 
