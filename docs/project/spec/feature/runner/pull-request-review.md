@@ -116,7 +116,7 @@ An owed commit is asked for with the fact `runner.review_needed`
 
 | Part | Value |
 | --- | --- |
-| Subject | The pull request: the project and the pull request's number. Of several eligible pull requests that share the head, the lowest-numbered. |
+| Subject | The pull request, `pull_request:<project>/<number>`. Of several eligible pull requests that share the head, the lowest-numbered. |
 | Data | `pull_request`, the pull request's number; `head_branch` and `base_branch`, its branch names; `head`, the exact head commit; `base`, the pinned base commit; `request`, the request's number for that head commit. |
 | Occurrence identity | The project, the head commit and the request number. |
 
@@ -195,11 +195,13 @@ procedure's published declaration and contract
 
 ### Candidate requests
 
-The same fact with the integration branch as its subject asks for review of an
-integration candidate. Its data names the candidate commit as `head`, the
-pinned base commit as `base`, which is the canonical head the candidate is
-based on, and the request number as `request`, and its occurrence identity is
-the project, the candidate commit and the request number. When a candidate owes a review is workflow's decision
+The same fact with the integration branch as its subject,
+`repository_ref:<project>/origin/integrate`, asks for review of an integration
+candidate. Its data names the candidate commit as `head`, the pinned base
+commit as `base`, which is the canonical head the candidate is based on, and
+the request number as `request`, and its occurrence identity is the project,
+the candidate commit and the request number. When a candidate owes a review is
+workflow's decision
 (`project/instrukt/spec/feature/workflow/integration-gate`); its requests are
 queued, in flight, end and repeat as above.
 
