@@ -43,10 +43,10 @@ this procedure names none.
 ## Preconditions
 
 - Platform onboarding stands on this computer: `instrukt status --json`
-  reports a configured `machine` layer with no validation findings, a
-  selected `runtime`, and the required host modules and runtime features
-  available under `modules`; `instrukt agents list` reports the configured
-  agent profiles.
+  reports `machine.configured: true` with no `machine.findings`, a selected
+  `runtime`, and `modules.features.standing_agents.available: true` (no host
+  module switch under `modules` is required for company onboarding);
+  `instrukt agents list` reports the configured agent profiles.
 - You work on the computer that is to hold the company's home.
 - The operator is at hand to run, at their own terminal, the commands this
   procedure gives them, and to give you their output back.
