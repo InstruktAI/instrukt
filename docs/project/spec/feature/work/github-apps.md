@@ -24,18 +24,34 @@ the key itself, a repository-selected path or an environment fallback.
 Configuration validates shapes, distinct App/bot identities and all references;
 the GitHub boundary verifies the configured actor against GitHub.
 
+<!-- planned-change:fix-reflection-legacy-orchestrator-role-app-fallback -->
+
 The actual recorded session role selects `roles.<role>.github_app` in
 `~/.instrukt/agents.yaml`. An omitted mapping uses `github.project_app`,
-including an unknown role resolved through `default`. Work recorded under a
-retired split orchestrator role (`prepare-orchestrator`, `work-orchestrator`)
-that `agents.yaml` no longer declares selects `todo-orchestrator`'s mapping,
-which the agents migration carried its settings to. No per-task model override,
+including an unknown role resolved through `default`. No per-task model override,
 command argument or profile order selects the GitHub actor. Background record,
 issue, bug and board maintenance uses the project identity. Role-driven pull
 request authoring and reviews use the selected role identity. Human work
 performed directly on GitHub keeps its human identity; instrukt's shared-record
 maintenance still uses the project App. This contract changes no human login/
 account association or runtime permission mode.
+
+<!-- change:fix-reflection-legacy-orchestrator-role-app-fallback -->
+
+The actual recorded session role selects `roles.<role>.github_app` in
+`~/.instrukt/agents.yaml`. Work recorded under a retired split orchestrator role
+(`prepare-orchestrator`, `work-orchestrator`) selects the current mapping of
+`todo-orchestrator`, the role agents migration replaces the split entries with.
+An omitted mapping uses `github.project_app`, including an unknown role resolved
+through `default`. No per-task model override,
+command argument or profile order selects the GitHub actor. Background record,
+issue, bug and board maintenance uses the project identity. Role-driven pull
+request authoring and reviews use the selected role identity. Human work
+performed directly on GitHub keeps its human identity; instrukt's shared-record
+maintenance still uses the project App. This contract changes no human login/
+account association or runtime permission mode.
+
+<!-- /planned-change:fix-reflection-legacy-orchestrator-role-app-fallback -->
 
 | Profile reference | Shipped identity | Responsibility |
 | --- | --- | --- |
@@ -88,17 +104,36 @@ operation, never the App key. Raw agent `gh`/git use remains with the runtime
 permission and credential integration; this does not add a general secret
 export command or a permission gate for those external tools.
 
+<!-- planned-change:fix-reflection-legacy-orchestrator-role-app-fallback -->
+
 Absent keys, an unavailable installation, identity/scope mismatch or failed
 issuance leaves the GitHub operation visibly pending/refused with a secret-safe
-cause. A failure of the project credential every reflection shares stops the
-command's remaining GitHub requests; a setup or refusal of the App one
-operation selects (a role's pull request or review, or the board account)
-leaves only that operation pending, and the other todos keep reflecting. An
-unreachable or rate-limited App API stops the command either way. Rate limits
-retain their retry boundary. Locally accepted work and its
+cause. Rate limits retain their retry boundary. Locally accepted work and its
 pending reflection survive; no credential failure is reported as remote success
 or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.
+
+<!-- change:fix-reflection-legacy-orchestrator-role-app-fallback -->
+
+Absent keys, an unavailable installation, identity/scope mismatch or failed
+issuance leaves the GitHub operation visibly pending/refused with a secret-safe
+cause. During one todo's reflection, when the credential of the App its pull
+request, review or board update selects cannot be issued because of a setup or
+identity mismatch, or because GitHub refuses that App's request, the todo's
+remaining reflection in that pass stays pending with the cause and the pass
+continues with the next todo. A failed issuance of the project credential every
+reflection request shares, an issuance GitHub throttles, may be throttling or
+cannot serve, and GitHub refusing an issued credential stop the command's
+remaining GitHub requests. When board setup at the start of reflection cannot
+obtain the board account's credential, board updates stay pending with the
+cause; a rate limit there stops the command's remaining GitHub requests, and
+any other cause leaves the rest of reflection running. Rate limits retain their
+retry boundary. Locally accepted work and its
+pending reflection survive; no credential failure is reported as remote success
+or as proof that an ambiguous write had no effect. The record's existing
+revision and retry-convergence rules remain in force.
+
+<!-- /planned-change:fix-reflection-legacy-orchestrator-role-app-fallback -->
 
 ### Read-only reflection readiness
 
