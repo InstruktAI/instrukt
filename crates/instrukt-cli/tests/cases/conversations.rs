@@ -1084,6 +1084,10 @@ fn failed_work_is_retried_after_a_restart() {
             })
         },
     );
+    wait_for_answer_fixture(
+        "the first member's notice posts while the redelivery is refused",
+        || notices(&c, "USTEVEN") == 1,
+    );
     c.runtime.flag("send-failure", false);
     wait_for_answer_fixture(
         "the retry reaches the same session after the refusal",
