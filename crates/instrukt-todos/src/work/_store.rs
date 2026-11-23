@@ -249,12 +249,17 @@ pub(crate) struct WithdrawalIntent {
 }
 
 impl WithdrawalIntent {
-    /// Whether any working resource is released yet; only an intent with
-    /// none may be abandoned.
-    pub fn released_any(&self) -> bool {
-        self.workspace == WorkspaceRelease::Released
-            || self.branch_deleted()
-            || self.worktrees.iter().any(|w| w.released)
+    /// Whether the intent may be closed with the todo left as it was: it
+    /// records no working resource released, and no effect under way whose
+    /// outcome a later run must still recognize — no worktree recorded at
+    /// its staging location, and no partial marker not yet taken back.
+    pub fn abandonable(&self) -> bool {
+        self.workspace != WorkspaceRelease::Released
+            && self.branch_state == BranchRelease::Pending
+            && self
+                .worktrees
+                .iter()
+                .all(|w| !w.released && w.staging.is_none())
     }
 
     /// Whether `branch` is recorded deleted.
@@ -725,14 +730,15 @@ impl Store {
         })
     }
 
-    /// Closes the withdrawal intent of `id` while it records nothing
-    /// released: the todo stays as it is. `false`, with the intent kept,
-    /// when it records a released resource; `true` when it is closed or
+    /// Closes the withdrawal intent of `id` while it is abandonable
+    /// ([`WithdrawalIntent::abandonable`]): the todo stays as it is.
+    /// `false`, with the intent kept, when the stored intent records a
+    /// released resource or an effect under way; `true` when it is closed or
     /// none is recorded.
     pub fn abandon_withdrawal(&self, id: &TodoId) -> Result<bool, WorkError> {
         self.write(
             |tx, path, project| match load_intent(tx, path, project, id)? {
-                Some(intent) if intent.released_any() => Ok(false),
+                Some(intent) if !intent.abandonable() => Ok(false),
                 Some(_) => {
                     tx.execute(
                         "DELETE FROM withdrawal_intents WHERE todo_id = ?1",

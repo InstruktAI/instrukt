@@ -543,12 +543,13 @@ impl Work {
     ///    a resource that must be kept, or an attempted release proven to
     ///    have changed nothing or taken back — closes the intent and leaves
     ///    the todo as it was while the intent records nothing released and
-    ///    the command attempted no other release. An observation or effect
-    ///    whose outcome was not established keeps the intent even when it
-    ///    records nothing released, and so does a branch update that left
-    ///    only its marker, recorded as a partial marker before it is taken
-    ///    back. A kept intent names what is recorded released, for the
-    ///    withdrawal run again to complete.
+    ///    nothing under way (a worktree at its staging location, a partial
+    ///    marker) and the command attempted no other release. An
+    ///    observation or effect whose outcome was not established keeps the
+    ///    intent even when it records nothing released, and so does a branch
+    ///    update that left only its marker, whether or not the marker was
+    ///    taken back. A kept intent names what is recorded released and
+    ///    under way, for the withdrawal run again to complete.
     /// 4. One writer transaction commits the withdrawn record, with
     ///    `removal` naming exactly what was released, and closes the intent.
     /// 5. The withdrawal lock is released and the change flushed under the
