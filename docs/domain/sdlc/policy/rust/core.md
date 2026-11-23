@@ -211,12 +211,22 @@ visibility: 'public'
 52. **Each live worktree builds into its own target directory.**
     `CARGO_TARGET_DIR` never points at a directory another live worktree
     builds into.
-53. **A cold build in a new worktree is accelerated with a bounded local
-    `sccache`.** Where a faster cold build is wanted, `sccache` runs as the
-    compiler wrapper (`RUSTC_WRAPPER`) with its local disk cache capped
-    (`SCCACHE_CACHE_SIZE`). It serves compiled dependencies to every worktree
-    by content while each keeps its own target directory. Using it is
-    optional.
+53. **A bounded local `sccache` is the optional route to reusing compilation
+    between worktrees.** Where a faster cold build in a new worktree is
+    wanted, `sccache` runs as the compiler wrapper (`RUSTC_WRAPPER`) with its
+    local disk cache capped (`SCCACHE_CACHE_SIZE`), while each worktree keeps
+    its own target directory. It reuses a compilation only when it can cache
+    that compilation and the cache key matches. By default a hit requires the
+    absolute paths in the key to match, so a compilation keyed on a path
+    inside the checkout gets no hit from a worktree at another path.
+    `SCCACHE_BASEDIRS` strips the named base directories before hashing; a
+    hit then returns a crate compiled in another directory, which keeps that
+    directory's paths in its debug info and panic messages unless
+    `--remap-path-prefix` maps them away, and in any checkout path the crate
+    embeds through `env!`. Crates that invoke the system linker, such as
+    binaries and procedural macros, are not cached, and by default neither
+    are incrementally compiled crates, which in the dev profile are the
+    workspace members and path dependencies.
 <!-- /planned:reduce-worktree-disk-usage -->
 
 ## Rationale
@@ -248,9 +258,10 @@ it compiles, so a size figure holds only for the build it was measured on.
 A target directory holds one build at a time. Builds that share one take
 turns on its lock, and its executables are whichever worktree built last, so
 a worktree can run or test another branch's binary. Separate directories keep
-concurrent worktrees independent and correct. A content-addressed compilation
-cache returns the shared compilation without sharing that mutable directory,
-and its size cap keeps the cache itself bounded.
+concurrent worktrees independent and correct. A compilation cache keyed on
+each compilation's inputs can hand one worktree what another already compiled
+without sharing that mutable directory, and its size cap keeps the cache
+itself bounded.
 <!-- /planned:reduce-worktree-disk-usage -->
 
 ## Scope
@@ -288,5 +299,5 @@ infrastructure crates, test code, build scripts.
 
 - https://doc.rust-lang.org/cargo/reference/profiles.html — Cargo profiles: the `debug` levels, per-package overrides, build-dependency defaults and profile inheritance.
 - https://doc.rust-lang.org/cargo/reference/build-cache.html — Cargo build cache: the target directory and the shared-cache route through `sccache`.
-- https://github.com/mozilla/sccache — `sccache`: the Rust wrapper setup, what it caches, and the local disk cache settings.
+- https://github.com/mozilla/sccache — `sccache`: the Rust wrapper setup, what it caches, path normalization between build directories, and the local disk cache settings.
 <!-- /planned:reduce-worktree-disk-usage -->
