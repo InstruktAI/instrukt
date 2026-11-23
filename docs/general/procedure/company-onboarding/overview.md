@@ -31,8 +31,9 @@ Keep the two onboarding layers distinct:
   `general/procedure/company-onboarding/service-connection`, and proving
   baseline business assistance (`general/procedure/company-assistance`).
   Technical coordination for a company (`general/procedure/technical-coordinator`)
-  is a separate downstream workflow run from a direct operator or coordinator
-  session rather than part of the company's `company-agent` chat session.
+  is a separate downstream workflow run from a direct operator session (or a
+  session whose role grants repository, MCP, and todo actions) rather than part
+  of the company's `company-agent` chat session.
 
 A service the company works with may need setting up for the company before
 it can be connected — its accounts, its roles, its records. That is the
@@ -43,8 +44,8 @@ this procedure names none.
 
 - Platform onboarding stands on this computer: `instrukt status --json`
   reports a configured `machine` layer with no validation findings, a
-  selected `runtime` with `modules.features.standing_agents` available, and
-  the host's enabled modules; `instrukt agents list` reports the configured
+  selected `runtime`, and the required host modules and runtime features
+  available under `modules`; `instrukt agents list` reports the configured
   agent profiles.
 - You work on the computer that is to hold the company's home.
 - The operator is at hand to run, at their own terminal, the commands this
@@ -80,9 +81,9 @@ the services it touched, then step 10.
      services only. Technical coordination for the company
      (`general/procedure/technical-coordinator`) — and any deployment-host,
      container-runtime, or GitOps setup — is handled separately downstream in
-     a direct operator or coordinator session after baseline onboarding stands,
-     never inside baseline business onboarding or the `company-agent`
-     conversation session.
+     a direct operator session (or a session whose role grants repository,
+     MCP, and todo actions) after baseline onboarding stands, never inside
+     baseline business onboarding or the `company-agent` conversation session.
 
    Then ask these, and take the answers as the company's facts:
    - What is the company called, and what key names it on this computer — a

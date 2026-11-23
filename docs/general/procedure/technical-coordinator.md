@@ -1,6 +1,6 @@
 ---
-description: Act as technical coordinator in an authorized direct session at platform level or in a company home — hold one shared technical picture across requesters and repositories, triage requests top-down through the four-lane adopt-before-build ladder, coordinate work through the SDLC todo pipeline, and communicate deliberately in human register.
-activation_trigger: 'Use in an operator or technical-coordinator direct session (at platform level or in a company home) when triaging technical requests, deciding whether to adopt, self-host, or build software, or coordinating overlapping work across repositories and the todo pipeline; company-agent chat sessions stay under `general/procedure/company-assistance`.'
+description: Act as technical coordinator in a direct operator session (or any session whose role grants repository, MCP, and todo actions) at platform level or in a company home — hold one shared technical picture across requesters and repositories, triage requests top-down through the four-lane adopt-before-build ladder, coordinate work through the SDLC todo pipeline, and communicate deliberately in human register.
+activation_trigger: 'Use in a direct operator session (at platform level or in a company home) — or another session whose role grants repository, MCP, and todo actions — when triaging technical requests or deciding whether to adopt, self-host, or build software; `company-agent` sessions stay under `general/procedure/company-assistance` and `coordinator` sessions stay under `sdlc/procedure/lifecycle/coordinate`.'
 visibility: public
 ---
 
@@ -21,30 +21,28 @@ pipeline; and communicate in concise human register.
 
 ### Home-aware posture and session boundary
 
-This procedure runs in an authorized direct runtime session (or a dedicated
-coordinator session whose role permits repository and todo actions) in either
-home scope:
+This procedure runs in a direct operator session — or any session whose role
+grants the required repository, MCP, and todo actions — in either home scope:
 
-- **Company home** (such as a direct operator or technical-coordinator session
-  working in `~/.instrukt/companies/<name>/` and its checked-out repositories
-  on requests from company founders, admins, or members): stay within that
-  company's home, git-backed `docs/`, connected MCP servers, and repositories,
-  and keep operator-only host internals with the operator.
-- **Platform level** (the operator coordinating platform infrastructure, shared
-  domains, and platform repositories): operate across the host's configured
-  repositories, published documentation, declared host MCP servers, and any
-  adopted deployment domain.
+- **Company home** (a direct operator session working in
+  `~/.instrukt/companies/<name>/` and its checked-out repositories on requests
+  from company founders, admins, or members): stay within that company's home,
+  git-backed `docs/`, connected MCP servers, and repositories, and keep
+  operator-only host internals with the operator.
+- **Platform level** (a direct operator session coordinating platform
+  infrastructure, shared domains, and platform repositories): operate across
+  the host's configured repositories, published documentation, declared host
+  MCP servers, and any adopted deployment domain.
 
 Connected company conversations running under
 `general/procedure/company-assistance` (role `company-agent`) keep their own
-contract; this procedure never widens a `company-agent` session's authority or
-grants proactive outbound messaging across conversations.
+contract; this procedure never widens a `company-agent` session's authority.
 
 ## Preconditions
 
-- You are in a direct operator or technical-coordinator session authorized for
-  repository and todo operations, not a `company-agent` conversation session
-  under `general/procedure/company-assistance`.
+- You are in a direct operator session — or a session whose role grants the
+  required repository, MCP, and todo actions — not a `company-agent`
+  conversation session under `general/procedure/company-assistance`.
 - A technical request, integration need, architecture question, or software
   workstream has arrived (directly in this session or relayed from company or
   platform stakeholders).
@@ -62,9 +60,9 @@ grants proactive outbound messaging across conversations.
    (`general/principle/grounding`):
    - the home's git-backed `docs/` (recorded systems, architectural decisions,
      and operating conventions);
-   - each target repository's active work via `instrukt todo list` (run in that
-     repository or with `--project-root <path>`) and `instrukt todo show <slug>`
-     for overlapping items;
+   - each target repository's active work via `instrukt todo list` (from that
+     repository or with `--project <slug>`) and `instrukt todo show <slug>` in
+     that repository for overlapping items;
    - declared MCP servers via `instrukt mcp list` and current repository state
      (`git status`, open branches, and recent commits).
 
