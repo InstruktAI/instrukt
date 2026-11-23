@@ -189,13 +189,17 @@ pub enum TickOutcome {
     Busy,
 }
 
-/// One wake-up on `clock`; exits at once when the runner lock is held. Its
-/// configuration is admitted at its start: an invalid machine layer or
-/// `agents.yaml` refuses it, and what was not admitted is left out.
+/// One wake-up at the moment it is invoked; exits at once when the runner
+/// lock is held. Its configuration is admitted at its start: an invalid
+/// machine layer or `agents.yaml` refuses it, and what was not admitted is
+/// left out. `clock` is read again only where an answer's own time matters.
 pub fn tick(
     cx: &RunnerContext<'_>,
     clock: &(dyn Fn() -> Timestamp + Sync),
 ) -> Result<TickOutcome, RunnerError> {
+    // The scheduler's moment is the tick's arrival: the locking, admission
+    // and readiness work below never make an on-time occurrence late.
+    let now = clock();
     let state = RunnerState::new(cx.home);
     let Some(_runner) = _holder::tick(cx.home)? else {
         return Ok(TickOutcome::Busy);
@@ -227,6 +231,7 @@ pub fn tick(
         wake(
             cx,
             &state,
+            now,
             clock,
             &considered,
             platform.as_ref(),
@@ -483,6 +488,7 @@ pub fn run(
                 if let Err(err) = wake(
                     cx,
                     &state,
+                    clock(),
                     &*clock,
                     &considered,
                     enabled_platform,
@@ -569,16 +575,19 @@ fn event_platform(
     }))
 }
 
+/// One wake at `now`, the moment it began; `clock` is read again only by
+/// CI credential issuance and its failure record.
+#[allow(clippy::too_many_arguments)]
 fn wake(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
+    now: Timestamp,
     clock: &(dyn Fn() -> Timestamp + Sync),
     considered: &[Considered],
     platform: Option<&EventPlatform>,
     drain: bool,
     invocation: &crate::keyed::RuntimeInvocation,
 ) -> Result<(), RunnerError> {
-    let now = clock();
     let previous = ticks::last_wakeup(state)?;
     ticks::record_wakeup(state, now)?;
     let dispatch_cx = DispatchContext {
