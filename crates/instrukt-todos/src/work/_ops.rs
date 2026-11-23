@@ -545,22 +545,50 @@ impl Work {
     ///    reflection lock.
     ///
     /// A withdrawal interrupted with its intent recorded is completed by
-    /// running it again, which continues from the intent.
+    /// running it again, which continues from the intent without reading
+    /// GitHub first: an action that arrived there meanwhile stays
+    /// outstanding until the first pull after the withdrawal commits.
     pub fn remove(
         &self,
         project: &ProjectRef,
         slug: &TodoSlug,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
-        let index = s.enter_judged(slug)?;
-        writable(&s.items[index].record)?;
+        let store = Store::new(&self.home, &project.slug);
+        // A withdrawal already admitted resumes on the record it was
+        // admitted on, before anything is read from GitHub: what arrived
+        // there since — a hold label, a command, a newer head — cannot
+        // commit while the intent is open, and waits for the first pull
+        // after the withdrawal commits.
+        let resuming = match s.find(slug, false) {
+            Some(index)
+                if store
+                    .withdrawal_intent(&s.items[index].record.id)?
+                    .is_some() =>
+            {
+                Some(index)
+            }
+            _ => None,
+        };
+        let index = match resuming {
+            Some(index) => index,
+            None => {
+                let index = s.enter_judged(slug)?;
+                writable(&s.items[index].record)?;
+                index
+            }
+        };
         let base = s.base(index).ok_or_else(|| {
             WorkError::refused(format!("`{slug}` has no stored record to withdraw"))
         })?;
         let id = base.record.id.clone();
-        let store = Store::new(&self.home, &project.slug);
         let withdrawing = WithdrawalLock::acquire(&self.home)?;
         let intent = match store.withdrawal_intent(&id)? {
+            None if resuming.is_some() => {
+                return Err(WorkError::refused(format!(
+                    "`{slug}`'s withdrawal ended while this command waited for it; nothing was done. See where it stands with `instrukt todo show {slug}`"
+                )));
+            }
             Some(intent) => {
                 tracing::info!(
                     event = "work_withdrawal_resumed",
