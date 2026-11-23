@@ -56,10 +56,11 @@ Global `mcp_clients.<name>` (declared only in `~/.instrukt/instrukt.yaml`) holds
 reusable host-level OAuth clients whose `issuer` (required authorization server
 issuer URL), `id` (required `${NAME}` reference into `~/.instrukt/secrets.env`),
 `secret` (optional `${NAME}` reference), and optional one-line `description`
-pin the shared client to one authorization server. Before reading the host
-client's secret, sign-in verifies that the server's discovered authorization
-server issuer matches `mcp_clients.<name>.issuer`; any mismatch is refused so a
-company declaration can never redirect a host client secret to another server. A
+pin the shared client to one authorization server. Before sending the host
+client's secret to any authorization server endpoint, sign-in verifies that the
+server's discovered authorization server issuer matches `mcp_clients.<name>.issuer`;
+any mismatch is refused so a company declaration can never redirect a host client
+secret to another server. A
 company home's `issuer` block (`enabled: true`, `signing_key: ${NAME}`
 referencing the company home's `secrets.env`) enables that company's built-in
 lightweight OIDC issuer for `sign_in.mode: issuer`.
@@ -588,7 +589,7 @@ is the local operator's.
 | Command | Does |
 | --- | --- |
 | `instrukt mcp list` | Names each server the caller sees with its description and where it is declared, and for a server with a declared or host-referenced sign-in client the client identifier and return address to register for it (never any secret). Contacts no server and reads no secret. |
-| `instrukt mcp clients [--json]` | Lists global `mcp_clients.<name>` entries declared on this host with their pinned issuers, non-secret client identifiers, descriptions and stable shared return addresses. Outside any session (local operator), materializes or refreshes host registrations; in an admin DM, strictly read-only (never reads secrets). |
+| `instrukt mcp clients [--company <name>] [--json]` | Without `--company`, lists global `mcp_clients.<name>` entries declared on this host with their pinned issuers, non-secret client identifiers, descriptions and stable shared return addresses; with `--company <name>`, lists company-declared `mcp.<server>.sign_in.client` entries with their client identifiers and return addresses. Outside any session (local operator), materializes or refreshes those registrations so the return address can be registered at the vendor before first sign-in; in an admin DM, strictly read-only (never reads secrets). |
 | `instrukt mcp discover <url> [--json]` | Probes a remote MCP server's OAuth/OIDC/EMA metadata live (Bucket A DCR vs. Bucket B pre-registered client vs. EMA `jwt-bearer`, PKCE `S256`, RFC 9207 `iss`, OpenID Provider). Writes nothing. |
 | `instrukt mcp check-ingress [--json]` | Verifies local `ingress.url` and cluster Redis reachability via an end-to-end probe through the real sign-in return path without inspecting any other computer's configuration. |
 | `instrukt mcp issuer init --company <name>` | Local operator only: initializes or rotates a company's built-in ES256 OIDC issuer key in the company home's `secrets.env` and publishes its public discovery/JWKS metadata to cluster Redis. |

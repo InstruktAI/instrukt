@@ -2114,6 +2114,7 @@ fn a_successful_answer_without_timestamp_needs_no_read_back() {
     projected(&c);
     let event = c.slack.direct("D17", "USTEVEN", "Is the release ready?");
     let session = started(&c, &[]);
+    let metadata_reads_before = c.slack.metadata_reads();
     c.slack.fate("Ready.", Fate::MissingTimestamp, 1);
     c.slack.refuse_metadata_reads();
     c.finish_turn(&session, 0, "Ready.");
@@ -2121,7 +2122,7 @@ fn a_successful_answer_without_timestamp_needs_no_read_back() {
         "the successful response confirmed without a timestamp",
         || c.slack.posts_beginning("Ready.") == 1 && answers_recorded(&c),
     );
-    assert_eq!(c.slack.metadata_reads(), 0);
+    assert_eq!(c.slack.metadata_reads(), metadata_reads_before);
     assert_eq!(interval(&c, &event), None);
 }
 

@@ -294,7 +294,9 @@ struct OAuthState {
     jwt_bearers: Vec<ObservedJwtBearer>,
     auth_code_exchanges: usize,
     refresh_exchanges: usize,
+    userinfo_calls: usize,
     total_token_requests: usize,
+    refresh_delay_ms: u64,
     next_token_id: usize,
 }
 
@@ -354,7 +356,9 @@ impl FakeOAuthMcp {
             jwt_bearers: Vec::new(),
             auth_code_exchanges: 0,
             refresh_exchanges: 0,
+            userinfo_calls: 0,
             total_token_requests: 0,
+            refresh_delay_ms: 0,
             next_token_id: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -451,7 +455,11 @@ impl FakeOAuthMcp {
                             .as_deref()
                             .and_then(|v| v.strip_prefix("Bearer "))
                             .unwrap_or_default();
-                        let email = state.lock().unwrap().tokens.get(token).cloned();
+                        let email = {
+                            let mut s = state.lock().unwrap();
+                            s.userinfo_calls += 1;
+                            s.tokens.get(token).cloned()
+                        };
                         if let Some(email) = email {
                             let body = json!({
                                 "sub": format!("sub:{email}"),
@@ -514,6 +522,10 @@ impl FakeOAuthMcp {
                                         .unwrap();
                                     continue;
                                 }
+                            }
+                            let delay_ms = state.lock().unwrap().refresh_delay_ms;
+                            if delay_ms > 0 {
+                                std::thread::sleep(Duration::from_millis(delay_ms));
                             }
                             let refresh_tok =
                                 params.get("refresh_token").cloned().unwrap_or_default();
@@ -859,6 +871,14 @@ impl FakeOAuthMcp {
 
     pub fn refresh_exchanges(&self) -> usize {
         self.state.lock().unwrap().refresh_exchanges
+    }
+
+    pub fn userinfo_calls(&self) -> usize {
+        self.state.lock().unwrap().userinfo_calls
+    }
+
+    pub fn set_refresh_delay_ms(&self, ms: u64) {
+        self.state.lock().unwrap().refresh_delay_ms = ms;
     }
 
     pub fn total_token_requests(&self) -> usize {

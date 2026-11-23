@@ -154,6 +154,107 @@ pub fn list_host_clients(
     Ok(out)
 }
 
+/// List company-declared `mcp.<server>.sign_in.client` registrations for `company`.
+/// When `read_only` is false (local operator), materializes or refreshes each server's
+/// declared registration so the operator can register the return address at the vendor
+/// before the first speaker sign-in. When `read_only` is true (admin DM), reads only
+/// `mcp_registrations` and never touches secrets or the state writer lock.
+pub fn list_company_clients(
+    home: &Home,
+    company: &ProjectSlug,
+    read_only: bool,
+    now: Timestamp,
+) -> Result<Vec<HostClientView>, McpError> {
+    let inspection = home.for_inspection();
+    let global = Configuration::load_global(&inspection)?;
+    let ingress_url = global.ingress_url()?;
+    let company_cfg = Configuration::load_company(&inspection, company)?;
+    let servers = company_cfg.mcp_servers(instrukt_core::config::LayerKind::Company)?;
+    let mut out = Vec::new();
+    for (name, server) in servers {
+        let Some(local_client) = server.sign_in.as_ref().and_then(|s| s.client.as_ref()) else {
+            continue;
+        };
+        let reg = if read_only {
+            read_company_client_registration(&inspection, company, &name, ingress_url.as_deref())?
+        } else {
+            Some(ensure_company_client_registration(
+                home,
+                company,
+                &name,
+                local_client,
+                "",
+                ingress_url.as_deref(),
+                now,
+            )?)
+        };
+        let (initialized, issuer, client_id, return_id, return_address) = match reg {
+            Some(reg) => {
+                let addr = ingress_url
+                    .as_deref()
+                    .map(|base| return_address_for(Some(base), &reg.return_id));
+                (
+                    true,
+                    reg.issuer,
+                    Some(reg.client_id),
+                    Some(reg.return_id),
+                    addr,
+                )
+            }
+            None => (false, String::new(), None, None, None),
+        };
+        out.push(HostClientView {
+            name: name.to_string(),
+            issuer,
+            initialized,
+            client_id,
+            description: Some(server.description),
+            return_id,
+            return_address,
+            has_secret: local_client.secret.is_some(),
+        });
+    }
+    Ok(out)
+}
+
+fn read_company_client_registration(
+    home: &Home,
+    company: &ProjectSlug,
+    server: &ProjectSlug,
+    ingress_url: Option<&str>,
+) -> Result<Option<Registration>, McpError> {
+    let Some(db) = StateRead::open(home)? else {
+        return Ok(None);
+    };
+    let row = db
+        .conn()
+        .query_row(
+            "SELECT return_id, issuer, client_id, client_secret, return_address
+             FROM mcp_registrations
+             WHERE company = ?1 AND server = ?2 AND host_client IS NULL AND declared = 1 AND retired_at IS NULL
+             LIMIT 1",
+            params![company.as_str(), server.as_str()],
+            |r| {
+                Ok(Registration {
+                    return_id: r.get(0)?,
+                    issuer: r.get(1)?,
+                    client_id: r.get(2)?,
+                    client_secret: r.get(3)?,
+                    return_address: r.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StateDbError::sqlite(db.path()))?;
+    let Some(mut reg) = row else {
+        return Ok(None);
+    };
+    if let Some(base) = ingress_url {
+        reg.return_address = return_address_for(Some(base), &reg.return_id);
+    }
+    Ok(Some(reg))
+}
+
 fn read_host_client_registration(
     home: &Home,
     name: &ProjectSlug,
@@ -210,6 +311,40 @@ pub(crate) fn ensure_host_client_registration(
         }
         None => None,
     };
+    // Read-only fast path: avoid opening writer.lock when nothing changed (N-b).
+    if let Some(read) = StateRead::open(&home.for_inspection())? {
+        let existing: Option<(String, String, String, Option<String>, String)> = read
+            .conn()
+            .query_row(
+                "SELECT return_id, issuer, client_id, secret_digest, return_address
+                 FROM mcp_registrations
+                 WHERE host_client = ?1 AND company IS NULL AND server IS NULL AND retired_at IS NULL
+                 LIMIT 1",
+                [name.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .map_err(StateDbError::sqlite(read.path()))?;
+        if let Some((return_id, existing_issuer, existing_id, existing_digest, existing_addr)) =
+            existing
+        {
+            let desired_addr = return_address_for(ingress_url, &return_id);
+            let addr_ok = ingress_url.is_none() || existing_addr == desired_addr;
+            if existing_issuer == client.issuer
+                && existing_id == client_id
+                && existing_digest == secret_digest
+                && addr_ok
+            {
+                return Ok(Registration {
+                    return_id,
+                    issuer: existing_issuer,
+                    client_id,
+                    client_secret: None,
+                    return_address: existing_addr,
+                });
+            }
+        }
+    }
     let fresh_return_id = random_hex_128()?;
     let mut db = StateDb::open(home)?;
     let path = db.path().to_path_buf();
@@ -305,6 +440,47 @@ pub(crate) fn ensure_company_client_registration(
         }
         None => None,
     };
+    // Read-only fast path: avoid opening writer.lock when registration matches unchanged (N-b).
+    if let Some(read) = StateRead::open(&home.for_inspection())? {
+        let existing: Option<(String, String, Option<String>, String, String)> = read
+            .conn()
+            .query_row(
+                "SELECT return_id, client_id, secret_digest, return_address, issuer
+                 FROM mcp_registrations
+                 WHERE company = ?1 AND server = ?2 AND host_client IS NULL AND declared = 1 AND retired_at IS NULL
+                 LIMIT 1",
+                params![company.as_str(), server.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .map_err(StateDbError::sqlite(read.path()))?;
+        if let Some((return_id, existing_id, existing_digest, existing_addr, existing_issuer)) =
+            existing
+            && existing_id == client_id
+            && existing_digest == secret_digest
+        {
+            if !existing_issuer.is_empty() && !issuer.is_empty() && existing_issuer != issuer {
+                return Err(McpError::Server {
+                    server: server.to_string(),
+                    cause: format!(
+                        "discovered authorization server `{issuer}` does not match declared client's pinned issuer `{existing_issuer}`; restore `url` to the pinned authorization server or rotate `sign_in.client` credentials as the local operator to rebind"
+                    ),
+                });
+            }
+            let desired_addr = return_address_for(ingress_url, &return_id);
+            let addr_ok = ingress_url.is_none() || existing_addr == desired_addr;
+            let issuer_ok = issuer.is_empty() || existing_issuer == issuer;
+            if addr_ok && issuer_ok {
+                return Ok(Registration {
+                    return_id,
+                    issuer: existing_issuer,
+                    client_id,
+                    client_secret: None,
+                    return_address: existing_addr,
+                });
+            }
+        }
+    }
     let fresh_return_id = random_hex_128()?;
     let mut db = StateDb::open(home)?;
     let path = db.path().to_path_buf();
@@ -327,7 +503,7 @@ pub(crate) fn ensure_company_client_registration(
             if existing_id == client_id && existing_digest == secret_digest {
                 if !existing_issuer.is_empty() && !issuer.is_empty() && existing_issuer != issuer {
                     return Ok(Err(format!(
-                        "discovered authorization server `{issuer}` does not match declared client's pinned issuer `{existing_issuer}`"
+                        "discovered authorization server `{issuer}` does not match declared client's pinned issuer `{existing_issuer}`; restore `url` to the pinned authorization server or rotate `sign_in.client` credentials as the local operator to rebind"
                     )));
                 }
                 let desired_addr = return_address_for(ingress_url, &return_id);
@@ -680,7 +856,9 @@ pub fn server_registration_hint(
                 }))
             }
             None => Ok(Some(ServerRegistrationHint::Uninitialized {
-                message: "declared client registration initializes on first sign-in".into(),
+                message: format!(
+                    "declared client registration not initialized yet; run `instrukt mcp clients --company {company}` as the local operator"
+                ),
             })),
         };
     }

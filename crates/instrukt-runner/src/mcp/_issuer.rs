@@ -217,15 +217,8 @@ pub fn init_company_issuer(
         cause: format!("failed to publish public issuer metadata to cluster Redis: {error}"),
     })?;
 
-    // Store private key in company home's owner-only secrets.env (never in DB or Redis).
-    set_secret_in(
-        home,
-        &SecretSource::Company(company.clone()),
-        &existing_key_name,
-        &keypair.private_pem,
-    )?;
-
-    // Record stable issuer_id + public JWKS in company_issuers, then drop writer.lock.
+    // Record stable issuer_id + public JWKS in company_issuers BEFORE overwriting secrets.env,
+    // so a DB failure never leaves secrets.env holding a newer private key than company_issuers.
     {
         let mut db = StateDb::open(home)?;
         let path = db.path().to_path_buf();
@@ -247,6 +240,14 @@ pub fn init_company_issuer(
             Ok(())
         })?;
     }
+
+    // Store private key in company home's owner-only secrets.env (never in DB or Redis).
+    set_secret_in(
+        home,
+        &SecretSource::Company(company.clone()),
+        &existing_key_name,
+        &keypair.private_pem,
+    )?;
 
     // Enable `issuer:` in the company home's instrukt.yaml.
     let layer = Layer::Company(company.clone());

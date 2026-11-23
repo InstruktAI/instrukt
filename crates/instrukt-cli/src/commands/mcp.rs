@@ -107,12 +107,22 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         Command::Clients { json } => {
             let is_session = require_operator_or_admin_dm(ctx, &caller, asked.as_ref())?;
-            let clients = mcp::list_host_clients(&ctx.home, is_session, Timestamp::now())?;
+            let clients = if let Some(ref company) = asked {
+                mcp::list_company_clients(&ctx.home, company, is_session, Timestamp::now())?
+            } else {
+                mcp::list_host_clients(&ctx.home, is_session, Timestamp::now())?
+            };
             if json {
                 ctx.out.json(&clients)?;
             } else if clients.is_empty() {
-                ctx.out
-                    .line("No host-level MCP OAuth client is declared.")?;
+                if let Some(ref company) = asked {
+                    ctx.out.line(&format!(
+                        "No company-declared MCP OAuth client (`sign_in.client`) for company `{company}`."
+                    ))?;
+                } else {
+                    ctx.out
+                        .line("No host-level MCP OAuth client is declared.")?;
+                }
             } else {
                 for client in &clients {
                     let desc = client
@@ -126,9 +136,15 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                             .return_address
                             .as_deref()
                             .unwrap_or("(set ingress.url to form return address)");
+                        let iss = if client.issuer.is_empty() {
+                            "(pins on first sign-in)"
+                        } else {
+                            client.issuer.as_str()
+                        };
+                        format!("issuer={iss} client_id={id} return_address={ret}")
+                    } else if let Some(ref company) = asked {
                         format!(
-                            "issuer={} client_id={id} return_address={ret}",
-                            client.issuer
+                            "(not initialized yet; local operator must run `instrukt mcp clients --company {company}`)"
                         )
                     } else {
                         format!(

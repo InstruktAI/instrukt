@@ -152,9 +152,14 @@ requires an authenticated administrator speaking in a direct message:
 - Allowed verbs inside that scope are `schema --company <own> mcp`,
   `get --company <own> mcp`, `get --company <own> --revision`,
   `validate --company <own>`, and `patch --company <own> --revision <rev>`
-  whose mapping touches only keys under `mcp`, never contains literal secrets,
-  and never introduces or alters any `${NAME}` secret reference (such as
-  `login` or `sign_in.client.id`/`secret`) — secret references are set only by
+  whose mapping touches only keys under `mcp`, carries no YAML tags, and sets
+  only non-secret fields (`url`, `description`, `speaker_login: sign-in`, and
+  `sign_in.{mode, scopes, client_ref, accept_return_without_issuer}`, or `null`
+  to remove a server). Introducing or altering `${NAME}` secret references,
+  setting `login`, `credential`, `speaker_login: stored`, `sign_in.client`, or
+  `sign_in.identity`, or changing `url` on an existing entry that binds a
+  secret, member credential, declared client, or identity endpoint is refused
+  naming the local operator door — secret-bearing settings are managed only by
   the local operator outside any session, while company admins connect services
   via host `sign_in.client_ref`, dynamic registration, or `sign_in.mode:
   issuer`. Any other verb, `--global`, project-layer edit, or key outside

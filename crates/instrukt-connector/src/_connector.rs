@@ -2,8 +2,9 @@
 //! the host's side they call back into.
 use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
-    Admission, AnswerError, AnswerReceipt, Captured, ConnectorError, ContextSnapshot, Incoming,
-    Limits, Place, ReadBackError, ReadBackGap, ReadBackPage, Status,
+    Admission, AnswerError, AnswerReceipt, Captured, ConnectorError, ContextSnapshot,
+    DirectMessageError, DirectMessageReceipt, Incoming, Limits, Place, ReadBackError, ReadBackGap,
+    ReadBackPage, Status,
 };
 use jiff::Timestamp;
 
@@ -60,12 +61,17 @@ pub trait Connector: Send + Sync {
     /// Make one bounded post of the connector's fixed unavailable notice,
     /// beginning with `member`'s mention. The caller records the attempt first.
     fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError>;
-    /// Send a direct message to `recipient` (a provider user identity) with `text`,
-    /// such as a private MCP sign-in link.
-    fn direct_message(&self, _recipient: &str, _text: &str) -> Result<(), ConnectorError> {
-        Err(ConnectorError {
-            cause: "this connector does not support direct messages".into(),
-        })
+    /// Send a private direct message to `recipient` (a provider user identity) with `text`,
+    /// such as an MCP sign-in link or outcome notice. The connector tags it private so it
+    /// never accompanies any later message to the agent.
+    fn direct_message(
+        &self,
+        _recipient: &str,
+        _text: &str,
+    ) -> Result<DirectMessageReceipt, DirectMessageError> {
+        Err(DirectMessageError::Final(
+            "this connector does not support direct messages".into(),
+        ))
     }
     /// Where the status for `message` of `conversation` sits.
     fn place(&self, conversation: &str, message: &str) -> Place;

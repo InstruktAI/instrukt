@@ -128,6 +128,23 @@ pub struct AnswerError {
     pub cause: String,
 }
 
+/// Receipt returned after posting a private direct message to a user.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DirectMessageReceipt {
+    pub channel: Option<String>,
+    pub message_id: Option<String>,
+}
+
+/// Failure posting a private direct message to a user, classified by whether
+/// the provider failure is retryable (rate limit, server error, transport) or final.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DirectMessageError {
+    #[error("{0}")]
+    Retryable(String),
+    #[error("{0}")]
+    Final(String),
+}
+
 /// What the provider says about the sender of an addressed message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Admission {

@@ -35,7 +35,8 @@ pub use _redis_mcp::{
     store_sign_in_return,
 };
 pub use _registrations::{
-    HostClientView, ServerRegistrationHint, list_host_clients, server_registration_hint,
+    HostClientView, ServerRegistrationHint, list_company_clients, list_host_clients,
+    server_registration_hint,
 };
 
 #[derive(Debug, thiserror::Error)]

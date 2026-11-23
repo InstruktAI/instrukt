@@ -337,6 +337,7 @@ fn patch(
     let patch = parse_patch(&text)?;
     if let Some(own_company) = company_scope {
         const DOOR: &str = "ask in a direct message as a workspace administrator for non-secret `mcp` settings (`sign_in.client_ref`, dynamic registration, or `sign_in.mode: issuer`), or have the local operator run the command outside any session";
+        reject_yaml_tags(&patch, "patch", own_company)?;
         let Some(map) = patch.as_mapping() else {
             anyhow::bail!("patch must be a YAML mapping");
         };
@@ -358,15 +359,14 @@ fn patch(
             );
         }
         // Prevent a company-agent patch from introducing or rebinding any `${NAME}` secret
-        // reference (e.g. pointing a new server URL at `${SLACK_BOT_TOKEN}` or `${INSTRUKT_ISSUER_SIGNING_KEY}`).
+        // reference or secret-bearing field (`login`, `credential`, `sign_in.client`, `sign_in.identity`).
         let inspection = ctx.home.for_inspection();
         let existing_doc = std::fs::read_to_string(layer.path(&inspection))
             .ok()
             .and_then(|raw| serde_yaml_ng::from_str::<Value>(&raw).ok());
         let existing_mcp = existing_doc.as_ref().and_then(|doc| doc.get("mcp"));
         if let Some(mcp_patch) = map.get(Value::String("mcp".into())) {
-            reject_new_secret_references(mcp_patch, existing_mcp, "mcp", own_company)?;
-            reject_url_rebind_on_secret_server(mcp_patch, existing_mcp, own_company)?;
+            enforce_admin_dm_mcp_allowlist(mcp_patch, existing_mcp, own_company)?;
         }
     }
     config::patch(
@@ -378,9 +378,72 @@ fn patch(
     Ok(ExitCode::SUCCESS)
 }
 
+/// Reject any YAML tag (`Value::Tagged`) anywhere in a company-agent patch so
+/// tagged scalars or subtrees can never bypass allow-list or secret checks.
+fn reject_yaml_tags(value: &Value, path: &str, company: &ProjectSlug) -> anyhow::Result<()> {
+    match value {
+        Value::Tagged(_) => {
+            anyhow::bail!(
+                "config patch refused: company-agent direct-message patches for `{company}` may not use YAML tags (at `{path}`); send plain YAML values or have the local operator apply the patch outside any session"
+            );
+        }
+        Value::Mapping(map) => {
+            for (k, v) in map {
+                reject_yaml_tags(k, path, company)?;
+                let child = format!("{path}.{}", k.as_str().unwrap_or("<key>"));
+                reject_yaml_tags(v, &child, company)?;
+            }
+            Ok(())
+        }
+        Value::Sequence(items) => {
+            for (idx, v) in items.iter().enumerate() {
+                reject_yaml_tags(v, &format!("{path}[{idx}]"), company)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Unwrap any YAML tag on an existing value read from disk before inspecting it.
+fn untag(mut value: &Value) -> &Value {
+    while let Value::Tagged(tagged) = value {
+        value = &tagged.value;
+    }
+    value
+}
+
+/// Returns true if an existing `mcp.<server>` entry carries any secret-bearing
+/// configuration (`login`, `credential`, `sign_in.client`, `sign_in.identity`,
+/// or any `${...}` secret reference).
+fn server_carries_secret_binding(server: &Value) -> bool {
+    let server = untag(server);
+    if contains_secret_reference(server) {
+        return true;
+    }
+    let Some(map) = server.as_mapping() else {
+        return false;
+    };
+    if map.contains_key(Value::String("login".into()))
+        || map.contains_key(Value::String("credential".into()))
+    {
+        return true;
+    }
+    if let Some(sign_in) = map
+        .get(Value::String("sign_in".into()))
+        .map(untag)
+        .and_then(Value::as_mapping)
+        && (sign_in.contains_key(Value::String("client".into()))
+            || sign_in.contains_key(Value::String("identity".into())))
+    {
+        return true;
+    }
+    false
+}
+
 /// Returns true if `value` contains any `${...}` secret reference anywhere in its subtree.
 fn contains_secret_reference(value: &Value) -> bool {
-    match value {
+    match untag(value) {
         Value::String(text) => text.contains("${"),
         Value::Mapping(map) => map.values().any(contains_secret_reference),
         Value::Sequence(items) => items.iter().any(contains_secret_reference),
@@ -388,88 +451,144 @@ fn contains_secret_reference(value: &Value) -> bool {
     }
 }
 
-/// Refuse changing `url` on an existing `mcp.<server>` entry that still carries any
-/// `${NAME}` secret reference (such as `login` or `sign_in.client`), so a company-agent
-/// DM patch cannot redirect an existing company secret to a new endpoint.
-fn reject_url_rebind_on_secret_server(
+/// Strict allow-list for company-agent admin-DM `mcp` patches:
+/// - Only non-secret fields are patchable: `url`, `description`, `speaker_login: sign-in`,
+///   and `sign_in.{mode, scopes, client_ref, accept_return_without_issuer}` (or `null` to delete).
+/// - Refuses `login`, `credential`, `speaker_login: stored`, `sign_in.client`, `sign_in.identity`,
+///   any `${NAME}` secret reference, and changing `url` on an existing secret-bearing server.
+fn enforce_admin_dm_mcp_allowlist(
     incoming_mcp: &Value,
     existing_mcp: Option<&Value>,
     company: &ProjectSlug,
 ) -> anyhow::Result<()> {
-    let (Some(in_map), Some(ex_map)) = (
-        incoming_mcp.as_mapping(),
-        existing_mcp.and_then(Value::as_mapping),
-    ) else {
+    const SECRET_DOOR: &str = "use a host `sign_in.client_ref`, dynamic registration, or `sign_in.mode: issuer`, or have the local operator update secret-bearing entries outside any session";
+
+    if incoming_mcp.is_null() {
         return Ok(());
+    }
+    let Some(servers) = incoming_mcp.as_mapping() else {
+        anyhow::bail!("config patch refused: `mcp` must be a YAML mapping");
     };
-    for (server_key, incoming_server) in in_map {
-        let Some(existing_server) = ex_map.get(server_key) else {
-            continue;
-        };
-        if !contains_secret_reference(existing_server) {
+    let existing_servers = existing_mcp.map(untag).and_then(Value::as_mapping);
+
+    for (server_key, incoming_server) in servers {
+        let server_name = server_key.as_str().unwrap_or("<server>");
+        if contains_secret_reference(incoming_server) {
+            anyhow::bail!(
+                "config patch refused: company-agent direct-message patches for `{company}` may not introduce or change secret references (under `mcp.{server_name}`); {SECRET_DOOR}"
+            );
+        }
+        if incoming_server.is_null() {
             continue;
         }
-        let Some(new_url) = incoming_server
-            .as_mapping()
-            .and_then(|m| m.get(Value::String("url".into())))
-            .and_then(Value::as_str)
-        else {
-            continue;
+        let Some(server_map) = incoming_server.as_mapping() else {
+            anyhow::bail!("config patch refused: `mcp.{server_name}` must be a mapping or null");
         };
-        let old_url = existing_server
-            .as_mapping()
-            .and_then(|m| m.get(Value::String("url".into())))
-            .and_then(Value::as_str);
-        if old_url != Some(new_url) {
-            let server_name = server_key.as_str().unwrap_or("<server>");
-            anyhow::bail!(
-                "config patch refused: company-agent direct-message patches for `{company}` may not change `mcp.{server_name}.url` while it still references a company secret; clear the secret reference or have the local operator update it outside any session"
-            );
+        let existing_server = existing_servers.and_then(|m| m.get(server_key));
+
+        // Refuse changing `url` on an existing server that still binds company secrets,
+        // member credentials (`credential`), declared `sign_in.client`, or `sign_in.identity`.
+        if let Some(existing_srv) = existing_server
+            && server_carries_secret_binding(existing_srv)
+            && let Some(new_url) = server_map
+                .get(Value::String("url".into()))
+                .and_then(Value::as_str)
+        {
+            let old_url = untag(existing_srv)
+                .as_mapping()
+                .and_then(|m| m.get(Value::String("url".into())))
+                .map(untag)
+                .and_then(Value::as_str);
+            if old_url != Some(new_url) {
+                anyhow::bail!(
+                    "config patch refused: company-agent direct-message patches for `{company}` may not change `mcp.{server_name}.url` while it binds a secret, member credential, declared client, or identity endpoint; {SECRET_DOOR}"
+                );
+            }
+        }
+
+        for (field_key, field_val) in server_map {
+            let field = field_key.as_str().unwrap_or("<key>");
+            match field {
+                "url" | "description" => {
+                    if !(field_val.is_string() || field_val.is_null()) {
+                        anyhow::bail!(
+                            "config patch refused: `mcp.{server_name}.{field}` must be a plain string"
+                        );
+                    }
+                }
+                "speaker_login" => {
+                    let allowed =
+                        field_val.is_null() || matches!(field_val.as_str(), Some("sign-in"));
+                    if !allowed {
+                        anyhow::bail!(
+                            "config patch refused: company-agent direct-message patches for `{company}` may only set `mcp.{server_name}.speaker_login` to `sign-in` (not `stored`); {SECRET_DOOR}"
+                        );
+                    }
+                }
+                "sign_in" => {
+                    if field_val.is_null() {
+                        continue;
+                    }
+                    let Some(sign_in_map) = field_val.as_mapping() else {
+                        anyhow::bail!(
+                            "config patch refused: `mcp.{server_name}.sign_in` must be a mapping or null"
+                        );
+                    };
+                    for (si_key, si_val) in sign_in_map {
+                        let si_field = si_key.as_str().unwrap_or("<key>");
+                        match si_field {
+                            "mode" | "client_ref" => {
+                                if !(si_val.is_string() || si_val.is_null()) {
+                                    anyhow::bail!(
+                                        "config patch refused: `mcp.{server_name}.sign_in.{si_field}` must be a plain string"
+                                    );
+                                }
+                            }
+                            "scopes" => {
+                                let valid = si_val.is_null()
+                                    || si_val
+                                        .as_sequence()
+                                        .is_some_and(|seq| seq.iter().all(Value::is_string));
+                                if !valid {
+                                    anyhow::bail!(
+                                        "config patch refused: `mcp.{server_name}.sign_in.scopes` must be a list of strings"
+                                    );
+                                }
+                            }
+                            "accept_return_without_issuer" => {
+                                if !(si_val.is_bool() || si_val.is_null()) {
+                                    anyhow::bail!(
+                                        "config patch refused: `mcp.{server_name}.sign_in.accept_return_without_issuer` must be a boolean"
+                                    );
+                                }
+                            }
+                            "client" | "identity" => {
+                                anyhow::bail!(
+                                    "config patch refused: company-agent direct-message patches for `{company}` may not set `mcp.{server_name}.sign_in.{si_field}`; {SECRET_DOOR}"
+                                );
+                            }
+                            other => {
+                                anyhow::bail!(
+                                    "config patch refused: `mcp.{server_name}.sign_in.{other}` is not allowed in a company-agent direct-message patch; {SECRET_DOOR}"
+                                );
+                            }
+                        }
+                    }
+                }
+                "login" | "credential" => {
+                    anyhow::bail!(
+                        "config patch refused: company-agent direct-message patches for `{company}` may not set `mcp.{server_name}.{field}`; {SECRET_DOOR}"
+                    );
+                }
+                other => {
+                    anyhow::bail!(
+                        "config patch refused: `mcp.{server_name}.{other}` is not allowed in a company-agent direct-message patch; {SECRET_DOOR}"
+                    );
+                }
+            }
         }
     }
     Ok(())
-}
-
-/// Refuse any `${...}` secret reference inside a company-agent `mcp` patch unless
-/// the exact same string already existed at the exact same path in the company's
-/// current `mcp` configuration.
-fn reject_new_secret_references(
-    incoming: &Value,
-    existing: Option<&Value>,
-    path: &str,
-    company: &ProjectSlug,
-) -> anyhow::Result<()> {
-    match incoming {
-        Value::String(text) if text.contains("${") => {
-            let unchanged = existing.and_then(Value::as_str) == Some(text.as_str());
-            if !unchanged {
-                anyhow::bail!(
-                    "config patch refused: company-agent direct-message patches for `{company}` may not introduce or change secret references (at `{path}`); use a host `sign_in.client_ref`, dynamic registration, or `sign_in.mode: issuer`, or have the local operator set secret references outside any session"
-                );
-            }
-            Ok(())
-        }
-        Value::Mapping(map) => {
-            let existing_map = existing.and_then(Value::as_mapping);
-            for (k, v) in map {
-                let key = k.as_str().unwrap_or("<key>");
-                let child_path = format!("{path}.{key}");
-                let existing_child = existing_map.and_then(|m| m.get(k));
-                reject_new_secret_references(v, existing_child, &child_path, company)?;
-            }
-            Ok(())
-        }
-        Value::Sequence(items) => {
-            let existing_seq = existing.and_then(Value::as_sequence);
-            for (idx, v) in items.iter().enumerate() {
-                let child_path = format!("{path}[{idx}]");
-                let existing_child = existing_seq.and_then(|s| s.get(idx));
-                reject_new_secret_references(v, existing_child, &child_path, company)?;
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
 }
 
 fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
