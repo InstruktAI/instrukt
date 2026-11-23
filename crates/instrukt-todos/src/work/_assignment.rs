@@ -9,6 +9,7 @@ use instrukt_core::{
         rusqlite::{OptionalExtension, params},
     },
 };
+use instrukt_runner::assignments::RecordedStart;
 
 const CONFLICT_MESSAGE: &str =
     "session has conflicting recorded assignments; recover its binding/attempt";
@@ -78,29 +79,39 @@ fn select_assignment(
 pub fn recorded_assignment(
     home: &Home,
     caller: &SessionRef,
+    start: Option<&RecordedStart>,
 ) -> Result<Option<Assignment>, StateDbError> {
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    // The third branch admits a start the runner has recorded for a reserved,
+    // The third branch admits the start the runner recorded for a reserved,
     // unreleased attempt before work records its session: a fresh start whose
     // binding has no session yet, or a successor of the session it names.
-    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,r.worktree FROM runtime_bindings r JOIN session_bindings b ON b.semantic_key=r.semantic_key AND (b.runtime IS NULL OR b.runtime=r.runtime) JOIN todos t ON t.id=b.todo_id WHERE r.runtime=?2 AND r.session=?1 AND b.released_at IS NULL AND (b.session IS NULL OR b.session=r.replaced_session)").map_err(StateDbError::sqlite(db.path()))?;
+    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,?5 FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?3 AND (b.runtime IS NULL OR b.runtime=?2) AND b.released_at IS NULL AND (b.session IS NULL OR b.session=?4)").map_err(StateDbError::sqlite(db.path()))?;
     let rows = stmt
-        .query_map(params![caller.to_string(), caller.runtime.as_str()], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, Option<String>>(6)?,
-                r.get::<_, Option<String>>(7)?,
-                r.get::<_, i64>(8)?,
-                r.get::<_, Option<String>>(9)?,
-            ))
-        })
+        .query_map(
+            params![
+                caller.to_string(),
+                caller.runtime.as_str(),
+                start.map(|s| &s.semantic_key),
+                start.and_then(|s| s.replaced_session.as_ref()),
+                start.and_then(|s| s.worktree.as_ref()),
+            ],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                    r.get::<_, i64>(8)?,
+                    r.get::<_, Option<String>>(9)?,
+                ))
+            },
+        )
         .map_err(StateDbError::sqlite(db.path()))?;
     let mut candidates = Vec::new();
     for row in rows {

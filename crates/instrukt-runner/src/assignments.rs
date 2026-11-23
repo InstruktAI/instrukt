@@ -83,21 +83,73 @@ fn standing_assignment(
     Ok(found)
 }
 
-/// Work owns its bindings; runner composes those facts with its own standing/start records.
-pub type WorkLookup = fn(&Home, &SessionRef) -> Result<Option<Assignment>, StateDbError>;
+/// The current start this runner recorded for a caller's native session: the
+/// semantic key it started, the session that start replaces, and the
+/// worktree the runtime placed it in once known. An owner that has not yet
+/// recorded the session (or still names the replaced one) decides from this
+/// fact whether the caller is the start of its object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedStart {
+    pub semantic_key: String,
+    pub replaced_session: Option<String>,
+    pub worktree: Option<String>,
+}
+
+/// The caller's current recorded start in this runner's own start records.
+fn recorded_start(home: &Home, caller: &SessionRef) -> Result<Option<RecordedStart>, StateDbError> {
+    let Some(db) = StateRead::open(home)? else {
+        return Ok(None);
+    };
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT semantic_key,replaced_session,worktree FROM runtime_bindings WHERE runtime=?1 AND session=?2")
+        .map_err(StateDbError::sqlite(db.path()))?;
+    let starts = stmt
+        .query_map(
+            instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(), caller.to_string()],
+            |r| {
+                Ok(RecordedStart {
+                    semantic_key: r.get(0)?,
+                    replaced_session: r.get(1)?,
+                    worktree: r.get(2)?,
+                })
+            },
+        )
+        .map_err(StateDbError::sqlite(db.path()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(StateDbError::sqlite(db.path()))?;
+    match <[RecordedStart; 1]>::try_from(starts) {
+        Ok([start]) => Ok(Some(start)),
+        Err(starts) if starts.is_empty() => Ok(None),
+        Err(_) => Err(StateDbError::invalid(
+            db.path(),
+            format!(
+                "{caller} is recorded as the start of several keys; recover its runtime binding"
+            ),
+        )),
+    }
+}
+
+/// Work owns its bindings; runner composes those facts with its own
+/// standing/start records and supplies the caller's recorded start.
+pub type WorkLookup =
+    fn(&Home, &SessionRef, Option<&RecordedStart>) -> Result<Option<Assignment>, StateDbError>;
 /// The company owns its conversation sessions' bindings, as work owns its
-/// own: the assignment of a session one of its conversations bound.
-pub type CompanyLookup = fn(&Home, &SessionRef) -> Result<Option<Assignment>, StateDbError>;
+/// own: the assignment of a session one of its conversations bound, or of the
+/// recorded start of one of its conversations.
+pub type CompanyLookup =
+    fn(&Home, &SessionRef, Option<&RecordedStart>) -> Result<Option<Assignment>, StateDbError>;
 pub fn resolve(
     home: &Home,
     caller: &SessionRef,
     work: WorkLookup,
     company: CompanyLookup,
 ) -> Result<Option<Assignment>, StateDbError> {
-    let work = work(home, caller)?;
+    let start = recorded_start(home, caller)?;
+    let work = work(home, caller, start.as_ref())?;
     let standing = match standing_assignment(home, caller)? {
         Some(standing) => Some(standing),
-        None => company(home, caller)?,
+        None => company(home, caller, start.as_ref())?,
     };
     if work.is_some() && standing.is_some() {
         return Err(StateDbError::invalid(
