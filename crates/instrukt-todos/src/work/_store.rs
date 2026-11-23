@@ -178,18 +178,16 @@ pub(crate) enum Checkout {
 /// One worktree a withdrawal releases: why it belongs to the todo, what it
 /// had checked out when the withdrawal checked it, whether it is released
 /// yet, how far the withdrawal's own moves of it have come, and its git
-/// directory, by which it is recognized where those moves can have put it.
-/// A worktree whose checkout is no longer that one is not the todo's any
-/// more.
+/// directory, by which it is recognized ([`WorktreeStage`]). A worktree
+/// whose checkout is no longer that one is not the todo's any more.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct IntentWorktree {
     pub path: PathBuf,
     pub tie: WorktreeTie,
     pub checkout: Option<Checkout>,
     pub released: bool,
-    /// How far the withdrawal's own moves of it have come, each recorded
-    /// before the move it names; it bounds where the withdrawal looks for
-    /// it ([`WorktreeStage::reachable`]).
+    /// How far the withdrawal's own moves of it have come; it bounds where
+    /// the withdrawal acts on it ([`WorktreeStage::reachable`]).
     #[serde(default, skip_serializing_if = "WorktreeStage::is_at_original")]
     pub stage: WorktreeStage,
     /// Its administrative directory in the repository, which
@@ -202,12 +200,22 @@ pub(crate) struct IntentWorktree {
 }
 
 /// How far a withdrawal's own moves of a worktree have come
-/// (`withdrawal_intents`, `worktrees`). Each stage is recorded before the
-/// git command it names, so it tells which places only this withdrawal's
-/// moves can have put the worktree, and the withdrawal looks for it only
-/// there: a worktree found anywhere else was put there by someone else, and
-/// a git directory found anywhere else may be one git gave a new checkout
-/// after removing this one.
+/// (`withdrawal_intents`, `worktrees`), which tells where the withdrawal
+/// acts on it.
+///
+/// - **Persistence.** A move is recorded before the git command that makes
+///   it ([`Self::MovingTo`], [`Self::RestoringFrom`]); [`Self::Staged`] is
+///   recorded after git's worktree list, read back, shows the worktree
+///   where the move put it.
+/// - **Where it may be acted on.** Only where this withdrawal's own moves
+///   can have put it ([`Self::reachable`]), and at its path, where a staged
+///   worktree found back there is no longer moved ([`Self::AtOriginal`]).
+/// - **Where it is looked for.** Its git directory is also looked for in
+///   every other linked worktree git lists, except once staged: until the
+///   withdrawal tries to remove it, git keeps its git directory for it, so
+///   that git directory anywhere else is the worktree moved there by
+///   someone else, left where it is; once staged, its removal may have let
+///   git give that git directory to a new checkout anywhere else.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WorktreeStage {
@@ -219,7 +227,8 @@ pub(crate) enum WorktreeStage {
     /// beside it.
     MovingTo(PathBuf),
     /// The withdrawal moved it here, away from its path, where it is
-    /// removed or from where it is moved back.
+    /// removed or from where it is moved back; recorded once git lists it
+    /// here.
     Staged(PathBuf),
     /// The withdrawal is moving it back from here to its path.
     RestoringFrom(PathBuf),
@@ -232,11 +241,11 @@ impl WorktreeStage {
     }
 
     /// The places the withdrawal's own moves can have put the worktree at
-    /// `path` by this stage: git moves a worktree into a directory that took
-    /// its destination meanwhile, so each destination is also looked at with
-    /// the worktree's name inside it. A staged worktree is looked for only
-    /// where it was staged: its removal there may have let git give its git
-    /// directory to a new checkout anywhere else.
+    /// `path` by this stage, where it acts on it: git moves a worktree into
+    /// a directory that took its destination meanwhile, so each destination
+    /// also counts with the worktree's name inside it. A staged worktree is
+    /// acted on only where it was staged, or at `path` once found back
+    /// there.
     pub fn reachable(&self, path: &Path) -> Vec<PathBuf> {
         let inside = |into: &Path, from: &Path| from.file_name().map(|name| into.join(name));
         match self {

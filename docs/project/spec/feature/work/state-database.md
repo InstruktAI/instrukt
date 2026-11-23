@@ -464,24 +464,28 @@ outstanding until the first pull after the withdrawal commits. It first records
 what the interrupted command did without recording it, and what became of the
 resources since: while the row records the branch `pending`, a marker records
 the branch deleted at the marker's commit, and whatever branch carries its name
-now is left as it is; each worktree is recognized by its git directory only
-where its stage says the withdrawal's own moves can have put it, never at the
-project's primary checkout nor where git reports it prunable: not moved by the
-withdrawal, at its path; being moved, at its path, its staging location or
-inside a directory that took that location; staged, only where it was staged;
-being moved back, where it was staged, at its path or inside a directory that
-took its path. Found at its path, its stage records it not moved; found
+now is left as it is; each worktree is recognized by its git directory, never
+at the project's primary checkout nor where git reports it prunable, and acted
+on only at its path or where its stage says the withdrawal's own moves can have
+put it: being moved, its staging location or inside a directory that took that
+location; staged, where it was staged; being moved back, where it was staged or
+inside a directory that took its path. Found at its path, its stage records it
+not moved, even when it was staged and someone moved it back there, and it is
+read and checked there as a worktree the withdrawal has not moved; found
 anywhere else there, its stage records it staged at that place, and it is never
-taken for released. One the withdrawal has not moved that git lists elsewhere
-was moved by someone else: it is left where it is, never moved back, and leaves
-the withdrawal. One not staged that git lists nowhere it is looked for is
-released only once git no longer keeps its git directory; a staged one is
-released once git lists nothing where it was staged and nothing is there,
-whatever git lists elsewhere. Removing a worktree lets git give its git
-directory, which git names after the worktree's directory name, to the next
+taken for released. Until the withdrawal tries to remove a worktree, that is in
+every stage but staged, git keeps its git directory for it alone, so the
+withdrawal also reads every other worktree git lists: one listed elsewhere with
+its git directory was moved there by someone else, even while the withdrawal was
+moving it or moving it back, and is left where it is, never moved back, and
+leaves the withdrawal. One not staged that git lists nowhere is released only
+once git no longer keeps its git directory; a staged one is released once git
+lists it neither where it was staged nor at its path and nothing is where it
+was staged, whatever git lists elsewhere. Removing a worktree lets git give its
+git directory, which git names after the worktree's directory name, to the next
 worktree added under that name, wherever it is, so a checkout git lists with
-that git directory elsewhere, even of the same commit, is never taken for a
-staged worktree. The workspace at `workspace_path` is released when
+that git directory anywhere but its path or where it was staged, even of the
+same commit, is never taken for a staged worktree. The workspace at `workspace_path` is released when
 the row records it present and it is gone. A workspace at `workspace_path` holding
 files refuses the withdrawal and is named, whatever the row records of it. Without a marker, a branch absent, or recreated at a commit that does
 not descend from `branch_head`, is recorded as deleted with the commit the row
@@ -511,9 +515,10 @@ keeps the move recorded and the refusal says where it is could not be
 established. A worktree git lists where it is looked for whose git directory
 cannot be read, when none listed there is recognized as this one, establishes
 nothing: the refusal names where git lists it and git's diagnostic, and the
-row keeps what it records. So does a worktree not staged that git lists nowhere
-it is looked for while git still keeps its git directory: its directory is
-gone, or was moved without git recording where, and the refusal names
+row keeps what it records. So does a worktree not staged that no worktree git
+lists, apart from those it reports prunable, holds while git still keeps its
+git directory: its directory is gone, or was moved without git recording
+where, and the refusal names
 `git worktree repair` and `git worktree prune` as its doors; and a staged one
 git no longer lists where it was staged while something is still there, whose
 refusal names that place.
@@ -528,6 +533,8 @@ its git directory in the same way: listed at its path, it is back and no
 longer moved; listed where it was staged, the move back did not happen and it
 stays staged there; listed inside a directory that took its path between the
 look and the move, its stage records it staged there and the refusal names it;
+listed anywhere else with its git directory, someone else moved it there: the
+refusal names that place, and the withdrawal run again leaves it there;
 when where it is cannot be established, the move back stays recorded and the
 refusal says so, with git's diagnostic. A
 `git worktree remove` that returns a failure keeps the row, and the refusal
@@ -1222,9 +1229,14 @@ And the reflected change and the concurrent local change both reach GitHub intac
   the withdrawal's last look and its removal. Uncommitted work it leaves there
   is kept, because `git worktree remove` refuses a worktree holding it; a
   branch it switched to keeps its commits.
-- A staged worktree that someone else moves away from where it was staged
-  before the withdrawal runs again is recorded released, as a removal whose
-  receipt was lost would be, and is left where they put it.
+- A staged worktree that someone else moves away from where it was staged,
+  to anywhere but its path, before the withdrawal runs again is recorded
+  released, as a removal whose receipt was lost would be, and is left where
+  they put it, once git lists nothing where it was staged and nothing is
+  there. Anything still at the place where it was staged, listed or not,
+  keeps the row open and the refusal names that place; one moved back to its
+  path is read and checked there, and refuses the withdrawal naming its path
+  when it holds uncommitted changes.
 - A worktree the withdrawal has not moved, removed by someone else, whose git
   directory git gave to a new checkout added elsewhere under the same name, is
   taken for one moved by someone else: the new checkout is left as it is and
