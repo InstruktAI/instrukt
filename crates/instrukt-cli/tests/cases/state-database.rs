@@ -595,3 +595,122 @@ fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refu
         .unwrap();
     assert_eq!(reasons, vec!["not_admin", "not_own", "unavailable"]);
 }
+
+/// The work tables' rows of `db`, each row as its columns' text, in key
+/// order: what a migration must leave as it found it.
+fn work_rows(db: &Connection) -> Vec<Vec<Option<String>>> {
+    let mut rows = Vec::new();
+    for query in [
+        "SELECT * FROM todos ORDER BY id",
+        "SELECT * FROM reflections ORDER BY todo_id",
+        "SELECT * FROM artifacts ORDER BY todo_id, name",
+        "SELECT * FROM artifact_versions ORDER BY todo_id, sequence",
+        "SELECT * FROM stamps ORDER BY todo_id, sequence",
+    ] {
+        let mut statement = db.prepare(query).unwrap();
+        let columns = statement.column_count();
+        let found = statement
+            .query_map([], |row| {
+                (0..columns)
+                    .map(|i| {
+                        row.get::<_, instrukt_core::state_db::rusqlite::types::Value>(i)
+                            .map(|value| match value {
+                                instrukt_core::state_db::rusqlite::types::Value::Null => None,
+                                other => Some(format!("{other:?}")),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        rows.extend(found);
+    }
+    rows
+}
+
+#[test]
+fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdrawal_intents() {
+    let env = common::TestEnv::new();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf()).for_writing();
+    let state = env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let file = state.join("instrukt.db");
+    let before = {
+        let db = Connection::open(&file).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v35.sql"))
+            .unwrap();
+        db.execute_batch(
+            "INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,human_involved,revision,catch_up,claim_machine,claim_session,claim_at,branch,sequence)
+             VALUES ('0123456789abcdef0123456789abcdef','demo','depth','feature','active','2026-11-20T10:00:00Z','session:t3:one',1,3,'skip','machine-1','t3:one','2026-11-20T10:01:00Z','depth/work',2);
+             INSERT INTO reflections(todo_id,issue_number,remote_revision,pending,conflicted,record_comment,reviews_reflected,pull_closed)
+             VALUES ('0123456789abcdef0123456789abcdef',7,2,1,0,70,0,0);
+             INSERT INTO artifacts(todo_id,name,address) VALUES ('0123456789abcdef0123456789abcdef','prd',4);
+             INSERT INTO artifact_versions(todo_id,name,sequence,digest,writer,created_at,content,derived_from,grounding,remote)
+             VALUES ('0123456789abcdef0123456789abcdef','prd',1,'sha256:00','session:t3:one','2026-11-20T10:02:00Z','Lists have depth.','[]','{}',1);
+             INSERT INTO stamps(todo_id,sequence,fact,at,actor,model_provenance,evidence)
+             VALUES ('0123456789abcdef0123456789abcdef',2,'{\"kind\":\"build_complete\"}','2026-11-20T10:03:00Z','session:t3:one','outside_session','{}');",
+        )
+        .unwrap();
+        let version: u32 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 35);
+        work_rows(&db)
+    };
+
+    // Opening the database through StateDb applies the v36 migration.
+    drop(instrukt_core::state_db::StateDb::open(&home).unwrap());
+
+    let raw = Connection::open(&file).unwrap();
+    let version: u32 = raw
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, instrukt_core::state_db::schema_version());
+    assert_eq!(work_rows(&raw), before);
+    let intents: u32 = raw
+        .query_row("SELECT COUNT(*) FROM withdrawal_intents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(intents, 0);
+
+    // The new table holds an intent of an existing todo, refuses one of a
+    // todo that does not exist, and goes with its todo.
+    raw.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+    raw.execute(
+        "INSERT INTO withdrawal_intents(todo_id,branch,branch_head,worktrees,workspace_released,branch_deleted,started_at)
+         VALUES ('0123456789abcdef0123456789abcdef','depth/work',?1,'[]',1,0,'2026-11-21T09:00:00Z')",
+        [&"e".repeat(40)],
+    )
+    .unwrap();
+    let read: (String, String, bool, bool) = raw
+        .query_row(
+            "SELECT branch, branch_head, workspace_released, branch_deleted FROM withdrawal_intents WHERE todo_id = '0123456789abcdef0123456789abcdef'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(read, ("depth/work".to_owned(), "e".repeat(40), true, false));
+    let orphan = raw.execute(
+        "INSERT INTO withdrawal_intents(todo_id,worktrees,started_at) VALUES ('ffffffffffffffffffffffffffffffff','[]','2026-11-21T09:00:00Z')",
+        [],
+    );
+    assert!(matches!(
+        orphan,
+        Err(instrukt_core::state_db::rusqlite::Error::SqliteFailure(
+            instrukt_core::state_db::rusqlite::ffi::Error {
+                code: instrukt_core::state_db::rusqlite::ErrorCode::ConstraintViolation,
+                ..
+            },
+            _
+        ))
+    ));
+    raw.execute(
+        "DELETE FROM todos WHERE id = '0123456789abcdef0123456789abcdef'",
+        [],
+    )
+    .unwrap();
+    let left: u32 = raw
+        .query_row("SELECT COUNT(*) FROM withdrawal_intents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
+}
