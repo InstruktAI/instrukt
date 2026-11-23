@@ -73,8 +73,11 @@ way, whatever was done before:
      first commit: its purpose into the master's `## Purpose`, each
      instruction into a project snippet of its type with its index entry
      (`instrukt docs schema docs/project` names the types), then remove the
-     kept copy. Leave the first commit to main, which starts publication, to
-     the human's word.
+     kept copy. When adopting an existing codebase or repository with
+     documentation outside `docs/project/` and `sdlc` is published, run
+     `sdlc/procedure/project-analysis` to harvest existing docs and conventions
+     into `docs/project/` and `docs/project/index.yaml`. Leave the first commit
+     to main, which starts publication, to the human's word.
    - **Adopt another repository.** The same, in the repository the human
      names.
    - **Switch on a module.** For todos, when status reports that this

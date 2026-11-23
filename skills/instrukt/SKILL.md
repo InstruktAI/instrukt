@@ -29,8 +29,13 @@ Guide the human's request from the observed state:
   If init retained `.instrukt/adopted/AGENTS.md`, review it with the human:
   move its purpose into the master's `## Purpose` and its instructions into
   project snippets with index entries, using `instrukt docs schema docs/project`.
-  Remove the kept copy after that review. The first commit to main starts
-  publication; leave that commit pending until the human directs it.
+  Remove the kept copy after that review. When adopting an existing codebase or
+  repository with docs outside `docs/project/` and `sdlc` is published, run
+  `sdlc/procedure/project-analysis`
+  (`instrukt docs get sdlc/procedure/project-analysis --closure`) to harvest
+  existing docs and conventions into `docs/project/` and `docs/project/index.yaml`.
+  The first commit to main starts publication; leave that commit pending until
+  the human directs it.
 - **Enable a module:** for todos, establish from status that the project's code
   is on GitHub. Establish the chosen runtime's required adapter capabilities;
   report absent prerequisites and keep the module off until they are met.
