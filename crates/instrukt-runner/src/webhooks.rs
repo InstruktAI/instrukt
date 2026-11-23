@@ -129,6 +129,9 @@ pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
     // A company home's sources add demand only while the machine's events
     // switch is on.
     if Configuration::load_global(&inspection)?.module_enabled(Module::Events)? {
+        if ingress.url.is_some() {
+            demand = true;
+        }
         for (name, config) in company_homes(&inspection)? {
             let declaration = (|| -> Result<bool, String> {
                 let config = config.map_err(|error| error.to_string())?;
@@ -200,22 +203,26 @@ pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
         else {
             continue;
         };
-        let response = if request.method() == &Method::Get
+        let reply = if request.method() == &Method::Get
             && request.url() == crate::installation::_launch::PROBE_PATH
         {
             match crate::installation::_launch::running(address.port()) {
-                Ok(proof) => (200, proof),
+                Ok(proof) => HttpReply::plain(200, proof),
                 Err(error) => {
                     tracing::warn!(event = "receiver_execution_unproven", error = %error);
-                    (503, "receiver execution unproven\n".into())
+                    HttpReply::plain(503, "receiver execution unproven\n".into())
                 }
             }
         } else {
-            receive(home, env, computer.as_str(), &mut request, clock())
+            receive_http(home, env, computer.as_str(), &mut request, clock())
         };
-        if let Err(error) =
-            request.respond(Response::from_string(response.1).with_status_code(response.0))
-        {
+        let mut http_response = Response::from_string(reply.body).with_status_code(reply.status);
+        for (name, value) in reply.headers {
+            if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                http_response = http_response.with_header(header);
+            }
+        }
+        if let Err(error) = request.respond(http_response) {
             tracing::warn!(event = "webhook_response_failed", error = %error);
         }
     }
@@ -450,6 +457,232 @@ fn header(request: &Request, name: &str) -> Option<String> {
         .filter(|header| header.field.as_str().as_str().eq_ignore_ascii_case(name));
     let value = headers.next()?.value.as_str().to_owned();
     headers.next().is_none().then_some(value)
+}
+
+struct HttpReply {
+    status: u16,
+    body: String,
+    headers: Vec<(&'static str, &'static str)>,
+}
+
+impl HttpReply {
+    fn plain(status: u16, body: String) -> Self {
+        Self {
+            status,
+            body,
+            headers: Vec::new(),
+        }
+    }
+
+    fn json(status: u16, body: String) -> Self {
+        Self {
+            status,
+            body,
+            headers: vec![("Content-Type", "application/json")],
+        }
+    }
+
+    fn sign_in_page() -> Self {
+        Self {
+            status: 200,
+            body: "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Sign-in return received</title></head><body><p>Sign-in return received. You can return to your conversation.</p></body></html>\n".into(),
+            headers: vec![
+                ("Content-Type", "text/html; charset=utf-8"),
+                ("Cache-Control", "no-store"),
+                ("Referrer-Policy", "no-referrer"),
+            ],
+        }
+    }
+}
+
+const MAX_SIGN_IN_URL_BYTES: usize = 8 * 1024;
+
+fn is_hex_128(text: &str) -> bool {
+    text.len() == 32 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn receive_http(
+    home: &Home,
+    env: &Env,
+    computer: &str,
+    request: &mut Request,
+    now: Timestamp,
+) -> HttpReply {
+    let url = request.url();
+    if url.starts_with("/hooks/inbound/sign-in/") {
+        return receive_sign_in(home, request, now);
+    }
+    if url.starts_with("/hooks/inbound/issuers/") {
+        return receive_issuer(home, request);
+    }
+    let (status, body) = receive(home, env, computer, request, now);
+    HttpReply::plain(status, body)
+}
+
+/// Handle `GET /hooks/inbound/sign-in/<return_id>?state=...&code=...` (or `error=...`).
+/// Never logs query parameters, state, code, or tokens.
+fn receive_sign_in(home: &Home, request: &Request, now: Timestamp) -> HttpReply {
+    if request.method() != &Method::Get {
+        return HttpReply::plain(405, "GET required\n".into());
+    }
+    let raw_url = request.url();
+    if raw_url.len() > MAX_SIGN_IN_URL_BYTES {
+        return HttpReply::plain(400, "request too large\n".into());
+    }
+    let (path, query) = match raw_url.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (raw_url, None),
+    };
+    let Some(return_id) = path.strip_prefix("/hooks/inbound/sign-in/") else {
+        return HttpReply::plain(404, "endpoint absent\n".into());
+    };
+    if !is_hex_128(return_id) {
+        return HttpReply::plain(404, "endpoint absent\n".into());
+    }
+    let Some(query) = query else {
+        // Return without `state` is discarded cleanly, showing the same plain page.
+        return HttpReply::sign_in_page();
+    };
+    if !valid_percent_encoding(query) {
+        return HttpReply::plain(400, "malformed query encoding\n".into());
+    }
+
+    let mut state: Option<String> = None;
+    let mut code: Option<String> = None;
+    let mut error: Option<String> = None;
+    let mut iss: Option<String> = None;
+    for (k, v) in form_urlencoded::parse(query.as_bytes()) {
+        match k.as_ref() {
+            "state" => {
+                if state.is_some() || v.is_empty() {
+                    return HttpReply::plain(400, "invalid sign-in return parameters\n".into());
+                }
+                state = Some(v.into_owned());
+            }
+            "code" => {
+                if code.is_some() || v.is_empty() {
+                    return HttpReply::plain(400, "invalid sign-in return parameters\n".into());
+                }
+                code = Some(v.into_owned());
+            }
+            "error" => {
+                if error.is_some() || v.is_empty() {
+                    return HttpReply::plain(400, "invalid sign-in return parameters\n".into());
+                }
+                error = Some(v.into_owned());
+            }
+            "iss" => {
+                if iss.is_some() || v.is_empty() {
+                    return HttpReply::plain(400, "invalid sign-in return parameters\n".into());
+                }
+                iss = Some(v.into_owned());
+            }
+            _ => {}
+        }
+    }
+
+    let Some(state) = state else {
+        return HttpReply::sign_in_page();
+    };
+    if code.is_some() == error.is_some() {
+        return HttpReply::plain(
+            400,
+            "sign-in return requires exactly one of code or error\n".into(),
+        );
+    }
+
+    let state_digest = hex::encode(Sha256::digest(state.as_bytes()));
+    let entry = crate::mcp::SignInReturnEntry {
+        return_id: return_id.to_owned(),
+        code,
+        error,
+        iss,
+    };
+
+    let inspection = home.for_inspection();
+    let global = match Configuration::load_global(&inspection) {
+        Ok(config) => config,
+        Err(_) => return HttpReply::plain(500, "cannot read ingress configuration\n".into()),
+    };
+    let transport = match ScopedTransport::cluster_only(&global, &RunnerState::new(&inspection)) {
+        Ok(transport) => transport,
+        Err(_) => return HttpReply::plain(502, "cluster Redis unavailable\n".into()),
+    };
+    match crate::mcp::store_sign_in_return(&transport, &state_digest, &entry, now.as_second()) {
+        Ok(crate::mcp::StoreOutcome::Stored | crate::mcp::StoreOutcome::Duplicate) => {
+            HttpReply::sign_in_page()
+        }
+        Ok(crate::mcp::StoreOutcome::Full) => {
+            HttpReply::plain(503, "sign-in capacity reached; retry shortly\n".into())
+        }
+        Err(_) => HttpReply::plain(502, "cluster Redis unavailable\n".into()),
+    }
+}
+
+fn valid_percent_encoding(query: &str) -> bool {
+    let bytes = query.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_hexdigit()
+                || !bytes[i + 2].is_ascii_hexdigit()
+            {
+                return false;
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    true
+}
+
+/// Handle read-only built-in per-company OIDC issuer endpoints:
+/// - `GET /hooks/inbound/issuers/<issuer_id>/.well-known/openid-configuration`
+/// - `GET /hooks/inbound/issuers/<issuer_id>/jwks.json`
+fn receive_issuer(home: &Home, request: &Request) -> HttpReply {
+    if request.method() != &Method::Get {
+        return HttpReply::plain(405, "GET required\n".into());
+    }
+    let path = request.url();
+    if path.contains('?') {
+        return HttpReply::plain(404, "endpoint absent\n".into());
+    }
+    let Some(rest) = path.strip_prefix("/hooks/inbound/issuers/") else {
+        return HttpReply::plain(404, "endpoint absent\n".into());
+    };
+    let Some((issuer_id, suffix)) = rest.split_once('/') else {
+        return HttpReply::plain(404, "endpoint absent\n".into());
+    };
+    if !is_hex_128(issuer_id) {
+        return HttpReply::plain(404, "endpoint absent\n".into());
+    }
+    let is_discovery = match suffix {
+        ".well-known/openid-configuration" => true,
+        "jwks.json" => false,
+        _ => return HttpReply::plain(404, "endpoint absent\n".into()),
+    };
+
+    let inspection = home.for_inspection();
+    let global = match Configuration::load_global(&inspection) {
+        Ok(config) => config,
+        Err(_) => return HttpReply::plain(500, "cannot read ingress configuration\n".into()),
+    };
+    let transport = match ScopedTransport::cluster_only(&global, &RunnerState::new(&inspection)) {
+        Ok(transport) => transport,
+        Err(_) => return HttpReply::plain(502, "cluster Redis unavailable\n".into()),
+    };
+    let doc = if is_discovery {
+        crate::mcp::read_issuer_discovery(&transport, issuer_id)
+    } else {
+        crate::mcp::read_issuer_jwks(&transport, issuer_id)
+    };
+    match doc {
+        Ok(Some(json_body)) => HttpReply::json(200, json_body),
+        Ok(None) => HttpReply::plain(404, "issuer not found\n".into()),
+        Err(_) => HttpReply::plain(502, "cluster Redis unavailable\n".into()),
+    }
 }
 
 fn receive(

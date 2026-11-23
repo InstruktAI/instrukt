@@ -253,3 +253,625 @@ impl Drop for FakeMcp {
         }
     }
 }
+
+/// Configuration for [`FakeOAuthMcp`]: an OAuth 2.1 / OIDC / EMA authorization
+/// server paired with a Streamable HTTP MCP resource server on loopback.
+#[derive(Debug, Clone)]
+pub struct OAuthMcpOptions {
+    pub name: String,
+    pub registration_supported: bool,
+    pub pkce_s256_supported: bool,
+    pub iss_parameter_supported: bool,
+    pub openid_provider: bool,
+    pub ema_jwt_bearer_supported: bool,
+    pub expected_client: Option<(String, String)>,
+}
+
+/// One verified EMA `jwt-bearer` assertion observed by [`FakeOAuthMcp`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedJwtBearer {
+    pub iss: String,
+    pub email: String,
+    pub jti: String,
+    pub resource: String,
+}
+
+#[derive(Debug, Clone)]
+struct IssuedCode {
+    email: String,
+    redirect_uri: String,
+    code_challenge: String,
+    nonce: Option<String>,
+    client_id: String,
+}
+
+struct OAuthState {
+    codes: std::collections::BTreeMap<String, IssuedCode>,
+    tokens: std::collections::BTreeMap<String, String>,
+    revoked_tokens: std::collections::BTreeSet<String>,
+    jwt_bearers: Vec<ObservedJwtBearer>,
+    auth_code_exchanges: usize,
+    next_token_id: usize,
+}
+
+/// Real loopback HTTP server implementing RFC 9728 PRM, RFC 8414 / OIDC
+/// metadata, JWKS, authorization-code + PKCE S256 + OIDC `id_token`,
+/// EMA `jwt-bearer` verification against the real ingress JWKS, and
+/// Bearer-protected Streamable HTTP MCP.
+pub struct FakeOAuthMcp {
+    pub base_url: String,
+    pub mcp_url: String,
+    state: Arc<Mutex<OAuthState>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FakeOAuthMcp {
+    pub fn start(opts: OAuthMcpOptions) -> Self {
+        use base64::Engine as _;
+        use ring::rand::SystemRandom;
+        use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
+        use sha2::{Digest, Sha256};
+
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+        let keypair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+                .unwrap();
+        let pub_bytes = keypair.public_key().as_ref();
+        let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pub_bytes[1..33]);
+        let y = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pub_bytes[33..65]);
+        let kid = "fake-as-kid-1".to_owned();
+        let as_jwks = json!({
+            "keys": [{
+                "kty": "EC",
+                "crv": "P-256",
+                "use": "sig",
+                "alg": "ES256",
+                "kid": kid,
+                "x": x,
+                "y": y,
+            }]
+        })
+        .to_string();
+        let as_private_pem = pem::encode(&pem::Pem::new("PRIVATE KEY", pkcs8.as_ref()));
+
+        let http = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = http.server_addr().to_ip().unwrap();
+        let base_url = format!("http://{addr}");
+        let mcp_url = format!("{base_url}/mcp");
+
+        let state = Arc::new(Mutex::new(OAuthState {
+            codes: std::collections::BTreeMap::new(),
+            tokens: std::collections::BTreeMap::new(),
+            revoked_tokens: std::collections::BTreeSet::new(),
+            jwt_bearers: Vec::new(),
+            auth_code_exchanges: 0,
+            next_token_id: 0,
+        }));
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let state = Arc::clone(&state);
+            let stop = Arc::clone(&stop);
+            let base = base_url.clone();
+            let mcp = mcp_url.clone();
+            std::thread::spawn(move || {
+                let hdr =
+                    |name: &str, value: &str| tiny_http::Header::from_bytes(name, value).unwrap();
+                while !stop.load(Ordering::Acquire) {
+                    let Ok(Some(mut request)) = http.recv_timeout(Duration::from_millis(50)) else {
+                        continue;
+                    };
+                    let url_str = request.url().to_owned();
+                    let path = url_str.split('?').next().unwrap_or(&url_str);
+                    let method = request.method().clone();
+                    let auth_header = request
+                        .headers()
+                        .iter()
+                        .find(|h| h.field.equiv("Authorization"))
+                        .map(|h| h.value.as_str().to_owned());
+
+                    if method == tiny_http::Method::Get
+                        && path == "/.well-known/oauth-protected-resource"
+                    {
+                        let body = json!({
+                            "resource": mcp,
+                            "authorization_servers": [base],
+                            "scopes_supported": ["mcp:read", "mcp:write"],
+                        })
+                        .to_string();
+                        request
+                            .respond(
+                                tiny_http::Response::from_string(body)
+                                    .with_header(hdr("Content-Type", "application/json")),
+                            )
+                            .unwrap();
+                        continue;
+                    }
+
+                    if method == tiny_http::Method::Get
+                        && (path == "/.well-known/oauth-authorization-server"
+                            || path == "/.well-known/openid-configuration")
+                    {
+                        let mut doc = json!({
+                            "issuer": base,
+                            "authorization_endpoint": format!("{base}/authorize"),
+                            "token_endpoint": format!("{base}/token"),
+                            "scopes_supported": ["openid", "email", "mcp:read"],
+                            "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
+                        });
+                        if opts.registration_supported {
+                            doc["registration_endpoint"] = json!(format!("{base}/register"));
+                        }
+                        if opts.pkce_s256_supported {
+                            doc["code_challenge_methods_supported"] = json!(["S256"]);
+                        }
+                        if opts.iss_parameter_supported {
+                            doc["authorization_response_iss_parameter_supported"] = json!(true);
+                        }
+                        if opts.openid_provider {
+                            doc["userinfo_endpoint"] = json!(format!("{base}/userinfo"));
+                            doc["jwks_uri"] = json!(format!("{base}/jwks.json"));
+                        }
+                        let mut grants = vec!["authorization_code", "refresh_token"];
+                        if opts.ema_jwt_bearer_supported {
+                            grants.push("urn:ietf:params:oauth:grant-type:jwt-bearer");
+                        }
+                        doc["grant_types_supported"] = json!(grants);
+                        request
+                            .respond(
+                                tiny_http::Response::from_string(doc.to_string())
+                                    .with_header(hdr("Content-Type", "application/json")),
+                            )
+                            .unwrap();
+                        continue;
+                    }
+
+                    if method == tiny_http::Method::Get && path == "/jwks.json" {
+                        request
+                            .respond(
+                                tiny_http::Response::from_string(as_jwks.clone())
+                                    .with_header(hdr("Content-Type", "application/json")),
+                            )
+                            .unwrap();
+                        continue;
+                    }
+
+                    if method == tiny_http::Method::Get && path == "/userinfo" {
+                        let token = auth_header
+                            .as_deref()
+                            .and_then(|v| v.strip_prefix("Bearer "))
+                            .unwrap_or_default();
+                        let email = state.lock().unwrap().tokens.get(token).cloned();
+                        if let Some(email) = email {
+                            let body = json!({
+                                "sub": format!("sub:{email}"),
+                                "email": email,
+                                "email_verified": true,
+                            })
+                            .to_string();
+                            request
+                                .respond(
+                                    tiny_http::Response::from_string(body)
+                                        .with_header(hdr("Content-Type", "application/json")),
+                                )
+                                .unwrap();
+                        } else {
+                            request.respond(tiny_http::Response::empty(401)).unwrap();
+                        }
+                        continue;
+                    }
+
+                    if method == tiny_http::Method::Post && path == "/token" {
+                        let mut body = String::new();
+                        request.as_reader().read_to_string(&mut body).unwrap();
+                        let params: std::collections::BTreeMap<String, String> =
+                            form_urlencoded::parse(body.as_bytes())
+                                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                                .collect();
+                        let grant = params.get("grant_type").map(String::as_str).unwrap_or("");
+                        if grant == "authorization_code" {
+                            if let Some((exp_id, exp_sec)) = &opts.expected_client {
+                                let expected_basic = format!(
+                                    "Basic {}",
+                                    base64::engine::general_purpose::STANDARD
+                                        .encode(format!("{exp_id}:{exp_sec}"))
+                                );
+                                if auth_header.as_deref() != Some(expected_basic.as_str()) {
+                                    request
+                                        .respond(
+                                            tiny_http::Response::from_string(
+                                                r#"{"error":"invalid_client"}"#,
+                                            )
+                                            .with_status_code(401),
+                                        )
+                                        .unwrap();
+                                    continue;
+                                }
+                            }
+                            let code = params.get("code").cloned().unwrap_or_default();
+                            let verifier = params.get("code_verifier").cloned().unwrap_or_default();
+                            let redirect = params.get("redirect_uri").cloned().unwrap_or_default();
+                            let issued = state.lock().unwrap().codes.remove(&code);
+                            let Some(issued) = issued else {
+                                request
+                                    .respond(
+                                        tiny_http::Response::from_string(
+                                            r#"{"error":"invalid_grant"}"#,
+                                        )
+                                        .with_status_code(400),
+                                    )
+                                    .unwrap();
+                                continue;
+                            };
+                            let computed_challenge =
+                                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                                    .encode(Sha256::digest(verifier.as_bytes()));
+                            if computed_challenge != issued.code_challenge
+                                || redirect != issued.redirect_uri
+                            {
+                                request
+                                    .respond(
+                                        tiny_http::Response::from_string(
+                                            r#"{"error":"invalid_grant"}"#,
+                                        )
+                                        .with_status_code(400),
+                                    )
+                                    .unwrap();
+                                continue;
+                            }
+                            let access_token = {
+                                let mut s = state.lock().unwrap();
+                                s.next_token_id += 1;
+                                s.auth_code_exchanges += 1;
+                                let tok =
+                                    format!("oauth-token-{}-{}", s.next_token_id, issued.email);
+                                s.tokens.insert(tok.clone(), issued.email.clone());
+                                tok
+                            };
+                            let now_s = jiff::Timestamp::now().as_second();
+                            let mut id_claims = json!({
+                                "iss": base,
+                                "sub": format!("sub:{}", issued.email),
+                                "aud": issued.client_id,
+                                "email": issued.email,
+                                "email_verified": true,
+                                "iat": now_s,
+                                "exp": now_s + 300,
+                            });
+                            if let Some(n) = issued.nonce {
+                                id_claims["nonce"] = json!(n);
+                            }
+                            let mut h = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+                            h.kid = Some(kid.clone());
+                            let enc =
+                                jsonwebtoken::EncodingKey::from_ec_pem(as_private_pem.as_bytes())
+                                    .unwrap();
+                            let id_token = jsonwebtoken::encode(&h, &id_claims, &enc).unwrap();
+                            let resp = json!({
+                                "token_type": "Bearer",
+                                "access_token": access_token,
+                                "id_token": id_token,
+                                "expires_in": 3600,
+                                "scope": "openid email mcp:read",
+                            })
+                            .to_string();
+                            request
+                                .respond(
+                                    tiny_http::Response::from_string(resp)
+                                        .with_header(hdr("Content-Type", "application/json")),
+                                )
+                                .unwrap();
+                            continue;
+                        }
+
+                        if grant == "urn:ietf:params:oauth:grant-type:jwt-bearer" {
+                            let assertion = params.get("assertion").cloned().unwrap_or_default();
+                            let resource = params.get("resource").cloned().unwrap_or_default();
+                            match verify_ema_assertion(&assertion, &base, &mcp) {
+                                Ok(obs) => {
+                                    let access_token = {
+                                        let mut s = state.lock().unwrap();
+                                        s.next_token_id += 1;
+                                        let tok =
+                                            format!("ema-token-{}-{}", s.next_token_id, obs.email);
+                                        s.tokens.insert(tok.clone(), obs.email.clone());
+                                        s.jwt_bearers.push(ObservedJwtBearer { resource, ..obs });
+                                        tok
+                                    };
+                                    let resp = json!({
+                                        "token_type": "Bearer",
+                                        "access_token": access_token,
+                                        "expires_in": 3600,
+                                        "scope": params.get("scope").cloned().unwrap_or_default(),
+                                    })
+                                    .to_string();
+                                    request
+                                        .respond(
+                                            tiny_http::Response::from_string(resp).with_header(
+                                                hdr("Content-Type", "application/json"),
+                                            ),
+                                        )
+                                        .unwrap();
+                                }
+                                Err(err) => {
+                                    let resp = json!({"error": format!("invalid_grant: {err}")})
+                                        .to_string();
+                                    request
+                                        .respond(
+                                            tiny_http::Response::from_string(resp)
+                                                .with_status_code(400)
+                                                .with_header(hdr(
+                                                    "Content-Type",
+                                                    "application/json",
+                                                )),
+                                        )
+                                        .unwrap();
+                                }
+                            }
+                            continue;
+                        }
+
+                        request
+                            .respond(
+                                tiny_http::Response::from_string(
+                                    r#"{"error":"unsupported_grant_type"}"#,
+                                )
+                                .with_status_code(400),
+                            )
+                            .unwrap();
+                        continue;
+                    }
+
+                    if path == "/mcp" {
+                        if method == tiny_http::Method::Delete {
+                            request.respond(tiny_http::Response::empty(200)).unwrap();
+                            continue;
+                        }
+                        let token = auth_header
+                            .as_deref()
+                            .and_then(|v| v.strip_prefix("Bearer "));
+                        let email = token.and_then(|t| {
+                            let s = state.lock().unwrap();
+                            if s.revoked_tokens.contains(t) {
+                                None
+                            } else {
+                                s.tokens.get(t).cloned()
+                            }
+                        });
+                        let Some(email) = email else {
+                            let mut discard = Vec::new();
+                            let _ = request.as_reader().read_to_end(&mut discard);
+                            let www = format!(
+                                "Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource\""
+                            );
+                            request
+                                .respond(
+                                    tiny_http::Response::empty(401)
+                                        .with_header(hdr("WWW-Authenticate", &www)),
+                                )
+                                .unwrap();
+                            continue;
+                        };
+                        let mut body = String::new();
+                        request.as_reader().read_to_string(&mut body).unwrap();
+                        let message: Value = serde_json::from_str(&body).unwrap();
+                        let rpc_method = message["method"].as_str().unwrap_or_default();
+                        let id = message["id"].clone();
+                        let resp = match rpc_method {
+                            "initialize" => tiny_http::Response::from_string(
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": {
+                                        "protocolVersion": "2025-06-18",
+                                        "capabilities": {"tools": {}},
+                                        "serverInfo": {"name": opts.name, "version": "1"}
+                                    }
+                                })
+                                .to_string(),
+                            )
+                            .with_header(hdr("Content-Type", "application/json"))
+                            .with_header(hdr("Mcp-Session-Id", SESSION)),
+                            "notifications/initialized" => {
+                                tiny_http::Response::from_string("").with_status_code(202)
+                            }
+                            "tools/call" => tiny_http::Response::from_string(
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": {
+                                        "content": [{"type": "text", "text": format!("{} verified {email}", opts.name)}],
+                                        "isError": false
+                                    }
+                                })
+                                .to_string(),
+                            )
+                            .with_header(hdr("Content-Type", "application/json")),
+                            _ => tiny_http::Response::from_string("").with_status_code(400),
+                        };
+                        request.respond(resp).unwrap();
+                        continue;
+                    }
+
+                    request.respond(tiny_http::Response::empty(404)).unwrap();
+                }
+            })
+        };
+
+        Self {
+            base_url,
+            mcp_url,
+            state,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// Simulate the user approving the OAuth `auth_link` in their browser:
+    /// mints an authorization code bound to the PKCE challenge & redirect URI
+    /// and delivers the real browser redirect to `redirect_uri` (the ingress receiver).
+    pub fn approve_browser_link(&self, auth_link: &str, email: &str) -> u16 {
+        let parsed = url::Url::parse(auth_link).unwrap();
+        let params: std::collections::BTreeMap<String, String> = parsed
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        let state = params["state"].clone();
+        let redirect_uri = params["redirect_uri"].clone();
+        let code_challenge = params["code_challenge"].clone();
+        let client_id = params["client_id"].clone();
+        let nonce = params.get("nonce").cloned();
+        let code = format!("authcode-{}", &state[..12.min(state.len())]);
+        self.state.lock().unwrap().codes.insert(
+            code.clone(),
+            IssuedCode {
+                email: email.to_owned(),
+                redirect_uri: redirect_uri.clone(),
+                code_challenge,
+                nonce,
+                client_id,
+            },
+        );
+        let mut callback = url::Url::parse(&redirect_uri).unwrap();
+        {
+            let mut q = callback.query_pairs_mut();
+            q.append_pair("code", &code);
+            q.append_pair("state", &state);
+            q.append_pair("iss", &self.base_url);
+        }
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let resp = agent.get(callback.as_str()).call().unwrap();
+        resp.status().as_u16()
+    }
+
+    /// Revoke all currently issued Bearer tokens so the next MCP call gets HTTP 401.
+    pub fn expire_all_tokens(&self) {
+        let mut s = self.state.lock().unwrap();
+        let keys: Vec<String> = s.tokens.keys().cloned().collect();
+        for key in keys {
+            s.revoked_tokens.insert(key);
+        }
+    }
+
+    pub fn observed_jwt_bearers(&self) -> Vec<ObservedJwtBearer> {
+        self.state.lock().unwrap().jwt_bearers.clone()
+    }
+
+    pub fn auth_code_exchanges(&self) -> usize {
+        self.state.lock().unwrap().auth_code_exchanges
+    }
+}
+
+fn verify_ema_assertion(
+    assertion: &str,
+    expected_aud: &str,
+    expected_resource: &str,
+) -> Result<ObservedJwtBearer, String> {
+    use base64::Engine as _;
+
+    let header = jsonwebtoken::decode_header(assertion).map_err(|e| e.to_string())?;
+    let parts: Vec<&str> = assertion.split('.').collect();
+    if parts.len() != 3 {
+        return Err("assertion is not a JWT".into());
+    }
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|e| e.to_string())?;
+    let unverified: Value = serde_json::from_slice(&payload_bytes).map_err(|e| e.to_string())?;
+    let iss = unverified["iss"]
+        .as_str()
+        .ok_or_else(|| "missing iss".to_owned())?
+        .to_owned();
+
+    // Fetch real discovery + JWKS from the company's ingress endpoint!
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let disc_url = format!(
+        "{}/.well-known/openid-configuration",
+        iss.trim_end_matches('/')
+    );
+    let mut disc_resp = agent
+        .get(&disc_url)
+        .call()
+        .map_err(|e| format!("disc GET {disc_url}: {e}"))?;
+    if disc_resp.status().as_u16() != 200 {
+        return Err(format!(
+            "discovery returned {}",
+            disc_resp.status().as_u16()
+        ));
+    }
+    let disc_text = disc_resp
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("disc body: {e}"))?;
+    let disc: Value = serde_json::from_str(&disc_text).map_err(|e| format!("disc json: {e}"))?;
+    if disc["issuer"].as_str() != Some(iss.as_str()) {
+        return Err("discovery issuer mismatch".into());
+    }
+    let jwks_uri = disc["jwks_uri"].as_str().ok_or("missing jwks_uri")?;
+    let mut jwks_resp = agent
+        .get(jwks_uri)
+        .call()
+        .map_err(|e| format!("jwks GET {jwks_uri}: {e}"))?;
+    if jwks_resp.status().as_u16() != 200 {
+        return Err(format!("jwks returned {}", jwks_resp.status().as_u16()));
+    }
+    let jwks_text = jwks_resp
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("jwks body: {e}"))?;
+    let jwks: jsonwebtoken::jwk::JwkSet =
+        serde_json::from_str(&jwks_text).map_err(|e| format!("jwks json: {e}"))?;
+    let jwk = header
+        .kid
+        .as_deref()
+        .and_then(|kid| jwks.find(kid))
+        .or_else(|| jwks.keys.first())
+        .ok_or("no matching JWK")?;
+    let key = jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|e| e.to_string())?;
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256);
+    validation.set_issuer(&[iss.as_str()]);
+    validation.set_audience(&[expected_aud]);
+    let verified = jsonwebtoken::decode::<Value>(assertion, &key, &validation)
+        .map_err(|e| format!("JWT signature/claims failed: {e}"))?
+        .claims;
+    let iat = verified["iat"].as_i64().ok_or("missing iat")?;
+    let exp = verified["exp"].as_i64().ok_or("missing exp")?;
+    if exp - iat > 300 || exp <= iat {
+        return Err("ID-JAG lifetime exceeds 5 minutes".into());
+    }
+    if verified["resource"].as_str() != Some(expected_resource) {
+        return Err("resource mismatch".into());
+    }
+    let email = verified["email"]
+        .as_str()
+        .ok_or("missing email")?
+        .to_owned();
+    if verified["sub"].as_str() != Some(email.as_str()) {
+        return Err("sub/email mismatch".into());
+    }
+    let jti = verified["jti"].as_str().ok_or("missing jti")?.to_owned();
+    Ok(ObservedJwtBearer {
+        iss,
+        email,
+        jti,
+        resource: expected_resource.to_owned(),
+    })
+}
+
+impl Drop for FakeOAuthMcp {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            drop(thread.join());
+        }
+    }
+}

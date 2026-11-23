@@ -1,11 +1,13 @@
-//! `instrukt mcp list|list-tools|call`: an agent reaches the MCP servers its
-//! scope declares, each call carrying the login the rules select.
+//! `instrukt mcp list|list-tools|call|clients|discover|check-ingress|issuer|sign-out`:
+//! an agent reaches the MCP servers its scope declares, each call carrying the
+//! login the rules select.
 use std::process::ExitCode;
 
 use crate::{authorization, context::Ctx, wiring};
-use instrukt_core::config::Configuration;
+use instrukt_core::config::{Configuration, SpeakerLogin};
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::mcp::{self, Caller, Origin, Scrub, StoredLogins, Target, View, Visible};
+use instrukt_runner::mcp::{self, Caller, McpError, Origin, Scrub, Target, View, Visible};
+use jiff::Timestamp;
 
 #[derive(Debug, clap::Args)]
 pub struct McpArgs {
@@ -39,6 +41,53 @@ enum Command {
         #[arg(long = "json", value_name = "ARGUMENTS", allow_hyphen_values = true)]
         arguments: String,
     },
+    /// List global reusable host-level OAuth clients (`mcp_clients.<name>`) with
+    /// their non-secret client IDs and stable shared return addresses.
+    Clients {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Probe a remote MCP server's OAuth/OIDC/EMA metadata live without writing
+    /// any configuration or state.
+    Discover {
+        url: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify local `ingress.url` and cluster Redis reachability through the real
+    /// sign-in return path without inspecting any other computer's configuration.
+    CheckIngress {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage a company's built-in lightweight OIDC issuer (`sign_in.mode: issuer`).
+    Issuer {
+        #[command(subcommand)]
+        command: IssuerCommand,
+    },
+    /// Remove a speaker's signed-in login(s) and cancel open sign-ins.
+    SignOut {
+        /// Server name; omit to sign out of every server of the company.
+        name: Option<String>,
+        /// Local operator only (outside any session): email address to sign out.
+        #[arg(long)]
+        email: Option<String>,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum IssuerCommand {
+    /// Local operator only: initialize or rotate a company's ES256 OIDC issuer key
+    /// and publish its public discovery/JWKS metadata to cluster Redis.
+    Init {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a company's built-in OIDC issuer URL and JWKS URL.
+    Show {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
@@ -48,15 +97,198 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         .map(ProjectSlug::parse)
         .transpose()?;
     let caller = caller(ctx)?;
-    let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
+
     match args.command {
-        Command::List { json } => list(ctx, &view, json),
+        Command::Clients { json } => {
+            let is_session = require_operator_or_admin_dm(ctx, &caller, asked.as_ref())?;
+            let clients = mcp::list_host_clients(&ctx.home, is_session, Timestamp::now())?;
+            if json {
+                ctx.out.json(&clients)?;
+            } else if clients.is_empty() {
+                ctx.out
+                    .line("No host-level MCP OAuth client is declared.")?;
+            } else {
+                for client in &clients {
+                    let desc = client
+                        .description
+                        .as_deref()
+                        .map(|d| format!(" — {d}"))
+                        .unwrap_or_default();
+                    let ret = client
+                        .return_address
+                        .as_deref()
+                        .unwrap_or("(set ingress.url to form return address)");
+                    ctx.out.line(&format!(
+                        "{}: client_id={} return_address={}{desc}",
+                        client.name, client.client_id, ret
+                    ))?;
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Discover { url, json } => {
+            let _ = require_operator_or_admin_dm(ctx, &caller, asked.as_ref())?;
+            let report = mcp::discover(&url)?;
+            if json {
+                ctx.out.json(&report)?;
+            } else {
+                ctx.out.line(&format!("url: {}", report.url))?;
+                if let Some(ref resource) = report.resource {
+                    ctx.out.line(&format!("resource: {resource}"))?;
+                }
+                ctx.out.line(&format!(
+                    "authorization_servers: {}",
+                    if report.authorization_servers.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        report.authorization_servers.join(", ")
+                    }
+                ))?;
+                ctx.out.line(&format!(
+                    "scopes_supported: {}",
+                    if report.scopes_supported.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        report.scopes_supported.join(", ")
+                    }
+                ))?;
+                ctx.out.line(&format!(
+                    "registration_supported: {}",
+                    report.registration_supported
+                ))?;
+                ctx.out.line(&format!(
+                    "pkce_s256_supported: {}",
+                    report.pkce_s256_supported
+                ))?;
+                ctx.out.line(&format!(
+                    "iss_parameter_supported: {}",
+                    report.iss_parameter_supported
+                ))?;
+                ctx.out
+                    .line(&format!("openid_provider: {}", report.openid_provider))?;
+                ctx.out.line(&format!(
+                    "ema_jwt_bearer_supported: {}",
+                    report.ema_jwt_bearer_supported
+                ))?;
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::CheckIngress { json } => {
+            let _ = require_operator_or_admin_dm(ctx, &caller, asked.as_ref())?;
+            let report = mcp::check_ingress(&ctx.home)?;
+            if json {
+                ctx.out.json(&report)?;
+            } else {
+                ctx.out.line(&format!(
+                    "ingress reachable: {} (cluster Redis ok, sign-in return probe verified)",
+                    report.ingress_url
+                ))?;
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Issuer { command } => match command {
+            IssuerCommand::Init { json } => {
+                if caller.session.is_some() {
+                    anyhow::bail!(
+                        "issuer init refused: `instrukt mcp issuer init` is for the local operator outside any session"
+                    );
+                }
+                let company = asked.ok_or_else(|| {
+                    anyhow::anyhow!("`instrukt mcp issuer init` requires `--company <name>`")
+                })?;
+                let info = mcp::init_company_issuer(&ctx.home, &company, Timestamp::now())?;
+                if json {
+                    ctx.out.json(&info)?;
+                } else {
+                    ctx.out.line(&format!("company: {}", info.company))?;
+                    ctx.out.line(&format!("issuer_url: {}", info.issuer_url))?;
+                    ctx.out.line(&format!("jwks_url: {}", info.jwks_url))?;
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            IssuerCommand::Show { json } => {
+                let is_session = require_operator_or_admin_dm(ctx, &caller, asked.as_ref())?;
+                let company = if is_session {
+                    caller.company.clone().ok_or_else(|| {
+                        anyhow::anyhow!("company-agent session has no company binding")
+                    })?
+                } else {
+                    asked.ok_or_else(|| {
+                        anyhow::anyhow!("`instrukt mcp issuer show` requires `--company <name>`")
+                    })?
+                };
+                let info = mcp::show_company_issuer(&ctx.home, &company)?;
+                if json {
+                    ctx.out.json(&info)?;
+                } else {
+                    ctx.out.line(&format!("company: {}", info.company))?;
+                    ctx.out.line(&format!("issuer_url: {}", info.issuer_url))?;
+                    ctx.out.line(&format!("jwks_url: {}", info.jwks_url))?;
+                    ctx.out.line(&format!("enabled: {}", info.enabled))?;
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+        },
+        Command::SignOut { name, email } => {
+            let server = name.as_deref().map(ProjectSlug::parse).transpose()?;
+            if caller.session.is_some() {
+                if email.is_some() {
+                    anyhow::bail!(
+                        "`--email` is for the local operator outside any session; a session signs out only its active speaker"
+                    );
+                }
+                let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
+                speak(ctx, &caller, &mut view)?;
+                let company = view.company.ok_or_else(|| {
+                    anyhow::anyhow!("sign-out is refused in a session with no company")
+                })?;
+                let speaker = view.speaker.ok_or_else(|| {
+                    anyhow::anyhow!("sign-out is refused in a session with no speaker")
+                })?;
+                let addr = speaker.email.ok_or_else(|| {
+                    anyhow::anyhow!("speaker has no recorded email address to sign out")
+                })?;
+                mcp::sign_out(
+                    &ctx.home,
+                    &company,
+                    &addr,
+                    server.as_ref(),
+                    Timestamp::now(),
+                )?;
+            } else {
+                let company = asked.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "`instrukt mcp sign-out` outside a session requires `--company <name>` and `--email <address>`"
+                    )
+                })?;
+                let addr = email.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "`instrukt mcp sign-out` outside a session requires `--email <address>`"
+                    )
+                })?;
+                mcp::sign_out(
+                    &ctx.home,
+                    &company,
+                    &addr,
+                    server.as_ref(),
+                    Timestamp::now(),
+                )?;
+            }
+            ctx.out.line("Signed out.")?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::List { json } => {
+            let view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
+            list(ctx, &view, caller.session.is_some(), json)
+        }
         Command::ListTools { name, json } => {
+            let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
             let visible = view.server(&name)?.clone();
             speak(ctx, &caller, &mut view)?;
-            let (scrub, login) = login(ctx, &view, &visible)?;
             let started = std::time::Instant::now();
-            let tools = mcp::list_tools(&target(&visible, login.as_deref()));
+            let (scrub, tools) = with_sign_in_retry(ctx, &view, &visible, |auth| {
+                mcp::list_tools(&target(&visible, auth))
+            })?;
             completed(&visible, "tools/list", None, started, tools.is_ok());
             let tools = tools.map_err(|error| scrubbed(&scrub, &error))?;
             if json {
@@ -88,11 +320,13 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("--json takes the tool's arguments as one JSON object")
                 })?;
+            let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
             let visible = view.server(&name)?.clone();
             speak(ctx, &caller, &mut view)?;
-            let (scrub, login) = login(ctx, &view, &visible)?;
             let started = std::time::Instant::now();
-            let result = mcp::call(&target(&visible, login.as_deref()), &tool, arguments);
+            let (scrub, result) = with_sign_in_retry(ctx, &view, &visible, |auth| {
+                mcp::call(&target(&visible, auth), &tool, arguments.clone())
+            })?;
             completed(&visible, "tools/call", Some(&tool), started, result.is_ok());
             let result = result.map_err(|error| scrubbed(&scrub, &error))?;
             ctx.out.json(&scrub.json(result))?;
@@ -101,10 +335,79 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     }
 }
 
+/// Execute an MCP network operation, renewing a `speaker_login: sign-in` Bearer
+/// token at most once if the server answers HTTP 401.
+fn with_sign_in_retry<T>(
+    ctx: &Ctx,
+    view: &View,
+    visible: &Visible,
+    mut op: impl FnMut(Option<&str>) -> Result<T, McpError>,
+) -> anyhow::Result<(Scrub, Result<T, McpError>)> {
+    let (scrub, login) = view.resolve_call_login(&ctx.home, visible, false, Timestamp::now())?;
+    let outcome = op(login.as_deref());
+    if let Err(McpError::Unauthorized { .. }) = &outcome
+        && visible.server.speaker_login == SpeakerLogin::SignIn
+        && view.speaker.is_some()
+    {
+        let (scrub2, login2) =
+            view.resolve_call_login(&ctx.home, visible, true, Timestamp::now())?;
+        let retried = op(login2.as_deref());
+        return Ok((scrub2, retried));
+    }
+    Ok((scrub, outcome))
+}
+
+/// For management read/probe verbs (`clients`, `discover`, `check-ingress`,
+/// `issuer show`), allow the local operator outside any session, or a verified
+/// workspace administrator in a company-agent direct message. Returns `true`
+/// when invoked from a company-agent session.
+fn require_operator_or_admin_dm(
+    ctx: &Ctx,
+    caller: &Caller,
+    asked: Option<&ProjectSlug>,
+) -> anyhow::Result<bool> {
+    let Some(session) = &caller.session else {
+        return Ok(false);
+    };
+    let Some(own) = &caller.company else {
+        if let Some(company) = &caller.working_in {
+            return Err(McpError::Unbound {
+                company: company.to_string(),
+            }
+            .into());
+        }
+        return Ok(false);
+    };
+    if let Some(asked) = asked
+        && asked != own
+    {
+        return Err(McpError::OtherCompany {
+            asked: asked.to_string(),
+            own: own.to_string(),
+        }
+        .into());
+    }
+    let runtime = Configuration::load_global(&ctx.home)?.runner_runtime()?;
+    let adapter = instrukt_runner::runtime::adapter(runtime);
+    let speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "refused: this command requires a verified workspace administrator speaking in a direct message, or the local operator outside any session"
+            )
+        })?;
+    if !speaker.is_admin || !speaker.is_direct {
+        anyhow::bail!(
+            "refused: this command requires a verified workspace administrator speaking in a direct message, or the local operator outside any session"
+        );
+    }
+    Ok(true)
+}
+
 /// The caller the selected runtime's caller identity names, with the
 /// company its recorded assignment works for.
 fn caller(ctx: &Ctx) -> anyhow::Result<Caller> {
-    let config = Configuration::load_global(&ctx.home)?;
+    let inspection = ctx.home.for_inspection();
+    let config = Configuration::load_global(&inspection)?;
     let session = config.caller(&wiring::environment(ctx)?)?;
     let company = authorization::caller(ctx)?.and_then(|(assignment, _)| assignment.company);
     Ok(Caller {
@@ -152,7 +455,7 @@ fn completed(
     );
 }
 
-fn list(ctx: &mut Ctx, view: &View, json: bool) -> anyhow::Result<ExitCode> {
+fn list(ctx: &mut Ctx, view: &View, read_only: bool, json: bool) -> anyhow::Result<ExitCode> {
     let declared = |visible: &Visible| match &visible.origin {
         Origin::Machine => "this computer".to_owned(),
         Origin::Company(company) => format!("company {company}"),
@@ -172,6 +475,17 @@ fn list(ctx: &mut Ctx, view: &View, json: bool) -> anyhow::Result<ExitCode> {
                 });
                 if let Origin::Company(company) = &visible.origin {
                     entry["company"] = company.as_str().into();
+                    if let Some((client_id, return_address)) = mcp::server_registration_hint(
+                        &ctx.home,
+                        company,
+                        &visible.server,
+                        read_only,
+                    ) {
+                        entry["client_id"] = client_id.into();
+                        if let Some(addr) = return_address {
+                            entry["return_address"] = addr.into();
+                        }
+                    }
                 }
                 entry
             })
@@ -181,8 +495,19 @@ fn list(ctx: &mut Ctx, view: &View, json: bool) -> anyhow::Result<ExitCode> {
         ctx.out.line("No MCP server is declared for this caller.")?;
     } else {
         for visible in view.servers.values() {
+            let extra = match &visible.origin {
+                Origin::Company(company) => {
+                    mcp::server_registration_hint(&ctx.home, company, &visible.server, read_only)
+                        .map(|(client_id, addr)| match addr {
+                            Some(addr) => format!(" [client_id={client_id}, return={addr}]"),
+                            None => format!(" [client_id={client_id}]"),
+                        })
+                        .unwrap_or_default()
+                }
+                Origin::Machine => String::new(),
+            };
             ctx.out.line(&format!(
-                "{}: {} (declared for {})",
+                "{}: {} (declared for {}){extra}",
                 visible.server.name,
                 visible.server.description,
                 declared(visible)
@@ -190,14 +515,6 @@ fn list(ctx: &mut Ctx, view: &View, json: bool) -> anyhow::Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// The login a request to `visible` carries, and the scrub that removes it
-/// from everything the server returns.
-fn login(ctx: &Ctx, view: &View, visible: &Visible) -> anyhow::Result<(Scrub, Option<String>)> {
-    let login = view.login(visible, &StoredLogins::new(&ctx.home))?;
-    let value = login.as_ref().map(|login| login.value.clone());
-    Ok((Scrub::new(login), value))
 }
 
 fn target<'a>(visible: &'a Visible, authorization: Option<&'a str>) -> Target<'a> {

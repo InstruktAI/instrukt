@@ -32,7 +32,8 @@ use crate::context::Ctx;
 pub fn caller_lookup(
     ctx: &Ctx,
 ) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::CallerIdentityLookup>>> {
-    let config = instrukt_core::config::Configuration::load_global(&ctx.home)?;
+    let inspection = ctx.home.for_inspection();
+    let config = instrukt_core::config::Configuration::load_global(&inspection)?;
     match config.runner_runtime() {
         Ok(runtime) => {
             let adapter: Arc<dyn instrukt_runner::runtime::RuntimeAdapter> =

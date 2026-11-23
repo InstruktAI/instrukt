@@ -65,6 +65,7 @@ pub struct Person {
     pub deleted: bool,
     pub bot: bool,
     pub guest: bool,
+    pub is_admin: bool,
 }
 impl Person {
     /// A full member of the workspace.
@@ -78,6 +79,7 @@ impl Person {
             deleted: false,
             bot: false,
             guest: false,
+            is_admin: false,
         }
     }
     /// The name Slack shows for them: the display name, the real name when
@@ -94,7 +96,7 @@ impl Person {
         if let Some(email) = &self.email {
             profile["email"] = json!(email);
         }
-        json!({"id": self.id, "team_id": self.team, "name": self.id.to_lowercase(), "deleted": self.deleted, "is_bot": self.bot, "is_restricted": self.guest, "is_ultra_restricted": false, "real_name": self.real_name, "profile": profile})
+        json!({"id": self.id, "team_id": self.team, "name": self.id.to_lowercase(), "deleted": self.deleted, "is_bot": self.bot, "is_restricted": self.guest, "is_ultra_restricted": false, "is_admin": self.is_admin, "real_name": self.real_name, "profile": profile})
     }
 }
 
@@ -1095,6 +1097,17 @@ impl FakeSlack {
 
     pub fn accept_posts(&self) {
         self.workspace.lock().unwrap().fail_posts = false;
+    }
+
+    /// Sets whether Slack reports `user` as a workspace administrator.
+    pub fn set_admin(&self, user: &str, is_admin: bool) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .people
+            .get_mut(user)
+            .unwrap()
+            .is_admin = is_admin;
     }
 
     /// Lookups of people wait until [`FakeSlack::release_lookups`].

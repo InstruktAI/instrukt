@@ -10,8 +10,10 @@ use crate::common;
 use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
 use crate::fixtures::documented;
 use crate::fixtures::event_transport::Computer;
-use crate::fixtures::mcp::{FakeMcp, Flaw};
+use crate::fixtures::mcp::{FakeMcp, FakeOAuthMcp, Flaw, OAuthMcpOptions};
+use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN};
 use crate::fixtures::t3::FakeT3;
+use crate::fixtures::webhooks::Receiver;
 use common::TestEnv;
 use common::redis::RedisServer;
 use instrukt_runner::mcp::{CALL_TOOL, INITIALIZE, INITIALIZED, LIST_TOOLS, PROTOCOL_VERSIONS};
@@ -297,6 +299,8 @@ fn a_tool_call_in_a_members_turn_carries_that_members_own_login() {
         "slack",
         "C1",
         "Steven",
+        false,
+        false,
         None,
         "0123456789abcdef0123456789abcdef",
         "Book it all.",
@@ -518,4 +522,820 @@ fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
         seen(&future),
         vec![rpc(INITIALIZE, None), end(PROTOCOL_VERSIONS[0])]
     );
+}
+
+fn wait_for_binding(env: &TestEnv, session: &str) {
+    let state = instrukt_core::home::Home::at_user_home(env.home().into());
+    let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
+    wait("the session's recorded binding", || {
+        instrukt_runner::assignments::resolve(
+            &state,
+            &caller,
+            instrukt_todos::work::recorded_assignment,
+            instrukt_company::conversations::conversation_assignment,
+        )
+        .unwrap()
+        .is_some()
+    });
+}
+
+fn machine_id(env: &TestEnv) -> String {
+    env.run(&env.path(""), ["tick"]).success();
+    std::fs::read_to_string(env.instrukt_home().join("state/machine-id"))
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+fn read_open_sign_in_link(env: &TestEnv, company: &str, person: &str, server: &str) -> String {
+    let home = instrukt_core::home::Home::at_user_home(env.home().into());
+    let mut found = None;
+    wait("open sign-in link in state db", || {
+        let Ok(Some(db)) = instrukt_core::state_db::StateRead::open(&home) else {
+            return false;
+        };
+        let row: Result<Option<String>, _> = db.conn().query_row(
+            "SELECT link FROM mcp_sign_ins
+             WHERE company = ?1 AND person = ?2 AND server = ?3 AND state = 'open' AND link IS NOT NULL
+             ORDER BY created_at DESC LIMIT 1",
+            instrukt_core::state_db::rusqlite::params![company, person, server],
+            |r| r.get(0),
+        );
+        if let Ok(Some(link)) = row {
+            found = Some(link);
+            true
+        } else {
+            false
+        }
+    });
+    found.unwrap()
+}
+
+// spec: project/instrukt/spec/feature/runner/mcp-access UC-MA12
+#[test]
+fn a_host_oauth_client_is_shared_across_companies_with_isolated_speaker_tokens() {
+    const HOST_CLIENT_ID: &str = "host-google-client-id-8812";
+    const HOST_CLIENT_SECRET: &str = "host-google-secret-never-disclose-9941";
+
+    let env = TestEnv::new();
+    let redis = RedisServer::new(&env);
+    let mut c = Company::on(
+        env,
+        ", events: true",
+        &format!("redis:\n  cluster:\n    url: '{}'\n", redis.url),
+        "",
+    );
+    let machine = machine_id(&c.env);
+    let receiver = Receiver::start_for_env(&c.env, &machine, true);
+
+    // Host operator stores the reusable OAuth client credentials in ~/.instrukt/secrets.env
+    // and declares mcp_clients.google in ~/.instrukt/instrukt.yaml.
+    c.env
+        .instrukt(&c.env.path(""))
+        .args(["secrets", "set", "HOST_GOOGLE_ID"])
+        .write_stdin(HOST_CLIENT_ID)
+        .assert()
+        .success();
+    c.env
+        .instrukt(&c.env.path(""))
+        .args(["secrets", "set", "HOST_GOOGLE_SECRET"])
+        .write_stdin(HOST_CLIENT_SECRET)
+        .assert()
+        .success();
+
+    let global_rev = stdout(
+        &c.env
+            .run(&c.env.path(""), ["config", "get", "--global", "--revision"])
+            .success(),
+    );
+    c.env
+        .run(
+            &c.env.path(""),
+            [
+                "config",
+                "patch",
+                "--global",
+                "--revision",
+                global_rev.trim(),
+                "--yaml",
+                "mcp_clients:\n  google:\n    id: '${HOST_GOOGLE_ID}'\n    secret: '${HOST_GOOGLE_SECRET}'\n    description: Shared host Google OAuth client\n",
+            ],
+        )
+        .success();
+
+    // Schema exposes mcp_clients in global layer.
+    let schema_out = stdout(
+        &c.env
+            .run(
+                &c.env.path(""),
+                ["config", "schema", "--global", "mcp_clients", "--json"],
+            )
+            .success(),
+    );
+    let schema_json: serde_json::Value = serde_json::from_str(&schema_out).unwrap();
+    assert_eq!(schema_json["type"], "object");
+    assert!(schema_json["additionalProperties"]["properties"]["id"].is_object());
+    assert!(schema_json["additionalProperties"]["properties"]["secret"].is_object());
+
+    // `instrukt mcp clients --json` returns one stable return address and never discloses the secret.
+    let clients_1 = stdout(
+        &c.env
+            .run(&c.env.path(""), ["mcp", "clients", "--json"])
+            .success(),
+    );
+    let clients_2 = stdout(
+        &c.env
+            .run(&c.env.path(""), ["mcp", "clients", "--json"])
+            .success(),
+    );
+    assert!(!clients_1.contains(HOST_CLIENT_SECRET));
+    let parsed_1: serde_json::Value = serde_json::from_str(&clients_1).unwrap();
+    let parsed_2: serde_json::Value = serde_json::from_str(&clients_2).unwrap();
+    assert_eq!(parsed_1, parsed_2);
+    let entry = &parsed_1[0];
+    assert_eq!(entry["name"], "google");
+    assert_eq!(entry["client_id"], HOST_CLIENT_ID);
+    assert_eq!(entry["has_secret"], true);
+    let shared_return_id = entry["return_id"].as_str().unwrap().to_owned();
+    let shared_return_address = entry["return_address"].as_str().unwrap().to_owned();
+    assert_eq!(
+        shared_return_address,
+        format!(
+            "{}/hooks/inbound/sign-in/{shared_return_id}",
+            receiver.url()
+        )
+    );
+
+    let oauth = FakeOAuthMcp::start(OAuthMcpOptions {
+        name: "workspace".into(),
+        registration_supported: false,
+        pkce_s256_supported: true,
+        iss_parameter_supported: true,
+        openid_provider: true,
+        ema_jwt_bearer_supported: false,
+        expected_client: Some((HOST_CLIENT_ID.into(), HOST_CLIENT_SECRET.into())),
+    });
+
+    // Configure two companies (`acme` and `beta`) referencing the same global client_ref.
+    patch_company(
+        &c.env,
+        COMPANY,
+        &format!(
+            "mcp:\n  workspace:\n    url: '{}'\n    description: Shared workspace MCP\n    speaker_login: sign-in\n    sign_in:\n      client_ref: google\n      scopes: [openid, email, 'mcp:read']\n",
+            oauth.mcp_url
+        ),
+    );
+    c.env
+        .run(&c.env.path(""), ["config", "init", "--company", "beta"])
+        .success();
+    patch_company(
+        &c.env,
+        "beta",
+        &format!(
+            "members:\n  steven: {{name: Steven Sonneveld, email: steven@example.com}}\nmcp:\n  workspace:\n    url: '{}'\n    description: Shared workspace MCP\n    speaker_login: sign-in\n    sign_in:\n      client_ref: google\n      scopes: [openid, email, 'mcp:read']\n",
+            oauth.mcp_url
+        ),
+    );
+
+    // Both companies validate cleanly and expose the identical host return address without holding the secret.
+    c.env
+        .run(
+            &c.env.path(""),
+            ["config", "validate", "--company", COMPANY],
+        )
+        .success();
+    c.env
+        .run(&c.env.path(""), ["config", "validate", "--company", "beta"])
+        .success();
+    for company in [COMPANY, "beta"] {
+        let listed = stdout(
+            &c.env
+                .run(
+                    &c.env.path(""),
+                    ["mcp", "list", "--company", company, "--json"],
+                )
+                .success(),
+        );
+        assert!(!listed.contains(HOST_CLIENT_SECRET));
+        let arr: serde_json::Value = serde_json::from_str(&listed).unwrap();
+        assert_eq!(arr[0]["client_id"], HOST_CLIENT_ID);
+        assert_eq!(arr[0]["return_address"], shared_return_address);
+        let dir = c.env.instrukt_home().join("companies").join(company);
+        for file in ["instrukt.yaml", "secrets.env"] {
+            let path = dir.join(file);
+            if path.exists() {
+                let raw = std::fs::read_to_string(path).unwrap();
+                assert!(
+                    !raw.contains(HOST_CLIENT_SECRET),
+                    "company {company} {file} must never hold the host client secret"
+                );
+            }
+        }
+    }
+
+    // Company 1 (`acme`): Steven signs in through the host return address on the real ingress receiver.
+    let acme_home = c.env.instrukt_home().join("companies").join(COMPANY);
+    c.runtime.flag("lifecycle", true);
+    c.run();
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> Check acme workspace", None);
+    let acme_session = c.session();
+    wait_for_binding(&c.env, &acme_session);
+
+    let oauth_ref = &oauth;
+    let shared_addr_ref = &shared_return_address;
+    let acme_out = {
+        let env_ref = &c.env;
+        std::thread::scope(|s| {
+            let approver = s.spawn(|| {
+                let link =
+                    read_open_sign_in_link(env_ref, COMPANY, "steven@example.com", "workspace");
+                let parsed = url::Url::parse(&link).unwrap();
+                let redirect_uri = parsed
+                    .query_pairs()
+                    .find(|(k, _)| k == "redirect_uri")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap();
+                assert_eq!(redirect_uri, *shared_addr_ref);
+                let status = oauth_ref.approve_browser_link(&link, "steven@example.com");
+                assert_eq!(status, 200);
+            });
+            let out = mcp_in(
+                env_ref,
+                &acme_home,
+                &acme_session,
+                &["call", "workspace", "whoami", "--json", "{}"],
+            )
+            .success();
+            approver.join().unwrap();
+            stdout(&out)
+        })
+    };
+    assert!(acme_out.contains("workspace verified steven@example.com"));
+    assert!(!acme_out.contains(HOST_CLIENT_SECRET));
+    c.kill_runner();
+
+    // Company 2 (`beta`): connect Slack to `beta`, keep `acme`'s login intact, sign Steven in for `beta`
+    // through the exact same host return address.
+    patch_company(&c.env, COMPANY, "connectors: null\n");
+    for (reference, value) in [
+        ("SLACK_APP_TOKEN", APP_TOKEN),
+        ("SLACK_BOT_TOKEN", BOT_TOKEN),
+    ] {
+        secret(&c.env, "beta", reference, value);
+    }
+    patch_company(
+        &c.env,
+        "beta",
+        "connectors: {slack: {app_token: '${SLACK_APP_TOKEN}', bot_token: '${SLACK_BOT_TOKEN}'}}\n",
+    );
+    let beta_home = c.env.instrukt_home().join("companies").join("beta");
+    let before = c.sessions();
+    c.run();
+    c.slack
+        .mention("C2", "USTEVEN", "<@UAGENT> Check beta workspace", None);
+    let beta_session = c.wait_for_new_session(&before);
+    wait_for_binding(&c.env, &beta_session);
+
+    let beta_out = {
+        let env_ref = &c.env;
+        std::thread::scope(|s| {
+            let approver = s.spawn(|| {
+                let link =
+                    read_open_sign_in_link(env_ref, "beta", "steven@example.com", "workspace");
+                let parsed = url::Url::parse(&link).unwrap();
+                let redirect_uri = parsed
+                    .query_pairs()
+                    .find(|(k, _)| k == "redirect_uri")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap();
+                assert_eq!(redirect_uri, *shared_addr_ref);
+                let status = oauth_ref.approve_browser_link(&link, "steven@example.com");
+                assert_eq!(status, 200);
+            });
+            let out = mcp_in(
+                env_ref,
+                &beta_home,
+                &beta_session,
+                &["call", "workspace", "whoami", "--json", "{}"],
+            )
+            .success();
+            approver.join().unwrap();
+            stdout(&out)
+        })
+    };
+    assert!(beta_out.contains("workspace verified steven@example.com"));
+    assert_eq!(oauth.auth_code_exchanges(), 2);
+
+    // State DB holds exactly ONE active host-scoped registration row and TWO isolated speaker tokens.
+    let db = instrukt_core::state_db::StateRead::open(&instrukt_core::home::Home::at_user_home(
+        c.env.home().into(),
+    ))
+    .unwrap()
+    .unwrap();
+    let conn = db.conn();
+    let reg_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM mcp_registrations WHERE retired_at IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(reg_count, 1);
+    let (host_client, reg_company, reg_server, reg_secret): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT host_client, company, server, client_secret FROM mcp_registrations WHERE return_id = ?1",
+            [&shared_return_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(host_client.as_deref(), Some("google"));
+    assert_eq!(reg_company, None);
+    assert_eq!(reg_server, None);
+    assert_eq!(
+        reg_secret, None,
+        "declared client secret must never be stored in SQLite"
+    );
+
+    let acme_token: String = conn
+        .query_row(
+            "SELECT access_token FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = 'workspace'",
+            [COMPANY, "steven@example.com"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let beta_token: String = conn
+        .query_row(
+            "SELECT access_token FROM mcp_logins WHERE company = 'beta' AND person = ?1 AND server = 'workspace'",
+            ["steven@example.com"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_ne!(acme_token, beta_token);
+    drop(receiver);
+}
+
+// spec: project/instrukt/spec/feature/runner/mcp-access UC-MA13
+#[test]
+fn discover_reports_auth_capabilities_and_check_ingress_verifies_return_path() {
+    let computer = Computer::new();
+    let redis = RedisServer::new(&computer.env);
+    let receiver = Receiver::start_with_url(&computer, &redis);
+
+    let full_server = FakeOAuthMcp::start(OAuthMcpOptions {
+        name: "full-ema".into(),
+        registration_supported: true,
+        pkce_s256_supported: true,
+        iss_parameter_supported: true,
+        openid_provider: true,
+        ema_jwt_bearer_supported: true,
+        expected_client: None,
+    });
+    let restricted_server = FakeOAuthMcp::start(OAuthMcpOptions {
+        name: "restricted".into(),
+        registration_supported: false,
+        pkce_s256_supported: true,
+        iss_parameter_supported: false,
+        openid_provider: false,
+        ema_jwt_bearer_supported: false,
+        expected_client: None,
+    });
+
+    // Snapshot global config and state before discovery to prove `discover` writes nothing.
+    let global_path = computer.env.instrukt_home().join("instrukt.yaml");
+    let before_yaml = std::fs::read_to_string(&global_path).unwrap();
+
+    let disc_full = stdout(
+        &computer
+            .env
+            .run(
+                &computer.env.path(""),
+                ["mcp", "discover", &full_server.mcp_url, "--json"],
+            )
+            .success(),
+    );
+    let full_json: serde_json::Value = serde_json::from_str(&disc_full).unwrap();
+    assert_eq!(full_json["resource"], full_server.mcp_url);
+    assert_eq!(
+        full_json["authorization_servers"],
+        serde_json::json!([full_server.base_url])
+    );
+    assert_eq!(full_json["registration_supported"], true);
+    assert_eq!(full_json["pkce_s256_supported"], true);
+    assert_eq!(full_json["iss_parameter_supported"], true);
+    assert_eq!(full_json["openid_provider"], true);
+    assert_eq!(full_json["ema_jwt_bearer_supported"], true);
+
+    let disc_restricted = stdout(
+        &computer
+            .env
+            .run(
+                &computer.env.path(""),
+                ["mcp", "discover", &restricted_server.mcp_url, "--json"],
+            )
+            .success(),
+    );
+    let restricted_json: serde_json::Value = serde_json::from_str(&disc_restricted).unwrap();
+    assert_eq!(restricted_json["registration_supported"], false);
+    assert_eq!(restricted_json["pkce_s256_supported"], true);
+    assert_eq!(restricted_json["iss_parameter_supported"], false);
+    assert_eq!(restricted_json["openid_provider"], false);
+    assert_eq!(restricted_json["ema_jwt_bearer_supported"], false);
+
+    assert_eq!(std::fs::read_to_string(&global_path).unwrap(), before_yaml);
+
+    // `instrukt mcp check-ingress --json` verifies local ingress.url + cluster Redis end-to-end
+    // and claims/deletes the probe entry immediately.
+    let checked = stdout(
+        &computer
+            .env
+            .run(&computer.env.path(""), ["mcp", "check-ingress", "--json"])
+            .success(),
+    );
+    let check_json: serde_json::Value = serde_json::from_str(&checked).unwrap();
+    assert_eq!(check_json["ok"], true);
+    assert_eq!(check_json["ingress_url"], receiver.url());
+    assert_eq!(check_json["redis_reachable"], true);
+    assert_eq!(check_json["callback_verified"], true);
+
+    let remaining_keys: Vec<String> = redis::cmd("KEYS")
+        .arg("instrukt:mcp:sign-in:return:*")
+        .query(&mut redis.connection())
+        .unwrap();
+    assert!(
+        remaining_keys.is_empty(),
+        "check-ingress must immediately claim and delete its probe return from Redis"
+    );
+
+    // Once the receiver stops, check-ingress fails visibly.
+    drop(receiver);
+    let failed = computer
+        .env
+        .run(&computer.env.path(""), ["mcp", "check-ingress"])
+        .failure();
+    assert!(stderr(&failed).contains("external callback probe"));
+}
+
+// spec: project/instrukt/spec/feature/runner/mcp-access UC-MA14
+#[test]
+fn company_admin_in_dm_can_manage_mcp_config_while_non_admin_channel_and_other_keys_are_refused() {
+    let mut c = Company::new("");
+    c.slack.set_admin("USTEVEN", true);
+    c.slack.set_admin("UANNA", false);
+    patch_company(
+        &c.env,
+        COMPANY,
+        "members:\n  steven: {name: Steven Sonneveld, email: steven@example.com}\n  anna: {name: Anna, email: anna@example.com}\n",
+    );
+    c.env
+        .run(&c.env.path(""), ["config", "init", "--company", "beta"])
+        .success();
+
+    let home = c.env.instrukt_home().join("companies").join(COMPANY);
+    c.runtime.flag("lifecycle", true);
+    c.run();
+
+    // 1. Admin DM (Steven in D1): envelope carries admin=true · direct=true,
+    //    and mcp-only config operations for own company succeed.
+    c.slack.direct("D1", "USTEVEN", "Connect our CRM MCP");
+    let admin_dm_session = c.session();
+    wait_for_binding(&c.env, &admin_dm_session);
+    assert!(
+        c.input(&admin_dm_session, 0)
+            .contains("admin=true · direct=true"),
+        "expected admin=true · direct=true in DM envelope"
+    );
+
+    let cfg = |session: &str, args: &[&str]| {
+        c.env
+            .instrukt(&home)
+            .env("T3CODE_THREAD_ID", session)
+            .arg("config")
+            .args(args)
+            .assert()
+    };
+
+    cfg(
+        &admin_dm_session,
+        &["schema", "--company", COMPANY, "mcp", "--json"],
+    )
+    .success();
+    let rev = stdout(
+        &cfg(
+            &admin_dm_session,
+            &["get", "--company", COMPANY, "--revision"],
+        )
+        .success(),
+    );
+    cfg(
+        &admin_dm_session,
+        &[
+            "patch",
+            "--company",
+            COMPANY,
+            "--revision",
+            rev.trim(),
+            "--yaml",
+            "mcp:\n  crm:\n    url: https://crm.example.com/mcp\n    description: Company CRM\n",
+        ],
+    )
+    .success();
+    let mcp_got = stdout(
+        &cfg(
+            &admin_dm_session,
+            &["get", "--company", COMPANY, "mcp", "--json"],
+        )
+        .success(),
+    );
+    assert!(mcp_got.contains("https://crm.example.com/mcp"));
+    cfg(&admin_dm_session, &["validate", "--company", COMPANY]).success();
+    mcp_in(&c.env, &home, &admin_dm_session, &["clients", "--json"]).success();
+
+    // Even in an admin DM, non-mcp keys, other companies, --global, init, secrets, and issuer init are refused.
+    let rev2 = stdout(
+        &cfg(
+            &admin_dm_session,
+            &["get", "--company", COMPANY, "--revision"],
+        )
+        .success(),
+    );
+    let non_mcp_patch = cfg(
+        &admin_dm_session,
+        &[
+            "patch",
+            "--company",
+            COMPANY,
+            "--revision",
+            rev2.trim(),
+            "--yaml",
+            "members:\n  bob: {name: Bob, email: bob@example.com}\n",
+        ],
+    )
+    .failure();
+    assert!(stderr(&non_mcp_patch).contains("only patch keys under `mcp`"));
+
+    let issuer_patch = cfg(
+        &admin_dm_session,
+        &[
+            "patch",
+            "--company",
+            COMPANY,
+            "--revision",
+            rev2.trim(),
+            "--yaml",
+            "issuer: {enabled: false}\n",
+        ],
+    )
+    .failure();
+    assert!(stderr(&issuer_patch).contains("only patch keys under `mcp`"));
+
+    cfg(&admin_dm_session, &["get", "--company", COMPANY, "members"]).failure();
+    cfg(&admin_dm_session, &["get", "--global"]).failure();
+    cfg(&admin_dm_session, &["get", "--company", "beta", "mcp"]).failure();
+    cfg(&admin_dm_session, &["init", "--company", COMPANY]).failure();
+
+    let secrets_refused = c
+        .env
+        .instrukt(&home)
+        .env("T3CODE_THREAD_ID", &admin_dm_session)
+        .args(["secrets", "set", "FORBIDDEN_KEY", "--company", COMPANY])
+        .write_stdin("nope")
+        .assert()
+        .failure();
+    assert!(stderr(&secrets_refused).contains("outside any session"));
+
+    let issuer_init_refused = mcp_in(
+        &c.env,
+        &home,
+        &admin_dm_session,
+        &["issuer", "init", "--company", COMPANY],
+    )
+    .failure();
+    assert!(stderr(&issuer_init_refused).contains("outside any session"));
+
+    // 2. Admin in shared channel (Steven in C1): envelope carries admin=true · direct=false,
+    //    and config verbs are refused naming the direct-message requirement.
+    let before = c.sessions();
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> Connect ERP from channel", None);
+    let admin_channel_session = c.wait_for_new_session(&before);
+    wait_for_binding(&c.env, &admin_channel_session);
+    assert!(
+        c.input(&admin_channel_session, 0)
+            .contains("admin=true · direct=false"),
+        "expected admin=true · direct=false in channel envelope"
+    );
+    let ch_refused = cfg(
+        &admin_channel_session,
+        &["get", "--company", COMPANY, "mcp"],
+    )
+    .failure();
+    assert!(stderr(&ch_refused).contains("direct message"));
+
+    // 3. Non-admin in DM (Anna in D2): envelope carries admin=false · direct=true,
+    //    and config verbs are refused naming the workspace administrator requirement.
+    let before = c.sessions();
+    c.slack.direct("D2", "UANNA", "Connect ERP for me");
+    let non_admin_dm_session = c.wait_for_new_session(&before);
+    wait_for_binding(&c.env, &non_admin_dm_session);
+    assert!(
+        c.input(&non_admin_dm_session, 0)
+            .contains("admin=false · direct=true"),
+        "expected admin=false · direct=true in non-admin DM envelope"
+    );
+    let non_admin_refused =
+        cfg(&non_admin_dm_session, &["get", "--company", COMPANY, "mcp"]).failure();
+    assert!(stderr(&non_admin_refused).contains("workspace administrator"));
+}
+
+// spec: project/instrukt/spec/feature/runner/mcp-access UC-MA15
+#[test]
+fn zero_click_employee_sign_in_through_built_in_company_oidc_issuer() {
+    let env = TestEnv::new();
+    let redis = RedisServer::new(&env);
+    let mut c = Company::on(
+        env,
+        ", events: true",
+        &format!("redis:\n  cluster:\n    url: '{}'\n", redis.url),
+        "",
+    );
+    let machine = machine_id(&c.env);
+    let receiver = Receiver::start_for_env(&c.env, &machine, true);
+
+    // Local operator initializes the company's built-in lightweight OIDC issuer.
+    let init_out = stdout(
+        &c.env
+            .run(
+                &c.env.path(""),
+                ["mcp", "issuer", "init", "--company", COMPANY, "--json"],
+            )
+            .success(),
+    );
+    let init_json: serde_json::Value = serde_json::from_str(&init_out).unwrap();
+    let issuer_id = init_json["issuer_id"].as_str().unwrap().to_owned();
+    let issuer_url = init_json["issuer_url"].as_str().unwrap().to_owned();
+    let jwks_url = init_json["jwks_url"].as_str().unwrap().to_owned();
+    assert_eq!(
+        issuer_url,
+        format!("{}/hooks/inbound/issuers/{issuer_id}", receiver.url())
+    );
+    assert_eq!(jwks_url, format!("{issuer_url}/jwks.json"));
+    assert_eq!(init_json["enabled"], true);
+
+    // Private signing key lives strictly in the company home's secrets.env, never in DB or Redis.
+    let company_secrets = std::fs::read_to_string(
+        c.env
+            .instrukt_home()
+            .join("companies")
+            .join(COMPANY)
+            .join("secrets.env"),
+    )
+    .unwrap();
+    assert!(company_secrets.contains("ISSUER_SIGNING_KEY="));
+    assert!(company_secrets.contains("BEGIN PRIVATE KEY"));
+
+    let db = instrukt_core::state_db::StateRead::open(&instrukt_core::home::Home::at_user_home(
+        c.env.home().into(),
+    ))
+    .unwrap()
+    .unwrap();
+    let db_jwks: String = db
+        .conn()
+        .query_row(
+            "SELECT public_jwks_json FROM company_issuers WHERE company = ?1",
+            [COMPANY],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(!db_jwks.contains("PRIVATE KEY"));
+    assert!(!db_jwks.contains("\"d\""));
+
+    // Ingress receiver serves public discovery + JWKS read-only from cluster Redis with no private key.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut disc_resp = agent
+        .get(&format!("{issuer_url}/.well-known/openid-configuration"))
+        .call()
+        .unwrap();
+    assert_eq!(disc_resp.status().as_u16(), 200);
+    let disc_body = disc_resp.body_mut().read_to_string().unwrap();
+    let disc_json: serde_json::Value = serde_json::from_str(&disc_body).unwrap();
+    assert_eq!(disc_json["issuer"], issuer_url);
+    assert_eq!(disc_json["jwks_uri"], jwks_url);
+
+    let mut jwks_resp = agent.get(&jwks_url).call().unwrap();
+    assert_eq!(jwks_resp.status().as_u16(), 200);
+    let jwks_body = jwks_resp.body_mut().read_to_string().unwrap();
+    assert!(!jwks_body.contains("PRIVATE KEY"));
+    let jwks_json: serde_json::Value = serde_json::from_str(&jwks_body).unwrap();
+    assert_eq!(jwks_json["keys"][0]["kty"], "EC");
+    assert_eq!(jwks_json["keys"][0]["crv"], "P-256");
+    assert_eq!(jwks_json["keys"][0]["alg"], "ES256");
+    assert!(jwks_json["keys"][0].get("d").is_none());
+
+    // `instrukt mcp issuer show --company acme --json` matches.
+    let show_out = stdout(
+        &c.env
+            .run(
+                &c.env.path(""),
+                ["mcp", "issuer", "show", "--company", COMPANY, "--json"],
+            )
+            .success(),
+    );
+    let show_json: serde_json::Value = serde_json::from_str(&show_out).unwrap();
+    assert_eq!(show_json["issuer_url"], issuer_url);
+    assert_eq!(show_json["jwks_url"], jwks_url);
+
+    // Declare an EMA-capable MCP server with `speaker_login: sign-in` and `sign_in.mode: issuer`.
+    let ema_server = FakeOAuthMcp::start(OAuthMcpOptions {
+        name: "ema-erp".into(),
+        registration_supported: false,
+        pkce_s256_supported: true,
+        iss_parameter_supported: true,
+        openid_provider: false,
+        ema_jwt_bearer_supported: true,
+        expected_client: None,
+    });
+    patch_company(
+        &c.env,
+        COMPANY,
+        &format!(
+            "mcp:\n  ema_erp:\n    url: '{}'\n    description: EMA-capable ERP\n    speaker_login: sign-in\n    sign_in:\n      mode: issuer\n      scopes: ['erp:read']\n",
+            ema_server.mcp_url
+        ),
+    );
+    c.env
+        .run(
+            &c.env.path(""),
+            ["config", "validate", "--company", COMPANY],
+        )
+        .success();
+
+    let home = c.env.instrukt_home().join("companies").join(COMPANY);
+    c.runtime.flag("lifecycle", true);
+    c.run();
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> Read ERP via EMA", None);
+    let session = c.session();
+    wait_for_binding(&c.env, &session);
+
+    // First call: zero interactive browser sign-in! Instrukt signs ES256 ID-JAG assertion,
+    // exchanges via jwt-bearer, Fake AS verifies signature via ingress JWKS, tool call succeeds.
+    let first_call = stdout(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "ema_erp", "whoami", "--json", "{}"],
+        )
+        .success(),
+    );
+    assert!(first_call.contains("ema-erp verified steven@example.com"));
+    let observed_1 = ema_server.observed_jwt_bearers();
+    assert_eq!(observed_1.len(), 1);
+    assert_eq!(observed_1[0].iss, issuer_url);
+    assert_eq!(observed_1[0].email, "steven@example.com");
+    assert_eq!(observed_1[0].resource, ema_server.mcp_url);
+
+    // Second call: reuses cached Bearer token in mcp_logins without another jwt-bearer exchange.
+    let second_call = stdout(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "ema_erp", "whoami", "--json", "{}"],
+        )
+        .success(),
+    );
+    assert!(second_call.contains("ema-erp verified steven@example.com"));
+    assert_eq!(ema_server.observed_jwt_bearers().len(), 1);
+
+    // Expire token on the MCP server (triggers HTTP 401): instrukt automatically signs a fresh
+    // ID-JAG assertion (new jti), exchanges for a new Bearer token, and completes the tool call.
+    ema_server.expire_all_tokens();
+    let third_call = stdout(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "ema_erp", "whoami", "--json", "{}"],
+        )
+        .success(),
+    );
+    assert!(third_call.contains("ema-erp verified steven@example.com"));
+    let observed_2 = ema_server.observed_jwt_bearers();
+    assert_eq!(observed_2.len(), 2);
+    assert_ne!(
+        observed_2[0].jti, observed_2[1].jti,
+        "renewed ID-JAG assertion must carry a fresh jti"
+    );
+
+    drop(receiver);
 }

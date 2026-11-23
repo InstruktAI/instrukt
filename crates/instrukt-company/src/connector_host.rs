@@ -1408,6 +1408,7 @@ mod tests {
         let sender = Sender {
             name: "Ada".into(),
             email: None,
+            is_admin: false,
         };
         assert_eq!(
             next_record(Admission::Admitted(sender.clone())),

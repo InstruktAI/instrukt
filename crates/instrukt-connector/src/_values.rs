@@ -51,6 +51,9 @@ pub struct Incoming {
     pub sender: String,
     pub written_at: Timestamp,
     pub text: String,
+    /// Whether the conversation is a direct message rather than a channel or group.
+    #[serde(default)]
+    pub is_direct: bool,
 }
 
 /// A provider page and the continuation for the next request.
@@ -97,6 +100,7 @@ pub struct ReadBackError {
 pub struct Sender {
     pub name: String,
     pub email: Option<String>,
+    pub is_admin: bool,
 }
 
 /// The clock a kind keeps its provider's waits by.

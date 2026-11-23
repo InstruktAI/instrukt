@@ -217,8 +217,8 @@ fn retain_in(
         )
         .map_err(state::sql(&path))?;
     tx.execute(
-            "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT DO NOTHING",
+            "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text,is_direct)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT DO NOTHING",
             params![
                 company.as_str(),
                 incoming.connector,
@@ -229,7 +229,8 @@ fn retain_in(
                 incoming.written_at.to_string(),
                 now.to_string(),
                 Stage::Received.as_str(),
-                incoming.text
+                incoming.text,
+                i32::from(incoming.is_direct)
             ],
         )
         .map_err(state::sql(&path))
@@ -301,8 +302,8 @@ pub fn admitted(
 ) -> Result<(), ConversationError> {
     RunnerState::new(home).write::<_, StateError>(|tx| {
         tx.execute(
-            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,admitted_at=?8,admission_position=(SELECT coalesce(max(admission_position),0)+1 FROM conversation_messages),failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
-            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str(), now.to_string()],
+            "UPDATE conversation_messages SET sender_name=?5,sender_email=?6,sender_is_admin=?9,admitted_at=?8,admission_position=(SELECT coalesce(max(admission_position),0)+1 FROM conversation_messages),failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND state=?7 AND sender_name IS NULL",
+            params![company.as_str(), connector, unread.conversation, unread.message, sender.name, sender.email, Stage::Received.as_str(), now.to_string(), i32::from(sender.is_admin)],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
@@ -664,14 +665,21 @@ pub fn captured(
     let row = state
         .read(|conn, path| {
             conn.query_row(
-                "SELECT sender_name,written_at FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
+                "SELECT sender_name,written_at,sender_is_admin,is_direct FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
                 params![company.as_str(), connector, unread.conversation, unread.message],
-                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i32>(2)? != 0,
+                        r.get::<_, i32>(3)? != 0,
+                    ))
+                },
             )
             .map_err(state::sql(path))
         })?
         .ok_or_else(|| ConversationError::Refused("the received message is gone".into()))?;
-    let (name, written_at) = row;
+    let (name, written_at, is_admin, is_direct) = row;
     let name = name
         .ok_or_else(|| ConversationError::Refused("the message's sender is not admitted".into()))?;
     let written_at: Timestamp = written_at
@@ -681,6 +689,8 @@ pub fn captured(
         connector,
         &unread.conversation,
         &name,
+        is_admin,
+        is_direct,
         written_at,
         text,
         &Accompanying::default(),
@@ -1091,10 +1101,13 @@ fn lock(home: &Home, c: &Conversation) -> Result<instrukt_core::fsx::LockGuard, 
 /// One addressed message framed for its own turn: the context envelope and
 /// the member envelope naming its sender, sharing one fresh boundary token
 /// that occurs nowhere in what they frame.
+#[allow(clippy::too_many_arguments)]
 fn framed(
     connector: &str,
     conversation: &str,
     sender: &str,
+    is_admin: bool,
+    is_direct: bool,
     written_at: Timestamp,
     text: &str,
     accompanying: &Accompanying,
@@ -1122,6 +1135,8 @@ fn framed(
             connector,
             conversation,
             sender,
+            is_admin,
+            is_direct,
             Some(written_at),
             &token,
             text
@@ -1300,7 +1315,7 @@ fn prepare_delivery(
     };
     let row = state.read(|conn, path| {
         conn.query_row(
-            "SELECT context_json,sender_name,written_at,coalesce(json_extract(context_json,'$.unread'),0)=1 FROM conversation_messages
+            "SELECT context_json,sender_name,written_at,coalesce(json_extract(context_json,'$.unread'),0)=1,sender_is_admin,is_direct FROM conversation_messages
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
             params![
                 c.company.as_str(),
@@ -1314,12 +1329,15 @@ fn prepare_delivery(
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, bool>(3)?,
+                    row.get::<_, i32>(4)? != 0,
+                    row.get::<_, i32>(5)? != 0,
                 ))
             },
         )
         .map_err(state::sql(path))
     })?;
-    let Some((Some(captured), Some(sender), written_at, incomplete)) = row else {
+    let Some((Some(captured), Some(sender), written_at, incomplete, is_admin, is_direct)) = row
+    else {
         return Ok(Some(next.clone()));
     };
     let mut accompanying: Accompanying = serde_json::from_str(&captured)?;
@@ -1380,6 +1398,8 @@ fn prepare_delivery(
         &c.connector,
         &c.conversation,
         &sender,
+        is_admin,
+        is_direct,
         written_at,
         text,
         &accompanying,
@@ -3922,7 +3942,7 @@ pub fn speaker(
     let row = db
         .conn()
         .query_row(
-            "SELECT sender, sender_name, sender_email FROM conversation_messages
+            "SELECT sender, sender_name, sender_email, sender_is_admin, is_direct FROM conversation_messages
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND boundary=?4",
             [&company, &connector, &conversation, &boundary],
             |r| {
@@ -3930,20 +3950,25 @@ pub fn speaker(
                     r.get::<_, Option<String>>(0)?,
                     r.get::<_, Option<String>>(1)?,
                     r.get::<_, Option<String>>(2)?,
+                    r.get::<_, i32>(3)? != 0,
+                    r.get::<_, i32>(4)? != 0,
                 ))
             },
         )
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let (identity, name, email) = row.ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
-        cause: "the turn's addressed message is not one this conversation delivered".into(),
-    })?;
+    let (identity, name, email, is_admin, is_direct) =
+        row.ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
+            cause: "the turn's addressed message is not one this conversation delivered".into(),
+        })?;
     Ok(Some(instrukt_runner::mcp::Speaker {
         name: name
             .or_else(|| identity.clone())
             .unwrap_or_else(|| "an unnamed sender".to_owned()),
         identity,
         email: email.filter(|email| !email.trim().is_empty()),
+        is_admin,
+        is_direct,
     }))
 }
 

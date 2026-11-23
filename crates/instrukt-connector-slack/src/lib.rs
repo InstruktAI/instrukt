@@ -557,6 +557,9 @@ fn admission(record: &Value, me: &Me) -> Option<Sender> {
         && flag("is_restricted") == Some(false)
         && flag("is_ultra_restricted") == Some(false)
         && in_workspace;
+    let is_admin = flag("is_admin") == Some(true)
+        || flag("is_owner") == Some(true)
+        || flag("is_primary_owner") == Some(true);
     own.then(|| Sender {
         name: name(record).unwrap_or_else(|| id.to_owned()),
         email: record
@@ -565,6 +568,7 @@ fn admission(record: &Value, me: &Me) -> Option<Sender> {
             .and_then(Value::as_str)
             .filter(|email| !email.is_empty())
             .map(str::to_owned),
+        is_admin,
     })
 }
 
@@ -1075,6 +1079,7 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
         }
         _ => return Ok(None),
     };
+    let is_direct = thread.is_none();
     let incoming = Incoming {
         connector: SLACK.into(),
         conversation: match thread {
@@ -1085,6 +1090,7 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
         sender: sender.to_owned(),
         written_at: ts_time(ts).ok_or("message without a valid time")?,
         text: text("text").unwrap_or_default().to_owned(),
+        is_direct,
     };
     Ok(Some(incoming))
 }
@@ -1376,5 +1382,31 @@ mod tests {
         let local = at("http://127.0.0.1:9/api").unwrap();
         assert!(local.admits_socket("ws://127.0.0.1:10/"));
         assert!(!local.admits_socket("ws://example.com/"));
+    }
+
+    #[test]
+    fn admission_marks_workspace_admin_owner_and_primary_owner_flags() {
+        let me = Me {
+            user: "UAGENT".into(),
+            bot: Some("BAGENT".into()),
+            team: "T1".into(),
+        };
+        let base = |extra: (&str, bool)| {
+            let mut rec = json!({
+                "id": "U1",
+                "team_id": "T1",
+                "deleted": false,
+                "is_bot": false,
+                "is_restricted": false,
+                "is_ultra_restricted": false,
+                "profile": {"display_name": "Steven", "email": "steven@example.com"},
+            });
+            rec[extra.0] = json!(extra.1);
+            admission(&rec, &me).unwrap()
+        };
+        assert!(!base(("is_admin", false)).is_admin);
+        assert!(base(("is_admin", true)).is_admin);
+        assert!(base(("is_owner", true)).is_admin);
+        assert!(base(("is_primary_owner", true)).is_admin);
     }
 }
