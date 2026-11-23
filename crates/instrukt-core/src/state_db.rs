@@ -900,6 +900,11 @@ mod tests {
                 "antigravity-plain",
                 serde_json::json!({"profile": "antigravity", "kind": "antigravity", "instance": "antigravity", "model": "gemini-pro-agent", "effort": null, "options": {}}),
             ),
+            // An ACP agent may carry its own scalar `thinking_level`; only Antigravity's is renamed.
+            request(
+                "acp-thinking-level",
+                serde_json::json!({"profile": "acp", "kind": "acpRegistry", "instance": "acp", "model": "acp-model", "effort": null, "options": {"thinking_level": "high"}}),
+            ),
         ];
         for row in &stored {
             conn.execute(
@@ -944,6 +949,7 @@ mod tests {
         for (key, original) in [
             ("codex-effort", &stored[1]),
             ("antigravity-plain", &stored[2]),
+            ("acp-thinking-level", &stored[3]),
         ] {
             let kept = loaded(key);
             assert_eq!(selection(&kept), selection(original));
