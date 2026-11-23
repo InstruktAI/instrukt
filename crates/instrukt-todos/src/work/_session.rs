@@ -384,6 +384,7 @@ impl<'w> Session<'w> {
             self.take_row(index, live);
         }
         self.unjudged.remove(&id);
+        let mut withdrawing = false;
         for attempt in 0..2 {
             let mut held = None;
             if self.items[index].reflection.pending {
@@ -479,18 +480,22 @@ impl<'w> Session<'w> {
                 Swapped::Changed(None) => break,
                 Swapped::Withdrawing(live) => {
                     // The withdrawal finishes on the record it was admitted
-                    // on; the command acts on that record.
+                    // on; the command acts on that record. What the issue
+                    // asks of the todo is not decided on it: the withdrawal
+                    // may commit before an answer would be recorded.
                     self.take_row(index, *live);
-                    self.items[index].reflection.inbound = inbound;
                     self.judging = held;
+                    withdrawing = true;
                     break;
                 }
             }
         }
         // While the todo's withdrawal is open, what the issue asks of it
         // waits: the first pull after the withdrawal commits answers it as
-        // the withdrawn todo (`state-database`, `withdrawal_intents`).
-        let withdrawing = self.store.withdrawal_intent(&id)?.is_some();
+        // the withdrawn todo (`state-database`, `withdrawal_intents`). An
+        // answer recorded later is recorded only on the record it was
+        // decided on, with no withdrawal open ([`Store::retain_reply`]).
+        let withdrawing = withdrawing || self.store.withdrawal_intent(&id)?.is_some();
         if withdrawing {
             self.items[index].reflection.inbound.clear();
         }
@@ -649,13 +654,22 @@ impl<'w> Session<'w> {
             } else {
                 match _inbound::parse(comment["body"].as_str().unwrap_or_default()) {
                     Err(why) => format!("@{login}: {why}; nothing changed."),
-                    Ok(command) => self.apply_command(
+                    Ok(command) => match self.apply_command(
                         index,
                         id,
                         comment["created_at"].as_str(),
                         &login,
                         command,
-                    )?,
+                    ) {
+                        Ok(answer) => answer,
+                        Err(err) => {
+                            // Not recorded: the command stays outstanding,
+                            // and the next pull reads it again.
+                            let todo = self.items[index].record.id.clone();
+                            self.store.forget_etag(&todo)?;
+                            return Err(err);
+                        }
+                    },
                 }
             };
             if !self.answered(index, id, &answer)? {
@@ -691,7 +705,10 @@ impl<'w> Session<'w> {
     /// meanwhile: the command and those after it stay outstanding.
     fn answered(&mut self, index: usize, comment: u64, answer: &str) -> Result<bool, WorkError> {
         let id = self.items[index].record.id.clone();
-        if !self.store.retain_reply(id.as_str(), comment, answer)? {
+        if !self
+            .store
+            .retain_reply(&self.items[index].record, comment, answer)?
+        {
             return Ok(false);
         }
         let rows = std::iter::once(&mut self.items[index]).chain(self.bases.get_mut(&id));
@@ -838,9 +855,9 @@ impl<'w> Session<'w> {
                 allowed && self.items[index].record.status != TodoStatus::StructuralHolder;
             if !admitted {
                 if !self.store.ignore_label(
+                    &self.items[index].record,
                     issue.number,
                     id,
-                    self.items[index].record.id.as_str(),
                     kind,
                     login,
                     at,

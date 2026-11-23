@@ -359,39 +359,55 @@ impl Store {
         })
     }
 
-    /// Records the answered command `comment` of `todo` and its fixed
-    /// reply, without saving the item. `false`, with nothing recorded, while
-    /// the todo's withdrawal is open (`withdrawal_intents`): the command
-    /// stays outstanding for the first pull after the withdrawal commits.
-    pub fn retain_reply(&self, todo: &str, comment: u64, answer: &str) -> Result<bool, WorkError> {
-        self.write(|tx, path, _| {
-            if withdrawal_open(tx, path, todo)? {
+    /// Records the answered command `comment` of the todo whose record
+    /// `decided_on` the answer was decided on, and its fixed reply, without
+    /// saving the item. `false`, with nothing recorded, while the todo's
+    /// withdrawal is open (`withdrawal_intents`) or once its live record is
+    /// no longer `decided_on`: the command stays outstanding for a pull
+    /// that decides it on the committed record, and the issue's `ETag` is
+    /// dropped so that pull reads the command again ([`defer_inbound`]).
+    pub fn retain_reply(
+        &self,
+        decided_on: &TodoRecord,
+        comment: u64,
+        answer: &str,
+    ) -> Result<bool, WorkError> {
+        self.write(|tx, path, project| {
+            if !defer_inbound(tx, path, project, decided_on)? {
                 return Ok(false);
             }
-            retain_reply(tx, path, todo, comment, answer)?;
+            retain_reply(tx, path, decided_on.id.as_str(), comment, answer)?;
             Ok(true)
         })
     }
 
-    /// Records label action `action` on `issue` as ignored. `false`, with
-    /// nothing recorded, while the todo's withdrawal is open: the action
-    /// stays outstanding for the first pull after the withdrawal commits.
+    /// Records label action `action` on `issue` of the todo whose record
+    /// `decided_on` the action was judged on as ignored. `false`, with
+    /// nothing recorded, while the todo's withdrawal is open or once its
+    /// live record is no longer `decided_on`: the action stays outstanding
+    /// for a pull that judges it on the committed record.
     pub fn ignore_label(
         &self,
+        decided_on: &TodoRecord,
         issue: u64,
         action: u64,
-        todo: &str,
         kind: &str,
         login: &str,
         at: &str,
     ) -> Result<bool, WorkError> {
         self.write(|tx, path, project| {
-            if withdrawal_open(tx, path, todo)? {
+            if !defer_inbound(tx, path, project, decided_on)? {
                 return Ok(false);
             }
-            tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,todo,kind,login,at]).map_err(StateDbError::sqlite(path))?;
+            tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,decided_on.id.as_str(),kind,login,at]).map_err(StateDbError::sqlite(path))?;
             Ok(true)
         })
+    }
+
+    /// Drops the stored `ETag` of `id`'s issue: a command its last pull
+    /// found was not recorded, and the next pull reads it again.
+    pub fn forget_etag(&self, id: &TodoId) -> Result<(), WorkError> {
+        self.write(|tx, path, _| forget_etag(tx, path, id))
     }
 
     pub fn label_seen(&self, issue: u64, action: u64) -> Result<bool, WorkError> {
@@ -691,6 +707,7 @@ impl Store {
                         params![id.as_str()],
                     )
                     .map_err(StateDbError::sqlite(path))?;
+                    forget_etag(tx, path, id)?;
                     Ok(true)
                 }
                 None => Ok(true),
@@ -721,9 +738,14 @@ impl Store {
                 params![id.as_str()],
             )
             .map_err(StateDbError::sqlite(path))?;
+            // Commands and label actions found while the intent was open
+            // were left outstanding; the issue may not change again before
+            // the next pull, so that pull reads it unconditionally.
+            forget_etag(tx, path, id)?;
             if !live.record.is_live() {
-                return Ok(Completed::NotLive(Box::new(live)));
+                return Ok(Completed::NotLive(Box::new(written(tx, path, id)?)));
             }
+            live.reflection.etag = None;
             live.record.withdraw(at, branch, worktrees);
             live.record.revision += 1;
             live.reflection.pending = true;
@@ -1222,15 +1244,40 @@ fn save_copy_in(
     Ok(())
 }
 
-/// Whether the withdrawal of todo `todo` is open, as `conn` holds it.
-fn withdrawal_open(conn: &Connection, path: &Path, todo: &str) -> Result<bool, WorkError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM withdrawal_intents WHERE todo_id = ?1)",
-        params![todo],
-        |r| r.get(0),
+/// Whether an inbound command or label action decided on `decided_on`
+/// may be recorded inside `tx`: the todo's live row still holds that record
+/// and no withdrawal of it is open (`withdrawal_intents`). When it may not,
+/// the issue's `ETag` is dropped in the same transaction, so the next pull
+/// reads the issue's commands and actions again rather than being told
+/// nothing changed, and decides them on the committed record.
+fn defer_inbound(
+    tx: &Connection,
+    path: &Path,
+    project: &ProjectSlug,
+    decided_on: &TodoRecord,
+) -> Result<bool, WorkError> {
+    let id = &decided_on.id;
+    let current = match load_own(tx, path, project, id)? {
+        Some(live) => {
+            live.record.same_as(decided_on) && load_intent(tx, path, project, id)?.is_none()
+        }
+        None => false,
+    };
+    if !current {
+        forget_etag(tx, path, id)?;
+    }
+    Ok(current)
+}
+
+/// Drops the stored `ETag` of `id`'s issue, so its next pull reads the
+/// issue unconditionally.
+fn forget_etag(tx: &Connection, path: &Path, id: &TodoId) -> Result<(), WorkError> {
+    tx.execute(
+        "UPDATE reflections SET etag = NULL WHERE todo_id = ?1",
+        params![id.as_str()],
     )
-    .map_err(StateDbError::sqlite(path))
-    .map_err(Into::into)
+    .map_err(StateDbError::sqlite(path))?;
+    Ok(())
 }
 
 /// The withdrawal intent of `id` in `project`, as `conn` holds it.

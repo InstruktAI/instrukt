@@ -384,10 +384,21 @@ run again once it has ended. Nothing read from GitHub replaces the record while
 the row exists: a pull or pickup listing keeps the local record, and
 `instrukt todo refresh` refuses naming `instrukt todo remove <slug>`. What
 reflection learns of its own receipts is still kept: a pull that finds this
-computer's own revision on GitHub records it as confirmed, as do conflict
-marks. A pull while the row exists answers no `/instrukt` command and applies
-no label action it finds on the issue: each stays outstanding, and the first
-pull after the withdrawal commits gives it the outcome a withdrawn todo gives.
+computer's own revision on GitHub records it as confirmed, setting the revision
+comment and remote revision to the ones GitHub holds. A conflict mark is kept
+too, and confirms nothing: it marks the todo conflicted and leaves the revision
+comment and remote revision as they were. A pull while the row exists answers
+no `/instrukt` command and applies no label action it finds on the issue: each
+stays outstanding, and the first pull after the withdrawal commits gives it the
+outcome a withdrawn todo gives. An answer to a command, or a label action
+recorded as ignored, is recorded only while the todo's live record is still the
+one it was decided on and no row exists, in the transaction that records it; one
+decided on a record that changed before it was recorded, such as an active
+record the withdrawal committed over meanwhile, is not recorded and stays
+outstanding. Whenever a command or label action is left outstanding this way,
+and when the row is removed, the issue's stored `ETag` is dropped, so the next
+pull reads the issue in full rather than being told nothing changed, even when
+the issue has not changed again since.
 Dispatch admission, read back after a reservation's reflection, refuses while
 the row exists, in the same read that confirms the reservation, claim and
 status. The row is updated as each step whose outcome must be recognized
