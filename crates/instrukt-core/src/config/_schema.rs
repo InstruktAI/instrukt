@@ -428,7 +428,7 @@ fn check_shape(
             Some(entries) => {
                 let fields: Vec<_> = super::_runtime::ACTIONS
                     .iter()
-                    .map(|name| (*name, Field::NonEmptyStr))
+                    .map(|(name, _)| (*name, Field::NonEmptyStr))
                     .collect();
                 for (name, entry) in entries {
                     check_record(entry, &join(path, &key_text(name)), &[], &fields, out);
@@ -975,7 +975,22 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
     };
     match shape {
         Shape::Runtimes => {
-            json!({"type":"object","additionalProperties":record(&super::_runtime::ACTIONS, &[])})
+            // Each action is an optional, non-blank override, as validation
+            // reads it: an omitted one keeps the shipped instruction.
+            let actions: Vec<_> = super::_runtime::ACTIONS
+                .iter()
+                .map(|(name, contract)| {
+                    let action =
+                        json!({"type": "string", "pattern": "\\S", "description": contract});
+                    (*name, action)
+                })
+                .collect();
+            let mut entry = record(&[], &actions);
+            entry["description"] = json!(
+                "This machine's agent-action instructions for the named runtime; \
+                 an action left out keeps the runtime's shipped instruction."
+            );
+            json!({ "type": "object", "additionalProperties": entry })
         }
         Shape::Webhooks => super::_webhooks::editor_schema(),
         Shape::Members => json!({ "type": "object" }),
@@ -1178,6 +1193,32 @@ mod tests {
                 "{extra}"
             );
             assert!(!fits(&editor_schema(), &as_json(&doc)), "{extra}");
+        }
+    }
+
+    #[test]
+    fn the_global_schema_reads_runtime_actions_as_validation_does() {
+        let schema = layer_json_schema(LayerKind::Global);
+        let entry = |actions: &str| format!("schema_version: 1\nruntimes:\n  t3:\n{actions}");
+        let earlier: String = super::super::_runtime::ACTIONS
+            .iter()
+            .filter(|(name, _)| *name != "retire_thread")
+            .map(|(name, _)| format!("    {name}: Follow the native {name}.\n"))
+            .collect();
+        for (doc, valid) in [
+            (entry(&earlier), true),
+            (
+                entry("    retire_thread: Archive the finished thread.\n"),
+                true,
+            ),
+            (entry("    retire_thread: '  '\n"), false),
+        ] {
+            assert_eq!(
+                check(&yaml(&doc), LayerKind::Global).is_empty(),
+                valid,
+                "{doc}"
+            );
+            assert_eq!(fits(&schema, &as_json(&doc)), valid, "{doc}");
         }
     }
 
