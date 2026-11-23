@@ -14,6 +14,7 @@ revision: 3
 intent:
   Lists keep their depth everywhere.
 reflection: pending: not yet reflected
+GitHub holds a revision of this todo that this computer has not recorded; shown as this computer records it. A reflection is in progress on this computer, so that revision is judged by the next refresh or reflection of this todo that holds the reflection lock
 issue: #1
 claim: not held
 hold: none

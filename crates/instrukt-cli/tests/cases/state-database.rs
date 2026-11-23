@@ -450,8 +450,17 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     let current = String::from_utf8(current.stdout).unwrap();
     drop(writer);
 
+    // GitHub accepts the first revision, with newly assigned artifact
+    // coordinates, and the reflection stops before this computer records
+    // it.
+    drop(upload);
+    assert!(
+        fields.wait_until_received(Duration::from_secs(30)),
+        "the first command's revision never reached GitHub"
+    );
+
     // A local change to the same todo commits while the reflection is in
-    // flight.
+    // flight: its entry meets this computer's own unrecorded post.
     let second = todo(&["artifacts", "write", "list-depth", "log", SECOND])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -469,14 +478,12 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         );
     }
 
-    // GitHub now holds the first revision; this computer has not recorded
-    // it and holds a newer one. Reading the todo marks no conflict.
-    drop(upload);
-    assert!(
-        fields.wait_until_received(Duration::from_secs(30)),
-        "the first command's revision never reached GitHub"
-    );
-    let during = project.ok(["show", "list-depth"]);
+    // This computer holds a revision past the one GitHub holds and has not
+    // recorded. Reading the todo marks no conflict.
+    let during = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
+        .expect("showing the todo waited on the in-flight reflection");
+    assert!(during.status.success(), "{during:?}");
+    let during = String::from_utf8(during.stdout).unwrap();
     drop(fields);
     for command in [first, second] {
         let output = command.wait_with_output().unwrap();
