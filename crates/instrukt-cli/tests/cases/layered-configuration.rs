@@ -136,9 +136,21 @@ fn a_cloned_project_cannot_decide_which_engine_command_runs_on_a_push() {
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL8
 #[test]
 fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_settling() {
-    let env = TestEnv::new();
+    let mut env = TestEnv::new();
     let fake = t3::FakeT3::create(&env);
     write_global(&env, MACHINE);
+    // Every read below is made by an identified agent in its own session.
+    fake.seed(
+        "agent",
+        env.home(),
+        "agent",
+        "Conclude the finished todo's threads.",
+    );
+    env.set_env("T3CODE_THREAD_ID", "agent");
+    let session = fake
+        .state_dir()
+        .join(format!("{}.json", fake.native_id("agent")));
+    let before = std::fs::read(&session).unwrap();
     let body =
         "<!-- @config: runtime.finish_thread -->\n\n<!-- @config: runtime.retire_thread -->\n";
     let repo = documented::project(
@@ -191,7 +203,8 @@ fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_s
         .success();
     insta::assert_snapshot!("terminal-retirement-overridden", rendered());
 
-    assert_eq!(fake.threads().len(), 0);
+    assert_eq!(std::fs::read(&session).unwrap(), before);
+    assert_eq!(fake.threads(), [fake.native_id("agent")]);
     assert_eq!(fake.calls().len(), 0);
 }
 
