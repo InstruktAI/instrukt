@@ -85,10 +85,10 @@ classify() {
     # The instrukt-todos unit tests and the CLI's integration tests read the
     # workflow flavor.
     docs/domain/sdlc/workflow/*) known=true rust=true docs=true ;;
-    # Documents, the rendered instruction files and skills, the committed
-    # project layer and the use-case coverage baseline. Root instrukt.yaml and
-    # AGENTS.master.md belong here, not to rust: only the configuration and
-    # instruction-file checks read them; no crate compiles or tests them.
+    # Documents, the rendered instruction file and skills, the committed
+    # project layer and the use-case coverage baseline. Root instrukt.yaml
+    # belongs here, not to rust: only the configuration and instruction-file
+    # checks read it; no crate compiles or tests it.
     docs/* | skills/* | *.md | instrukt.yaml | instrukt-coverage-baseline.json)
         known=true docs=true ;;
     esac

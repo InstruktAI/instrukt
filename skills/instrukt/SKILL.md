@@ -26,9 +26,10 @@ Guide the human's request from the observed state:
 
 - **Adopt a repository:** work in the repository they name. If adopted, report
   what it publishes. Otherwise run `instrukt init` and show the files and claims.
-  If init retained `.instrukt/adopted/AGENTS.md`, review it with the human:
-  move its purpose into the master's `## Purpose` and its instructions into
-  project snippets with index entries, using `instrukt docs schema docs/project`.
+  If init retained `.instrukt/adopted/AGENTS.md`, review it with the human
+  before the first commit: move its purpose into a project snippet named first
+  in the index's `expanded`, and each instruction into a project snippet of
+  its type with its index entry, using `instrukt docs schema docs/project`.
   Remove the kept copy after that review. When adopting an existing codebase or
   repository with docs outside `docs/project/` and `sdlc` is published, run
   `sdlc/procedure/project-analysis`
