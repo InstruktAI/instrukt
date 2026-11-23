@@ -66,6 +66,7 @@ assert_cmd = "2"
 insta = { version = "1", features = ["yaml", "json", "filters"] }
 predicates = "3"
 proptest = "1"
+regress = "0.12"
 tiny_http = "=0.12.0"
 
 [workspace.lints.rust]
