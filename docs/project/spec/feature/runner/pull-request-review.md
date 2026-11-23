@@ -79,8 +79,8 @@ GitHub sources already keep.
 | Opened by the reviewer identity's own bot | None; an independent review needs an identity other than the author's (`project/instrukt/spec/feature/work/github-apps`, Role selection). |
 
 A trusted author is the repository's owner, a member of its organization, a
-collaborator, or the bot of one of the project's configured GitHub Apps,
-recognised by its verified bot identity under
+collaborator, or the bot of one of the project's configured GitHub Apps other
+than the reviewer identity's, recognised by its verified bot identity under
 `project/instrukt/spec/feature/work/github-apps`. A head is reviewed once, however
 often it is observed. A new push is a new head and is reviewed in its own right;
 an earlier head's verdict never stands in for it. The activation starts an
