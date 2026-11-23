@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS withdrawal_intents (
     branch      TEXT,
     branch_head TEXT,
     worktrees   TEXT NOT NULL,
+    workspace_released INTEGER NOT NULL DEFAULT 0,
+    branch_deleted     INTEGER NOT NULL DEFAULT 0,
     started_at  TEXT NOT NULL
 );
 ";

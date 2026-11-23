@@ -369,24 +369,41 @@ intent: it is never reflected to GitHub and never copied to another computer.
 | --- | --- |
 | `todo_id` | The withdrawn todo (`todos.id`); removed with it. |
 | `branch` | The work branch the withdrawal releases, or `NULL` when there is none. |
-| `branch_head` | The commit that branch pointed at when the withdrawal last read it, or `NULL`. It is recorded before the branch is deleted, against that commit. |
-| `worktrees` | The worktrees the withdrawal releases, each with whether it is released yet, as JSON. |
+| `branch_head` | The commit that branch pointed at when the withdrawal last read it, or `NULL`. It is recorded before the branch is deleted, against that commit, and kept as the deleted branch's recovery commit. |
+| `worktrees` | The worktrees the withdrawal releases, as JSON: each with why it belongs to the todo (`bound`, named by a session binding, or `on_branch`, with the work branch checked out), the checkout it had when the withdrawal checked it (its branch, or the commit it was detached at), and whether it is released yet. |
+| `workspace_released` | Whether the todo's empty workspace was removed. |
+| `branch_deleted` | Whether the work branch is deleted: by this withdrawal, or found gone or recreated at a commit that does not descend from `branch_head`. |
 | `started_at` | When the withdrawal began. |
 
 The row is written, after the todo's record and its working resources were
-checked, before any resource is released; the todo stays live and claimed while
-it exists. A change of the todo's record committed while the row exists is
-refused, naming its doors: `instrukt todo remove <slug>`, which completes the
-withdrawal, or the command run again once it has ended. The row is updated
-before each later step whose outcome must be recognized afterwards: the branch's
-commit before the branch is deleted, the worktrees released before a refusal
-that leaves the rest. It is removed in the transaction that commits the
-withdrawn record, with `removal` naming exactly what was released, or, when a
-refusal comes before anything was released, on its own, leaving the todo as it
-was. A withdrawal interrupted while the row exists is completed by running
-`instrukt todo remove <slug>` again, which continues from the row: what it
-names as released stays released, and a branch already deleted is recorded
-with the commit the row holds.
+checked, before any resource is released. While it exists the todo stays live,
+with its claim as it was, or unclaimed when it had none. A change of the todo's
+record committed while the row exists is refused, naming its doors:
+`instrukt todo remove <slug>`, which completes the withdrawal, or the command
+run again once it has ended. Nothing read from GitHub replaces the record while
+the row exists: a pull or pickup listing keeps the local record, and
+`instrukt todo refresh` refuses naming `instrukt todo remove <slug>`; what
+reflection learns of its own receipts and conflict marks is still kept.
+Dispatch admission, read back after a reservation's reflection, refuses while
+the row exists, in the same read that confirms the reservation, claim and
+status. The row is updated as each step whose outcome must be recognized
+afterwards happens: the branch's commit before the branch is deleted, and each
+worktree, the workspace and the branch once released. It is removed in the
+transaction that commits the withdrawn record, with `removal` naming exactly
+what was released, or on its own only when a refusal comes before anything was
+released, leaving the todo as it was. After any release a refusal keeps the row
+with everything it records, `branch_head` included.
+
+A withdrawal interrupted while the row exists is completed by running
+`instrukt todo remove <slug>` again, which continues from the row before reading
+GitHub: an action that arrived there meanwhile, such as a hold label, stays
+outstanding until the first pull after the withdrawal commits. What the row
+names as released stays released. A branch absent, or recreated at a commit
+that does not descend from `branch_head`, is recorded as deleted with the commit
+the row holds, and a recreated branch is left as it is; a branch that moved on
+to a descendant of `branch_head` is recorded at, and deleted against, the commit
+it moved to. A worktree whose checkout is no longer the one the row records is
+no longer the todo's: it is left where it is and leaves the withdrawal.
 
 ### Runner tables
 
