@@ -1,10 +1,11 @@
 ---
-description: Rendered agent instructions — a repository's `AGENTS.md` files are committed, rendered at each commit from the repository's committed content alone (a project's root file is its purpose and the rendering of `docs/project/index.yaml`, doctrine another repository publishes named by the command that reads it), a company home's file is its master's own content, a check in CI catches a commit made without the hook; and the owner of `docs/general/` renders a global file for each agent runtime the selected runtime reports as configured, in that runtime's own home, with per-runtime `agents` snippets, written whole on every sync with no record of what was written, merging exactly the entrypoint-loading settings keys.
+description: Rendered agent instructions — a repository's rendered `AGENTS.md` is committed, rendered at each commit from the repository's committed content alone (a project's root file renders `docs/project/index.yaml`, doctrine another repository publishes named by the command that reads it; a company home's file is the company's own knowledge), a check in CI catches a commit made without the hook; and the owner of `docs/general/` renders a global file for each agent runtime the selected runtime reports as configured, in that runtime's own home, with per-runtime `agents` snippets, written whole on every sync with no record of what was written, merging exactly the entrypoint-loading settings keys.
 ---
 # Agent Entrypoints — Spec
 
 ## What it is
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 Agents receive instrukt's instructions through files their programs already
 load. A repository's `AGENTS.md` files are part of the repository: instrukt
 renders them at each commit from what the commit holds and stages them into
@@ -21,9 +22,29 @@ settings key that makes a runtime load `AGENTS.md` files. Every file instrukt
 renders is its own: it is written whole each time, whatever it held, and no
 record is kept of what was written. There is no global master and there are
 no addenda.
+<!-- change:unify-index-yaml-entrypoints -->
+Agents receive instrukt's instructions through files their programs already
+load. A repository carries at most one rendered instruction file, the
+`AGENTS.md` at its root: instrukt renders it at each commit from what the
+commit holds and stages it into it, so every checkout carries it — on a
+computer without instrukt, in a linked worktree, and in a cloud agent's clone.
+A project's root `AGENTS.md` is the selection in `docs/project/index.yaml`; a
+company home's `AGENTS.md` is the selection its `docs/index.yaml` makes from
+the company's own documents. No file below a repository's root is rendered.
+The project that owns `docs/general/` also renders a user-scope global file
+for each agent runtime the user has configured, found by asking the selected
+runtime: the always-on `general` content where a native loader is
+established, one line per on-demand domain with the command that loads it,
+and that runtime's own `agents` snippets. It sets the one settings key that
+makes a runtime load `AGENTS.md` files. Every file instrukt renders is its
+own: it opens with the generated line, is written whole each time, whatever it
+held, and no record is kept of what was written. There is no master file and
+there are no addenda: each rendering has one source, an `index.yaml`.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ## Canonical fields
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 The root `AGENTS.md` also lists the project's own procedures that declare
 subscriptions, under “Configured Responsibilities”, whether or not events is
 enabled on the computer that renders it. No branding line is emitted.
@@ -34,6 +55,19 @@ generated there (`general/policy/agent-artifact-governance`). An
 rendering, naming the file: Codex reads it in place of `AGENTS.md`, so it
 hides every committed update. instrukt never deletes it, since it may be a
 person's own (`general/policy/agent-artifact-governance`).
+<!-- change:unify-index-yaml-entrypoints -->
+The root `AGENTS.md` also lists the project's own procedures that declare
+subscriptions, under “Configured Responsibilities”, whether or not events is
+enabled on the computer that renders it. No branding line is emitted.
+instrukt writes no project override instruction file, such as Codex's
+`AGENTS.override.md`: the root `AGENTS.md` is the only file generated in a
+repository (`general/policy/agent-artifact-governance`). An
+`AGENTS.override.md` at the root of a repository whose root `AGENTS.md` is
+rendered is a finding of the committed rendering, naming the file: Codex
+reads it in place of `AGENTS.md`, so it hides every committed update.
+instrukt never deletes it, since it may be a person's own
+(`general/policy/agent-artifact-governance`).
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### Rendering a selection
 
@@ -78,6 +112,7 @@ unresolved.
 
 ### Committed entrypoints
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 Every `AGENTS.md` beside an `AGENTS.master.md` in a repository — the root
 file, a nested master's file and a company home's file — is committed.
 instrukt renders it from the repository's committed content alone: the
@@ -119,9 +154,63 @@ the same bytes.
   (`general/policy/agent-artifact-governance`: the `AGENTS.md` beside a
   master is instrukt's; what a person writes into it by hand is replaced at
   the next commit, and a person's own instructions belong in documentation).
+<!-- change:unify-index-yaml-entrypoints -->
+A repository's rendered `AGENTS.md` is committed, and it stands at the
+repository's root, where the repository holds its entry index:
+`docs/project/index.yaml` in a project, `docs/index.yaml` in a company home.
+instrukt renders it from the repository's committed content alone: that index
+and the documentation the repository holds. Nothing from the computer enters
+that rendering — not the documentation other repositories publish, not the
+configuration layers, not the environment — so two computers rendering the
+same content with the same instrukt release write the same bytes.
+
+- **The generated line.** Every file instrukt renders opens with one line, an
+  HTML comment beginning `<!-- Generated by instrukt`, saying the file is
+  generated from the documentation its `index.yaml` selects and that changes
+  go there. A file is instrukt's rendering only while its first line is such
+  a comment; what follows those words is the wording of the release that
+  wrote the file, so a rendering of any release is recognised.
+- **What the repository holds is inlined.** A snippet in the closure of a
+  rendered selection is rendered in full when it belongs to a position the
+  repository holds: its own `docs/project/`, and `docs/general/` or a
+  `docs/domain/<x>/` in its own tree.
+- **What another repository publishes is named, not copied.** A required
+  read of a snippet whose position the repository does not hold is rendered
+  as one reference line, its id followed by `instrukt docs get <id>
+  --closure`; a bare-domain read the repository does not hold, as the domain's
+  name followed by `instrukt docs get --domain <x>`. The line carries nothing
+  read from outside the repository: no description, no closure.
+- **No configured value.** A `@config` directive in a document a committed
+  rendering holds in full is a finding naming the document; the door is to
+  list that snippet instead, so it is read on demand where `instrukt docs
+  get` resolves the value. `@exec`, `@include` and a reference left for an
+  agent program to resolve are findings as everywhere
+  (`general/policy/agent-artifact-governance`: a reference a rendering would
+  leave is a finding, and a committed `AGENTS.md` with one keeps its previous
+  content).
+- **Written whole.** A rendering is written over whatever the root
+  `AGENTS.md` holds, a file a person wrote included; `instrukt init` keeps a
+  copy of a hand-written root file first
+  (`project/instrukt/spec/feature/repository/project-initialization`;
+  `general/policy/agent-artifact-governance`: the rendered `AGENTS.md` is
+  instrukt's; what a person writes into it by hand is replaced at the next
+  commit, and a person's own instructions belong in documentation).
+- **One file, at the root.** No `AGENTS.md` below the repository's root is
+  rendered. One there that is instrukt's rendering is removed; any other is
+  left as it is. A root `AGENTS.md` that is instrukt's rendering in a
+  repository without its entry index is removed likewise.
+- **No master.** instrukt reads no `AGENTS.master.md`. One anywhere in the
+  repository is a finding naming it and where its content goes: a project's
+  purpose and instructions into snippets `docs/project/index.yaml` selects, a
+  company's knowledge into documents `docs/index.yaml` selects, the file then
+  deleted. While a master remains, the `AGENTS.md` beside it is left as it
+  is, so what an earlier release rendered from it stays until its content has
+  moved.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### Project entrypoints
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **The root master.** `AGENTS.master.md` at the repository root is the
   project's authored entry. It holds only `## Purpose`. A root master carrying
   `## Required reads` is a finding, naming the master and
@@ -137,6 +226,21 @@ the same bytes.
 - **Nested masters.** Every other `AGENTS.master.md` renders into the
   `AGENTS.md` beside it, from its own content with its required reads as
   above; it receives no project selection and no procedure lines.
+<!-- change:unify-index-yaml-entrypoints -->
+- **The entry index.** A project's root `AGENTS.md` is rendered from
+  `docs/project/index.yaml`
+  (`project/instrukt/spec/feature/docs/position-index`). The project's purpose
+  is a snippet like any other; by convention it is the first id in `expanded`.
+- **The root `AGENTS.md`**: the generated line, then the rendering of
+  `docs/project/index.yaml` (`expanded`, then `listed`, then the project's
+  triggered procedures), as above, then the configured responsibilities. An
+  index that selects nothing, in a project with no triggered procedure and no
+  configured responsibility, renders the generated line alone.
+- **Without `docs/project/index.yaml`**, the project has no rendering, a
+  rendering of instrukt's left at its root is removed, and the rendering
+  reports a notice naming the missing file. A root `AGENTS.md` that is not
+  instrukt's rendering stays as it is.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### When a committed entrypoint is rendered
 
@@ -171,6 +275,7 @@ that workflow and its renderer belong to the shared workflows repository
 
 ### Company home entrypoint
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 A company home (`project/instrukt/spec/feature/configuration/company-homes`)
 is the checkout of the company's repository, on a computer and in a container
 alike. It holds the company's own knowledge: `AGENTS.master.md` at its root and the
@@ -277,12 +382,146 @@ the home and leaves any other there as it is.
   other line, the publisher's included, stays as it is: the hook section and
   `instrukt docs render` leave it in place, and `instrukt docs render --check`
   does not name it.
+<!-- change:unify-index-yaml-entrypoints -->
+A company home (`project/instrukt/spec/feature/configuration/company-homes`)
+is the checkout of the company's repository, on a computer and in a container
+alike. It holds the company's own knowledge: the company's documents in its
+`docs/` folder and the index `docs/index.yaml` that selects from them. Its
+committed `AGENTS.md` is that selection rendered. As instrukt renders it, it
+holds the generated line, the company passage, each `expanded` document in
+full with its required reads, and one line for each `listed` document. A
+supported runtime that the global agent files' preparation sets to load
+project instruction files (Global agent files, below) loads it from the home
+it starts in, so a session of such a runtime in the home starts with it:
+conversation sessions and event-started work alike, and an agent that checks
+the company's repository out elsewhere. The company-assistance procedure
+reaches the agent through its role
+(`project/instrukt/spec/feature/company/conversations`); it is instrukt's
+doctrine, not company knowledge. instrukt writes no other instruction file in
+the home and leaves any other there as it is.
+
+- **What makes a repository a company home.** The rendering mode comes from
+  what the working tree's root holds, tracked or not:
+  - a root `instrukt.yaml` that declares `company` is a company's settings
+    document: company rendering — the company's home, where that file is
+    present and ignored;
+  - any other root `instrukt.yaml` is the project layer: project rendering,
+    from the moment `instrukt init` writes it
+    (`project/instrukt/spec/feature/repository/project-initialization`);
+  - no root `instrukt.yaml` and a `docs/index.yaml`: company rendering — a
+    clone of the company's repository, or its CI.
+
+  A project never stands without its layer: initialization writes the layer
+  and the project's index together, and the layer is committed with the
+  project. A company's home and a clone of its repository therefore render
+  the same bytes. A root `instrukt.yaml` that cannot be read is a finding
+  naming it, handled as every finding is: the mode is never guessed from a
+  file that cannot be read (`sdlc/principle/design-fundamentals`). A company's
+  settings document tracked by mistake changes no rendering; configuration
+  validation reports the tracked file
+  (`project/instrukt/spec/feature/configuration/company-homes`).
+- **The company index.** `docs/index.yaml` holds `expanded` and `listed` and
+  no other key (`project/instrukt/spec/feature/docs/position-index`). Each
+  entry names a company document by its path relative to `docs/`. The
+  framing of a company rendering is no key of the index: the company passage
+  below is fixed, and no index replaces, extends or removes it.
+- **The company passage.** Between the generated line and the first
+  document, every company rendering instrukt writes carries one fixed
+  passage. It says where the knowledge comes from: the company's repository,
+  its `docs/index.yaml` and the Markdown documents under `docs/` that index
+  selects; that a document the rendering names by one line is read at that
+  path when the work calls for it; and that the checkout of that repository
+  at `~/.instrukt/companies/<slug>/`, `<slug>` being the company's key, is the
+  company's home, which serves the company's agents and stays on the
+  repository's default branch. It directs an agent with access to the
+  repository to improve the knowledge by editing the Markdown documents
+  (`*.md`) under `docs/`, subfolders included, and the index that selects
+  them, on a branch, in a separate worktree of the home or in a clone of the
+  repository, and to open a pull request that someone other than its author
+  reviews before it merges to the default branch, through which the change
+  reaches the company's agents: company home knowledge is authored apart from
+  the serving checkout and independently reviewed before it reaches the
+  default branch (`general/policy/documentation-discipline`). It gives
+  `company-<slug>` as the repository's conventional name, which a company's
+  repository need not carry. It says that the change is made in those
+  documents and that index alone, `AGENTS.md` and any skill published from
+  them being generated output that is left as rendered, and what each
+  document carries: a non-empty `description` in its frontmatter and what is
+  true of the company now, in the present tense, what was true before staying
+  in the repository's history (`general/procedure/doc-snippet-authoring`).
+  The path and the repository name carry `<slug>` as literal text: the
+  passage takes no company's key, names the home and no repository host or
+  organization, and is the same for every company, in a home and in a clone
+  of the repository, wherever instrukt renders it. It is owned by this spec;
+  a file the shared workflows repository's publisher writes carries that
+  publisher's own passage (Who renders it, below).
+- **The company's documents.** A company document is a Markdown file in the
+  home's `docs/` folder. A company document names another as a required read
+  by its path relative to the file that reads it. The rendering holds each
+  `expanded` document in full, in the index's order, with its own required
+  reads, each before the document that requires it and each once. After
+  them it holds one line for each `listed` document, in the index's order:
+  the document's path from the repository's root and the `description` of
+  its frontmatter. A company document has no snippet id, is not a
+  documentation position and is never published.
+- **The company's knowledge stands alone.** The index and the company's
+  documents reference only the company's own documents. An index entry, a
+  required read, or a reference in a document's text, to a snippet or a
+  domain — `general`, `sdlc` or any other — or to a file outside the home's
+  `docs/` folder is a finding naming the index or the document and the
+  reference; so is an entry or a required read whose file does not exist, or
+  that reaches its file through a symbolic link, the file's own or a folder's
+  above it, `docs/` included; so are required reads that form a cycle, named
+  by the documents in it. A reference in the text is an `@` reference in a
+  reference's shape — holding a `/` or ending in `.md` — a Markdown link to a
+  file, or a See Also entry; one naming a company document stays in the
+  text, and a bare `@word` mentions someone and is prose. `@config`, `@exec`
+  and `@include` are findings too, wherever they stand, the required reads
+  included. These hold for every document the index selects, `expanded` or
+  `listed`, and for every document their required reads reach.
+- **What the index may say.** Each of these is a finding naming
+  `docs/index.yaml` and what is wrong: a file that is no mapping of keys; a
+  key other than `expanded` and `listed`; a value that is not a list of
+  document paths; a `listed` document without a non-empty `description`; a
+  `listed` document the `expanded` documents already bring in, naming the
+  expanded document whose required reads carry it.
+  `instrukt config validate --company <name>` and `instrukt docs render` in
+  the home report every finding of the index and of the documents, and a
+  home with a finding is not rendered.
+- **Who renders it.** instrukt renders it in two places: the `pre-commit`
+  section where it is installed in the home, and `instrukt docs render` run
+  in the home or in a clone of the repository. The block order above and the
+  same bytes in a home and in a clone hold for instrukt's rendering, and
+  `instrukt docs render --check` compares the working file with that
+  rendering. The company repository's workflow on main commits an `AGENTS.md`
+  as well, rendered by the shared workflows repository's publisher with its
+  own renderer; what that file holds, and what that publisher reads, is that
+  repository's contract (`project/instrukt/policy/shared-workflows`). It
+  opens with that publisher's own first line and holds its blocks in that
+  publisher's own order, so it is not instrukt's rendering: the generated
+  line, the block order, the company passage and the removal of a rendering
+  whose index is gone are stated in this spec of the file instrukt writes,
+  and none of them of that file. The runner starts sessions in the home as it
+  stands and renders nothing there.
+- **Without `docs/index.yaml`**, the home has no rendering, and a rendering
+  of instrukt's left there is removed. An `AGENTS.md` there that opens with
+  any other line, the publisher's included, stays as it is: the hook section
+  and `instrukt docs render` leave it in place, and `instrukt docs render
+  --check` does not name it.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### Global agent files
 
 Rendered from what is published on the computer, and written only by the sync
 of the project that owns `docs/general/`, at the end of a sync that
 publishes. They are the computer's own, never committed anywhere.
+
+<!-- planned:unify-index-yaml-entrypoints -->
+Every global file opens with the generated line (Committed entrypoints,
+above), so a reader of the file sees that it is generated and where a change
+goes. Where a runtime's file format puts something of its own first, as the
+frontmatter of Cursor's rule file does, the generated line follows it.
+<!-- /planned:unify-index-yaml-entrypoints -->
 
 - **Composition**, per agent runtime, in order:
   1. `general`'s section, rendered from `docs/general/index.yaml`. Its
@@ -440,6 +679,7 @@ publishes. They are the computer's own, never committed anywhere.
 
 ## Use cases
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 ### UC-AE1: An agent that checks out a developer's project starts with what the project selected
 
 ```gherkin
@@ -453,7 +693,22 @@ And it lists the other snippet and the triggered procedure, each with the comman
 When an agent checks the repository out on a computer without instrukt
 Then it starts with that instruction file
 ```
+<!-- change:unify-index-yaml-entrypoints -->
+### UC-AE1: An agent that checks out a developer's project starts with what the project selected
 
+```gherkin
+Given a developer's project whose index selects in full a document stating the project's purpose and a snippet that requires doctrine another repository publishes, lists another snippet, and the project has a triggered procedure
+When the developer commits through instrukt's hook
+Then the commit carries one instruction file, at the repository's root, starting with the line that names it as generated
+And it holds the project's purpose and the selected snippet in full
+And it names the other repository's doctrine with the command that reads it
+And it lists the other snippet and the triggered procedure, each with the command that loads it
+When an agent checks the repository out on a computer without instrukt
+Then it starts with that instruction file
+```
+<!-- /planned-change:unify-index-yaml-entrypoints -->
+
+<!-- planned-change:unify-index-yaml-entrypoints -->
 ### UC-AE2: A developer sees native instruction delivery and explicit non-delivery for configured agent runtimes
 
 ```gherkin
@@ -477,6 +732,32 @@ And no global instruction file is written, and the developer is told which runti
 When publication runs again while the runtime can be asked
 Then every configured agent runtime with an established native loader receives the changed doctrine
 ```
+<!-- change:unify-index-yaml-entrypoints -->
+### UC-AE2: A developer sees native instruction delivery and explicit non-delivery for configured agent runtimes
+
+```gherkin
+Given a developer's runtime has several agent runtimes configured, some with homes of their own, and another agent program is installed but not configured
+And the computer publishes always-on doctrine and an on-demand domain with a description and a triggered procedure
+And the agent runtimes' settings hold the developer's own preferences
+And one configured agent runtime's global instruction file holds text another tool wrote
+When publication runs for the project that owns the always-on doctrine
+Then each configured agent runtime with an established native loader receives the always-on doctrine in full in its native format and home
+And each of those files carries the line that names it as generated
+And every configured instance without an established loader or home is named with its non-delivery reason
+And the text the other tool wrote is gone
+And always-on doctrine taken from another domain sits under that domain's heading, in the order the doctrine requires it, even where the domains interleave
+And it reads one line naming the on-demand domain, its description and the command that loads it
+And it reads the domain's triggered procedure with the command that loads it with its closure
+And each configured agent runtime that needs it is set to load project instruction files
+And every other setting the developer had is unchanged
+And the agent program that is not configured receives nothing
+But when the always-on doctrine changes and publication runs while the runtime cannot be asked
+Then the rest of the documentation is published
+And no global instruction file is written, and the developer is told which runtime could not be asked and why
+When publication runs again while the runtime can be asked
+Then every configured agent runtime with an established native loader receives the changed doctrine
+```
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### UC-AE3: A developer gives one agent runtime rules of its own
 
@@ -508,6 +789,7 @@ And the domain's snippets are still found by listing that domain
 
 ### UC-AE7: A fresh primary checkout bootstraps publication once (retired)
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 ### UC-AE8: An operator gives every agent working for a company the company's own knowledge
 
 ```gherkin
@@ -518,6 +800,18 @@ And an agent started in the home once the home holds that commit, and an agent t
 But when the operator's change names a required read of doctrine outside the company's own documents
 Then the rendering reports the master and the read, and the committed instruction file is not changed
 ```
+<!-- change:unify-index-yaml-entrypoints -->
+### UC-AE8: An operator gives every agent working for a company the company's own knowledge
+
+```gherkin
+Given an operator keeps a company's knowledge as documents in its home, which is the company's repository, with an index that selects some in full and lists others
+When the operator commits through instrukt's hook
+Then the commit carries one instruction file holding the fixed company passage, each selected document in full, and one line naming each listed document with its description
+And an agent started in the home once the home holds that commit, and an agent that checks the repository out elsewhere, each start with it
+But when the operator's change selects doctrine outside the company's own documents
+Then the rendering reports the index and the entry, and the committed instruction file is not changed
+```
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### UC-AE9: A developer's CI catches instructions a commit left stale
 
@@ -547,8 +841,23 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 
 ### UC-AE14: A developer whose agent runtimes could not be asked is told, and the next publication catches up (retired)
 
+<!-- planned:unify-index-yaml-entrypoints -->
+### UC-AE15: A developer whose repository still carries a master keeps its instructions until they move them
+
+```gherkin
+Given a developer's project in which an earlier instrukt release rendered instructions from a master at its root and from another master in a subfolder
+When the developer commits through the hook of a release that reads no master
+Then the developer is told each master is not read and where its content goes
+And the instruction files beside the masters are left as they were
+When the developer moves the content into documentation the project's index selects, deletes the masters and commits
+Then the commit carries the root instruction file rendered from the index
+And the subfolder's rendered instruction file is gone
+```
+<!-- /planned:unify-index-yaml-entrypoints -->
+
 ## Known caveats
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - Global files are never removed. The file of a runtime that is no longer
   configured, of a home an instance no longer uses, or of a project that
   stopped publishing `docs/general/` stays where it is, with the doctrine of
@@ -604,6 +913,78 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 - A start in a company home renders nothing and takes no docs lock, so it
   never waits on a sync that is publishing; it reads the `AGENTS.md` the
   home holds.
+<!-- change:unify-index-yaml-entrypoints -->
+- Global files are never removed. The file of a runtime that is no longer
+  configured, of a home an instance no longer uses, or of a project that
+  stopped publishing `docs/general/` stays where it is, with the doctrine of
+  the last sync that wrote it, until the developer deletes it.
+- A global file the developer edits is overwritten by the next sync that
+  publishes; an edit that should last belongs in documentation.
+- A committed rendering names doctrine another repository publishes by its id
+  and command. An agent where that doctrine is not published reads the
+  project's own content in full and those lines only.
+- The rendering depends on the instrukt release that renders it. A CI check
+  running another release than the developer's hook may report a difference
+  the developer's commit did not cause; CI pins the release it installs.
+- instrukt and the shared workflows repository's publisher each write a
+  company repository's `AGENTS.md` whole, and no contract makes the two
+  renderings the same bytes. The publisher
+  commits its rendering to main; the hook section stages instrukt's into the
+  commit being made; `instrukt docs render` writes instrukt's to the working
+  file, and `instrukt docs render --check` compares the working file with
+  it. In a checkout whose working file is the one the publisher committed,
+  the check names `AGENTS.md` as differing wherever the two renderings
+  differ, although no document changed. After `instrukt docs render` writes
+  the file there, the check reports no difference for `AGENTS.md` while the
+  commit still holds the publisher's file; it exits zero only where it also
+  names no other entrypoint and no finding.
+- What the shared workflows repository's publisher reads is that
+  repository's contract. A release of it that renders a company's knowledge
+  from an `AGENTS.master.md` renders nothing from a repository that holds
+  `docs/index.yaml` and no master; a company's repository moves to a
+  publisher release that reads the index in the change that removes its
+  master.
+- Between a commit made without the hook and the commit that repairs it,
+  every checkout carries the stale rendering, and a company home started from
+  it reads the previous knowledge.
+- A home a T3 instance takes only from T3's own process environment is not
+  reported to instrukt. Such an instance receives its file in the vendor's
+  default home, which the sync names; where it actually runs from another
+  home, that home's file is current only up to the last sync that could
+  write it.
+- On a T3 release newer than the pinned one, a Codex instance with an
+  overlay home and a `CODEX_HOME` in its instance environment but no home
+  setting is read as the pinned release reads it: its file is written in the
+  default home and the overlay is linked to it. Such a release takes that
+  `CODEX_HOME` as the shared home instead; when that folder holds an
+  `AGENTS.md` of its own, T3 points the overlay's link at it when it next
+  creates the provider, and the instance reads that file until the next sync
+  links it again.
+- After a sync during which the selected runtime could not be asked, the
+  global files stay as they were until the next sync of the project that owns
+  `docs/general/`: a hook trigger there, or `instrukt sync` run in it
+  (`project/instrukt/spec/feature/publication/project-publication`).
+- Native disable switches, size limits and overrides retain their own behavior.
+  A file being present does not establish that a session loaded its current bytes.
+- How a runtime combines the rendering with other instruction files in a
+  home, and whether it reads it again during a session or when it resumes
+  one, is that runtime's.
+- A company home's knowledge is the documents its `docs/index.yaml` selects
+  and the documents their required reads reach. Documentation positions
+  inside the home are not rendered or published.
+- A company home has no editor schema file for its `docs/index.yaml`, as it
+  has none for its settings document
+  (`project/instrukt/spec/feature/publication/editor-schemas`): what the
+  index may hold is what `instrukt docs render` and `instrukt config validate
+  --company` report.
+- A `listed` company document is named, not held: an agent reads it from the
+  checkout it works in. Where a runtime reads a company's knowledge from a
+  copy of `AGENTS.md` alone, without the repository, a listed document is out
+  of its reach.
+- A start in a company home renders nothing and takes no docs lock, so it
+  never waits on a sync that is publishing; it reads the `AGENTS.md` the
+  home holds.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ## See Also
 

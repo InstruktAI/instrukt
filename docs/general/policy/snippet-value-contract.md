@@ -264,6 +264,7 @@ change at the owner leaves every copy stale.
 
 Applies to all snippet authoring contexts and company home knowledge:
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - Manual snippet authoring via `general/procedure/doc-snippet-authoring`.
 - Automated authoring during `sdlc/procedure/project-analysis` via
   `sdlc/procedure/project-analysis`.
@@ -273,6 +274,17 @@ Applies to all snippet authoring contexts and company home knowledge:
   Narration) apply in full while company documents remain self-contained
   without taxonomy IDs or external doctrine references.
 - Future authoring flows (scaffolding, manual updates).
+<!-- change:unify-index-yaml-entrypoints -->
+- Manual snippet authoring via `general/procedure/doc-snippet-authoring`.
+- Automated authoring during `sdlc/procedure/project-analysis` via
+  `sdlc/procedure/project-analysis`.
+- Company home knowledge (the documents anywhere under `docs/` in a company
+  repository and the `docs/index.yaml` that selects them): the value test,
+  `general/policy/agent-facing-text`, and all anti-patterns (including
+  Narration) apply in full while company documents remain self-contained
+  without taxonomy IDs or external doctrine references.
+- Future authoring flows (scaffolding, manual updates).
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 The contract is procedural, not structural. It is enforced by the author
 applying it before drafting and by reviewers applying it during review.

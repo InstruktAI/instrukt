@@ -48,6 +48,20 @@ the project's index name only snippets of their own position.
 An index is the only one in its position. Depth comes from required reads — a
 listed overview's closure — never from nested indexes.
 
+<!-- planned:unify-index-yaml-entrypoints -->
+### The company index
+
+A company home's `docs/index.yaml` is no position's index: a company's
+documents have no snippet id and are never published. It carries the two
+selection keys, `expanded` and `listed`, and no other; its entries are the
+paths of company documents relative to `docs/`, not ids. What it may say,
+its findings and what is rendered from it are publication's contract
+(`project/instrukt/spec/feature/publication/agent-entrypoints`, Company home
+entrypoint), and `instrukt docs validate` reads no company index. In a
+project, a `docs/index.yaml` sits at no position's root and is the finding
+below.
+<!-- /planned:unify-index-yaml-entrypoints -->
+
 ### Findings
 
 Reported by `instrukt docs validate` and, through validation, by the sync that

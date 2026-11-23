@@ -31,6 +31,7 @@ check documentation before committing, and it changes nothing.
 
 ### Checks
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 | Family | A finding when |
 | --- | --- |
 | Identity | the path yields no identity (outside `docs/general/`, `docs/domain/<x>/`, `docs/project/` and `docs/third-party/`; an unknown taxonomy directory; a file directly under `docs/domain/`; a project snippet in a repository whose `instrukt.yaml` declares no `project`); a domain folder carries a reserved name (`general`, `project`); classification fields are authored in frontmatter |
@@ -44,6 +45,21 @@ check documentation before committing, and it changes nothing.
 | Pending | `delivered_by` is not a non-empty list of slugs; a companion, planned or change marker names a slug of invalid form; planned markers are inline, nested, unbalanced or overlapping |
 | Third-party | `description` missing; a `## Sources` entry that is neither a web URL nor a documentation-service identifier |
 | Directives | an `@exec` or `@include` directive in a snippet, companion, third-party doc or master, naming its command or path; a `@config` directive with a `runtime.*` path in a snippet rendered into a global agent file — reached through `docs/general/index.yaml`'s `expanded` closure or `agents`; any `@config` directive in an `AGENTS.master.md` or in a snippet the repository's committed `AGENTS.md` renders in full (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
+<!-- change:unify-index-yaml-entrypoints -->
+| Family | A finding when |
+| --- | --- |
+| Identity | the path yields no identity (outside `docs/general/`, `docs/domain/<x>/`, `docs/project/` and `docs/third-party/`; an unknown taxonomy directory; a file directly under `docs/domain/`; a project snippet in a repository whose `instrukt.yaml` declares no `project`); a domain folder carries a reserved name (`general`, `project`); classification fields are authored in frontmatter |
+| Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` appears without an explicit or subscription-default role or is malformed; obsolete `dispatch` appears; an `adr` lacks `date` or `number`; `eval` is not a boolean |
+| Procedures | a non-subscribed workflow or project procedure has a `role` absent from its `workflow/workflow.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
+| Structure | the H1 is missing, not first, or does not end with `— <Type>`; a required H2 section of the effective schema is missing; an H2 outside it appears; `See Also` is not last (`project/instrukt/spec/feature/docs/snippet-schema`) |
+| References | `## Required reads` not at H2; a Required reads entry that is not one snippet id, a same-repository link whose text is one snippet id, or one bare domain name; an id that resolves to no snippet; a bare name that is neither `general` nor a domain of the validated repository or published on the computer, or names a domain without `index.yaml`; a See Also entry starting with an id that resolves to no snippet; a reference link in Required reads or See Also whose text is not one snippet id, whose target is missing, outside the working tree or not that id's file, or whose id belongs to another repository; a snippet referenced by path (`@…`, or a path to a snippet file) outside code and these reference links; a `general` or domain snippet requiring a project snippet |
+| Required-reads hygiene | a required read already implied by the closure of another required read of the same snippet; the finding names the read that implies it |
+| Position index | as `project/instrukt/spec/feature/docs/position-index` lists |
+| Schema | a `schema.yaml` finding as `project/instrukt/spec/feature/docs/snippet-schema` lists |
+| Pending | `delivered_by` is not a non-empty list of slugs; a companion, planned or change marker names a slug of invalid form; planned markers are inline, nested, unbalanced or overlapping |
+| Third-party | `description` missing; a `## Sources` entry that is neither a web URL nor a documentation-service identifier |
+| Directives | an `@exec` or `@include` directive in a snippet, companion or third-party doc, naming its command or path; a `@config` directive with a `runtime.*` path in a snippet rendered into a global agent file — reached through `docs/general/index.yaml`'s `expanded` closure or `agents`; any `@config` directive in a snippet the repository's committed `AGENTS.md` renders in full (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 A todo slug is checked for form only. Whether it names an existing todo is
 checked as well when the `todos` module is on, by asking that module without

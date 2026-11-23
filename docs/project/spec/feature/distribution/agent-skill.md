@@ -60,6 +60,7 @@ doing on this computer, including when instrukt is not installed or not set
 up yet, and that `instrukt -h` lists the commands. Every visit runs the same
 way, whatever was done before:
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 1. **Read the state.** Run `instrukt status --json`
    (`project/instrukt/spec/feature/publication/instrukt-status`).
    When there is no binary, install it with the release installer pinned to
@@ -101,6 +102,50 @@ way, whatever was done before:
      `instrukt secrets set/generate`.
    - Anything else about instrukt: `instrukt -h` and `instrukt docs`.
 3. **Show the result** by reading `instrukt status` again.
+<!-- change:unify-index-yaml-entrypoints -->
+1. **Read the state.** Run `instrukt status --json`
+   (`project/instrukt/spec/feature/publication/instrukt-status`).
+   When there is no binary, install it with the release installer pinned to
+   the skill's `metadata.version`, then read the state. When the binary is
+   older than the skill's release, say so and offer the same pinned install.
+2. **Act on what the human asked**, against that state:
+   - **Adopt this repository.** When status reports it adopted, say so and
+     what it publishes. Otherwise run `instrukt init` and show what it wrote and
+     the claims it reports. When init kept a hand-written `AGENTS.md`
+     (`.instrukt/adopted/AGENTS.md`), go through it with the human before the
+     first commit: its purpose into a project snippet named first in the
+     index's `expanded`, each instruction into a project snippet of its type
+     with its index entry
+     (`instrukt docs schema docs/project` names the types), then remove the
+     kept copy. When adopting an existing codebase or repository with
+     documentation outside `docs/project/` and `sdlc` is published, run
+     `sdlc/procedure/project-analysis` to harvest existing docs and conventions
+     into `docs/project/` and `docs/project/index.yaml`. Leave the first commit
+     to main, which starts publication, to the human's word.
+   - **Adopt another repository.** The same, in the repository the human
+     names.
+   - **Switch on a module.** For todos, when status reports that this
+     repository's code is not on GitHub, say first that todos need the
+     project's code on GitHub, and go no further. When status reports a
+     feature the module needs unavailable on the configured runtime, name the
+     missing adapter capabilities or absent runtime choice and keep the module
+     off until a configured adapter supports it. Otherwise ask
+     what the module needs and only the human can say, write it with
+     `instrukt config patch`, check it with `instrukt config validate`, and
+     register the wake-up with `instrukt install` when the module runs
+     through the runner.
+   - **Reconfigure.** Change layered settings with `instrukt config patch`
+     in their owning layer and validate. Model selection uses the configuration
+     skill and user-owned `~/.instrukt/agents.yaml`, keyed by role; the skill
+     discovers existing ACP instances without creating provider instances.
+     The same role entries hold classes, scoped capability bundles and GitHub
+     App references. GitHub setup reuses configured Apps or creates/installs the
+     three identities through the configuration skill; author and reviewer bots
+     stay distinct. Protected instrukt secrets, including App keys, use only
+     `instrukt secrets set/generate`.
+   - Anything else about instrukt: `instrukt -h` and `instrukt docs`.
+3. **Show the result** by reading `instrukt status` again.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 The setup is an interview the agent guides. It asks the human only what
 instrukt cannot answer: which runtime to call (no code detects or chooses

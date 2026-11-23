@@ -1,5 +1,5 @@
 ---
-description: "Project initialization — `instrukt init` adopts a git repository in one idempotent step: project layer with its slug, `docs/project/` with its `index.yaml` and, when sdlc is published, a copy of sdlc's `schema.yaml`, a purpose-only root master, editor schemas with modelines, and instrukt's hook sections; it reports the claims a first sync will make and never overwrites what exists."
+description: "Project initialization — `instrukt init` adopts a git repository in one idempotent step: project layer with its slug, `docs/project/` with its `index.yaml` and, when sdlc is published, a copy of sdlc's `schema.yaml`, editor schemas with modelines, and instrukt's hook sections; it reports the claims a first sync will make and never overwrites what exists."
 ---
 # Project Initialization — Spec
 
@@ -18,6 +18,7 @@ sections.
 
 ## Canonical fields
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 Adoption replaces whole instruction files and never injects into existing
 ones. A project's root `AGENTS.md` is taken over by adoption: when a
 hand-written root `AGENTS.md` exists without a master, init writes the
@@ -26,12 +27,30 @@ content, byte for byte, at `.instrukt/adopted/AGENTS.md`, so nothing the
 developer wrote is lost while it finds its place. The master never takes that
 content: what a project's `AGENTS.md` includes comes only from
 `docs/project/index.yaml`.
+<!-- change:unify-index-yaml-entrypoints -->
+Adoption replaces whole instruction files and never injects into existing
+ones. A project's root `AGENTS.md` is taken over by adoption: when a
+hand-written root `AGENTS.md` exists in a repository that has no
+`docs/project/index.yaml` yet, init keeps the file's content, byte for byte,
+at `.instrukt/adopted/AGENTS.md`, so nothing the developer wrote is lost
+while it finds its place. What a project's `AGENTS.md` includes comes only
+from `docs/project/index.yaml`.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 Placing it is migration the adopting agent guides
 (`project/instrukt/spec/feature/distribution/agent-skill`): the file's purpose
 into the master's `## Purpose`, each instruction into a project snippet of its
 type under `docs/project/` with its entry in the index, and the kept copy
 removed once nothing in it is left unplaced.
+<!-- change:unify-index-yaml-entrypoints -->
+Placing it is migration the adopting agent guides
+(`project/instrukt/spec/feature/distribution/agent-skill`): the file's purpose
+into a project snippet named first in the index's `expanded`, each
+instruction into a project snippet of its type under `docs/project/` with its
+entry in the index, and the kept copy removed once nothing in it is left
+unplaced.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 The root `AGENTS.md` is generated from then on, and it stays committed: the
 commit that adopts the project carries its rendering
@@ -45,6 +64,7 @@ the sync of the project that owns `docs/general/` writes them whole
 
 ### What init establishes
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 | Part | Where | Written when |
 | --- | --- | --- |
 | Project layer | `instrukt.yaml` at the repository root, holding `schema_version` and `project` (the slug, from the primary worktree's folder name, normalized) with defaults | absent; an existing one is brought to the current schema version instead (`project/instrukt/spec/domain/configuration`) |
@@ -56,6 +76,18 @@ the sync of the project that owns `docs/general/` writes them whole
 | Editor schemas and modelines | `.instrukt/schemas/` and the first line of each file they describe | as `project/instrukt/spec/feature/publication/editor-schemas` |
 | Ignores | `.gitignore`: `.instrukt/` | the line is missing; it is appended, every other line kept |
 | Hook sections | the hooks directory | as `instrukt hooks install` (`project/instrukt/spec/feature/repository/hook-sections`) |
+<!-- change:unify-index-yaml-entrypoints -->
+| Part | Where | Written when |
+| --- | --- | --- |
+| Project layer | `instrukt.yaml` at the repository root, holding `schema_version` and `project` (the slug, from the primary worktree's folder name, normalized) with defaults | absent; an existing one is brought to the current schema version instead (`project/instrukt/spec/domain/configuration`) |
+| Project docs | `docs/project/` | absent |
+| Project index | `docs/project/index.yaml`, with empty `expanded` and `listed` | absent |
+| Project schema | `docs/project/schema.yaml`, a copy of the published `sdlc` domain's `schema.yaml` | absent and `sdlc` is published on the computer with a `schema.yaml` |
+| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists that is not instrukt's rendering, and the repository had no `docs/project/index.yaml` before this run |
+| Editor schemas and modelines | `.instrukt/schemas/` and the first line of each file they describe | as `project/instrukt/spec/feature/publication/editor-schemas` |
+| Ignores | `.gitignore`: `.instrukt/` | the line is missing; it is appended, every other line kept |
+| Hook sections | the hooks directory | as `instrukt hooks install` (`project/instrukt/spec/feature/repository/hook-sections`) |
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 - Refused outside a git repository's working tree.
 - Reports each part as created, completed or already present.
@@ -94,6 +126,7 @@ The report claims nothing and writes nothing; ownership is taken by the sync
 
 ## Use cases
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 ### UC-IN1: A developer adopts instrukt in their repository in one step
 
 ```gherkin
@@ -104,7 +137,20 @@ And it has a project documentation folder with an empty index and a master stati
 And instrukt's hooks are installed beside any hooks the repository had
 And nothing has been committed
 ```
+<!-- change:unify-index-yaml-entrypoints -->
+### UC-IN1: A developer adopts instrukt in their repository in one step
 
+```gherkin
+Given a developer's existing git repository with no instrukt configuration
+When the developer initializes instrukt in it
+Then the repository has a project configuration named after its primary checkout's folder
+And it has a project documentation folder with an index that selects nothing yet
+And instrukt's hooks are installed beside any hooks the repository had
+And nothing has been committed
+```
+<!-- /planned-change:unify-index-yaml-entrypoints -->
+
+<!-- planned-change:unify-index-yaml-entrypoints -->
 ### UC-IN5: A developer adopting a repository with its own agent instructions keeps what they wrote
 
 ```gherkin
@@ -118,7 +164,23 @@ Then the commit carries the rendered instruction file in its place, and the kept
 When their agent goes through the kept instructions with them
 Then each lands in the project's documentation and index, and the published instruction file carries them
 ```
+<!-- change:unify-index-yaml-entrypoints -->
+### UC-IN5: A developer adopting a repository with its own agent instructions keeps what they wrote
 
+```gherkin
+Given a developer's repository has a hand-written root agent instruction file and no instrukt configuration
+When the developer initializes instrukt in it
+Then everything the file said is kept aside for them, and the project's index selects nothing yet
+And the developer is told that the instruction file is generated from now on
+And the file itself is left as it was
+When the developer commits
+Then the commit carries the rendered instruction file in its place, and the kept copy still holds what they wrote
+When their agent goes through the kept instructions with them
+Then each lands in the project's documentation and index, and the published instruction file carries them
+```
+<!-- /planned-change:unify-index-yaml-entrypoints -->
+
+<!-- planned-change:unify-index-yaml-entrypoints -->
 ### UC-IN2: Initializing again completes an adoption without touching the developer's files
 
 ```gherkin
@@ -130,6 +192,19 @@ And the missing hooks are installed
 When the developer initializes instrukt once more
 Then nothing in the repository changes
 ```
+<!-- change:unify-index-yaml-entrypoints -->
+### UC-IN2: Initializing again completes an adoption without touching the developer's files
+
+```gherkin
+Given a developer's repository that already has its own project index, project documents and ignore file
+And instrukt's hooks are missing
+When the developer initializes instrukt in it
+Then the developer's documents and ignore lines are unchanged, and the project index is unchanged apart from its schema modeline
+And the missing hooks are installed
+When the developer initializes instrukt once more
+Then nothing in the repository changes
+```
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### UC-IN3: A developer adopting a docs repository sees what it will claim before it is published
 

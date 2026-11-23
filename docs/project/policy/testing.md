@@ -98,7 +98,7 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     request that selects Rust currently runs the unsharded workspace test suite,
     doctests, and commit, document, configuration, use-case coverage and
     instruction-file checks on both Linux and macOS. A change to documents and
-    configuration alone, root `instrukt.yaml` and `AGENTS.master.md` among them,
+    configuration alone, root `instrukt.yaml` among them,
     reaches no Rust input: Linux builds the CLI binary and runs the document,
     configuration, use-case coverage and instruction-file checks with it,
     without the workspace test suite, doctests, macOS, the dependency audit,

@@ -520,6 +520,7 @@ Missing documentation updates are **Important** findings. Missing config surface
 
 **Authority:** `general/principle/intent-first-documentation` + `general/policy/adr-discipline` + `general/policy/snippet-value-contract` (full anti-pattern list, not Narration alone) + `general/policy/referencing-doc-snippets` (citation form) + `general/policy/agent-facing-text` (reader framing) + `sdlc/policy/process-change-authority` + `sdlc/policy/language-policy-ownership`.
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 Conditional lane — fires whenever the diff touches a `docs/**` snippet,
 company home knowledge (`AGENTS.master.md` or any document anywhere under
 `docs/` in a company repository), **or any directive-text surface** (below).
@@ -531,7 +532,22 @@ code that scores free-text prose quality would itself violate
 `principle/intelligence-boundaries`, so the reviewer reads the prose and applies
 the rule. Tooling may **route** a diff into this lane by locating changed string
 literals on the surfaces named below; it never grades what those literals say.
+<!-- change:unify-index-yaml-entrypoints -->
+Conditional lane — fires whenever the diff touches a `docs/**` snippet,
+company home knowledge (any document anywhere under `docs/` in a company
+repository, or the `docs/index.yaml` that selects them), **or any
+directive-text surface** (below).
+The DoD docs lane above checks that docs _exist and reflect the change_; this
+lane checks that the changed prose is _clean_ and _the author's to write_. A
+snippet or company knowledge body states present-tense intent, facts, or
+contract — nothing else. This is a reviewer judgment, not an automated grader:
+code that scores free-text prose quality would itself violate
+`principle/intelligence-boundaries`, so the reviewer reads the prose and applies
+the rule. Tooling may **route** a diff into this lane by locating changed string
+literals on the surfaces named below; it never grades what those literals say.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 **Scope.** Audit the **changed regions** (added/modified lines and their enclosing
 section), the snippet's **frontmatter**, and any **newly-added or delivered**
 planned block (`&lt;!-- planned:slug --&gt;`), planned-change block
@@ -545,6 +561,21 @@ re-audit unchanged regions of a snippet the diff merely touched elsewhere —
 pre-existing narration outside the change is not this change's finding. A
 delivered planned, planned-change, or companion body is fully in scope, because
 delivery touches it.
+<!-- change:unify-index-yaml-entrypoints -->
+**Scope.** Audit the **changed regions** (added/modified lines and their enclosing
+section), the snippet's **frontmatter**, and any **newly-added or delivered**
+planned block (`&lt;!-- planned:slug --&gt;`), planned-change block
+(`&lt;!-- planned-change:slug --&gt;`), or companion (`<stem>.<slug>.md`). For
+company home knowledge — including purely descriptive documents or index-only
+changes — audit the changed regions and frontmatter under the full
+`general/policy/snippet-value-contract` (including Narration) and
+`general/policy/agent-facing-text` checks without requiring taxonomy placement
+or snippet IDs. Do NOT
+re-audit unchanged regions of a snippet the diff merely touched elsewhere —
+pre-existing narration outside the change is not this change's finding. A
+delivered planned, planned-change, or companion body is fully in scope, because
+delivery touches it.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 **Use-case changes.** Apply `sdlc/procedure/feature-spec-authoring` to each
 changed representation, including a retirement. Verify the retained stakeholder

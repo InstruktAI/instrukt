@@ -5,6 +5,7 @@ description: "Repository — instrukt's git integration in a project: adopting a
 
 ## What it is
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 The repository context is where instrukt meets a project's git repository. It
 adopts a repository (`instrukt init`): the project layer, `docs/project/`
 with its index and starting schema, a purpose-only root master, the ignore
@@ -21,6 +22,24 @@ the session it ran in; the caller's declaration of human involvement; and the
 work item when given. It does not decide what a sync publishes or a
 graph contains, owns no lint or test hook, and never runs the project's own
 commands.
+<!-- change:unify-index-yaml-entrypoints -->
+The repository context is where instrukt meets a project's git repository. It
+adopts a repository (`instrukt init`): the project layer, `docs/project/`
+with its index and starting schema, the ignore
+lines, the editor schemas with their modelines (generated through
+publication's operation) and the hook sections, and it reports what the
+repository's first sync will claim on the computer. It owns instrukt's
+marked section in each git hook it uses, living beside whatever else the
+project and its tools put there, and routes each hook to the context that
+acts on it — publication after main changes, the blueprint on a push to main
+or a pull advancing main, when blueprint is enabled.
+It composes attributed commits (`instrukt repo commit`): the acting agent as
+author, using the selected App's bot noreply identity for a recorded bot role;
+the session it ran in; the caller's declaration of human involvement; and the
+work item when given. It does not decide what a sync publishes or a
+graph contains, owns no lint or test hook, and never runs the project's own
+commands.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ## Ubiquitous language
 
@@ -45,11 +64,19 @@ commands.
 :  A tool that generates the project's hook files itself and may drop
    sections it did not write.
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 **Adoption**
 :  The state `instrukt init` establishes in a repository: project layer,
    `docs/project/` with its `index.yaml` and, when sdlc is published, its
    `schema.yaml`, the root master, the ignore line for `.instrukt/`, the
    editor schemas and modelines publication generates, and the hook sections.
+<!-- change:unify-index-yaml-entrypoints -->
+**Adoption**
+:  The state `instrukt init` establishes in a repository: project layer,
+   `docs/project/` with its `index.yaml` and, when sdlc is published, its
+   `schema.yaml`, the ignore line for `.instrukt/`, the
+   editor schemas and modelines publication generates, and the hook sections.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 **Claims report**
 :  What `instrukt init` reports in a repository holding `docs/general/` or a
@@ -148,6 +175,7 @@ commands.
 
 #### Adoption (aggregate)
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **Root:** the adopted repository.
 - **Contains:** the project layer `instrukt.yaml`, `docs/project/` with its
   `index.yaml` and `schema.yaml`, the root `AGENTS.master.md`, the ignore
@@ -161,6 +189,21 @@ commands.
 - **Identifier:** the repository.
 - **Lifecycle:** created by `instrukt init`; completed by a later run when a
   part is missing.
+<!-- change:unify-index-yaml-entrypoints -->
+- **Root:** the adopted repository.
+- **Contains:** the project layer `instrukt.yaml`, `docs/project/` with its
+  `index.yaml` and `schema.yaml`, the ignore
+  line for `.instrukt/`, `.instrukt/schemas/` and the modelines, the hook
+  sections.
+- **Invariants:**
+  - Adoption never overwrites a file that exists, apart from the modeline
+    publication keeps at the top of the files it describes.
+  - Adoption publishes and claims nothing; its claims report only reads.
+  - Running it again on an adopted repository changes nothing.
+- **Identifier:** the repository.
+- **Lifecycle:** created by `instrukt init`; completed by a later run when a
+  part is missing.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 #### Attributed commit (aggregate)
 

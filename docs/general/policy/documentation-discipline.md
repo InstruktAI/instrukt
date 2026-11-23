@@ -70,6 +70,7 @@ restart, then check the logs` is directive. One string reaching a human and an
 
 ### Review and cross-project authoring
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **Governed documentation is never self-reviewed.** A doc-only commit that
   changes what a snippet establishes or directs gets an independent review via
   `sdlc/procedure/lifecycle/work/review-commits` on its worktree head before integration. Its author
@@ -108,6 +109,46 @@ restart, then check the logs` is directive. One string reaching a human and an
   and review routing. If it cannot apply them exactly, it reports the blocker and
   leaves the content unchanged. The caller removes the files once success or
   cancellation is confirmed.
+<!-- change:unify-index-yaml-entrypoints -->
+- **Governed documentation is never self-reviewed.** A doc-only commit that
+  changes what a snippet establishes or directs gets an independent review via
+  `sdlc/procedure/lifecycle/work/review-commits` on its worktree head before integration. Its author
+  classifies the change when dispatching that review:
+  - **A change to what agents are directed to do** — directive text, the
+    process layer (`sdlc/policy/process-change-authority`) included — is
+    reviewed at full depth (`general/procedure/orchestration`). The dispatch
+    carries the intent no diff shows, in its additional context or in the
+    message that hands the series to a reviewer already open: the problem the
+    change answers, the reader role whose behavior it changes and the behavior
+    wanted from that role, the human's direction wherever it shaped the change,
+    relayed faithfully, the alternatives the authoring context rejected, and
+    what the change leaves as it was.
+  - **Any other change to what a snippet establishes** is reviewed at the
+    lighter depth for the security lane's repository-privacy check and the
+    doc-hygiene lane.
+
+  Every check is reviewer judgment, never prose scanning. A typo, formatting or
+  link repair changes neither, and its author stamps it
+  (`general/policy/commits`). Company home knowledge (the documents anywhere under `docs/` in a company
+  repository and the `docs/index.yaml` that selects them) is governed
+  content: it renders into the company's committed `AGENTS.md` and published
+  skills, so its content follows `general/policy/snippet-value-contract` and
+  `general/policy/agent-facing-text`, and its changes are authored in a
+  separate worktree (keeping the serving company home checkout on the reviewed
+  default branch) and put through independent review before reaching the
+  default branch (`general/policy/commits`). Standalone descriptive prose
+  outside the snippet system and company knowledge, such as a README, is not
+  governed content; directive text is, wherever it lives.
+
+- **Cross-project doc work preserves the authoring session.** The session holding
+  the design context writes the complete content to caller-owned temporary files
+  and relays only their absolute paths and target repository paths to a session
+  rooted in the owning project. That agent applies them exactly — no rewriting,
+  summarizing, or improving — then runs its project's validation, sync, commit,
+  and review routing. If it cannot apply them exactly, it reports the blocker and
+  leaves the content unchanged. The caller removes the files once success or
+  cancellation is confirmed.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ## Rationale
 

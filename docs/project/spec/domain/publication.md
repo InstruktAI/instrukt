@@ -90,12 +90,20 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 **Retraction**
 :  Removal of what a project published before and no longer owns.
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 **Master**
 :  An `AGENTS.master.md` file in a project or a company home. A project's root master holds only the
    project's `## Purpose`; a nested master is the source of the `AGENTS.md`
    beside it. A company home's master is the company's own knowledge, rendered
    into the home's `AGENTS.md`
    (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- change:unify-index-yaml-entrypoints -->
+**Entry index**
+:  The `index.yaml` a committed entrypoint is rendered from:
+   `docs/project/index.yaml` in a project, `docs/index.yaml` in a company
+   home, which selects from the company's own documents
+   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 **Rendering**
 :  Producing one instruction file from documentation: selected snippets in
@@ -106,11 +114,20 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    names other repositories' doctrine by the command that reads it, and
    admits no configured value.
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 **Committed entrypoint**
 :  An `AGENTS.md` beside an `AGENTS.master.md` in a repository or a company
    home: committed with the repository, opening with the generated line that
    marks it as a rendering, and a function of the repository's committed
    content and the rendering instrukt release only.
+<!-- change:unify-index-yaml-entrypoints -->
+**Committed entrypoint**
+:  The `AGENTS.md` at the root of a repository that holds its entry index, a
+   project's or a company home's: committed with the repository, opening with
+   the generated line that marks it as a rendering, and a function of the
+   repository's committed content and the rendering instrukt release only. A
+   repository has at most one.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 **Configured agent runtime**
 :  An agent runtime the runtime `runner.runtime` selects reports as configured
@@ -245,6 +262,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 #### Committed entrypoint (aggregate)
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **Root:** one `AGENTS.md` beside a master, in a project's repository or a
   company home.
 - **Contains:** the rendered file, its generated line and the master it is
@@ -266,6 +284,31 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   commit, or written by `instrukt docs render`, including a repository's CI
   workflow; removed with its master
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- change:unify-index-yaml-entrypoints -->
+- **Root:** the one `AGENTS.md` at the root of a project's repository or a
+  company home.
+- **Contains:** the rendered file, its generated line and the entry index it
+  is rendered from.
+- **Invariants:**
+  - A function of the repository's committed content and the rendering
+    instrukt release: nothing published on the computer, no configuration
+    layer and no environment enters it.
+  - Changes only in a commit, or in the working tree through
+    `instrukt docs render`; no sync, checkout, start or tick writes it.
+  - Written over whatever the file holds; removed, when its entry index no
+    longer exists, only while it is instrukt's rendering.
+  - At most one per repository, at its root; a rendering of instrukt's below
+    the root is removed.
+  - A company home's rendering is the selection its index makes from the
+    company's own documents and references nothing outside them.
+  - It has no published commit, no claim and no index entry, and belongs to
+    no project's published part.
+- **Identifier:** the file's path in its repository or home.
+- **Lifecycle:** rendered and staged by the `pre-commit` section at each
+  commit, or written by `instrukt docs render`, including a repository's CI
+  workflow; removed with its entry index
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### Domain events emitted
 

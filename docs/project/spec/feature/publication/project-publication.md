@@ -84,7 +84,7 @@ everything a forced one did.
   session. A `runtime.*` path in a rendered output is a validation finding,
   since publication has no session to resolve it against; any other path that
   cannot be resolved fails the sync. Publication runs no command: an `@exec`
-  directive in a published snippet or master is a validation finding, and
+  directive in a published snippet is a validation finding, and
   sync refuses and names the file.
 - Rendering never inlines a pending snippet and drops planned material, so
   rendered outputs carry the current contract only.
@@ -217,6 +217,7 @@ Then its publication is refused and names the domain and its owner
 And the documentation of both projects is as it was before
 ```
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 ### UC-PUB3: A developer retracts retired documentation
 
 ```gherkin
@@ -229,6 +230,17 @@ And the rendered agent instructions of the deleted master are gone
 And instructions rendered from masters that still exist are unchanged
 And another project's published documentation is unchanged
 ```
+<!-- change:unify-index-yaml-entrypoints -->
+### UC-PUB3: A developer retracts retired documentation
+
+```gherkin
+Given a developer's project whose published documentation includes a snippet and a domain
+When the developer deletes the snippet, removes the domain and commits to main
+And publication runs for the project
+Then the published corpus and index no longer contain the retired snippet or domain
+And another project's published documentation is unchanged
+```
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### UC-PUB4: Publishing again restores what is missing without a new commit
 
