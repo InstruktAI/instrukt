@@ -1,7 +1,8 @@
 ---
 eval: true
-description: Commitizen format, attribution, when to commit. Atomic commits, hooks
-  verify quality.
+description: 'Worktree-only authoring (main has one writer: the integrator), committing
+  via `instrukt repo commit` with Commitizen format and provenance, commit-first autonomy,
+  and author-decided post-commit independent review routing.'
 visibility: public
 ---
 
@@ -84,7 +85,7 @@ All Committizen types are allowed.
   the diff touches never decides that review is owed. Review is technical
   stewardship, never a human ratification step. Removing a live check or branch
   changes logic and owes review. Mechanical changes require green CI only.
-  This author-decided routing is always loaded through the general baseline;
+  This author-decided routing is listed in the general baseline (loaded on demand or through procedure required reads);
   it adds no checkpoint gate.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 
