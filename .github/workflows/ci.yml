@@ -302,8 +302,13 @@ jobs:
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
+      # rust-cache hashes member manifests and Cargo.lock but not the virtual root
+      # Cargo.toml that sets the dependency opt-level. Without a new key this job
+      # matches its opt-level 0 cache, rebuilds every dependency and saves nothing.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
+        with:
+          key: dev-opt2
       - name: Read pinned test tools
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
         id: test-tools
@@ -333,8 +338,13 @@ jobs:
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
+      # rust-cache hashes member manifests and Cargo.lock but not the virtual root
+      # Cargo.toml that sets the dependency opt-level. Without a new key this job
+      # matches its opt-level 0 cache, rebuilds every dependency and saves nothing.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
+        with:
+          key: dev-opt2
       - name: Read pinned test tools
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
         id: test-tools
