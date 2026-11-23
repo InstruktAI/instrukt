@@ -170,10 +170,15 @@ fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_s
 
     repo.write(
         "instrukt.yaml",
-        "schema_version: 1\nproject: demo\nruntimes:\n  t3:\n    retire_thread: Delete the thread and its transcript.\n",
+        &format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nruntimes:\n  t3:\n    retire_thread: Delete the thread and its transcript.\n"
+        ),
     );
     let refused = env.run(repo.path(), ["config", "validate"]).failure();
-    insta::assert_snapshot!(stdout(&env, &refused), @"");
+    insta::assert_snapshot!(
+        stdout(&env, &refused),
+        @"[TMP]/demo/instrukt.yaml: runtimes: not permitted in the project layer (global layer only)"
+    );
     assert_eq!(rendered(), shipped);
 
     write_global(

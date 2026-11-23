@@ -150,7 +150,7 @@ impl std::fmt::Display for WorkflowCapability {
 }
 
 /// Agent action names; their execution wording lives only in configuration data.
-pub(crate) const ACTIONS: [&str; 14] = [
+pub(crate) const ACTIONS: [&str; 15] = [
     "dispatch",
     "message_child",
     "message_peer",
@@ -162,6 +162,7 @@ pub(crate) const ACTIONS: [&str; 14] = [
     "start_thread",
     "cancel_child",
     "finish_thread",
+    "retire_thread",
     "discover_environments",
     "connect_environment",
     "dispatch_remote",
