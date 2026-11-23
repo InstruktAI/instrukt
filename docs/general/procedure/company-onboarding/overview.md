@@ -31,9 +31,10 @@ Keep the two onboarding layers distinct:
   `general/procedure/company-onboarding/service-connection`, and proving
   baseline business assistance (`general/procedure/company-assistance`).
   Technical coordination for a company (`general/procedure/technical-coordinator`)
-  is a separate downstream workflow run from a direct operator session (or a
-  session whose role grants repository, MCP, and todo actions) rather than part
-  of the company's `company-agent` chat session.
+  is a separate downstream workflow run from a direct operator session (or
+  another session whose role grants repository, MCP, and todo actions and that
+  did not start from `general/procedure/company-assistance`) rather than inside
+  a company conversation started from `general/procedure/company-assistance`.
 
 A service the company works with may need setting up for the company before
 it can be connected — its accounts, its roles, its records. That is the
@@ -81,9 +82,11 @@ the services it touched, then step 10.
      services only. Technical coordination for the company
      (`general/procedure/technical-coordinator`) — and any deployment-host,
      container-runtime, or GitOps setup — is handled separately downstream in
-     a direct operator session (or a session whose role grants repository,
-     MCP, and todo actions) after baseline onboarding stands, never inside
-     baseline business onboarding or the `company-agent` conversation session.
+     a direct operator session (or another session whose role grants
+     repository, MCP, and todo actions and that did not start from
+     `general/procedure/company-assistance`) after baseline onboarding stands,
+     never inside baseline business onboarding or a company conversation
+     started from `general/procedure/company-assistance`.
 
    Then ask these, and take the answers as the company's facts:
    - What is the company called, and what key names it on this computer — a

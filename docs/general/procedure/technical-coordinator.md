@@ -1,6 +1,6 @@
 ---
-description: Act as technical coordinator in a direct operator session (or any session whose role grants repository, MCP, and todo actions) at platform level or in a company home — hold one shared technical picture across requesters and repositories, triage requests top-down through the four-lane adopt-before-build ladder, coordinate work through the SDLC todo pipeline, and communicate deliberately in human register.
-activation_trigger: 'Use in a direct operator session (at platform level or in a company home) — or another session whose role grants repository, MCP, and todo actions — when triaging technical requests or deciding whether to adopt, self-host, or build software; `company-agent` sessions stay under `general/procedure/company-assistance` and `coordinator` sessions stay under `sdlc/procedure/lifecycle/coordinate`.'
+description: Act as technical coordinator in a direct operator session (or another session whose role grants repository, MCP, and todo actions and that did not start from `general/procedure/company-assistance`) at platform level or in a company home — hold one shared technical picture across requesters and repositories, triage requests top-down through the four-lane adopt-before-build ladder, coordinate work through the SDLC todo pipeline, and communicate deliberately in human register.
+activation_trigger: 'Use in a direct operator session (at platform level or in a company home) — or another session whose role grants repository, MCP, and todo actions and that did not start from `general/procedure/company-assistance` — when triaging technical requests or deciding whether to adopt, self-host, or build software; sessions started from `general/procedure/company-assistance` stay under that procedure regardless of configured role, and `coordinator` sessions stay under `sdlc/procedure/lifecycle/coordinate`.'
 visibility: public
 ---
 
@@ -21,8 +21,9 @@ pipeline; and communicate in concise human register.
 
 ### Home-aware posture and session boundary
 
-This procedure runs in a direct operator session — or any session whose role
-grants the required repository, MCP, and todo actions — in either home scope:
+This procedure runs in a direct operator session — or another session whose
+role grants the required repository, MCP, and todo actions and that did not
+start from `general/procedure/company-assistance` — in either home scope:
 
 - **Company home** (a direct operator session working in
   `~/.instrukt/companies/<name>/` and its checked-out repositories on requests
@@ -34,15 +35,16 @@ grants the required repository, MCP, and todo actions — in either home scope:
   the host's configured repositories, published documentation, declared host
   MCP servers, and any adopted deployment domain.
 
-Connected company conversations running under
-`general/procedure/company-assistance` (role `company-agent`) keep their own
-contract; this procedure never widens a `company-agent` session's authority.
+Any connected company conversation started from
+`general/procedure/company-assistance` keeps that procedure's contract
+regardless of its connector's configured role; this procedure never widens
+such a session's authority.
 
 ## Preconditions
 
 - You are in a direct operator session — or a session whose role grants the
-  required repository, MCP, and todo actions — not a `company-agent`
-  conversation session under `general/procedure/company-assistance`.
+  required repository, MCP, and todo actions — that did not start from
+  `general/procedure/company-assistance` (regardless of configured role).
 - A technical request, integration need, architecture question, or software
   workstream has arrived (directly in this session or relayed from company or
   platform stakeholders).
@@ -168,8 +170,8 @@ contract; this procedure never widens a `company-agent` session's authority.
 
 Evaluate Lanes 1 through 4 top-down before proposing custom software, anchor
 every coordination move in the shared git-backed `docs/` and live target-repo
-`instrukt todo list`, and keep `company-agent` conversations within
-`general/procedure/company-assistance`.
+`instrukt todo list`, and leave every session started from
+`general/procedure/company-assistance` within that procedure's contract.
 
 ## See Also
 
