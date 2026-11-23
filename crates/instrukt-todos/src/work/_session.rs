@@ -446,7 +446,10 @@ impl<'w> Session<'w> {
                 self.judging = held;
                 break;
             }
-            match self.store.swap(&base, &pulled)? {
+            match self
+                .store
+                .swap(&base, &pulled, found == Some(Pulled::Landed))?
+            {
                 Swapped::Applied(row) => {
                     if found == Some(Pulled::Adopted) {
                         tracing::info!(
@@ -484,7 +487,14 @@ impl<'w> Session<'w> {
                 }
             }
         }
-        let answered = if self.items[index].reflection.conflicted {
+        // While the todo's withdrawal is open, what the issue asks of it
+        // waits: the first pull after the withdrawal commits answers it as
+        // the withdrawn todo (`state-database`, `withdrawal_intents`).
+        let withdrawing = self.store.withdrawal_intent(&id)?.is_some();
+        if withdrawing {
+            self.items[index].reflection.inbound.clear();
+        }
+        let answered = if self.items[index].reflection.conflicted || withdrawing {
             Ok(())
         } else {
             self.answer_label_actions(index)
@@ -610,7 +620,9 @@ impl<'w> Session<'w> {
                     ),
                     None => format!("@{original_login}: recorded your change request on {gate}."),
                 };
-                self.answered(index, id, &answer)?;
+                if !self.answered(index, id, &answer)? {
+                    break;
+                }
                 continue;
             }
             let write_access = if approvers.contains(&login) {
@@ -646,7 +658,9 @@ impl<'w> Session<'w> {
                     )?,
                 }
             };
-            self.answered(index, id, &answer)?;
+            if !self.answered(index, id, &answer)? {
+                break;
+            }
         }
         // Replies are posted only by the holder of the reflection lock. A
         // busy lock leaves them pending: a later flush of this project that
@@ -672,17 +686,21 @@ impl<'w> Session<'w> {
         posted
     }
 
-    /// Records command `comment` of item `index` as answered with `answer`.
-    fn answered(&mut self, index: usize, comment: u64, answer: &str) -> Result<(), WorkError> {
+    /// Records command `comment` of item `index` as answered with `answer`;
+    /// `false`, with nothing recorded, when the todo's withdrawal opened
+    /// meanwhile: the command and those after it stay outstanding.
+    fn answered(&mut self, index: usize, comment: u64, answer: &str) -> Result<bool, WorkError> {
         let id = self.items[index].record.id.clone();
-        self.store.retain_reply(id.as_str(), comment, answer)?;
+        if !self.store.retain_reply(id.as_str(), comment, answer)? {
+            return Ok(false);
+        }
         let rows = std::iter::once(&mut self.items[index]).chain(self.bases.get_mut(&id));
         for item in rows {
             if !item.reflection.commands_seen.contains(&comment) {
                 item.reflection.commands_seen.push(comment);
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Applies `amend` to item `index`'s stored reflection state and takes
@@ -819,14 +837,16 @@ impl<'w> Session<'w> {
             let admitted =
                 allowed && self.items[index].record.status != TodoStatus::StructuralHolder;
             if !admitted {
-                self.store.ignore_label(
+                if !self.store.ignore_label(
                     issue.number,
                     id,
                     self.items[index].record.id.as_str(),
                     kind,
                     login,
                     at,
-                )?;
+                )? {
+                    return Ok(());
+                }
                 continue;
             }
             let actor = Actor::GitHub {
@@ -1675,7 +1695,7 @@ impl<'w> Session<'w> {
             if !_reflect::accept_listing(&mut accepted, record, *issue, self.now) {
                 continue;
             }
-            match self.store.swap(&base, &accepted) {
+            match self.store.swap(&base, &accepted, false) {
                 Ok(
                     Swapped::Applied(row) | Swapped::Changed(Some(row)) | Swapped::Withdrawing(row),
                 ) => {
@@ -2174,7 +2194,7 @@ impl<'w> Session<'w> {
             }
         };
         result.map_err(|err| self.github_failure(err))?;
-        match self.store.swap(&base, &refreshed)? {
+        match self.store.swap(&base, &refreshed, false)? {
             Swapped::Applied(row) => self.take_row(index, *row),
             Swapped::Withdrawing(_) => return Err(withdrawing_refusal(&base.record.slug)),
             Swapped::Changed(_) => {

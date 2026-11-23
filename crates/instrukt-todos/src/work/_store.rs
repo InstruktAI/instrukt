@@ -342,11 +342,22 @@ impl Store {
     }
 
     /// Records the answered command `comment` of `todo` and its fixed
-    /// reply, without saving the item.
-    pub fn retain_reply(&self, todo: &str, comment: u64, answer: &str) -> Result<(), WorkError> {
-        self.write(|tx, path, _| retain_reply(tx, path, todo, comment, answer))
+    /// reply, without saving the item. `false`, with nothing recorded, while
+    /// the todo's withdrawal is open (`withdrawal_intents`): the command
+    /// stays outstanding for the first pull after the withdrawal commits.
+    pub fn retain_reply(&self, todo: &str, comment: u64, answer: &str) -> Result<bool, WorkError> {
+        self.write(|tx, path, _| {
+            if withdrawal_open(tx, path, todo)? {
+                return Ok(false);
+            }
+            retain_reply(tx, path, todo, comment, answer)?;
+            Ok(true)
+        })
     }
 
+    /// Records label action `action` on `issue` as ignored. `false`, with
+    /// nothing recorded, while the todo's withdrawal is open: the action
+    /// stays outstanding for the first pull after the withdrawal commits.
     pub fn ignore_label(
         &self,
         issue: u64,
@@ -355,8 +366,14 @@ impl Store {
         kind: &str,
         login: &str,
         at: &str,
-    ) -> Result<(), WorkError> {
-        self.write(|tx, path, project| {tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,todo,kind,login,at]).map_err(StateDbError::sqlite(path))?;Ok(())})
+    ) -> Result<bool, WorkError> {
+        self.write(|tx, path, project| {
+            if withdrawal_open(tx, path, todo)? {
+                return Ok(false);
+            }
+            tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,todo,kind,login,at]).map_err(StateDbError::sqlite(path))?;
+            Ok(true)
+        })
     }
 
     pub fn label_seen(&self, issue: u64, action: u64) -> Result<bool, WorkError> {
@@ -434,9 +451,17 @@ impl Store {
     /// judged against `base`, only while the live row still equals `base`
     /// and no withdrawal of the todo is open (`withdrawal_intents`): a
     /// withdrawal finishes on the record it was admitted on, so nothing
-    /// read from GitHub replaces it meanwhile. A row of the identity that
-    /// belongs to another project is reported gone.
-    pub fn swap(&self, base: &LocalItem, next: &LocalItem) -> Result<Swapped, WorkError> {
+    /// read from GitHub replaces it meanwhile. A pull that recognized this
+    /// computer's own revision on GitHub (`landed`) still records that
+    /// receipt on the live row ([`receipt`]), so the withdrawal's revision
+    /// is reflected on top of it. A row of the identity that belongs to
+    /// another project is reported gone.
+    pub fn swap(
+        &self,
+        base: &LocalItem,
+        next: &LocalItem,
+        landed: bool,
+    ) -> Result<Swapped, WorkError> {
         let id = &base.record.id;
         self.write(|tx, path, project| {
             let live = load_own(tx, path, project, id)?;
@@ -446,7 +471,11 @@ impl Store {
             if let Some(live) = live
                 && load_intent(tx, path, project, id)?.is_some()
             {
-                return Ok(Swapped::Withdrawing(Box::new(live)));
+                if !landed {
+                    return Ok(Swapped::Withdrawing(Box::new(live)));
+                }
+                save_in(tx, path, &receipt(&live, next))?;
+                return Ok(Swapped::Withdrawing(Box::new(written(tx, path, id)?)));
             }
             save_in(tx, path, next)?;
             Ok(Swapped::Applied(Box::new(written(tx, path, id)?)))
@@ -1053,6 +1082,22 @@ pub(crate) fn merge_reflection(
     next
 }
 
+/// What a pull that recognized this computer's own revision on GitHub as
+/// `pulled` leaves on the `live` row while the todo's withdrawal is open:
+/// the live record, with the artifact values the pull learned attached to
+/// the matching versions, confirmed at the revision comment and revision
+/// GitHub holds. Nothing else the pull read replaces the live row; its
+/// `ETag` is not kept, so the issue's commands are read again after the
+/// withdrawal commits.
+pub(crate) fn receipt(live: &LocalItem, pulled: &LocalItem) -> LocalItem {
+    let mut next = live.clone();
+    learn(&mut next.record, &pulled.record);
+    next.reflection.record_comment = pulled.reflection.record_comment;
+    next.reflection.remote_revision = pulled.reflection.remote_revision;
+    next.reflection.refreshed_at = pulled.reflection.refreshed_at;
+    next
+}
+
 /// `item` as its row stores it: commands found on the last pull are never
 /// stored.
 pub(crate) fn stored(item: &LocalItem) -> LocalItem {
@@ -1155,6 +1200,17 @@ fn save_copy_in(
     )
     .map_err(StateDbError::sqlite(path))?;
     Ok(())
+}
+
+/// Whether the withdrawal of todo `todo` is open, as `conn` holds it.
+fn withdrawal_open(conn: &Connection, path: &Path, todo: &str) -> Result<bool, WorkError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM withdrawal_intents WHERE todo_id = ?1)",
+        params![todo],
+        |r| r.get(0),
+    )
+    .map_err(StateDbError::sqlite(path))
+    .map_err(Into::into)
 }
 
 /// The withdrawal intent of `id` in `project`, as `conn` holds it.
@@ -2360,5 +2416,24 @@ mod tests {
             .map(|v| v.remote)
             .collect();
         assert_eq!(remotes, vec![Some(1), Some(2), None]);
+    }
+
+    #[test]
+    fn a_receipt_of_this_computer_s_own_post_confirms_the_live_record_and_replaces_nothing_else() {
+        let mut live = item(2, &["started", "joined"]);
+        live.reflection.pending = true;
+        live.reflection.etag = Some("before".into());
+        let mut pulled = learned(live.clone(), 12);
+        pulled.reflection.pending = true;
+        pulled.reflection.etag = Some("after".into());
+        pulled.reflection.refreshed_at = Some(Timestamp::from_second(9).unwrap());
+        let next = receipt(&live, &pulled);
+        assert_eq!(next.record.revision, 2);
+        assert_eq!(next.record.artifacts[0].address, Some(7));
+        assert_eq!(next.reflection.record_comment, Some(12));
+        assert_eq!(next.reflection.remote_revision, Some(2));
+        assert_eq!(next.reflection.refreshed_at, pulled.reflection.refreshed_at);
+        assert!(next.reflection.pending);
+        assert_eq!(next.reflection.etag, Some("before".into()));
     }
 }

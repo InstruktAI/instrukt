@@ -382,8 +382,12 @@ record committed while the row exists is refused, naming its doors:
 `instrukt todo remove <slug>`, which completes the withdrawal, or the command
 run again once it has ended. Nothing read from GitHub replaces the record while
 the row exists: a pull or pickup listing keeps the local record, and
-`instrukt todo refresh` refuses naming `instrukt todo remove <slug>`; what
-reflection learns of its own receipts and conflict marks is still kept.
+`instrukt todo refresh` refuses naming `instrukt todo remove <slug>`. What
+reflection learns of its own receipts is still kept: a pull that finds this
+computer's own revision on GitHub records it as confirmed, as do conflict
+marks. A pull while the row exists answers no `/instrukt` command and applies
+no label action it finds on the issue: each stays outstanding, and the first
+pull after the withdrawal commits gives it the outcome a withdrawn todo gives.
 Dispatch admission, read back after a reservation's reflection, refuses while
 the row exists, in the same read that confirms the reservation, claim and
 status. The row is updated as each step whose outcome must be recognized
