@@ -1007,12 +1007,13 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
         Shape::Runtimes => {
             // Each action is an optional, non-blank override, as validation
             // reads it: an omitted one keeps the shipped instruction.
+            let non_blank = non_blank_pattern();
             let actions: Vec<_> = super::_runtime::ACTIONS
                 .iter()
                 .map(|(name, contract)| {
                     let action = json!({
                         "type": "string",
-                        "pattern": non_blank_pattern(),
+                        "pattern": non_blank,
                         "description": contract,
                     });
                     (*name, action)
