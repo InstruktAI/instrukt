@@ -4827,7 +4827,6 @@ fn admins_only_connector_refuses_non_admin_and_uses_declared_role() {
     let assignment = conversations::conversation_assignment(
         &home,
         &instrukt_core::ids::SessionRef::parse(&format!("t3:{native_session}")).unwrap(),
-        None,
     )
     .unwrap()
     .unwrap();

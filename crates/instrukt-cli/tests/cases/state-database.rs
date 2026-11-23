@@ -411,10 +411,9 @@ fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refu
     drop(db);
 
     let session = instrukt_core::ids::SessionRef::parse("t3:legacy-conv").unwrap();
-    let assignment =
-        instrukt_company::conversations::conversation_assignment(&home, &session, None)
-            .unwrap()
-            .unwrap();
+    let assignment = instrukt_company::conversations::conversation_assignment(&home, &session)
+        .unwrap()
+        .unwrap();
     assert_eq!(assignment.role.as_str(), "company-agent");
     assert_eq!(
         assignment.company.as_ref().map(|slug| slug.as_str()),

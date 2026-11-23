@@ -4337,7 +4337,6 @@ fn status_at(home: &Home, now: Timestamp) -> Result<Status, ConversationError> {
 pub fn conversation_assignment(
     home: &Home,
     caller: &SessionRef,
-    start: Option<&instrukt_runner::assignments::RecordedStart>,
 ) -> Result<Option<instrukt_core::capabilities::Assignment>, instrukt_core::state_db::StateDbError>
 {
     let Some(db) = instrukt_core::state_db::StateRead::open(home)? else {
@@ -4346,15 +4345,8 @@ pub fn conversation_assignment(
     let row = db
         .conn()
         .query_row(
-            // The third branch admits the start the runner recorded for this
-            // conversation before its first accepted message binds the session:
-            // a first start, or a successor of the session the conversation names.
-            "SELECT company,semantic_key,NULL,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT company,semantic_key,NULL,role FROM connected_conversations WHERE semantic_key=?2 AND (session IS NULL OR session=?3)",
-            params![
-                caller.to_string(),
-                start.map(|s| &s.semantic_key),
-                start.and_then(|s| s.replaced_session.as_ref()),
-            ],
+            "SELECT company,semantic_key,NULL,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0",
+            [caller.to_string()],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,

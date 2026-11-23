@@ -581,23 +581,6 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     // defect into any project, and no other work-record write.
     insta::assert_snapshot!("company-agent-help", help(&["--help"]));
 
-    // A conversation's agent reads that same help on its first turn, before
-    // its first accepted message binds the session, under its conversation.
-    let key = "instrukt:conversation:acme:slack:C1%2F1700.1";
-    let db = state_db(&env);
-    db.execute("INSERT INTO connected_conversations(company,connector,conversation,semantic_key,source_identity) VALUES ('acme','slack','C1/1700.1',?1,'src')",[key]).unwrap();
-    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3',?1,'conversation',?1,'t3:conversation',?2,0,1)",[key,env.home().to_str().unwrap()]).unwrap();
-    let conversation = env
-        .instrukt(env.home())
-        .env("T3CODE_THREAD_ID", "conversation")
-        .args(["--help"])
-        .assert()
-        .success();
-    assert_eq!(
-        words(&String::from_utf8_lossy(&conversation.get_output().stdout)),
-        words(&help(&["--help"]).replace("assignment assistance", &format!("assignment {key}")))
-    );
-
     // An agents.yaml edited before `report` existed keeps working: its
     // company agent holds what that file gives it, and no `bug-report`.
     let file = env.instrukt_home().join("agents.yaml");

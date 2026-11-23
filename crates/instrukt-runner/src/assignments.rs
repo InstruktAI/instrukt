@@ -135,10 +135,8 @@ fn recorded_start(home: &Home, caller: &SessionRef) -> Result<Option<RecordedSta
 pub type WorkLookup =
     fn(&Home, &SessionRef, Option<&RecordedStart>) -> Result<Option<Assignment>, StateDbError>;
 /// The company owns its conversation sessions' bindings, as work owns its
-/// own: the assignment of a session one of its conversations bound, or of the
-/// recorded start of one of its conversations.
-pub type CompanyLookup =
-    fn(&Home, &SessionRef, Option<&RecordedStart>) -> Result<Option<Assignment>, StateDbError>;
+/// own: the assignment of a session one of its conversations bound.
+pub type CompanyLookup = fn(&Home, &SessionRef) -> Result<Option<Assignment>, StateDbError>;
 pub fn resolve(
     home: &Home,
     caller: &SessionRef,
@@ -149,7 +147,7 @@ pub fn resolve(
     let work = work(home, caller, start.as_ref())?;
     let standing = match standing_assignment(home, caller)? {
         Some(standing) => Some(standing),
-        None => company(home, caller, start.as_ref())?,
+        None => company(home, caller)?,
     };
     if work.is_some() && standing.is_some() {
         return Err(StateDbError::invalid(
