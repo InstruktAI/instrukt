@@ -10,9 +10,8 @@ role: diagnosis-driver
 ## Required reads
 
 - sdlc
-- [sdlc/procedure/debugging](../../debugging.md)
+- [sdlc/procedure/lifecycle/prepare/diagnose-peer](diagnose-peer.md)
 - [sdlc/policy/process-change-authority](../../../policy/process-change-authority.md)
-- [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)
 - [sdlc/policy/todo-creation-discipline](../../../policy/todo-creation-discipline.md)
 
 ## Goal
@@ -199,8 +198,8 @@ Interrogate in this order:
 3. **Ask why the trace stops at the claimed origin** rather than at an upstream cause. A
    stopping point that reflects where the investigation began, rather than where the system
    boundary is, is the most common way a located symptom passes as a mechanism. Apply the
-   debugging procedure's operation-outcome and failure-handling distinction to the claimed
-   stopping point. Challenge whether the cited contract applies to the observed conditions
+   operation-outcome and failure-handling distinction (`sdlc/procedure/lifecycle/prepare/diagnose-peer`)
+   to the claimed stopping point. Challenge whether the cited contract applies to the observed conditions
    and whether the evidence supports the diagnosis's occurrence coverage.
 4. **Challenge horizontal completeness.** When the claimed origin is a shared contract, ask
    which producers, entry paths, and consumers implement it and what evidence accounts for
@@ -269,7 +268,7 @@ confirmation record is the evidence the three conditions are read from.
   consumer within the system boundary; no sibling implementation is left unexplained.
 - The mechanism is stated as a shape decidable at one site, and the family census records
   its two searches and every site found, each marked matching, not matching, or undecided
-  (`sdlc/procedure/debugging`). A census that investigated a site's reachability, or
+  (`sdlc/procedure/lifecycle/prepare/diagnose-peer`). A census that investigated a site's reachability, or
   searched beyond its two searches, is returned to the peer to be cut back.
 - Every causal transition cites the observations that carry it, names what would falsify it,
   and bottoms out in independently auditable observation. Repeatability limits, where they
@@ -284,7 +283,7 @@ confirmation record is the evidence the three conditions are read from.
   and its diff hunk for Regression; both the introducing and the reachability change for
   Latent; the files, range, and search terms actually covered for Provenance not established.
   Any sibling damage a named commit reveals is recorded for its own triage, never folded into
-  this fix (`sdlc/procedure/debugging`, step 5).
+  this fix (`sdlc/policy/todo-creation-discipline`).
 - The root cause states its minimal causal set and its counterfactual, and prescribes no fix
   and no verification approach.
 
@@ -395,7 +394,7 @@ authorized symptom and causal scope (`sdlc/policy/process-change-authority`).
 ### The cause is a governing decision
 
 When the settled mechanism is one a governing design or decision record prescribes
-(`sdlc/procedure/debugging`, Name the mechanism), the `diagnosis` names that contract and
+(`sdlc/procedure/lifecycle/prepare/diagnose-peer`, Mechanism), the `diagnosis` names that contract and
 states whether its design's `Failure modes` already record this failure. The interrogation
 tests both claims like any other transition. A repeat makes the remedy reopen the decision
 (`sdlc/policy/preparation-artifact-quality`, Structural decisions carry architecture

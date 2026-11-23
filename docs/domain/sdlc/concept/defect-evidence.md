@@ -43,7 +43,7 @@ review — uses them.
   "Someone could" names no actor and is not a path.
 
 - **Family site** — a site a settled diagnosis's family census marks as matching
-  its mechanism (`sdlc/procedure/debugging`). It is a recorded lead and carries
+  its mechanism (`sdlc/procedure/lifecycle/prepare/diagnose-peer`). It is a recorded lead and carries
   no evidence: the diagnosis's occurrence or dangerous path stays with the site
   where it happened. A family site becomes a defect claim only on evidence of
   its own — an occurrence at that site or a dangerous path through it — against
