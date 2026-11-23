@@ -116,15 +116,13 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         }) {
             return Reply::invalid("unknown column field");
         }
-        let number = project
-            .views
-            .iter()
-            .filter_map(|v| v["number"].as_u64())
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let view = json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":input["name"],"layout":input["layout"],"filter":input["filter"].as_str().unwrap_or(""),"vertical_group_by":columns});
-        project.views.push(view.clone());
+        let view = project.add_view(
+            id,
+            input["name"].clone(),
+            input["layout"].clone(),
+            input["filter"].as_str().unwrap_or(""),
+            Value::Array(columns),
+        );
         return Reply::created(view);
     }
     let ["repos", owner, name, rest @ ..] = segs.as_slice() else {

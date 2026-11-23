@@ -19,7 +19,7 @@ pub(super) struct Project {
     public: bool,
     pub(super) fields: Vec<ProjectField>,
     items: Vec<ProjectItem>,
-    pub(super) views: Vec<Value>,
+    views: Vec<Value>,
     workflows: Vec<Value>,
 }
 
@@ -37,6 +37,28 @@ impl Project {
             views: Vec::new(),
             workflows: Vec::new(),
         }
+    }
+
+    /// Stores a new view as GitHub numbers it: one past the highest number
+    /// the project's views hold. Returns the stored view.
+    pub(super) fn add_view(
+        &mut self,
+        id: u64,
+        name: Value,
+        layout: Value,
+        filter: &str,
+        vertical_group_by: Value,
+    ) -> Value {
+        let number = self
+            .views
+            .iter()
+            .filter_map(|v| v["number"].as_u64())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let view = json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":name,"layout":layout,"filter":filter,"vertical_group_by":vertical_group_by});
+        self.views.push(view.clone());
+        view
     }
 }
 
@@ -209,14 +231,7 @@ impl FakeGitHub {
                 field_database_id(&project.fields.iter().find(|f| f.name == *name).unwrap().id)
             })
             .collect::<Vec<_>>();
-        let number = project
-            .views
-            .iter()
-            .filter_map(|v| v["number"].as_u64())
-            .max()
-            .unwrap_or(0)
-            + 1;
-        project.views.push(json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":name,"layout":layout,"filter":filter,"vertical_group_by":fields}));
+        project.add_view(id, json!(name), json!(layout), filter, json!(fields));
     }
     pub fn edit_project_view(&self, owner: &str, number: u64, name: &str, patch: &Value) {
         let mut state = self.lock();
@@ -485,15 +500,12 @@ pub(super) fn graphql(state: &mut State, input: &Value) -> Reply {
         else {
             return graphql_error("no such project");
         };
-        let number = project
-            .views
-            .iter()
-            .filter_map(|v| v["number"].as_u64())
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let view = json!({"id":id,"node_id":format!("PVTV_{id}"),"number":number,"name":vars["name"],"layout":if vars["layout"]=="BOARD_LAYOUT"{"board"}else{"table"},"filter":"","vertical_group_by":[]});
-        project.views.push(view.clone());
+        let layout = if vars["layout"] == "BOARD_LAYOUT" {
+            "board"
+        } else {
+            "table"
+        };
+        let view = project.add_view(id, vars["name"].clone(), json!(layout), "", json!([]));
         return Reply::ok(
             json!({"data":{"createProjectV2View":{"projectV2View":{"id":view["node_id"]}}}}),
         );
