@@ -50,8 +50,8 @@ meaning and the writes of the conversation tables.
   consumer holds no unrelated local write hostage. SQLite's own locking is not
   the serialization contract.
 - The state directory is resolved to its canonical location once, and the database,
-  its sidecars and every lock — writer, reflection, runner, runtime-dispatch, history
-  and conversation locks — derive from it, so a home or a state directory reached
+  its sidecars and every lock — writer, reflection, withdrawal, runner,
+  runtime-dispatch, history and conversation locks — derive from it, so a home or a state directory reached
   through a symbolic link keeps one authority. A symbolic link at the database file
   or one of its sidecars is refused, naming the door (link the home or `state/`
   instead): it alone would put one database under two lock domains
@@ -65,6 +65,13 @@ meaning and the writes of the conversation tables.
   the reflection lock. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
   before consuming it, except during status inspection.
+- A withdrawal holds the per-computer withdrawal lock
+  `~/.instrukt/state/withdrawal.lock` from before it records its intent
+  (`withdrawal_intents`) until it has committed or abandoned it. The lock tells
+  a withdrawal in progress from one that was interrupted; it is never requested
+  while the writer lock is held, and it is released before the withdrawal's
+  reflection acquires the reflection lock. A withdrawal's git and filesystem
+  work runs under it and outside the writer lock.
 - A change to a todo is computed from the record its command read and is
   written only while that record is unchanged. When another command changed it
   in between, the later write is refused whole, naming the todo and its door:
@@ -180,6 +187,9 @@ Version 34 evolves the conversation tables for named company connectors:
 `conversation_refusals` widens its `reason` check constraint to admit
 `'not_admin'` alongside `'not_own'` and `'unavailable'`, preserving all
 existing rows verbatim.
+
+Version 36 adds `withdrawal_intents` (Work tables), the durable intent of a
+withdrawal whose working resources are being released. It starts empty.
 
 ### Work tables
 
@@ -349,6 +359,34 @@ not a local item here, as the latest pickup listing read it. Key:
 
 A copy is replaced by each later pickup listing and removed when its todo
 becomes a local item or no longer appears in the listing.
+
+**`withdrawal_intents`** — a withdrawal of a local item whose working
+resources are being released (`project/instrukt/spec/feature/work/todos`,
+"Parking, withdrawal and delivery"). Key: `todo_id`. Local-only operational
+intent: it is never reflected to GitHub and never copied to another computer.
+
+| Column | Meaning |
+| --- | --- |
+| `todo_id` | The withdrawn todo (`todos.id`); removed with it. |
+| `branch` | The work branch the withdrawal releases, or `NULL` when there is none. |
+| `branch_head` | The commit that branch pointed at when the withdrawal last read it, or `NULL`. It is recorded before the branch is deleted, against that commit. |
+| `worktrees` | The worktrees the withdrawal releases, each with whether it is released yet, as JSON. |
+| `started_at` | When the withdrawal began. |
+
+The row is written, after the todo's record and its working resources were
+checked, before any resource is released; the todo stays live and claimed while
+it exists. A change of the todo's record committed while the row exists is
+refused, naming its doors: `instrukt todo remove <slug>`, which completes the
+withdrawal, or the command run again once it has ended. The row is updated
+before each later step whose outcome must be recognized afterwards: the branch's
+commit before the branch is deleted, the worktrees released before a refusal
+that leaves the rest. It is removed in the transaction that commits the
+withdrawn record, with `removal` naming exactly what was released, or, when a
+refusal comes before anything was released, on its own, leaving the todo as it
+was. A withdrawal interrupted while the row exists is completed by running
+`instrukt todo remove <slug>` again, which continues from the row: what it
+names as released stays released, and a branch already deleted is recorded
+with the commit the row holds.
 
 ### Runner tables
 

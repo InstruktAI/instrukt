@@ -46,7 +46,21 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v33),
     Step(v34),
     Step(v35),
+    Sql(V36),
 ];
+
+/// Version 36: `withdrawal_intents`, the durable intent of a withdrawal
+/// whose working resources are being released (`state-database`, "Work
+/// tables"). Local-only; never reflected.
+const V36: &str = "
+CREATE TABLE IF NOT EXISTS withdrawal_intents (
+    todo_id     TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
+    branch      TEXT,
+    branch_head TEXT,
+    worktrees   TEXT NOT NULL,
+    started_at  TEXT NOT NULL
+);
+";
 
 /// Version 35: pin `reply_mode` on `connected_conversations` at binding
 /// creation and record connector-supplied `thread` on `conversation_messages`

@@ -248,6 +248,14 @@ impl Home {
         self.state_dir().join("reflection.lock")
     }
 
+    /// `~/.instrukt/state/withdrawal.lock` — held by a withdrawal while its
+    /// recorded intent is open, so a withdrawal in progress is told apart
+    /// from an interrupted one; taken before the writer lock and never while
+    /// it is held.
+    pub fn withdrawal_lock_file(&self) -> PathBuf {
+        self.state_dir().join("withdrawal.lock")
+    }
+
     /// `~/.instrukt/state/runner.lock` — serializes runner invocations; it
     /// guards no data.
     pub fn runner_lock_file(&self) -> PathBuf {
@@ -341,6 +349,7 @@ mod tests {
             home.state_db_file(),
             home.writer_lock_file(),
             home.reflection_lock_file(),
+            home.withdrawal_lock_file(),
             home.runner_lock_file(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
