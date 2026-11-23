@@ -118,6 +118,15 @@ on configured human approval (`approvals.prd` / `approvals.task`) or while a
 (a human clarification, external input, or a peer reply), keep the claim on your
 live session or place an explicit hold (`instrukt todo update <slug> --hold --reason "..."`)
 so the runner does not re-dispatch a fresh turn on every tick.
+<!-- planned:reduce-worktree-disk-usage -->
+When parking `<slug>/work` on an idle wait after build output has already been
+created there (such as returning to a human approval gate after a kickback or
+placing an explicit hold), remove the regenerable build output created by this
+todo's work sessions and their delegates (`general/policy/shared-machine-resources`),
+leaving the clean committed tree, the todo branch and any published head intact,
+and record any removal that cannot complete as an owed obligation. This does not
+apply to a checkout still in active build or awaiting review before handoff.
+<!-- /planned:reduce-worktree-disk-usage -->
 
 ## Preconditions
 
@@ -154,12 +163,26 @@ so the runner does not re-dispatch a fresh turn on every tick.
 4. **Verify review substance before acting on verdicts.** Confirm the findings
    artifact exists, covers all applicable review lanes, and justifies clean
    approvals specifically for the target.
+<!-- planned-change:reduce-worktree-disk-usage -->
 5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, and all required approvals hold.
    Record `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
    `workflow.finalized`) and release the claim with
    `instrukt todo update {slug} --unclaim`.
+<!-- change:reduce-worktree-disk-usage -->
+5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
+   no workspace attempt is active, `origin/<slug>/work` matches the exact
+   independently approved HEAD commit SHA, and all required approvals hold.
+   Record `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
+   `workflow.finalized`). Because `<slug>/work` now waits for integration,
+   remove the regenerable build output created there by this todo's work
+   sessions and their delegates (`general/policy/shared-machine-resources`),
+   leaving the clean committed tree, the todo branch and the published head
+   intact as bound by the readiness record; if removal cannot complete, record
+   it as an owed obligation without reopening the handoff. Then release the
+   claim with `instrukt todo update {slug} --unclaim`.
+<!-- /planned-change:reduce-worktree-disk-usage -->
 
 ## Outputs
 

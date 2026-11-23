@@ -21,13 +21,14 @@ visibility: 'public'
   ends, removes the regenerable output its finished delegates left behind.
 <!-- planned:reduce-worktree-disk-usage -->
 - **Waiting work checkouts drop their build output.** When a todo's work
-  checkout transitions into a wait — either after its candidate is handed to
-  integration or after the todo is kicked back to preparation — the session
-  that owns the regenerable build output created there removes that output at
-  the transition. The clean committed tree, the todo branch and any published
-  head remain intact; if work later resumes in that checkout, the next build
-  regenerates what it needs. A preparation checkout awaiting review is not
-  covered by this rule.
+  checkout transitions into an idle wait — after its candidate is handed to
+  integration, or when the orchestrator parks or holds the todo after build
+  output was created there — the session that owns the regenerable build output
+  created there removes that output at the transition. The clean committed
+  tree, the todo branch and any published head remain intact; if work later
+  resumes in that checkout, the next build regenerates what it needs. Active
+  builds and checkouts awaiting review before handoff are not covered by this
+  rule.
 <!-- /planned:reduce-worktree-disk-usage -->
 - **Measure before building in a new place.** Before a build, install or full
   test run in a checkout that has no build output yet, check the volume's free
@@ -52,8 +53,8 @@ Output is regenerable, so removing it costs only a rebuild; keeping it costs
 everyone on the machine.
 
 <!-- planned:reduce-worktree-disk-usage -->
-Once a work checkout hands off to integration or returns to preparation, it
-sits idle for the full duration of downstream integration or re-preparation
+Once a todo's work checkout hands off to integration or parks on an external
+wait, it sits idle for the full duration of downstream integration or the wait
 with no live build inside it. Keeping its regenerable output turns disk usage
 into a function of every todo in flight rather than active builds, risking the
 machine's headroom floor. Dropping that output at the transition leaves
