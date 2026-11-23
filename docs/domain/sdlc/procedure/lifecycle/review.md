@@ -82,7 +82,8 @@ defective: finding defects is the lane's work.
   always apply. The invoking procedure determines whether the scope lane has a
   requirements contract to trace. The doc-hygiene lane runs whenever a doc
   snippet changes. The doc-first paradigm lane runs for an ad-hoc commit review
-  with no prepare artifacts.
+  or a fast-track lifecycle review with no prepare artifacts (and verifies no
+  contract delta was missed when preparation authored pending docs).
 - The project's focus points: walk the project's fixed entry points to its
   governing contracts (`sdlc/policy/preparation-artifact-quality`, Governing
   contracts) and take every contract that bears on the target. Each is carried

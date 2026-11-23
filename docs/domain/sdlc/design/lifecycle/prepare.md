@@ -1,5 +1,5 @@
 ---
-description: 'Prepare phase design: one driving session loads phase-scoped procedures in sequence, produces the prepare artifacts, and submits each derived artifact to an independently dispatched reviewer. PRD is the only human approval gate.'
+description: 'Prepare phase design: todo-orchestrator routes composable preparation primitives (intaker, architect, planner) in <slug>/work and submits each derived artifact to an independently dispatched reviewer. PRD is the human approval gate.'
 ---
 
 # Prepare — Design
@@ -10,15 +10,15 @@ description: 'Prepare phase design: one driving session loads phase-scoped proce
 
 ## Purpose
 
-Define how the prepare phase produces the aligned artifacts that downstream
-work must consume.
+Define how preparation produces the aligned artifacts that downstream
+implementation consumes.
 
-Prepare exists to turn a problem impulse into build-ready truth. One session
-drives the whole prepare lifecycle. The session loads a phase-scoped procedure for
-each step in the chain — intake, architecture, plan — and does the
-work for that step itself. Each derived artifact is verified by an independently
-dispatched reviewer session. The PRD is verified by the
-human, who is the sole authority on intent.
+Prepare exists to turn a problem impulse into build-ready truth. One unified
+`todo-orchestrator` routes preparation in prose from the factual ledger,
+dispatching focused role workers (`intaker`, optional `architect`, `planner`)
+in `<slug>/work` for the steps the todo needs. Each derived artifact is
+verified by an independently dispatched reviewer session. The PRD is verified
+by the human, who is the sole authority on intent.
 
 ## Inputs/Outputs
 

@@ -21,7 +21,7 @@ the marker the todo authors.
 - An explicit `binding_reservations` entry claims its use case; otherwise a use case is claimed by the slug of the pending marker that encloses its
   definition line: a `planned:<slug>` block (a newly authored use case) or a
   `planned-change:<slug>` block (an existing use case restated unchanged, or
-  changed). When folded before tests exist, unbound use-case ownership is preserved in frontmatter `binding_reservations: {UC-id: todo-slug}`; work-delivery folding clears an owned reservation once an attached test binding exists in the candidate. The marker grammar is owned by docs
+  changed). When folded before tests exist, unbound use-case ownership is preserved in frontmatter `binding_reservations: {UC-id: todo-slug}`; delivery folding clears an owned reservation once an attached test binding exists in the candidate. The marker grammar is owned by docs
   (`project/instrukt/spec/domain/docs`).
 - Whole-file `delivered_by` claims all use cases only when it names exactly
   one delivering slug. With several slugs, claims come from in-body pending

@@ -55,10 +55,10 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 ##### NC-02-a — Todo for work that belongs in context
 
-- **Evidence available:** todo creation record, current input, Prepare transcript and
+- **Evidence available:** todo creation record, current input, orchestrator transcript and
   derived artifacts, and the in-context boundary in
   `sdlc/policy/todo-creation-discipline`.
-- **Ownership:** The live claimant — the owning Prepare session named by the todo/session
+- **Ownership:** The live claimant — the owning `todo-orchestrator` session named by the todo/session
   record — judges the creation audit and executes repair or retirement. The todo lifecycle mechanism is state authority.
 - **Coordinator:** intervene only on positive evidence that the claimant derived
   without holding the required check, or when its stated basis materially contradicts
@@ -71,7 +71,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 ##### NC-02-b — Documentation-only work routed through the lifecycle
 
-- **Evidence available:** creation record, input, declared deliverables, Prepare
+- **Evidence available:** creation record, input, declared deliverables, orchestrator
   transcript and derived artifacts, and `general/policy/documentation-discipline`.
   File paths alone do not prove the work is doc-only; directive agent text can be
   behavioural implementation.
@@ -90,7 +90,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 ##### NC-02-c — Process change past a human-owned consequence without its decision
 
 - **Evidence available:** the actual human decision record, current input, creation
-  record, Prepare transcript and derived artifacts, and
+  record, orchestrator transcript and derived artifacts, and
   `sdlc/policy/process-change-authority`. Lineage and
   `human_involved` corroborate involvement but never prove the decision.
 - **Ownership:** The live claimant, resolved from the todo/session record, applies the
@@ -421,7 +421,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 ##### NC-20-b — Deferral overlap discovered after creation
 
 - **Evidence available:** created deferral todo and creation record, originating
-  deferral, overlapping open todo, and Prepare transcript or derived artifacts.
+  deferral, overlapping open todo, and orchestrator transcript or derived artifacts.
 - **Ownership:** the live claimant, resolved from the todo/session record, judges and
   executes audit repair/retirement; the todo lifecycle mechanism owns state.
 - **Coordinator:** only on positive evidence that the claimant derived without the

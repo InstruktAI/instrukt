@@ -67,7 +67,7 @@ retaining thread and attempt records.
   driver reservations (`session: None`) do not block dispatch and are retired
   automatically when `todo-orchestrator` takes over.
 - If an interrupted legacy start had already created a local `<slug>/work`
-  branch without a retained bound session/worktree, `reserve_dispatch` refuses
+  branch without a retained bound session/worktree, dispatch reservation refuses
   to overwrite the existing branch (`todo branch '<slug>/work' already exists;
   no replacement worktree is created`); reconcile by attaching/resuming the
   existing worktree via `instrukt todo work <slug> --placement-evidence ...`,
