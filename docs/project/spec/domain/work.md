@@ -88,7 +88,9 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 **Derived approval**
 : The record that an integration candidate's content is covered, from
-  workflow's finding and with no review of its own.
+  workflow's finding and with no review of its own. Until GitHub shows it as
+  the candidate's review status it stands only while that finding is found
+  again.
 
 **Settlement**
 : A commit's first admitted head verdict with every later version of it. It
@@ -238,12 +240,15 @@ and issues installation credentials under
   settling session revises it; a verdict and an exemption of one commit never
   replace each other; each publication follows the current verdict, and
   nothing is published for a commit while a revision of it is pending, and
-  nothing is exported from a computer that holds one; a settlement is current
+  nothing is exported from a computer that holds one; a derived approval is
+  first published as the commit's status, by a tick that found its coverage
+  again; a settlement is current
   on one computer, the one that started it or the one it was last handed to;
   an import never changes which verdict of a commit is current where this
   computer holds another settlement of it, unless an operator stated which
   stands, at this import or at the one whose choice the imported settlement
-  carries; only the reviewer identity publishes. Admission, publication,
+  carries; a choice is recorded only on a settlement that stands on the
+  importing computer; only the reviewer identity publishes. Admission, publication,
   storage, transfer and readiness belong to
   `project/instrukt/spec/feature/work/github-apps`.
 - **Identifier:** project and commit.
@@ -333,17 +338,20 @@ owning design snippet or decision record is declared.
   a pull request is a todo's, whether a commit carries a verdict and which
   review evidence is current for it, and whether both identities are ready.
   Through its command contract it records a derived approval, carrying the
-  coverage finding the runner read from workflow, and publishes what is
-  outstanding to the pull requests the runner observed.
+  coverage finding the runner read from workflow, withdraws one that a later
+  finding no longer covers, and publishes what is outstanding to the pull
+  requests the runner observed.
 - **Runner → work (automatic review)** — customer-supplier. The runner supplies
   a commit's review requests with their standing and pinned base, which input
   opened the turn a session had in progress at a stated moment, and a named
   session's conversation; work consults them when it admits a head verdict
   and when a tick decides a pending revision.
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
-  evidence is current for a commit and whether its verdict is undecided;
+  evidence is current for a commit, whether its verdict is undecided and
+  whether a candidate's derived approval is one GitHub does not show yet;
   workflow reads approval of a head that is not a todo's, and exemptions, from
-  that answer alone.
+  that answer alone, and reads a candidate's result from it together with the
+  review status.
 <!-- /planned:event-driven-pr-review-gate -->
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation

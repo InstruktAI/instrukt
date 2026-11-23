@@ -475,7 +475,7 @@ For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries
 a verdict and whether both identities are ready, and workflow says whether the
 active candidate's content is covered. Through work's command contract the
-runner records a derived approval and has outstanding verdicts published,
+runner records or withdraws a derived approval and has outstanding verdicts published,
 handing over the eligible pull requests it observed at each head. It supplies
 work with a commit's review requests, each with its number, standing, the
 session it reached and pinned base, with the input that opened the turn a

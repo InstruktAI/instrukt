@@ -468,7 +468,7 @@ sequenceDiagram
   participant I as integrator (agent)
   R->>G: open pull requests and heads (conditional requests)
   R->>W: does this head carry a verdict?
-  W->>G: for a head with no evidence here, the reviewer bot's status on it and the review that status links
+  W->>G: for a head with no evidence here, the reviewer bot's status on it, the review that status links and its latest review on each pull request observed at that head
   R-->>V: runner.review_needed for an owed commit with no live request (head, pinned base, request number)
   V->>W: instrukt review show (head), then instrukt review record (head, base, verdict, report)
   W->>R: this commit's requests with their standing and pinned base, and for a settled commit which input opened the caller's turn when it offered the verdict
@@ -478,11 +478,11 @@ sequenceDiagram
   F->>W: current evidence of each head and commit the finding depends on
   alt every commit covered
     R->>W: record the derived approval
-    W->>G: review status on the candidate commit
+    W->>G: review status on the candidate commit, by a tick that found it covered
   else a commit is not covered
     R-->>V: runner.review_needed for the exact candidate
   end
-  R-->>I: runner.ci_completed once CI and the review status are both reported
+  R-->>I: runner.ci_completed once the candidate's result is complete
 ```
 
 A review is one judgment of one commit from the pinned base its request
@@ -500,7 +500,12 @@ reached that session, work asks which turn that was for the moment of the
 offer; while the runtime cannot say, the offer is a pending revision that a
 later tick decides for that same moment, and its commit is undecided: nothing
 is published for it, no coverage is derived from it and, as a candidate, it is
-not promoted. GitHub keeps enforcing by the status it already shows.
+not promoted. GitHub keeps enforcing by the status it already shows. A
+candidate's result follows work's current verdict of it before the status
+does: needs work is a failed result from its admission. A derived approval is
+derived again until GitHub shows it as the status, and is withdrawn when a
+commit is no longer covered
+(`project/instrukt/spec/feature/workflow/integration-gate`).
 
 instrukt owns the review state and GitHub reflects and enforces it. Evidence
 is recorded locally before anything is published, and GitHub receives two
@@ -520,7 +525,7 @@ them takes the state database's writer lock.
 | --- | --- | --- |
 | `state/review.db` | settlements with their identity, hand-off number, recorded choices and head verdict versions with their reports, pending revisions, exemptions, imported derived approvals and the settlements an import set aside; written only by the `instrukt review` commands | nothing: it is the only copy of this computer's evidence and must be preserved; another computer receives it through an export |
 | `state/review.lock` | the evidence store's write-isolation unit, held for each of those commands' transactions | taken again by the next command |
-| `state/review-publication.db` | the derived approvals the tick recorded, the answer that decided each pending revision, what GitHub shows of each current verdict per destination, and the verdicts recognised as already published with their review body; written only by the tick | what GitHub shows, and a fresh coverage derivation for the integration head; the derived approval of a candidate the canonical branch has taken and the answer that decided a pending revision are not re-created |
+| `state/review-publication.db` | the derived approvals the tick recorded and each withdrawal of one, the answer that decided each pending revision, what GitHub shows of each current verdict per destination, and the verdicts recognised as already published with their review body; written only by the tick | what GitHub shows, and a fresh coverage derivation for the integration head; the derived approval of a candidate the canonical branch has taken and the answer that decided a pending revision are not re-created |
 | `state/review-publication.lock` | the publication store's write-isolation unit, held for each tick's publication writes | taken again by the next tick |
 | `state/review-observation.db` | the pages of the pull-request listing with their conditional validators; written only by the tick's review observation | one unconditional request per page |
 | `state/review-observation.lock` | the observation store's write-isolation unit, held for each observation pass's writes | taken again by the next pass |
@@ -536,11 +541,13 @@ carries a hand-off number that only rises, so a settlement is current on one
 computer at a time and an earlier transfer of it makes nothing current again.
 An import adds to what the importing computer holds; where it holds another
 settlement of a commit, whatever the two hand-off numbers, it changes nothing
-until its operator states which stands. That choice is recorded on the
-settlement that stands and travels with it. A computer that serves
-without an import recognises what the reviewer bot already published by
-following the status to its review, gives a
-further pull request at such a head the same review, and asks for the rest.
+until its operator states which stands. That choice is recorded on a
+settlement that stands on the importing computer and travels with it; a
+settlement that computer handed off is chosen where it stands. A computer that
+serves without an import recognises the verdict the reviewer bot published
+last for a head, from its status, the review that status links and its reviews
+on the pull requests observed there. It brings a status or a pull request that
+lags behind that verdict up to it and asks for the rest.
 Observation rides the tick's existing
 conditional GitHub pass, requests the event platform and publication the tick;
 the gate adds no webhook, queue or process.
@@ -648,6 +655,15 @@ the gate adds no webhook, queue or process.
   verdict became pending:** GitHub would still accept its promotion. The
   candidate has no completed result until the revision is decided, so the
   integrator is not woken to promote it.
+- **A needs-work version of a candidate's verdict is admitted while GitHub
+  still shows the earlier approving status:** the candidate's result is a
+  failure from that tick on, whatever the status shows, and the failure status
+  follows when it is published.
+- **A covering head's approval is replaced by needs work before the
+  candidate's derived approval reached GitHub:** the derivation that precedes
+  publication finds the commit uncovered, the derived approval is withdrawn
+  and the exact candidate is reviewed. A derived approval reaches GitHub
+  status first, so nothing of a withdrawn one was published.
 - **An export is asked for while a revision is pending:** it is refused whole
   and names the commit; the tick that decides the revision is its door.
 - **A candidate adds a commit that is neither an approved head, reproducible
@@ -663,9 +679,13 @@ the gate adds no webhook, queue or process.
   or higher hand-off number:** the import is refused whole and names the
   commit; nothing changes until the operator states which settlement stands,
   and the other one is set aside with a revision that was pending on it.
-- **The chosen settlement returns to the computer that held the other one:**
-  it carries the choice, becomes current there and sets the other aside
-  without a second statement.
+- **The operator chooses, at an import, a settlement this computer handed
+  off:** the import is refused whole and names the computer the settlement was
+  handed to. The choice is stated there, or the imported settlement is chosen
+  here.
+- **The two settlements of a recorded choice meet again, on either
+  computer:** the chosen one becomes or stays current and the other is set
+  aside without a second statement.
 - **An export file is imported again, on the computer that wrote it or on one
   it was not written for:** it is refused where it is not addressed, and where
   it is, a settlement already met at that hand-off number or a higher one
@@ -673,7 +693,14 @@ the gate adds no webhook, queue or process.
 - **A head with no evidence here already carries the reviewer bot's status,
   and another eligible pull request has it as its head:** the review that
   status links is read, also from a pull request that was closed unmerged, and
-  written to that pull request too; no review is asked for.
+  written to that pull request too; no review is asked for. A status that no
+  review accompanies is recognised as well: no review is asked for and none is
+  written.
+- **A publication stopped between a review and its status, and a computer
+  without the evidence serves next:** the latest verdict the reviewer bot
+  published is recognised from the reviews on the observed pull requests as
+  well as from the status, the status is brought up to it, and an earlier
+  review is never written over a later one.
 - **A computer is lost, or loses its home, without an export:** what it had
   not published is gone. The computer that serves next recognises what the
   reviewer bot published, has every other owed head reviewed again, and shows
