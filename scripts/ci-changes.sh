@@ -9,16 +9,22 @@
 #   scripts/ci-changes.sh --classify    the outputs for the paths read from standard input, one per line
 # The outputs, each true or false:
 #   shell     shellcheck
-#   rust      fmt, clippy, unit, functional and doc tests on Linux and macOS
+#   rust      on Linux fmt, clippy, the doctests and the test suite sharded
+#             across runners; on macOS clippy and the macOS tests
 #   docs      document, entrypoint, use-case coverage and configuration checks (Linux)
 #   deps      the dependency audit
 #   graphify  the pinned Graphify contract
 #   t3        the pinned T3 contract
 #   python    the Python lint and type check among the commit checks
-#   validate  the Linux check job builds instrukt and validates (rust or docs)
-# and precommit_skip, the commit checks (.pre-commit-config.yaml hook ids) the
-# Linux job leaves out: the Rust ones unless rust, shellcheck unless shell,
-# the Python ones unless python; none when every check runs.
+#   validate  the Linux build job builds instrukt and validates (rust or docs):
+#             with validate true and rust false it validates and no test runs;
+#             with both false neither the Linux build job nor the shard job
+#             starts, while the required platform jobs still start and report
+# and precommit_skip, the commit checks (.pre-commit-config.yaml hook ids) this
+# classification leaves out: the Rust ones unless rust, shellcheck unless
+# shell, the Python ones unless python; empty when every check runs. The
+# workflow applies it only when this job succeeded, and adds to it, always,
+# the hooks whose checks run in other steps and jobs (.github/workflows/ci.yml).
 set -eu
 
 shell=false rust=false docs=false deps=false graphify=false t3=false python=false
@@ -31,9 +37,14 @@ everything() {
 # union of every rule it matches.
 classify() {
     case $1 in
-    # The pipeline itself, this script, and the pinned tool versions (nextest,
-    # cargo-deny, uv and pre-commit), which select every check.
-    .github/workflows/ci.yml | scripts/ci-changes.sh | scripts/test-tools.env)
+    # The pipeline itself, this script, the pinned tool versions (nextest,
+    # cargo-deny, uv and pre-commit), and the scripts the workflow's jobs
+    # delegate to, which are the pipeline's body: each selects every check.
+    # A pipeline script added later selects every check only once it is
+    # named here.
+    .github/workflows/ci.yml | scripts/ci-changes.sh | scripts/test-tools.env | \
+        scripts/ci-ubuntu-build.sh | scripts/ci-ubuntu-shard.sh | \
+        scripts/ci-verify-jobs.sh | scripts/ci-macos.sh)
         everything; return 0 ;;
     esac
     known=false
