@@ -219,7 +219,7 @@ impl GitHub {
             let credential = apps
                 .issue(&self.repository, self.role.as_deref(), self.operation, now)
                 .map_err(|error| self.app_failure(error))?;
-            let bots = apps.verified_bots(&self.repository, now)?;
+            let bots = apps.verified_bots(&self.repository, self.current_time()?)?;
             *self.token.borrow_mut() = credential.token().to_owned();
             *self.credential.borrow_mut() = Some(credential);
             *self.bots.borrow_mut() = bots;
@@ -548,15 +548,27 @@ impl Limits {
         status == 429 || (status == 403 && self.signalled())
     }
 
-    /// The earliest moment GitHub permits the next request, seen at `now`:
-    /// not before `retry-after` seconds have passed, nor before the reset
-    /// when no requests remain; without a delay, the reset GitHub sent.
+    /// The earliest moment GitHub permits the next request, for an answer
+    /// received at `now`: not before `retry-after` seconds have passed, nor
+    /// before the reset when no requests remain; without a delay, the reset
+    /// GitHub sent.
     pub(super) fn until(&self, now: Timestamp) -> Option<Timestamp> {
+        self.deadline(now, None)
+    }
+
+    /// [`Limits::until`] for a secondary limit: one that names no delay
+    /// waits GitHub's minute instead of the primary reset.
+    fn secondary_until(&self, now: Timestamp) -> Option<Timestamp> {
+        self.deadline(now, Some(SECONDARY_WAIT_SECONDS))
+    }
+
+    fn deadline(&self, now: Timestamp, unnamed_delay: Option<i64>) -> Option<Timestamp> {
         let delay = self
             .retry_after
             .as_deref()
             .and_then(|seconds| seconds.trim().parse::<i64>().ok())
             .filter(|seconds| *seconds >= 0)
+            .or(unnamed_delay)
             .and_then(|seconds| now.as_second().checked_add(seconds))
             .and_then(|second| Timestamp::from_second(second).ok());
         let reset = self
@@ -572,12 +584,28 @@ impl Limits {
     }
 }
 
-/// The failure a GraphQL answer with a non-empty `errors` list reports.
-/// An answer GitHub throttled (a [`Limits`] signal, whatever the HTTP
-/// status, or an entry typed `RATE_LIMITED`) is [`GitHubError::RateLimited`]
-/// until [`Limits::until`]; otherwise one whose every entry is typed
-/// `FORBIDDEN` is [`GitHubError::Refused`]; any other answer is
-/// [`GitHubError::Status`]. Messages carry `credential` redacted.
+/// How long GitHub asks a client to wait after a secondary rate limit that
+/// names no `retry-after` delay while requests remain: at least a minute.
+const SECONDARY_WAIT_SECONDS: i64 = 60;
+
+/// Whether a GraphQL `errors` entry is GitHub's secondary rate limit. GitHub
+/// identifies it by its message alone, with neither a type nor, always, a
+/// header; this reads that provider wire signal as octokit's throttling
+/// plugin does (`/\bsecondary rate\b/i`).
+fn secondary_limit(entry: &Value) -> bool {
+    entry["message"]
+        .as_str()
+        .is_some_and(|message| message.to_ascii_lowercase().contains("secondary rate"))
+}
+
+/// The failure a GraphQL answer with a non-empty `errors` list reports,
+/// received at `now`. A secondary rate limit is [`GitHubError::RateLimited`]
+/// for its delay, a minute when it names none, or until the later reset when
+/// no requests remain; any other answer GitHub throttled (a [`Limits`]
+/// signal, whatever the HTTP status, or an entry typed `RATE_LIMITED`) is
+/// [`GitHubError::RateLimited`] until [`Limits::until`]; otherwise one whose
+/// every entry is typed `FORBIDDEN` is [`GitHubError::Refused`]; any other
+/// answer is [`GitHubError::Status`]. Messages carry `credential` redacted.
 pub(super) fn graphql_failure(
     errors: &[Value],
     status: u16,
@@ -586,6 +614,11 @@ pub(super) fn graphql_failure(
     credential: &str,
 ) -> GitHubError {
     let typed = |entry: &Value, kind: &str| entry["type"].as_str() == Some(kind);
+    if errors.iter().any(secondary_limit) {
+        return GitHubError::RateLimited {
+            until: limits.secondary_until(now),
+        };
+    }
     if limits.signalled() || errors.iter().any(|e| typed(e, "RATE_LIMITED")) {
         return GitHubError::RateLimited {
             until: limits.until(now),

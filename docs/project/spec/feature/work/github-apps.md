@@ -140,8 +140,9 @@ command-wide. What a failure stops depends on the operation it interrupts:
   refused credential included, lets the pass continue.
 
 Rate limits, including a secondary limit GitHub reports in a successful GraphQL
-answer, retain their retry boundary: GitHub's `Retry-After` delay, or its reset
-without one, and the later of the two when no requests remain. Locally accepted
+answer, retain their retry boundary, counted from when the throttled answer is
+received: GitHub's `Retry-After` delay, or without one its reset (a minute for a
+secondary limit), and the later of the two when no requests remain. Locally accepted
 work and its pending reflection survive; no credential failure is reported as
 remote success or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.

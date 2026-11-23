@@ -9,10 +9,43 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 fn setup(cause: &str) -> AppError {
     AppError::Setup(cause.into())
+}
+
+/// A caller's `now` carried forward on the monotonic clock, so each GitHub
+/// answer is dated when it is received, not when the work that awaited it
+/// began.
+#[derive(Clone, Copy)]
+struct Clock {
+    start: Timestamp,
+    started: Instant,
+}
+impl Clock {
+    fn starting(start: Timestamp) -> Self {
+        Self {
+            start,
+            started: Instant::now(),
+        }
+    }
+    /// The present moment, rounded up to a whole second: a delay counted
+    /// from it never ends before the delay counted from the real moment.
+    fn now(&self) -> Timestamp {
+        let moment = jiff::SignedDuration::try_from(self.started.elapsed())
+            .ok()
+            .and_then(|elapsed| self.start.checked_add(elapsed).ok())
+            .unwrap_or(Timestamp::MAX);
+        if moment.subsec_nanosecond() == 0 {
+            return moment;
+        }
+        moment
+            .as_second()
+            .checked_add(1)
+            .and_then(|second| Timestamp::from_second(second).ok())
+            .unwrap_or(Timestamp::MAX)
+    }
 }
 #[derive(Clone, Copy)]
 enum Method {
@@ -76,14 +109,16 @@ impl GitHubAccess {
         operation: Operation,
         now: Timestamp,
     ) -> Result<Arc<Credential>, AppError> {
-        self.with_apps(|apps| apps.issue(repository, role, operation, now))
+        let clock = Clock::starting(now);
+        self.with_apps(|apps| apps.issue(repository, role, operation, clock))
     }
     pub(crate) fn verified_bots(
         &self,
         repository: &str,
         now: Timestamp,
     ) -> Result<Vec<Bot>, AppError> {
-        self.with_apps(|apps| apps.verified_bots(repository, now))
+        let clock = Clock::starting(now);
+        self.with_apps(|apps| apps.verified_bots(repository, clock))
     }
 }
 impl instrukt_core::interfaces::GitHubActors for GitHubAccess {
@@ -105,11 +140,12 @@ impl instrukt_runner::interfaces::GitHubCredentials for GitHubAccess {
         operation: Operation,
         now: Timestamp,
     ) -> Result<Arc<Credential>, AppError> {
+        let clock = Clock::starting(now);
         self.with_apps(|apps| {
             let id = apps.selected(None).app_id;
             apps.credentials.remove(&(repository.into(), id, operation));
             apps.installations.remove(&(repository.into(), id));
-            apps.issue(repository, None, operation, now)
+            apps.issue(repository, None, operation, clock)
         })
     }
 }
@@ -120,9 +156,10 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
         board: Option<&instrukt_core::config::BoardRef>,
         now: Timestamp,
     ) -> Result<(), AppError> {
+        let clock = Clock::starting(now);
         self.with_apps(|apps| {
-            let record = apps.issue(repository, None, Operation::Record, now)?;
-            apps.verified_bots(repository, now)?;
+            let record = apps.issue(repository, None, Operation::Record, clock)?;
+            apps.verified_bots(repository, clock)?;
             let gh = super::_github::GitHub::new(&apps.api, repository, record.token().into());
             let inspect = || -> Result<(), super::GitHubError> {
                 let repository = gh.read("")?;
@@ -140,7 +177,7 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
                 Ok(())
             };
             inspect().map_err(readiness_error)?;
-            let account = apps.issue(repository, None, Operation::Board, now)?;
+            let account = apps.issue(repository, None, Operation::Board, clock)?;
             let gh = super::_github::GitHub::new(&apps.api, repository, account.token().into());
             super::_board::inspect(&gh, board).map_err(readiness_error)
         })
@@ -239,19 +276,11 @@ impl Apps {
                 "github.api_url requires HTTPS (HTTP only on loopback)",
             ));
         }
-        let agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(30)))
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .max_redirects(0)
-            .user_agent("instrukt")
-            .build()
-            .into();
         Ok(Self {
             home: home.clone(),
             api: api.trim_end_matches('/').into(),
             identity,
-            agent,
+            agent: agent(),
             auth_deferrals: Default::default(),
             actors: Default::default(),
             verified_apps: Default::default(),
@@ -267,8 +296,9 @@ impl Apps {
         repository: &str,
         role: Option<&str>,
         operation: Operation,
-        now: Timestamp,
+        clock: Clock,
     ) -> Result<Arc<Credential>, AppError> {
+        let now = clock.now();
         let app = self.selected(role).clone();
         let key = (repository.to_owned(), app.app_id, operation);
         if let Some(until) = self
@@ -291,7 +321,7 @@ impl Apps {
         let renewal = self.credentials.contains_key(&key);
         let start = std::time::Instant::now();
         let result = self
-            .issue_uncached(repository, &app, operation, now)
+            .issue_uncached(repository, &app, operation, clock)
             .map(Arc::new);
         tracing::debug!(event="github_credential_acquired",app_id=app.app_id,app_slug=%app.slug,repository,operation=?operation,outcome=if result.is_err(){"failed"}else if renewal{"renewed"}else{"issued"},duration_ms=u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX));
         if result.is_err() {
@@ -311,8 +341,9 @@ impl Apps {
         repository: &str,
         app: &App,
         op: Operation,
-        now: Timestamp,
+        clock: Clock,
     ) -> Result<Credential, AppError> {
+        let now = clock.now();
         let key = instrukt_core::config::resolve_secret(&self.home, &app.private_key).map_err(|_| {
             setup(
                 "selected App key unavailable in owner-only secrets.env; use instrukt secrets set",
@@ -322,7 +353,7 @@ impl Apps {
             .map_err(|_| setup("selected App key is not usable RSA PEM"))?;
         let jwt = jsonwebtoken::encode(&jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),&json!({"iat":now.as_second()-60,"exp":now.as_second()+540,"iss":app.app_id.to_string()}),&key).map_err(|_|setup("cannot sign selected App JWT"))?;
         if !self.verified_apps.contains(&app.app_id) {
-            let identity = self.request(Method::Get, "/app", &jwt, None, now)?;
+            let identity = self.request(Method::Get, "/app", &jwt, None, clock)?;
             if identity["id"].as_u64() != Some(app.app_id)
                 || identity["slug"].as_str() != Some(&app.slug)
             {
@@ -339,7 +370,7 @@ impl Apps {
                 &format!("/repos/{repository}/installation"),
                 &jwt,
                 None,
-                now,
+                clock,
             )?,
         };
         if !installation["suspended_at"].is_null() || !installation["suspended_by"].is_null() {
@@ -366,13 +397,13 @@ impl Apps {
             &format!("/app/installations/{id}/access_tokens"),
             &jwt,
             Some(&token_request),
-            now,
+            clock,
         )?;
         check_permissions(&response["permissions"], &permissions)?;
         let expires: Timestamp = response["expires_at"]
             .as_str()
             .and_then(|s| s.parse::<Timestamp>().ok())
-            .filter(|t| t.as_second() > now.as_second() + 30)
+            .filter(|t| t.as_second() > clock.now().as_second() + 30)
             .ok_or_else(|| setup("issued credential has no usable expiry"))?;
         let token = response["token"]
             .as_str()
@@ -384,7 +415,7 @@ impl Apps {
                 "/installation/repositories?per_page=100",
                 token,
                 None,
-                now,
+                clock,
             )?;
             if !repos["repositories"].as_array().is_some_and(|rs| {
                 rs.iter()
@@ -398,7 +429,7 @@ impl Apps {
             "/graphql",
             token,
             Some(&json!({"query":"query { viewer { id login databaseId } }"})),
-            now,
+            clock,
         )?;
         let viewer = &viewer["data"]["viewer"];
         if viewer["databaseId"].as_u64() != Some(app.bot.id)
@@ -412,8 +443,8 @@ impl Apps {
         self.actors.insert(app.bot.login.clone(), app.bot.clone());
         Ok(Credential::new(token.into(), app.bot.clone(), expires))
     }
-    fn verified_bots(&mut self, repository: &str, now: Timestamp) -> Result<Vec<Bot>, AppError> {
-        let credential = self.issue(repository, None, Operation::Record, now)?;
+    fn verified_bots(&mut self, repository: &str, clock: Clock) -> Result<Vec<Bot>, AppError> {
+        let credential = self.issue(repository, None, Operation::Record, clock)?;
         let apps = self.identity.apps.values().cloned().collect::<Vec<_>>();
         for app in &apps {
             if self.actors.get(&app.bot.login) == Some(&app.bot) {
@@ -424,7 +455,7 @@ impl Apps {
                 &format!("/users/{}", app.bot.login),
                 credential.token(),
                 None,
-                now,
+                clock,
             )?;
             if !app.bot.matches(&bot)
                 || bot["login"].as_str() != Some(&app.bot.login)
@@ -438,13 +469,15 @@ impl Apps {
         }
         Ok(apps.into_iter().map(|app| app.bot).collect())
     }
+    /// One App API request; a throttled answer's retry boundary counts from
+    /// when `clock` says the answer was received.
     fn request(
         &self,
         method: Method,
         endpoint: &str,
         bearer: &str,
         body: Option<&Value>,
-        now: Timestamp,
+        clock: Clock,
     ) -> Result<Value, AppError> {
         if bearer.is_empty() {
             return Err(setup("authenticated App capability is unavailable"));
@@ -460,11 +493,12 @@ impl Apps {
             Method::Get => headers(self.agent.get(&url), bearer).call(),
         }
         .map_err(|_| AppError::Unreachable)?;
+        let received = clock.now();
         let status = response.status().as_u16();
         let limits = super::_github::Limits::read(response.headers());
         if limits.refusal_throttles(status) {
             return Err(AppError::RateLimited {
-                until: limits.until(now),
+                until: limits.until(received),
             });
         }
         if !(200..300).contains(&status) {
@@ -480,15 +514,26 @@ impl Apps {
         let answer: Value =
             serde_json::from_str(&text).map_err(|_| setup("unreadable App API response"))?;
         // GraphQL reports throttling, primary or secondary, in a successful
-        // answer's `errors`; its retry boundary is the headers' to name.
+        // answer's `errors`; its retry boundary is the headers' to name, or
+        // GitHub's minute for a secondary limit that names no delay.
         if let Some(errors) = answer["errors"].as_array().filter(|e| !e.is_empty())
             && let super::GitHubError::RateLimited { until } =
-                super::_github::graphql_failure(errors, status, &limits, now, bearer)
+                super::_github::graphql_failure(errors, status, &limits, received, bearer)
         {
             return Err(AppError::RateLimited { until });
         }
         Ok(answer)
     }
+}
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(30)))
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .max_redirects(0)
+        .user_agent("instrukt")
+        .build()
+        .into()
 }
 fn check_permissions(actual: &Value, required: &Value) -> Result<(), AppError> {
     for (name, wanted) in required.as_object().into_iter().flatten() {
@@ -539,6 +584,95 @@ mod tests {
                 .map(|(role, app)| ((*role).into(), (*app).into()))
                 .collect(),
         }
+    }
+
+    /// The moment an issuance begins in the tests below; the primary reset
+    /// their answers carry is ten minutes later.
+    const START: i64 = 1_767_225_000;
+    const RESET: i64 = START + 600;
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(second).unwrap()
+    }
+
+    /// The viewer query of an issuance, answered on loopback by HTTP 200
+    /// with GitHub's secondary rate limit in `errors`, requests remaining,
+    /// a later primary reset and `retry_after` when given.
+    fn viewer_throttled(retry_after: Option<u64>, clock: Clock) -> Result<Value, AppError> {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let api = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                request.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            request.read_exact(&mut vec![0; length]).unwrap();
+            let body = r#"{"errors":[{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}]}"#;
+            let delay = retry_after.map_or(String::new(), |s| format!("Retry-After: {s}\r\n"));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-RateLimit-Remaining: 4999\r\nX-RateLimit-Reset: {RESET}\r\n{delay}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let home = tempfile::tempdir().unwrap();
+        let apps = Apps {
+            home: Home::at_user_home(home.path().into()),
+            api,
+            identity: settings(&[]),
+            agent: agent(),
+            auth_deferrals: Default::default(),
+            actors: Default::default(),
+            verified_apps: Default::default(),
+            installations: Default::default(),
+            credentials: Default::default(),
+        };
+        let query = json!({"query": "query { viewer { id login databaseId } }"});
+        let answer = apps.request(Method::Post, "/graphql", "token", Some(&query), clock);
+        server.join().unwrap();
+        answer
+    }
+
+    #[test]
+    fn a_throttled_answer_counts_its_delay_from_receipt_not_from_when_issuance_began() {
+        // Earlier issuance requests took three seconds before this answer.
+        let clock = Clock {
+            start: at(START),
+            started: Instant::now().checked_sub(Duration::from_secs(3)).unwrap(),
+        };
+        let Err(AppError::RateLimited { until: Some(until) }) = viewer_throttled(Some(2), clock)
+        else {
+            panic!("a secondary limit naming a delay is a rate limit");
+        };
+        assert!(
+            (at(START + 3 + 2)..at(START + 3 + 2 + 30)).contains(&until),
+            "{until} must permit the full delay after receipt"
+        );
+    }
+
+    #[test]
+    fn a_secondary_limit_naming_no_delay_defers_a_minute_and_is_no_actor_mismatch() {
+        let clock = Clock::starting(at(START));
+        let Err(AppError::RateLimited { until: Some(until) }) = viewer_throttled(None, clock)
+        else {
+            panic!("a secondary limit is a rate limit, never a viewer answer");
+        };
+        // GitHub's minute, not the primary reset that quota still allows.
+        assert!(
+            (at(START + 60)..at(START + 60 + 30)).contains(&until),
+            "{until} must be a minute after receipt"
+        );
     }
 
     #[test]
