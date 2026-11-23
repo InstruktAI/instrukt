@@ -368,8 +368,8 @@ verdict it was decided over.
 
 | Decided by | The moment of the version |
 | --- | --- |
-| Its recording | The moment it was recorded with, for an admitted revision the moment it was offered. Where that is not later than the moment of the version it replaces, it is the first moment after that one. |
-| An import that sets a settlement aside for the one that stands on this computer (Evidence when the serving computer changes) | Unchanged where the standing settlement's current version already has a later moment than the latest version of the settlement set aside. Otherwise that current version takes the moment of the import, or the first moment after the set-aside one's where the import's is not later. |
+| Its recording | The moment it was recorded with, for an admitted revision the moment it was offered. Where that is not later than the moment of the version it replaces, it is the first moment after that one, also where an import moved that one after the revision was offered. |
+| An import that sets a settlement aside for the one that stands on this computer (Evidence when the serving computer changes) | Unchanged where the standing settlement's current version already has a later moment than the one that import compares of the settlement set aside. Otherwise that current version takes the moment of the import, or the first moment after the compared one where the import's is not later. |
 
 The moments of a commit's head verdicts thus keep the order in which they
 became current, across the versions of a settlement and across a settlement
@@ -525,7 +525,10 @@ nowhere else and are kept there until they are retired: the derived approval
 of a candidate the canonical branch has since taken, the answer that decided a
 pending revision, and each withdrawal with the commit found uncovered. Whether
 a pending revision is decided, and how, and whether a derived approval was
-withdrawn, is read from there by every reader of a commit's current verdict.
+withdrawn, is read from there by every reader of a commit's current verdict,
+an import among them. An admitted revision that an import recorded as a
+version is read from the evidence store from then on (Evidence when the
+serving computer changes).
 
 A withdrawal is the record of what one tick did and why, and that tick's write
 is its only copy. A later derivation answers another question: whether the
@@ -670,20 +673,50 @@ holds in place.
 | The settlement set aside at this import | The moment compared |
 | --- | --- |
 | The export's settlement, set aside for one that stands here | The latest among the versions the export carries of it. A settlement this computer met before at a lower hand-off number, as its holder, as a former holder or as one it set aside, is compared the same way: nothing this computer keeps of it from that lower number is read, the moment it had when this computer handed it off included. |
-| The settlement this computer holds in place as standing | That of its current version, read from the evidence store. |
+| The settlement this computer holds in place as standing | That of its current version. Where a revision the import reads as undecided is pending on it, the moment that revision would have as a version (Verdict publication), which is the later one. |
 | The settlement this computer holds in place as handed off | The one this computer keeps of it: the moment its current version had when it was handed off (Review evidence storage). |
 
 The kept moment is read from the evidence store, so an import that sets a
 handed-off settlement aside decides the same before and after that
-settlement's versions were retired. An import reads nothing but the evidence
-store and the export.
+settlement's versions were retired.
+
+The current version of a settlement that stands here is the one work answers
+its commit by (Admission of review evidence): the latest among the versions
+the evidence store records and the pending revisions a tick admitted. Which
+pending revision was admitted, and which refused, is the answer the
+publication store holds. An import reads those answers as every reader of a
+commit's current verdict does and takes no lock for it (Review evidence
+storage). A refused offer is no version and is not compared.
+
+An offer the import reads as undecided is no version either, and of the
+settlement set aside it is compared as the version it would be. That reading
+is not final as an admission and a refusal are. The two stores share no
+transaction, so a tick can admit and publish the revision while the import
+runs, and an answer the publication store has lost reads as undecided
+although its revision was published. Compared this way, the settlement that
+stands is ahead of that revision in each of these cases.
+
+Where the settlement this computer held in place keeps its place as standing,
+the version the import compares, and moves where its moment is not the later
+one, is its current version, read the same way.
+
+| Of the settlement that keeps its place | The import |
+| --- | --- |
+| The current version is one the evidence store records | Compares it and writes its moment there where it moves. |
+| The current version is a pending revision a tick admitted | Compares that revision and records it in the evidence store as the version it became, with the moment the comparison leaves it. It is read from the evidence store from then on, whatever becomes of the answer. |
+| A revision the import reads as undecided is pending on it | Leaves it pending and the commit undecided, and compares the current version as the two rows above say. Refused, the version it would have replaced is published as current again with the moment the import left it. Admitted, whichever tick answered, the revision takes its moment after that one (Verdict publication) and is published with it. |
+
+An import reads the export, the evidence store and those answers. It writes
+the evidence store alone.
 
 Setting a settlement aside takes a revision that is pending on it along. A
 settlement that was set aside is kept whole: its identity, versions, reports
 and reviewing sessions, where and when each was recorded, that pending
 revision, and the import and choice that set it aside. `instrukt review show` gives it beside the standing one. It
 publishes nothing, earns no coverage and admits no revision, and its pending
-revision is decided by no tick.
+revision is decided by no tick. An answer a tick gave for that revision while
+the import ran changes nothing of the import: the revision was compared as
+the version it would be.
 
 Imported evidence is the importing computer's from then on. It keeps its
 reviewing session and where and when it was recorded, counts like evidence
@@ -694,9 +727,13 @@ the importing repository does not hold is kept and is published once GitHub
 has the commit.
 
 Neither command needs the project to be opted in, waits for GitHub or takes
-the publication lock: an export reads the derived approvals and the decided
-revisions as every reader of the publication store does, and an import keeps
-them in the evidence store.
+the publication lock. Both read the publication store as every reader of it
+does, without a lock: an export reads the derived approvals and the decided
+revisions, and an import the answers to the pending revisions of the
+settlements that stand here. Both write the evidence store alone, under
+`state/review.lock`: an import keeps there the derived approvals and the
+decided revisions an export carried, and an admitted revision it recorded as
+a version.
 
 A computer that starts serving a project without an import holds no evidence.
 It recognises what the reviewer bot already published on eligible heads
@@ -805,6 +842,13 @@ But a later head of that pull request carries no status from that verdict
   there carries a later moment again, until that computer imports the chosen
   settlement, or this one imports an export that carries that version while
   the chosen settlement stands here.
+- An import cannot tell an undecided revision of a settlement that stands
+  here from one that is being admitted or whose answer was lost, so it
+  compares the offer as the version it would be (Evidence when the serving
+  computer changes). Where that offer is never admitted, the chosen verdict
+  has a later moment than its order needed, and each destination that showed
+  it with the earlier one is written once more: a change-requesting review
+  reaches its pull request a second time with the same findings.
 - A derived approval is derived again until GitHub shows it as the commit's
   status. A covering head's verdict that changes after the derivation of the
   tick that publishes it, or after the status is shown, withdraws nothing: the
