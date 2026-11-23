@@ -72,6 +72,7 @@ verified vendor contract is T3's projection writer (see See Also).
 
 ### Freshness and participation
 
+<!-- planned-change:fix-flaky-conversation-links-wait-tests -->
 The existing long-lived `instrukt run` catches up at startup and on native
 notifications of database or WAL changes. While T3's database or its WAL does
 not exist or cannot be watched, the runner tries every two seconds to watch
@@ -82,17 +83,24 @@ search also catch up before reading the local index. Each remote participant
 performs its own catch-up before answering. There is no tick-driven
 extraction, no periodic reading of T3's state and no scheduled reconciliation
 fallback.
-
-<!-- planned:fix-flaky-conversation-links-wait-tests -->
-After it subscribes, after each watch it establishes and after each native
-notification, the T3 adapter follows the database's change counter on one
-read-only connection for the confirmation bound its notification producer
-owns, and the runner catches up again each time the counter moves: a commit
-whose write was notified before it became readable is read once it is. A
-counter read that fails is tried again within the same bound and fails
-nothing. Once the bound has passed without a further native notification, the
-connection is closed and nothing is read.
-<!-- /planned:fix-flaky-conversation-links-wait-tests -->
+<!-- change:fix-flaky-conversation-links-wait-tests -->
+The existing long-lived `instrukt run` catches up at startup and on native
+notifications of database or WAL changes. A native notification can arrive
+before the change it announces is readable. While both T3's database and its
+WAL are watched, the adapter also asks its readers to read again: a first time
+shortly after the subscription, an established watch or a native notification,
+then after a delay that doubles up to a longest delay, for as long as both
+stay watched. The next native notification starts the delays from the shortest
+again. The T3 notification producer owns the shortest and the longest delay.
+While T3's database or its WAL does not exist or cannot be watched, the runner
+tries every two seconds to watch it, reading nothing, and catches up once when
+the watch is established: a source that is absent or unwatchable is recovered
+from, not failed on (`sdlc/principle/design-fundamentals`). Explicit extraction
+and every history search also catch up before reading the local index. Each
+remote participant performs its own catch-up before answering. There is no
+tick-driven extraction, and outside these repeated reads nothing reads T3's
+state on a schedule.
+<!-- /planned-change:fix-flaky-conversation-links-wait-tests -->
 
 Extraction and the query responder each retry inside themselves when their
 source or transport fails after they started, and report their state in
@@ -324,13 +332,10 @@ Then that conversation is in the developer's instrukt history without a search o
 - A mirror added to the mirror store below the last committed id while an
   import is incomplete is not imported.
 <!-- planned:fix-flaky-conversation-links-wait-tests -->
-- A commit that becomes readable later than the confirmation bound after the
-  last native notification of its write is caught up at the next native
-  notification, explicit extraction, search or runner start.
-- While the adapter follows the change counter, the runner holds one read-only
-  connection to T3's database, and with it SQLite's shared lock on the
-  database file. An operation that needs the database exclusively waits until
-  that connection closes.
+- A turn whose commit becomes readable after the read its notification
+  triggered is read at the next repeated read. That read comes within the
+  shortest delay or about as long again as the commit took to become readable,
+  and never later than the longest delay.
 <!-- /planned:fix-flaky-conversation-links-wait-tests -->
 
 ## See Also
@@ -339,6 +344,3 @@ Then that conversation is in the developer's instrukt history without a search o
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/work/github-record](../work/github-record.md)
 - https://github.com/pingdotgg/t3code/blob/6417151c093e54dbba0e6c824c69d03983793b9a/apps/server/src/orchestration-v2/ProjectionStore.ts — T3's projection writer, the vendor contract the T3 adapter's source reads are verified against.
-<!-- planned:fix-flaky-conversation-links-wait-tests -->
-- https://www.sqlite.org/pragma.html#pragma_data_version — SQLite's change counter, the vendor contract the adapter's confirmation reads.
-<!-- /planned:fix-flaky-conversation-links-wait-tests -->
