@@ -23,6 +23,27 @@ fn shown(project: &Tracked, bytes: &[u8]) -> String {
         "[TMP]",
     ))
 }
+/// The state database of `project`'s instrukt home, opened directly.
+fn state_db(project: &Tracked) -> instrukt_core::state_db::rusqlite::Connection {
+    instrukt_core::state_db::rusqlite::Connection::open(
+        project.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap()
+}
+/// The role section of the help instrukt renders for the native thread
+/// `native` in `cwd`; a caller without an assignment renders none.
+fn role_help(project: &Tracked, cwd: &std::path::Path, native: &str) -> String {
+    let output = project
+        .env
+        .instrukt(cwd)
+        .env("T3CODE_THREAD_ID", native)
+        .args(["--help"])
+        .assert()
+        .success();
+    let help = shown(project, &output.get_output().stdout);
+    help.split_once("\nRole:")
+        .map_or(help.clone(), |(_, role)| format!("Role:{role}"))
+}
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
 fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
@@ -560,6 +581,43 @@ fn releasing_a_driver_resumes_its_same_native_phase_and_tree_on_pickup() {
         "retained-driver-resumed",
         support::redact(&p.todo(["show", "resume-parser"]))
     );
+    // An earlier build recorded each pickup of a resumed driver as a new
+    // attempt with its own start, so a retained thread is the start of
+    // several attempts of one assignment. Its active attempt is its
+    // assignment, and the latest once all are released.
+    let native = fake.native_id("s1");
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &native)
+        .args(["todo", "update", "resume-parser", "--unclaim"])
+        .assert()
+        .success();
+    let db = state_db(&p);
+    let first: String = db
+        .query_row(
+            "SELECT semantic_key FROM session_bindings WHERE session=?1 AND released_at IS NOT NULL",
+            [format!("t3:{native}")],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let second = format!("{}:2", first.strip_suffix(":1").unwrap());
+    db.execute_batch(&format!(
+        "CREATE TEMP TABLE attempt AS SELECT * FROM session_bindings WHERE semantic_key='{first}';
+         UPDATE attempt SET attempt=2,semantic_key='{second}',released_at=NULL,evidence=json_set(evidence,'$.attempt',2,'$.semantic_key','{second}','$.released_at',json('null'));
+         INSERT INTO session_bindings SELECT * FROM attempt;
+         CREATE TEMP TABLE start AS SELECT * FROM runtime_bindings WHERE semantic_key='{first}';
+         UPDATE start SET semantic_key='{second}',subject='{second}';
+         INSERT INTO runtime_bindings SELECT * FROM start;"
+    ))
+    .unwrap();
+    let second_attempt = role_help(&p, &worktree, &native);
+    insta::assert_snapshot!("retained-second-attempt-role", second_attempt);
+    db.execute(
+        "UPDATE session_bindings SET released_at=(SELECT released_at FROM session_bindings WHERE semantic_key=?1),evidence=json_set(evidence,'$.released_at',(SELECT json_extract(evidence,'$.released_at') FROM session_bindings WHERE semantic_key=?1)) WHERE semantic_key=?2",
+        [&first, &second],
+    )
+    .unwrap();
+    assert_eq!(role_help(&p, &worktree, &native), second_attempt);
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17

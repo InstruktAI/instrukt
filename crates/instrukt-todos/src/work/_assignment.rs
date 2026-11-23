@@ -76,43 +76,85 @@ fn select_assignment(
     Ok(latest)
 }
 
+/// One binding row with the worktree a runner start supplies when the row
+/// was found through that start.
+type BindingRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<String>,
+);
+
+/// Bindings recorded for the caller's session, directly or through a later
+/// runtime generation of their key.
+const RECORDED_BINDINGS: &str = "SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0";
+
+/// The reserved, unreleased attempt a runner start names before work records
+/// the caller's session on it: a fresh start whose binding has no session
+/// yet, or a successor of the session the start replaces. A binding already
+/// on the caller is read through [`RECORDED_BINDINGS`].
+const STARTED_BINDING: &str = "SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,?5 FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?3 AND (b.runtime IS NULL OR b.runtime=?2) AND b.released_at IS NULL AND (b.session IS NULL OR b.session=?4) AND b.session IS NOT ?1";
+
+fn binding_rows(
+    db: &StateRead,
+    sql: &str,
+    params: impl instrukt_core::state_db::rusqlite::Params,
+) -> Result<Vec<BindingRow>, StateDbError> {
+    let mut stmt = db
+        .conn()
+        .prepare_cached(sql)
+        .map_err(StateDbError::sqlite(db.path()))?;
+    stmt.query_map(params, |r| {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+            r.get(6)?,
+            r.get(7)?,
+            r.get(8)?,
+            r.get(9)?,
+        ))
+    })
+    .map_err(StateDbError::sqlite(db.path()))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(StateDbError::sqlite(db.path()))
+}
+
+/// The caller's assignment among its recorded bindings and the reserved
+/// attempts its runner `starts` name; [`select_assignment`] decides among
+/// several attempts.
 pub fn recorded_assignment(
     home: &Home,
     caller: &SessionRef,
-    start: Option<&RecordedStart>,
+    starts: &[RecordedStart],
 ) -> Result<Option<Assignment>, StateDbError> {
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    // The third branch admits the start the runner recorded for a reserved,
-    // unreleased attempt before work records its session: a fresh start whose
-    // binding has no session yet, or a successor of the session it names.
-    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,?5 FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?3 AND (b.runtime IS NULL OR b.runtime=?2) AND b.released_at IS NULL AND (b.session IS NULL OR b.session=?4)").map_err(StateDbError::sqlite(db.path()))?;
-    let rows = stmt
-        .query_map(
+    let session = caller.to_string();
+    let mut rows = binding_rows(&db, RECORDED_BINDINGS, params![session])?;
+    for start in starts {
+        rows.extend(binding_rows(
+            &db,
+            STARTED_BINDING,
             params![
-                caller.to_string(),
+                session,
                 caller.runtime.as_str(),
-                start.map(|s| &s.semantic_key),
-                start.and_then(|s| s.replaced_session.as_ref()),
-                start.and_then(|s| s.worktree.as_ref()),
+                start.semantic_key,
+                start.replaced_session,
+                start.worktree,
             ],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, Option<String>>(6)?,
-                    r.get::<_, Option<String>>(7)?,
-                    r.get::<_, i64>(8)?,
-                    r.get::<_, Option<String>>(9)?,
-                ))
-            },
-        )
-        .map_err(StateDbError::sqlite(db.path()))?;
+        )?);
+    }
     let mut candidates = Vec::new();
     for row in rows {
         let (
@@ -126,7 +168,7 @@ pub fn recorded_assignment(
             released_at,
             attempt,
             started_workspace,
-        ) = row.map_err(StateDbError::sqlite(db.path()))?;
+        ) = row;
         let binding: Binding = serde_json::from_str(&evidence).map_err(|e| {
             StateDbError::invalid(
                 db.path(),
