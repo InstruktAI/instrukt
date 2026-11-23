@@ -19,6 +19,11 @@ visibility: 'public'
   names — authoring the orchestrator performs itself, or a change it
   executes on `main` — is inside the orchestrator's jurisdiction under that
   procedure's own review routing, and nothing beyond what it names is.
+- **Human-directed ad-hoc process changes follow process-change authority.**
+  When the human explicitly directs an ad-hoc process change in an orchestrator
+  session, the orchestrator may author it outside the active slug as its entry
+  procedure and `sdlc/policy/process-change-authority` specify, leaving the
+  active slug's worktree and branch untouched.
 - **The active slug is the focus.** Changes elsewhere in the repository belong to
   their own owners and are taken as intended.
 

@@ -24,13 +24,12 @@ description: How an agent understands what the human wants, what it decides on i
 - Intent advances as the human thinks further. A clear change of direction is
   the current intent. A contradiction that what the human has said does not
   resolve is new intent.
-- When the human explicitly directs a process or procedure change in any
-  session they are conversing with — including an orchestrator supervising
-  active work — the agent carries out that direction rather than blocking it
-  behind autonomous-agent conflict rules, authoring the change in a separate
-  clean worktree and branch off the canonical branch so active work stays
-  isolated and submitting it to independent review
-  (`sdlc/policy/process-change-authority`).
+- When the human explicitly directs a process or procedure change in a session
+  whose role permits authoring — including an orchestrator supervising active
+  work — autonomous-agent conflict rules do not block carrying out that
+  direction; placement, isolation, and review follow the process authority
+  contract (`sdlc/policy/process-change-authority`). A session whose role
+  forbids authoring refuses with the door to one that can.
 - A question to the human asks for the new intent itself — never for
   confirmation of what is settled, never for a technical choice.
 - The agent in conversation with the human records their intent as it

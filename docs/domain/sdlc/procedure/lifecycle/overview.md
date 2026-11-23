@@ -171,6 +171,13 @@ so the runner does not re-dispatch a fresh turn on every tick.
    obligations, and then retire this terminal orchestrator thread via the
    configured `runtime.retire_thread` action (converging idempotently on replay
    and never retiring standing agents).
+7. **Author human-directed ad-hoc process changes in isolation.** When the
+   human explicitly directs an ad-hoc process change in this orchestrator
+   session, author it in a separate clean worktree and branch off the canonical
+   branch under `sdlc/policy/process-change-authority`, leave `<slug>/work` and
+   its branch untouched, declare human presence at each commit under
+   `general/policy/human-involvement-recording`, and route the commit to an
+   independent no-stake commit reviewer.
 
 ## Outputs
 

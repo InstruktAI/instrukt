@@ -35,11 +35,16 @@ Neither its pending contracts nor its code alter a lifecycle state machine, a
 review lane, a lifecycle procedure, or todo and state semantics; a storage,
 transport or integration delivery adapts to the existing process. A reviewer
 raises such an alteration as significant unrequested behavior, whatever its
-quality. When the human explicitly directs an ad-hoc process change inside a
-session that is orchestrating other work, that session may author it in a
-separate clean worktree and branch from the canonical branch — leaving the
-orchestrated delivery's own worktree and branch untouched — recorded with
-`Human-Involved: true` and judged by an independent commit reviewer.
+quality. When the human explicitly directs an ad-hoc process change inside an
+eligible authoring session — including an orchestrator supervising an unrelated
+delivery — that session may author it in a separate clean worktree and branch
+from the canonical branch, leaving any active delivery's worktree and branch
+untouched, declaring human presence at each commit under
+`general/policy/human-involvement-recording`, and submitting it to an
+independent commit reviewer. A delivery whose own stated purpose is a process
+change keeps authoring its pending contract on its assigned worktree, and a
+role whose grants forbid authoring refuses with the door to an eligible
+session.
 
 The process artifact creates no human decision. Apply
 `general/policy/human-contract` to the underlying consequence. Only a material
@@ -94,12 +99,16 @@ artifact is judged under the contract as it stands. The pending contract a todo
 delivers under its own slug is the work under review, not a judging contract,
 and stays its author's.
 
-When the human is present in an orchestrator session and explicitly directs a
-process adjustment, that session is carrying human intent rather than rewriting
-its own judge autonomously. It authors the adjustment in a separate clean
-ad-hoc worktree and branch off the canonical branch, leaves the active
-delivery's worktree and branch untouched, commits with `Human-Involved: true`,
-and submits the commit to an independent no-stake commit reviewer.
+When the human is present in an eligible authoring session — including an
+orchestrator supervising an active review loop — and explicitly directs an
+ad-hoc process adjustment, that session is carrying human intent rather than
+rewriting its own judge autonomously. It authors the adjustment in a separate
+clean ad-hoc worktree and branch off the canonical branch, leaves the active
+delivery's worktree and branch untouched, declares human presence at each
+commit under `general/policy/human-involvement-recording`, and submits the
+commit to an independent no-stake commit reviewer. A focused role whose grants
+forbid authoring refuses with the door to an eligible session, and a process
+todo editing its own pending deliverable remains on its assigned worktree.
 
 ### Operation and recovery remain with intelligence
 
