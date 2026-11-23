@@ -79,4 +79,3 @@ Operations — `instrukt docs get --domain ops`
 # Sdlc
 
 Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
-- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`

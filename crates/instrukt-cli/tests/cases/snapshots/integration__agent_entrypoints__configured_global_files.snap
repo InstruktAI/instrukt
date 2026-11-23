@@ -96,10 +96,13 @@ Kind: Exceptions.
 - general/policy/style: About Style. — `instrukt docs get general/policy/style`
 - general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
 
+## Configured Responsibilities — started when their events arrive
+
+- general/procedure/triage: About Triage. — answers: system.alert
+
 # Sdlc
 
 Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
-- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`
 
 == [TMP]/pi-home/AGENTS.md
 # General
@@ -195,10 +198,13 @@ Kind: Exceptions.
 - general/policy/style: About Style. — `instrukt docs get general/policy/style`
 - general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
 
+## Configured Responsibilities — started when their events arrive
+
+- general/procedure/triage: About Triage. — answers: system.alert
+
 # Sdlc
 
 Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
-- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`
 
 == [TMP]/home/.claude/CLAUDE.md
 # General
@@ -294,10 +300,13 @@ Kind: Exceptions.
 - general/policy/style: About Style. — `instrukt docs get general/policy/style`
 - general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
 
+## Configured Responsibilities — started when their events arrive
+
+- general/procedure/triage: About Triage. — answers: system.alert
+
 # Sdlc
 
 Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
-- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`
 
 == [TMP]/home/.config/opencode/AGENTS.md
 # General
@@ -393,10 +402,13 @@ Kind: Exceptions.
 - general/policy/style: About Style. — `instrukt docs get general/policy/style`
 - general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
 
+## Configured Responsibilities — started when their events arrive
+
+- general/procedure/triage: About Triage. — answers: system.alert
+
 # Sdlc
 
 Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
-- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`
 
 == [TMP]/home/.kiro/steering/instrukt.md
 # General
@@ -492,7 +504,10 @@ Kind: Exceptions.
 - general/policy/style: About Style. — `instrukt docs get general/policy/style`
 - general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
 
+## Configured Responsibilities — started when their events arrive
+
+- general/procedure/triage: About Triage. — answers: system.alert
+
 # Sdlc
 
 Writing, reviewing and shipping code — `instrukt docs get --domain sdlc`
-- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`
