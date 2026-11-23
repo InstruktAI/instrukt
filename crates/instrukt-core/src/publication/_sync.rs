@@ -9,7 +9,7 @@ use super::_agents::{MergeRefusal, merge_key, targets};
 use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
-use super::_render::Renderer;
+use super::_render::{GENERATED_LINE, Renderer};
 use super::_source::{self, Committed, Project};
 use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
 use super::_tx::{LinkOutcome, STAGING_PREFIX, Transaction, destination, own_destination, sweep};
@@ -684,14 +684,7 @@ fn global_files(
                         reference: reference.clone(),
                     }),
             );
-        let text = if runtime.cli == "cursor" {
-            format!(
-                "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{}",
-                global.text
-            )
-        } else {
-            global.text.clone()
-        };
+        let text = global_file_text(runtime.cli, &global.text);
         plan.global.push(GlobalWrite {
             at: destination(&file.home, Path::new(runtime.file))?,
             path: file.path(),
@@ -905,4 +898,50 @@ fn relative_to(root: &Path, path: &Path) -> Result<PathBuf, PublicationError> {
         .map_err(|_| PublicationError::Unconfined {
             path: path.to_path_buf(),
         })
+}
+
+/// The agent runtime whose rule file opens with frontmatter of its own.
+const CURSOR: &str = "cursor";
+
+/// The text written to the global file of the agent runtime `cli`: the
+/// generated line, then `rendering`. Where the runtime's file format puts
+/// something of its own first, as Cursor's rule file does with its
+/// frontmatter, the generated line follows it.
+fn global_file_text(cli: &str, rendering: &str) -> String {
+    if cli == CURSOR {
+        format!(
+            "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{GENERATED_LINE}\n{rendering}"
+        )
+    } else {
+        format!("{GENERATED_LINE}\n{rendering}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RENDERING: &str = "# General\n\nBe kind.\n";
+
+    #[test]
+    fn cursors_frontmatter_comes_first_and_the_generated_line_right_after_it() {
+        let text = global_file_text(CURSOR, RENDERING);
+        let after = text
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n\n"))
+            .map(|(_, after)| after)
+            .unwrap_or_default();
+        assert_eq!(after.lines().next(), Some(GENERATED_LINE));
+        assert_eq!(
+            after.strip_prefix(GENERATED_LINE),
+            Some(&*format!("\n{RENDERING}"))
+        );
+        assert_eq!(text.matches(GENERATED_LINE).count(), 1);
+    }
+
+    #[test]
+    fn another_runtimes_file_opens_with_the_generated_line() {
+        let text = global_file_text("claude", RENDERING);
+        assert_eq!(text, format!("{GENERATED_LINE}\n{RENDERING}"));
+    }
 }

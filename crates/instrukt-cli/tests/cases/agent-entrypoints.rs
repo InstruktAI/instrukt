@@ -9,6 +9,7 @@
 use crate::common;
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
+use instrukt_core::publication::GENERATED_LINE;
 
 /// A snippet of `taxonomy` (policy, principle or procedure) with every
 /// required section, `extra` frontmatter lines and `reads` as its required
@@ -516,6 +517,16 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
             ]
         )
     );
+    for delivered in [
+        &codex,
+        &pi,
+        &claude,
+        &home.join(".config/opencode/AGENTS.md"),
+        &home.join(".kiro/steering/instrukt.md"),
+    ] {
+        let text = std::fs::read_to_string(delivered).unwrap();
+        assert_eq!(text.lines().next(), Some(GENERATED_LINE), "{delivered:?}");
+    }
     assert!(!home.join(".fx/AGENTS.md").exists());
     insta::assert_snapshot!(
         "configured_claude_settings",
