@@ -386,7 +386,7 @@ scope violations to strike before the plan is written, regardless of how
 prudent they look. Tracing a task to a scenario or
 snippet this same prepare pass authored does not create scope; the `diagnosis`
 and the `input` symptom are the only scope authorities for a bug
-(`sdlc/procedure/debugging`, step 5).
+(`sdlc/concept/defect-evidence` and `sdlc/policy/todo-creation-discipline`).
 
 State the operation's observable outcome and relevant effects after the fix
 under the diagnosed triggering conditions. If the settled diagnosis cannot

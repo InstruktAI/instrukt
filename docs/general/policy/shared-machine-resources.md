@@ -30,6 +30,11 @@ visibility: 'public'
 - **Clean what you own.** A session removes only output it or its delegates
   created, never another live session's checkout or build output. Output of a
   session that has ended is the delegating session's to remove.
+- **Reap ephemeral processes you spawn.** Any temporary server, container,
+  background load or reproduction process a session starts is spawned in a
+  tracked group and torn down in a guaranteed-cleanup path (`trap` / `finally`
+  / process-group kill) the instant its evidence is captured — never left as a
+  detached child leaking CPU or memory across the host.
 
 ## Rationale
 

@@ -795,14 +795,14 @@ Simplification findings are **Important** severity. The simplify lane only flags
 
 #### Bug-fix review
 
-**Authority:** DoD §3 (Testing) + `debugging`. Conditional lane — fires when `kind == "bug"`.
+**Authority:** DoD §3 (Testing) + `sdlc/procedure/lifecycle/prepare/diagnose-peer`. Conditional lane — fires when `kind == "bug"`.
 
 When `kind == "bug"`, the `input` artifact is the bug report and the intent source (no `prd`),
 sharpened by the `diagnosis` root cause. Verify:
 
-1. Fix addresses the evidenced concern in `input`. Independently apply the debugging
-   procedure's operation-outcome and failure-handling distinction to the diagnosis, then
-   verify that the delivered behavior satisfies that concern under the diagnosed conditions.
+1. Fix addresses the evidenced concern in `input`. Independently apply the
+   operation-outcome and failure-handling distinction (`sdlc/procedure/lifecycle/prepare/diagnose-peer`)
+   to the diagnosis, then verify that the delivered behavior satisfies that concern under the diagnosed conditions.
    A recorded disposition or named follow-up does not establish delivery.
 2. Root cause analysis is sound.
 3. Fix is minimal and targeted: the smallest change that removes the diagnosed
