@@ -24,11 +24,12 @@ pub enum GitHubError {
     RecordSchema { message: String },
     #[error(transparent)]
     App(#[from] instrukt_core::github::AppError),
-    /// The App one operation selected (a role's App, or the board account)
-    /// is not set up for it or GitHub refused it: that operation fails, and
-    /// the command's other operations continue with their own credentials.
+    /// The installation credential of the App one todo's operation selected
+    /// (a role's pull request or review App, or the board account) could not
+    /// be issued for it: that todo's reflection stays pending and the pass
+    /// continues with the next todo.
     #[error(transparent)]
-    OperationApp(instrukt_core::github::AppError),
+    OperationApp(OperationAppError),
     #[error("GitHub is unreachable ({0})")]
     Unreachable(String),
     #[error("GitHub deferred requests (rate limited)")]
@@ -54,11 +55,25 @@ pub enum GitHubError {
     Decode { path: String, message: String },
 }
 
+/// Why one todo's operation-selected App could not be issued a credential:
+/// a setup or identity mismatch, or a refusal naming that App's request.
+/// Only [`GitHub::app_failure`] makes one, so it never holds an unreachable,
+/// throttled or unavailable App API, which stop the command.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(transparent)]
+pub struct OperationAppError(instrukt_core::github::AppError);
+
+impl From<OperationAppError> for instrukt_core::github::AppError {
+    fn from(error: OperationAppError) -> Self {
+        error.0
+    }
+}
+
 impl GitHubError {
     /// Whether the failure stops every further request of this command:
-    /// GitHub cannot be reached, deferred us, or refused the token, or the
-    /// credential every request of the command shares could not be issued.
-    /// [`GitHubError::OperationApp`] is not one: it fails only its operation.
+    /// GitHub cannot be reached, deferred us, or refused the token, or an
+    /// installation credential could not be issued for a reason other than
+    /// one todo's operation-selected App ([`GitHubError::OperationApp`]).
     pub(crate) fn is_reach(&self) -> bool {
         matches!(
             self,
@@ -204,16 +219,22 @@ impl GitHub {
         Ok(())
     }
 
-    /// An App failure as this client's scope makes it: a setup or refusal of
-    /// an operation-scoped credential fails that operation alone, while an
-    /// unreachable or deferring App API stops the command either way.
+    /// An issuance failure as this client's scope makes it. For a credential
+    /// one operation selected, a setup mismatch or a refusal of that App's
+    /// request (a 4xx other than 403, which may be a secondary rate limit)
+    /// is local to the todo. Everything else, and any failure of the shared
+    /// project credential, stops the command.
     pub(crate) fn app_failure(&self, error: instrukt_core::github::AppError) -> GitHubError {
         use instrukt_core::github::AppError;
-        match error {
-            AppError::Setup(_) | AppError::Refused { .. } if self.scoped => {
-                GitHubError::OperationApp(error)
-            }
-            error => GitHubError::App(error),
+        let local = match &error {
+            AppError::Setup(_) => true,
+            AppError::Refused { status, .. } => (400..500).contains(status) && *status != 403,
+            AppError::Unreachable | AppError::RateLimited { .. } => false,
+        };
+        if local && self.scoped {
+            GitHubError::OperationApp(OperationAppError(error))
+        } else {
+            GitHubError::App(error)
         }
     }
 
@@ -489,7 +510,7 @@ fn reset_at(reset: Option<&str>) -> Option<Timestamp> {
 /// requests remaining) is [`GitHubError::RateLimited`]; otherwise one whose
 /// every entry is typed `FORBIDDEN` is [`GitHubError::Refused`]; any other
 /// answer is [`GitHubError::Status`]. Messages carry `credential` redacted.
-fn graphql_failure(
+pub(super) fn graphql_failure(
     errors: &[Value],
     status: u16,
     remaining: Option<&str>,
@@ -597,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn only_an_operation_scoped_app_setup_or_refusal_leaves_the_command_running() {
+    fn only_an_operation_scoped_app_setup_or_app_refusal_leaves_the_command_running() {
         use instrukt_core::github::{AppError, Operation};
         let shared = GitHub::new("http://127.0.0.1", "o/r", String::new());
         let scoped = shared.for_role(Some("builder"), Operation::Author).unwrap();
@@ -606,6 +627,14 @@ mod tests {
             AppError::Refused {
                 operation: "/repos/o/r/installation".into(),
                 status: 404,
+            },
+            AppError::Refused {
+                operation: "/app/installations/2/access_tokens".into(),
+                status: 403,
+            },
+            AppError::Refused {
+                operation: "/app/installations/2/access_tokens".into(),
+                status: 503,
             },
             AppError::Unreachable,
             AppError::RateLimited { until: None },
@@ -617,9 +646,9 @@ mod tests {
                 .collect()
         };
         // The credential every request shares stops the command on any failure.
-        assert_eq!(stops(&shared), [true, true, true, true]);
-        // One operation's App failure stops only that operation, unless the
-        // App API itself is unreachable or deferring.
-        assert_eq!(stops(&scoped), [false, false, true, true]);
+        assert_eq!(stops(&shared), [true, true, true, true, true, true]);
+        // One operation's App setup or refusal stays with its todo, unless it
+        // may be throttling (403) or the App API is unavailable or deferring.
+        assert_eq!(stops(&scoped), [false, false, true, true, true, true]);
     }
 }

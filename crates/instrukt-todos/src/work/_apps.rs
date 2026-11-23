@@ -149,7 +149,8 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
 
 fn readiness_error(error: super::GitHubError) -> AppError {
     match error {
-        super::GitHubError::App(error) | super::GitHubError::OperationApp(error) => error,
+        super::GitHubError::App(error) => error,
+        super::GitHubError::OperationApp(error) => error.into(),
         super::GitHubError::RateLimited { until } => AppError::RateLimited { until },
         super::GitHubError::Unreachable(_) => AppError::Unreachable,
         error => setup(&error.to_string()),
@@ -487,11 +488,27 @@ impl Apps {
                 status,
             });
         }
+        let header = |name: &str| h.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
+        let (remaining, reset) = (header("x-ratelimit-remaining"), header("x-ratelimit-reset"));
         let text = response
             .body_mut()
             .read_to_string()
             .map_err(|_| AppError::Unreachable)?;
-        serde_json::from_str(&text).map_err(|_| setup("unreadable App API response"))
+        let answer: Value =
+            serde_json::from_str(&text).map_err(|_| setup("unreadable App API response"))?;
+        // GraphQL reports throttling in a successful answer's `errors`.
+        if let Some(errors) = answer["errors"].as_array().filter(|e| !e.is_empty())
+            && let super::GitHubError::RateLimited { until } = super::_github::graphql_failure(
+                errors,
+                status,
+                remaining.as_deref(),
+                reset.as_deref(),
+                bearer,
+            )
+        {
+            return Err(AppError::RateLimited { until });
+        }
+        Ok(answer)
     }
 }
 fn check_permissions(actual: &Value, required: &Value) -> Result<(), AppError> {
