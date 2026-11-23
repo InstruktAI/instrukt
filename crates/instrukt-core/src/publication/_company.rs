@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_yaml_ng::Value;
 
@@ -39,7 +40,7 @@ const LISTED: &str = "listed";
 
 /// A company's `docs/index.yaml`: the documents its agents start with in
 /// full, in order, and those named by one line. No other key is allowed.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CompanyIndex {
     /// Each document held in full, with its required reads.
@@ -58,6 +59,34 @@ pub(super) struct CompanyEntry(String);
 impl CompanyEntry {
     fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl CompanyEntry {
+    /// What an entry's path must match: it ends in `.md`.
+    const PATTERN: &'static str = r"\.md$";
+}
+
+impl JsonSchema for CompanyEntry {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CompanyEntry".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": Self::PATTERN,
+            "description": "A company document's path relative to `docs/`, ending in `.md`."
+        })
+    }
+}
+
+impl CompanyIndex {
+    /// The editor schema of a company index, generated from the type the
+    /// index is read with: the empty document, or a mapping of `expanded`
+    /// and `listed`, each a list of `.md` paths, and no other key.
+    pub(super) fn editor_schema() -> serde_json::Value {
+        schemars::schema_for!(Option<CompanyIndex>).to_value()
     }
 }
 
@@ -644,6 +673,25 @@ mod tests {
                     carrier: "docs/company.md".to_owned(),
                 },
             }]
+        );
+    }
+
+    #[test]
+    fn the_company_index_schema_admits_its_two_keys_of_md_paths_and_the_empty_document() {
+        let schema = CompanyIndex::editor_schema();
+        let variants = schema["anyOf"].as_array().unwrap();
+        assert!(variants.contains(&serde_json::json!({"type": "null"})));
+        let index = &schema["$defs"]["CompanyIndex"];
+        let mut keys: Vec<&String> = index["properties"].as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, [EXPANDED, LISTED]);
+        assert_eq!(index["additionalProperties"], false);
+        for key in [EXPANDED, LISTED] {
+            assert_eq!(index["properties"][key]["type"], "array");
+        }
+        assert_eq!(
+            schema["$defs"]["CompanyEntry"]["pattern"],
+            CompanyEntry::PATTERN
         );
     }
 }

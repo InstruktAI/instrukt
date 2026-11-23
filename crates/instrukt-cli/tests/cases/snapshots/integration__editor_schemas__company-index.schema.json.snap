@@ -1,0 +1,44 @@
+---
+source: crates/instrukt-cli/tests/cases/editor-schemas.rs
+expression: "String::from_utf8(bytes).unwrap()"
+---
+{
+  "anyOf": [
+    {
+      "$ref": "#/$defs/CompanyIndex"
+    },
+    {
+      "type": "null"
+    }
+  ],
+  "title": "Nullable_CompanyIndex",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CompanyIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expanded": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CompanyEntry"
+          },
+          "description": "Each document held in full, with its required reads."
+        },
+        "listed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CompanyEntry"
+          },
+          "description": "Each document named by one line."
+        }
+      },
+      "description": "A company's `docs/index.yaml`: the documents its agents start with in\nfull, in order, and those named by one line. No other key is allowed."
+    },
+    "CompanyEntry": {
+      "type": "string",
+      "pattern": "\\.md$",
+      "description": "A company document's path relative to `docs/`, ending in `.md`."
+    }
+  }
+}

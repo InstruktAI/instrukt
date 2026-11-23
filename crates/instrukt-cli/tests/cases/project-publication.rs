@@ -119,6 +119,7 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/company-index.schema.json: schema written
     .instrukt/schemas/snippet-schema.schema.json: schema written
     .instrukt/schemas/instrukt.schema.json: schema written
     ");
@@ -204,6 +205,7 @@ fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/company-index.schema.json: schema written
     .instrukt/schemas/snippet-schema.schema.json: schema written
     .instrukt/schemas/instrukt.schema.json: schema written
     ");
@@ -662,6 +664,7 @@ fn an_output_that_is_a_symbolic_link_is_replaced_and_its_target_left_alone() {
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/company-index.schema.json: schema written
     .instrukt/schemas/snippet-schema.schema.json: schema written
     .instrukt/schemas/instrukt.schema.json: schema written
     ");
