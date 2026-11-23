@@ -541,6 +541,80 @@ mod tests {
         assert_eq!(record.next_sequence(), 5);
     }
 
+    /// An active, claimed todo `depth` at `revision` with one reflected
+    /// `log` version, its learned coordinates as given.
+    fn reflected(revision: u64, address: Option<u64>, remote: Option<u64>) -> TodoRecord {
+        let mut record: TodoRecord = serde_json::from_value(serde_json::json!({
+            "schema": 1, "id": "ab".repeat(16), "project": "demo", "slug": "depth",
+            "kind": "change", "status": "active", "created": "2026-01-01T00:00:00Z",
+            "created_by": {"person": {"name": "dev"}}, "revision": revision,
+            "claim": {"machine": "cd".repeat(16), "at": "2026-01-02T00:00:00Z"},
+        }))
+        .unwrap();
+        record.artifacts.push(Artifact {
+            name: ArtifactName::new("log"),
+            address,
+            versions: vec![Version {
+                digest: digest_of("started"),
+                writer: Actor::Person { name: "dev".into() },
+                created: Timestamp::from_second(5).unwrap(),
+                derived_from: Vec::new(),
+                sequence: 1,
+                grounding: Grounding::default(),
+                remote,
+                content: Some("started".into()),
+            }],
+        });
+        record
+    }
+
+    #[test]
+    fn a_record_is_the_same_whatever_reflection_learned_of_its_artifacts() {
+        let read = reflected(2, None, None);
+        let mut learned = reflected(2, Some(7), Some(1));
+        learned.artifacts[0].versions[0].content = None;
+        assert!(learned.same_as(&read));
+    }
+
+    #[test]
+    fn a_different_change_at_the_same_revision_a_rename_and_a_withdrawal_are_not_the_same_record() {
+        let read = reflected(2, Some(7), Some(1));
+        let mut other = read.clone();
+        other.artifacts[0].versions[0].digest = digest_of("joined");
+        let mut renamed = read.clone();
+        renamed.slug = TodoSlug::parse("depth-two").unwrap();
+        let mut withdrawn = read.clone();
+        withdrawn.withdraw(Timestamp::from_second(9).unwrap(), None, Vec::new());
+        for changed in [other, renamed, withdrawn] {
+            assert!(!changed.same_as(&read), "{changed:?}");
+        }
+    }
+
+    #[test]
+    fn withdrawing_records_what_was_released_and_the_status_it_came_from_and_drops_the_claim() {
+        let mut record = reflected(2, None, None);
+        let at = Timestamp::from_second(9).unwrap();
+        let branch = ReleasedBranch {
+            name: "depth/work".into(),
+            head: CommitSha::parse(&"e".repeat(40)).unwrap(),
+        };
+        let worktrees = vec![PathBuf::from("/work/depth")];
+        record.withdraw(at, Some(branch.clone()), worktrees.clone());
+        assert_eq!(
+            (record.status, record.claim, record.removal),
+            (
+                TodoStatus::Removed,
+                None,
+                Some(Removal {
+                    at,
+                    from: TodoStatus::Active,
+                    branch: Some(branch),
+                    worktrees,
+                })
+            )
+        );
+    }
+
     #[test]
     fn digests_name_their_algorithm_and_change_with_content() {
         let a = digest_of("one");

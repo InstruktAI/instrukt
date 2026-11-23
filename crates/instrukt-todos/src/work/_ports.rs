@@ -485,6 +485,9 @@ impl SessionBindings for Work {
         use instrukt_runner::interfaces::{AssignmentKind, DispatchReservation};
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
+        // A start or follow-up on a todo whose working resources are being
+        // released would run in a worktree that is going.
+        s.refuse_withdrawing(index)?;
         let machine = s.machine()?;
         let record = &s.items[index].record;
         if record.status != TodoStatus::Active
@@ -776,6 +779,7 @@ impl SessionBindings for Work {
         let machine = s.machine()?;
         let todo = replacement_todo(&s, key)?;
         let index = s.enter_judged(&todo)?;
+        s.refuse_withdrawing(index)?;
         checked_replacement(&s.items[index].record, &machine, key, stopped)?;
         Ok(())
     }

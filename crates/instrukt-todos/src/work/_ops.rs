@@ -2130,9 +2130,13 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
 }
 
 /// A cycle of waiting through `record`, if the project graph has one: the
-/// slugs from `record` back to itself ([`super::_graph::first_cycle`]). Every todo
-/// the waiting from `record` reaches is refreshed first, once per command,
-/// so the graph is judged as GitHub holds it now.
+/// slugs from `record` back to itself ([`super::_graph::first_cycle`]). Every
+/// todo the waiting from `record` reaches is consulted once per command
+/// ([`Session::record_current`]): refreshed from GitHub when GitHub answers,
+/// otherwise judged by the last record this computer holds of it, so the
+/// graph is the most current one this command can read, not necessarily
+/// GitHub's. The transaction that commits the change judges the graph it
+/// holds again.
 fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
     loop {
         let graph = wait_graph(s);
@@ -2539,10 +2543,10 @@ mod tests {
                 .lacking(&artifact)
                 .is_empty()
         );
-        let taken = Wanted::version(&artifact, digest.as_str()).unwrap();
+        // The version that holds the content, whole: not the earlier repeat.
         assert_eq!(
-            (taken.sequence, taken.content.as_deref()),
-            (2, Some("same"))
+            Wanted::version(&artifact, digest.as_str()),
+            Some(&artifact.versions[1])
         );
     }
 

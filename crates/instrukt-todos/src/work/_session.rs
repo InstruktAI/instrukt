@@ -1263,6 +1263,16 @@ impl<'w> Session<'w> {
         self.store.item(&self.items[index].record.id)
     }
 
+    /// Refuses acting on item `index` while its withdrawal is recorded and
+    /// not ended (`withdrawal_intents`): its working resources may be going.
+    pub fn refuse_withdrawing(&self, index: usize) -> Result<(), WorkError> {
+        let record = &self.items[index].record;
+        if self.store.withdrawal_intent(&record.id)?.is_some() {
+            return Err(withdrawing_refusal(&record.slug));
+        }
+        Ok(())
+    }
+
     /// Item `index`'s row as this command last read or wrote it, `None`
     /// for an item it has not stored.
     pub fn base(&self, index: usize) -> Option<LocalItem> {
