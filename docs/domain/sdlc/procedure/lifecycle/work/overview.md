@@ -204,15 +204,15 @@ with no outstanding workspace role, send the retained finalizer the record-only
 `--finalize-ready` follow-up. Retry only that write after interruption; further
 workspace work needs a new attempt and completion. Readiness and
 `workflow.finalized` append commit together for the exact project/todo/SHA.
-Confirm the handoff. The worktree now waits for integration. The work
-orchestrator owns the build output this todo's work sessions and their
-delegates created, so it removes that regenerable output
-(`general/policy/shared-machine-resources`), leaving the clean committed tree,
-the todo branch and the published head as the readiness record binds them. A
-removal that cannot complete is recorded as an owed obligation and does not
-reopen the handoff. Then run `instrukt todo update <slug> --unclaim`, confirm
-release and record remaining obligations. Integration belongs to the standing
-integrator.
+Confirm the handoff. Because this work checkout now waits for integration, the
+work orchestrator — as owner of the regenerable build output created by its
+work sessions and their delegates — removes that regenerable output
+(`general/policy/shared-machine-resources`) while leaving the clean committed
+tree, the todo branch and the published head untouched as bound by the
+readiness record. If removal cannot complete, record it as an owed obligation
+without reopening the handoff. Then run `instrukt todo update <slug> --unclaim`,
+confirm release and record remaining obligations. Integration belongs to the
+standing integrator.
 <!-- /planned-change:reduce-worktree-disk-usage -->
 
 After confirmed delivery, the integrator removes this todo's one worktree from
@@ -277,14 +277,15 @@ branches and build commits. The stamp alone performs no session side effects.
 <!-- change:reduce-worktree-disk-usage -->
 Run `instrukt todo stamp {slug} --kickback --reason '<why the plan cannot be built>'`
 through the configured kickback command. The record carries the reason in
-`input`, invalidates the implementation plan and resets finalization. The
-worktree now waits for re-preparation. The work orchestrator removes the
-regenerable build output this todo's work sessions and their delegates created
-(`general/policy/shared-machine-resources`) and preserves the worktree,
-branches and build commits; a removal that cannot complete is recorded as an
-owed obligation. Execute `instrukt todo update <slug> --unclaim` and the
-cleanup effects and confirm release. The stamp alone performs no session side
-effects.
+`input`, invalidates the implementation plan and resets finalization. Because
+this work checkout now waits for re-preparation, the work orchestrator — as
+owner of the regenerable build output created by its work sessions and their
+delegates — removes that regenerable output
+(`general/policy/shared-machine-resources`) while preserving the clean
+committed tree, the todo branch, any published head and existing build commits.
+If removal cannot complete, record it as an owed obligation without reopening
+the kickback. Execute `instrukt todo update <slug> --unclaim` and the cleanup
+effects and confirm release. The stamp alone performs no session side effects.
 <!-- /planned-change:reduce-worktree-disk-usage -->
 
 The runner owns the next preparation dispatch. Its planner reads the recorded

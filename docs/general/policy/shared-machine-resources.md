@@ -20,12 +20,14 @@ visibility: 'public'
   checkouts names that cleanup in the brief, and when a round of delegated work
   ends, removes the regenerable output its finished delegates left behind.
 <!-- planned:reduce-worktree-disk-usage -->
-- **A work checkout waits without its output.** A todo's work checkout that
-  stays after its candidate is handed to integration, or after its todo is
-  kicked back to preparation, has its regenerable output removed at that
-  transition by the session that owns that output. The clean committed
-  checkout and its branch stay as they are, and the next build there
-  regenerates what it needs.
+- **Waiting work checkouts drop their build output.** When a todo's work
+  checkout transitions into a wait — either after its candidate is handed to
+  integration or after the todo is kicked back to preparation — the session
+  that owns the regenerable build output created there removes that output at
+  the transition. The clean committed tree, the todo branch and any published
+  head remain intact; if work later resumes in that checkout, the next build
+  regenerates what it needs. A preparation checkout awaiting review is not
+  covered by this rule.
 <!-- /planned:reduce-worktree-disk-usage -->
 - **Measure before building in a new place.** Before a build, install or full
   test run in a checkout that has no build output yet, check the volume's free
@@ -50,12 +52,12 @@ Output is regenerable, so removing it costs only a rebuild; keeping it costs
 everyone on the machine.
 
 <!-- planned:reduce-worktree-disk-usage -->
-A work checkout that waits after its hand-off or kickback keeps its output for
-as long as the integrator or the next preparation takes, and the waiting
-session cannot shorten the wait. Every todo in flight adds one such checkout,
-so idle output grows with the number of todos in flight instead of with the
-builds that are running. Removing it at the transition costs one rebuild, and
-only when work returns to that checkout.
+Once a work checkout hands off to integration or returns to preparation, it
+sits idle for the full duration of downstream integration or re-preparation
+with no live build inside it. Keeping its regenerable output turns disk usage
+into a function of every todo in flight rather than active builds, risking the
+machine's headroom floor. Dropping that output at the transition leaves
+committed work untouched and pays at most one rebuild if work returns.
 <!-- /planned:reduce-worktree-disk-usage -->
 
 ## Scope
@@ -68,8 +70,9 @@ All agents, all sessions, all projects, on every machine they run on.
 Reviewers treat a finished checkout left with its build output as a
 process miss.
 <!-- change:reduce-worktree-disk-usage -->
-Reviewers treat a finished checkout, or a work checkout past its integration
-hand-off or kickback, left with its build output as a process miss.
+Reviewers treat a finished checkout — or a todo work checkout left with its
+regenerable build output after integration handoff or kickback to preparation —
+as a process miss.
 <!-- /planned-change:reduce-worktree-disk-usage -->
 
 ## Exceptions
