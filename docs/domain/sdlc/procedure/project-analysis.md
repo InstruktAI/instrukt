@@ -311,10 +311,12 @@ Write the project's purpose as a project snippet, name it first in `expanded`,
 and select the other project snippets through `docs/project/index.yaml` so the
 commit renders `AGENTS.md`.
 
-**Case 5 — an `AGENTS.master.md` exists.**
-No entrypoint is rendered from a master, so what the file holds reaches no agent.
-Move its `## Purpose` into the project's purpose snippet and anything else it
-holds into snippets the index selects, then delete the file.
+**Case 5 — a former master exists: an `AGENTS.master.md` kept at the repository's root or in a subfolder as the source of the `AGENTS.md` beside it.**
+No entrypoint is rendered from it, so what it holds reaches no agent through
+the project's rendering. Move its `## Purpose` into the project's purpose
+snippet and anything else it holds into snippets the index selects, then
+delete the file. A document under `docs/` that the index selects stays where
+it is, whatever its name.
 
 **Anomaly — both `.instrukt/adopted/AGENTS.md` (or a hand-authored `AGENTS.md`) and a substantive runtime-specific instruction file exist.**
 When the configured runtime loads both into the same session, two authored

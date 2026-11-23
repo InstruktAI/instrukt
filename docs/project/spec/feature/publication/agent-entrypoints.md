@@ -214,8 +214,10 @@ same content with the same instrukt release write the same bytes.
   other there: in a project the ordinary snippet rules read it and report
   what they find, and in a company home an index entry or a required read
   may name it as a company document. Anywhere else in a repository nothing
-  reads it. What a master held reaches agents once it is moved into
-  documentation the entry index selects.
+  reads it. What a file kept as a master holds reaches agents through
+  instrukt's rendering once it is documentation the entry index selects;
+  whether and when that file is deleted is its repository's
+  (`general/policy/agent-artifact-governance`).
 <!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ### Project entrypoints
