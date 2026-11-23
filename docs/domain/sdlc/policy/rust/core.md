@@ -234,9 +234,11 @@ I/O it wraps, and `dyn` is simpler.
 <!-- planned:reduce-worktree-disk-usage -->
 The dev profile settings keep the debug info a failure report reads, the file
 and line of a panic or a backtrace frame in workspace crates. They leave out
-the rest, which a profile without them compiles in full for every crate:
-variable and parameter information for workspace crates, and all debug info
-for dependencies. Each worktree's build is smaller by what the omitted part
+the rest: for workspace crates everything beyond those line tables, such as
+variable and parameter information, and for dependencies all debug info. A
+crate loses only what its build carried before, and one compiled only for
+build time, such as a procedural macro or what a build script depends on, may
+already carry none. Each worktree's build is smaller by what the omitted part
 weighs. That weight depends on the workspace and the dependencies it compiles,
 so a size figure holds only for the build it was measured on.
 
