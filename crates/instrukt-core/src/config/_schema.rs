@@ -959,8 +959,9 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
 /// `char::is_whitespace`, the set `str::trim` removes. A regex class escape
 /// such as `\S` would not do, because JSON Schema reads patterns as ECMA-262,
 /// whose whitespace differs (it adds U+FEFF and omits U+0085). The pattern is
-/// a complemented class of `\uXXXX` escapes, which every JSON Schema regex
-/// dialect reads as the same code points.
+/// a complemented class of `\uXXXX` escapes, which ECMA-262 reads as exactly
+/// those code points; a validator using another regex dialect may not accept
+/// the `\uXXXX` escape.
 fn non_blank_pattern() -> String {
     let mut runs: Vec<(u32, u32)> = Vec::new();
     for code in (0..=u32::from(char::MAX))
