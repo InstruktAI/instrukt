@@ -177,28 +177,81 @@ pub(crate) enum Checkout {
 
 /// One worktree a withdrawal releases: why it belongs to the todo, what it
 /// had checked out when the withdrawal checked it, whether it is released
-/// yet, where it is moved to be released, and its git directory, by which
-/// it is recognized wherever git lists it. A worktree whose checkout is no
-/// longer that one is not the todo's any more.
+/// yet, how far the withdrawal's own moves of it have come, and its git
+/// directory, by which it is recognized where those moves can have put it.
+/// A worktree whose checkout is no longer that one is not the todo's any
+/// more.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct IntentWorktree {
     pub path: PathBuf,
     pub tie: WorktreeTie,
     pub checkout: Option<Checkout>,
     pub released: bool,
-    /// Where the worktree is while the withdrawal releases it away from
-    /// `path`: the staging location beside `path` it is moved to, recorded
-    /// before the move, or wherever git lists it instead once a move put it
-    /// elsewhere; cleared once it is removed or moved back.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub staging: Option<PathBuf>,
+    /// How far the withdrawal's own moves of it have come, each recorded
+    /// before the move it names; it bounds where the withdrawal looks for
+    /// it ([`WorktreeStage::reachable`]).
+    #[serde(default, skip_serializing_if = "WorktreeStage::is_at_original")]
+    pub stage: WorktreeStage,
     /// Its administrative directory in the repository, which
     /// `git worktree move` keeps (`git rev-parse --absolute-git-dir`):
     /// recorded when the withdrawal checks it, or, for an intent recorded
-    /// without it, the first time a run finds the worktree at its path or
-    /// staging location.
+    /// without it, the first time a run finds the worktree where its stage
+    /// says it can be.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_dir: Option<PathBuf>,
+}
+
+/// How far a withdrawal's own moves of a worktree have come
+/// (`withdrawal_intents`, `worktrees`). Each stage is recorded before the
+/// git command it names, so it tells which places only this withdrawal's
+/// moves can have put the worktree, and the withdrawal looks for it only
+/// there: a worktree found anywhere else was put there by someone else, and
+/// a git directory found anywhere else may be one git gave a new checkout
+/// after removing this one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorktreeStage {
+    /// The withdrawal has not moved it: it is at its path, or was moved by
+    /// someone else.
+    #[default]
+    AtOriginal,
+    /// The withdrawal is moving it from its path to this staging location
+    /// beside it.
+    MovingTo(PathBuf),
+    /// The withdrawal moved it here, away from its path, where it is
+    /// removed or from where it is moved back.
+    Staged(PathBuf),
+    /// The withdrawal is moving it back from here to its path.
+    RestoringFrom(PathBuf),
+}
+
+impl WorktreeStage {
+    /// Whether the withdrawal has not moved it.
+    pub fn is_at_original(&self) -> bool {
+        *self == Self::AtOriginal
+    }
+
+    /// The places the withdrawal's own moves can have put the worktree at
+    /// `path` by this stage: git moves a worktree into a directory that took
+    /// its destination meanwhile, so each destination is also looked at with
+    /// the worktree's name inside it. A staged worktree is looked for only
+    /// where it was staged: its removal there may have let git give its git
+    /// directory to a new checkout anywhere else.
+    pub fn reachable(&self, path: &Path) -> Vec<PathBuf> {
+        let inside = |into: &Path, from: &Path| from.file_name().map(|name| into.join(name));
+        match self {
+            Self::AtOriginal => vec![path.to_path_buf()],
+            Self::MovingTo(to) => std::iter::once(path.to_path_buf())
+                .chain(std::iter::once(to.clone()))
+                .chain(inside(to, path))
+                .collect(),
+            Self::Staged(at) => vec![at.clone()],
+            Self::RestoringFrom(from) => std::iter::once(from.clone())
+                .chain(std::iter::once(path.to_path_buf()))
+                .chain(inside(path, from))
+                .collect(),
+        }
+    }
 }
 
 /// How far a withdrawal's release of its work branch has come
@@ -260,15 +313,16 @@ pub(crate) struct WithdrawalIntent {
 impl WithdrawalIntent {
     /// Whether the intent may be closed with the todo left as it was: it
     /// records no working resource released, and no effect under way whose
-    /// outcome a later run must still recognize — no worktree recorded at
-    /// its staging location, and no partial marker not yet taken back.
+    /// outcome a later run must still recognize — no worktree the
+    /// withdrawal is moving, has moved or is moving back
+    /// ([`WorktreeStage`]), and no partial marker not yet taken back.
     pub fn abandonable(&self) -> bool {
         self.workspace != WorkspaceRelease::Released
             && self.branch_state == BranchRelease::Pending
             && self
                 .worktrees
                 .iter()
-                .all(|w| !w.released && w.staging.is_none())
+                .all(|w| !w.released && w.stage.is_at_original())
     }
 
     /// Whether `branch` is recorded deleted.

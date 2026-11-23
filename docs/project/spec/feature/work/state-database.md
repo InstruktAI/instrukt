@@ -371,7 +371,7 @@ intent: it is never reflected to GitHub and never copied to another computer.
 | `todo_id` | The withdrawn todo (`todos.id`); removed with it. |
 | `branch` | The work branch the withdrawal releases, or `NULL` when there is none. |
 | `branch_head` | The commit that branch pointed at when the withdrawal last read it, or `NULL`. It is recorded before the branch is deleted, against that commit, and kept as the deleted branch's recovery commit. |
-| `worktrees` | The worktrees the withdrawal releases, as JSON: each with why it belongs to the todo (`bound`, named by a session binding, or `on_branch`, with the work branch checked out), the checkout it had when the withdrawal checked it (its branch, or the commit it was detached at), whether it is released yet, its git directory (its administrative directory in the repository, which a move keeps), and, while the withdrawal releases it away from its path, where it is: its staging location, a sibling of its path in the same directory, of bounded length whatever the worktree is called and distinct for each worktree, recorded as a path before the worktree is moved there; or, when a move put it somewhere else, such as inside a directory that took its path or its staging location meanwhile, where git lists it there. |
+| `worktrees` | The worktrees the withdrawal releases, as JSON: each with why it belongs to the todo (`bound`, named by a session binding, or `on_branch`, with the work branch checked out), the checkout it had when the withdrawal checked it (its branch, or the commit it was detached at), whether it is released yet, its git directory (its administrative directory in the repository, which a move keeps), and its stage: how far the withdrawal's own moves of it have come, each recorded before the `git worktree move` it names — not moved by the withdrawal (left out of the JSON), `moving_to` its staging location, `staged` at the place that move put it, or `restoring_from` that place back to its path. The staging location is a sibling of its path in the same directory, of bounded length whatever the worktree is called and distinct for each worktree; the place a move put it is its destination or, when a directory took that destination meanwhile, the worktree's directory name inside it. |
 | `workspace_path` | Where the todo's workspace is in the checkout the withdrawal was admitted from (`<checkout>/workspace/<slug>`): the one workspace the withdrawal checks and releases, whichever checkout of the project runs it again. |
 | `workspace` | The workspace at `workspace_path`: `absent` when there was none to release when the withdrawal checked, `present` while it is there, empty, to release, `released` once removed or found gone. |
 | `branch_state` | How far the work branch's release has come: `pending` while it is not deleted; `partial_marker` once a failed deletion is known to have left only the withdrawal's marker beside the branch it did not delete; `deleted` once it is deleted by this withdrawal, or found gone or recreated at a commit that does not descend from `branch_head`. |
@@ -405,7 +405,7 @@ Dispatch admission, read back after a reservation's reflection, refuses while
 the row exists, in the same read that confirms the reservation, claim and
 status. The row is updated as each step whose outcome must be recognized
 afterwards happens: the branch's commit before the branch is deleted, a
-worktree's staging location before it is moved there, and each worktree, the
+worktree's stage before each move of it, and each worktree, the
 workspace and the branch once released; recording a partial marker is
 attempted before the marker is taken back, which goes ahead whether or not
 that write succeeded (see the marker-only outcome below). It is removed in the
@@ -414,10 +414,11 @@ what was released, or on its own only when a refusal rests on what git or the
 filesystem positively shows — a resource that must be kept, or an attempted
 release proven to have changed nothing or taken back — while the command
 attempted no other release and the row records nothing released and nothing
-under way: no worktree at a staging location and no `partial_marker`. Then the
+under way: no worktree the withdrawal is moving, has moved or is moving back,
+and no `partial_marker`. Then the
 todo is left as it was.
 Otherwise a refusal keeps the row with everything it records, `branch_head`,
-staging locations and `partial_marker` included, whatever refused the command,
+worktree stages and `partial_marker` included, whatever refused the command,
 such as files that appeared in the workspace before a partial marker was taken
 back. The refusal names what the row records as released and what it records
 under way; one that rests on an observation git or the filesystem could not
@@ -463,13 +464,24 @@ outstanding until the first pull after the withdrawal commits. It first records
 what the interrupted command did without recording it, and what became of the
 resources since: while the row records the branch `pending`, a marker records
 the branch deleted at the marker's commit, and whatever branch carries its name
-now is left as it is; each worktree is recognized by its git directory among
-all the worktrees git lists, other than the project's primary checkout and
-those git reports prunable: one git lists at its path is back there or was not
-moved; one git lists anywhere else, such as inside a directory a move put it
-in, has that place recorded as where it is, and is never taken for released;
-one git lists nowhere is released only once git no longer keeps its git
-directory; and the workspace at `workspace_path` is released when
+now is left as it is; each worktree is recognized by its git directory only
+where its stage says the withdrawal's own moves can have put it, never at the
+project's primary checkout nor where git reports it prunable: not moved by the
+withdrawal, at its path; being moved, at its path, its staging location or
+inside a directory that took that location; staged, only where it was staged;
+being moved back, where it was staged, at its path or inside a directory that
+took its path. Found at its path, its stage records it not moved; found
+anywhere else there, its stage records it staged at that place, and it is never
+taken for released. One the withdrawal has not moved that git lists elsewhere
+was moved by someone else: it is left where it is, never moved back, and leaves
+the withdrawal. One not staged that git lists nowhere it is looked for is
+released only once git no longer keeps its git directory; a staged one is
+released once git lists nothing where it was staged and nothing is there,
+whatever git lists elsewhere. Removing a worktree lets git give its git
+directory, which git names after the worktree's directory name, to the next
+worktree added under that name, wherever it is, so a checkout git lists with
+that git directory elsewhere, even of the same commit, is never taken for a
+staged worktree. The workspace at `workspace_path` is released when
 the row records it present and it is gone. A workspace at `workspace_path` holding
 files refuses the withdrawal and is named, whatever the row records of it. Without a marker, a branch absent, or recreated at a commit that does
 not descend from `branch_head`, is recorded as deleted with the commit the row
@@ -479,43 +491,48 @@ moved to. What the row names as released stays released.
 
 Each worktree is released through git's own worktree commands. It is read
 again and checked at its path; a clean worktree still the todo's is moved with
-`git worktree move` to its staging location, recorded first, and read and
-checked again there. Still the todo's and clean, it is removed there with
-`git worktree remove`; otherwise it is moved back to its path. One that holds
+`git worktree move` to its staging location, its stage recording that move
+first, and read and checked again where the move put it. Still the todo's and
+clean, it is removed there with `git worktree remove`; otherwise it is moved
+back to its path, its stage recording that move first. One that holds
 uncommitted changes or is locked by then refuses the withdrawal, naming its
 path. One whose checkout is no longer the one the row records, or that has the
 work branch checked out once that branch is recorded deleted, is no longer the
 todo's: it is left at its path and leaves the withdrawal.
 Whatever a move returns, git's worktree list is read back and the worktree
-recognized by its git directory, as when a withdrawal is run again. Listed at
-its path, the move did not happen: the row no longer records a staging
-location, and a move that returned a failure refuses the withdrawal with git's
-reason, having changed nothing. Listed anywhere else — its staging location,
-or inside a directory that appeared there meanwhile — that place is recorded
-and it is released from there, even when the move returned a failure.
-Otherwise the row keeps its staging location and the refusal says where it is
-could not be established. A worktree git lists whose git directory cannot be
-read, when no worktree git lists is recognized as this one, establishes
+recognized by its git directory where that move can have put it, as when a
+withdrawal is run again. Listed at its path, the move did not happen: its stage
+records it not moved, and a move that returned a failure refuses the
+withdrawal with git's reason, having changed nothing. Listed at its staging
+location, or inside a directory that appeared there meanwhile, its stage
+records it staged at that place before anything else is done there, and it is
+released from there, even when the move returned a failure. Otherwise the row
+keeps the move recorded and the refusal says where it is could not be
+established. A worktree git lists where it is looked for whose git directory
+cannot be read, when none listed there is recognized as this one, establishes
 nothing: the refusal names where git lists it and git's diagnostic, and the
-row keeps what it records. So does a worktree git lists nowhere while git
-still keeps its git directory: its directory is gone, or was moved without git
-recording where, and the refusal names `git worktree repair` and
-`git worktree prune` as its doors.
+row keeps what it records. So does a worktree not staged that git lists nowhere
+it is looked for while git still keeps its git directory: its directory is
+gone, or was moved without git recording where, and the refusal names
+`git worktree repair` and `git worktree prune` as its doors; and a staged one
+git no longer lists where it was staged while something is still there, whose
+refusal names that place.
 A worktree is moved back only to a path nothing occupies: when git lists
 another worktree there, or any file or directory is there, such as a checkout
 created at the vacated path meanwhile, it is not moved back — git would move it
-inside that directory. It stays at its staging location, recorded, and the
-refusal names that location and says its path is taken; when that location
-is inside its path, the refusal names moving it out with `git worktree move`
-before its path is freed, rather than freeing the path. After a move back, the
-worktree is recognized by its git directory in the same way: listed at its
-path, it is back; listed elsewhere, such as inside a directory that took its
-path between the look and the move, that place is recorded as its staging
-location and named; when where it is cannot be established, its staging
-location stays recorded and the refusal says so, with git's diagnostic. A
+inside that directory. It stays staged where it is, and the refusal names that
+place and says its path is taken; when that place is inside its path, the
+refusal names moving it out with `git worktree move` before its path is freed,
+rather than freeing the path. After a move back, the worktree is recognized by
+its git directory in the same way: listed at its path, it is back and no
+longer moved; listed where it was staged, the move back did not happen and it
+stays staged there; listed inside a directory that took its path between the
+look and the move, its stage records it staged there and the refusal names it;
+when where it is cannot be established, the move back stays recorded and the
+refusal says so, with git's diagnostic. A
 `git worktree remove` that returns a failure keeps the row, and the refusal
 says only what git's list and the filesystem show afterwards: git still listing
-it at its staging location, or no longer listing it with the directory still
+it where it was staged, or no longer listing it with the directory still
 there or gone, or that this could not be established.
 Once a worktree is moved, a git command started afterwards and addressed to its
 path, such as `git -C <path> switch`, does not reach it: while the path is
@@ -523,8 +540,9 @@ vacant, it finds no worktree there and changes nothing; once a replacement
 checkout occupies the path, it acts on that checkout and leaves the moved
 worktree untouched. A process whose working directory was already inside it
 is not stopped by the move (see Known caveats). A
-withdrawal interrupted with a worktree at its staging location continues from
-there when run again, removing it or moving it back, with nothing to clean up
+withdrawal interrupted while it is moving a worktree, has staged it or is
+moving it back continues from where it finds it when run again, removing it or
+moving it back, with nothing to clean up
 by hand unless its path is taken or git stopped inside its own move (see Known
 caveats). This holds whatever ref storage the repository uses. A git
 observation that fails decides nothing, and neither does a negative answer git
@@ -1204,6 +1222,13 @@ And the reflected change and the concurrent local change both reach GitHub intac
   the withdrawal's last look and its removal. Uncommitted work it leaves there
   is kept, because `git worktree remove` refuses a worktree holding it; a
   branch it switched to keeps its commits.
+- A staged worktree that someone else moves away from where it was staged
+  before the withdrawal runs again is recorded released, as a removal whose
+  receipt was lost would be, and is left where they put it.
+- A worktree the withdrawal has not moved, removed by someone else, whose git
+  directory git gave to a new checkout added elsewhere under the same name, is
+  taken for one moved by someone else: the new checkout is left as it is and
+  the worktree leaves the withdrawal without being recorded released.
 - A git process stopped inside its own `git worktree move`, after renaming the
   directory and before recording its new location, leaves git listing the
   worktree where it was, as prunable, while the directory is at its

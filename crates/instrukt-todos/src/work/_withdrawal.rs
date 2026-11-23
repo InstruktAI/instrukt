@@ -9,17 +9,24 @@
 //!
 //! - a worktree the intent records is released through git's own worktree
 //!   commands. The intent records its git directory, which a move keeps,
-//!   and it is recognized by that directory among all the worktrees git
-//!   lists, wherever git lists it ([`locate`]). Checked at its path, it is
-//!   moved with `git worktree move` to a staging location beside it, which
-//!   the intent records before the move; found anywhere else after a move,
-//!   that place is recorded instead. There it is looked at once more and
-//!   removed with `git worktree remove`, or moved back when it is no longer
-//!   the todo's or holds uncommitted work — only to a path nothing occupies.
-//!   While it is away from its path, a git command addressed to that path
-//!   does not reach it; a process already inside it is not stopped. It is
-//!   released once git lists it nowhere and no longer keeps its git
-//!   directory;
+//!   and its stage ([`WorktreeStage`]): how far this withdrawal's own moves
+//!   of it have come, each recorded before the move it names. It is looked
+//!   for by its git directory only where its stage says those moves can
+//!   have put it ([`locate`]): a worktree the withdrawal never moved that
+//!   git lists elsewhere was moved by someone else and is left there, and,
+//!   once it is staged, a git directory git lists anywhere else may be one
+//!   git gave a new checkout after this one was removed, so it is never
+//!   looked at. Checked at its path, it is moved with `git worktree move`
+//!   to a staging location beside it; found inside a directory that took
+//!   that location meanwhile, it is staged there instead. There it is
+//!   looked at once more and removed with `git worktree remove`, or moved
+//!   back when it is no longer the todo's or holds uncommitted work — only
+//!   to a path nothing occupies. While it is away from its path, a git
+//!   command addressed to that path does not reach it; a process already
+//!   inside it is not stopped. Until it is staged, it is released once git
+//!   lists it nowhere it is looked for and no longer keeps its git
+//!   directory; once staged, once git lists nothing at its staged location
+//!   and nothing is there;
 //! - the workspace the intent records, at the location it was admitted
 //!   at, is released once it is gone when the intent recorded it present —
 //!   an absent one is never taken for released, and one holding files is
@@ -40,8 +47,9 @@
 //!   to recognize. Any other marker is removed only once the intent records
 //!   the deletion.
 //!
-//! While the intent records a worktree at its staging location or a
-//! partial marker, it is never abandoned, whatever refuses the run.
+//! While the intent records a worktree the withdrawal is moving, has moved
+//! or is moving back, or a partial marker, it is never abandoned, whatever
+//! refuses the run.
 //!
 //! A run therefore first recognizes what an earlier run did and records it,
 //! then acts. A git or filesystem observation that fails, or an effect that
@@ -57,7 +65,8 @@ use instrukt_core::ids::{CommitSha, TodoSlug};
 use super::_error::WorkError;
 use super::_model::{ReleasedBranch, TodoId, TodoRecord};
 use super::_store::{
-    BranchRelease, Checkout, IntentWorktree, Store, WithdrawalIntent, WorkspaceRelease, WorktreeTie,
+    BranchRelease, Checkout, IntentWorktree, Store, WithdrawalIntent, WorkspaceRelease,
+    WorktreeStage, WorktreeTie,
 };
 
 /// The working resources a withdrawal releases, as checked before any is
@@ -238,8 +247,10 @@ fn staging_name(path: &Path, todo: &TodoId) -> String {
 
 /// The git directory of the worktree at `path`: its administrative
 /// directory in the repository, which `git worktree move` keeps. It tells
-/// a worktree apart from another one at the same path, wherever git lists
-/// it.
+/// a worktree apart from another one at the same path. Git names it after
+/// the worktree's directory name and gives a removed worktree's name to the
+/// next one added under it, so it tells nothing about a worktree found
+/// where the withdrawal's own moves cannot have put it.
 fn git_dir(path: &Path) -> Result<PathBuf, git::GitError> {
     Ok(PathBuf::from(git::run(
         path,
@@ -259,77 +270,93 @@ fn exists(path: &Path) -> Result<bool, Stop> {
     }
 }
 
-/// Where git lists a worktree the intent records.
+/// Where a worktree the intent records is, as far as the withdrawal can
+/// tell it apart from what others did.
 #[derive(Debug)]
 enum Located {
-    /// At its own path.
-    AtPath(Worktree),
-    /// At another path: the staging location the withdrawal moved it to,
-    /// or wherever a move put it instead.
-    Moved(Worktree),
-    /// Nowhere: git lists it nowhere and no longer keeps its git directory.
-    Neither,
+    /// Where its stage says the withdrawal's own moves can have put it
+    /// ([`WorktreeStage::reachable`]), at the path git lists it at.
+    At(Worktree),
+    /// Somewhere the withdrawal never moved it, at the path git lists it
+    /// at: moved by someone else before the withdrawal moved it at all.
+    Elsewhere(Worktree),
+    /// Released: git lists it nowhere and no longer keeps its git
+    /// directory, or, once staged, git lists nothing where it was staged
+    /// and nothing is there.
+    Gone,
 }
 
 /// The worktrees that may be the one `recorded`, in the order they are
-/// read: every one git lists but the primary checkout and those git reports
-/// prunable, whose directory is gone; its recorded path and staging
-/// location first.
+/// read: those git lists where its stage says it can be, then, while the
+/// withdrawal has not moved it, every other one, which shows whether
+/// someone else moved it. Never the primary checkout, nor one git reports
+/// prunable, whose directory is gone.
 fn candidates<'a>(listed: &'a [Worktree], recorded: &IntentWorktree) -> Vec<&'a Worktree> {
-    let mut candidates: Vec<&Worktree> = listed.iter().skip(1).filter(|w| !w.prunable).collect();
-    candidates
-        .sort_by_key(|w| !(w.path == recorded.path || recorded.staging.as_ref() == Some(&w.path)));
+    let reachable = recorded.stage.reachable(&recorded.path);
+    let mut candidates: Vec<&Worktree> = listed
+        .iter()
+        .skip(1)
+        .filter(|w| !w.prunable)
+        .filter(|w| recorded.stage.is_at_original() || reachable.contains(&w.path))
+        .collect();
+    candidates.sort_by_key(|w| !reachable.contains(&w.path));
     candidates
 }
 
 /// What git's list shows of the worktree whose git directory is `ours`.
 #[derive(Debug)]
 enum Placed<'a> {
-    /// Listed at its own path.
-    AtPath(&'a Worktree),
-    /// Listed at another path.
-    Moved(&'a Worktree),
+    /// Listed where its stage says it can be.
+    At(&'a Worktree),
+    /// Listed elsewhere while the withdrawal has not moved it.
+    Elsewhere(&'a Worktree),
     /// Not among the worktrees read, while git lists one whose git
     /// directory could not be read, with git's diagnostic: it may be that
     /// one.
-    Unreadable(&'a Worktree, &'a str),
-    /// Listed nowhere, while git still keeps its git directory: its
-    /// directory is gone, or was moved without git recording where.
+    Unreadable { at: &'a Worktree, error: &'a str },
+    /// Listed nowhere it is looked for, while something of it may remain
+    /// (`remains`).
     Kept,
-    /// Listed nowhere, and git keeps no git directory of it.
+    /// Listed nowhere it is looked for, and nothing of it remains.
     Gone,
 }
 
 /// Where the worktree `recorded`, whose git directory is `ours`, is, from
 /// `seen` — the [`candidates`] read, each with its git directory or git's
-/// diagnostic for why it could not be read — and `kept`, whether git still
-/// keeps `ours`. Only its own git directory recognizes it: another
-/// checkout at its path is not it, and a candidate that could not be read
-/// is no proof it is gone.
+/// diagnostic for why it could not be read — and `remains`: whether
+/// anything of it may be left that git does not list where it is looked
+/// for; once staged, anything at its staged location, and otherwise its git
+/// directory, which git still keeps. Only its own git directory recognizes
+/// it, and only where its stage says it can be: another checkout at its
+/// path is not it, a candidate that could not be read is no proof it is
+/// gone, and its git directory found anywhere else, once the withdrawal
+/// has moved it, may be one git gave a new checkout after removing it.
 fn place<'a>(
     recorded: &IntentWorktree,
     ours: &Path,
     seen: &'a [(Worktree, Result<PathBuf, String>)],
-    kept: bool,
+    remains: bool,
 ) -> Placed<'a> {
-    if let Some((found, _)) = seen.iter().find(|(_, dir)| dir.as_deref() == Ok(ours)) {
-        return if found.path == recorded.path {
-            Placed::AtPath(found)
-        } else {
-            Placed::Moved(found)
-        };
+    let reachable = recorded.stage.reachable(&recorded.path);
+    let mut found = seen.iter().filter(|(_, dir)| dir.as_deref() == Ok(ours));
+    if let Some((at, _)) = found.clone().find(|(w, _)| reachable.contains(&w.path)) {
+        return Placed::At(at);
     }
-    if let Some((unread, Err(why))) = seen.iter().find(|(_, dir)| dir.is_err()) {
-        return Placed::Unreadable(unread, why);
+    if recorded.stage.is_at_original()
+        && let Some((elsewhere, _)) = found.next()
+    {
+        return Placed::Elsewhere(elsewhere);
     }
-    if kept { Placed::Kept } else { Placed::Gone }
+    if let Some((at, Err(error))) = seen.iter().find(|(_, dir)| dir.is_err()) {
+        return Placed::Unreadable { at, error };
+    }
+    if remains { Placed::Kept } else { Placed::Gone }
 }
 
-/// Where git lists the worktree `recorded`, recognized by its git
-/// directory among all the project's worktrees in `listed` ([`place`]),
-/// reading each candidate's git directory until its own is found. An intent
-/// recorded without its git directory learns it first ([`learn_git_dir`]),
-/// setting it in `recorded`.
+/// Where the worktree `recorded` is, recognized by its git directory where
+/// its stage says it can be ([`place`]), reading each candidate's git
+/// directory until its own is found. An intent recorded without its git
+/// directory learns it first ([`learn_git_dir`]), setting it in `recorded`.
 fn locate(listed: &[Worktree], recorded: &mut IntentWorktree) -> Result<Located, Stop> {
     let Some(ours) = learn_git_dir(listed, recorded)? else {
         return unrecognized(recorded);
@@ -343,39 +370,51 @@ fn locate(listed: &[Worktree], recorded: &mut IntentWorktree) -> Result<Located,
             break;
         }
     }
-    let kept = exists(&ours)?;
-    match place(recorded, &ours, &seen, kept) {
-        Placed::AtPath(found) => Ok(Located::AtPath(found.clone())),
-        Placed::Moved(found) => Ok(Located::Moved(found.clone())),
-        Placed::Unreadable(unread, why) => Err(Stop::Unverified(WorkError::refused(format!(
-            "git lists a worktree at {} whose git directory could not be read ({why}); whether it is the worktree {} could not be established",
-            unread.path.display(),
+    let staged = match &recorded.stage {
+        WorktreeStage::Staged(at) => Some(at.clone()),
+        _ => None,
+    };
+    let remains = match &staged {
+        Some(at) => listed.iter().any(|w| &w.path == at) || exists(at)?,
+        None => exists(&ours)?,
+    };
+    match place(recorded, &ours, &seen, remains) {
+        Placed::At(found) => Ok(Located::At(found.clone())),
+        Placed::Elsewhere(found) => Ok(Located::Elsewhere(found.clone())),
+        Placed::Unreadable { at, error } => Err(Stop::Unverified(WorkError::refused(format!(
+            "git lists a worktree at {} whose git directory could not be read ({error}); whether it is the worktree {} could not be established",
+            at.path.display(),
             recorded.path.display()
         )))),
-        Placed::Kept => {
-            let prunable: Vec<String> = listed
-                .iter()
-                .filter(|w| {
-                    w.prunable
-                        && (w.path == recorded.path || recorded.staging.as_ref() == Some(&w.path))
-                })
-                .map(|w| format!(" (git reports {} prunable)", w.path.display()))
-                .collect();
-            Err(Stop::Unverified(WorkError::refused(format!(
-                "git lists the worktree {} nowhere it can be read, yet still keeps its git directory {}{}: its directory is gone, or was moved without git recording where. If it was moved, run `git worktree repair <where it is>`; if it is gone, run `git worktree prune`; then withdraw again",
+        Placed::Kept => Err(Stop::Unverified(WorkError::refused(match staged {
+            Some(at) => format!(
+                "the withdrawal moved the worktree {} to {}, where git lists nothing it recognizes as this worktree while something is still there, listed or not; whether it is released could not be established. Once nothing of it is left at {}, withdraw again",
                 recorded.path.display(),
-                ours.display(),
-                prunable.concat()
-            ))))
-        }
-        Placed::Gone => Ok(Located::Neither),
+                at.display(),
+                at.display()
+            ),
+            None => {
+                let reachable = recorded.stage.reachable(&recorded.path);
+                let prunable: Vec<String> = listed
+                    .iter()
+                    .filter(|w| w.prunable && reachable.contains(&w.path))
+                    .map(|w| format!(" (git reports {} prunable)", w.path.display()))
+                    .collect();
+                format!(
+                    "git lists the worktree {} nowhere it can be read, yet still keeps its git directory {}{}: its directory is gone, or was moved without git recording where. If it was moved, run `git worktree repair <where it is>`; if it is gone, run `git worktree prune`; then withdraw again",
+                    recorded.path.display(),
+                    ours.display(),
+                    prunable.concat()
+                )
+            }
+        }))),
+        Placed::Gone => Ok(Located::Gone),
     }
 }
 
 /// The git directory `recorded` records. An intent recorded without it
-/// learns it from the worktree git lists at its staging location, else at
-/// its path, and sets it in `recorded`; `None` when git lists one at
-/// neither.
+/// learns it from the worktree git lists where its stage says it can be,
+/// and sets it in `recorded`; `None` when git lists one nowhere there.
 fn learn_git_dir(
     listed: &[Worktree],
     recorded: &mut IntentWorktree,
@@ -384,10 +423,10 @@ fn learn_git_dir(
         return Ok(Some(ours.clone()));
     }
     let found = recorded
-        .staging
-        .iter()
-        .chain(std::iter::once(&recorded.path))
-        .find_map(|at| listed.iter().find(|w| &w.path == at && !w.prunable));
+        .stage
+        .reachable(&recorded.path)
+        .into_iter()
+        .find_map(|at| listed.iter().find(|w| w.path == at && !w.prunable));
     let Some(found) = found else {
         return Ok(None);
     };
@@ -397,20 +436,20 @@ fn learn_git_dir(
 }
 
 /// A worktree an intent recorded without its git directory, which git lists
-/// at neither its path nor its staging location: gone only while nothing is
-/// at either place, since a move may have put it anywhere else.
+/// nowhere its stage says it can be: gone only while nothing is at any of
+/// those places, since a move may have left it there unlisted.
 fn unrecognized(recorded: &IntentWorktree) -> Result<Located, Stop> {
-    for at in std::iter::once(&recorded.path).chain(recorded.staging.iter()) {
-        if exists(at)? {
+    for at in recorded.stage.reachable(&recorded.path) {
+        if exists(&at)? {
             return Err(Stop::Unverified(WorkError::refused(format!(
-                "git lists the worktree {} at neither its path nor its staging location while {} exists, and the withdrawal recorded no git directory to recognize it by anywhere else; where it is could not be established. Once nothing of it is left at {}, withdraw again",
+                "git lists the worktree {} nowhere the withdrawal can have put it while {} exists, and the withdrawal recorded no git directory to recognize it by; where it is could not be established. Once nothing of it is left at {}, withdraw again",
                 recorded.path.display(),
                 at.display(),
                 at.display()
             ))));
         }
     }
-    Ok(Located::Neither)
+    Ok(Located::Gone)
 }
 
 /// [`locate`] for the worktree `intent` records at `at`, recording the git
@@ -427,6 +466,18 @@ fn located(
         recorded(intent)?;
     }
     found
+}
+
+/// The stage of the worktree at `path` once it is found at `found`
+/// ([`Located::At`]): back at its path, it is no longer moved;
+/// anywhere else, it is staged there — where a move of the withdrawal put
+/// it, such as inside a directory that took its destination meanwhile.
+fn settled(path: &Path, found: &Path) -> WorktreeStage {
+    if found == path {
+        WorktreeStage::AtOriginal
+    } else {
+        WorktreeStage::Staged(found.to_path_buf())
+    }
 }
 
 /// The todo's workspace `<project>/workspace/<slug>/` as it is now.
@@ -726,7 +777,7 @@ pub(super) fn plan_release(root: &Path, record: &TodoRecord) -> Result<Checked, 
             tie: *tie,
             checkout: worktree.checkout(),
             released: false,
-            staging: None,
+            stage: WorktreeStage::AtOriginal,
             git_dir: Some(git_dir(&worktree.path)?),
         });
     }
@@ -776,7 +827,7 @@ pub(super) fn plan_release(root: &Path, record: &TodoRecord) -> Result<Checked, 
 ///   ([`worktree_step`]): checked at its path, moved to its staging
 ///   location, looked at and checked again there, and removed there
 ///   ([`release_worktree`]); one that is not the todo's is left out, moved
-///   back first when it was moved;
+///   back first when the withdrawal moved it;
 /// - the work branch, still the recorded one, is recorded at the commit it
 ///   points at when it moved on to a descendant, then deleted against that
 ///   commit together with its marker; gone or replaced, it is recorded
@@ -787,7 +838,7 @@ pub(super) fn plan_release(root: &Path, record: &TodoRecord) -> Result<Checked, 
 ///
 /// - a positive refusal ([`Stop::Refused`]) closes the intent and leaves
 ///   the todo as it was when the intent is abandonable — it records nothing
-///   released, no worktree at its staging location and no partial marker
+///   released, no worktree the withdrawal moved and no partial marker
 ///   ([`WithdrawalIntent::abandonable`]) — and no effect was attempted, or
 ///   each one attempted is proven to have changed nothing: a branch update
 ///   the refs read back show did nothing, a worktree move git's list shows
@@ -799,8 +850,8 @@ pub(super) fn plan_release(root: &Path, record: &TodoRecord) -> Result<Checked, 
 /// - a branch update that left only its marker keeps the intent, whether
 ///   or not the marker is taken back ([`delete_branch`]).
 ///
-/// A kept intent keeps everything it records, the branch's commit, any
-/// worktree's staging location and a partial marker included, and the
+/// A kept intent keeps everything it records, the branch's commit, each
+/// worktree's stage and a partial marker included, and the
 /// refusal names what is recorded released, what is recorded under way
 /// ([`underway`]), and, for an unverified stop, that the rest could not be
 /// established.
@@ -988,24 +1039,25 @@ impl<E: Into<Stop>> From<E> for Attempt {
     }
 }
 
+/// Where the withdrawal moves, moved or moves back a worktree at `stage`
+/// from its path; `None` while it has not moved it.
+fn away(stage: &WorktreeStage) -> Option<&Path> {
+    match stage {
+        WorktreeStage::AtOriginal => None,
+        WorktreeStage::MovingTo(at)
+        | WorktreeStage::Staged(at)
+        | WorktreeStage::RestoringFrom(at) => Some(at),
+    }
+}
+
 /// Releases the worktree `intent` records at `at`, recording the outcome,
-/// through git's own worktree commands, recognizing it by its git directory
-/// ([`locate`]). One found at its path, still the todo's and clean, is
-/// moved to its staging location, recorded before the move
-/// ([`staging_path`]), and finished there ([`finish_staged`]); one found
-/// anywhere else — where an earlier run moved it, or a move put it — is
-/// finished where git lists it.
-///
-/// Moving it is what keeps a command addressed to its path from changing
-/// its checkout unseen between the last look and the removal: once moved, a
-/// git command addressed to its path does not reach it. A process whose
-/// working directory was already inside it keeps reaching it at the staging
-/// location (`state-database`, "Known caveats"). Whatever the move returns,
-/// git's worktree list is read back: listed at its path, the move did not
-/// happen and a move that returned a failure is proven to have changed
-/// nothing; listed anywhere else, such as inside a directory that appeared
-/// at its staging location meanwhile, it is finished there; anything else
-/// keeps it recorded at its staging location, unverified.
+/// through git's own worktree commands, looking for it, by its git
+/// directory, only where its stage says the withdrawal's own moves can have
+/// put it ([`locate`]). Found at its path, it is released from there
+/// ([`from_original`]); found where a move of the withdrawal put it, its
+/// stage records that place and it is finished there ([`from_staged`]).
+/// One the withdrawal never moved, which git lists elsewhere, was moved by
+/// someone else: it is left where it is and out of the withdrawal.
 fn release_worktree(
     root: &Path,
     slug: &TodoSlug,
@@ -1014,22 +1066,67 @@ fn release_worktree(
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
 ) -> Result<Advance, Attempt> {
     let path = intent.worktrees[at].path.clone();
-    let now = match located(root, intent, at, recorded)? {
-        Located::Moved(staged) => return finish_staged(root, slug, intent, at, staged, recorded),
-        Located::AtPath(listed) => {
-            if intent.worktrees[at].staging.take().is_some() {
-                recorded(intent)?;
-            }
-            Some(listed)
-        }
-        Located::Neither => None,
+    let moved = away(&intent.worktrees[at].stage).map(Path::to_path_buf);
+    let fail = |stop: Stop| match &moved {
+        Some(moved) => Attempt::moving(&path, moved, stop),
+        None => Attempt::from(stop),
     };
-    if now.is_some() {
-        note_branch(root, intent, at, recorded)?;
+    match located(root, intent, at, recorded).map_err(fail)? {
+        Located::Gone => released(intent, at, false, recorded),
+        Located::Elsewhere(found) => {
+            tracing::info!(
+                event = "work_withdrawal_worktree_moved_elsewhere",
+                todo = %slug,
+                worktree = %path.display(),
+                at = %found.path.display(),
+                "a worktree the withdrawal never moved is at another path; it is left there"
+            );
+            left(slug, intent, at, recorded)
+        }
+        Located::At(found) => {
+            let stage = settled(&path, &found.path);
+            if intent.worktrees[at].stage != stage {
+                intent.worktrees[at].stage = stage;
+                recorded(intent).map_err(|cause| fail(Stop::Unverified(cause)))?;
+            }
+            if found.path == path {
+                from_original(root, slug, intent, at, found, recorded)
+            } else {
+                from_staged(root, slug, intent, at, found, recorded)
+            }
+        }
     }
+}
+
+/// Releases the worktree `intent` records at `at`, which git lists as
+/// `now` at its path and the withdrawal has not moved. Still the todo's
+/// and clean, it is moved with `git worktree move` to its staging location
+/// ([`staging_path`]), its stage recording that move before it is made
+/// ([`WorktreeStage::MovingTo`]), and finished there ([`from_staged`]).
+///
+/// Moving it is what keeps a command addressed to its path from changing
+/// its checkout unseen between the last look and the removal: once moved, a
+/// git command addressed to its path does not reach it. A process whose
+/// working directory was already inside it keeps reaching it at the staging
+/// location (`state-database`, "Known caveats"). Whatever the move returns,
+/// git's worktree list is read back where the move can have put it: listed
+/// at its path, the move did not happen and a move that returned a failure
+/// is proven to have changed nothing; listed at its staging location, or
+/// inside a directory that appeared there meanwhile, it is staged there and
+/// finished there; anything else keeps the move recorded, unverified.
+fn from_original(
+    root: &Path,
+    slug: &TodoSlug,
+    intent: &mut WithdrawalIntent,
+    at: usize,
+    now: Worktree,
+    recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
+) -> Result<Advance, Attempt> {
+    let path = intent.worktrees[at].path.clone();
+    note_branch(root, intent, at, recorded)?;
     let worktree = match worktree_step(
         &intent.worktrees[at],
-        now,
+        Some(now),
         intent.branch.as_deref(),
         intent.branch_deleted(),
     ) {
@@ -1057,21 +1154,25 @@ fn release_worktree(
             .into());
         }
     }
-    intent.worktrees[at].staging = Some(staging.clone());
+    intent.worktrees[at].stage = WorktreeStage::MovingTo(staging.clone());
     recorded(intent)?;
     let (from, to) = (
         path.to_string_lossy().into_owned(),
         staging.to_string_lossy().into_owned(),
     );
     let moved = git::run(root, ["worktree", "move", from.as_str(), to.as_str()]);
+    let moving = |stop: Stop| Attempt::moving(&path, &staging, stop);
     // Read back where git has it, whatever the move returned: a directory
     // that appeared at its staging location meanwhile has git move it
     // inside.
-    let found = located(root, intent, at, recorded);
-    match (moved, found) {
-        (_, Ok(Located::Moved(staged))) => finish_staged(root, slug, intent, at, staged, recorded),
-        (Err(git::GitError::Failed { stderr, .. }), Ok(Located::AtPath(_))) => {
-            intent.worktrees[at].staging = None;
+    match (moved, located(root, intent, at, recorded)) {
+        (_, Ok(Located::At(staged))) if staged.path != path => {
+            intent.worktrees[at].stage = WorktreeStage::Staged(staged.path.clone());
+            recorded(intent).map_err(|cause| moving(Stop::Unverified(cause)))?;
+            from_staged(root, slug, intent, at, staged, recorded)
+        }
+        (Err(git::GitError::Failed { stderr, .. }), Ok(Located::At(_))) => {
+            intent.worktrees[at].stage = WorktreeStage::AtOriginal;
             recorded(intent)?;
             Err(Stop::refused(format!(
                 "git kept the worktree {} where it is ({})",
@@ -1080,37 +1181,28 @@ fn release_worktree(
             ))
             .into())
         }
-        (Err(err), Ok(_)) => Err(Attempt::moving(
-            &path,
-            &staging,
-            Stop::Unverified(WorkError::refused(format!(
-                "git returned a failure moving it ({err}); where it is now is recognized when the withdrawal is run again"
-            ))),
-        )),
-        (Ok(_), Ok(_)) => Err(Attempt::moving(
-            &path,
-            &staging,
-            Stop::Unverified(WorkError::refused(
-                "git reports moving it, yet does not list it moved",
-            )),
-        )),
-        (_, Err(stop)) => Err(Attempt::moving(&path, &staging, stop)),
+        (Err(err), Ok(_)) => Err(moving(Stop::Unverified(WorkError::refused(format!(
+            "git returned a failure moving it ({err}); where it is now is recognized when the withdrawal is run again"
+        ))))),
+        (Ok(_), Ok(_)) => Err(moving(Stop::Unverified(WorkError::refused(
+            "git reports moving it, yet does not list it moved",
+        )))),
+        (_, Err(stop)) => Err(moving(stop)),
     }
 }
 
 /// Finishes the release of the worktree `intent` records at `at`, which git
-/// lists as `staged` away from its path: that place is recorded as its
-/// staging location first, when the intent records another. Looked at once
-/// more there, it is removed while it is still the todo's and clean, and
-/// moved back to its path otherwise. Moved back because it holds
-/// uncommitted work or is locked, it refuses the withdrawal naming its
-/// path; moved back because it is no longer the todo's, it is left out of
-/// the withdrawal. One not moved back — its path taken, or git not moving
-/// it — stays recorded where git lists it, named, for the withdrawal run
-/// again ([`move_back`]). A removal that returns a failure keeps the
-/// intent, and the refusal says what git and the filesystem show of it
-/// afterwards ([`after_failed_removal`]).
-fn finish_staged(
+/// lists as `staged` where the withdrawal moved it and its stage records
+/// ([`WorktreeStage::Staged`]). Looked at once more there, it is removed
+/// while it is still the todo's and clean, and moved back to its path
+/// otherwise ([`restore`]). Moved back because it holds uncommitted work or
+/// is locked, it refuses the withdrawal naming its path; moved back because
+/// it is no longer the todo's, it is left out of the withdrawal. One not
+/// moved back — its path taken, or git not moving it — stays recorded
+/// where git lists it, named, for the withdrawal run again. A removal that
+/// returns a failure keeps the intent, and the refusal says what git and
+/// the filesystem show of it afterwards ([`after_failed_removal`]).
+fn from_staged(
     root: &Path,
     slug: &TodoSlug,
     intent: &mut WithdrawalIntent,
@@ -1121,10 +1213,6 @@ fn finish_staged(
     let path = intent.worktrees[at].path.clone();
     let staging = staged.path.clone();
     let moving = |stop: Stop| Attempt::moving(&path, &staging, stop);
-    if intent.worktrees[at].staging.as_ref() != Some(&staging) {
-        intent.worktrees[at].staging = Some(staging.clone());
-        recorded(intent).map_err(|cause| moving(Stop::Unverified(cause)))?;
-    }
     note_branch(root, intent, at, recorded).map_err(|a| moving(*a.stop))?;
     let worktree = match worktree_step(
         &intent.worktrees[at],
@@ -1135,14 +1223,14 @@ fn finish_staged(
         WorktreeStep::Release(worktree) => worktree,
         WorktreeStep::Gone => return released(intent, at, false, recorded),
         WorktreeStep::Left => {
-            move_back(root, intent, at, &staging, recorded)?;
+            restore(root, intent, at, &staging, recorded)?;
             return left(slug, intent, at, recorded);
         }
     };
     match check_worktree(&worktree, &path) {
         Ok(()) => {}
         Err(Stop::Refused(cause)) => {
-            move_back(root, intent, at, &staging, recorded)?;
+            restore(root, intent, at, &staging, recorded)?;
             return Err(Stop::Refused(cause).into());
         }
         Err(stop) => return Err(moving(stop)),
@@ -1207,16 +1295,19 @@ fn way_back(path: &Path, at: &Path) -> String {
     }
 }
 
-/// Moves the worktree `intent` records at `at` back from `staging` to its
-/// path. Anything at its path now — another checkout git has put there, or
-/// any file or directory — keeps it at `staging`, unmoved: git would move
-/// it inside that directory. After the move, it is looked for again by its
-/// git directory among all the worktrees git lists ([`located`]): back at
-/// its path, its staging location is cleared; anywhere else, that place is
-/// recorded as its staging location and named; when that look establishes
-/// nothing, its staging location stays recorded and the refusal says where
-/// it is could not be established, with what kept the look from it.
-fn move_back(
+/// Moves the worktree `intent` records at `at` back from `staging`, where
+/// the withdrawal moved it, to its path. Anything at its path now — another
+/// checkout git has put there, or any file or directory — keeps it at
+/// `staging`, unmoved and staged: git would move it inside that directory.
+/// Otherwise its stage records the move back before it is made
+/// ([`WorktreeStage::RestoringFrom`]), and afterwards it is looked for by
+/// its git directory where that move can have put it ([`located`]): back at
+/// its path, it is no longer moved; at `staging`, or inside a directory
+/// that took its path between the look and the move, it is staged there and
+/// named; when that look establishes nothing, the move back stays recorded
+/// and the refusal says where it is could not be established, with what
+/// kept the look from it.
+fn restore(
     root: &Path,
     intent: &mut WithdrawalIntent,
     at: usize,
@@ -1250,6 +1341,15 @@ fn move_back(
             way_back(&path, staging)
         )));
     }
+    let kept_at = |at: &Path, why: String| {
+        Attempt::moving(&path, at, Stop::Unverified(WorkError::refused(why)))
+    };
+    let keep = |cause: WorkError| Attempt {
+        stop: Box::new(Stop::Unverified(cause)),
+        removing: true,
+    };
+    intent.worktrees[at].stage = WorktreeStage::RestoringFrom(staging.to_path_buf());
+    recorded(intent).map_err(keep)?;
     let (from, to) = (
         staging.to_string_lossy().into_owned(),
         path.to_string_lossy().into_owned(),
@@ -1260,24 +1360,16 @@ fn move_back(
         Err(git::GitError::Failed { stderr, .. }) => format!(" ({})", stderr.trim()),
         Err(other) => format!(" ({other})"),
     };
-    let kept_at = |at: &Path, why: String| {
-        Attempt::moving(&path, at, Stop::Unverified(WorkError::refused(why)))
-    };
-    let keep = |cause: WorkError| Attempt {
-        stop: Box::new(Stop::Unverified(cause)),
-        removing: true,
-    };
     // Read back where git has it, whatever the move returned: a directory
     // that appeared at its path meanwhile has git move it inside.
     match located(root, intent, at, recorded) {
-        Ok(Located::AtPath(_)) => {
-            intent.worktrees[at].staging = None;
-            recorded(intent).map_err(keep)
-        }
-        Ok(Located::Moved(found)) => {
+        Ok(Located::At(found)) => {
             let found = found.path;
-            intent.worktrees[at].staging = Some(found.clone());
+            intent.worktrees[at].stage = settled(&path, &found);
             recorded(intent).map_err(keep)?;
+            if found == path {
+                return Ok(());
+            }
             let why = if found == staging {
                 format!(
                     "it is no longer releasable and git did not move it back{failure}; it is still at {}. Running the withdrawal again moves it back or releases it",
@@ -1293,10 +1385,10 @@ fn move_back(
             };
             Err(kept_at(&found, why))
         }
-        Ok(Located::Neither) => Err(kept_at(
+        Ok(Located::Gone | Located::Elsewhere(_)) => Err(kept_at(
             staging,
             format!(
-                "it is no longer releasable, and after moving it back{failure} git lists it nowhere and no longer keeps its git directory; where it is could not be established"
+                "it is no longer releasable, and after moving it back{failure} git lists it nowhere the move can have put it and no longer keeps its git directory; where it is could not be established"
             ),
         )),
         Err(stop) => Err(kept_at(
@@ -1309,8 +1401,8 @@ fn move_back(
     }
 }
 
-/// Records the worktree `intent` records at `at` released; `removed` when
-/// this run removed it.
+/// Records the worktree `intent` records at `at` released, no longer moved;
+/// `removed` when this run removed it.
 fn released(
     intent: &mut WithdrawalIntent,
     at: usize,
@@ -1318,7 +1410,7 @@ fn released(
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
 ) -> Result<Advance, Attempt> {
     intent.worktrees[at].released = true;
-    intent.worktrees[at].staging = None;
+    intent.worktrees[at].stage = WorktreeStage::AtOriginal;
     recorded(intent).map_err(|cause| Attempt {
         stop: Box::new(Stop::Unverified(cause)),
         removing: removed,
@@ -1369,13 +1461,14 @@ fn note_branch(
 /// Brings `intent`, left by an earlier run, up to date with what that run
 /// did and could not record, and with what happened to its resources
 /// since: the branch deleted by it (its marker, while the branch is
-/// recorded pending) or gone; each worktree, recognized by its git
-/// directory ([`locate`]), released when git lists it nowhere and no longer
-/// keeps that directory, back at its path when git lists it there, and
-/// recorded where git lists it when that is anywhere else, such as inside a
-/// directory a move put it in; and the workspace it recorded present, at
-/// the location it recorded, that is gone. A worktree away from its path is
-/// finished from where git lists it by its release; a partial marker by the
+/// recorded pending) or gone; each worktree, looked for by its git
+/// directory where its stage says the withdrawal's moves can have put it
+/// ([`locate`]): released once it is gone; back at its path, or never
+/// moved off it, no longer moved; anywhere else there, such as inside a
+/// directory a move put it in, staged there; and the workspace it recorded
+/// present, at the location it recorded, that is gone. A worktree staged
+/// is finished from there by its release, and one the withdrawal never
+/// moved that git lists elsewhere is left by it; a partial marker by the
 /// branch's deletion.
 fn recognize(root: &Path, intent: &mut WithdrawalIntent) -> Result<(), WorkError> {
     if let (Some(name), BranchRelease::Pending) = (intent.branch.clone(), intent.branch_state) {
@@ -1386,11 +1479,11 @@ fn recognize(root: &Path, intent: &mut WithdrawalIntent) -> Result<(), WorkError
         let listed = worktrees(root)?;
         for worktree in intent.worktrees.iter_mut().filter(|w| !w.released) {
             match locate(&listed, worktree).map_err(Stop::cause)? {
-                Located::Moved(moved) => worktree.staging = Some(moved.path),
-                Located::AtPath(_) => worktree.staging = None,
-                Located::Neither => {
+                Located::At(found) => worktree.stage = settled(&worktree.path, &found.path),
+                Located::Elsewhere(_) => {}
+                Located::Gone => {
                     worktree.released = true;
-                    worktree.staging = None;
+                    worktree.stage = WorktreeStage::AtOriginal;
                 }
             }
         }
@@ -1424,21 +1517,30 @@ fn released_so_far(intent: &WithdrawalIntent) -> Vec<String> {
 
 /// What `intent` records under way, which keeps it open whatever else is
 /// released ([`WithdrawalIntent::abandonable`]), for a refusal to name:
-/// each worktree recorded at its staging location, and a partial marker not
-/// yet taken back.
+/// each worktree the withdrawal is moving, has moved or is moving back, and
+/// a partial marker not yet taken back.
 fn underway(intent: &WithdrawalIntent) -> Vec<String> {
     let mut open: Vec<String> = intent
         .worktrees
         .iter()
         .filter(|w| !w.released)
         .filter_map(|w| {
-            w.staging.as_ref().map(|staging| {
-                format!(
-                    "its worktree {} at {}, where it is moved to be released",
-                    w.path.display(),
-                    staging.display()
-                )
-            })
+            let path = w.path.display();
+            match &w.stage {
+                WorktreeStage::AtOriginal => None,
+                WorktreeStage::MovingTo(to) => Some(format!(
+                    "its worktree {path}, being moved to {} to be released",
+                    to.display()
+                )),
+                WorktreeStage::Staged(at) => Some(format!(
+                    "its worktree {path} at {}, where it is moved to be released",
+                    at.display()
+                )),
+                WorktreeStage::RestoringFrom(from) => Some(format!(
+                    "its worktree {path}, being moved back from {}",
+                    from.display()
+                )),
+            }
         })
         .collect();
     if intent.branch_state == BranchRelease::PartialMarker {
@@ -1680,7 +1782,7 @@ mod tests {
             tie: WorktreeTie::OnBranch,
             checkout: Some(checkout),
             released: false,
-            staging: None,
+            stage: WorktreeStage::AtOriginal,
             git_dir: Some(PathBuf::from(OURS)),
         }
     }
@@ -1722,11 +1824,19 @@ mod tests {
         }
     }
 
-    fn staged() -> IntentWorktree {
+    /// The staging location of the worktree the tests' intent records.
+    const STAGING: &str = "/work/.instrukt-wd-tree";
+
+    /// The worktree the tests' intent records, at `stage`.
+    fn at_stage(stage: WorktreeStage) -> IntentWorktree {
         IntentWorktree {
-            staging: Some(PathBuf::from("/work/.instrukt-wd-tree")),
+            stage,
             ..recorded(Checkout::Branch("depth/work".to_owned()))
         }
+    }
+
+    fn staged() -> IntentWorktree {
+        at_stage(WorktreeStage::Staged(PathBuf::from(STAGING)))
     }
 
     #[test]
@@ -1940,77 +2050,36 @@ mod tests {
             .collect()
     }
 
+    /// Another worktree's git directory.
+    const OTHER: &str = "/repo/.git/worktrees/tree1";
+
     #[test]
-    fn a_worktree_git_lists_at_its_path_by_its_own_git_directory_is_at_its_path() {
-        let tree = staged();
+    fn a_worktree_never_moved_is_found_at_its_path_by_its_own_git_directory() {
+        let tree = at_stage(WorktreeStage::AtOriginal);
         let seen = read(&[(&tree.path, OURS)]);
         assert!(matches!(
             place(&tree, Path::new(OURS), &seen, true),
-            Placed::AtPath(found) if found.path == tree.path
+            Placed::At(found) if found.path == tree.path
         ));
     }
 
     #[test]
-    fn a_worktree_git_lists_at_its_staging_location_by_its_own_git_directory_is_moved() {
-        let tree = staged();
-        let staging = tree.staging.clone().unwrap();
-        let seen = read(&[(&staging, OURS)]);
+    fn a_worktree_the_withdrawal_never_moved_listed_elsewhere_was_moved_by_someone_else() {
+        let tree = at_stage(WorktreeStage::AtOriginal);
+        let operator = Path::new("/operator/path");
+        let seen = read(&[(operator, OURS)]);
         assert!(matches!(
             place(&tree, Path::new(OURS), &seen, true),
-            Placed::Moved(found) if found.path == staging
-        ));
-    }
-
-    #[test]
-    fn a_worktree_a_move_put_inside_a_directory_at_its_path_is_found_there_not_at_its_path() {
-        let tree = staged();
-        let nested = tree.path.join(".instrukt-wd-tree");
-        let seen = read(&[(&tree.path, "/repo/.git/worktrees/tree1"), (&nested, OURS)]);
-        assert!(matches!(
-            place(&tree, Path::new(OURS), &seen, true),
-            Placed::Moved(found) if found.path == nested
+            Placed::Elsewhere(found) if found.path == operator
         ));
     }
 
     #[test]
     fn another_checkout_at_its_path_is_not_taken_for_it() {
-        let tree = staged();
-        let seen = read(&[(&tree.path, "/repo/.git/worktrees/tree1")]);
+        let tree = at_stage(WorktreeStage::AtOriginal);
+        let seen = read(&[(&tree.path, OTHER)]);
         assert!(matches!(
             place(&tree, Path::new(OURS), &seen, true),
-            Placed::Kept
-        ));
-    }
-
-    #[test]
-    fn a_worktree_found_by_its_git_directory_is_found_beside_one_whose_git_directory_is_unreadable()
-    {
-        let tree = staged();
-        let staging = tree.staging.clone().unwrap();
-        let seen = vec![
-            (listed_at(&tree.path), Err("Permission denied".to_owned())),
-            (listed_at(&staging), Ok(PathBuf::from(OURS))),
-        ];
-        assert!(matches!(
-            place(&tree, Path::new(OURS), &seen, true),
-            Placed::Moved(found) if found.path == staging
-        ));
-    }
-
-    #[test]
-    fn a_listed_worktree_whose_git_directory_is_unreadable_leaves_where_it_is_unestablished() {
-        let tree = staged();
-        let seen = vec![(listed_at(&tree.path), Err("Permission denied".to_owned()))];
-        assert!(matches!(
-            place(&tree, Path::new(OURS), &seen, false),
-            Placed::Unreadable(unread, "Permission denied") if unread.path == tree.path
-        ));
-    }
-
-    #[test]
-    fn a_worktree_listed_nowhere_whose_git_directory_git_still_keeps_is_not_gone() {
-        assert!(matches!(
-            place(&staged(), Path::new(OURS), &[], true),
             Placed::Kept
         ));
     }
@@ -2018,14 +2087,130 @@ mod tests {
     #[test]
     fn a_worktree_listed_nowhere_whose_git_directory_is_gone_is_gone() {
         assert!(matches!(
-            place(&staged(), Path::new(OURS), &[], false),
+            place(
+                &at_stage(WorktreeStage::AtOriginal),
+                Path::new(OURS),
+                &[],
+                false
+            ),
             Placed::Gone
         ));
     }
 
     #[test]
-    fn the_primary_checkout_is_never_a_candidate() {
+    fn a_worktree_being_moved_is_found_at_its_staging_location() {
+        let tree = at_stage(WorktreeStage::MovingTo(PathBuf::from(STAGING)));
+        let seen = read(&[(Path::new(STAGING), OURS)]);
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, true),
+            Placed::At(found) if found.path == Path::new(STAGING)
+        ));
+    }
+
+    #[test]
+    fn a_worktree_whose_move_did_not_happen_is_found_at_its_path() {
+        let tree = at_stage(WorktreeStage::MovingTo(PathBuf::from(STAGING)));
+        let seen = read(&[(&tree.path, OURS)]);
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, true),
+            Placed::At(found) if found.path == tree.path
+        ));
+    }
+
+    #[test]
+    fn a_worktree_a_move_put_inside_a_directory_at_its_staging_location_is_found_there() {
+        let tree = at_stage(WorktreeStage::MovingTo(PathBuf::from(STAGING)));
+        let nested = Path::new(STAGING).join("tree");
+        let seen = read(&[(Path::new(STAGING), OTHER), (&nested, OURS)]);
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, true),
+            Placed::At(found) if found.path == nested
+        ));
+    }
+
+    #[test]
+    fn a_worktree_a_move_back_put_inside_a_directory_at_its_path_is_found_there() {
+        let tree = at_stage(WorktreeStage::RestoringFrom(PathBuf::from(STAGING)));
+        let nested = tree.path.join(".instrukt-wd-tree");
+        let seen = read(&[(&tree.path, OTHER), (&nested, OURS)]);
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, true),
+            Placed::At(found) if found.path == nested
+        ));
+    }
+
+    #[test]
+    fn a_staged_worktree_is_found_where_it_was_staged() {
         let tree = staged();
+        let seen = read(&[(Path::new(STAGING), OURS)]);
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, true),
+            Placed::At(found) if found.path == Path::new(STAGING)
+        ));
+    }
+
+    #[test]
+    fn its_git_directory_given_to_a_new_checkout_elsewhere_after_its_staged_removal_is_not_it() {
+        let tree = staged();
+        let replacement = Path::new("/unrelated/parent/tree");
+        let seen = read(&[(replacement, OURS)]);
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, false),
+            Placed::Gone
+        ));
+    }
+
+    #[test]
+    fn a_staged_worktree_git_no_longer_lists_with_something_left_where_it_was_staged_is_not_gone() {
+        assert!(matches!(
+            place(&staged(), Path::new(OURS), &[], true),
+            Placed::Kept
+        ));
+    }
+
+    #[test]
+    fn a_worktree_found_by_its_git_directory_is_found_beside_one_whose_git_directory_is_unreadable()
+    {
+        let tree = at_stage(WorktreeStage::MovingTo(PathBuf::from(STAGING)));
+        let seen = vec![
+            (listed_at(&tree.path), Err("cannot read".to_owned())),
+            (listed_at(Path::new(STAGING)), Ok(PathBuf::from(OURS))),
+        ];
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, true),
+            Placed::At(found) if found.path == Path::new(STAGING)
+        ));
+    }
+
+    #[test]
+    fn a_listed_worktree_whose_git_directory_is_unreadable_leaves_where_it_is_unestablished() {
+        let tree = at_stage(WorktreeStage::AtOriginal);
+        let diagnostic = "fatal: not a git repository".to_owned();
+        let seen = vec![(listed_at(&tree.path), Err(diagnostic.clone()))];
+        assert!(matches!(
+            place(&tree, Path::new(OURS), &seen, false),
+            Placed::Unreadable { at, error } if at.path == tree.path && *error == diagnostic
+        ));
+    }
+
+    #[test]
+    fn a_worktree_found_at_its_path_is_no_longer_moved() {
+        let path = Path::new("/work/tree");
+        assert_eq!(settled(path, path), WorktreeStage::AtOriginal);
+    }
+
+    #[test]
+    fn a_worktree_found_away_from_its_path_is_staged_there() {
+        let nested = Path::new("/work/tree/.instrukt-wd-tree");
+        assert_eq!(
+            settled(Path::new("/work/tree"), nested),
+            WorktreeStage::Staged(nested.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn the_primary_checkout_is_never_a_candidate() {
+        let tree = at_stage(WorktreeStage::AtOriginal);
         let listed = [listed_at(&tree.path), listed_at(Path::new("/work/other"))];
         let paths: Vec<&Path> = candidates(&listed, &tree)
             .iter()
@@ -2036,7 +2221,7 @@ mod tests {
 
     #[test]
     fn a_worktree_git_reports_prunable_is_never_a_candidate() {
-        let tree = staged();
+        let tree = at_stage(WorktreeStage::AtOriginal);
         let gone = Worktree {
             prunable: true,
             ..listed_at(&tree.path)
@@ -2046,16 +2231,34 @@ mod tests {
     }
 
     #[test]
-    fn its_recorded_path_and_staging_location_are_read_first() {
-        let tree = staged();
-        let staging = tree.staging.clone().unwrap();
+    fn a_worktree_the_withdrawal_never_moved_is_read_at_its_path_first_then_everywhere_else() {
+        let tree = at_stage(WorktreeStage::AtOriginal);
         let listed = [
             listed_at(Path::new("/repo")),
-            listed_at(Path::new("/work/other")),
-            listed_at(&staging),
+            listed_at(Path::new("/operator/path")),
+            listed_at(&tree.path),
         ];
-        let first = candidates(&listed, &tree).first().map(|w| w.path.clone());
-        assert_eq!(first, Some(staging));
+        let paths: Vec<&Path> = candidates(&listed, &tree)
+            .iter()
+            .map(|w| w.path.as_path())
+            .collect();
+        assert_eq!(paths, [tree.path.as_path(), Path::new("/operator/path")]);
+    }
+
+    #[test]
+    fn a_staged_worktree_is_read_only_where_it_was_staged() {
+        let tree = staged();
+        let listed = [
+            listed_at(Path::new("/repo")),
+            listed_at(&tree.path),
+            listed_at(Path::new("/unrelated/parent/tree")),
+            listed_at(Path::new(STAGING)),
+        ];
+        let paths: Vec<&Path> = candidates(&listed, &tree)
+            .iter()
+            .map(|w| w.path.as_path())
+            .collect();
+        assert_eq!(paths, [Path::new(STAGING)]);
     }
 
     #[test]
@@ -2084,9 +2287,9 @@ mod tests {
     }
 
     #[test]
-    fn an_intent_recording_a_worktree_at_its_staging_location_is_never_abandoned() {
+    fn an_intent_recording_a_worktree_the_withdrawal_is_moving_is_never_abandoned() {
         let moving = WithdrawalIntent {
-            worktrees: vec![staged()],
+            worktrees: vec![at_stage(WorktreeStage::MovingTo(PathBuf::from(STAGING)))],
             ..intent(sha('a'))
         };
         assert!(!moving.abandonable());

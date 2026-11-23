@@ -543,7 +543,7 @@ impl Work {
     ///    a resource that must be kept, or an attempted release proven to
     ///    have changed nothing or taken back — closes the intent and leaves
     ///    the todo as it was while the intent records nothing released and
-    ///    nothing under way (a worktree at its staging location, a partial
+    ///    nothing under way (a worktree the withdrawal moved or is moving, a partial
     ///    marker) and the command attempted no other release. An
     ///    observation or effect whose outcome was not established keeps the
     ///    intent even when it records nothing released, and so does a branch
