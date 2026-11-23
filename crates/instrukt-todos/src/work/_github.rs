@@ -280,6 +280,7 @@ impl GitHub {
         check(
             status,
             &response,
+            self.current_time()?,
             "GET",
             path,
             &text.replace(self.token.borrow().as_str(), "<credential>"),
@@ -374,6 +375,7 @@ impl GitHub {
         check(
             status,
             &response,
+            self.current_time()?,
             method,
             path,
             &answer.replace(self.token.borrow().as_str(), "<credential>"),
@@ -402,9 +404,11 @@ impl GitHub {
             .body_mut()
             .read_to_string()
             .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
+        let now = self.current_time()?;
         check(
             status,
             &response,
+            now,
             "POST",
             "/graphql",
             &answer.replace(self.token.borrow().as_str(), "<credential>"),
@@ -414,8 +418,8 @@ impl GitHub {
             return Err(graphql_failure(
                 errors,
                 status,
-                header(&response, "x-ratelimit-remaining").as_deref(),
-                header(&response, "x-ratelimit-reset").as_deref(),
+                &Limits::read(response.headers()),
+                now,
                 self.token.borrow().as_str(),
             ));
         }
@@ -462,6 +466,7 @@ fn header(response: &ureq::http::Response<ureq::Body>, name: &str) -> Option<Str
 fn check(
     status: u16,
     response: &ureq::http::Response<ureq::Body>,
+    now: Timestamp,
     method: &'static str,
     path: &str,
     text: &str,
@@ -469,13 +474,10 @@ fn check(
     if (200..300).contains(&status) {
         return Ok(());
     }
-    let remaining = header(response, "x-ratelimit-remaining");
-    let retry_after = header(response, "retry-after");
-    if status == 429
-        || (status == 403 && (remaining.as_deref() == Some("0") || retry_after.is_some()))
-    {
+    let limits = Limits::read(response.headers());
+    if limits.refusal_throttles(status) {
         return Err(GitHubError::RateLimited {
-            until: reset_at(header(response, "x-ratelimit-reset").as_deref()),
+            until: limits.until(now),
         });
     }
     if status == 401 {
@@ -498,29 +500,85 @@ fn check(
     })
 }
 
-/// When GitHub's rate limit resets, from its `x-ratelimit-reset` header.
-fn reset_at(reset: Option<&str>) -> Option<Timestamp> {
-    reset
-        .and_then(|reset| reset.parse::<i64>().ok())
-        .and_then(|secs| Timestamp::from_second(secs).ok())
+/// GitHub's rate-limit signals on one answer: the primary quota's
+/// `x-ratelimit-remaining` and `x-ratelimit-reset`, and the `retry-after`
+/// delay a secondary limit sends. Every GitHub answer Work reads, REST or
+/// GraphQL, through the record client or the App issuer, is judged by them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct Limits {
+    remaining: Option<String>,
+    reset: Option<String>,
+    retry_after: Option<String>,
+}
+
+impl Limits {
+    pub(super) fn read(headers: &ureq::http::HeaderMap) -> Self {
+        let get = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        };
+        Self {
+            remaining: get("x-ratelimit-remaining"),
+            reset: get("x-ratelimit-reset"),
+            retry_after: get("retry-after"),
+        }
+    }
+
+    /// Whether GitHub signalled throttling: no requests remain, or it named
+    /// a delay before the next one.
+    fn signalled(&self) -> bool {
+        self.remaining.as_deref() == Some("0") || self.retry_after.is_some()
+    }
+
+    /// Whether an unsuccessful `status` is throttling: 429, or a 403 that
+    /// carries a throttle signal (otherwise a 403 is a refusal).
+    pub(super) fn refusal_throttles(&self, status: u16) -> bool {
+        status == 429 || (status == 403 && self.signalled())
+    }
+
+    /// The earliest moment GitHub permits the next request, seen at `now`:
+    /// not before `retry-after` seconds have passed, nor before the reset
+    /// when no requests remain; without a delay, the reset GitHub sent.
+    pub(super) fn until(&self, now: Timestamp) -> Option<Timestamp> {
+        let delay = self
+            .retry_after
+            .as_deref()
+            .and_then(|seconds| seconds.trim().parse::<i64>().ok())
+            .filter(|seconds| *seconds >= 0)
+            .and_then(|seconds| now.as_second().checked_add(seconds))
+            .and_then(|second| Timestamp::from_second(second).ok());
+        let reset = self
+            .reset
+            .as_deref()
+            .and_then(|reset| reset.parse::<i64>().ok())
+            .and_then(|secs| Timestamp::from_second(secs).ok());
+        if self.remaining.as_deref() == Some("0") {
+            delay.max(reset)
+        } else {
+            delay.or(reset)
+        }
+    }
 }
 
 /// The failure a GraphQL answer with a non-empty `errors` list reports.
-/// An answer marked as rate limited (an entry typed `RATE_LIMITED`, or no
-/// requests remaining) is [`GitHubError::RateLimited`]; otherwise one whose
-/// every entry is typed `FORBIDDEN` is [`GitHubError::Refused`]; any other
-/// answer is [`GitHubError::Status`]. Messages carry `credential` redacted.
+/// An answer GitHub throttled (a [`Limits`] signal, whatever the HTTP
+/// status, or an entry typed `RATE_LIMITED`) is [`GitHubError::RateLimited`]
+/// until [`Limits::until`]; otherwise one whose every entry is typed
+/// `FORBIDDEN` is [`GitHubError::Refused`]; any other answer is
+/// [`GitHubError::Status`]. Messages carry `credential` redacted.
 pub(super) fn graphql_failure(
     errors: &[Value],
     status: u16,
-    remaining: Option<&str>,
-    reset: Option<&str>,
+    limits: &Limits,
+    now: Timestamp,
     credential: &str,
 ) -> GitHubError {
     let typed = |entry: &Value, kind: &str| entry["type"].as_str() == Some(kind);
-    if remaining == Some("0") || errors.iter().any(|e| typed(e, "RATE_LIMITED")) {
+    if limits.signalled() || errors.iter().any(|e| typed(e, "RATE_LIMITED")) {
         return GitHubError::RateLimited {
-            until: reset_at(reset),
+            until: limits.until(now),
         };
     }
     let message = errors
@@ -564,9 +622,67 @@ mod tests {
 
     use super::*;
 
-    fn failure(errors: Value, remaining: Option<&str>) -> GitHubError {
+    /// The moment the answers below are seen; the primary reset they carry
+    /// is ten minutes later.
+    const NOW: i64 = 1_767_225_000;
+    const RESET: i64 = 1_767_225_600;
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(second).unwrap()
+    }
+
+    fn limits(remaining: Option<&str>, reset: Option<i64>, retry_after: Option<&str>) -> Limits {
+        Limits {
+            remaining: remaining.map(str::to_owned),
+            reset: reset.map(|reset| reset.to_string()),
+            retry_after: retry_after.map(str::to_owned),
+        }
+    }
+
+    fn answered(errors: Value, limits: &Limits) -> GitHubError {
         let errors = errors.as_array().cloned().unwrap_or_default();
-        graphql_failure(&errors, 200, remaining, Some("1767225600"), "secret")
+        graphql_failure(&errors, 200, limits, at(NOW), "secret")
+    }
+
+    fn failure(errors: Value, remaining: Option<&str>) -> GitHubError {
+        answered(errors, &limits(remaining, Some(RESET), None))
+    }
+
+    #[test]
+    fn an_ok_graphql_error_with_retry_after_defers_for_its_delay_though_quota_remains() {
+        let secondary = json!([{"message": "You have exceeded a secondary rate limit."}]);
+        let error = answered(secondary, &limits(Some("4999"), None, Some("120")));
+        assert_eq!(
+            error,
+            GitHubError::RateLimited {
+                until: Some(at(NOW + 120))
+            }
+        );
+        assert!(error.is_reach());
+    }
+
+    #[test]
+    fn a_typed_rate_limited_entry_keeps_retry_after_over_a_sooner_reset() {
+        let typed = json!([{"type": "RATE_LIMITED", "message": "limit"}]);
+        let error = answered(typed, &limits(Some("4999"), Some(NOW + 30), Some("120")));
+        assert_eq!(
+            error,
+            GitHubError::RateLimited {
+                until: Some(at(NOW + 120))
+            }
+        );
+    }
+
+    #[test]
+    fn with_no_requests_remaining_the_later_of_reset_and_retry_after_governs() {
+        let typed = json!([{"type": "RATE_LIMITED", "message": "limit"}]);
+        let error = answered(typed, &limits(Some("0"), Some(RESET), Some("120")));
+        assert_eq!(
+            error,
+            GitHubError::RateLimited {
+                until: Some(at(RESET))
+            }
+        );
     }
 
     #[test]

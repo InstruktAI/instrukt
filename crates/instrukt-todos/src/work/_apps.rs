@@ -461,26 +461,11 @@ impl Apps {
         }
         .map_err(|_| AppError::Unreachable)?;
         let status = response.status().as_u16();
-        let h = response.headers();
-        if status == 429
-            || (status == 403
-                && (h.get("x-ratelimit-remaining").is_some_and(|h| h == "0")
-                    || h.contains_key("retry-after")))
-        {
-            let until = h
-                .get("x-ratelimit-reset")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse().ok())
-                .and_then(|v| Timestamp::from_second(v).ok());
-            let until = until.or_else(|| {
-                h.get("retry-after")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse::<i64>().ok())
-                    .filter(|seconds| *seconds >= 0)
-                    .and_then(|seconds| now.as_second().checked_add(seconds))
-                    .and_then(|second| Timestamp::from_second(second).ok())
+        let limits = super::_github::Limits::read(response.headers());
+        if limits.refusal_throttles(status) {
+            return Err(AppError::RateLimited {
+                until: limits.until(now),
             });
-            return Err(AppError::RateLimited { until });
         }
         if !(200..300).contains(&status) {
             return Err(AppError::Refused {
@@ -488,23 +473,17 @@ impl Apps {
                 status,
             });
         }
-        let header = |name: &str| h.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
-        let (remaining, reset) = (header("x-ratelimit-remaining"), header("x-ratelimit-reset"));
         let text = response
             .body_mut()
             .read_to_string()
             .map_err(|_| AppError::Unreachable)?;
         let answer: Value =
             serde_json::from_str(&text).map_err(|_| setup("unreadable App API response"))?;
-        // GraphQL reports throttling in a successful answer's `errors`.
+        // GraphQL reports throttling, primary or secondary, in a successful
+        // answer's `errors`; its retry boundary is the headers' to name.
         if let Some(errors) = answer["errors"].as_array().filter(|e| !e.is_empty())
-            && let super::GitHubError::RateLimited { until } = super::_github::graphql_failure(
-                errors,
-                status,
-                remaining.as_deref(),
-                reset.as_deref(),
-                bearer,
-            )
+            && let super::GitHubError::RateLimited { until } =
+                super::_github::graphql_failure(errors, status, &limits, now, bearer)
         {
             return Err(AppError::RateLimited { until });
         }
