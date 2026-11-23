@@ -30,21 +30,39 @@ impl Clock {
             started: Instant::now(),
         }
     }
-    /// The present moment, rounded up to a whole second: a delay counted
-    /// from it never ends before the delay counted from the real moment.
+    /// The present moment, exact to the nanosecond: a stored deadline has
+    /// arrived only once this reaches it. Rounding a relative wait into a
+    /// deadline is [`super::_github::Limits`]'s, never the clock's.
     fn now(&self) -> Timestamp {
-        let moment = jiff::SignedDuration::try_from(self.started.elapsed())
-            .ok()
-            .and_then(|elapsed| self.start.checked_add(elapsed).ok())
-            .unwrap_or(Timestamp::MAX);
-        if moment.subsec_nanosecond() == 0 {
-            return moment;
+        carried(self.start, self.started.elapsed()).unwrap_or(Timestamp::MAX)
+    }
+}
+
+/// `start` carried forward by `elapsed` on the monotonic clock, exactly: no
+/// fraction of a second is dropped or added. `None` past the representable
+/// range.
+pub(super) fn carried(start: Timestamp, elapsed: Duration) -> Option<Timestamp> {
+    jiff::SignedDuration::try_from(elapsed)
+        .ok()
+        .and_then(|elapsed| start.checked_add(elapsed).ok())
+}
+
+/// Each App's issuance deferral: the instant GitHub permits that App's next
+/// request after throttling it. It is shared by every repository and
+/// operation the App serves.
+#[derive(Default)]
+struct Deferrals(BTreeMap<u64, Timestamp>);
+impl Deferrals {
+    /// The deferral of `app` still in force at the exact moment `now`: one
+    /// whose instant has not yet arrived.
+    fn until(&self, app: u64, now: Timestamp) -> Option<Timestamp> {
+        self.0.get(&app).copied().filter(|until| *until > now)
+    }
+    /// Remembers the retry boundary of a throttled issuance of `app`.
+    fn record(&mut self, app: u64, error: &AppError) {
+        if let AppError::RateLimited { until: Some(until) } = error {
+            self.0.insert(app, *until);
         }
-        moment
-            .as_second()
-            .checked_add(1)
-            .and_then(|second| Timestamp::from_second(second).ok())
-            .unwrap_or(Timestamp::MAX)
     }
 }
 #[derive(Clone, Copy)]
@@ -252,7 +270,7 @@ struct Apps {
     api: String,
     identity: IdentitySettings,
     agent: ureq::Agent,
-    auth_deferrals: BTreeMap<u64, Timestamp>,
+    auth_deferrals: Deferrals,
     actors: BTreeMap<String, Bot>,
     verified_apps: BTreeSet<u64>,
     installations: BTreeMap<(String, u64), Value>,
@@ -301,14 +319,8 @@ impl Apps {
         let now = clock.now();
         let app = self.selected(role).clone();
         let key = (repository.to_owned(), app.app_id, operation);
-        if let Some(until) = self
-            .auth_deferrals
-            .get(&app.app_id)
-            .filter(|until| **until > now)
-        {
-            return Err(AppError::RateLimited {
-                until: Some(*until),
-            });
+        if let Some(until) = self.auth_deferrals.until(app.app_id, now) {
+            return Err(AppError::RateLimited { until: Some(until) });
         }
 
         if let Some(credential) = self
@@ -328,8 +340,8 @@ impl Apps {
             self.installations
                 .remove(&(repository.to_owned(), app.app_id));
         }
-        if let Err(AppError::RateLimited { until: Some(until) }) = &result {
-            self.auth_deferrals.insert(app.app_id, *until);
+        if let Err(error) = &result {
+            self.auth_deferrals.record(app.app_id, error);
         }
         if let Ok(credential) = &result {
             self.credentials.insert(key, credential.clone());

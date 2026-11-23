@@ -196,13 +196,12 @@ impl GitHub {
                 message: "verified bot unavailable".into(),
             })
     }
+    /// The exact present moment: this client's `now` carried forward by the
+    /// time elapsed since it was constructed.
     fn current_time(&self) -> Result<Timestamp, GitHubError> {
-        let elapsed = i64::try_from(self.started.elapsed().as_secs()).unwrap_or(i64::MAX);
-        Timestamp::from_second(self.now.as_second().saturating_add(elapsed)).map_err(|_| {
-            GitHubError::Decode {
-                path: "App".into(),
-                message: "credential clock is out of range".into(),
-            }
+        super::_apps::carried(self.now, self.started.elapsed()).ok_or_else(|| GitHubError::Decode {
+            path: "App".into(),
+            message: "credential clock is out of range".into(),
         })
     }
     fn credential(&self) -> Result<(), GitHubError> {
@@ -549,27 +548,31 @@ impl Limits {
     }
 
     /// The earliest moment GitHub permits the next request, for an answer
-    /// received at `now`: not before `retry-after` seconds have passed, nor
-    /// before the reset when no requests remain; without a delay, the reset
-    /// GitHub sent.
-    pub(super) fn until(&self, now: Timestamp) -> Option<Timestamp> {
-        self.deadline(now, None)
+    /// received at the exact moment `received`: not before `retry-after`
+    /// seconds have passed, nor before the reset when no requests remain;
+    /// without a delay, the reset GitHub sent. A delay counts whole seconds
+    /// from `received` rounded up, so it never ends before the full delay
+    /// has passed; the reset is GitHub's own instant and stays exact.
+    pub(super) fn until(&self, received: Timestamp) -> Option<Timestamp> {
+        self.deadline(received, None)
     }
 
     /// [`Limits::until`] for a secondary limit: one that names no delay
-    /// waits GitHub's minute instead of the primary reset.
-    fn secondary_until(&self, now: Timestamp) -> Option<Timestamp> {
-        self.deadline(now, Some(SECONDARY_WAIT_SECONDS))
+    /// waits GitHub's minute instead of the primary reset, unless no
+    /// requests remain, when the later reset still governs.
+    fn secondary_until(&self, received: Timestamp) -> Option<Timestamp> {
+        self.deadline(received, Some(SECONDARY_WAIT_SECONDS))
     }
 
-    fn deadline(&self, now: Timestamp, unnamed_delay: Option<i64>) -> Option<Timestamp> {
+    fn deadline(&self, received: Timestamp, unnamed_delay: Option<i64>) -> Option<Timestamp> {
+        let whole = received.as_second() + i64::from(received.subsec_nanosecond() > 0);
         let delay = self
             .retry_after
             .as_deref()
             .and_then(|seconds| seconds.trim().parse::<i64>().ok())
             .filter(|seconds| *seconds >= 0)
             .or(unnamed_delay)
-            .and_then(|seconds| now.as_second().checked_add(seconds))
+            .and_then(|seconds| whole.checked_add(seconds))
             .and_then(|second| Timestamp::from_second(second).ok());
         let reset = self
             .reset

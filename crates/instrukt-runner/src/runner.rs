@@ -189,14 +189,13 @@ pub enum TickOutcome {
     Busy,
 }
 
-/// One wake-up at `now`; exits at once when the runner lock is held. Its
+/// One wake-up on `clock`; exits at once when the runner lock is held. Its
 /// configuration is admitted at its start: an invalid machine layer or
 /// `agents.yaml` refuses it, and what was not admitted is left out.
 pub fn tick(
     cx: &RunnerContext<'_>,
-    clock: &dyn Fn() -> Timestamp,
+    clock: &(dyn Fn() -> Timestamp + Sync),
 ) -> Result<TickOutcome, RunnerError> {
-    let now = clock();
     let state = RunnerState::new(cx.home);
     let Some(_runner) = _holder::tick(cx.home)? else {
         return Ok(TickOutcome::Busy);
@@ -228,7 +227,7 @@ pub fn tick(
         wake(
             cx,
             &state,
-            now,
+            clock,
             &considered,
             platform.as_ref(),
             true,
@@ -484,7 +483,7 @@ pub fn run(
                 if let Err(err) = wake(
                     cx,
                     &state,
-                    clock(),
+                    &*clock,
                     &considered,
                     enabled_platform,
                     false,
@@ -573,12 +572,13 @@ fn event_platform(
 fn wake(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
-    now: Timestamp,
+    clock: &(dyn Fn() -> Timestamp + Sync),
     considered: &[Considered],
     platform: Option<&EventPlatform>,
     drain: bool,
     invocation: &crate::keyed::RuntimeInvocation,
 ) -> Result<(), RunnerError> {
+    let now = clock();
     let previous = ticks::last_wakeup(state)?;
     ticks::record_wakeup(state, now)?;
     let dispatch_cx = DispatchContext {
@@ -612,6 +612,7 @@ fn wake(
             EventWake {
                 cx,
                 state,
+                clock,
                 now,
                 considered,
                 mains: &mains,
@@ -656,6 +657,8 @@ fn wake(
 struct EventWake<'a, 'cx> {
     cx: &'a RunnerContext<'cx>,
     state: &'a RunnerState,
+    /// The operator's clock, read again where an answer's time matters.
+    clock: &'a (dyn Fn() -> Timestamp + Sync),
     now: Timestamp,
     considered: &'a [Considered],
     mains:
@@ -669,6 +672,7 @@ impl EventWake<'_, '_> {
         let Self {
             cx,
             state,
+            clock,
             now,
             considered,
             mains,
@@ -685,6 +689,7 @@ impl EventWake<'_, '_> {
                 &log,
                 project,
                 mains.get(&project.project.slug),
+                clock,
                 now,
             );
         }
@@ -736,6 +741,7 @@ fn read_sources(
     log: &DbEventLog,
     considered: &Considered,
     observed: Option<&sources::MainObservation>,
+    clock: &dyn Fn() -> Timestamp,
     now: Timestamp,
 ) {
     let project = &considered.project;
@@ -813,10 +819,15 @@ fn read_sources(
         tracing::warn!(event="ci_app_unavailable",project=%project.slug,cause="work credential capability unavailable");
         return;
     };
-    let credential = match credentials.credential(&repository, github::Operation::Observe, now) {
+    // Issuance dates GitHub's answers from the moment it begins, so it reads
+    // the clock then, not when this wake began: discovery above may have
+    // spent seconds on the network.
+    let credential = match credentials.credential(&repository, github::Operation::Observe, clock())
+    {
         Ok(credential) => credential,
         Err(error) => {
-            if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, now) {
+            if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, clock())
+            {
                 tracing::warn!(event="ci_observation_state_failed",error=%save);
             }
             tracing::warn!(event="ci_app_unavailable",project=%project.slug,error=%error);
