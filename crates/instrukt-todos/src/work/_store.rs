@@ -177,19 +177,28 @@ pub(crate) enum Checkout {
 
 /// One worktree a withdrawal releases: why it belongs to the todo, what it
 /// had checked out when the withdrawal checked it, whether it is released
-/// yet, and where it is moved to be released. A worktree whose checkout is
-/// no longer that one is not the todo's any more.
+/// yet, where it is moved to be released, and its git directory, by which
+/// it is recognized wherever git lists it. A worktree whose checkout is no
+/// longer that one is not the todo's any more.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct IntentWorktree {
     pub path: PathBuf,
     pub tie: WorktreeTie,
     pub checkout: Option<Checkout>,
     pub released: bool,
-    /// Where the withdrawal moves the worktree, beside `path`, to look at it
-    /// once more and remove it there: recorded before the move, cleared once
-    /// it is removed or moved back.
+    /// Where the worktree is while the withdrawal releases it away from
+    /// `path`: the staging location beside `path` it is moved to, recorded
+    /// before the move, or wherever git lists it instead once a move put it
+    /// elsewhere; cleared once it is removed or moved back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staging: Option<PathBuf>,
+    /// Its administrative directory in the repository, which
+    /// `git worktree move` keeps (`git rev-parse --absolute-git-dir`):
+    /// recorded when the withdrawal checks it, or, for an intent recorded
+    /// without it, the first time a run finds the worktree at its path or
+    /// staging location.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_dir: Option<PathBuf>,
 }
 
 /// How far a withdrawal's release of its work branch has come
