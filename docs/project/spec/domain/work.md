@@ -92,20 +92,10 @@ runner owns dispatch, and the configured runtime owns conversations.
   the candidate's review status it stands only while that finding is found
   again.
 
-**Settlement**
-: A commit's first admitted head verdict with every later version of it. It
-  has an identity of its own, given when it starts and kept on every computer
-  it reaches.
-
 **Revision**
-: A later version of a settled verdict, recorded by the session that recorded
-  the current one in a turn that no review request for that commit opened.
-
-**Pending revision**
-: A revision offered by a session that a review request of the commit reached,
-  while the runtime could not say which input opened its turn. It is kept with
-  the moment of the offer and is no version until that turn is known; its
-  commit is undecided meanwhile.
+: A later version of a commit's head verdict, recorded by the session that
+  recorded the current one in a turn that no review request for that commit
+  opened.
 
 **Handed-over approval**
 : A head verdict its reviewing session returned and did not record, entered by
@@ -113,13 +103,9 @@ runner owns dispatch, and the configured runtime owns conversations.
   no judgment of the reviewed change.
 
 **Export**
-: One cut of a computer's review evidence for a project, written to a file
-  for one named computer to import. The exported settlements are handed off:
-  they stay current only where they were imported.
-
-**Hand-off number**
-: How often one settlement has been handed off. It orders the transfers of
-  that settlement and nothing between two settlements of a commit.
+: One snapshot of the review evidence that stands on a computer for a project,
+  written to a file for another computer to import. The exported verdicts are
+  handed off: they stand again where the file is imported.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -225,30 +211,26 @@ and issues installation credentials under
 
 - **Root entity:** the review evidence of one exact commit of a project's
   repository.
-- **Contains:** its settlement, with identity, hand-off number, the
-  settlements it was chosen over and its head verdict versions, each with
-  verdict, pinned base, report, reviewing session and the request it answers;
-  a pending revision; settlements an import set aside; its exemption; for an
-  integration
-  candidate its derived approval with the coverage it rests on; and what
-  GitHub shows of the current verdict at each destination.
+- **Contains:** its head verdict with its versions, each with verdict, pinned
+  base, report, reviewing session, the request it answers and its moment, and
+  with whether it stands on this computer, was handed off by an export or was
+  set aside by an import; its exemption; for an integration candidate its
+  derived approval with the coverage it rests on; and what GitHub shows of the
+  current verdict at each destination.
 - **Invariants:** evidence is recorded before anything of it is published; a
   verdict names one commit and no other commit inherits it; a verdict covers
   the whole range from a pinned base its reviewer cannot narrow; no reviewed
   commit names the verdict's reviewing session as its author; a commit's
   review is settled by the first verdict admitted for it, and only its
   settling session revises it; a verdict and an exemption of one commit never
-  replace each other; each publication follows the current verdict, and
-  nothing is published for a commit while a revision of it is pending, and
-  nothing is exported from a computer that holds one; a derived approval is
-  first published as the commit's status, by a tick that found its coverage
-  again; a settlement is current
-  on one computer, the one that started it or the one it was last handed to;
-  an import never changes which verdict of a commit is current where this
-  computer holds another settlement of it, unless an operator stated which
-  stands, at this import or at the one whose choice the imported settlement
-  carries; a choice is recorded only on a settlement that stands on the
-  importing computer; only the reviewer identity publishes. Admission, publication,
+  replace each other; each publication follows the current verdict; a
+  derived approval is first published as the commit's status, by a tick that
+  found its coverage again; a verdict an export carried is handed off where
+  it was exported and stands where its file is imported; an import never
+  changes which verdict of a commit is current where another one stands
+  here, unless its operator states which stands; a current version carries
+  its own report and moment and rests on no earlier one; only the reviewer
+  identity publishes. Admission, publication,
   storage, transfer and readiness belong to
   `project/instrukt/spec/feature/work/github-apps`.
 - **Identifier:** project and commit.
@@ -343,12 +325,12 @@ owning design snippet or decision record is declared.
   requests the runner observed.
 - **Runner → work (automatic review)** — customer-supplier. The runner supplies
   a commit's review requests with their standing and pinned base, which input
-  opened the turn a session had in progress at a stated moment, and a named
-  session's conversation; work consults them when it admits a head verdict
-  and when a tick decides a pending revision.
+  opened the turn a session has in progress when it offers a revision, and a
+  named session's conversation; work consults them when it admits a head
+  verdict.
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
-  evidence is current for a commit, whether its verdict is undecided and
-  whether a candidate's derived approval is one GitHub does not show yet;
+  evidence is current for a commit and whether a candidate's derived
+  approval is one GitHub does not show yet;
   workflow reads approval of a head that is not a todo's, and exemptions, from
   that answer alone, and reads a candidate's result from it together with the
   review status.

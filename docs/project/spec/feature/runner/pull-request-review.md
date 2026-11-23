@@ -186,25 +186,22 @@ cannot finish is not started in a loop and the commit is never given up.
 
 Work reads two answers from the runner when it admits a verdict: the first
 always, the second only where the first shows that a request of the commit
-reached the session that offers a revision, and again when a tick decides a
-revision the runtime could not judge at once
+reached the session that offers a revision
 (`project/instrukt/spec/feature/work/github-apps`, Admission of review
 evidence).
 
 | Asked | Answered from |
 | --- | --- |
 | A commit's requests: each one's number, its standing, the session it was handed over to, an ended request's disposition, whether an ended request that delivery selected is still to be handed over, and its pinned base | Delivery's own records. |
-| Which input opened the turn a named session had in progress at a stated moment, with regard to that commit's requests handed over to that session | One read of the runtime for the turn the session had in progress at that moment and the input that opened it, compared with the frozen content of those handovers. |
+| Which input opened the turn a named session has in progress, with regard to that commit's requests handed over to that session | One read of the runtime for the turn the session has in progress and the input that opened it, compared with the frozen content of those handovers. |
 
 The second answer is one of four: a request of that commit opened the turn,
-something else opened it, the session had no turn in progress at that moment,
-or the runtime cannot say. It costs one bounded read of the runtime and one
-keyed read of delivery's records, however long the session's history is. The
-moment is the asker's: the answer is about the turn in progress then, whichever
-turn the session is in when it is asked, so an ask repeated later for the same
-moment has the same answer once the runtime gives one. A runtime that is
-unavailable, or that keeps no record of the session's turn at that moment,
-cannot say.
+something else opened it, the session has no turn in progress, or the runtime
+cannot say. It costs one bounded read of the runtime and one keyed read of
+delivery's records, however long the session's history is. It is asked while
+the command that offers the revision runs and is about the turn in progress
+then. A runtime that is unavailable, or that keeps no record of the session's
+turn, cannot say.
 
 The answer is exact where a handover opens the turn it enters: a session
 started with the request,
@@ -215,10 +212,9 @@ capability and bounded batches). A handover that a runtime steers into a
 running turn is not that turn's opening input and is not seen by this answer.
 
 A request's records are kept while it is live, while its commit is still owed,
-while a session it was selected for can still take it up, while a turn it
-opened is in progress, and while work holds a pending revision of its commit.
-A session of which no kept record says a request of the commit reached it is
-therefore in no turn that such a request opened.
+while a session it was selected for can still take it up, and while a turn it
+opened is in progress. A session of which no kept record says a request of the
+commit reached it is therefore in no turn that such a request opened.
 
 ### Placement and consumer
 
@@ -269,9 +265,7 @@ publishes the status and does not change branch protection.
 
 When GitHub or the runtime is unavailable, observation, activation and
 publication retry until the service returns, and the unavailable service is
-reported to the operator (`project/instrukt/policy/checks-and-guards`). A
-runtime that cannot say which input opened a session's turn is reported the
-same way.
+reported to the operator (`project/instrukt/policy/checks-and-guards`).
 
 ## Use cases
 

@@ -73,7 +73,7 @@ the same derivation. The runner consumes both for execution observation
 
 <!-- planned:event-driven-pr-review-gate -->
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage; the runner supplies the canonical head's CI result as it observed it.
-- **Work → workflow (review coverage):** work supplies which review evidence is current for a commit, whether its verdict is undecided and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.
+- **Work → workflow (review coverage):** work supplies which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Governing designs and decisions

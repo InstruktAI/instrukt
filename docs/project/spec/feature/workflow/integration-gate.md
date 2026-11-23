@@ -73,7 +73,6 @@ applies decides.
 
 | Work's answer on the candidate commit, and its review status | The candidate's result |
 | --- | --- |
-| Work answers the commit as undecided, a revision of its verdict being pending | Pending, whatever review status the commit carries. |
 | The commit's current verdict with work is needs work | `failure`, whatever review status the commit still carries. |
 | The commit carries no review status | Pending. |
 | The review status is a failure | `failure`. |
@@ -81,10 +80,8 @@ applies decides.
 
 A status the reviewer bot published for an earlier version of the verdict
 therefore completes no result that the current verdict withholds. From the
-tick that finds a pending revision until the tick that finds it decided, the
-candidate has no completed result, `runner.ci_completed` is not emitted for
-it, and the integrator keeps it unpromoted. From the tick that finds needs
-work current, the result is a failure, before GitHub shows the failure status.
+tick that finds needs work current, the result is a failure, before GitHub
+shows the failure status.
 A result that was reported complete before the verdict changed is not
 recalled. On a
 project that has not opted in,
@@ -144,10 +141,6 @@ An approval in a todo's record covers the exact commit it names and no other:
 a head that changed after its approval, and one whose approval a later verdict
 replaced, is not an approved head.
 
-A head that work answers as undecided is neither an approved head nor an
-uncovered commit. A derivation that depends on it determines nothing in that
-tick.
-
 The commits a red head's promotion added are the first-parent commits after
 the canonical head it was promoted from, up to that head. Where work holds no
 evidence of the red head as a candidate, that extent is not known and no
@@ -160,11 +153,11 @@ this way.
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
 | A commit is not covered | The candidate owes a review. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. The runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
-| The repository cannot answer, or a head the finding depends on is undecided | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
+| The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
 
 A derived approval thus reaches GitHub only from a finding of the tick that
-publishes it: a covering head whose approval a needs-work version replaced, or
-whose verdict is undecided, gives the candidate no first approving status.
+publishes it: a covering head whose approval a needs-work version replaced
+gives the candidate no first approving status.
 Once GitHub shows the status, a later version of a covering head withdraws
 nothing.
 
@@ -193,13 +186,12 @@ the owner's administration act
 (`project/instrukt/spec/feature/runner/pull-request-review`).
 
 GitHub checks the status the commit carries, which is the last verdict the
-reviewer bot published. While a revision of that verdict is pending, and
-after a needs-work version was admitted until its failure status is
-published, an approving status published before still satisfies this guard,
-and GitHub would accept the push. What holds the candidate back in that
-interval is its result, which is missing while the revision is pending and a
-failure once needs work is current (Candidate and verification); the status
-changes only when the current verdict is published
+reviewer bot published. After a needs-work version was admitted and until its
+failure status is published, an approving status published before still
+satisfies this guard, and GitHub would accept the push. What holds the
+candidate back in that interval is its result, which is a failure once needs
+work is current (Candidate and verification); the status changes only when
+the current verdict is published
 (`project/instrukt/spec/feature/work/github-apps`, Admission of review
 evidence).
 <!-- /planned:event-driven-pr-review-gate -->

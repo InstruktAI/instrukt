@@ -479,8 +479,8 @@ runner records or withdraws a derived approval and has outstanding verdicts publ
 handing over the eligible pull requests it observed at each head. It supplies
 work with a commit's review requests, each with its number, standing, the
 session it reached and pinned base, with the input that opened the turn a
-session had in progress at
-a stated moment, and with a named session's conversation
+session has in progress when it offers a revision, and with a named session's
+conversation
 (`project/instrukt/spec/domain/context-map`).
 <!-- /planned:event-driven-pr-review-gate -->
 
