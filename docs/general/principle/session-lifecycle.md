@@ -1,5 +1,5 @@
 ---
-description: 'Artifacts carry continuity; dispatchers record outcomes and handoffs, retain needed conversation context and leave session lifecycle to the runtime.'
+description: 'Artifacts carry continuity; dispatchers record outcomes and handoffs, retain needed conversation context, retire terminal todo orchestrator threads, and leave other session lifecycle to the runtime.'
 visibility: 'public'
 ---
 
@@ -10,8 +10,9 @@ visibility: 'public'
 Sessions are ephemeral expressions; artifacts carry continuity. A session exists
 for an outcome, and the work record carries that outcome beyond the
 conversation. Whoever dispatches work records its outcome and handoff, retaining
-context needed by later review rounds or a pending human conversation. The
-runtime owns session lifecycle, ending and cleanup.
+context needed by later review rounds or a pending human conversation. Apart
+from terminal todo orchestrator retirement through the configured runtime
+action, the runtime owns session lifecycle, ending and cleanup.
 
 Completion of a workflow assignment, release of its claim, end of an execution
 and loss of a session are separate facts. A step is done when the record carries
@@ -22,8 +23,9 @@ its required artifact and stamp, never because a reply says it is done.
 A workflow can establish completion of one assignment; the agent holds the
 current conversation and its remaining obligations. Treating one assignment as
 the whole session can cut off a forming conversation or discard context needed
-by a later review round. instrukt records that assignment's handoff; the runtime
-manages the conversation's lifecycle.
+by a later review round. instrukt records that assignment's handoff and retires
+only terminal todo orchestrator threads through the configured runtime action;
+otherwise the runtime manages the conversation's lifecycle.
 
 A claim determines who drives the work next, while a session determines where
 the conversation continues. Holding the claim after handing off the work stalls

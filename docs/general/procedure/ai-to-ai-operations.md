@@ -124,7 +124,7 @@ lifecycle contract.
    nor implicitly releases a claim. Retain workers needed for further rounds
    and retain a thread that holds a human question. Release the claim with
    `instrukt todo update <slug> --unclaim`. Conclude a completed discussion through the configured runtime discussion
-   instruction and record the contribution's handoff. The runtime owns session ending and cleanup.
+   instruction and record the contribution's handoff. Apart from terminal orchestrator retirement, the runtime owns session ending and cleanup.
 
 A focused worker's outputs belong in its assigned artifacts and its own turn.
 It messages or links other sessions only where its brief authorizes that

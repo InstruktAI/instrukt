@@ -246,7 +246,11 @@ binding.
 - An unresolved conflict stays with the integrator and its governing contracts.
   Only missing human intent or a human-owned exposure is asked in the thread.
 - A candidate already promoted needs delivery-record reconciliation, not
-  another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`)
-  and `<slug>/work` worktree/branch cleanup directly. Release an owed claim with `instrukt todo update <slug> --unclaim`
-  and confirm the released claim. Record the handoff and remaining cleanup;
+  another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`),
+  then follow Step 6 directly: inspect `instrukt todo show <slug>@<identity-prefix> --json`,
+  retire the delivered todo's recorded non-standing phase orchestrator thread(s)
+  through `runtime.retire_thread`, and remove the clean `<slug>/work` worktree
+  and local/origin branch (neither gating the other). Release an owed claim with
+  `instrukt todo update <slug> --unclaim` and confirm the released claim. Record
+  the handoff and remaining cleanup; apart from terminal orchestrator retirement,
   the runtime owns session ending. A failed cleanup remains unresolved.
