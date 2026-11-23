@@ -611,6 +611,7 @@ impl Work {
                     branch: checked.branch,
                     branch_head: checked.head,
                     worktrees: checked.worktrees,
+                    workspace_path: checked.workspace_path,
                     workspace: checked.workspace,
                     branch_deleted: false,
                     started_at: s.now,

@@ -216,6 +216,10 @@ pub(crate) struct WithdrawalIntent {
     /// branch's recovery commit.
     pub branch_head: Option<CommitSha>,
     pub worktrees: Vec<IntentWorktree>,
+    /// Where the todo's workspace is in the checkout the withdrawal was
+    /// admitted from: the one workspace it checks and releases, whichever
+    /// checkout of the project runs it again.
+    pub workspace_path: PathBuf,
     pub workspace: WorkspaceRelease,
     /// Whether `branch` is deleted: by this withdrawal, or found gone or
     /// recreated at a commit that does not descend from `branch_head`.
@@ -650,13 +654,15 @@ impl Store {
             }
             tx.execute(
                 "INSERT INTO withdrawal_intents
-                    (todo_id, branch, branch_head, worktrees, workspace, branch_deleted, started_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (todo_id, branch, branch_head, worktrees, workspace_path, workspace,
+                     branch_deleted, started_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     id.as_str(),
                     intent.branch,
                     intent.branch_head.as_ref().map(CommitSha::as_str),
                     json_of(&intent.worktrees)?,
+                    path_text(path, &intent.workspace_path)?,
                     text_of(&intent.workspace),
                     intent.branch_deleted,
                     intent.started_at.to_string(),
@@ -1287,11 +1293,19 @@ fn load_intent(
     project: &ProjectSlug,
     id: &TodoId,
 ) -> Result<Option<WithdrawalIntent>, WorkError> {
-    type Row = (Option<String>, Option<String>, String, String, bool, String);
+    type Row = (
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        String,
+        bool,
+        String,
+    );
     let row: Option<Row> = conn
         .query_row(
-            "SELECT w.branch, w.branch_head, w.worktrees, w.workspace, w.branch_deleted,
-                    w.started_at
+            "SELECT w.branch, w.branch_head, w.worktrees, w.workspace_path, w.workspace,
+                    w.branch_deleted, w.started_at
              FROM withdrawal_intents w JOIN todos t ON t.id = w.todo_id
              WHERE w.todo_id = ?1 AND t.project = ?2",
             params![id.as_str(), project.as_str()],
@@ -1303,12 +1317,15 @@ fn load_intent(
                     r.get(3)?,
                     r.get(4)?,
                     r.get(5)?,
+                    r.get(6)?,
                 ))
             },
         )
         .optional()
         .map_err(StateDbError::sqlite(path))?;
-    let Some((branch, head, worktrees, workspace, branch_deleted, started_at)) = row else {
+    let Some((branch, head, worktrees, workspace_path, workspace, branch_deleted, started_at)) =
+        row
+    else {
         return Ok(None);
     };
     Ok(Some(WithdrawalIntent {
@@ -1318,6 +1335,7 @@ fn load_intent(
             .map(|head| CommitSha::parse(&head).map_err(|e| invalid(path, e.to_string())))
             .transpose()?,
         worktrees: parse_json(path, &worktrees)?,
+        workspace_path: PathBuf::from(workspace_path),
         workspace: value_of(path, &workspace)?,
         branch_deleted,
         started_at: time(path, &started_at)?,
@@ -2259,6 +2277,14 @@ fn json_of<T: Serialize + ?Sized>(value: &T) -> Result<String, WorkError> {
 
 fn parse_json<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T, WorkError> {
     serde_json::from_str(text).map_err(|e| invalid(path, e))
+}
+
+/// `value`, a filesystem path, as the text a row stores; a path that is
+/// not UTF-8 is refused rather than stored as another path.
+fn path_text<'a>(path: &Path, value: &'a Path) -> Result<&'a str, WorkError> {
+    value
+        .to_str()
+        .ok_or_else(|| invalid(path, format!("{} is not a UTF-8 path", value.display())))
 }
 
 fn invalid(path: &Path, message: impl std::fmt::Display) -> WorkError {
