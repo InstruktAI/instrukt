@@ -27,11 +27,15 @@ concurrency:
 
 # A deselection is the literal `false` from a `changes` job that succeeded, and
 # nothing else: a `changes` job that fails, even after writing some outputs,
-# selects every check, and the commit checks then leave out none of the hooks
-# the classifier names (precommit_skip). Independently of the classifier, the
-# Linux build job always leaves three hooks out of its every-file run because
-# other steps and jobs run their checks: shellcheck, cargo-clippy-and-unit-tests
-# and config-validate. Three kinds of job rest on the deselection rule:
+# selects every check. The Linux build job's every-file commit-check run skips
+# hooks in two parts. Three hook IDs are always left out, whatever the
+# classifier reported and whether it succeeded: shellcheck,
+# cargo-clippy-and-unit-tests and config-validate; their checks run elsewhere,
+# each under its own selection condition, as that step's comment says. The
+# hooks the classifier names (precommit_skip) are added only when `changes`
+# succeeded; when it fails they are dropped, so no other hook, such as
+# cargo-fmt or the Python hooks, is left out. Three kinds of job rest on the
+# deselection rule:
 # - `shellcheck`, `dependency audit`, `pinned Graphify contract`,
 #   `pinned T3 contract` and `fmt, clippy, test (macos-latest)` carry required
 #   names. Each depends on `changes`, runs unless cancelled and gates its
@@ -122,14 +126,18 @@ jobs:
           tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
       # Every check of .pre-commit-config.yaml over every file, document
       # validation with an instrukt built from this revision among them.
-      # Three hooks always run elsewhere, whatever the classifier reported:
-      # shellcheck in its own job, clippy with the unit tests in the build
-      # script, the shards and the macOS job, and configuration validation in
-      # the `committed configuration` step below, which also fails when the
-      # committed project layer is missing. On a pull request whose `changes`
-      # job succeeded it also leaves out the Rust, shell or Python checks whose
-      # inputs did not change (precommit_skip). It runs before the Rust build:
-      # its build lock clears the workspace's artifacts the first time.
+      # SKIP always leaves out three hook IDs, whatever the classifier
+      # reported, because each check runs elsewhere under its own selection:
+      # shellcheck in the `shellcheck` job when shell is selected; clippy with
+      # the unit tests in the build script, the shards and the macOS job when
+      # rust is selected; and configuration validation in the `committed
+      # configuration` step below whenever Linux validation runs and the steps
+      # before it pass, which also fails when the committed project layer is
+      # missing. Only when `changes` succeeded does SKIP also take
+      # precommit_skip, the Rust, shell or Python hooks whose inputs did not
+      # change; a failed `changes` adds none, so every other hook runs. It runs
+      # before the Rust build: its build lock clears the workspace's artifacts
+      # the first time.
       - name: commit checks over every file
         env:
           SKIP: shellcheck,cargo-clippy-and-unit-tests,config-validate,${{ needs.changes.result == 'success' && needs.changes.outputs.precommit_skip || '' }}
