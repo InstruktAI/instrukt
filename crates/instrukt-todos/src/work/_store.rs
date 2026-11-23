@@ -176,15 +176,37 @@ pub(crate) enum Checkout {
 }
 
 /// One worktree a withdrawal releases: why it belongs to the todo, what it
-/// had checked out when the withdrawal checked it, and whether it is
-/// released yet. A worktree whose checkout is no longer that one is not the
-/// todo's any more.
+/// had checked out when the withdrawal checked it, whether it is released
+/// yet, and where it is moved to be released. A worktree whose checkout is
+/// no longer that one is not the todo's any more.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct IntentWorktree {
     pub path: PathBuf,
     pub tie: WorktreeTie,
     pub checkout: Option<Checkout>,
     pub released: bool,
+    /// Where the withdrawal moves the worktree, beside `path`, to look at it
+    /// once more and remove it there: recorded before the move, cleared once
+    /// it is removed or moved back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging: Option<PathBuf>,
+}
+
+/// How far a withdrawal's release of its work branch has come
+/// (`withdrawal_intents`, `branch_state`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BranchRelease {
+    /// Not deleted yet. A marker found now was created by a deletion whose
+    /// receipt was lost, and shows the branch deleted at its commit.
+    Pending,
+    /// A failed deletion is known to have left only its marker, beside the
+    /// branch it did not delete. The marker proves nothing and is removed
+    /// before the branch is deleted.
+    PartialMarker,
+    /// Deleted: by this withdrawal, or found gone or recreated at a commit
+    /// that does not descend from `branch_head`.
+    Deleted,
 }
 
 /// The todo's empty workspace in a withdrawal (`withdrawal_intents`,
@@ -221,9 +243,8 @@ pub(crate) struct WithdrawalIntent {
     /// checkout of the project runs it again.
     pub workspace_path: PathBuf,
     pub workspace: WorkspaceRelease,
-    /// Whether `branch` is deleted: by this withdrawal, or found gone or
-    /// recreated at a commit that does not descend from `branch_head`.
-    pub branch_deleted: bool,
+    /// How far the release of `branch` has come.
+    pub branch_state: BranchRelease,
     pub started_at: Timestamp,
 }
 
@@ -232,8 +253,13 @@ impl WithdrawalIntent {
     /// none may be abandoned.
     pub fn released_any(&self) -> bool {
         self.workspace == WorkspaceRelease::Released
-            || self.branch_deleted
+            || self.branch_deleted()
             || self.worktrees.iter().any(|w| w.released)
+    }
+
+    /// Whether `branch` is recorded deleted.
+    pub fn branch_deleted(&self) -> bool {
+        self.branch_state == BranchRelease::Deleted
     }
 }
 
@@ -655,7 +681,7 @@ impl Store {
             tx.execute(
                 "INSERT INTO withdrawal_intents
                     (todo_id, branch, branch_head, worktrees, workspace_path, workspace,
-                     branch_deleted, started_at)
+                     branch_state, started_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     id.as_str(),
@@ -664,7 +690,7 @@ impl Store {
                     json_of(&intent.worktrees)?,
                     path_text(path, &intent.workspace_path)?,
                     text_of(&intent.workspace),
-                    intent.branch_deleted,
+                    text_of(&intent.branch_state),
                     intent.started_at.to_string(),
                 ],
             )
@@ -684,14 +710,14 @@ impl Store {
             }
             tx.execute(
                 "UPDATE withdrawal_intents
-                 SET branch_head = ?2, worktrees = ?3, workspace = ?4, branch_deleted = ?5
+                 SET branch_head = ?2, worktrees = ?3, workspace = ?4, branch_state = ?5
                  WHERE todo_id = ?1",
                 params![
                     intent.todo.as_str(),
                     intent.branch_head.as_ref().map(CommitSha::as_str),
                     json_of(&intent.worktrees)?,
                     text_of(&intent.workspace),
-                    intent.branch_deleted,
+                    text_of(&intent.branch_state),
                 ],
             )
             .map_err(StateDbError::sqlite(path))?;
@@ -1299,13 +1325,13 @@ fn load_intent(
         String,
         String,
         String,
-        bool,
+        String,
         String,
     );
     let row: Option<Row> = conn
         .query_row(
             "SELECT w.branch, w.branch_head, w.worktrees, w.workspace_path, w.workspace,
-                    w.branch_deleted, w.started_at
+                    w.branch_state, w.started_at
              FROM withdrawal_intents w JOIN todos t ON t.id = w.todo_id
              WHERE w.todo_id = ?1 AND t.project = ?2",
             params![id.as_str(), project.as_str()],
@@ -1323,8 +1349,7 @@ fn load_intent(
         )
         .optional()
         .map_err(StateDbError::sqlite(path))?;
-    let Some((branch, head, worktrees, workspace_path, workspace, branch_deleted, started_at)) =
-        row
+    let Some((branch, head, worktrees, workspace_path, workspace, branch_state, started_at)) = row
     else {
         return Ok(None);
     };
@@ -1337,7 +1362,7 @@ fn load_intent(
         worktrees: parse_json(path, &worktrees)?,
         workspace_path: PathBuf::from(workspace_path),
         workspace: value_of(path, &workspace)?,
-        branch_deleted,
+        branch_state: value_of(path, &branch_state)?,
         started_at: time(path, &started_at)?,
     }))
 }

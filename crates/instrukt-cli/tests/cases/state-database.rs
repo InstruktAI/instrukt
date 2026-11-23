@@ -693,8 +693,8 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
     // todo that does not exist, and goes with its todo.
     raw.execute_batch("PRAGMA foreign_keys = ON").unwrap();
     raw.execute(
-        "INSERT INTO withdrawal_intents(todo_id,branch,branch_head,worktrees,workspace_path,workspace,branch_deleted,started_at)
-         VALUES ('d34b9b4b157da44424c3630d9592445e','list-depth',?1,'[]','/project/workspace/list-depth','present',0,'2026-11-21T09:00:00Z')",
+        "INSERT INTO withdrawal_intents(todo_id,branch,branch_head,worktrees,workspace_path,workspace,branch_state,started_at)
+         VALUES ('d34b9b4b157da44424c3630d9592445e','list-depth',?1,'[]','/project/workspace/list-depth','present','pending','2026-11-21T09:00:00Z')",
         [&"e".repeat(40)],
     )
     .unwrap();

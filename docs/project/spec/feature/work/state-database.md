@@ -370,10 +370,10 @@ intent: it is never reflected to GitHub and never copied to another computer.
 | `todo_id` | The withdrawn todo (`todos.id`); removed with it. |
 | `branch` | The work branch the withdrawal releases, or `NULL` when there is none. |
 | `branch_head` | The commit that branch pointed at when the withdrawal last read it, or `NULL`. It is recorded before the branch is deleted, against that commit, and kept as the deleted branch's recovery commit. |
-| `worktrees` | The worktrees the withdrawal releases, as JSON: each with why it belongs to the todo (`bound`, named by a session binding, or `on_branch`, with the work branch checked out), the checkout it had when the withdrawal checked it (its branch, or the commit it was detached at), and whether it is released yet. |
+| `worktrees` | The worktrees the withdrawal releases, as JSON: each with why it belongs to the todo (`bound`, named by a session binding, or `on_branch`, with the work branch checked out), the checkout it had when the withdrawal checked it (its branch, or the commit it was detached at), whether it is released yet, and, while the withdrawal is moving it to be released, its staging location `<directory>/.instrukt-withdrawal-<todo_id>-<name>` beside it. |
 | `workspace_path` | Where the todo's workspace is in the checkout the withdrawal was admitted from (`<checkout>/workspace/<slug>`): the one workspace the withdrawal checks and releases, whichever checkout of the project runs it again. |
 | `workspace` | The workspace at `workspace_path`: `absent` when there was none to release when the withdrawal checked, `present` while it is there, empty, to release, `released` once removed or found gone. |
-| `branch_deleted` | Whether the work branch is deleted: by this withdrawal, or found gone or recreated at a commit that does not descend from `branch_head`. |
+| `branch_state` | How far the work branch's release has come: `pending` while it is not deleted; `partial_marker` once a failed deletion is known to have left only the withdrawal's marker beside the branch it did not delete; `deleted` once it is deleted by this withdrawal, or found gone or recreated at a commit that does not descend from `branch_head`. |
 | `started_at` | When the withdrawal began. |
 
 The row is written, after the todo's record and its working resources were
@@ -403,13 +403,16 @@ the issue has not changed again since.
 Dispatch admission, read back after a reservation's reflection, refuses while
 the row exists, in the same read that confirms the reservation, claim and
 status. The row is updated as each step whose outcome must be recognized
-afterwards happens: the branch's commit before the branch is deleted, and each
-worktree, the workspace and the branch once released. It is removed in the
+afterwards happens: the branch's commit before the branch is deleted, a
+worktree's staging location before it is moved there, a partial marker before
+it is taken back, and each worktree, the workspace and the branch once
+released. It is removed in the
 transaction that commits the withdrawn record, with `removal` naming exactly
 what was released, or on its own only when a refusal rests on what git or the
 filesystem positively shows — a resource that must be kept, or an attempted
-release proven to have changed nothing — while the command attempted no other
-release and the row records nothing released, leaving the todo as it was.
+release proven to have changed nothing or taken back — while the command
+attempted no other release and the row records nothing released, leaving the
+todo as it was.
 Otherwise a refusal keeps the row with everything it records, `branch_head`
 included: a refusal that rests on an observation git or the filesystem could not
 make, or on a release that returned a failure without its outcome proven, names
@@ -422,39 +425,60 @@ commit the row holds, that first creates the withdrawal's marker ref
 and then deletes the branch. The call ends in one of three ways:
 
 - **Confirmed deletion.** The call succeeds. The row records the branch deleted
-  at that commit, then the marker is removed. A marker found with no row told of
-  the deletion shows the branch was deleted at the marker's commit.
+  at that commit, then the marker is removed. A marker found while the row
+  records the branch `pending` shows the branch was deleted at the marker's
+  commit by a call whose success was not recorded.
 - **Attempt proven ineffective.** The call returns a failure, and the refs read
   back show no marker and the branch still at that commit, or moved on from it:
   nothing changed, and the attempt does not count as one.
-- **Partial or unsettled failure.** The call returns a failure and the refs read
-  back show anything else. A marker beside the branch still at that commit is
-  removed again; any other marker is left. The branch is never recorded deleted
-  on a returned failure: the command refuses with git's failure, and the row
-  keeps what it records, for the withdrawal run again to recognize what
-  happened.
+- **Marker only.** The call returns a failure, and the refs read back show the
+  marker and the branch both still at that commit. The row records
+  `partial_marker` before the marker is removed; once it is removed the row
+  records `pending` again. A marker removal that fails leaves `partial_marker`
+  recorded. While the row records `partial_marker` the marker shows nothing:
+  the withdrawal run again removes it, records `pending`, and only then looks at
+  the branch and deletes it.
+- **Unsettled failure.** The call returns a failure and the refs read back show
+  anything else; the marker is left.
+
+The branch is never recorded deleted on a returned failure: the command
+refuses with git's failure, and the row keeps what it records, for the
+withdrawal run again to recognize what happened.
 
 A withdrawal interrupted while the row exists is completed by running
 `instrukt todo remove <slug>` again, which continues from the row before reading
 GitHub: an action that arrived there meanwhile, such as a hold label, stays
 outstanding until the first pull after the withdrawal commits. It first records
 what the interrupted command did without recording it, and what became of the
-resources since: a marker records the branch deleted at the marker's commit,
-and whatever branch carries its name now is left as it is; a worktree git no
-longer lists is released, and so is the workspace at `workspace_path` when the
-row records it present and it is gone. A workspace at `workspace_path` holding
+resources since: while the row records the branch `pending`, a marker records
+the branch deleted at the marker's commit, and whatever branch carries its name
+now is left as it is; a worktree git lists at neither its path nor its staging
+location is released; one git lists at its path with nothing at its staging
+location was not moved; and the workspace at `workspace_path` is released when
+the row records it present and it is gone. A workspace at `workspace_path` holding
 files refuses the withdrawal and is named, whatever the row records of it. Without a marker, a branch absent, or recreated at a commit that does
 not descend from `branch_head`, is recorded as deleted with the commit the row
 holds and a recreated branch is left as it is; a branch that moved on to a
 descendant of `branch_head` is recorded at, and deleted against, the commit it
-moved to. What the row names as released stays released. Each worktree is read
-again just before it is released, and is checked and removed while the
-withdrawal holds the lock git takes to change that worktree's `HEAD` (its
-`HEAD.lock`, or with `reftable` ref storage its own reference table lock), so a
-git command that would change its checkout meanwhile fails on that lock and
-changes nothing. One whose checkout is no longer the one the row records, or
-that has the work branch checked out once that branch is recorded deleted, is
-no longer the todo's: it is left where it is and leaves the withdrawal. A git
+moved to. What the row names as released stays released.
+
+Each worktree is released through git's own worktree commands. It is read
+again and checked at its path; a clean worktree still the todo's is moved with
+`git worktree move` to its staging location, recorded first, and read and
+checked again there. Still the todo's and clean, it is removed there with
+`git worktree remove`; otherwise it is moved back to its path. One that holds
+uncommitted changes or is locked by then refuses the withdrawal, naming its
+path. One whose checkout is no longer the one the row records, or that has the
+work branch checked out once that branch is recorded deleted, is no longer the
+todo's: it is left at its path and leaves the withdrawal. A move git refuses
+changes nothing and refuses the withdrawal with git's reason. One git does not
+move back stays recorded at its staging location, and the refusal names it.
+Once a worktree is moved, a git command addressed to its path, such as
+`git -C <path> switch`, finds no worktree there and changes nothing; one that
+ran before the move has ended, or is seen at the staging location. A
+withdrawal interrupted with a worktree at its staging location continues from
+there when run again, removing it or moving it back, with nothing to clean up
+by hand. This holds whatever ref storage the repository uses. A git
 observation that fails decides nothing, and neither does a negative answer git
 gives together with a diagnostic, such as for an object store it could not
 read: the command refuses and the row keeps what it recorded, for the
@@ -1125,10 +1149,24 @@ And the reflected change and the concurrent local change both reach GitHub intac
 - Without a marker, a work branch deleted and recreated at a descendant of the
   commit the withdrawal recorded is indistinguishable from the branch moving
   on; the withdrawal deletes it against the commit it points at.
-- A withdrawal process stopped while it holds a worktree's `HEAD` lock leaves
-  the lock file behind: git refuses to change that worktree's checkout, naming
-  the file, until it is removed, and the withdrawal run again refuses naming it
-  too.
+- Moving a worktree to its staging location changes where it is addressed,
+  not what a process already inside it can do. A process whose working
+  directory was inside the worktree before the move, such as an open shell,
+  still reaches it at the staging location and can change its checkout between
+  the withdrawal's last look and its removal. Uncommitted work it leaves there
+  is kept, because `git worktree remove` refuses a worktree holding it; a
+  branch it switched to keeps its commits.
+- A git process stopped inside its own `git worktree move`, after renaming the
+  directory and before recording its new location, leaves git listing the
+  worktree at its path while the directory is at the staging location. The
+  withdrawal run again refuses, naming both, until `git worktree repair
+  <staging>` records where it is.
+- A failed branch deletion that left only its marker, where neither recording
+  the partial marker nor removing the marker succeeds, leaves the row
+  `pending` with the marker present. The withdrawal run again then reads the
+  marker as the deletion and leaves the branch, which still points at the
+  marker's commit, as it is: nothing is lost, but the branch outlives the
+  withdrawal.
 
 ## See Also
 

@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS withdrawal_intents (
     worktrees   TEXT NOT NULL,
     workspace_path TEXT NOT NULL,
     workspace   TEXT NOT NULL CHECK (workspace IN ('absent', 'present', 'released')),
-    branch_deleted INTEGER NOT NULL DEFAULT 0,
+    branch_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (branch_state IN ('pending', 'partial_marker', 'deleted')),
     started_at  TEXT NOT NULL
 );
 ";
