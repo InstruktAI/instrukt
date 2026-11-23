@@ -35,14 +35,11 @@ address, and a webhook delivery starts no review.
 
 The listing is read page by page until a short page ends it, each page under
 its own conditional validator, and eligibility is decided from the complete
-listing only. For an eligible head that work holds no review evidence for, the
-tick also reads the evidence records GitHub carries on that commit with their
-anchors, every page, and hands them to work, so evidence recorded on another
-computer is recognised and starts no second review. For an active integration candidate it reads, the
-same way, the evidence records of the commits workflow's coverage finding
-depends on. What counts as evidence, and from which identity, is work's answer
-(`project/instrukt/spec/feature/work/github-apps`, Evidence records on
-GitHub). These reads use a credential of the project identity scoped to them
+listing only. Whether an eligible head already carries a verdict is work's
+answer, from the evidence this computer holds or from what the reviewer bot
+already published (`project/instrukt/spec/feature/work/github-apps`, Verdict
+publication); the runner asks and reads no verdict itself. The listing uses a
+credential of the project identity scoped to it
 (`project/instrukt/spec/feature/work/github-apps`, Readiness for automatic
 review), issued only for an opted-in project.
 
@@ -53,17 +50,16 @@ in a store of their own.
 
 | Store | Holds | Written by | Write-isolation unit |
 | --- | --- | --- | --- |
-| `state/review-observation.db` | The pages of the current pull-request listing and the evidence-record pages of the commits the tick currently reads them for, each with its conditional validator. | The tick's review observation only. | `state/review-observation.lock` |
+| `state/review-observation.db` | The pages of the current pull-request listing, each with its conditional validator. | The tick's review observation only. | `state/review-observation.lock` |
 
 No command a caller waits on writes this store, and no write to it takes the
 state database's writer lock, so a pass that reads many pages delays no
 command (`sdlc/policy/state-storage`, Write isolation follows contention). It
 has the shape of the history store
 (`project/instrukt/spec/feature/runner/history`, History store): one writer,
-its own lock, readers without a lock. A page beyond the current listing and a
-commit whose evidence records are no longer read lose theirs in the same pass.
-The store holds nothing else, so removing it loses no fact: rebuilding costs
-one unconditional request per page. The poll deferral is the one the other
+its own lock, readers without a lock. A page beyond the current listing is
+removed in the same pass. The store holds nothing else, so removing it loses no
+fact: rebuilding costs one unconditional request per page. The poll deferral is the one the other
 GitHub sources already keep.
 
 ### Which heads are reviewed
@@ -106,9 +102,9 @@ head and is reviewed automatically.
 ### Review requests
 
 A commit is owed a review while it is the current head of an eligible pull
-request and work recognises no verdict for it: neither a head verdict nor a
-derived approval (`project/instrukt/spec/feature/work/github-apps`, Review
-evidence). The review is one judgment of that commit: eligible pull requests
+request and work answers that it carries no verdict
+(`project/instrukt/spec/feature/work/github-apps`, Review evidence and Verdict
+publication). The review is one judgment of that commit: eligible pull requests
 that share a head are owed one review between them, and each receives the
 outcome as its own pull-request review.
 
@@ -121,19 +117,20 @@ An owed commit is asked for with the fact `runner.review_needed`
 | Data | `pull_request`, the pull request's number; `head_branch` and `base_branch`, its branch names; `head`, the exact head commit; `base`, the pinned base commit; `request`, the request's number for that head commit. |
 | Occurrence identity | The project, the head commit and the request number. |
 
-The pinned base is where the reviewed change starts: the merge base of the head
-commit and the project's canonical branch, computed in the project's repository
-after its remote was fetched for this request. The branch a pull request
-targets does not move it: the review status belongs to the commit and admits
-it wherever it is proposed, so one review covers everything the head adds to
-the canonical branch, also when the pull request targets another branch and
-when several pull requests with different base branches share the head. The
-pinned base is a commit, fixed for the request, and the branch names beside it
-only describe the pull request. The consumer reviews from it, work admits the
-verdict against it and the recorded evidence names it
+The pinned base is where the reviewed change starts: a commit, fixed for the
+request and computed in the project's repository after its remote was fetched
+for this request.
+
+| The head | Pinned base |
+| --- | --- |
+| Shares history with the project's canonical branch | Their merge base. The branch a pull request targets does not move it: the review status belongs to the commit and admits it wherever it is proposed, so one review covers everything the head adds to the canonical branch, also when the pull request targets another branch and when several pull requests with different base branches share the head. |
+| Shares none with the canonical branch | The merge base of the head with the base branch of the pull request the request is addressed to. The review covers what the head adds to that branch. |
+
+The branch names beside the pinned base only describe the pull request. The
+consumer reviews from the pinned base and work admits the verdict against it
 (`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence). A head whose merge base the repository cannot give is not asked for
-in that tick.
+evidence). A head for which the repository gives neither merge base is not
+asked for in that tick.
 
 The fact is a state: while a pull request's request has not been selected for
 handover, a request for a newer head of that pull request takes its place.
@@ -141,69 +138,71 @@ handover, a request for a newer head of that pull request takes its place.
 ### One review per commit
 
 Requests are counted per project and commit, whichever pull requests have that
-commit as their head, and a commit has at most one request that is queued or in
-flight.
+commit as their head, and a commit has at most one live request: one that is
+queued, selected or handed over.
 
-| A request is | From | Until |
-| --- | --- | --- |
-| Queued | It is emitted. | Delivery selects it for handover to a session, or it ends. |
-| In flight | Delivery selected it for handover. From then on it is handed over as selected, and nothing replaces or withdraws it (`project/instrukt/spec/feature/runner/procedure-event-delivery`). | Its outcome is known. |
-
-Only a queued request can be replaced or end because its commit stopped being
-owed. A request's standing is delivery's own record of it, so the two never
-disagree about whether it will still be handed over.
-
-| Outcome | What follows |
+| Standing | The request |
 | --- | --- |
-| A verdict for the commit is recorded. | Every request of that commit is closed and the commit is asked for no more. |
-| The turn that received the request ended with no verdict recorded. | The request ends. |
-| The handover stays unconfirmed: the runtime accepted it and delivery found no evidence within its bound that it entered a turn (`project/instrukt/spec/feature/runner/procedure-event-delivery`). | The request ends as unconfirmed. Whether its session will still take it up is not known. |
-| The request never reached a session: no responsibility accepted it, a newer queued request for its subject took its place, its handover failed, or its commit stopped being owed while it was queued. | The request ends. |
+| Queued | Is emitted, and delivery has not selected it. It can be replaced, and it ends when its commit stops being owed. |
+| Selected | Is frozen by delivery for handover, to a session that is not started yet or to one whose runtime has not accepted it. From here on nothing replaces or withdraws it (`project/instrukt/spec/feature/runner/procedure-event-delivery`). No session holds it yet. |
+| Handed over | Was accepted by the runtime for a named session. That session holds the request. |
+| Ended | Has one of the dispositions below. |
 
-A turn the runtime reports as interrupted is no outcome: delivery replays it.
+A request's standing is delivery's own record of it, so the two never disagree
+about whether it will still be handed over.
 
-A closed or ended request can still enter a turn: one selected before the
-verdict was recorded, one that ended as unconfirmed, and one delivery replays.
-It asks for the judgment the commit already has, and its answer records
-nothing (`project/instrukt/spec/feature/work/github-apps`, Admission of review
+| Disposition | When |
+| --- | --- |
+| Answered | A verdict for the commit was recorded. Every request of that commit ends with it and the commit is asked for no more. |
+| No verdict | The turn that received the request ended with no verdict recorded. |
+| Unconfirmed | The runtime accepted the handover and delivery found no evidence within its bound that it entered a turn (`project/instrukt/spec/feature/runner/procedure-event-delivery`). Whether its session will still take it up is not known. |
+| Never handed over | No responsibility accepted it, a newer queued request for its subject took its place, its handover failed, or its commit stopped being owed while it was queued. |
+
+A turn the runtime reports as interrupted is no disposition: delivery replays
+it.
+
+An ended request can still enter a turn: one selected before the verdict was
+recorded, one that ended unconfirmed, and one delivery replays. What a session
+does with a request for a commit that is already settled belongs to its
+procedure (`sdlc/procedure/lifecycle/work/review-commits`), and what a verdict
+offered then does belongs to work
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
 evidence).
 
-An in-flight request belongs to its commit, not to the pull request that made
-the commit owed. It does not end when the commit stops being owed, as when the
-pull request gets a new head, becomes a draft or is closed. While it is in
-flight no further request is emitted for that commit, also when another pull
-request, or the same one again, makes the commit owed in the meantime. Its
-verdict reaches every eligible pull request that has the commit as its head
-when the verdict is published.
+A live request belongs to its commit, not to the pull request that made the
+commit owed. A selected or handed-over request does not end when the commit
+stops being owed, as when the pull request gets a new head, becomes a draft or
+is closed. While a request is live no further request is emitted for that
+commit, also when another pull request, or the same one again, makes the commit
+owed in the meantime. Its verdict reaches every eligible pull request that has
+the commit as its head when the verdict is published.
 
-While a commit is owed and has no queued or in-flight request, the runner emits
-the next request for it under the next number, addressed to the lowest-numbered
-eligible pull request that has it as its head at that moment. Each further
-request for one commit waits longer than the one before, up to a bound, so a
-reviewer that cannot finish is not started in a loop and the commit is never
-given up.
+While a commit is owed and has no live request, the runner emits the next
+request for it under the next number, addressed to the lowest-numbered eligible
+pull request that has it as its head at that moment. Each further request for
+one commit waits longer than the one before, up to a bound, so a reviewer that
+cannot finish is not started in a loop and the commit is never given up.
 
-Every request of a commit asks for the same review. A session that was handed
-one of them may record the verdict, also after that request ended or the pull
-request moved on, and the verdict is that commit's alone. Work settles the
-commit on the first verdict it admits and admits no further judgment in answer
-to a request, from another session or from the same one
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence). A commit asked for again after an unconfirmed handover therefore
-gains no second verdict and no further version from the repeated answer, also
-when the first handover enters a turn after all, in the session that answered
-the later request or in another.
+Work reads two answers from the runner when it admits a verdict.
 
-Work reads a commit's requests from the runner when it admits a verdict: each
-request's number, whether it is queued, was handed to a session and to which,
-or ended before it reached one, and its pinned base. For a settled commit it
-also asks whether the calling session's current turn is one that a request for
-that commit entered. The runner answers from delivery's record of the turn each
-handover entered, and for a handover delivery has not seen enter — one still
-awaiting confirmation, or ended as unconfirmed — from what the runtime reports
-that turn received. A request's records are kept while it is queued or in
-flight, while its commit is still owed, and while a session it was selected for
-can still take it up.
+| Asked | Answered from |
+| --- | --- |
+| A commit's requests: each one's number, its standing, the session that holds a handed-over request, an ended request's disposition, and its pinned base | Delivery's own records. |
+| Which input opened a named session's turn in progress, with regard to that commit's requests handed over to that session | One read of the runtime for the input that opened the session's turn in progress, compared with the frozen content of those handovers. |
+
+The second answer is one of four: a request of that commit opened the turn,
+something else opened it, the session has no turn in progress, or the runtime
+cannot say. It costs one bounded read of the runtime and one keyed read of
+delivery's records, however long the session's history is. It is exact where a
+handover opens the turn it enters: a session started with the request,
+only-at-entry delivery, and as-soon-as-possible delivery on a runtime that
+queues a handover for the next turn
+(`project/instrukt/spec/feature/runner/procedure-event-delivery`, Intent,
+capability and bounded batches). A handover that a runtime steers into a
+running turn is not that turn's opening input and is not seen by this answer.
+
+A request's records are kept while it is live, while its commit is still owed,
+and while a session it was selected for can still take it up.
 
 ### Placement and consumer
 
@@ -226,8 +225,8 @@ commit as `base`, which is its merge base with the canonical branch and so the
 canonical head the candidate is based on, and the request number as `request`, and its occurrence identity is the project,
 the candidate commit and the request number. When a candidate owes a review is
 workflow's decision
-(`project/instrukt/spec/feature/workflow/integration-gate`); its requests are
-queued, in flight, end and repeat as above.
+(`project/instrukt/spec/feature/workflow/integration-gate`); its requests take
+the standings and dispositions above and repeat as above.
 
 ### Enablement
 
@@ -240,8 +239,8 @@ review).
 
 | Project on this computer | What the runner does |
 | --- | --- |
-| Admitted for automatic review | Observes its pull requests on every tick, asks for the reviews that are owed and has outstanding review evidence published. |
-| Opted in and not admitted here | Observes no pull requests and emits no review request. Evidence recorded on this computer is still handed to work for reflection on every tick (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes). |
+| Admitted for automatic review | Observes its pull requests on every tick, asks for the reviews that are owed and has work publish what is outstanding. |
+| Opted in and not admitted here | Observes no pull requests, emits no review request and has nothing published. |
 | Not opted in | Observes no pull requests, emits no review request and has nothing published. Reviews the project already receives are unaffected, and so is how its CI results are read. |
 
 The capability does not depend on the project's todos module.
@@ -254,7 +253,9 @@ publishes the status and does not change branch protection.
 
 When GitHub or the runtime is unavailable, observation, activation and
 publication retry until the service returns, and the unavailable service is
-reported to the operator (`project/instrukt/policy/checks-and-guards`).
+reported to the operator (`project/instrukt/policy/checks-and-guards`). A
+runtime that cannot say which input opened a session's turn is reported the
+same way.
 
 ## Use cases
 
@@ -305,21 +306,28 @@ Then no review is started for it
 - A reviewer that keeps ending its turn without a verdict is asked again at
   growing intervals for as long as the head stays current. The head carries no
   review status meanwhile and, where the status is required, cannot merge.
-- A commit that becomes a head again while its earlier request is still in
-  flight waits for that review, however long that turn runs, and starts no
-  other.
+- A commit that becomes a head again while its earlier request is selected or
+  handed over waits for that review, however long that turn runs, and starts
+  no other.
 - After an unconfirmed handover the commit is asked for again, and a request
-  selected before a verdict was recorded is still handed over. The commit can
-  so be reviewed twice, by two sessions or twice by one. Work records the
-  first verdict and nothing for the second answer; that review is spent.
+  selected before a verdict was recorded is still handed over. Two requests of
+  one commit that both enter a turn before any verdict exists are both
+  reviewed.
 - A pull request that targets another branch than the canonical one is
   reviewed for everything its head adds to the canonical branch, which can be
   more than the pull request shows as its change.
+- A pull request on a history the canonical branch does not share is reviewed
+  against its own base branch. Another pull request that shares its head and
+  has a different base branch receives that same verdict. A head that shares
+  no history with its own pull request's base branch has no commit to review
+  from and is asked for no review.
 - One computer observes a project's pull requests at a time. Another computer
-  recognises review evidence once it is reflected on GitHub
-  (`project/instrukt/spec/feature/work/github-apps`); a review in flight
-  elsewhere is invisible to it, and it asks for its own. Two computers admitted
-  for one project at once each ask and publish.
+  recognises what the reviewer bot already published and holds none of the
+  first one's evidence until it is imported
+  (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
+  computer changes); a review in flight elsewhere is invisible to it, and it
+  asks for its own. Two computers admitted for one project at once each ask
+  and publish.
 - A pull request outside eligibility starts no review, so no review status is
   published on its account. The status belongs to the commit and answers only
   the review check. Where a canonical branch requires that check, it is unmet

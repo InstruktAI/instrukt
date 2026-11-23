@@ -84,7 +84,11 @@ Review evidence belongs to the Evidence family: `instrukt review record` and
 stands in. The grant reaches the command; what a caller may record is decided
 by the evidence's own admission invariants, which bind every caller alike
 (`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence).
+evidence). `instrukt review export` and `instrukt review import` move a
+computer's review evidence for a project and are `installation-write`,
+addressing this computer's installation
+(`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
+computer changes).
 <!-- /planned:event-driven-pr-review-gate -->
 
 Scope is always authored as `own` or `any`. `any` reaches every object the

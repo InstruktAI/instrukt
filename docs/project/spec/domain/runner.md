@@ -373,7 +373,7 @@ in data.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no queued or in-flight request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, which is its merge base with the canonical branch, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
+| `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Event-platform facts emitted
@@ -472,16 +472,14 @@ has no origin, as declared in Canonical fields.
 
 <!-- planned:event-driven-pr-review-gate -->
 For automatic review the runner asks its suppliers and derives none of their
-answers: work says whether a pull request is a todo's, which review evidence is
-current for a commit and whether both identities are ready, and workflow says
-whether the active candidate's content is covered. Through work's command
-contract the runner records a derived approval and has outstanding evidence
-published, handing over the evidence records it read from GitHub and the
-eligible pull requests it observed at each head. It supplies work with a
-commit's review requests: each one's number, whether it is queued, was handed
-to a session and to which, or ended before it reached one, and its pinned
-base, and whether the calling session's current turn was entered by one of
-them (`project/instrukt/spec/domain/context-map`).
+answers: work says whether a pull request is a todo's, whether a commit carries
+a verdict and whether both identities are ready, and workflow says whether the
+active candidate's content is covered. Through work's command contract the
+runner records a derived approval and has outstanding verdicts published,
+handing over the eligible pull requests it observed at each head. It supplies
+work with a commit's review requests, each with its number, standing and
+pinned base, with the input that opened a session's turn in progress, and with
+a named session's conversation (`project/instrukt/spec/domain/context-map`).
 <!-- /planned:event-driven-pr-review-gate -->
 
 The runtime adapter and the event-source boundary form an

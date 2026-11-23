@@ -108,9 +108,9 @@ Automatic review adds these crossings; their composition is the review gate in
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → runner, work, workflow | Customer / Supplier | The per-project automatic-review opt-in |
-| work → configuration, runner | Customer / Supplier | The readiness of the project identity to observe and of the reviewer identity to publish, consulted where the opt-in is admitted and by installation inspection; the current review evidence a computer holds that GitHub does not carry yet, consulted where a write would end the project's admission there |
-| work → runner | Customer / Supplier | Whether a pull request is a todo's and which review evidence is current for a commit; recording a derived approval and reflecting and publishing outstanding evidence through work's command contract |
-| runner → work | Customer / Supplier | A commit's review requests, each with its number, whether it is queued, handed to a session or ended before reaching one, and its pinned base, and whether the calling session's current turn was entered by one of them, consulted when a head verdict is admitted; the evidence records the runner read from GitHub |
+| work → configuration, runner | Customer / Supplier | The readiness of the project identity to observe and of the reviewer identity to publish, consulted where the opt-in is admitted and by installation inspection |
+| work → runner | Customer / Supplier | Whether a pull request is a todo's, whether a commit carries a verdict and which review evidence is current for it; recording a derived approval and publishing outstanding verdicts through work's command contract |
+| runner → work | Customer / Supplier | A commit's review requests, each with its number, its standing (queued, selected, handed over to a named session, or ended with its disposition) and its pinned base; which input opened a named session's turn in progress; and a named session's conversation. All three are consulted when a head verdict is admitted |
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit: the only source of a non-todo head's approval and of exemptions in coverage |
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
 <!-- /planned:event-driven-pr-review-gate -->

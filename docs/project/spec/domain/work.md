@@ -75,31 +75,32 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 **Pinned base**
 : The commit a review starts from, fixed by instrukt and never chosen by the
-  reviewer: the head's merge base with the canonical branch, carried by the
-  review request or computed for an unrequested review. A head verdict so
-  covers everything its head adds to the canonical branch.
+  reviewer: the head's merge base with the canonical branch, so a head verdict
+  covers everything its head adds to that branch. A head that shares no history
+  with the canonical branch is pinned at its merge base with its pull
+  request's base branch, and its verdict does not cover the canonical branch.
 
 **Exemption**
 : The recorded decision that a commit owes no independent review under
-  `general/policy/commits`, made by its author.
+  `general/policy/commits`, made by its author. It is a fact of its own beside
+  a commit's verdict.
 
 **Derived approval**
 : The record that an integration candidate's content is covered, from
   workflow's finding and with no review of its own.
 
-**Evidence record**
-: Review evidence as GitHub carries it on the commit it is about: the form in
-  which it reaches another computer. It is evidence only through its anchor.
-
-**Anchor**
-: The reviewer bot's commit status that names the digest of an evidence
-  record's whole content. The newest anchor on a commit names its current
-  record.
-
 **Revision**
 : A later version of a settled verdict, recorded by the session that recorded
-  the current one in a turn no review request for that commit entered. A
-  request answered again is no revision and records nothing.
+  the current one in a turn that no review request for that commit opened.
+
+**Handed-over approval**
+: A head verdict admitted from the reviewing session's own conversation,
+  entered by another session that adds no judgment.
+
+**Export**
+: One cut of a computer's review evidence for a project, written to a file
+  that another computer imports. The exported head verdicts are handed off:
+  they stay current only where they were imported.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -138,10 +139,10 @@ One-off work retains its reviewed-head report for the integrator; no direct-main
 <!-- planned:event-driven-pr-review-gate -->
 Work also owns review evidence for exact commits that no todo's record
 carries: head verdicts, exemptions and derived approvals, their admission,
-which of them is current for a commit, their reflection as evidence records
-and their publication as the reviewer bot's pull-request review and review
-status. `instrukt review record`, `instrukt review exempt` and
-`instrukt review show` are their published contract
+which of them is current for a commit, their publication as the reviewer
+bot's pull-request review and review status, and their transfer to another
+computer. `instrukt review record`, `exempt`, `show`, `export` and `import`
+are their published contract
 (`project/instrukt/spec/feature/work/github-apps`). Which commits are owed a
 review and which review requests exist is the runner's decision, whether a
 candidate's content is covered is workflow's, and how a head is reviewed is its
@@ -208,27 +209,24 @@ and issues installation credentials under
 - **Contains:** its head verdict versions, each with verdict, pinned base,
   report, reviewing session and the request it answers; its exemption; for an
   integration candidate its derived approval with the coverage it rests on;
-  its evidence records; and what has been published of the current evidence to
-  each destination.
-- **Invariants:** evidence is recorded before anything of it is published, and
-  its evidence record and anchor before its status and reviews; a verdict
-  names one commit and no other commit inherits it; a verdict covers
-  everything its commit adds to the canonical branch, from a pinned base its
-  reviewer cannot narrow; no reviewed commit names the verdict's reviewing
-  session as its author; a commit's review is settled by the first verdict
-  admitted for it, and a review request answered after that records nothing; a
-  verdict recorded on this computer leads what GitHub still shows of an
-  earlier one; what GitHub returns is evidence only when its content has the
-  digest its anchor names; the computer that accepted evidence reflects it;
-  only the reviewer identity publishes it. Admission, currency, reflection,
-  publication, storage and readiness belong to
+  and what GitHub shows of the current verdict at each destination.
+- **Invariants:** evidence is recorded before anything of it is published; a
+  verdict names one commit and no other commit inherits it; a verdict covers
+  the whole range from a pinned base its reviewer cannot narrow; no reviewed
+  commit names the verdict's reviewing session as its author; a commit's
+  review is settled by the first verdict admitted for it, and only its
+  settling session revises it; a verdict and an exemption of one commit never
+  replace each other; each publication follows the current verdict; a head
+  verdict is current on one computer, the one that recorded it or last
+  imported it; only the reviewer identity publishes. Admission, publication,
+  storage, transfer and readiness belong to
   `project/instrukt/spec/feature/work/github-apps`.
 - **Identifier:** project and commit.
 - **Lifecycle:** recorded by the reviewing session, by the commit's author for
   an exemption, or by the runner through work's command contract for a derived
-  approval; reflected and published on ticks; read from its anchored evidence
-  records by a computer that starts serving the project; kept while current
-  and retired as history under the same contract.
+  approval; published on ticks by a computer the project is admitted on;
+  moved to another computer by an export and an import; kept while current and
+  retired as history under the same contract.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Domain events emitted
@@ -307,19 +305,15 @@ owning design snippet or decision record is declared.
 
 <!-- planned:event-driven-pr-review-gate -->
 - **Work → runner (automatic review)** — customer-supplier. Work answers whether
-  a pull request is a todo's, which review evidence is current for a commit and
-  whether both identities are ready. Through its command contract it records a
-  derived approval, carrying the coverage finding the runner read from
-  workflow, and reflects and publishes outstanding evidence to the pull
-  requests the runner observed.
-- **Work → configuration (automatic review)** — customer-supplier. Work answers
-  which current evidence this computer holds for a project that GitHub does
-  not carry yet, consulted where a write would end the project's admission and
-  by installation inspection.
+  a pull request is a todo's, whether a commit carries a verdict and which
+  review evidence is current for it, and whether both identities are ready.
+  Through its command contract it records a derived approval, carrying the
+  coverage finding the runner read from workflow, and publishes what is
+  outstanding to the pull requests the runner observed.
 - **Runner → work (automatic review)** — customer-supplier. The runner supplies
-  a commit's review requests with their standing and pinned base and whether
-  the calling session's current turn was entered by one of them, which a head
-  verdict's admission consults, and the evidence records it read from GitHub.
+  a commit's review requests with their standing and pinned base, which input
+  opened a session's turn in progress, and a named session's conversation;
+  work consults them when it admits a head verdict.
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
   evidence is current for a commit; workflow reads approval of a head that is
   not a todo's, and exemptions, from that answer alone.

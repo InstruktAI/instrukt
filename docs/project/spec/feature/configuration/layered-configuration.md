@@ -72,11 +72,10 @@ missing:
   matches the type, another procedure in its place whatever role it declares,
   that procedure under another role, and a second subscribed procedure each
   leave the finding standing;
-- the project identity cannot read the repository's pull requests and review
-  evidence, or the reviewer identity cannot publish evidence records,
-  pull-request reviews and commit statuses there, as work's readiness reports
-  each (`project/instrukt/spec/feature/work/github-apps`, Readiness for
-  automatic review).
+- work's readiness for automatic review reports an unmet finding for the
+  project identity or the reviewer identity on the repository
+  (`project/instrukt/spec/feature/work/github-apps`, Readiness for automatic
+  review).
 
 `config patch` refuses a write that would switch it on with such a finding,
 under its revision check and whole-document validation
@@ -88,18 +87,6 @@ that computer; its other capabilities are unaffected
 (`project/instrukt/policy/checks-and-guards`). The readiness findings need
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
-
-A project that is admitted on this computer is served there, and the write
-that ends its admission here is how that service ends in order: switching
-`review.automatic` off, or switching off what the admission rests on. While
-work holds current review evidence for the project on this computer that
-GitHub does not carry yet, that is a finding at the key being written
-(`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
-computer changes). `config patch` refuses the write and names the commits and
-the door: a tick reflects them once GitHub answers, `instrukt tick` runs one
-now, and `instrukt review show <sha>` shows what is still outstanding.
-`config validate` and `install --check` report the same evidence for every
-opted-in project, admitted or not.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Layer rules

@@ -38,7 +38,7 @@ meaning and the writes of the conversation tables.
   place them.
 <!-- planned:event-driven-pr-review-gate -->
 - **Review evidence stays outside it too:** head verdicts and exemptions live
-  in `state/review.db` and their publication records in
+  in `state/review.db`, and derived approvals and publication records in
   `state/review-publication.db`, each under its own lock and never under the
   writer lock (`project/instrukt/spec/feature/work/github-apps`, Review
   evidence storage). The pages the runner reads for automatic review live in
