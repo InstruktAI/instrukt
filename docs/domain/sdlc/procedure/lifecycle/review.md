@@ -197,8 +197,9 @@ A finding is valid only when all four hold:
    decision or an authorization names no state of the target.
 
 A finding that claims a defect establishes, from current sources, that a
-reachable condition triggers it (`sdlc/concept/defect-evidence`); a defect claim
-on an unreachable condition is an investigation lead.
+reachable condition triggers it (`sdlc/concept/defect-evidence`); any defect
+claim failing `sdlc/concept/defect-evidence` is an investigation lead, never a
+finding.
 
 An observation missing any one of these is an **investigation lead**, not a
 finding: it cannot block, never enters remediation, requires no producer
@@ -218,9 +219,14 @@ Use this format:
 Severity — Policy: <citation>
 Location: <file:line>
 Violation: <one sentence stating what the target does that the cited rule forbids>
+Method: <how the finding was discovered or reproduced: real-use producer or unassisted ordinary-use steps, explicitly disclosing any synthetic setup, state tampering, environment modification, or timing control>
 Evidence: <each factual premise of the violation, with the observation that shows it>
 Closure: <the state of the target that resolves it, within the frozen scope, stated without prescribing implementation>
 ```
+
+Every finding states its `Method:` by default without being asked, so the
+reviewer checks admissibility before filing and the receiving author and
+orchestrator can independently audit how the conclusion was reached.
 
 Use exactly three severity tiers:
 
@@ -262,8 +268,9 @@ not part of that denominator (`sdlc/policy/preparation-artifact-quality`).
 Remediation closes valid findings
 within that scope; a valid omission finding may add material, but scope growth
 is semantic and line count proves nothing either way. A remediation changes the
-target, not its authority; every addition remains answerable to the same frozen
-denominator.
+target, not its authority: it does not introduce new binding specification
+promises solely to defend an added mechanism against an earlier finding, and
+every addition remains answerable to the same frozen denominator.
 
 The first review of a target is one complete discovery pass over the frozen
 digest. A remediation review closes existing findings and inspects the
@@ -328,11 +335,15 @@ carries it to the human, and neither does the round count.
 Neither elapsed rounds nor stopping authorizes approval, scope growth, or a
 weakened finding.
 
-Findings and their dispositions persist with the reviewed work. A fresh reviewer
-derives independently before reading prior dispositions, then reconciles; a
-continuing reviewer works from its own ledger. A disposition reopens only on
-changed substrate or material new evidence; re-filing it otherwise is reviewer
-incompleteness.
+Review is bidirectionally adversarial. Findings and their dispositions persist
+with the reviewed work. A fresh reviewer derives independently before reading
+prior dispositions, then reconciles; a continuing reviewer works from its own
+ledger. When a producer or orchestrator records a grounded rejection —
+including that a finding omits `Method:` or that its disclosed `Method:` fails
+`sdlc/concept/defect-evidence` — the reviewer adjudicates the rejection on its
+merits and withdraws the finding unless real-use evidence or changed substrate
+overturns it. A disposition reopens only on changed substrate or material new
+evidence; re-filing an unrefuted rejected finding is reviewer incompleteness.
 
 ## Outputs
 

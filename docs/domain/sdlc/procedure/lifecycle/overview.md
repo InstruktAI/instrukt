@@ -17,6 +17,7 @@ parameters:
 - [general/procedure/orchestration](../../../../general/procedure/orchestration.md)
 - [general/concept/agent-characteristics](../../../../general/concept/agent-characteristics.md)
 - [general/policy/commits](../../../../general/policy/commits.md)
+- [sdlc/concept/defect-evidence](../../concept/defect-evidence.md)
 - [sdlc/policy/todo-creation-discipline](../../policy/todo-creation-discipline.md)
 - [sdlc/policy/peer-invocation](../../policy/peer-invocation.md)
 - [sdlc/procedure/blast-radius-discovery](../blast-radius-discovery.md)
@@ -153,9 +154,18 @@ so the runner does not re-dispatch a fresh turn on every tick.
    delegate with shared isolation in `<slug>/work`, and immediately bind the
    child via `instrukt todo bind`. Only one workspace attempt may be active at
    a time; completion stamps release it atomically.
-4. **Verify review substance before acting on verdicts.** Confirm the findings
-   artifact exists, covers all applicable review lanes, and justifies clean
-   approvals specifically for the target.
+4. **Verify review substance and contest invalid findings before acting on verdicts.**
+   Confirm the findings artifact exists, covers all applicable review lanes,
+   discloses each finding's `Method:` (`sdlc/procedure/lifecycle/review` §4),
+   and justifies clean approvals specifically for the target. Maintain a
+   bidirectional adversarial stance: distrust unverified claims and audit every
+   finding's `Method:` and premise against `sdlc/concept/defect-evidence` and
+   the frozen intent rather than forwarding reviewer demands as mandatory
+   closures. Route review remediation through
+   `sdlc/procedure/lifecycle/fix-review-findings` (contest-first) so valid
+   findings are fixed, invalid or out-of-bounds findings are rejected on the
+   record, and repeatedly failing mechanisms are pruned rather than layered
+   (`sdlc/procedure/lifecycle/review` §6).
 5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, and all required approvals hold.
