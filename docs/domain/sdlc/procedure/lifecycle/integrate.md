@@ -207,10 +207,9 @@ delete `<slug>/work` locally and on `origin`; keep any failed cleanup owed.
 After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json`:
 
 1. **Retire terminal orchestrator threads.** Read the delivered todo's recorded
-   phase orchestrator bindings (`todo-orchestrator`, plus any legacy
-   `prepare-orchestrator` or `work-orchestrator` bindings) and retire each
-   non-standing orchestrator thread through the configured `runtime.retire_thread`
-   action. Converge idempotently on already-retired threads (distinguishing an
+   orchestrator bindings (`todo-orchestrator`, plus any legacy
+   phase-orchestrator bindings) and retire each non-standing orchestrator thread
+   through the configured `runtime.retire_thread` action. Converge idempotently on already-retired threads (distinguishing an
    already-retired thread from a failed observation), preserve any unfinished
    human or worker obligations, and never retire standing agents (including this
    integrator session). Unrelated worktree or branch cleanup failures do not
