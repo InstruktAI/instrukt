@@ -1,5 +1,5 @@
 ---
-description: Free disk space is shared by every process on the machine; whoever creates a checkout or build output keeps it bounded, removes it when its work ends, and keeps a floor of headroom before starting a build.
+description: Disk space, CPU and memory are shared by every process on the machine; whoever creates a checkout, build output or ephemeral process keeps it bounded, removes or reaps it when its work ends, and keeps a floor of headroom before starting a build.
 visibility: 'public'
 ---
 
@@ -44,7 +44,10 @@ regenerable output to fill a volume. When the volume fills, writes fail in
 unrelated applications and their virtual machines stop. That harm lands
 outside the session that caused it, where restoring the files repairs nothing.
 Output is regenerable, so removing it costs only a rebuild; keeping it costs
-everyone on the machine.
+everyone on the machine. The same holds for ephemeral processes: a detached
+reproduction server, container or load generator left running after a session
+moves on steals CPU and memory from every other agent and application on the
+host until someone hunts it down.
 
 ## Scope
 
@@ -52,8 +55,8 @@ All agents, all sessions, all projects, on every machine they run on.
 
 ## Enforcement
 
-Reviewers treat a finished checkout left with its build output as a
-process miss.
+Reviewers treat a finished checkout left with its build output, or an ephemeral
+process left orphaned after its work ends, as a process miss.
 
 ## Exceptions
 
