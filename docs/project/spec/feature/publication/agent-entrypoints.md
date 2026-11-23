@@ -164,8 +164,8 @@ commit naming each stale entrypoint; the repair is `instrukt docs render` and
 a commit, or a commit through the hook. In a company's repository, the
 workflow that publishes the company's skill on main also writes the
 repository's `AGENTS.md`, with the shared workflows repository's own renderer,
-and commits to main only when what it rendered changed; that workflow and its
-renderer belong to the shared workflows repository
+and commits to main only when what it rendered differs from what main holds;
+that workflow and its renderer belong to the shared workflows repository
 (`project/instrukt/policy/shared-workflows`).
 
 ### Company home entrypoint
@@ -269,7 +269,7 @@ the home and leaves any other there as it is.
   section where it is installed in the home, and `instrukt docs render` run
   in the home or in a clone of the repository. The block order above and the
   same bytes in a home and in a clone hold for instrukt's rendering, and
-  `instrukt docs render --check` compares the committed file with that
+  `instrukt docs render --check` compares the working file with that
   rendering. The company repository's workflow on main commits an `AGENTS.md`
   as well, rendered by the shared workflows repository's publisher with its
   own renderer; what that file holds is that repository's contract
@@ -563,12 +563,14 @@ Then the rendering reports the snippet and says to list it instead, and the inst
   the developer's commit did not cause; CI pins the release it installs.
 - instrukt and the shared workflows repository's publisher each write a
   company repository's `AGENTS.md` whole, from the same master and documents,
-  and no contract makes the two files the same bytes.
-  `instrukt docs render --check` compares the committed file with instrukt's
-  rendering alone: in a repository whose workflow committed the file, it can
-  name `AGENTS.md` as differing although no document changed, and the hook
-  section and `instrukt docs render` write instrukt's rendering over it. The
-  committed file is that of whichever wrote last.
+  and no contract makes the two renderings the same bytes. The publisher
+  commits its rendering to main; the hook section stages instrukt's into the
+  commit being made; `instrukt docs render` writes instrukt's to the working
+  file, and `instrukt docs render --check` compares the working file with
+  it. In a checkout whose working file is the one the publisher committed,
+  the check names `AGENTS.md` as differing wherever the two renderings
+  differ, although no document changed. After `instrukt docs render` there,
+  the check passes while the commit still holds the publisher's file.
 - Between a commit made without the hook and the commit that repairs it,
   every checkout carries the stale rendering, and a company home started from
   it reads the previous knowledge.
