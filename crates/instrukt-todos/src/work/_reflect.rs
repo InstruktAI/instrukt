@@ -102,17 +102,22 @@ pub(crate) enum Judgment {
     Commit,
     /// Commit nothing about the head: it may be this computer's own post,
     /// which a reflection in progress has not recorded yet, or another
-    /// computer's, and only the holder of the reflection lock can tell.
+    /// computer's, and only the holder of the reflection lock, with no
+    /// reflection of this computer posting, can judge it.
     Unjudged,
 }
 
 /// Whether a pull that found `pulled` for a row with `pending` local
 /// changes may commit it, `held` telling whether the puller holds the
 /// reflection lock. Every reflection on this computer posts and records
-/// under that lock, so under it no post of this computer is unrecorded and
-/// a head this computer has not recorded is judged on what it holds. A row
-/// with nothing pending has nothing a head could conflict with, and a head
-/// this computer recorded needs no judgment.
+/// under that lock, so its holder judges with no other reflection of this
+/// computer posting meanwhile. The lock does not prove that an earlier
+/// holder recorded every post: one whose answer was lost leaves a head this
+/// computer has not recorded, which the pull recognizes as
+/// [`Pulled::Landed`] while it holds the local record; once the record has
+/// changed since, it meets it as any other unrecorded head does. A row with
+/// nothing pending has nothing a head could conflict with, and a head this
+/// computer recorded needs no judgment.
 pub(crate) fn judgment(pending: bool, held: bool, pulled: Pulled) -> Judgment {
     match pulled {
         Pulled::Current | Pulled::Adopted => Judgment::Commit,
