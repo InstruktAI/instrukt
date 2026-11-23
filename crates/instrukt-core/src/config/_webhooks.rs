@@ -86,6 +86,26 @@ pub struct Ingress {
     /// ingress.
     #[serde(default)]
     pub reactions: Option<MachineId>,
+    /// The public https address (or loopback http address for local testing)
+    /// at which the operator's edge forwards the receiver's inbound paths.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Whether `url` is a valid `ingress.url`: an absolute `https` address (or
+/// loopback `http` address) without credentials, query, or fragment.
+pub fn ingress_url_admitted(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url.trim()) else {
+        return false;
+    };
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return false;
+    }
+    super::_mcp::admitted_address(parsed.as_str())
 }
 
 impl Ingress {
@@ -235,6 +255,14 @@ pub(super) fn ingress(raw: Option<&Value>) -> Result<Ingress, ConfigError> {
         })?;
     if ingress.port == 0 {
         return Err(invalid("ingress.port", "must be nonzero"));
+    }
+    if let Some(ref url) = ingress.url
+        && !ingress_url_admitted(url)
+    {
+        return Err(invalid(
+            "ingress.url",
+            "expected an absolute https URL (or loopback http URL) with no credentials, query, or fragment",
+        ));
     }
     Ok(ingress)
 }

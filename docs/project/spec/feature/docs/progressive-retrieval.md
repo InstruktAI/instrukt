@@ -78,7 +78,7 @@ IDs reports each of them.
 
 ### Pending documentation source
 
-`docs index --target <slug>` and `docs get <id> --target <slug>` read the recorded preparation worktree, including unpublished new snippets and pending companions. They never substitute the main checkout for an unresolved preparation workspace. After preparation integration, folded documentation is simply the current contract on main; pending docs do not wait for build delivery.
+`docs index --target <slug>` and `docs get <id> --target <slug>` read the todo's recorded `<slug>/work` worktree (falling back to a legacy prepare worktree during upgrade), including unpublished new snippets and pending companions. They never substitute the main checkout for an unresolved todo workspace. Pending documentation folds into the current contract on `main` when the todo delivers through `integrate`.
 
 ### Get
 

@@ -149,20 +149,68 @@ impl std::fmt::Display for WorkflowCapability {
     }
 }
 
-/// Agent action names; their execution wording lives only in configuration data.
-pub(crate) const ACTIONS: [&str; 14] = [
-    "dispatch",
-    "message_child",
-    "message_peer",
-    "read_thread",
-    "inspect_thread",
-    "look_around",
-    "steer",
-    "discuss",
-    "start_thread",
-    "cancel_child",
-    "finish_thread",
-    "discover_environments",
-    "connect_environment",
-    "dispatch_remote",
+/// Agent actions as `(name, contract)`: the contract is the one line the
+/// configuration schema prints for the action; its execution wording lives
+/// only in configuration data.
+pub(crate) const ACTIONS: [(&str, &str); 15] = [
+    (
+        "dispatch",
+        "Delegate this agent's worker with shared isolation in the parent's recorded workspace.",
+    ),
+    (
+        "message_child",
+        "Send a bounded follow-up, findings or recovery to this parent's identified child.",
+    ),
+    (
+        "message_peer",
+        "Send text to an addressed peer or coordinator conversation with source attribution.",
+    ),
+    (
+        "read_thread",
+        "Read an identified conversation's relevant messages and attribution.",
+    ),
+    (
+        "inspect_thread",
+        "Inspect an identified thread or own child's state or result.",
+    ),
+    (
+        "look_around",
+        "Discover current conversations in the supplied project or scope.",
+    ),
+    (
+        "steer",
+        "Deliver current direction at the target's supported safe input boundary.",
+    ),
+    (
+        "discuss",
+        "Open, take part in and close a runner-owned conversation link between two peer threads.",
+    ),
+    (
+        "start_thread",
+        "Start a separately addressed conversation with its supplied brief and placement.",
+    ),
+    (
+        "cancel_child",
+        "Stop this parent's identified child, retaining its work and evidence.",
+    ),
+    (
+        "finish_thread",
+        "Dormantly settle a conversation so it stays wakeable in place with full context.",
+    ),
+    (
+        "retire_thread",
+        "Terminally retire a delivered or withdrawn todo's orchestrator thread, retaining its transcript; never a standing agent.",
+    ),
+    (
+        "discover_environments",
+        "Discover connected computers or environments, their projects and capabilities.",
+    ),
+    (
+        "connect_environment",
+        "Request the runtime's native connection flow for a named missing computer.",
+    ),
+    (
+        "dispatch_remote",
+        "Assign a brief to an explicitly addressed connected environment.",
+    ),
 ];

@@ -42,10 +42,12 @@ build-review-fix loops.
 - Work is iterative by default; rigor comes from explicit loops, not from
   assuming one-pass implementation.
 
-- Work consumes prepare artifacts; it never writes them. A finding is resolved by
-  changing code, or — when it reveals the intent or plan itself is wrong — by
-  bouncing the todo back to prepare. A work-phase session never edits a prepare
-  artifact to make a finding pass; the prepare orchestrator owns those edits.
+- Implementation workers (`builder`, `fixer`) consume prepare artifacts; they
+  never rewrite them. A finding is resolved by changing code, or — when it
+  reveals the intent or plan itself is wrong — by kicking back to
+  `todo-orchestrator`. A builder or fixer never edits a prepare artifact to make
+  a finding pass; `todo-orchestrator` routes those edits to `intaker` or
+  `planner` on the same `<slug>/work` worktree.
 
 ## Primary flows
 
@@ -162,5 +164,5 @@ Exit condition:
 
 ## See Also
 
-- [sdlc/procedure/lifecycle/work/overview](../../procedure/lifecycle/work/overview.md) —
-  operational steps for executing the work phase
+- [sdlc/procedure/lifecycle/overview](../../procedure/lifecycle/overview.md) —
+  operational steps for executing the unified lifecycle

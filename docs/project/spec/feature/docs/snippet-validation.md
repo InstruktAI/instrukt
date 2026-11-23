@@ -25,9 +25,9 @@ check documentation before committing, and it changes nothing.
 - With paths: only the named files, plus the cross-snippet checks those files
   take part in.
 - Directories whose name starts with `_` are skipped.
-- `docs/domain/<x>/workflow/` is a non-snippet directory. Its definitions,
-  actions (including `roles:` and `effects:`) and templates are validated
-  against the workflow schema, rather than snippet taxonomy and frontmatter.
+- `docs/domain/<x>/workflow/` is a non-snippet directory. Its `workflow.yaml`
+  manifest (`orchestrator`, `requires`, `roles`) is validated against the
+  workflow schema, rather than snippet taxonomy and frontmatter.
 
 ### Checks
 
@@ -35,7 +35,7 @@ check documentation before committing, and it changes nothing.
 | --- | --- |
 | Identity | the path yields no identity (outside `docs/general/`, `docs/domain/<x>/`, `docs/project/` and `docs/third-party/`; an unknown taxonomy directory; a file directly under `docs/domain/`; a project snippet in a repository whose `instrukt.yaml` declares no `project`); a domain folder carries a reserved name (`general`, `project`); classification fields are authored in frontmatter |
 | Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` appears without an explicit or subscription-default role or is malformed; obsolete `dispatch` appears; an `adr` lacks `date` or `number`; `eval` is not a boolean |
-| Procedures | a procedure dispatched by the selected workflow has a `role` absent from its `workflow/actions.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
+| Procedures | a non-subscribed workflow or project procedure has a `role` absent from its `workflow/workflow.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
 | Structure | the H1 is missing, not first, or does not end with `— <Type>`; a required H2 section of the effective schema is missing; an H2 outside it appears; `See Also` is not last (`project/instrukt/spec/feature/docs/snippet-schema`) |
 | References | `## Required reads` not at H2; a Required reads entry that is not one snippet id, a same-repository link whose text is one snippet id, or one bare domain name; an id that resolves to no snippet; a bare name that is neither `general` nor a domain of the validated repository or published on the computer, or names a domain without `index.yaml`; a See Also entry starting with an id that resolves to no snippet; a reference link in Required reads or See Also whose text is not one snippet id, whose target is missing, outside the working tree or not that id's file, or whose id belongs to another repository; a snippet referenced by path (`@…`, or a path to a snippet file) outside code and these reference links; a `general` or domain snippet requiring a project snippet |
 | Required-reads hygiene | a required read already implied by the closure of another required read of the same snippet; the finding names the read that implies it |

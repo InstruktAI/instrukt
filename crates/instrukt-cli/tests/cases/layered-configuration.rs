@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
 use crate::common;
-use crate::fixtures::mapped;
+use crate::fixtures::{documented, mapped, t3};
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
 use instrukt_core::config::{CURRENT_SCHEMA_VERSION, Revision};
@@ -131,6 +131,81 @@ fn a_cloned_project_cannot_decide_which_engine_command_runs_on_a_push() {
         instrukt_blueprint::GenerationState::Mapped
     );
     assert!(!mark.exists(), "the project's engine command never ran");
+}
+
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL8
+#[test]
+fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_settling() {
+    let mut env = TestEnv::new();
+    let fake = t3::FakeT3::create(&env);
+    write_global(&env, MACHINE);
+    // Every read below is made by an identified agent in its own session.
+    fake.seed(
+        "agent",
+        env.home(),
+        "agent",
+        "Conclude the finished todo's threads.",
+    );
+    env.set_env("T3CODE_THREAD_ID", "agent");
+    let session = fake
+        .state_dir()
+        .join(format!("{}.json", fake.native_id("agent")));
+    let before = std::fs::read(&session).unwrap();
+    let body =
+        "<!-- @config: runtime.finish_thread -->\n\n<!-- @config: runtime.retire_thread -->\n";
+    let repo = documented::project(
+        &env,
+        "demo",
+        &[(
+            "docs/domain/acme/procedure/conclude.md",
+            documented::snippet(
+                "procedure",
+                "Conclude",
+                "Settle a resting conversation or retire a finished one.",
+                "",
+                &[],
+                body,
+            ),
+        )],
+    );
+    documented::sync(&env, &repo);
+    let rendered = || {
+        common::mask_published_commits(&stdout(
+            &env,
+            &env.run(repo.path(), ["docs", "get", "acme/procedure/conclude"])
+                .success(),
+        ))
+    };
+
+    let shipped = rendered();
+    insta::assert_snapshot!("terminal-retirement-shipped", shipped);
+
+    repo.write(
+        "instrukt.yaml",
+        &format!(
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nruntimes:\n  t3:\n    retire_thread: Delete the thread and its transcript.\n"
+        ),
+    );
+    let refused = env.run(repo.path(), ["config", "validate"]).failure();
+    insta::assert_snapshot!(
+        stdout(&env, &refused),
+        @"[TMP]/demo/instrukt.yaml: runtimes: not permitted in the project layer (global layer only)"
+    );
+    assert_eq!(rendered(), shipped);
+
+    write_global(
+        &env,
+        &format!(
+            "{MACHINE}runtimes:\n  t3:\n    retire_thread: Hide the finished conversation through the runtime's closest non-destructive operation.\n"
+        ),
+    );
+    env.run(env.path("").as_path(), ["config", "validate", "--global"])
+        .success();
+    insta::assert_snapshot!("terminal-retirement-overridden", rendered());
+
+    assert_eq!(std::fs::read(&session).unwrap(), before);
+    assert_eq!(fake.threads(), [fake.native_id("agent")]);
+    assert_eq!(fake.calls().len(), 0);
 }
 
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3

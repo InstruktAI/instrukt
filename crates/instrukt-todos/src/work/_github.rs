@@ -39,6 +39,12 @@ pub enum GitHubError {
         status: u16,
         message: String,
     },
+    /// GitHub will not perform this operation for this viewer: a GraphQL
+    /// `errors` answer whose every entry is typed `FORBIDDEN`. Unlike
+    /// [`GitHubError::Unauthorized`], it says nothing about the credential's
+    /// other uses.
+    #[error("GitHub answered POST /graphql with {status}: {message}")]
+    Refused { status: u16, message: String },
     #[error("GitHub's answer to {path} is not readable: {message}")]
     Decode { path: String, message: String },
 }
@@ -333,7 +339,7 @@ impl GitHub {
 
     /// A GraphQL document with its variables (never interpolated values);
     /// the `data` of the answer. An `errors` answer is a failure naming
-    /// them.
+    /// them, typed by [`graphql_failure`].
     pub fn graphql(&self, document: &str, variables: &Value) -> Result<Value, GitHubError> {
         let url = self.graphql_url();
         let text = serde_json::json!({ "query": document, "variables": variables }).to_string();
@@ -358,17 +364,13 @@ impl GitHub {
         )?;
         let value = decode("/graphql", &answer)?;
         if let Some(errors) = value["errors"].as_array().filter(|e| !e.is_empty()) {
-            let message = errors
-                .iter()
-                .filter_map(|e| e["message"].as_str())
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(GitHubError::Status {
-                method: "POST",
-                path: "/graphql".to_owned(),
+            return Err(graphql_failure(
+                errors,
                 status,
-                message: message.replace(self.token.borrow().as_str(), "<credential>"),
-            });
+                header(&response, "x-ratelimit-remaining").as_deref(),
+                header(&response, "x-ratelimit-reset").as_deref(),
+                self.token.borrow().as_str(),
+            ));
         }
         Ok(value["data"].clone())
     }
@@ -425,10 +427,9 @@ fn check(
     if status == 429
         || (status == 403 && (remaining.as_deref() == Some("0") || retry_after.is_some()))
     {
-        let until = header(response, "x-ratelimit-reset")
-            .and_then(|reset| reset.parse::<i64>().ok())
-            .and_then(|secs| Timestamp::from_second(secs).ok());
-        return Err(GitHubError::RateLimited { until });
+        return Err(GitHubError::RateLimited {
+            until: reset_at(header(response, "x-ratelimit-reset").as_deref()),
+        });
     }
     if status == 401 {
         return Err(GitHubError::Unauthorized { status });
@@ -450,6 +451,48 @@ fn check(
     })
 }
 
+/// When GitHub's rate limit resets, from its `x-ratelimit-reset` header.
+fn reset_at(reset: Option<&str>) -> Option<Timestamp> {
+    reset
+        .and_then(|reset| reset.parse::<i64>().ok())
+        .and_then(|secs| Timestamp::from_second(secs).ok())
+}
+
+/// The failure a GraphQL answer with a non-empty `errors` list reports.
+/// An answer marked as rate limited (an entry typed `RATE_LIMITED`, or no
+/// requests remaining) is [`GitHubError::RateLimited`]; otherwise one whose
+/// every entry is typed `FORBIDDEN` is [`GitHubError::Refused`]; any other
+/// answer is [`GitHubError::Status`]. Messages carry `credential` redacted.
+fn graphql_failure(
+    errors: &[Value],
+    status: u16,
+    remaining: Option<&str>,
+    reset: Option<&str>,
+    credential: &str,
+) -> GitHubError {
+    let typed = |entry: &Value, kind: &str| entry["type"].as_str() == Some(kind);
+    if remaining == Some("0") || errors.iter().any(|e| typed(e, "RATE_LIMITED")) {
+        return GitHubError::RateLimited {
+            until: reset_at(reset),
+        };
+    }
+    let message = errors
+        .iter()
+        .filter_map(|e| e["message"].as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let message = message.replace(credential, "<credential>");
+    if errors.iter().all(|e| typed(e, "FORBIDDEN")) {
+        return GitHubError::Refused { status, message };
+    }
+    GitHubError::Status {
+        method: "POST",
+        path: "/graphql".to_owned(),
+        status,
+        message,
+    }
+}
+
 fn decode(path: &str, text: &str) -> Result<Value, GitHubError> {
     serde_json::from_str(text).map_err(|err| GitHubError::Decode {
         path: path.to_owned(),
@@ -466,4 +509,64 @@ fn log(status: u16, method: &str, path: &str, started: Instant) {
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         "GitHub request"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn failure(errors: Value, remaining: Option<&str>) -> GitHubError {
+        let errors = errors.as_array().cloned().unwrap_or_default();
+        graphql_failure(&errors, 200, remaining, Some("1767225600"), "secret")
+    }
+
+    #[test]
+    fn an_entry_typed_rate_limited_defers_until_the_reset() {
+        let error = failure(
+            json!([{"type": "RATE_LIMITED", "message": "limit"}]),
+            Some("4999"),
+        );
+        assert_eq!(
+            error,
+            GitHubError::RateLimited {
+                until: Some("2026-01-01T00:00:00Z".parse().unwrap())
+            }
+        );
+    }
+
+    #[test]
+    fn no_remaining_requests_defer_even_when_every_entry_is_forbidden() {
+        let error = failure(json!([{"type": "FORBIDDEN", "message": "no"}]), Some("0"));
+        assert!(matches!(error, GitHubError::RateLimited { until: Some(_) }));
+    }
+
+    #[test]
+    fn an_answer_whose_every_entry_is_forbidden_is_a_refusal_not_a_reach_failure() {
+        let error = failure(
+            json!([
+                {"type": "FORBIDDEN", "message": "a"},
+                {"type": "FORBIDDEN", "message": "b"}
+            ]),
+            Some("4999"),
+        );
+        assert!(matches!(error, GitHubError::Refused { status: 200, .. }));
+        assert!(!error.is_reach());
+    }
+
+    #[test]
+    fn mixed_entry_types_stay_an_ordinary_status() {
+        let error = failure(
+            json!([{"type": "FORBIDDEN", "message": "a"}, {"type": "NOT_FOUND", "message": "b"}]),
+            None,
+        );
+        assert!(matches!(error, GitHubError::Status { status: 200, .. }));
+    }
+
+    #[test]
+    fn an_untyped_entry_stays_an_ordinary_status() {
+        let error = failure(json!([{"message": "no type"}]), None);
+        assert!(matches!(error, GitHubError::Status { status: 200, .. }));
+    }
 }

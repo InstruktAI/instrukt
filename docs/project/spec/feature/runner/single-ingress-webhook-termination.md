@@ -16,8 +16,9 @@ same stream as remote reactions, without a direct request-dispatch path.
 ### Receiver and public edge
 
 The global-only `ingress.computer` names the existing stable instrukt machine ID,
-not a hostname inferred at runtime. Only that computer serves source endpoints
-and the MCP sign-in return.
+not a hostname inferred at runtime. Only that computer serves source endpoints,
+the MCP sign-in return, and the public discovery/JWKS endpoints for built-in
+per-company OIDC issuers.
 The receiver checks placement before serving and exits when no longer ingress.
 A valid enabled nonempty source set supplies receiver demand, and so does
 `ingress.url` set on the ingress computer while events is on there; an empty
@@ -30,8 +31,12 @@ the inbound prefix. A local request to a source still needs a signature. The
 sign-in return under the same prefix is unsigned and knows no company: it
 checks only the request's form and its path, and hands a code on through
 cluster Redis as a bounded, short-lived entry that is no event
-(`project/instrukt/spec/feature/runner/mcp-access`). The edge filters abuse of
-it, its rate and size, as for sources. No
+(`project/instrukt/spec/feature/runner/mcp-access`). Built-in per-company OIDC
+issuer metadata (`GET /hooks/inbound/issuers/<issuer-id>/.well-known/openid-configuration`
+and `GET /hooks/inbound/issuers/<issuer-id>/jwks.json`) is served read-only
+under the same prefix from bounded public metadata published in cluster Redis;
+no private signing key ever resides on ingress or in cluster Redis. The edge
+filters abuse of these paths, their rate and size, as for sources. No
 session-control, work-command or general public API surface is exposed.
 
 The admitted service manager holds the listening socket across receiver restarts

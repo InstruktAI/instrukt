@@ -1502,10 +1502,9 @@ fn check_procedures(
     if let Some(lookup) = &env.wiring.flavor_roles {
         let membership = lookup.declared(env.repo_root)?;
         let declared: BTreeSet<&str> = membership.roles.iter().map(RoleName::as_str).collect();
-        let dispatched: BTreeSet<&SnippetId> = membership.dispatched_procedures.iter().collect();
         for s in states
             .iter()
-            .filter(|s| !s.subscribed && dispatched.contains(&s.id))
+            .filter(|s| !s.subscribed && s.id.as_str().starts_with("project/"))
         {
             let (Some(role), Some(path)) = (&s.role, &s.repo_path) else {
                 continue;
@@ -1583,7 +1582,6 @@ fn check_workflows(
     let Some(schema) = &env.wiring.flavor_schema else {
         return Ok(());
     };
-    let by_id = states_by_id(states);
     for (domain, rel_dir) in workflow_dirs(env.repo_root)? {
         let declarations = match schema.check(&env.repo_root.join(&rel_dir))? {
             FlavorCheck::Invalid(findings) => {
@@ -1623,35 +1621,6 @@ fn check_workflows(
                 FindingCode::OrchestratorWithoutProcedure,
                 Some(format!("{flow}: {role}")),
             );
-        }
-        for (action, id) in &declarations.action_procedures {
-            let actions_file = rel_dir.join("actions.yaml");
-            let value = Some(format!("{action}: {id}"));
-            if taxonomy_of(id) != Some(Taxonomy::Procedure) {
-                push(
-                    out,
-                    &actions_file,
-                    FindingCode::ActionTargetNotProcedure,
-                    value,
-                );
-                continue;
-            }
-            let Some(group) = by_id.get(id) else {
-                push(
-                    out,
-                    &actions_file,
-                    FindingCode::ActionProcedureUnresolved,
-                    value,
-                );
-                continue;
-            };
-            if group.iter().any(|s| s.role.is_some()) {
-                continue;
-            }
-            let mut finding =
-                Finding::new(actions_file, FindingCode::ActionProcedureWithoutRole, value);
-            finding.involves = group.iter().filter_map(|s| s.repo_path.clone()).collect();
-            out.push(finding);
         }
         let roles: BTreeSet<&str> = declarations.roles.iter().map(|r| r.as_str()).collect();
         let prefix = format!("{domain}/");
@@ -1741,7 +1710,6 @@ mod tests {
 
     struct Roles {
         roles: Vec<&'static str>,
-        dispatched: Vec<&'static str>,
     }
 
     impl FlavorRoles for Roles {
@@ -1751,11 +1719,6 @@ mod tests {
                     .roles
                     .iter()
                     .filter_map(|r| RoleName::parse(r).ok())
-                    .collect(),
-                dispatched_procedures: self
-                    .dispatched
-                    .iter()
-                    .filter_map(|p| SnippetId::parse(p).ok())
                     .collect(),
             })
         }
@@ -1833,7 +1796,6 @@ mod tests {
             todo_existence: Some(Arc::new(Todos(vec!["known"]))),
             flavor_roles: Some(Arc::new(Roles {
                 roles: vec!["reviewer"],
-                dispatched: vec!["project/demo/procedure/p"],
             })),
             ..CoreWiring::default()
         };
@@ -1844,7 +1806,6 @@ mod tests {
         let declared = CoreWiring {
             flavor_roles: Some(Arc::new(Roles {
                 roles: vec!["builder"],
-                dispatched: vec!["project/demo/procedure/p"],
             })),
             ..CoreWiring::default()
         };
@@ -2038,7 +1999,11 @@ mod tests {
     fn repo_with_workflow() -> tempfile::TempDir {
         let repo = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(repo.path().join("docs/domain/acme/workflow")).unwrap();
-        std::fs::write(repo.path().join("docs/domain/acme/workflow/work.yaml"), "").unwrap();
+        std::fs::write(
+            repo.path().join("docs/domain/acme/workflow/workflow.yaml"),
+            "",
+        )
+        .unwrap();
         repo
     }
 
@@ -2053,7 +2018,7 @@ mod tests {
     fn workflow_schema_findings_are_reported_in_their_file() {
         let repo = repo_with_workflow();
         let wiring = schema(FlavorCheck::Invalid(vec![FlavorFinding {
-            file: PathBuf::from("actions.yaml"),
+            file: PathBuf::from("workflow.yaml"),
             location: "roles".into(),
             message: "is empty".into(),
         }]));
@@ -2061,7 +2026,7 @@ mod tests {
         assert_eq!(codes(&found), [FindingCode::WorkflowSchemaInvalid]);
         assert_eq!(
             found[0].path,
-            Path::new("docs/domain/acme/workflow/actions.yaml")
+            Path::new("docs/domain/acme/workflow/workflow.yaml")
         );
     }
 
@@ -2069,23 +2034,15 @@ mod tests {
     fn a_valid_flavor_is_checked_against_the_procedures() {
         let repo = repo_with_workflow();
         let role = |r: &str| RoleName::parse(r).unwrap();
-        let id = |i: &str| SnippetId::parse(i).unwrap();
         let wiring = schema(FlavorCheck::Valid(FlavorDeclarations {
             roles: vec![role("worker"), role("lead")],
-            orchestrators: vec![("work".into(), role("lead"))],
-            action_procedures: vec![
-                ("build".into(), id("acme/procedure/build")),
-                ("help".into(), id("acme/procedure/helper")),
-                ("vanish".into(), id("acme/procedure/missing")),
-                ("misnamed".into(), id("acme/concept/idea")),
-            ],
+            orchestrators: vec![("workflow".into(), role("lead"))],
         }));
         let c = corpus(&[
             (
                 "docs/domain/acme/procedure/build.md",
                 &procedure("role: worker\nactivation_trigger: t\n"),
             ),
-            ("docs/domain/acme/procedure/helper.md", &procedure("")),
             (
                 "docs/domain/acme/procedure/rogue.md",
                 &procedure("role: rogue\nactivation_trigger: t\n"),
@@ -2099,19 +2056,7 @@ mod tests {
             [
                 (
                     FindingCode::OrchestratorWithoutProcedure,
-                    Path::new("docs/domain/acme/workflow/work.yaml")
-                ),
-                (
-                    FindingCode::ActionProcedureWithoutRole,
-                    Path::new("docs/domain/acme/workflow/actions.yaml")
-                ),
-                (
-                    FindingCode::ActionProcedureUnresolved,
-                    Path::new("docs/domain/acme/workflow/actions.yaml")
-                ),
-                (
-                    FindingCode::ActionTargetNotProcedure,
-                    Path::new("docs/domain/acme/workflow/actions.yaml")
+                    Path::new("docs/domain/acme/workflow/workflow.yaml")
                 ),
                 (
                     FindingCode::RoleUndeclared,

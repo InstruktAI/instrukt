@@ -33,7 +33,7 @@ fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
     let title = FakeT3::create(&p.env).title("s1");
     insta::assert_snapshot!("readable-orchestrator-title", support::redact(&title));
     let fake = FakeT3::create(&p.env);
-    insta::assert_snapshot!(p.env.git(&fake.worktree("s1"),["branch","--show-current"]),@"parser/prepare");
+    insta::assert_snapshot!(p.env.git(&fake.worktree("s1"),["branch","--show-current"]),@"parser/work");
     assert!(fake.worktree("s1").is_dir());
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         p.env.instrukt_home().join("state/instrukt.db"),
@@ -46,7 +46,7 @@ fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(branch, "parser/prepare");
+    assert_eq!(branch, "parser/work");
     for command in ["run", "send", "alive", "conversation", "link"] {
         p.env.run(p.repo.path(), ["sessions", command]).failure();
     }
@@ -320,7 +320,7 @@ fn approval_wakes_a_settled_orchestrator_in_its_retained_conversation() {
 #[test]
 fn unattended_requirements_admit_workspace_capabilities_and_refuse_missing_operations() {
     let crew = workflow::Crew::new();
-    let path = "docs/domain/crew/workflow/work.yaml";
+    let path = "docs/domain/crew/workflow/workflow.yaml";
     let supported = crew.flavor.repo.read(path).replace(
         "requires: []",
         "requires: [worktree_create, shared_delegation, worktree_attach]",
@@ -445,7 +445,7 @@ fn deliberate_entry_requires_native_recorded_placement_and_never_adopts_incident
         &runtime::NativePlacement {
             cwd: &path,
             slug,
-            role: "work-lead",
+            role: "todo-lead",
             session: "lead-1",
         },
     );
@@ -506,7 +506,7 @@ fn deliberate_phase_placement_fetches_remote_main_while_local_main_lags() {
     assert_eq!(p.repo.git(["rev-parse", "origin/main"]), old);
     let out = p
         .env
-        .run(p.repo.path(), ["todo", "prepare", "fresh-base"])
+        .run(p.repo.path(), ["todo", "work", "fresh-base"])
         .success();
     let value: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(value["placement"]["from"], "origin/main");
@@ -527,13 +527,13 @@ fn a_failed_phase_fetch_never_uses_the_stale_local_base() {
         p.env.path("missing-origin.git").to_str().unwrap(),
     ]);
     p.env
-        .run(p.repo.path(), ["todo", "prepare", "no-fetch"])
+        .run(p.repo.path(), ["todo", "work", "no-fetch"])
         .failure();
     assert_eq!(p.rt.started_count(), 0);
     let branches = p.repo.git([
         "for-each-ref",
         "--format=%(refname)",
-        "refs/heads/no-fetch/prepare",
+        "refs/heads/no-fetch/work",
     ]);
     assert_eq!(branches.lines().count(), 0);
 }
@@ -796,25 +796,6 @@ fn proven_native_no_start_retries_with_the_next_available_model() {
 fn a_kickback_round_trip_resumes_the_retained_work_driver_without_resetting_its_tree() {
     let p = Tracked::new(true);
     let slug = "round-trip";
-    let prepare = "docs/domain/acme/workflow/prepare.yaml";
-    p.repo.write(
-        prepare,
-        &p.repo.read(prepare).replace(
-            "when: {not: {exists: implementation_plan.digest}}",
-            "when: {not: {equals: [plan_review.verdict, approve]}}",
-        ),
-    );
-    let work = "docs/domain/acme/workflow/work.yaml";
-    p.repo.write(
-        work,
-        &p.repo.read(work).replace(
-            "when: {exists: implementation_plan.digest}",
-            "when: {equals: [plan_review.verdict, approve]}",
-        ),
-    );
-    p.repo.commit("publish kickback-aware fixture lanes");
-    p.repo.git(["push", "--quiet", "origin", "main"]);
-    p.env.run(p.repo.path(), ["sync"]).success();
     change(&p, slug);
     p.todo([
         "artifacts",
@@ -873,61 +854,9 @@ fn a_kickback_round_trip_resumes_the_retained_work_driver_without_resetting_its_
         .args(["todo", "update", slug, "--unclaim"])
         .assert()
         .success();
+    // Single unified todo-orchestrator resumes the retained driver s1 in place without spawning a second prepare thread.
     p.tick();
-    assert_eq!(fake.threads().len(), 2, "{}", p.todo(["show", slug]));
-    let preparation = fake.worktree("s2");
-    p.env
-        .instrukt(&preparation)
-        .env("T3CODE_THREAD_ID", fake.native_id("s2"))
-        .args([
-            "todo",
-            "artifacts",
-            "write",
-            slug,
-            "implementation-plan",
-            "The corrected plan.",
-        ])
-        .assert()
-        .success();
-    p.env
-        .instrukt(&preparation)
-        .env("T3CODE_THREAD_ID", fake.native_id("s2"))
-        .args([
-            "todo",
-            "artifacts",
-            "write",
-            slug,
-            "plan-review-findings",
-            "Approved corrected plan.",
-        ])
-        .assert()
-        .success();
-    p.env
-        .instrukt(&preparation)
-        .env("T3CODE_THREAD_ID", fake.native_id("s2"))
-        .args([
-            "todo",
-            "stamp",
-            slug,
-            "--verdict",
-            "approve",
-            "--phase",
-            "plan_review",
-        ])
-        .assert()
-        .success();
-    p.env
-        .instrukt(&preparation)
-        .env("T3CODE_THREAD_ID", fake.native_id("s2"))
-        .args(["todo", "update", slug, "--unclaim"])
-        .assert()
-        .success();
-    // This preparation changed only work-record artifacts; its Git head is already on main.
-    p.repo
-        .git(["worktree", "remove", preparation.to_str().unwrap()]);
-    p.repo.git(["branch", "-d", "round-trip/prepare"]);
-    p.tick();
-    assert_eq!(fake.threads().len(), 2);
+    assert_eq!(fake.threads().len(), 1, "{}", p.todo(["show", slug]));
     assert_eq!(fake.message_count("s1"), 2);
     assert!(retained.join("retained.txt").is_file());
     assert_eq!(p.env.git(&retained, ["rev-parse", "HEAD"]), head);
@@ -1009,7 +938,7 @@ fn deliberate_preparation() -> (Tracked, FakeT3, String, std::path::PathBuf, Str
     change(&p, "native-parser");
     let plan = p
         .env
-        .run(p.repo.path(), ["todo", "prepare", "native-parser"])
+        .run(p.repo.path(), ["todo", "work", "native-parser"])
         .success();
     let value: serde_json::Value = serde_json::from_slice(&plan.get_output().stdout).unwrap();
     let placement = &value["placement"];
@@ -1021,7 +950,7 @@ fn deliberate_preparation() -> (Tracked, FakeT3, String, std::path::PathBuf, Str
             "start",
             "--title",
             &format!(
-                "prepare-orchestrator · native-parser · {}",
+                "todo-orchestrator · native-parser · {}",
                 placement["key"].as_str().unwrap()
             ),
             "--worktree",
@@ -1030,7 +959,7 @@ fn deliberate_preparation() -> (Tracked, FakeT3, String, std::path::PathBuf, Str
             placement["branch"].as_str().unwrap(),
             "--",
             p.repo.path().to_str().unwrap(),
-            "Native preparation opening.",
+            "Native orchestrator opening.",
         ])
         .output()
         .unwrap();
@@ -1043,20 +972,14 @@ fn deliberate_preparation() -> (Tracked, FakeT3, String, std::path::PathBuf, Str
         &runtime::NativePlacement {
             cwd: &tree,
             slug: "native-parser",
-            role: "prepare-orchestrator",
+            role: "todo-orchestrator",
             session: &id,
         },
     );
     p.env
         .instrukt(&tree)
         .env("T3CODE_THREAD_ID", &id)
-        .args([
-            "todo",
-            "prepare",
-            "native-parser",
-            "--placement-evidence",
-            "-",
-        ])
+        .args(["todo", "work", "native-parser", "--placement-evidence", "-"])
         .write_stdin(proof)
         .assert()
         .success();
@@ -1131,7 +1054,7 @@ fn an_older_public_placement_proof_is_normalized_before_binding() {
         &runtime::NativePlacement {
             cwd: &tree,
             slug: "native-parser",
-            role: "prepare-orchestrator",
+            role: "todo-orchestrator",
             session: &id,
         },
     ))
@@ -1140,13 +1063,7 @@ fn an_older_public_placement_proof_is_normalized_before_binding() {
     p.env
         .instrukt(&tree)
         .env("T3CODE_THREAD_ID", &id)
-        .args([
-            "todo",
-            "prepare",
-            "native-parser",
-            "--placement-evidence",
-            "-",
-        ])
+        .args(["todo", "work", "native-parser", "--placement-evidence", "-"])
         .write_stdin(proof.to_string())
         .assert()
         .success();

@@ -136,6 +136,40 @@ computers and local agents; these CLI commands act only on their own computer.
 A revision is an opaque digest of the layer document's content. Two reads of
 an unchanged document give the same revision; any change gives another.
 
+### Company-agent caller scope
+
+When `instrukt config` is invoked from a session whose recorded assignment
+names a company home (`project/instrukt/spec/feature/company/conversations`),
+access is restricted strictly to that company's own `mcp` declarations and
+requires an authenticated administrator speaking in a direct message:
+
+- The active turn's recorded speaker must have `is_admin = true` and
+  `is_direct = true`, as the connector recorded at admission. A non-admin, a
+  channel turn (`is_direct = false`), a session with no active turn, or a
+  `--company` naming another company is refused, naming its door: an
+  administrator asks in a direct message to the company agent, or the local
+  operator runs the command outside any session.
+- Allowed verbs inside that scope are `schema --company <own> mcp`,
+  `get --company <own> mcp`, `get --company <own> --revision`,
+  `validate --company <own>`, and `patch --company <own> --revision <rev>`
+  whose mapping touches only keys under `mcp`, carries no YAML tags, and sets
+  only non-secret fields (`url`, `description`, `speaker_login: sign-in`, and
+  `sign_in.{mode, scopes, client_ref, accept_return_without_issuer}`, or `null`
+  to remove a server). Introducing or altering `${NAME}` secret references,
+  setting `login`, `credential`, `speaker_login: stored`, `sign_in.client`, or
+  `sign_in.identity`, or changing `url` on an existing entry that binds a
+  secret, member credential, declared client, or identity endpoint is refused
+  naming the local operator door — secret-bearing settings are managed only by
+  the local operator outside any session, while company admins connect services
+  via host `sign_in.client_ref`, dynamic registration, or `sign_in.mode:
+  issuer`. Any other verb, `--global`, project-layer edit, or key outside
+  `mcp` (such as `connectors`, `members`, `profiles`, `webhooks`, or `issuer`)
+  is refused.
+- Company-agent sessions never read or write any secrets file through
+  `instrukt secrets` or `instrukt config`.
+- The local operator outside any session retains full access to every layer
+  and key.
+
 ## Use cases
 
 ### UC-CE1: An agent changes a setting for a developer without losing anyone else's change
@@ -205,6 +239,10 @@ And a repeated setup repairs only differing owned resources
 
 - `instrukt config get --revision` prints the addressed layer's current revision.
 - `get --json` renders JSON, including when no path is supplied.
+- Company-agent caller-scope enforcement on `instrukt config` and `instrukt
+  secrets` keys off the runtime's session identity variable; as with MCP
+  session binding (`project/instrukt/spec/feature/runner/mcp-access`), it
+  governs sessions that keep their identity and is not OS-level confinement.
 
 ## See Also
 

@@ -74,9 +74,6 @@ acquisition_events! {
     MainFailing, "runner.main_failing", "Remote canonical main head completed CI red.", State, RepositoryRef {
         project: ProjectSlug, head: CommitSha
     };
-    PreparationReviewed, "workflow.preparation_reviewed", "Reviewed preparation documentation is ready for immediate integration.", Occurrence, Todo {
-        project: ProjectSlug, todo: TodoSlug, revision: CommitSha
-    };
     WorkflowFinalized, "workflow.finalized", "A finalize-ready todo was handed off to integration.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, revision: CommitSha
     };
@@ -89,7 +86,6 @@ impl Event {
             | Self::CiCompleted { project, .. }
             | Self::MainFailing { project, .. }
             | Self::DependencyFailing { project, .. }
-            | Self::PreparationReviewed { project, .. }
             | Self::WorkflowFinalized { project, .. } => project,
         }
     }
@@ -125,8 +121,7 @@ impl Event {
                     conclusion.as_deref().unwrap_or(""),
                 ]);
             }
-            Self::PreparationReviewed { todo, revision, .. }
-            | Self::WorkflowFinalized { todo, revision, .. } => {
+            Self::WorkflowFinalized { todo, revision, .. } => {
                 key.extend([todo.as_str(), revision.as_str()])
             }
         }

@@ -238,16 +238,13 @@ policy:
 - Every prescribed act is executable by the role and phase receiving it, from
   the environment that role runs in. A task that schedules an act its assigned
   role cannot legally or physically perform is Critical.
-- No work-phase task takes the doc layer's state as its subject. Authoring or
-  editing under `docs/**`, folding pending markers, and confirming or verifying
-  whether they are folded are the same violation: the doc layer is authored in
-  `<slug>/prepare`, then reviewed, folded and integrated by the integrator before
-  build -> Critical.
-  Judge the task's subject, not its verb — a documentation task phrased as a
-  confirmation of marker state passes an executability check and is still
-  invalid. Reading doc snippets as implementation input is not this violation;
-  binding in-scope feature-spec scenarios and implementing against published
-  contracts is required work-phase behavior.
+- Pending documentation lives in the same `<slug>/work` worktree and is folded
+  by `integrate` at delivery. No plan task may direct a worker to fold pending
+  markers (`instrukt docs fold`) or commit directly on `main` — both belong
+  exclusively to `integrate` -> Critical. Reading doc snippets as implementation
+  input, updating or adding pending doc snippets in `<slug>/work`, binding
+  in-scope feature-spec scenarios, and implementing against published contracts
+  are valid `<slug>/work` work.
 - Referenced file paths are explicit in the plan tasks for grounding review.
   Missing or incomplete -> Important.
 
@@ -380,7 +377,7 @@ to pre-satisfy:
   context decides is an Important finding whose closure is removal or a
   one-sentence pointer to the owner. A third disposition is
   `doc_deferred: <holding-slug> — <inline-snippet-reference>#<section>`. Accept
-  it only when the named region in the target preparation worktree is enclosed by that slug's pending
+  it only when the named region in the target `<slug>/work` worktree is enclosed by that slug's pending
   marker, that slug is already in this todo's `after` set, the inline reference
   points to the held snippet using the form required by
   `general/policy/referencing-doc-snippets`, and replacement text is drafted
@@ -391,20 +388,20 @@ to pre-satisfy:
   collision, a nested marker, or an untracked wait as deferral.
   When the delivery removes a capability that a whole live snippet describes,
   or the last dispatcher of a command artifact, the plan names each retiring
-  file and verifies its empty companion was authored in the preparation worktree under this slug
+  file and verifies its empty companion was authored in `<slug>/work` under this slug
   (`general/procedure/doc-snippet-authoring` step 13). A retiring file with no
   companion, a task that deletes it, or a removal left to an act after
   delivery is a Requirement-Violation.
-- **ADR discipline (hard gate)**: any ADR the plan schedules, or that prepare
-  authored in the preparation worktree, is held to `general/policy/adr-discipline` and
+- **ADR discipline (hard gate)**: any ADR the plan schedules, or that was
+  authored in `<slug>/work`, is held to `general/policy/adr-discipline` and
   `general/procedure/adr-authoring`. It must record one real, contestable
   architectural fork — reject design or current-state cast as an ADR, a
   non-decision (cleanup or alignment that carries no fork — the default is none),
   work/slugs in the body, or an ADR pre-authored for undelivered work. A
   scheduled or authored ADR that fails this bar is a Requirement-Violation
   (blocking); the reviewer does not approve until it is dropped or corrected.
-  This bar is the plan reviewer's: the build reviewer never assesses ADRs, because
-  the doc layer is authored in the preparation worktree, reviewed and integrated to main before build, never in the work-phase worktree.
+  Both plan review and build review enforce this bar when ADRs are authored in
+  `<slug>/work`.
 - **Process-change governance (hard gate)**: per
   `sdlc/policy/process-change-authority`, when any plan task
   implies a behavioral delta to a process-layer contract (lifecycle state
@@ -505,8 +502,8 @@ are the complete `plan-review-findings` artifact for every pass, the
 this reviewer is its first non-author recipient.
 
 When the plan has a localized defect, record it as a finding and stamp
-`needs_work`. The plan drafter owns the corrective edit and the next workflow call
-derives the re-review obligation.
+`needs_work`. The plan drafter owns the corrective edit, and `todo-orchestrator`
+routes the findings and follow-up re-review from the factual ledger.
 
 ### 8a. Forbidden reviewer moves
 
@@ -545,9 +542,9 @@ Severity tiers and verdict arithmetic are owned by
 When the current implementation-plan digest differs from the prior reviewed
 target, compare the retained versions with
 `instrukt todo artifacts diff {slug} implementation-plan <old-digest> <new-digest>`.
-The action and rendered template identify the current review obligation;
-no synthetic header is required. Re-validate the changed evidence under the
-shared discovery and remediation boundaries.
+The factual ledger (`instrukt todo show {slug}`) and orchestrator brief identify
+the current review target; no synthetic header is required. Re-validate the
+changed evidence under the shared discovery and remediation boundaries.
 
 ### 9. Write verdict
 
@@ -564,12 +561,11 @@ Verdict rules:
 - The §6a lane execution gate passes first: the `Lane anticipation` section verdicts every catalog lane. A verdict is not stamped over an incomplete sweep.
 - `approve` only when no Requirement-Violation, Critical or Important finding remains unresolved.
 - `needs_work` when any finding in those three tiers remains unresolved.
-- **Round threshold.** The workflow derives plan-review counts from the record
-  against the configured threshold and refuses none. The count summons no one;
-  continuation stays with the prepare orchestrator under
-  `sdlc/procedure/lifecycle/review`. The threshold never changes
-  verdict arithmetic: the reviewer writes the complete report and stamps
-  `approve` only at zero unresolved findings, or `needs_work` otherwise.
+- **Round threshold.** Plan-review counts are observed from the record
+  and refuse none. The count summons no one; continuation stays with
+  `todo-orchestrator` under `sdlc/procedure/lifecycle/review`. The threshold
+  never changes verdict arithmetic: the reviewer writes the complete report and
+  stamps `approve` only at zero unresolved findings, or `needs_work` otherwise.
 
 Write the complete pass via `instrukt todo artifacts write {slug} plan-review-findings <content>`
 before stamping, with findings classified under
@@ -597,9 +593,9 @@ Review artifact: plan-review-findings
 
 ## Recovery
 
-- If any finding remains unresolved, mark `needs_work`. The
-  next workflow call routes the findings; whether another pass follows is the
-  prepare orchestrator's continuation judgment under the shared review procedure.
+- If any finding remains unresolved, mark `needs_work`. `todo-orchestrator`
+  routes the findings; whether another pass follows is `todo-orchestrator`'s
+  continuation judgment under the shared review procedure.
 - If upstream artifacts themselves are the problem (plan is correct but PRD,
   architecture, or in-scope feature specs are wrong), flag as blocker — the affected
   upstream artifact must be re-reviewed first.

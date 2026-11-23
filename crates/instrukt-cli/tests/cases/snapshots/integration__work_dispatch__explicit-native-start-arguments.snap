@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/cases/work-dispatch.rs
 expression: "work::redact(&command.replace(p.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\"))"
 ---
-thread start --title prepare-orchestrator · tidy-imports --provider claudeAgent --model claude-sonnet-5-5 --worktree origin/main --branch tidy-imports/prepare -- [TMP]/demo -
+thread start --title todo-orchestrator · tidy-imports --provider claudeAgent --model claude-sonnet-5-5 --worktree origin/main --branch tidy-imports/work -- [TMP]/demo -

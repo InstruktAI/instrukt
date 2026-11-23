@@ -51,6 +51,14 @@ pub struct Incoming {
     pub sender: String,
     pub written_at: Timestamp,
     pub text: String,
+    /// Whether the conversation is a direct message rather than a channel or group.
+    #[serde(default)]
+    pub is_direct: bool,
+    /// Optional connector-supplied thread identifier when the conversation is
+    /// threaded (`None` for direct messages or unthreaded places). Keeps
+    /// `conversation` opaque to generic company logic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
 }
 
 /// A provider page and the continuation for the next request.
@@ -97,6 +105,7 @@ pub struct ReadBackError {
 pub struct Sender {
     pub name: String,
     pub email: Option<String>,
+    pub is_admin: bool,
 }
 
 /// The clock a kind keeps its provider's waits by.
@@ -124,6 +133,23 @@ pub struct AnswerError {
     pub cause: String,
 }
 
+/// Receipt returned after posting a private direct message to a user.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DirectMessageReceipt {
+    pub channel: Option<String>,
+    pub message_id: Option<String>,
+}
+
+/// Failure posting a private direct message to a user, classified by whether
+/// the provider failure is retryable (rate limit, server error, transport) or final.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DirectMessageError {
+    #[error("{0}")]
+    Retryable(String),
+    #[error("{0}")]
+    Final(String),
+}
+
 /// What the provider says about the sender of an addressed message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Admission {
@@ -133,6 +159,32 @@ pub enum Admission {
     NotOwn,
     /// Nothing is decided yet; the message waits, with this cause.
     Undecided(String),
+}
+
+/// Why an addressed message was refused without starting or waking a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalReason {
+    /// Sender is not a full member of the company's workspace.
+    NotOwn,
+    /// Connector admits workspace administrators only and sender is not one.
+    NotAdmin,
+}
+
+impl RefusalReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotOwn => "not_own",
+            Self::NotAdmin => "not_admin",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "not_own" => Some(Self::NotOwn),
+            "not_admin" => Some(Self::NotAdmin),
+            _ => None,
+        }
+    }
 }
 
 /// Optional provider-owned presentation facts; never conversation identity.

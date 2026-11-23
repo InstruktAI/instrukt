@@ -15,16 +15,18 @@ parameters:
 ## Goal
 
 Prepare the candidate in your bound finalizer worktree, report role completion
-to the work orchestrator, and record finalize readiness after atomic completion
-and current independent approval. Report blockers to that orchestrator with
-the affected evidence and preserved work location.
+to `todo-orchestrator`, and record finalize readiness after atomic completion
+and current independent approval. Report blockers to `todo-orchestrator` with
+the affected evidence and preserved work location. (When no separate merge/sync
+is needed, the claim-holding `todo-orchestrator` may stamp `--finalize-ready`
+directly without dispatching a `finalizer`.)
 
 ## Preconditions
 
 - `instrukt todo artifacts read {slug} review-findings` exists with APPROVE.
 - At admission, the bound build-review stamp is current for the target and report.
   Changes made during finalization are reviewed after completion and release.
-- `instrukt todo artifacts read {slug} quality-checklist` exists.
+- When `quality-checklist` is present, its build and review sections are complete.
 - Deferrals are resolved and their processing is recorded.
 
 ## Steps
@@ -56,7 +58,7 @@ and preserved shared-work location.
 
 - Branch merged with latest upstream main and pushed to the captured `origin/<slug>/work` branch.
 - Readiness bound to the matching clean worktree, local branch and remote head.
-- Completion evidence and readiness reported to the work orchestrator; readiness
+- Completion evidence and readiness reported to `todo-orchestrator`; readiness
   records the exact candidate handoff to the standing integrator.
 
 ## Recovery

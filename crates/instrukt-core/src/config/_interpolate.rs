@@ -18,14 +18,22 @@ pub(crate) enum Mode<'a> {
 /// signing material, App keys, and a company home's member logins and
 /// connector tokens resolve only through their typed accessors.
 fn stored_reference(path: &str) -> bool {
-    ["webhooks", "github.apps", "members", "connectors"]
-        .iter()
-        .any(|root| {
-            path == *root
-                || path
-                    .strip_prefix(root)
-                    .is_some_and(|rest| rest.starts_with('.'))
-        })
+    [
+        "webhooks",
+        "github.apps",
+        "members",
+        "connectors",
+        "mcp",
+        "mcp_clients",
+        "issuer",
+    ]
+    .iter()
+    .any(|root| {
+        path == *root
+            || path
+                .strip_prefix(root)
+                .is_some_and(|rest| rest.starts_with('.'))
+    })
 }
 
 /// Resolves paths and expands references over one configuration value.
@@ -168,7 +176,11 @@ impl<'a> Interpolator<'a> {
 
     fn locate_runtime(&self, path: &str, fields: &[&str]) -> Result<Located<'a>, ConfigError> {
         if fields != ["session_id"] {
-            if fields.len() != 1 || !super::_runtime::ACTIONS.contains(&fields[0]) {
+            if fields.len() != 1
+                || !super::_runtime::ACTIONS
+                    .iter()
+                    .any(|(name, _)| *name == fields[0])
+            {
                 return Err(missing(path, &fields.join("."), "runtime"));
             }
             let runtime = self

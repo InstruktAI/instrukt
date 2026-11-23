@@ -1,188 +1,188 @@
 ---
 eval: true
-activation_trigger: Use when you need to prime as an orchestrator or need to know how orchestration works.
-description: 'Software development lifecycle. Three-stage model: prepare, work, integrate.'
+activation_trigger: Use when asked to orchestrate a todo, drive instrukt todo work for a slug, or learn how the prose-routed lifecycle works.
+description: 'Unified prose-routed todo orchestrator playbook. Inspect factual ledger, route composable primitives by scope and blast radius, enforce three hard integrity invariants, and hand verified candidates to integrate.'
 visibility: public
+role: todo-orchestrator
+parameters:
+  - name: slug
+    required: true
 ---
 
 # Lifecycle Overview — Procedure
 
+## Required reads
+
+- [general/principle/session-lifecycle](../../../../general/principle/session-lifecycle.md)
+- [general/procedure/orchestration](../../../../general/procedure/orchestration.md)
+- [general/concept/agent-characteristics](../../../../general/concept/agent-characteristics.md)
+- [general/policy/commits](../../../../general/policy/commits.md)
+- [sdlc/policy/todo-creation-discipline](../../policy/todo-creation-discipline.md)
+- [sdlc/policy/peer-invocation](../../policy/peer-invocation.md)
+- [sdlc/procedure/blast-radius-discovery](../blast-radius-discovery.md)
+
 ## Goal
 
-The software development lifecycle follows a three-stage model. Preparation
-and work derive obligations from flavor definitions and current record
-evidence; the standing integrator owns the integration gate. The evaluator
-stores no phase and executes no command.
+Drive a todo end-to-end in a single unified `todo-orchestrator` session using
+one `<slug>/work` worktree and a facts-only ledger (`instrukt todo show <slug>`
+/ `instrukt todo work <slug>`). Code enforces only facts and three hard
+integrity invariants; intelligence routes composable primitives in prose
+according to scope, blast radius, and risk — never a rigid 42-state transition
+table.
 
-### 1. Prepare (`instrukt todo prepare`)
+### What Code Enforces (Three Hard Integrity Invariants)
 
-Sequential artifact production with review gates:
+1. **No interference:** one active writer/child workspace attempt per todo
+   worktree at a time (`instrukt todo attempt` / `bind`, atomically released on
+   the role's completion stamp).
+2. **Independent exact-SHA review gate at `integrate`:** only the standing
+   `integrator` writes `main`, and only for an exact commit SHA that carries an
+   **independent reviewer's `build_review` `approve` stamp** bound to that exact
+   SHA and current `review-findings` report + green CI. Reviewers stamp their
+   own verdicts; self-approval by the orchestrator or any writer is refused.
+3. **Human-owned approval gates:** configured `approvals.prd` (required for
+   `feature` todos and any todo carrying a `prd` artifact before build or
+   finalization) and `approvals.task` (required before `task-runner` executes a
+   `task` todo).
 
-- **Human refinement / handoff** — the versioned `input` records intent for
-  every kind. Its first non-author recipient checks it against the originating
-  conversation and records the version-bound intent check. A changed input
-  requires a new check; later recipients carry checked intent unchanged.
-- **Intake** — for a feature, derive `prd` and the pending behavioral contract
-  from checked `input`.
-- **PRD review** — independently challenge the drafted product horizon,
-  enrichment, scope reasoning, assumptions, omissions, and observable outcomes
-  before the configured approval moment. Human approval is the default; a peer
-  gate retains peer attribution and escalates human-owned exposure.
-- **Architecture** — derive and independently review the code-grounded design
-  in domain/design snippets, with `architecture` as its thin index/log, or skip
-  with a recorded reason when it does not earn its place.
-- **Plan drafting** — produce `implementation-plan` (or split the todo); plan
-  tasks reference the checked intent, applicable PRD criteria, architecture
-  constraints, and feature-spec scenarios. A change enters here; a bug enters
-  after independent diagnosis, examination and current-digest settlement.
-- **Plan review** — validate plan against policies, DoD gates, review lanes.
-- **Readiness gate** — require the kind's current artifact, report, review and
-  approval bindings, plus approving commit reviews for canonical-branch commits
-  authored under the preparation claim.
-- **Grounding check** — analyze pending drift. Substantive drift re-enters its
-  owning derivation layer; cosmetic settlement binds the evidence assessed.
-- **Task preparation** — draft the external action's `task-plan` and obtain its
-  configured authorization. Tasks have no PRD, architecture, implementation plan
-  or separate reviewer verdict. The runner owns authorized, eligible, due runs.
+### Composable Primitives & Prose Routing
 
-Outputs: the selected kind's reviewed derivations and applicable approval,
-complete digest-bound review reports, and confirmed preparation-claim release.
-Preparation's native shared doc writers author pending documentation in the
-`<slug>/prepare` worktree. The integrator folds, publishes and cleans it after
-independent head review, before work begins separately in `<slug>/work`.
+Choose only the primitives that earn their keep for this todo's actual scope
+and blast radius. Every route is reversible: if a fast-tracked build discovers
+unexpected blast radius or needs a contract/spec rewrite, pause implementation
+and route to `planner`, `intaker`, or doc updates cleanly in the same
+`<slug>/work` worktree.
 
-### 2. Work (`instrukt todo work`)
+- **Bounded 5-minute bug or small localized change:**
+  1. Check blast radius yourself (`sdlc/procedure/blast-radius-discovery`). For
+     a bug whose root cause is non-obvious, dispatch `diagnoser`
+     (`sdlc/procedure/lifecycle/prepare/diagnose-peer`) and settle the
+     diagnosis first.
+  2. Dispatch `builder` (`sdlc/procedure/lifecycle/work/build`) directly in
+     `<slug>/work` — no mandatory `implementation-plan`, `setup`, or
+     `quality-checklist` ceremony.
+  3. Dispatch an independent `build-reviewer`
+     (`sdlc/procedure/lifecycle/work/review-build`) against the exact clean
+     committed HEAD.
+  4. If `changes_requested`, dispatch `builder`/`fixer`
+     (`sdlc/procedure/lifecycle/fix-review-findings`) to resolve findings and
+     re-run independent `build-reviewer` on the new exact HEAD.
+  5. Process any `deferrals` artifact via `deferrer`
+     (`sdlc/procedure/lifecycle/work/deferrals`).
+  6. Push the exact reviewed HEAD to `origin/<slug>/work`, stamp
+     `instrukt todo stamp <slug> --finalize-ready` (directly as the
+     claim-holding `todo-orchestrator`, or via `finalizer` when rebase/merge
+     sync is needed — note that any new merge commit requires fresh exact-SHA
+     independent review), then release your claim with
+     `instrukt todo update <slug> --unclaim` to hand off to `integrate`.
 
-Build-review-fix-finalize cycle for prepared repository work with delivered
-dependencies:
+- **Non-trivial change or high blast radius:**
+  1. Dispatch `planner` (`sdlc/procedure/lifecycle/prepare/plan-draft`) for
+     blast-radius discovery and `implementation-plan`, followed by independent
+     `plan-reviewer` (`sdlc/procedure/lifecycle/prepare/review-plan`).
+  2. Optionally dispatch `architect` + `architecture-reviewer` if structural
+     boundaries or durable state change.
+  3. Proceed to `builder` → independent `build-reviewer` → fix/deferrals as
+     needed → exact-SHA push + `--finalize-ready` + `--unclaim` → `integrate`.
 
-- **Entry** — obtain current record/repository evidence and execute the
-  configured runtime-worktree, upstream-merge, branch-publication and build-start
-  obligations. The runtime places the work orchestrator in the todo's one
-  work worktree on `<slug>/work` from updated main. Its native shared children
-  use that same workspace serially; the orchestrator coordinates only. Preparation
-  has already integrated from its separate `<slug>/prepare` worktree. Ad hoc work
-  uses a reviewed one-off worktree and the integrator's gate.
-- **Build** — bind the feature-spec scenarios in scope under the project's
-  testing contract and implement the code that satisfies them; execute the
-  implementation plan task-by-task, commit per task and stamp build completion.
-  Suite execution belongs to the integration gate; project hooks retain their
-  own checks.
-- **Review** — parallel review lanes (scope, code, principles, security, tests,
-  errors, types, comments, docs), persisted as a complete report whose digest
-  and reviewed worktree HEAD are bound to the verdict. Both approval and
-  changes-requested verdicts require a current binding. Undetermined evidence
-  preserves the verdict while exposing the gap.
-- **Fix** — address review findings minimally, re-review while the orchestrator
-  can name what the next pass resolves. A changed approved plan requires build
-  reconciliation; a plan defect returns through a recorded kickback.
-- **Deferrals** — process deferred items into dispositions and, where admissible,
-  new todos before finalizer dispatch.
-- **Finalize** — integrate latest main, push the branch and stamp readiness.
-  Require a clean worktree and matching worktree, local branch, remote branch and
-  readiness-stamp commits before the configured integration handoff.
-- **Bug fix** — build from the independently settled diagnosis and prepared
-  plan under the same review and finalization contract.
+- **Feature (`kind: feature`):**
+  1. Verify `input` intent (`--intent-checked` when authored by another
+     session).
+  2. Dispatch `intaker` (`sdlc/procedure/lifecycle/prepare/intake`) to author
+     `prd` (and pending feature-spec scenarios when applicable), then
+     independent `prd-reviewer`
+     (`sdlc/procedure/lifecycle/prepare/review-prd`).
+  3. Obtain configured PRD approval (`approvals.prd`). When human approval is
+     required, present the reviewed PRD clearly, unclaim
+     (`instrukt todo update <slug> --unclaim`), and stop — the runner wakes you
+     automatically when the approval arrives.
+  4. Dispatch optional `architect` + `architecture-reviewer` (or skip when
+     unneeded), then `planner` + `plan-reviewer`.
+  5. Proceed to `builder` → independent `build-reviewer` → exact-SHA push +
+     `--finalize-ready` + `--unclaim` → `integrate`.
 
-The handoff emits `workflow.finalized` for the exact candidate and confirms
-claim/lane release. Work writes no doc contract and folds no pending docs;
-the integrator reconciles delivery documentation before candidate verification.
+- **Task (`kind: task`):**
+  Tasks never create a git worktree. Draft `task-plan` directly, or delegate to
+  `task-preparer` (`sdlc/procedure/lifecycle/task/prepare-task`) as a
+  worktree-less child attempt (`instrukt todo attempt` / `bind` without
+  `--worktree`, `--branch`, or `--base`, completed via `--role-complete`), then
+  unclaim and wait for `approvals.task` when human-owned. Once approved, the
+  runner dispatches `task-runner` (`sdlc/procedure/lifecycle/task/run-task`) on
+  schedule.
 
-### 3. Integrate (standing integrator)
+### Waiting & Re-Dispatch Discipline
 
-Merge candidates to canonical main:
-
-- **Candidate composition** — merge reviewed preparation heads, finalized work
-  branches and reviewed one-off branches in the persistent integration worktree. The runtime owns
-  worktree creation; the integration procedure owns its established location.
-- **Conflict resolution** — resolve in the integration worktree, preserving
-  both sides' meaningful intent. Run `instrukt docs fold <slug>` to fold preparation's pending documentation
-  before freezing the candidate.
-- **Verification** — push the exact candidate to `origin/integrate`. Required
-  green checks admit that commit; `runner.ci_completed` wakes the integrator
-  with its result. Without CI, run the project's documented test command on
-  that candidate in the integration worktree.
-- **Push** — fast-forward canonical main to exactly the verified commit and
-  confirm the remote result. Main movement or candidate edits require
-  reconciliation and verification for the resulting commit.
-- **Delivery bookkeeping** — record the confirmed delivered commit through
-  `instrukt todo deliver <slug> --commit <sha>` and reconcile the work record and working
-  resources through established commands.
-- **Recovery** — if canonical main becomes red, put a revert through the same
-  gate first; repair its cause in separate work.
-
-Approved preparation emits `workflow.preparation_reviewed` for immediate integration before build. Preparation uses `<slug>/prepare`; after integration and cleanup, work starts separately in `<slug>/work` from updated main. Only the integrator writes main.
-
-### Principles
-
-- **Serial execution**: one obligation completes before its dependent work begins.
-- **Deterministic handoffs**: each call derives from the current definition and
-  evidence. Effects run in listed order and are idempotent; their optional
-  `done_when` determines whether they remain owed on replay.
-- **No micromanagement**: orchestrator dispatches and monitors; workers implement autonomously.
-- **Quality gates**: project-owned hooks enforce their standards; independent
-  review validates completeness and the integration gate verifies the candidate.
-- **Tandem for decisions, single for execution**: material discovery and design decisions receive independent peer falsification; once a decision is settled, one agent owns execution, with no peer ceremony added to fleshed-out mechanical work.
+The runner suppresses re-dispatch for unclaimed active todos only while waiting
+on configured human approval (`approvals.prd` / `approvals.task`) or while a
+`--finalize-ready` handoff stands for `integrate`. When waiting on anything else
+(a human clarification, external input, or a peer reply), keep the claim on your
+live session or place an explicit hold (`instrukt todo update <slug> --hold --reason "..."`)
+so the runner does not re-dispatch a fresh turn on every tick.
 
 ## Preconditions
 
-- `instrukt todo show {slug}` shows the item, checked input, claim and role
-  session bindings; entry honors holds, workspace rules and dependencies.
-- The selected flavor supplies `workflow/prepare.yaml`, `workflow/work.yaml`,
-  `workflow/actions.yaml` and `workflow/templates/<action>.md`.
-- The configured runtime supplies the required session and worktree capabilities.
+- `instrukt todo show <slug> [--json]` displays the factual ledger: artifacts,
+  digests, stamps, claims, bindings, git state, open findings, and gate status.
+- The selected flavor supplies `workflow/workflow.yaml` declaring
+  `orchestrator: todo-orchestrator`, `requires`, and `roles`.
 
 ## Steps
 
-### Phase worktrees
+### Workspace placement & delegation
 
 <!-- @config: runtime.start_thread -->
 
-Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Fetch origin before starting a new phase through the configured runtime start action, using `origin/main` and the derived phase branch. Its orchestrator and native shared children all use that preparation worktree. Creation refuses while the local phase branch still exists; retry or wake uses the retained native assignment, never another tree.
+<!-- @config: runtime.dispatch -->
 
-Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer then releases its claim while the worktree exists; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
+<!-- @config: runtime.message_child -->
 
-After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from freshly fetched `origin/main` on `<slug>/work`; another computer continues an existing published phase from `origin/<slug>/work` on that same local branch. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
+<!-- @config: runtime.inspect_thread -->
 
-
-1. Run `instrukt todo prepare {slug}` to derive preparation obligations. Read
-   the selected action, rendered template and owed effects; execute their
-   established commands and re-derive after material outcomes.
-2. After preparation release and runner admission, run
-   `instrukt todo work {slug}` to build, review, fix and finalize. Reuse recorded
-   active attempts through configured runtime inspection and child messaging;
-   reserve, natively delegate and bind a new role attempt when required.
-3. Execute the configured finalize-ready handoff. The standing integrator
-   composes, verifies and promotes the exact candidate; no work-role command
-   performs integration.
-4. Confirm record writes, handoff and release from their evidence. A reply,
-   successful ended turn or workflow evaluation alone establishes none of them.
+1. **Read current facts and claim the todo.** Run `instrukt todo work {slug}`
+   (or `instrukt todo show {slug} --json` to inspect). For deliberate entry
+   outside `<slug>/work`, follow the returned native placement instruction and
+   re-enter with `--placement-evidence`. On resumption after interruption,
+   kickback, or human approval, read the factual ledger first so your next move
+   matches ground truth.
+2. **Check prerequisites and holds.** If prerequisites are undelivered or a
+   hold is active, preserve state and stop without guessing.
+3. **Select and dispatch the next primitive.** Reserve each worker attempt
+   through `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`,
+   delegate with shared isolation in `<slug>/work`, and immediately bind the
+   child via `instrukt todo bind`. Only one workspace attempt may be active at
+   a time; completion stamps release it atomically.
+4. **Verify review substance before acting on verdicts.** Confirm the findings
+   artifact exists, covers all applicable review lanes, and justifies clean
+   approvals specifically for the target.
+5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
+   no workspace attempt is active, `origin/<slug>/work` matches the exact
+   independently approved HEAD commit SHA, and all required approvals hold.
+   Record `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
+   `workflow.finalized`) and release the claim with
+   `instrukt todo update {slug} --unclaim`.
 
 ## Outputs
 
-- Delivered work item merged to main through the integration gate, or an
-  authorized task execution with a recorded occurrence outcome.
-- Updated work artifacts, stamps and delivery records, with confirmed claim
-  release and explicitly accounted-for cleanup.
+- Verified candidate commit pushed to `origin/<slug>/work` with an independent
+  exact-SHA `build_review` `approve` stamp, `--finalize-ready` handoff to
+  `integrate`, and released claim — or an approved `task-plan` ready for
+  `task-runner`.
 
 ## Recovery
 
-- Re-calling prepare or work derives from current facts; no persisted phase is
-  resumed. Execute effects still owed under their `done_when` conditions and
-  inspect failures before dispatching further work.
-- On an upstream merge conflict, abort the merge and route recovery to the
-  recorded live builder's procedure. A missing builder is an explicit dispatch
-  gap; a failed fetch or skipped merge is not synchronization.
-- A remote record-revision conflict uses `instrukt todo refresh {slug}`, then
-  reapplication of the intended mutation.
-- If blocked, preserve the evidence and responsible owner. Human-owned questions
-  remain in the responsible thread; the runner handles unattended anomalies.
-- A missing command binding or runtime capability remains an open obligation.
-  Inspecting a record records no approval, release, handoff or delivery. The
-  flavor's templates expose unresolved command boundaries before execution.
+- Re-read `instrukt todo show {slug}` after any interruption or failure; all
+  state lives in the factual ledger and git worktree.
+- If a child stops without stamping completion, inspect its state, reconcile
+  the worktree to a clean head, and resolve the attempt with
+  `instrukt todo attempt {slug} --role <role> --attempt <n> --failed ...` (or
+  `--not-started` if it never started) before dispatching a replacement.
+- If `integrate` returns red CI or conflicts, re-enter `<slug>/work`, resolve
+  through `builder`/`fixer`, obtain a fresh independent exact-SHA review
+  approval, push, and re-stamp `--finalize-ready`.
 
 ## See also
 
-- [sdlc/procedure/lifecycle/prepare/overview](prepare/overview.md)
-- [sdlc/procedure/lifecycle/work/overview](work/overview.md)
 - [sdlc/procedure/lifecycle/integrate](integrate.md)
+- [sdlc/procedure/lifecycle/work/build](work/build.md)
+- [sdlc/procedure/lifecycle/work/review-build](work/review-build.md)
+- [sdlc/procedure/lifecycle/work/finalize](work/finalize.md)

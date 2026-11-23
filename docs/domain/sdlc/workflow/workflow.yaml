@@ -1,0 +1,29 @@
+orchestrator: todo-orchestrator
+requires:
+  - worktree_create
+  - shared_delegation
+roles:
+  - todo-orchestrator
+  - intaker
+  - prd-reviewer
+  - architect
+  - architecture-reviewer
+  - planner
+  - plan-reviewer
+  - diagnoser
+  - diagnosis-driver
+  - drift-analyzer
+  - task-preparer
+  - task-runner
+  - builder
+  - fixer
+  - build-reviewer
+  - deferrer
+  - finalizer
+  - integrator
+  - coordinator
+  - commit-reviewer
+  - bug-hunter
+  - project-analyst
+  - config-assessor
+  - third-party-researcher

@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
-assertion_line: 109
 expression: "shown(&crew, record.as_bytes())"
 ---
 add-depth · change · active
@@ -15,8 +14,8 @@ issue: #1
 claim: held since <time> by session t3:lead-1
 hold: none
 sessions:
-  work-lead/1: t3:lead-1
-    key: instrukt:todo:demo/<id 1>:work-lead:1
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
     branch: add-depth/work; base: <commit 1>
     worktree: [TMP]/team-add-depth-work
   setup/1: t3:setup-1
@@ -49,3 +48,8 @@ stamps:
   #5 <time> build started — base <commit 1>, plan <digest 2> — by session t3:setup-1 as setup, model codex gpt-test, eval <digest 5>
   #7 <time> role complete — setup/1 head <commit 2> — by session t3:setup-1 as setup, model codex gpt-test, eval <digest 5>
   #8 <time> build complete — head <commit 3> — by session t3:builder-1 as builder, model codex gpt-test, eval <digest 5>
+workspace:
+  branch: add-depth/work
+  worktree: [TMP]/team-add-depth-work (clean)
+  head: <commit 3>
+  remote: <commit 2> (behind local)

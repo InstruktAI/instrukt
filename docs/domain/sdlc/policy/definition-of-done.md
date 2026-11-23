@@ -19,6 +19,7 @@ Before considering ANY work complete, verify ALL criteria are met:
 - [ ] Edge cases handled: every reachable condition (`sdlc/concept/defect-evidence`)
 - [ ] Error paths handled and reviewed
 - [ ] No debug/temp code remains
+- [ ] Bug fixes stop at the verified cause: smallest change that removes the root cause, no "while I'm here" hardening beyond it; unrelated findings surfaced during investigation are reported separately (`sdlc/policy/todo-creation-discipline`)
 
 ### 2. Code Quality
 

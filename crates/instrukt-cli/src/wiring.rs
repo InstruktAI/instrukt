@@ -32,7 +32,8 @@ use crate::context::Ctx;
 pub fn caller_lookup(
     ctx: &Ctx,
 ) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::CallerIdentityLookup>>> {
-    let config = instrukt_core::config::Configuration::load_global(&ctx.home)?;
+    let inspection = ctx.home.for_inspection();
+    let config = instrukt_core::config::Configuration::load_global(&inspection)?;
     match config.runner_runtime() {
         Ok(runtime) => {
             let adapter: Arc<dyn instrukt_runner::runtime::RuntimeAdapter> =
@@ -147,7 +148,7 @@ pub fn company() -> std::sync::Arc<dyn instrukt_runner::interfaces::CompanyPorts
     ))
 }
 
-/// Work's command contract, for `instrukt todo prepare|work`'s deliberate
+/// Work's command contract, for `instrukt todo work`'s deliberate
 /// pickup claim (workflow) and for work's own commands.
 #[allow(dead_code, reason = "consumed by the todo commands in wave 3")]
 pub fn work_ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {

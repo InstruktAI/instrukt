@@ -589,6 +589,24 @@ fn receiver(request: &Request<'_>, demand: &Demand, report: &mut Report) -> anyh
         });
         ingress_port = Some(ingress.port);
     }
+    if ingress_port.is_none()
+        && global.module_enabled(Module::Events)?
+        && global.ingress_url()?.is_some()
+        && let Ok(ingress) = global.ingress()
+    {
+        let machine = std::fs::read_to_string(request.home.machine_id_file()).map_err(|_| {
+            anyhow::anyhow!("machine identity missing/unreadable; restore the recorded machine-id before receiver placement or withdrawal")
+        })?;
+        anyhow::ensure!(
+            instrukt_core::machine::MachineId::parse(machine.trim()).is_some(),
+            "invalid machine identity; restore the recorded machine-id before receiver placement"
+        );
+        if machine.trim() == ingress.computer.as_str() {
+            ingress_port = Some(ingress.port);
+            health_route = Some("/hooks/inbound/sign-in/00000000000000000000000000000000".into());
+            projects.push("ingress:url".into());
+        }
+    }
     if let Some(port) = ingress_port {
         let ingress = global.ingress()?;
         anyhow::ensure!(

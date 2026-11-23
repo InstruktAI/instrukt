@@ -53,16 +53,54 @@ impl Receiver {
         panic!("could not reserve a loopback port after ten bind collisions");
     }
 
+    pub fn start_with_url(computer: &Computer, cluster: &RedisServer) -> Self {
+        computer.config(cluster, None);
+        computer.tick();
+        let machine = computer.computer();
+        Self::start_for_env(&computer.env, &machine, true)
+    }
+
+    pub fn start_for_env(env: &crate::common::TestEnv, machine: &str, set_url: bool) -> Self {
+        let global = env.instrukt_home().join("instrukt.yaml");
+        let base = std::fs::read_to_string(&global).unwrap();
+        for _ in 0..10 {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let ingress_line = if set_url {
+                format!(
+                    "ingress: {{computer: '{machine}', port: {port}, url: 'http://127.0.0.1:{port}'}}\n"
+                )
+            } else {
+                format!("ingress: {{computer: '{machine}', port: {port}}}\n")
+            };
+            std::fs::write(&global, format!("{base}{ingress_line}")).unwrap();
+            drop(listener);
+            match Self::spawn_env(env, port) {
+                Ok(receiver) => return receiver,
+                Err(detail) if detail.contains("Address already in use") => continue,
+                Err(detail) => panic!("receiver did not start: {detail}"),
+            }
+        }
+        panic!("could not reserve a loopback port after ten bind collisions");
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
     fn spawn(computer: &Computer, port: u16) -> Result<Self, String> {
-        let log = computer.env.log_dir().join("webhooks.log");
+        Self::spawn_env(&computer.env, port)
+    }
+
+    fn spawn_env(env: &crate::common::TestEnv, port: u16) -> Result<Self, String> {
+        let log = env.log_dir().join("webhooks.log");
         let offset = match std::fs::metadata(&log) {
             Ok(metadata) => metadata.len(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
             Err(error) => return Err(error.to_string()),
         };
-        let child = computer
-            .env
-            .instrukt_process(&computer.env.path(""))
+        let child = env
+            .instrukt_process(&env.path(""))
             .args(["webhooks", "serve"])
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

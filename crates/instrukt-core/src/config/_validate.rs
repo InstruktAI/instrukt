@@ -78,6 +78,13 @@ fn findings_in_scope(
             };
             super::_company::check_profiles(name, profiles, &declared, &mut found);
         }
+        if value.get("connectors").is_some() {
+            let declared = match given.agents {
+                Some(agents) => Ok(agents.clone()),
+                None => super::Agents::load(&home.for_inspection()),
+            };
+            found.extend(connector_roles(home, name, value, declared.as_ref().ok()));
+        }
         let read;
         let secrets = match given.secrets {
             Some(secrets) => secrets,
@@ -256,7 +263,14 @@ fn connector_secrets(
     };
     let mut found = Vec::new();
     for (key, entry) in connectors {
-        let Some(kind) = key.as_str().and_then(super::_connectors::declaration) else {
+        let Some(connector_name) = key.as_str() else {
+            continue;
+        };
+        let kind_name = entry
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or(connector_name);
+        let Some(kind) = super::_connectors::declaration(kind_name) else {
             continue;
         };
         for field in kind.fields {
@@ -268,11 +282,50 @@ fn connector_secrets(
             };
             if let Err(error) = secrets.resolve(reference) {
                 found.push(KeyFinding::new(
-                    &join("connectors", &join(kind.key, field.name)),
+                    &join("connectors", &join(connector_name, field.name)),
                     FindingKind::Missing,
                     format!("{error}; set it with `instrukt secrets set <NAME> --company {name}`"),
                 ));
             }
+        }
+    }
+    found
+}
+
+/// Every explicit `role` on a company's declared connectors must name a role
+/// configured in `agents.yaml` or declared by a delivered published procedure.
+fn connector_roles(
+    home: &Home,
+    company: &crate::ids::ProjectSlug,
+    value: &Value,
+    agents: Option<&super::Agents>,
+) -> Vec<KeyFinding> {
+    let Some(connectors) = value.get("connectors").and_then(Value::as_mapping) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for (key, entry) in connectors {
+        let Some(connector_name) = key.as_str() else {
+            continue;
+        };
+        let Some(role_str) = entry.get("role").and_then(Value::as_str) else {
+            continue;
+        };
+        if crate::ids::RoleName::parse(role_str).is_err() {
+            continue;
+        }
+        let configured = agents.map_or_else(
+            || role_str == super::COMPANY_AGENT_ROLE,
+            |agents| agents.roles.contains_key(role_str),
+        );
+        if !configured && !role_procedure_available(home, role_str) {
+            found.push(KeyFinding::new(
+                &join("connectors", &join(connector_name, "role")),
+                FindingKind::UnresolvedReference,
+                format!(
+                    "company `{company}` connector `{connector_name}` names role `{role_str}`, which is neither configured in agents.yaml nor declared by a published procedure"
+                ),
+            ));
         }
     }
     found
@@ -342,9 +395,9 @@ fn code_on_github(
     }
 }
 
-pub(super) fn company_procedure_available(home: &Home) -> bool {
+pub(super) fn role_procedure_available(home: &Home, role_name: &str) -> bool {
     use crate::index::{GlobalIndex, RoleProcedure};
-    crate::ids::RoleName::parse("company-agent")
+    crate::ids::RoleName::parse(role_name)
         .ok()
         .is_some_and(|role| {
             GlobalIndex::load_readable(&home.for_inspection())
@@ -359,23 +412,71 @@ pub(super) fn company_procedure_available(home: &Home) -> bool {
         })
 }
 
-pub(super) fn missing_company_procedure(home: &Home, company: &crate::ids::ProjectSlug) -> Finding {
+pub(super) fn company_procedure_available(home: &Home) -> bool {
+    role_procedure_available(home, super::COMPANY_AGENT_ROLE)
+}
+
+pub(super) fn missing_role_procedure(
+    home: &Home,
+    company: &crate::ids::ProjectSlug,
+    connector: Option<&str>,
+    role: &str,
+) -> Finding {
+    let key = match connector {
+        Some(name) if role != super::COMPANY_AGENT_ROLE => join("connectors", name),
+        _ => "connectors".into(),
+    };
     Finding {
         document: Layer::Company(company.clone()).path(home),
-        key: "connectors".into(),
+        key,
         kind: FindingKind::InvalidValue,
         message: format!(
-            "company `{company}` needs a published procedure declaring the company-agent role"
+            "company `{company}` needs a published procedure declaring the {role} role"
         ),
     }
 }
 
-/// Local publication prerequisite for starting a company's connectors.
+/// Local publication prerequisite for starting one named connector with `role`.
+/// A custom role configured in `agents.yaml` without its own procedure falls
+/// back to the `company-agent` procedure.
+pub fn connector_role_procedure_finding(
+    home: &Home,
+    company: &crate::ids::ProjectSlug,
+    connector: &str,
+    role: &str,
+    agents: Option<&super::Agents>,
+) -> Option<Finding> {
+    if role_procedure_available(home, role) {
+        return None;
+    }
+    if role != super::COMPANY_AGENT_ROLE
+        && agents.is_some_and(|agents| agents.roles.contains_key(role))
+        && company_procedure_available(home)
+    {
+        return None;
+    }
+    let needed_role = if role != super::COMPANY_AGENT_ROLE
+        && agents.is_some_and(|agents| agents.roles.contains_key(role))
+    {
+        super::COMPANY_AGENT_ROLE
+    } else {
+        role
+    };
+    Some(missing_role_procedure(
+        home,
+        company,
+        Some(connector),
+        needed_role,
+    ))
+}
+
+/// Local publication prerequisite for starting a company's default connectors.
 pub fn connector_procedure_finding(
     home: &Home,
     company: &crate::ids::ProjectSlug,
 ) -> Option<Finding> {
-    (!company_procedure_available(home)).then(|| missing_company_procedure(home, company))
+    (!company_procedure_available(home))
+        .then(|| missing_role_procedure(home, company, None, super::COMPANY_AGENT_ROLE))
 }
 
 /// `instrukt config validate`: the findings of `layer`. A missing layer,
@@ -406,12 +507,35 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
     }
     if let Layer::Company(name) = layer {
         findings.extend(local_material(home, name)?);
-        if value
-            .get("connectors")
-            .and_then(Value::as_mapping)
-            .is_some_and(|entries| !entries.is_empty())
+        if let Some(entries) = value.get("connectors").and_then(Value::as_mapping)
+            && !entries.is_empty()
         {
-            findings.extend(connector_procedure_finding(home, name));
+            let agents = super::Agents::load(&home.for_inspection()).ok();
+            let mut reported_default = false;
+            for (key, entry) in entries {
+                let Some(connector_name) = key.as_str() else {
+                    continue;
+                };
+                let role = entry
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or(super::COMPANY_AGENT_ROLE);
+                if let Some(finding) = connector_role_procedure_finding(
+                    home,
+                    name,
+                    connector_name,
+                    role,
+                    agents.as_ref(),
+                ) {
+                    if finding.key == "connectors" {
+                        if reported_default {
+                            continue;
+                        }
+                        reported_default = true;
+                    }
+                    findings.push(finding);
+                }
+            }
         }
     }
     if layer.kind() == LayerKind::Global
@@ -542,7 +666,9 @@ pub(crate) fn judge(
             runner_runtime(value, &effective, &mut found);
             event_transport(&effective, &mut found);
         }
-        LayerKind::Company => {}
+        LayerKind::Company => {
+            super::_mcp::check_company_cross_refs(value, global, &mut found);
+        }
     }
     feature_capabilities(value, &effective, this, &mut found);
     references(value, kind, &effective, &mut found);
@@ -745,9 +871,17 @@ fn references(value: &Value, kind: LayerKind, effective: &Value, out: &mut Vec<K
     let mut strings = Vec::new();
     collect_strings(&_schema::permitted(value, kind), "", &mut strings);
     for (path, text) in strings {
-        if ["webhooks", "github.apps", "members", "connectors"]
-            .iter()
-            .any(|root| path == *root || path.starts_with(&format!("{root}.")))
+        if [
+            "webhooks",
+            "github.apps",
+            "members",
+            "connectors",
+            "mcp",
+            "mcp_clients",
+            "issuer",
+        ]
+        .iter()
+        .any(|root| path == *root || path.starts_with(&format!("{root}.")))
         {
             continue;
         }
@@ -819,9 +953,7 @@ fn workflow_capabilities(home: &Home, effective: &Value, out: &mut Vec<KeyFindin
     for entry in entries {
         let result = (|| -> Result<(), String> {
             let file = entry.map_err(|e| e.to_string())?.path();
-            if file.extension().is_none_or(|e| e != "yaml")
-                || file.file_name().is_some_and(|n| n == "actions.yaml")
-            {
+            if file.extension().is_none_or(|e| e != "yaml") {
                 return Ok(());
             }
             let text =
@@ -908,6 +1040,142 @@ mod tests {
             judge(&doc, LayerKind::Global, None, None)
                 .iter()
                 .any(|f| f.kind == FindingKind::ReferenceCycle)
+        );
+    }
+
+    #[test]
+    fn named_connectors_default_kind_and_validate_settings() {
+        crate::config::_connectors::install_fixture();
+        let global = current_document("runner: {runtime: t3}");
+
+        // Multiple named Slack connectors with explicit kind and policy settings.
+        let valid = current_document(
+            r#"company: acme
+connectors:
+  slack:
+    app_token: '${APP_A}'
+    bot_token: '${BOT_A}'
+  second:
+    kind: slack
+    role: company-agent
+    admit: admins_only
+    session_scope: company
+    reply_mode: explicit
+    app_token: '${APP_B}'
+    bot_token: '${BOT_B}'
+"#,
+        );
+        let findings = judge(&valid, LayerKind::Company, Some(&global), None);
+        assert!(findings.is_empty(), "{findings:?}");
+
+        let parsed = super::super::_company::connectors(valid.get("connectors")).unwrap();
+        assert_eq!(parsed.len(), 2);
+        let first = parsed.iter().find(|c| c.key == "slack").unwrap();
+        assert_eq!(first.kind, "slack");
+        assert_eq!(first.role.as_str(), "company-agent");
+        assert_eq!(first.admit, super::super::ConnectorAdmit::Members);
+        assert_eq!(
+            first.session_scope,
+            super::super::SessionScope::Conversation
+        );
+        assert_eq!(first.reply_mode, super::super::ReplyMode::TurnOutput);
+
+        let second = parsed.iter().find(|c| c.key == "second").unwrap();
+        assert_eq!(second.kind, "slack");
+        assert_eq!(second.role.as_str(), "company-agent");
+        assert_eq!(second.admit, super::super::ConnectorAdmit::AdminsOnly);
+        assert_eq!(second.session_scope, super::super::SessionScope::Company);
+        assert_eq!(second.reply_mode, super::super::ReplyMode::Explicit);
+
+        // Unknown kind, invalid admit/session_scope/reply_mode are all reported at their paths.
+        let invalid = current_document(
+            r#"company: acme
+connectors:
+  unknown-one:
+    app_token: '${APP}'
+  bad-opts:
+    kind: slack
+    admit: everyone
+    session_scope: global
+    reply_mode: silent
+    app_token: '${APP}'
+    bot_token: '${BOT}'
+"#,
+        );
+        let keys: Vec<(String, FindingKind)> =
+            judge(&invalid, LayerKind::Company, Some(&global), None)
+                .into_iter()
+                .map(|f| (f.key, f.kind))
+                .collect();
+        assert!(
+            keys.contains(&("connectors.unknown-one".into(), FindingKind::UnknownKey)),
+            "{keys:?}"
+        );
+        assert!(
+            keys.contains(&(
+                "connectors.bad-opts.admit".into(),
+                FindingKind::InvalidValue
+            )),
+            "{keys:?}"
+        );
+        assert!(
+            keys.contains(&(
+                "connectors.bad-opts.session_scope".into(),
+                FindingKind::InvalidValue
+            )),
+            "{keys:?}"
+        );
+        assert!(
+            keys.contains(&(
+                "connectors.bad-opts.reply_mode".into(),
+                FindingKind::InvalidValue
+            )),
+            "{keys:?}"
+        );
+    }
+
+    #[test]
+    fn named_connector_secrets_and_roles_validate_against_home() {
+        crate::config::_connectors::install_fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf()).for_writing();
+        std::fs::create_dir_all(home.root()).unwrap();
+        std::fs::write(
+            home.global_config(),
+            format!("schema_version: {CURRENT_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\n"),
+        )
+        .unwrap();
+        let company = crate::ids::ProjectSlug::parse("acme").unwrap();
+        let company_dir = home.company_dir(&company);
+        std::fs::create_dir_all(&company_dir).unwrap();
+        std::fs::write(
+            company_dir.join(super::super::CONFIG_FILE_NAME),
+            format!(
+                r#"schema_version: {CURRENT_SCHEMA_VERSION}
+company: acme
+connectors:
+  second:
+    kind: slack
+    role: nonexistent-role
+    app_token: '${{MISSING_APP}}'
+    bot_token: '${{MISSING_BOT}}'
+"#
+            ),
+        )
+        .unwrap();
+        let findings = validate(&home, &Layer::Company(company)).unwrap();
+        let keys: Vec<&str> = findings.iter().map(|f| f.key.as_str()).collect();
+        assert!(
+            keys.contains(&"connectors.second.app_token"),
+            "expected missing secret at connectors.second.app_token, got {keys:?}"
+        );
+        assert!(
+            keys.contains(&"connectors.second.bot_token"),
+            "expected missing secret at connectors.second.bot_token, got {keys:?}"
+        );
+        assert!(
+            keys.contains(&"connectors.second.role"),
+            "expected unknown role finding at connectors.second.role, got {keys:?}"
         );
     }
 }

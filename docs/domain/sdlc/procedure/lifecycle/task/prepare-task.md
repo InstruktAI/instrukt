@@ -21,16 +21,18 @@ parameters:
 Turn a `kind=task` todo's raw `input` into a `task-plan` — the durable,
 authorized instruction set the task executes on every run — and then request
 the configured authorization. This procedure does not execute the task or
-create other todos. It is the task route of `instrukt todo prepare {slug}`.
+create other todos. It is the task route of `instrukt todo work {slug}`.
 A task is non-SDLC: no PRD, architecture, implementation-plan, or reviewer
 verdict applies.
 
 ## Preconditions
 
-- The todo is `kind=task` and the current prepare action calls for task-plan
-  drafting, with an `input` artifact and no `task-plan` yet (or a refinement
-  pass on an existing one).
-- The session uses its assigned preparation worktree; any committed preparation is independently reviewed and integrated by the integrator. It authors nothing on main.
+- The todo is `kind=task` and `todo-orchestrator` routed it here for `task-plan`
+  drafting (or a refinement pass on an existing `task-plan`), with an `input`
+  artifact present.
+- Tasks have no git worktree: when dispatched as `task-preparer`, the session
+  runs as a worktree-less child attempt (`instrukt todo attempt` / `bind`
+  without worktree/branch/base flags) and authors no repository files or commits.
 - The `input` is the versioned intent record. Its current position-based
   intent check is required; a new version invalidates the earlier check.
 
@@ -87,8 +89,12 @@ Use `instrukt <command> -h` for individual commands.
 
 5. **Write the `task-plan`.** `instrukt todo artifacts write {slug} task-plan "…"`.
 
-6. **Request configured authorization.** Call `instrukt todo prepare {slug}`
-   after writing the plan and follow its rendered authorization instructions. Human approval is
+6. **Request configured authorization.** Inspect `instrukt todo show {slug}`.
+   When running as a dispatched `task-preparer` child, stamp
+   `instrukt todo stamp {slug} --role-complete` and report the drafted `task-plan`
+   to `todo-orchestrator`; when running directly as `todo-orchestrator`, present
+   the `task-plan` and unclaim (`instrukt todo update {slug} --unclaim`) if human
+   approval is pending. Human approval is
    the default: the responsible session presents the `task-plan` and asks in
    its thread. A peer gate uses a separate peer session to check the boundary,
    result, recipient and timing against `input`, with no invented limits,
@@ -107,8 +113,8 @@ Use `instrukt <command> -h` for individual commands.
    missed-run decisions; scheduling never substitutes for authorization.
 
 7. **Hand off to the runner.** Once the record carries the current `task-plan`
-   and authorization stamp, call prepare for the remaining obligation. The
-   runner dispatches `sdlc/procedure/lifecycle/task/run-task` when the task is
+   and authorization stamp and the claim is released, the runner automatically
+   dispatches `sdlc/procedure/lifecycle/task/run-task` when the task is
    authorized, not held, eligible under pickup policy, and due with its
    dependency gate satisfied.
 

@@ -1,5 +1,5 @@
 //! The workflow schema docs validation checks an authored flavor against
-//! (core's `FlavorSchema`), answered by loading the flavor.
+//! (core's `FlavorSchema`), answered by loading `workflow.yaml`.
 
 use std::path::Path;
 
@@ -38,15 +38,7 @@ impl FlavorSchema for WorkflowSchema {
 fn declarations(flavor: &Flavor) -> FlavorDeclarations {
     FlavorDeclarations {
         roles: flavor.roles().to_vec(),
-        orchestrators: flavor
-            .flows
-            .iter()
-            .map(|(flow, definition)| (flow.to_string(), definition.orchestrator.clone()))
-            .collect(),
-        action_procedures: flavor
-            .action_procedures()
-            .map(|(action, procedure)| (action.to_string(), procedure.clone()))
-            .collect(),
+        orchestrators: vec![("workflow".to_owned(), flavor.orchestrator().clone())],
     }
 }
 
@@ -54,7 +46,7 @@ fn declarations(flavor: &Flavor) -> FlavorDeclarations {
 mod tests {
     use std::path::PathBuf;
 
-    use instrukt_core::ids::{RoleName, SnippetId};
+    use instrukt_core::ids::RoleName;
 
     use super::super::_testing::{flavor_dir, sdlc_dir};
     use super::*;
@@ -64,7 +56,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sdlc_flavor_declares_its_roles_orchestrators_and_action_procedures() {
+    fn the_sdlc_flavor_declares_its_roles_and_unified_orchestrator() {
         let FlavorCheck::Valid(declared) = WorkflowSchema.check(&sdlc_dir()).unwrap() else {
             panic!("sdlc flavor is invalid");
         };
@@ -72,34 +64,15 @@ mod tests {
         assert_eq!(declared.roles, flavor.roles());
         assert_eq!(
             declared.orchestrators,
-            vec![
-                ("prepare".to_owned(), role("prepare-orchestrator")),
-                ("work".to_owned(), role("work-orchestrator")),
-            ]
+            vec![("workflow".to_owned(), role("todo-orchestrator"))]
         );
-        let procedure_of = |action: &str| {
-            declared
-                .action_procedures
-                .iter()
-                .find(|(id, _)| id == action)
-                .map(|(_, procedure)| procedure.clone())
-        };
-        assert_eq!(
-            procedure_of("review-prd"),
-            Some(SnippetId::parse("sdlc/procedure/lifecycle/prepare/review-prd").unwrap())
-        );
-        assert_eq!(
-            procedure_of("draft-prd"),
-            Some(SnippetId::parse("sdlc/procedure/lifecycle/prepare/intake").unwrap())
-        );
-        assert_eq!(procedure_of("release-prepared"), None);
     }
 
     #[test]
     fn an_invalid_flavor_reports_its_findings_by_file_and_location() {
         let dir = flavor_dir(&[(
-            "actions.yaml",
-            "roles: [builder]\nbuild:\n  command: instrukt docs get not-an-id\n  template: t.md\n",
+            "workflow.yaml",
+            "orchestrator: lead\nrequires: []\nroles: [builder]\n",
         )]);
         let FlavorCheck::Invalid(findings) = WorkflowSchema.check(dir.path()).unwrap() else {
             panic!("expected findings");
@@ -110,10 +83,7 @@ mod tests {
             .collect();
         assert_eq!(
             places,
-            vec![
-                (PathBuf::from("actions.yaml"), "build.command"),
-                (PathBuf::from("actions.yaml"), "build.template"),
-            ]
+            vec![(PathBuf::from("workflow.yaml"), "orchestrator")]
         );
     }
 

@@ -19,8 +19,9 @@ branch protection.
 
 ### Candidate and verification
 
-The finalized candidate is the shared todo branch head after successful
-finalizer completion and release, current independent approval and readiness under
+The finalized candidate is the shared `<slug>/work` branch head carrying an
+independent reviewer's `build_review` `approve` stamp bound to that exact commit
+SHA and `--finalize-ready` under
 `project/instrukt/spec/feature/workflow/delivery-cycle`. The integrator reads
 that branch and stamped commit; it does not inherit a shared todo worktree.
 
@@ -29,7 +30,10 @@ and pushes the resulting commit to `integrate`. It may batch
 candidates according to its judgment. A merge conflict remains work for the
 integrator to resolve before there is a candidate to verify.
 
-The integrator receives reviewed todo or one-off worktree heads. Main has no independent authoring commits to discover: only the integrator merges candidates, and publication goes live atomically at that integration. Reviewed preparation docs arrive through `workflow.preparation_reviewed` and are integrated as soon as possible before any build. Their clean `<slug>/prepare` worktree and local/remote branch are removed after confirmed integration; work starts separately from the new main. A dependent todo waits for delivery of the contracts it requires.
+The integrator receives reviewed todo or one-off worktree heads. Main has no
+independent authoring commits to discover: only the integrator merges
+candidates, and publication goes live atomically at that integration. A
+dependent todo waits for delivery of the contracts it requires.
 
 The active candidate is the fetched `origin/integrate` head while it is not
 already contained in remote canonical main. An absent integrate ref or a head
@@ -183,16 +187,11 @@ And the post-merge hook publishes the new documentation for this computer's agen
 But a dirty checkout or non-fast-forward history is reported and preserved for retry
 ```
 
-### UC-IG5: Build after preparation contracts are published
+### UC-IG5: Build after preparation contracts are published (retired)
 
-```gherkin
-Given a developer's todo has documentation committed in its preparation worktree
-When independent review approves that exact preparation head
-Then an occurrence event wakes the integrator to integrate it through the candidate gate as soon as possible
-And its documentation is published before the implementation starts
-And the integrator removes the merged preparation worktree and its local and origin branch
-And work starts separately from freshly fetched remote main
-```
+Retired: preparation and build share one `<slug>/work` worktree under the
+unified `todo-orchestrator`, with no separate `<slug>/prepare` integration
+handoff before build.
 
 ### UC-IG6: A developer gets failed dependency updates assessed without watching every bot PR
 

@@ -65,6 +65,7 @@ pub struct Person {
     pub deleted: bool,
     pub bot: bool,
     pub guest: bool,
+    pub is_admin: bool,
 }
 impl Person {
     /// A full member of the workspace.
@@ -78,6 +79,7 @@ impl Person {
             deleted: false,
             bot: false,
             guest: false,
+            is_admin: false,
         }
     }
     /// The name Slack shows for them: the display name, the real name when
@@ -94,7 +96,7 @@ impl Person {
         if let Some(email) = &self.email {
             profile["email"] = json!(email);
         }
-        json!({"id": self.id, "team_id": self.team, "name": self.id.to_lowercase(), "deleted": self.deleted, "is_bot": self.bot, "is_restricted": self.guest, "is_ultra_restricted": false, "real_name": self.real_name, "profile": profile})
+        json!({"id": self.id, "team_id": self.team, "name": self.id.to_lowercase(), "deleted": self.deleted, "is_bot": self.bot, "is_restricted": self.guest, "is_ultra_restricted": false, "is_admin": self.is_admin, "real_name": self.real_name, "profile": profile})
     }
 }
 
@@ -200,6 +202,93 @@ struct Workspace {
     fates: Vec<(String, Fate, usize)>,
     /// Posts committed late, not yet visible.
     late: Vec<(Value, Post)>,
+    /// Mapping from user id to DM channel id (e.g. USTEVEN -> D1), matching real Slack's
+    /// `chat.postMessage(channel=<user_id>)` delivery into that user's DM channel.
+    dm_channels: std::collections::BTreeMap<String, String>,
+    /// One-shot error code returned by the next `chat.postMessage` call (e.g. `ratelimited` or `user_not_found`).
+    next_post_error: Option<String>,
+    /// Additional Slack apps hosted on the same fake Web API endpoint, routed
+    /// by their app/bot Bearer tokens.
+    extra_apps: Vec<Arc<Mutex<ExtraAppState>>>,
+}
+
+struct ExtraAppState {
+    app_token: String,
+    bot_token: String,
+    bot_user: String,
+    bot_id: String,
+    socket_url: String,
+    outgoing: VecDeque<String>,
+    posts: Vec<Post>,
+    acknowledged: Vec<String>,
+    connections: usize,
+    limit_lookup: Option<u64>,
+    lookups: usize,
+}
+
+/// Handle to an additional Slack app registered on a [`FakeSlack`] server.
+#[derive(Clone)]
+pub struct ExtraSlackApp {
+    state: Arc<Mutex<ExtraAppState>>,
+    workspace: Arc<Mutex<Workspace>>,
+}
+
+impl ExtraSlackApp {
+    pub fn mention(&self, channel: &str, user: &str, text: &str, thread: Option<&str>) -> String {
+        let ts = {
+            let mut w = self.workspace.lock().unwrap();
+            let ts = FakeSlack::stamp(&mut w);
+            let mut message = json!({"channel": channel, "ts": ts, "user": user, "text": text});
+            if let Some(thread) = thread {
+                message["thread_ts"] = json!(thread);
+            }
+            w.messages.push(message);
+            ts
+        };
+        let mut event = json!({"type": "app_mention", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
+        if let Some(thread) = thread {
+            event["thread_ts"] = json!(thread);
+        }
+        self.deliver(&format!("envelope-{ts}"), event);
+        ts
+    }
+
+    pub fn direct(&self, channel: &str, user: &str, text: &str) -> String {
+        let ts = {
+            let mut w = self.workspace.lock().unwrap();
+            let ts = FakeSlack::stamp(&mut w);
+            w.messages
+                .push(json!({"channel": channel, "ts": ts, "user": user, "text": text}));
+            w.dm_channels.insert(user.to_owned(), channel.to_owned());
+            ts
+        };
+        let event = json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
+        self.deliver(&format!("envelope-{ts}"), event);
+        ts
+    }
+
+    fn deliver(&self, envelope: &str, event: Value) {
+        self.state.lock().unwrap().outgoing.push_back(
+            json!({"envelope_id": envelope, "type": "events_api", "accepts_response_payload": false, "payload": {"type": "event_callback", "event": event}})
+                .to_string(),
+        );
+    }
+
+    pub fn posts(&self) -> Vec<Post> {
+        self.state.lock().unwrap().posts.clone()
+    }
+
+    pub fn connections(&self) -> usize {
+        self.state.lock().unwrap().connections
+    }
+
+    pub fn limit_lookup(&self, seconds: u64) {
+        self.state.lock().unwrap().limit_lookup = Some(seconds);
+    }
+
+    pub fn lookups(&self) -> usize {
+        self.state.lock().unwrap().lookups
+    }
 }
 
 pub struct FakeSlack {
@@ -301,9 +390,20 @@ impl FakeSlack {
                         }
                         let limited = {
                             let mut w = workspace.lock().unwrap();
+                            let extra_app = w
+                                .extra_apps
+                                .iter()
+                                .find(|app| app.lock().unwrap().bot_token == token)
+                                .cloned();
                             if method == "users.info" {
-                                w.lookups += 1;
-                                w.limit_lookup.take()
+                                if let Some(extra) = extra_app {
+                                    let mut e = extra.lock().unwrap();
+                                    e.lookups += 1;
+                                    e.limit_lookup.take()
+                                } else {
+                                    w.lookups += 1;
+                                    w.limit_lookup.take()
+                                }
                             } else if method == "conversations.history" {
                                 let args = form(&body);
                                 let channel = args.get("channel").unwrap();
@@ -462,18 +562,43 @@ impl FakeSlack {
     ) -> Value {
         let mut w = workspace.lock().unwrap();
         let app = method == "apps.connections.open";
-        let accepted = if app {
-            w.app_token.as_deref().unwrap_or(APP_TOKEN)
+        let extra = w
+            .extra_apps
+            .iter()
+            .find(|slot| {
+                let s = slot.lock().unwrap();
+                if app {
+                    s.app_token == token
+                } else {
+                    s.bot_token == token
+                }
+            })
+            .cloned();
+        let (eff_socket_url, eff_bot_user, eff_bot_id) = if let Some(ref slot) = extra {
+            if w.refuse {
+                return json!({"ok": false, "error": "invalid_auth"});
+            }
+            let s = slot.lock().unwrap();
+            (s.socket_url.clone(), s.bot_user.clone(), s.bot_id.clone())
         } else {
-            BOT_TOKEN
+            let accepted = if app {
+                w.app_token.as_deref().unwrap_or(APP_TOKEN)
+            } else {
+                BOT_TOKEN
+            };
+            if app && w.refuse_app_connection {
+                w.refused_app_connections += 1;
+                return json!({"ok": false, "error": "invalid_auth"});
+            }
+            if w.refuse || token != accepted {
+                return json!({"ok": false, "error": "invalid_auth"});
+            }
+            (
+                socket_url.to_owned(),
+                BOT_USER.to_owned(),
+                BOT_ID.to_owned(),
+            )
         };
-        if app && w.refuse_app_connection {
-            w.refused_app_connections += 1;
-            return json!({"ok": false, "error": "invalid_auth"});
-        }
-        if w.refuse || token != accepted {
-            return json!({"ok": false, "error": "invalid_auth"});
-        }
         let arg = |name: &str| args.get(name).map(String::as_str);
         let bound = |m: &Value, name: &str, below: bool| {
             arg(name).is_none_or(|edge| {
@@ -488,9 +613,9 @@ impl FakeSlack {
             })
         };
         match method {
-            "apps.connections.open" => json!({"ok": true, "url": socket_url}),
+            "apps.connections.open" => json!({"ok": true, "url": eff_socket_url}),
             "auth.test" => {
-                json!({"ok": true, "user_id": BOT_USER, "bot_id": BOT_ID, "team_id": TEAM})
+                json!({"ok": true, "user_id": eff_bot_user, "bot_id": eff_bot_id, "team_id": TEAM})
             }
             "users.conversations" => json!({
                 "ok": true,
@@ -506,7 +631,10 @@ impl FakeSlack {
                         .iter()
                         .filter(|message| message["channel"].as_str() == Some(channel))
                         .filter_map(|message| message["user"].as_str())
-                        .filter(|user| *user != BOT_USER)
+                        .filter(|user| {
+                            *user != BOT_USER
+                                && !w.people.get(*user).is_some_and(|person| person.bot)
+                        })
                         .collect::<std::collections::BTreeSet<_>>();
                     if users.len() == 1 {
                         json!({"ok":true,"channel":{"id":channel,"is_im":true,"user":users.into_iter().next().unwrap()}})
@@ -644,12 +772,28 @@ impl FakeSlack {
             "chat.postMessage" if arg("markdown_text").is_none() && arg("text").is_none() => {
                 json!({"ok": false, "error": "no_text"})
             }
+            "chat.postMessage" if w.next_post_error.is_some() => {
+                let err = w.next_post_error.take().unwrap();
+                json!({"ok": false, "error": err})
+            }
             "chat.postMessage" if w.fail_posts => {
                 json!({"ok": false, "error": "not_in_channel"})
             }
+            // `conversations.open` requires `im:write` / `channels:manage` / `groups:write` / `mpim:write`,
+            // none of which the documented Slack app manifest grants. Match real Slack by refusing it.
+            "conversations.open" => json!({"ok": false, "error": "missing_scope"}),
             "chat.postMessage" => {
+                let raw_channel = arg("channel").unwrap().to_owned();
+                let resolved_channel = if w.people.contains_key(&raw_channel) {
+                    w.dm_channels
+                        .get(&raw_channel)
+                        .cloned()
+                        .unwrap_or_else(|| format!("DM-{raw_channel}"))
+                } else {
+                    raw_channel
+                };
                 let post = Post {
-                    channel: arg("channel").unwrap().to_owned(),
+                    channel: resolved_channel,
                     thread: arg("thread_ts").map(str::to_owned),
                     text: arg("text").map(str::to_owned),
                     markdown: arg("markdown_text").map(str::to_owned),
@@ -672,7 +816,7 @@ impl FakeSlack {
                 }
                 let ts = Self::posted(&mut w);
                 let rendered = w.rendered_posts.get(&shown).unwrap_or(&shown);
-                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": rendered});
+                let mut message = json!({"channel": post.channel, "ts": ts, "user": eff_bot_user, "bot_id": eff_bot_id, "text": rendered});
                 if let Some(metadata) = arg("metadata") {
                     message["metadata"] = serde_json::from_str(metadata).unwrap();
                 }
@@ -690,14 +834,19 @@ impl FakeSlack {
                     channel != &post.channel
                         || post.thread.as_ref().is_some_and(|posted| posted != thread)
                 });
-                w.posts.push(post);
+                let reply_channel = post.channel.clone();
+                if let Some(ref slot) = extra {
+                    slot.lock().unwrap().posts.push(post);
+                } else {
+                    w.posts.push(post);
+                }
                 if fate == Some(Fate::Lost) {
                     return json!({"ok": false, "error": "request_timeout"});
                 }
                 if fate == Some(Fate::MissingTimestamp) {
                     return json!({"ok": true});
                 }
-                json!({"ok": true, "ts": ts})
+                json!({"ok": true, "channel": reply_channel, "ts": ts})
             }
             other => json!({"ok": false, "error": format!("unknown_method {other}")}),
         }
@@ -889,6 +1038,11 @@ impl FakeSlack {
         file: bool,
     ) -> String {
         let ts = self.say(channel, user, text, None);
+        self.workspace
+            .lock()
+            .unwrap()
+            .dm_channels
+            .insert(user.to_owned(), channel.to_owned());
         let mut event = json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
         Self::dress(&mut event, subtype, file);
         self.dress_stored(&ts, subtype, file);
@@ -1097,6 +1251,17 @@ impl FakeSlack {
         self.workspace.lock().unwrap().fail_posts = false;
     }
 
+    /// Sets whether Slack reports `user` as a workspace administrator.
+    pub fn set_admin(&self, user: &str, is_admin: bool) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .people
+            .get_mut(user)
+            .unwrap()
+            .is_admin = is_admin;
+    }
+
     /// Lookups of people wait until [`FakeSlack::release_lookups`].
     pub fn hold_lookups(&self) {
         self.workspace.lock().unwrap().hold_lookups = true;
@@ -1200,6 +1365,14 @@ impl FakeSlack {
         self.workspace.lock().unwrap().posts.clone()
     }
 
+    pub fn stored_messages(&self) -> Vec<Value> {
+        self.workspace.lock().unwrap().messages.clone()
+    }
+
+    pub fn fail_next_post(&self, error: &str) {
+        self.workspace.lock().unwrap().next_post_error = Some(error.to_owned());
+    }
+
     /// What Slack returns as text for the submitted Markdown.
     pub fn render_post(&self, submitted: &str, returned: &str) {
         self.workspace
@@ -1251,6 +1424,93 @@ impl FakeSlack {
 
     pub fn connections(&self) -> usize {
         self.workspace.lock().unwrap().connections
+    }
+
+    /// Register an additional Slack app on the same fake Web API endpoint,
+    /// with its own Socket Mode WebSocket listener and Bearer tokens.
+    pub fn register_app(
+        &mut self,
+        app_token: &str,
+        bot_token: &str,
+        bot_user: &str,
+        bot_id: &str,
+    ) -> ExtraSlackApp {
+        let sockets = TcpListener::bind("127.0.0.1:0").unwrap();
+        let socket_url = format!("ws://{}/", sockets.local_addr().unwrap());
+        let state = Arc::new(Mutex::new(ExtraAppState {
+            app_token: app_token.to_owned(),
+            bot_token: bot_token.to_owned(),
+            bot_user: bot_user.to_owned(),
+            bot_id: bot_id.to_owned(),
+            socket_url,
+            outgoing: VecDeque::new(),
+            posts: Vec::new(),
+            acknowledged: Vec::new(),
+            connections: 0,
+            limit_lookup: None,
+            lookups: 0,
+        }));
+        {
+            let mut w = self.workspace.lock().unwrap();
+            let mut bot = Person::member(bot_user, "bot", "bot", "bot@example.com");
+            bot.bot = true;
+            w.people.insert(bot_user.to_owned(), bot);
+            w.extra_apps.push(Arc::clone(&state));
+        }
+        sockets.set_nonblocking(true).unwrap();
+        let slot = Arc::clone(&state);
+        let stop = Arc::clone(&self.stop);
+        self.threads.push(std::thread::spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                let stream = match sockets.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(20)))
+                    .unwrap();
+                let Ok(mut socket) = tungstenite::accept(stream) else {
+                    continue;
+                };
+                slot.lock().unwrap().connections += 1;
+                let _ = socket.send(tungstenite::Message::text(
+                    json!({"type":"hello","num_connections":1}).to_string(),
+                ));
+                while !stop.load(Ordering::Acquire) {
+                    let next = slot.lock().unwrap().outgoing.pop_front();
+                    if let Some(next) = next
+                        && socket.send(tungstenite::Message::text(next)).is_err()
+                    {
+                        break;
+                    }
+                    match socket.read() {
+                        Ok(tungstenite::Message::Text(text)) => {
+                            if let Ok(ack) = serde_json::from_str::<Value>(&text)
+                                && let Some(id) = ack["envelope_id"].as_str()
+                            {
+                                slot.lock().unwrap().acknowledged.push(id.to_owned());
+                            }
+                        }
+                        Ok(tungstenite::Message::Close(_)) => break,
+                        Ok(_) => {}
+                        Err(tungstenite::Error::Io(error))
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+        }));
+        ExtraSlackApp {
+            state,
+            workspace: Arc::clone(&self.workspace),
+        }
     }
 }
 
