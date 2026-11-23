@@ -58,7 +58,7 @@ procedure, design, spec, adr. Order of listing follows this sequence.
 unit: one owner per computer, its own schema, its own index, optionally its own
 workflow (`docs/domain/<x>/workflow/`). It is named after what it is about,
 never after a category it belongs to. Domains carry no tags; they are found
-through their description and their procedures' activation triggers.
+through their description.
 `general` is a position with the same model; it is addressed like a domain
 wherever a domain name is accepted.
 

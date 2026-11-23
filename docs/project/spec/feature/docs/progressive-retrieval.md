@@ -130,9 +130,9 @@ the current contract.
 - **Content, in order:** every `expanded` snippet in full with its closure,
   each snippet once across the whole read; then one listing line per `listed`
   id; then one listing line per procedure of that domain carrying an
-  `activation_trigger`.
-- **Format:** grouped and formatted exactly as publication renders that
-  domain's group in the global agent files
+  `activation_trigger`; then the domain's subscribed procedures under
+  Configured Responsibilities.
+- **Format:** grouped and formatted by the shared selection rendering
   (`project/instrukt/spec/feature/publication/agent-entrypoints`). For
   an on-demand domain this is the full content its description line in the
   global file stands for, not merely that line.
