@@ -525,7 +525,7 @@ them takes the state database's writer lock.
 | --- | --- | --- |
 | `state/review.db` | settlements with their identity, hand-off number, recorded choices and head verdict versions with their reports, pending revisions, exemptions, imported derived approvals and the settlements an import set aside; written only by the `instrukt review` commands | nothing: it is the only copy of this computer's evidence and must be preserved; another computer receives it through an export |
 | `state/review.lock` | the evidence store's write-isolation unit, held for each of those commands' transactions | taken again by the next command |
-| `state/review-publication.db` | the derived approvals the tick recorded and each withdrawal of one, the answer that decided each pending revision, what GitHub shows of each current verdict per destination, and the verdicts recognised as already published with their review body; written only by the tick | what GitHub shows, and a fresh coverage derivation for the integration head; the derived approval of a candidate the canonical branch has taken and the answer that decided a pending revision are not re-created |
+| `state/review-publication.db` | the derived approvals the tick recorded and each withdrawal of one, the answer that decided each pending revision, what GitHub shows of each current verdict per destination, and the verdicts recognised as already published with their review body; written only by the tick | what GitHub shows, and a fresh coverage derivation for the integration head; the derived approval of a candidate the canonical branch has taken, the answer that decided a pending revision and each withdrawal with the commit found uncovered are not re-created |
 | `state/review-publication.lock` | the publication store's write-isolation unit, held for each tick's publication writes | taken again by the next tick |
 | `state/review-observation.db` | the pages of the pull-request listing with their conditional validators; written only by the tick's review observation | one unconditional request per page |
 | `state/review-observation.lock` | the observation store's write-isolation unit, held for each observation pass's writes | taken again by the next pass |
@@ -544,10 +544,14 @@ settlement of a commit, whatever the two hand-off numbers, it changes nothing
 until its operator states which stands. That choice is recorded on a
 settlement that stands on the importing computer and travels with it; a
 settlement that computer handed off is chosen where it stands. A computer that
-serves without an import recognises the verdict the reviewer bot published
-last for a head, from its status, the review that status links and its reviews
-on the pull requests observed there. It brings a status or a pull request that
-lags behind that verdict up to it and asks for the rest.
+serves without an import recognises, among the verdicts the reviewer bot
+published for a head, the one decided last, from its status, the review that
+status links and its reviews on the pull requests observed there. Every
+publication carries the moment its verdict was decided, and that moment orders
+them; the date GitHub gives a publication says when it was delivered, and a
+verdict repeated on a further pull request keeps the moment it had. The
+computer brings a status or a pull request that lags behind that verdict up to
+it and asks for the rest.
 Observation rides the tick's existing
 conditional GitHub pass, requests the event platform and publication the tick;
 the gate adds no webhook, queue or process.
@@ -697,10 +701,21 @@ the gate adds no webhook, queue or process.
   review accompanies is recognised as well: no review is asked for and none is
   written.
 - **A publication stopped between a review and its status, and a computer
-  without the evidence serves next:** the latest verdict the reviewer bot
-  published is recognised from the reviews on the observed pull requests as
-  well as from the status, the status is brought up to it, and an earlier
-  review is never written over a later one.
+  without the evidence serves next:** the verdict decided last among those the
+  reviewer bot published is recognised from the reviews on the observed pull
+  requests as well as from the status, the status is brought up to it, and a
+  verdict decided earlier is never written over a later one.
+- **A computer without the evidence repeated an approval on a further pull
+  request while the pull request carrying a later change request was a draft,
+  and that pull request is ready again:** the repeated approval carries the
+  moment of the approval it repeats, so the change request is the verdict
+  decided last although GitHub received it earlier. The status and the other
+  pull request are brought up to the change request with its findings, and the
+  head is not reviewed again.
+- **The publication store is lost after a tick withdrew a derived approval:**
+  the account of that withdrawal and of the commit found uncovered is gone and
+  no derivation gives it again. Nothing is published from the loss: an approval
+  GitHub does not show is derived again before anything of it is written.
 - **A computer is lost, or loses its home, without an export:** what it had
   not published is gone. The computer that serves next recognises what the
   reviewer bot published, has every other owed head reviewed again, and shows

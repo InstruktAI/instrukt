@@ -360,13 +360,22 @@ derived approval that GitHub does not show yet is published only by a tick
 that found its coverage again (Admission of review evidence).
 
 A version is named by the digest of its report, and a derived approval by the
-digest of its coverage. The status carries that name in its description and
-the review in its body.
+digest of its coverage. Each verdict also has its moment, which says when it
+was decided and never when it was published. A version's moment is the moment
+it was recorded with, for an admitted revision the moment it was offered;
+where that is not later than the moment of the version it replaces, it is the
+first moment after that one, so the moments of a settlement keep the order of
+its versions whatever the clocks of the computers that held it read. A derived
+approval's moment is the moment the tick recorded the coverage it is published
+with. The moment is kept with the verdict, travels with it through an export
+and an import, and is the same in every publication of it. The status carries
+the name and the moment in its description, and the review carries both at the
+head of its body, ahead of the report or the coverage.
 
 | Destination | Owed while |
 | --- | --- |
-| The review status on the commit | GitHub has the commit in the project's repository, and the reviewer bot's newest status named `instrukt/review` on it does not have the current verdict's state together with its name, or links no review although a pull request holds the reviewer bot's review of the current verdict. |
-| A pull-request review on each eligible pull request whose current head is the commit | The runner observes that pull request eligible at that head, and the reviewer bot's latest review of exactly that commit on that pull request does not have the current verdict's native state together with its name in the body. |
+| The review status on the commit | GitHub has the commit in the project's repository, and the reviewer bot's newest status named `instrukt/review` on it does not have the current verdict's state together with its name and moment, or links no review although a pull request holds the reviewer bot's review of the current verdict. |
+| A pull-request review on each eligible pull request whose current head is the commit | The runner observes that pull request eligible at that head, and the reviewer bot's latest review of exactly that commit on that pull request does not have the current verdict's native state together with its name and moment in the body. |
 
 The status links the review. Its target address is the address GitHub gives
 the reviewer bot's review that carries the current verdict, on the
@@ -432,41 +441,49 @@ own publications for exactly that commit, each verified by the bot's identity.
 
 | Read | Counts when |
 | --- | --- |
-| The reviewer bot's newest `instrukt/review` status on the commit | Its state is success or failure and its description carries a verdict's name. |
-| The review that status links, read by its own address | Its author is the reviewer bot, it is a review of exactly that commit in the project's repository, its native state is approving or change-requesting, and its body carries a verdict's name. |
-| The reviewer bot's latest review of exactly that commit on each eligible pull request the runner observes at that head | The same as for the linked review. |
+| The reviewer bot's newest `instrukt/review` status on the commit | Its state is success or failure and its description carries a verdict's name and moment. |
+| The review that status links, read by its own address | Its author is the reviewer bot, it is a review of exactly that commit in the project's repository, its native state is approving or change-requesting, and its body carries a verdict's name and moment. |
+| The reviewer bot's latest review of exactly that commit on each eligible pull request the runner observes at that head, which is the one GitHub lists last there | The same as for the linked review. |
 
-The recognised verdict is the one the latest of these carries: its state and
-its name. The latest is the one GitHub dates last, a status by when it was
-created and a review by when it was submitted; of two reviews on one pull
-request it is the one GitHub lists later. Where GitHub gives two of them
-the same date and they carry different names, the one that reports failure or
-requests changes counts as the later; between two of one state a review counts
-as later than the status, and of two reviews the one on the higher-numbered
-pull request. The order follows from what GitHub shows alone, so every tick
-recognises the same verdict.
+The recognised verdict is the one decided last among those these reads give:
+its state, its name and its moment. Which was decided last is read from the
+moments the publications carry and from nothing else. The date GitHub gives a
+status or a review is the date of that delivery: a verdict delivered again, to
+a further pull request or as a status written once more, is dated anew and was
+not decided again, so GitHub's dates order no two verdicts. Publications that
+carry one name and one moment carry one verdict. Of two verdicts the one with
+the later moment was decided last. Where two moments are equal and the names
+differ, the verdict that reports failure or requests changes counts as the
+later, and between two of one state the one whose name sorts last. The order
+follows from what the publications carry alone, so every tick recognises the
+same verdict, whichever pull requests received it and in whatever order.
 
 The linked review is read where it was written, whatever became of its pull
 request: one that was closed without merging still gives it. A head with a
 recognised verdict carries the reviewer identity's verdict and is asked for no
 review, also when the status alone carries it.
 
-Recognition keeps the verdict's state and name and, where a review that counts
-carries that name, that review's body. Each destination then follows the
-recognised verdict as it follows a current one. The status is owed while the
-reviewer bot's newest one does not show that state and name, or links no
-review although a review that counts carries the name, and is written linking
-such a review. An eligible pull request at that head whose latest review by
-the reviewer bot of the commit does not show them is owed a review of that
-state carrying that body. A publication that stopped between a review and its
-status is completed this way, a further pull request at the head receives the
-same verdict with the same findings, and no destination is written with an
-earlier verdict than the latest GitHub shows. The commit is judged once.
+Recognition keeps the verdict's state, name and moment and, where a review
+that counts carries that name and moment, that review's body. Each destination
+then follows the recognised verdict as it follows a current one. The status is
+owed while the reviewer bot's newest one does not show that state, name and
+moment, or links no review although a review that counts carries them, and is
+written with them, linking such a review. An eligible pull request at that
+head whose latest review by the reviewer bot of the commit does not show them
+is owed a review of that state carrying that body as it was read. What
+recognition writes repeats a verdict and decides none: it carries the
+recognised name and moment unchanged and is given no moment of its own, and
+the date GitHub gives it is the date of its delivery. A publication that
+stopped between a review and its status is completed this way, a further pull
+request at the head receives the same verdict with the same findings, and no
+destination is written with a verdict decided earlier than the last one these
+reads give, however lately the earlier one was delivered. The commit is judged
+once.
 
-Where no review that counts carries the recognised name, this computer has no
-report to deliver. It writes no review, the pull requests keep what they show
-beside the commit's status, and `instrukt review show` gives the review as
-owed and not deliverable from this computer.
+Where no review that counts carries the recognised name and moment, this
+computer has no report to deliver. It writes no review, the pull requests keep
+what they show beside the commit's status, and `instrukt review show` gives
+the review as owed and not deliverable from this computer.
 
 Recognition is no evidence: it earns no candidate coverage and admits no
 revision. What it writes repeats the reviewer bot's own latest publication and
@@ -478,20 +495,33 @@ and a head with none that counts is owed its review.
 | Store | Holds | Written by | Write-isolation unit |
 | --- | --- | --- | --- |
 | `state/review.db` | Settlements as recorded on or imported to this computer, each with its identity, its hand-off number, the settlements it was chosen over and its verdict versions with their reports; pending revisions; exemptions; imported derived approvals; for a settlement this computer handed off, the computer it was handed to; and the settlements an import set aside. | `instrukt review record`, `exempt`, `export` and `import` only: commands their caller waits on. | `state/review.lock` |
-| `state/review-publication.db` | The derived approvals the tick recorded, with their coverage; each withdrawal of a derived approval, of one an import brought as well; the answer that decided each pending revision; per current verdict and destination what GitHub shows of it, with the cause of an outstanding or refused one; and the verdicts recognised as already published, each with its state, name and review body. | The tick only. | `state/review-publication.lock` |
+| `state/review-publication.db` | The derived approvals the tick recorded, with their coverage; each withdrawal of a derived approval, of one an import brought as well, with the commit found uncovered and when it was withdrawn; the answer that decided each pending revision; per current verdict and destination what GitHub shows of it, with the cause of an outstanding or refused one; and the verdicts recognised as already published, each with its state, name, moment and review body. | The tick only. | `state/review-publication.lock` |
 
 No background work writes the evidence store and no command a caller waits on
 writes the publication store, so no command waits behind a tick
 (`sdlc/policy/state-storage`). Neither store takes the state database's writer
 lock, and readers take no lock. The publication store refers to evidence by
 commit and version and shares no transaction with the evidence store. What it
-holds of GitHub is read again when it is missing, and the derived approval of
-the integration head is derived again. The derived approval of a candidate the
-canonical branch has since taken, and the answer that decided a pending
-revision, cannot be obtained again with certainty and are kept there until
-they are retired. Whether a pending revision is decided, and how, and whether
-a derived approval was withdrawn, is read from there by every reader of a
-commit's current verdict.
+holds of GitHub is read again when it is missing, and whether the integration
+head is covered now is derived again. Three things in it are obtained from
+nowhere else and are kept there until they are retired: the derived approval
+of a candidate the canonical branch has since taken, the answer that decided a
+pending revision, and each withdrawal with the commit found uncovered. Whether
+a pending revision is decided, and how, and whether a derived approval was
+withdrawn, is read from there by every reader of a commit's current verdict.
+
+A withdrawal is the record of what one tick did and why, and that tick's write
+is its only copy. A later derivation answers another question: whether the
+integration head of its own tick is covered by the evidence of its own tick.
+That is another candidate once the integration branch has moved and other
+evidence once a head was revised. No derivation returns that an approval was
+withdrawn, when, or for which commit. The tick writes the withdrawal as the
+act itself: the approval is withdrawn from that write on. It is history from
+then and is retired like other history, and it stays on the computer whose
+tick recorded it: an export carries no withdrawn approval and no withdrawal.
+Losing a withdrawal loses that account and causes no publication: an approval
+that reads as not withdrawn again and that GitHub does not show is derived
+again before anything of it is written.
 
 Evidence is current for as long as it can still admit something. A commit's
 current verdict is current while the canonical branch does not contain the
@@ -525,7 +555,7 @@ computer to one named computer.
 
 | Command | Contract |
 | --- | --- |
-| `instrukt review export --to <file> --for <computer>` | Writes one cut of the project's review evidence on this computer for the computer named by its instrukt machine ID: every standing settlement with its identity, its hand-off number, the settlements it was chosen over and all its versions and reports, every current exemption and every derived approval it keeps, with what is not yet published and what concerns commits GitHub does not have. It holds `state/review.lock`, so a recording command falls wholly before the cut or wholly after it. The file names the computer that wrote it and the computer it is for. It is complete on disk before the cut is committed, and with the cut the exported settlements are handed off to that computer. |
+| `instrukt review export --to <file> --for <computer>` | Writes one cut of the project's review evidence on this computer for the computer named by its instrukt machine ID: every standing settlement with its identity, its hand-off number, the settlements it was chosen over and all its versions and reports, every current exemption and every derived approval it keeps that was not withdrawn, with what is not yet published and what concerns commits GitHub does not have. It holds `state/review.lock`, so a recording command falls wholly before the cut or wholly after it. The file names the computer that wrote it and the computer it is for. It is complete on disk before the cut is committed, and with the cut the exported settlements are handed off to that computer. |
 | `instrukt review import <file>` | Takes in an export written for this computer, holding `state/review.lock`, commit by commit. On any other computer it is refused whole, and the refusal names the computer the file is for. It removes nothing the importing computer holds. |
 | `instrukt review import <file> --standing imported\|held` | The same, and states which settlement stands for every commit of which the export and this computer hold two different ones. |
 
@@ -708,14 +738,22 @@ But a later head of that pull request carries no status from that verdict
   without the evidence does not have the head reviewed again and writes no
   review for it: its pull requests show the commit's status and no findings
   until the evidence is imported.
-- Recognition orders what the reviewer bot published by GitHub's dates, which
-  count seconds. Of two publications of one second that carry different
-  verdicts the order is not known, and the refusing one is taken as the
-  later.
+- Recognition orders published verdicts by the moments they carry. Within one
+  settlement that is the order of its versions. Two verdicts that are not
+  versions of one settlement, two settlements of one commit or a head verdict
+  and a derived approval, carry moments read from the clocks of the computers
+  that recorded them, and their order is as true as those clocks agree. Of two
+  verdicts of one moment the order is not known, and the refusing one is taken
+  as the later.
 - A derived approval is derived again until GitHub shows it as the commit's
   status. A covering head's verdict that changes after the derivation of the
   tick that publishes it, or after the status is shown, withdraws nothing: the
   candidate keeps its approving status.
+- A withdrawal of a derived approval, with the commit found uncovered, is
+  given by `instrukt review show` on the computer whose tick recorded it and
+  for the retention period. No later derivation gives it again, and it is in
+  no export: a computer that serves next derives the candidate's coverage for
+  itself and holds no account of an earlier withdrawal.
 - A handed-over approval is admitted only from a conversation instrukt can
   still read and with a report that ends in the fixed verdict line. Work
   establishes that the named session returned that report for that head. That
@@ -766,6 +804,6 @@ But a later head of that pull request carries no status from that verdict
 - https://github.com/actions/create-github-app-token — GitHub's reference token issuance and bot commit-author example.
 
 <!-- planned:event-driven-pr-review-gate -->
-- https://docs.github.com/en/rest/commits/statuses — the creation date of a status, the newest-first listing and the target address a status carries.
-- https://docs.github.com/en/rest/pulls/reviews — the submission date of a review, the listing in submission order and a review read by its own address.
+- https://docs.github.com/en/rest/commits/statuses — the newest-first listing, and the description and target address a status carries.
+- https://docs.github.com/en/rest/pulls/reviews — the listing in submission order, a review read by its own address, and the submission date GitHub sets at each delivery, which no request can set.
 <!-- /planned:event-driven-pr-review-gate -->
