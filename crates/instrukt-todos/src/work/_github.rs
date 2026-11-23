@@ -169,14 +169,14 @@ impl GitHub {
         &self,
         role: Option<&str>,
         operation: instrukt_core::github::Operation,
-    ) -> Result<Self, GitHubError> {
+    ) -> Self {
         let mut gh = Self::new(&self.api, &self.repository, String::new());
         gh.apps = self.apps.clone();
         gh.scoped = true;
         gh.clock = self.clock;
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
-        Ok(gh)
+        gh
     }
     pub fn bots(&self) -> std::cell::Ref<'_, Vec<instrukt_core::github::Bot>> {
         self.bots.borrow()
@@ -828,7 +828,7 @@ mod tests {
     fn only_an_operation_scoped_app_setup_or_app_refusal_leaves_the_command_running() {
         use instrukt_core::github::{AppError, Operation};
         let shared = GitHub::new("http://127.0.0.1", "o/r", String::new());
-        let scoped = shared.for_role(Some("builder"), Operation::Author).unwrap();
+        let scoped = shared.for_role(Some("builder"), Operation::Author);
         let errors = [
             AppError::Setup("mismatch".into()),
             AppError::Refused {

@@ -916,7 +916,7 @@ impl<'w> Session<'w> {
                 } => return Err(error.clone().into()),
                 Remote::Unavailable(reason) => return Err(WorkError::refused(describe(reason))),
             };
-            let account = gh.for_role(None, github::Operation::Board)?;
+            let account = gh.for_role(None, github::Operation::Board);
             let board = super::_board::setup(&account, gh, known.as_ref())?;
             // The reference is the machine's record: reflection never writes
             // the committed project layer.
