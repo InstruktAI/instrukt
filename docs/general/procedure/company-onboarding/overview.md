@@ -15,6 +15,23 @@ through the services the company works with, each person under their own login
 at each service. The company's repository holds its final knowledge, and the
 operator holds the proof. You are the operator's agent setting the company up.
 
+### Platform onboarding vs. company onboarding
+
+Keep the two onboarding layers distinct:
+
+- **Platform onboarding** (the `instrukt` cockpit skill): sets up the host
+  computer itself — installing `instrukt`, adopting documentation and project
+  repositories, configuring the runtime, model profiles, and GitHub Apps, and
+  enabling host modules. Run and re-open the cockpit skill for host-level
+  changes.
+- **Company onboarding** (this procedure): runs on a computer where platform
+  onboarding already stands — creating one company's private repository and
+  home, declaring its members, messaging connector, and company knowledge,
+  wiring its business services through
+  `general/procedure/company-onboarding/service-connection`, and optionally
+  opting into a technical coordinator (`@coder`) posture
+  (`general/procedure/technical-coordinator`).
+
 A service the company works with may need setting up for the company before
 it can be connected — its accounts, its roles, its records. That is the
 service's own procedure; you run it where the company uses that service, and
@@ -22,6 +39,9 @@ this procedure names none.
 
 ## Preconditions
 
+- Platform onboarding stands on this computer: `instrukt` is installed, its
+  runtime and model profiles are configured, and required host modules are
+  enabled (`instrukt status --json` reports a ready host).
 - You work on the computer that is to hold the company's home.
 - The operator is at hand to run, at their own terminal, the commands this
   procedure gives them, and to give you their output back.
@@ -37,8 +57,29 @@ the steps in order, skipping what already stands. Connecting or repairing an
 onboarded company's services runs step 6, then steps 7 and 8, then step 9 for
 the services it touched, then step 10.
 
-1. **Take the intake.** Ask these, and take the answers as the company's
-   facts:
+1. **Surface upfront caveats and take the intake.** Before creating a company
+   home or connecting channels, orient the operator on three operational
+   boundaries (`general/policy/leadership`, `general/policy/human-contract`):
+   - **Compute and token budget:** every addressed company conversation turn
+     and any opted-in technical coordination runs against the configured model
+     profiles and provider usage budget (company-specific profiles are scoped
+     in step 4). Confirm budget expectations and account ownership before
+     enabling active channels.
+   - **Host isolation boundary:** on a single shared host without per-company
+     containers, company homes are separate folders under one operating-system
+     user rather than OS-isolated sandboxes; multi-tenant filesystem and
+     runtime isolation requires per-company containers on a Linux host (macOS
+     is not a multi-tenant company host). State the computer's current
+     isolation topology explicitly before placing the company on it.
+   - **Technical coordination and deployment infrastructure stay opt-in and
+     downstream:** baseline company onboarding delivers business assistance
+     (`general/procedure/company-assistance`) and connected business MCP
+     services. Adopting a technical coordinator / `@coder` persona
+     (`general/procedure/technical-coordinator`) is an explicit opt-in, and any
+     deployment-host, container-runtime, or GitOps setup stays strictly
+     downstream of that opt-in rather than part of baseline company onboarding.
+
+   Then ask these, and take the answers as the company's facts:
    - What is the company called, and what key names it on this computer — a
      slug, the same as its repository's name?
    - What does it do, and how do its people work?
@@ -46,9 +87,14 @@ the services it touched, then step 10.
    - Where do its people talk to each other: which messaging provider and
      which workspace there?
    - Which services does its work run on, and what for?
+   - Does this company stay on business assistance only, or does it also opt
+     into a technical coordinator / `@coder` posture?
 
-   The name and key lead to step 2, what it does and who leads it to step 3,
-   the messaging to step 5, and the services to step 6.
+   The name and key lead to step 2, what it does, who leads it, and any
+   technical-coordinator opt-in to step 3, the messaging to step 5, and the
+   services to step 6. Any deployment-host or GitOps setup for an opted-in
+   technical coordinator remains downstream after step 10 proves baseline
+   onboarding.
 2. **Give the company its repository and its home.** Create the company's
    private repository, one per company, and check it out at
    `~/.instrukt/companies/<name>/`, where `<name>` is the company's key.
@@ -68,9 +114,10 @@ the services it touched, then step 10.
    default branch throughout authoring and review (`general/policy/commits`).
    Create `AGENTS.master.md` for the company's purpose and top-level required
    reads, and place the company's knowledge — what it does, how its people
-   work, who owns and organizes it, and where people reach the agent — in
-   documents under `docs/` referenced by relative path. Follow the company home
-   knowledge rules in `general/procedure/doc-snippet-authoring` and
+   work, who owns and organizes it, where people reach the agent, and (when
+   opted in during step 1) the technical coordinator scope and repositories —
+   in documents under `docs/` referenced by relative path. Follow the company
+   home knowledge rules in `general/procedure/doc-snippet-authoring` and
    `general/policy/snippet-value-contract` (present-tense current truth without
    historical narration; self-contained with no references outside the
    company's own documents). Commit in the worktree.
@@ -148,10 +195,13 @@ the services it touched, then step 10.
    the company's people start (`general/policy/grounding`, confirmation is
    reserved for inspected claims).
 10. **Report to the operator.** Give the home and its repository with the
-    revision pushed, the connector and its state, each service's outcome from
+    revision pushed, the isolation topology confirmed in step 1, the connector
+    and its state, each service's outcome from
     `general/procedure/company-onboarding/service-connection`, each outcome
-    of step 9,
-    and every step still open with what it waits on.
+    of step 9, whether technical coordination was opted into (naming any
+    downstream deployment-host or GitOps setup as separate follow-on work
+    under `general/procedure/technical-coordinator`), and every step still open
+    with what it waits on.
 
 ## Outputs
 
@@ -183,3 +233,9 @@ the services it touched, then step 10.
   fails; report it to the operator with the words the person was given.
 - **The rendering check fails.** It names the file and the reference; correct
   it, commit, and run step 8 again.
+
+## See Also
+
+- [general/procedure/company-onboarding/service-connection](service-connection.md)
+- [general/procedure/company-assistance](../company-assistance.md)
+- [general/procedure/technical-coordinator](../technical-coordinator.md)
