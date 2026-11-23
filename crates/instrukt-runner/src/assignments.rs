@@ -101,8 +101,9 @@ pub struct RecordedStart {
 /// Every start this runner recorded for the caller's native session, and
 /// whether one of them is a work or standing start that must yield an
 /// assignment. Which start carries the assignment is the owning lookup's
-/// decision; both facts come from one read, so the check that an
-/// assignment exists covers exactly the starts the lookups were given.
+/// decision. Both facts come from one read: the starts handed to the
+/// [`WorkLookup`] are exactly those the lost-assignment check counts. The
+/// standing and company lookups read their own state separately.
 fn recorded_starts(
     home: &Home,
     caller: &SessionRef,
