@@ -466,34 +466,38 @@ sequenceDiagram
   participant W as work
   participant F as workflow
   participant I as integrator (agent)
-  R->>G: open pull requests and heads; evidence records of commits without local evidence (conditional requests)
+  R->>G: open pull requests and heads; evidence records and anchors of commits without local evidence (conditional requests)
   R->>W: evidence records read; which evidence is current for this head?
-  R-->>V: runner.review_needed for an owed commit with no live request (head, pinned base, request number)
+  R-->>V: runner.review_needed for an owed commit with no live request (head, base pinned at the canonical merge base, request number)
   V->>W: instrukt review record (head, base, verdict, report)
-  W->>R: reads this commit's requests, their standing and pinned base
+  W->>R: reads this commit's requests with their standing and pinned base, and for a settled commit whether the caller's turn was entered by one
   R->>W: publish outstanding evidence to the pull requests observed at each head
-  W->>G: evidence record on the commit, then the review status and a review on each such pull request, as the reviewer bot
+  W->>G: evidence record on the commit, then its anchor, then the review status and a review on each such pull request, as the reviewer bot
   R->>F: active candidate: is its content covered?
   F->>W: current evidence of each head and commit the finding depends on
   alt every commit covered
     R->>W: record the derived approval
-    W->>G: evidence record and review status on the candidate commit
+    W->>G: evidence record, anchor and review status on the candidate commit
   else a commit is not covered
     R-->>V: runner.review_needed for the exact candidate
   end
   R-->>I: runner.ci_completed once CI and the review status are both reported
 ```
 
-A review is one judgment of one commit from a pinned base. Requests for it are
-counted per commit: one is live at a time, and a request that reached a session
-keeps the commit until its outcome is known, whichever pull requests point at
-it meanwhile. The outcome is delivered to every eligible pull request at that
-commit. The runner reads GitHub and decides what is owed; it decides nothing
-about a verdict. Work admits the first verdict for a commit and no competing
-one, records it locally before anything is published, and reflects it as an
-evidence record before the status and the reviews, so publication is retried
-from the record, on any computer, and never repeats a review
-(`sdlc/policy/state-storage`).
+A review is one judgment of one commit from a pinned base, its merge base with
+the canonical branch: the review status belongs to the commit and admits it
+wherever it is proposed, so the judgment covers everything the commit adds to
+that branch. Requests for it are counted per commit: one is live at a time, and
+a request delivery selected for handover keeps the commit until its outcome is
+known, whichever pull requests point at it meanwhile. The outcome is delivered
+to every eligible pull request at that commit. The runner reads GitHub and
+decides what is owed; it decides nothing about a verdict. Work admits the first
+verdict for a commit and no further answer to a request, from any session;
+only the settling session revises it, in a turn no request for the commit
+entered. Work records a verdict locally before anything is published and
+reflects it as an evidence record with its anchor before the status and the
+reviews, so publication is retried from the record, on any computer, and never
+repeats a review (`sdlc/policy/state-storage`).
 
 Review state has three stores, split by who writes and who waits. Recording
 waits on the evidence store alone; the tick writes the other two, and none of
@@ -501,7 +505,7 @@ them takes the state database's writer lock.
 
 | Path | Holds | Re-created from |
 | --- | --- | --- |
-| `state/review.db` | head verdict versions with their reports, and exemptions, as recorded on this computer; written only by `instrukt review record` and `instrukt review exempt` | their evidence records on GitHub once reflected; evidence not yet reflected exists nowhere else and must be preserved |
+| `state/review.db` | head verdict versions with their reports, and exemptions, as recorded on this computer; written only by `instrukt review record` and `instrukt review exempt` | their anchored evidence records on GitHub once reflected; evidence not yet reflected exists nowhere else, must be preserved, and keeps this computer reflecting it |
 | `state/review.lock` | the evidence store's write-isolation unit, held for each recording command's transaction | taken again by the next recording command |
 | `state/review-publication.db` | derived approvals with their coverage, the evidence records read from GitHub, and what GitHub carries of each piece of evidence per destination; written only by the tick | what GitHub carries, and a fresh coverage derivation |
 | `state/review-publication.lock` | the publication store's write-isolation unit, held for each tick's publication writes | taken again by the next tick |
@@ -512,10 +516,17 @@ GitHub carries review evidence between computers as it carries the work
 record: a computer that starts serving a project reads the evidence records of
 the commits it answers for, starts no review of a commit that has one,
 completes whatever publication is still missing from the recorded report, and
-derives coverage from the same records. The review status is the mark GitHub
-enforces and is never read back as evidence. Observation rides the tick's
-existing conditional GitHub pass, requests the event platform and publication
-the tick; the gate adds no webhook, queue or process.
+derives coverage from the same records. A record is a check run of the
+reviewer identity and counts only through its anchor, a commit status of the
+reviewer bot that names the digest of the record's whole content; content
+GitHub returns that its anchor does not name is no evidence. The computer that
+accepted evidence reflects it, and the configuration write that ends a
+computer's admission of a project is refused while that computer still holds
+evidence GitHub does not carry, so a computer that takes over reads the
+predecessor's latest decision. The review status is the mark GitHub enforces
+and is never read back as evidence. Observation rides the tick's existing
+conditional GitHub pass, requests the event platform and publication the tick;
+the gate adds no webhook, queue or process.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Failure modes
@@ -584,8 +595,12 @@ the tick; the gate adds no webhook, queue or process.
   is required, cannot merge.
 - **A review request is accepted by the runtime and never seen entering a
   turn:** the request ends as unconfirmed and the commit is asked for again.
-  If the first handover enters after all, work admits one verdict for the
-  commit and refuses the other session's.
+  If the first handover enters after all, in another session or in the one
+  that answered the later request, work records the first verdict for the
+  commit and nothing for the request answered second.
+- **A request selected for handover belongs to a commit that stopped being
+  owed:** it is handed over as selected and stays in flight; no other request
+  is emitted for that commit until its outcome is known.
 - **A commit stops being a head while its review is in flight and becomes one
   again, on the same or another pull request:** no second request is emitted;
   the review in flight is that commit's and its verdict reaches the pull
@@ -596,9 +611,16 @@ the tick; the gate adds no webhook, queue or process.
 - **GitHub is unavailable while evidence waits for publication:** the evidence
   stays recorded with its publication outstanding and its cause; a later tick
   publishes it. The review is not repeated.
-- **GitHub carries a verdict's evidence record and not all of its status and
-  reviews:** the missing ones are completed from the record, on whichever
-  computer serves the project; no second review is started.
+- **GitHub carries a verdict's anchored evidence record and not all of its
+  status and reviews:** the missing ones are completed from the record, on
+  whichever computer serves the project; no second review is started.
+- **An evidence record's content on GitHub differs from what its anchor
+  names, or the record has no anchor:** it supplies no verdict, and no
+  publication is completed from it. A commit left without recognised evidence
+  is asked for again where it is owed.
+- **A pull request is closed before its review was written and reopened at the
+  same head:** the review is owed again and written from the existing
+  evidence.
 - **A verdict recorded locally is newer than the status GitHub still shows:**
   the local verdict decides; a stale approving status earns no derived
   approval.
@@ -607,7 +629,14 @@ the tick; the gate adds no webhook, queue or process.
   candidate is reviewed, and promotion waits for that verdict.
 - **A recovery candidate removes more than the red head's own promotion
   added:** it is not covered as a revert; the exact candidate is reviewed.
-- **A project moves to another computer with evidence not yet reflected:** the
-  new computer cannot see it and has an owed head reviewed again; the old
-  computer's record keeps the report, and nothing is admitted on its account.
+- **A computer's admission of a project is to end while it holds evidence not
+  yet reflected:** the configuration write is refused until a tick has
+  reflected it; the computer that takes over then reads that evidence from
+  GitHub.
+- **A computer stops ticking for a project with evidence not yet reflected,
+  without that write:** another computer cannot see the evidence and has an
+  owed head reviewed again; the first computer keeps it and reflects it when
+  it ticks for the project again. Nothing is admitted on its account
+  meanwhile, and an approval GitHub already showed stays the newest it shows
+  until then.
 <!-- /planned:event-driven-pr-review-gate -->

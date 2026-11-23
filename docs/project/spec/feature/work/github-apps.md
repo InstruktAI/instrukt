@@ -141,7 +141,9 @@ The reviewer identity is the App the `commit-reviewer` role selects.
 The verdict is a judgment of the commit; the pull-request review is its
 delivery to one pull request. Every eligible pull request whose current head is
 that commit receives its own review of the one verdict, and the commit receives
-one status.
+one status. The status belongs to the commit and admits it wherever it is
+proposed, so the verdict behind it is a judgment of everything the commit adds
+to the canonical branch (Admission of review evidence, Range).
 
 ### Review evidence
 
@@ -161,11 +163,18 @@ an exemption is not.
 | `instrukt review exempt --commit <sha> --basis <text>` | Records an exemption for a commit the canonical branch does not contain yet. |
 | `instrukt review show <sha>` | The commit's evidence: its verdict versions, exemption or derived approval, each with its pinned base, where it was recorded, its evidence record on GitHub and every publication with its state and the cause of an outstanding or refused one. |
 
-The first verdict admitted for a commit settles its review. A later verdict for
-the same commit is a new version, admitted only from the session that recorded
-the current one, as when a reviewer judges its own findings again against the
-author's evidence. The latest version is current and earlier ones are kept as
-history.
+The first verdict admitted for a commit settles its review. Every review
+request for that commit asks for that one judgment, so a request answered once
+the commit is settled records nothing. A later version exists only as a
+revision: the session that recorded the current version judges its own findings
+again, as when the author disputes them with evidence and no new commit. The
+latest version is current and earlier ones are kept as history.
+
+A head verdict is its reviewer's to record. Whether the review was requested,
+when it took place and whether the project has opted in decide nothing about
+its admission: a review that finished earlier is recorded from its retained
+report by the session that reviewed, and counts like any other. Recording needs
+no opt-in; publication does (Verdict publication).
 
 ### Admission of review evidence
 
@@ -179,10 +188,21 @@ it, and they bind every caller, a session without a role included
 | Repository | `--head` is the full id of a commit present in the repository of the project the caller stands in. | The commit and the project. |
 | Reviewer | The caller is a session the selected runtime adapter recognises, resolved as for an attributed commit (`project/instrukt/spec/feature/repository/attributed-commit`, Resolution). It is recorded as the reviewing session. | That no session resolves. |
 | Request | Read from the runner (`project/instrukt/spec/feature/runner/pull-request-review`, One review per commit). A caller that was handed a review request for exactly this project and commit records that review. Any other caller is refused while the commit has a queued or in-flight request: the review is that request's. A commit with neither is unrequested and its verdict is a one-off review's. | The request, and the session that holds it once it was handed over. |
-| Range | The pinned base is the request's for a requested review. For an unrequested one it is the merge base of the head with the project's canonical branch as the repository holds it, so the review covers the whole head, as `sdlc/procedure/lifecycle/work/review-commits` pins its candidate. A later version of a settled commit keeps the pinned base of the version it replaces. `--base` states where the review started and is admitted when it is the pinned base or one of that base's ancestors. The caller cannot narrow the range. | The pinned base. |
+| Range | The pinned base is the merge base of the head with the project's canonical branch, so a head verdict covers everything its head adds to that branch, whatever branch a pull request at that head targets. A request carries it for a requested review; work computes it from the repository for an unrequested one, as `sdlc/procedure/lifecycle/work/review-commits` pins its candidate. A later version of a settled commit keeps the pinned base of the version it replaces. `--base` states where the review started and is admitted when it is the pinned base or one of that base's ancestors. The caller cannot narrow the range. | The pinned base. |
 | Independence | No commit after the pinned base up to the head names the reviewing session in its `Session:` trailer. | The commits that name the caller. The door is a review by a session none of them names. |
-| Settlement | The commit has no verdict yet, or the caller is the session that recorded its current version. | The settled verdict and `instrukt review show`. |
+| Settlement | The commit has no verdict yet, or the verdict is a revision: the caller is the session that recorded the current version, and its current turn is one that no review request for this commit entered. | The settled verdict and `instrukt review show`; for the session that recorded it, that a revision is recorded in a turn no review request for the commit entered. |
 | Report | A non-empty report is supplied. It is stored whole with the version. | The missing report. |
+
+A request is answered in the turn it entered. A verdict offered in such a turn
+for a commit that is already settled answers that request a second time,
+whichever session offers it and whichever request it is: the one first handed
+over, one emitted after an unconfirmed handover, or one delivery replayed. It
+is refused and no version is recorded. Whether the caller's current turn was
+entered by a review request for the commit is the runner's answer
+(`project/instrukt/spec/feature/runner/pull-request-review`, One review per
+commit), asked only for a settled commit and its settling session. While the
+runtime cannot give it, the verdict is refused as not yet decidable and the
+caller records again.
 
 A commit without a `Session:` trailer names no session, and that is its true
 state (`general/concept/lineage-vs-authorship`). Work refuses nothing on that
@@ -218,35 +238,60 @@ as it carries the work record
 pull-through): evidence is recorded locally first and then reflected as an
 evidence record on the commit it is about.
 
-| Evidence | Evidence record |
+| Evidence | Its evidence record carries |
 | --- | --- |
-| Head verdict version | A record comment on the reviewed commit carrying the version whole: verdict, pinned base, complete report, reviewing session, request and the commits that name no authoring session. |
-| Derived approval | A record comment on the candidate commit carrying the canonical head it was derived against and every covering item. |
-| Exemption | A record comment on the exempted commit carrying the basis and who declared it. |
+| Head verdict version | The version whole: verdict, pinned base, complete report, reviewing session, request and the commits that name no authoring session. |
+| Derived approval | The canonical head it was derived against and every covering item with the reference to its evidence (Verdict publication). |
+| Exemption | The basis and who declared it. |
 
-The reviewer identity writes every evidence record, and a record counts only
-from that identity, recognised by its verified bot identity; a comment of the
-same shape from anyone else is not evidence. A record declares its record
-schema version and is read under the compatibility rule of
-`project/instrukt/spec/feature/work/github-record` (Record schema
-compatibility). One that does not fit a single comment is carried in numbered
-parts and counts only when every part is present. A record is never rewritten:
-a later version is a later record.
+An evidence record is two objects on the commit, both published by the
+reviewer identity.
 
-The evidence record is the first thing published of any evidence. The review
-status and the pull-request reviews are written only once the record is
-confirmed on GitHub, so whatever GitHub shows of a verdict has its complete
-evidence beside it. The review status alone is never evidence in instrukt: a
-commit that carries the status and no record has no recognised verdict.
+| Part | GitHub object | Holds |
+| --- | --- | --- |
+| The record | A completed check run named `instrukt/review-record`, concluded neutral | The evidence whole, in the check run's output. |
+| Its anchor | A commit status named `instrukt/review-anchor`, with state success | In its description, the digest of the record's whole content. |
+
+What GitHub returns for a record is evidence only through its anchor. Work
+reads the reviewer bot's anchors on the commit, recognised by its verified bot
+identity, and accepts the record whose whole content has the digest an anchor
+names. A record without an anchor, one whose content differs from its anchor
+and one with a part missing supply no evidence, whoever GitHub names as their
+creator. The anchor is a commit status because GitHub's status interface
+creates and lists statuses, offers nothing that changes or removes one, and
+names the creator of each. The record is a check run because only a GitHub App
+can write one, under a permission readiness verifies (Readiness for automatic
+review), where a comment's text can be changed by anyone who may write to the
+repository. A version of an artifact counts the same way in the work record:
+only when a committed revision names its digest
+(`project/instrukt/spec/feature/work/github-record`, Artifacts and stamps).
+
+A record declares its record schema version and is read under the
+compatibility rule of `project/instrukt/spec/feature/work/github-record`
+(Record schema compatibility). One that does not fit a single check run is
+carried in numbered parts under one anchor whose digest covers them all. A
+record is never rewritten: a later version is a later record with a later
+anchor.
+
+The newest anchor on a commit names its current record. Every earlier record
+is history from then on, also when the record the newest anchor names cannot
+be read whole: the commit then has no recognised evidence, and an earlier
+verdict does not come back.
+
+The record is published first and its anchor second. The review status and the
+pull-request reviews are written only once the anchor is confirmed on GitHub,
+so whatever GitHub shows of a verdict has its verifiable evidence beside it.
+The review status alone is never evidence in instrukt: a commit that carries
+the status and no anchored record has no recognised verdict.
 
 Which evidence is current for a commit is resolved in this order, and every
 reader of review evidence asks work for this answer:
 
 | Work holds for the commit | Current evidence |
 | --- | --- |
-| A version recorded on this computer that is not yet reflected, or that is the last record GitHub carries | That version. What GitHub still shows of an earlier version decides nothing: an approving status that a later needs-work version replaced approves nothing. |
-| A version recorded on this computer that GitHub moved past before it was reflected: GitHub carries a later record, written by another computer, that this computer had not read when it recorded | The record GitHub carries. The local version is kept as history and is not reflected, as a newer remote revision is never overwritten (`project/instrukt/spec/feature/work/github-record`, Writer and convergence). |
-| No version of its own | The last record GitHub carries on the commit, as the runner read it. |
+| A version recorded on this computer that is not yet reflected, or that is the record GitHub's newest anchor names | That version. What GitHub still shows of an earlier version decides nothing: an approving status that a later needs-work version replaced approves nothing. |
+| A version recorded on this computer that GitHub moved past before it was reflected: GitHub carries a newer anchor, written by another computer, that this computer had not read when it recorded | The record that anchor names. The local version is kept as history and is not reflected, as a newer remote revision is never overwritten (`project/instrukt/spec/feature/work/github-record`, Writer and convergence). |
+| No version of its own | The record GitHub's newest anchor on the commit names, as the runner read it. |
 
 ### Verdict publication
 
@@ -254,36 +299,52 @@ Evidence is recorded before anything of it is published, and recording does
 not wait for GitHub. Each tick publishes what is outstanding for an opted-in
 project, whether or not that project's todos module is on.
 
-| Publication | Published once |
-| --- | --- |
-| The evidence record on the commit | GitHub has the commit in the project's repository. Evidence of a commit GitHub does not have yet waits, and that is no failure. |
-| The review status on the commit, for a head verdict or a derived approval | The evidence record is confirmed. |
-| A pull-request review on each eligible pull request whose current head is the commit | The evidence record is confirmed and the runner observed that pull request at that head. |
+| Publication | Published once | By |
+| --- | --- | --- |
+| The evidence record on the commit, then its anchor | GitHub has the commit in the project's repository. Evidence of a commit GitHub does not have yet waits, and that is no failure. | The computer that recorded the evidence, whether or not it observes the project's pull requests. |
+| The review status on the commit, for a head verdict or a derived approval | The anchor is confirmed. | That computer, and any computer that reads the anchored record and finds the status missing. |
+| A pull-request review on each eligible pull request whose current head is the commit | The anchor is confirmed and the runner observed that pull request at that head. | The computer that observes the project's pull requests. |
 
 What a pull request receives follows the kind of verdict its head has.
 
 | Verdict of the head | Pull-request review |
 | --- | --- |
 | Head verdict | Approving, or change-requesting, and carrying the report with its findings. |
-| Derived approval | Approving, carrying the coverage: every covering item, and for each approved head a reference to that head's evidence record. No review of the candidate commit took place, and none is started for the pull request. |
+| Derived approval | Approving, carrying the coverage: every covering item with the reference to its evidence. No review of the candidate commit took place, and none is started for the pull request. |
+
+A covering item is referenced by the evidence its producer keeps, as
+workflow's finding names it.
+
+| Covering item | Reference |
+| --- | --- |
+| A head approved by a head verdict | That head's evidence record on its commit. |
+| A todo's head approved in the todo's record | The todo, the approval bound to that exact commit with its report's digest, and the todo's pull request where its review is reflected (`project/instrukt/spec/feature/work/github-record`, Artifacts and stamps). No evidence record exists for such a head and none is written. |
+| An exempted commit | Its evidence record. |
+| A reproduced merge, documentation fold or revert | The commits it was reproduced from, named as reproduced. |
 
 Every eligible pull request at a commit thus receives its own native review
 from the commit's one verdict: the pull request a request was addressed to and
-every other alike, and one that becomes eligible at that head later receives it
-then.
+every other alike.
+
+A pull request's review is owed for as long as the runner observes that pull
+request eligible at that head and GitHub carries no review of that commit from
+the reviewer bot on it. One that becomes eligible at that head later is owed
+it then, and so is one that was closed or made a draft before its review was
+written and is eligible at the same head again.
 
 Only a commit's current evidence is published; a version replaced before it was
 published is not. Before writing, publication recognises what GitHub already
-carries from the reviewer bot: its evidence record on the commit, its status of
-that name on the commit, and its review of that commit on that pull request. A
-write that already landed is not repeated. Whatever is missing is completed
-from the evidence record, on whichever computer serves the project; nothing is
-reviewed again to complete a publication.
+carries from the reviewer bot: its record and anchor on the commit, its status
+of that name on the commit, and its review of that commit on that pull request.
+A write that already landed is not repeated. Whatever is missing is completed
+from the commit's current evidence, on whichever computer serves the project;
+nothing is reviewed again to complete a publication.
 
 An unavailable GitHub leaves a publication outstanding with its cause, and the
-next tick retries it. A destination GitHub refuses for good, such as a pull
-request closed before its review was written, is recorded as refused with its
-cause and is not retried.
+next tick retries it. A destination GitHub refuses, such as a pull request
+closed before its review was written, is recorded as refused with its cause and
+is not retried while what was observed of it holds; the refusal ends when the
+destination is owed again.
 
 ### Review evidence storage
 
@@ -313,13 +374,33 @@ after a retention period. Current evidence and outstanding publications are
 never retired by age. The evidence store retires its history inside a recording
 command, the publication store inside a tick.
 
+### Evidence when the serving computer changes
+
 Both stores belong to one computer; the evidence belongs to the project and
-moves with it through its evidence records. A computer that starts serving a
-project reads the records of the commits it has to answer for — eligible heads,
-the heads a candidate merges and the candidate's own commits — and from them
-recognises verdicts, counts exemptions and derived approvals, and completes
-every publication still missing, with the recorded report and without another
-review.
+moves with it through its evidence records.
+
+| Duty | Belongs to | Lasts |
+| --- | --- | --- |
+| Reflecting accepted evidence as its record and anchor | The computer that accepted it | Until GitHub carries it, for as long as the project is opted in. It does not end when that computer stops observing the project's pull requests. |
+| Answering for a project's commits | The computer the project is admitted on | While it is admitted there. |
+
+A computer serves a project's automatic review while the project is admitted
+there, and the orderly end of that service is the configuration write that ends
+the admission. Work answers which current evidence this computer holds for the
+project that GitHub does not carry yet. Configuration refuses that write while
+there is any and names its door, and installation inspection reports the same
+evidence
+(`project/instrukt/spec/feature/configuration/layered-configuration`, Automatic
+review enablement). A computer that left this way has reflected the latest
+version of everything it accepted, with its report, so the record GitHub's
+newest anchor names is that computer's latest decision and nothing older is
+current anywhere.
+
+A computer that starts serving a project reads the anchored records of the
+commits it has to answer for — eligible heads, the heads a candidate merges
+and the candidate's own commits — and from them recognises verdicts, counts
+exemptions and derived approvals, and completes every publication still
+missing, with the recorded report and without another review.
 
 ### Readiness for automatic review
 
@@ -328,8 +409,8 @@ credential changes.
 
 | Credential | Identity | Permissions | Used for |
 | --- | --- | --- | --- |
-| Review observation | The project identity | Read access to pull requests | The tick's pull-request listing and its reads of evidence records. |
-| Review publication | The reviewer identity | Write access to pull requests and to commit statuses, read access to contents | Evidence records, the review status and pull-request reviews, with the reads that recognise what GitHub already carries. |
+| Review observation | The project identity | Read access to pull requests, checks and commit statuses | The tick's pull-request listing and its reads of evidence records and their anchors. |
+| Review publication | The reviewer identity | Write access to pull requests, commit statuses and checks, read access to contents | Evidence records and their anchors, the review status and pull-request reviews, with the reads that recognise what GitHub already carries. |
 
 Work verifies both by requesting each credential with exactly those
 permissions, where the project's opt-in is admitted and in
@@ -337,9 +418,12 @@ permissions, where the project's opt-in is admitted and in
 (`project/instrukt/spec/feature/configuration/layered-configuration`,
 `project/instrukt/spec/feature/runner/module-installation`). A missing
 installation or permission is an unmet finding naming the App, the repository,
-the missing permission and the configuration repair door. Verification writes
-no state. The credentials that observe CI and that reflect build reviews are
-unchanged: a project that has not opted in needs neither permission.
+the missing permission and the configuration repair door. Every publication is
+thereby a permission of the reviewer identity that the credential request
+establishes; none rests on a repository setting readiness cannot read.
+Verification writes no state. The credentials that observe CI and that reflect
+build reviews are unchanged: a project that has not opted in needs none of
+these permissions.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Use cases
@@ -384,16 +468,27 @@ But a later head of that pull request carries no status from that verdict
 
 <!-- planned:event-driven-pr-review-gate -->
 - Review evidence recorded on a computer and not yet reflected exists only
-  there. If that computer stops serving the project before a tick reflects it,
-  the evidence does not move: an owed head is reviewed again, an exemption has
-  to be recorded again, and nothing is admitted on its account.
+  there. A computer that stops ticking for the project without the
+  configuration write that ends its admission — it is switched off, or loses
+  the project's checkout or its home — keeps that evidence in its store and
+  reflects it when it ticks for the project again. Until then no other computer
+  sees it: an owed head is reviewed again, an exemption has to be recorded
+  again, nothing is admitted on its account, and an approval whose later
+  needs-work version was never reflected stays the newest GitHub shows.
 - A head verdict's report is published on the reviewed commit as its evidence
   record and is readable by everyone who can read the repository, also for a
   head that has no pull request.
-- An evidence record is a comment, and an account that can delete comments on
-  the repository can remove one. A commit whose record is gone has no
-  recognised verdict in instrukt and is asked for again where it is owed.
-  GitHub's branch protection reads the review status alone.
+- An evidence record and its anchor are GitHub's check and status data. GitHub
+  removes that data after the retention its owner configures, and a record
+  whose content no longer matches its anchor is not read. A commit whose
+  current record cannot be read whole has no recognised verdict in instrukt and
+  is asked for again where it is owed. GitHub's branch protection reads the
+  review status alone.
+- A review whose reviewing session can no longer record it leaves no evidence.
+  Its head is covered by a review of the commit or of the candidate that
+  contains it.
+- A revision is refused in a turn that a review request for the same commit
+  also entered. The reviewing session records it in a turn of its own.
 - Work verifies a reviewer's independence only against the sessions the
   reviewed commits name. For a commit that names none it verifies nothing about
   its author.

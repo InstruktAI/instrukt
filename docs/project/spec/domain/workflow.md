@@ -42,8 +42,9 @@ prose (`sdlc/procedure/lifecycle/overview`).
 
 <!-- planned:event-driven-pr-review-gate -->
 Workflow also derives the active candidate's review coverage on request, from
-the repository, work's answer on each commit's current review evidence and the
-runner's red observation of the canonical head. It is a derived fact and
+the repository, the independent approvals todo records bind to exact commits,
+work's answer on each other commit's current review evidence and the runner's
+red observation of the canonical head. It is a derived fact and
 workflow stores it nowhere. Its rule belongs to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
 earns is work's record and the review it otherwise owes is the runner's

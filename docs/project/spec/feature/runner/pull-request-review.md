@@ -36,14 +36,15 @@ address, and a webhook delivery starts no review.
 The listing is read page by page until a short page ends it, each page under
 its own conditional validator, and eligibility is decided from the complete
 listing only. For an eligible head that work holds no review evidence for, the
-tick also reads the evidence records GitHub carries on that commit, every page,
-and hands them to work, so evidence recorded on another computer is recognised
-and starts no second review. For an active integration candidate it reads, the
+tick also reads the evidence records GitHub carries on that commit with their
+anchors, every page, and hands them to work, so evidence recorded on another
+computer is recognised and starts no second review. For an active integration candidate it reads, the
 same way, the evidence records of the commits workflow's coverage finding
 depends on. What counts as evidence, and from which identity, is work's answer
 (`project/instrukt/spec/feature/work/github-apps`, Evidence records on
-GitHub). These reads use a credential of the project identity scoped to
-reading pull requests, issued only for an opted-in project.
+GitHub). These reads use a credential of the project identity scoped to them
+(`project/instrukt/spec/feature/work/github-apps`, Readiness for automatic
+review), issued only for an opted-in project.
 
 ### Observation store
 
@@ -121,16 +122,21 @@ An owed commit is asked for with the fact `runner.review_needed`
 | Occurrence identity | The project, the head commit and the request number. |
 
 The pinned base is where the reviewed change starts: the merge base of the head
-commit and the pull request's base branch, computed in the project's repository
-after its remote was fetched for this request. It is a commit, fixed for the
-request, and the branch names beside it only describe the pull request. The
-consumer reviews from it, work admits the verdict against it and the recorded
-evidence names it (`project/instrukt/spec/feature/work/github-apps`, Admission
-of review evidence). A head whose merge base the repository cannot give is not
-asked for in that tick.
+commit and the project's canonical branch, computed in the project's repository
+after its remote was fetched for this request. The branch a pull request
+targets does not move it: the review status belongs to the commit and admits
+it wherever it is proposed, so one review covers everything the head adds to
+the canonical branch, also when the pull request targets another branch and
+when several pull requests with different base branches share the head. The
+pinned base is a commit, fixed for the request, and the branch names beside it
+only describe the pull request. The consumer reviews from it, work admits the
+verdict against it and the recorded evidence names it
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence). A head whose merge base the repository cannot give is not asked for
+in that tick.
 
-The fact is a state: while a pull request's request has not been handed to a
-session, a request for a newer head of that pull request takes its place.
+The fact is a state: while a pull request's request has not been selected for
+handover, a request for a newer head of that pull request takes its place.
 
 ### One review per commit
 
@@ -140,8 +146,12 @@ flight.
 
 | A request is | From | Until |
 | --- | --- | --- |
-| Queued | It is emitted. | It is handed to a session or ends. |
-| In flight | The runtime accepted its handover to a session. | Its outcome is known. |
+| Queued | It is emitted. | Delivery selects it for handover to a session, or it ends. |
+| In flight | Delivery selected it for handover. From then on it is handed over as selected, and nothing replaces or withdraws it (`project/instrukt/spec/feature/runner/procedure-event-delivery`). | Its outcome is known. |
+
+Only a queued request can be replaced or end because its commit stopped being
+owed. A request's standing is delivery's own record of it, so the two never
+disagree about whether it will still be handed over.
 
 | Outcome | What follows |
 | --- | --- |
@@ -151,6 +161,12 @@ flight.
 | The request never reached a session: no responsibility accepted it, a newer queued request for its subject took its place, its handover failed, or its commit stopped being owed while it was queued. | The request ends. |
 
 A turn the runtime reports as interrupted is no outcome: delivery replays it.
+
+A closed or ended request can still enter a turn: one selected before the
+verdict was recorded, one that ended as unconfirmed, and one delivery replays.
+It asks for the judgment the commit already has, and its answer records
+nothing (`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence).
 
 An in-flight request belongs to its commit, not to the pull request that made
 the commit owed. It does not end when the commit stops being owed, as when the
@@ -170,16 +186,24 @@ given up.
 Every request of a commit asks for the same review. A session that was handed
 one of them may record the verdict, also after that request ended or the pull
 request moved on, and the verdict is that commit's alone. Work settles the
-commit on the first verdict it admits and refuses a second judgment from the
-holder of another request (`project/instrukt/spec/feature/work/github-apps`,
-Admission of review evidence). A commit asked for again after an unconfirmed
-handover therefore ends with one verdict, also when the first handover enters a
-turn after all.
+commit on the first verdict it admits and admits no further judgment in answer
+to a request, from another session or from the same one
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence). A commit asked for again after an unconfirmed handover therefore
+gains no second verdict and no further version from the repeated answer, also
+when the first handover enters a turn after all, in the session that answered
+the later request or in another.
 
 Work reads a commit's requests from the runner when it admits a verdict: each
 request's number, whether it is queued, was handed to a session and to which,
-or ended before it reached one, and its pinned base. A request's records are
-kept while it is queued or in flight and while its commit is still owed.
+or ended before it reached one, and its pinned base. For a settled commit it
+also asks whether the calling session's current turn is one that a request for
+that commit entered. The runner answers from delivery's record of the turn each
+handover entered, and for a handover delivery has not seen enter — one still
+awaiting confirmation, or ended as unconfirmed — from what the runtime reports
+that turn received. A request's records are kept while it is queued or in
+flight, while its commit is still owed, and while a session it was selected for
+can still take it up.
 
 ### Placement and consumer
 
@@ -198,8 +222,8 @@ procedure's published declaration and contract
 The same fact with the integration branch as its subject,
 `repository_ref:<project>/origin/integrate`, asks for review of an integration
 candidate. Its data names the candidate commit as `head`, the pinned base
-commit as `base`, which is the canonical head the candidate is based on, and
-the request number as `request`, and its occurrence identity is the project,
+commit as `base`, which is its merge base with the canonical branch and so the
+canonical head the candidate is based on, and the request number as `request`, and its occurrence identity is the project,
 the candidate commit and the request number. When a candidate owes a review is
 workflow's decision
 (`project/instrukt/spec/feature/workflow/integration-gate`); its requests are
@@ -217,7 +241,8 @@ review).
 | Project on this computer | What the runner does |
 | --- | --- |
 | Admitted for automatic review | Observes its pull requests on every tick, asks for the reviews that are owed and has outstanding review evidence published. |
-| Not opted in, or opted in and not admitted | Observes no pull requests, emits no review request and has nothing published. Reviews the project already receives are unaffected, and so is how its CI results are read. |
+| Opted in and not admitted here | Observes no pull requests and emits no review request. Evidence recorded on this computer is still handed to work for reflection on every tick (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes). |
+| Not opted in | Observes no pull requests, emits no review request and has nothing published. Reviews the project already receives are unaffected, and so is how its CI results are read. |
 
 The capability does not depend on the project's todos module.
 
@@ -269,8 +294,8 @@ Then no review is started for it
   intent the diff does not show; it relies on the pull request's description and
   commits.
 - Every new head of every eligible pull request starts a review, except a head
-  another head replaced before its request was handed to a session and that did
-  not become current again.
+  another head replaced before its request was selected for handover and that
+  did not become current again.
 - A request is addressed to one pull request. Other eligible pull requests that
   share its head receive the same outcome as their own pull-request review and
   are addressed no request of their own. How many sessions answer requests, and
@@ -283,13 +308,18 @@ Then no review is started for it
 - A commit that becomes a head again while its earlier request is still in
   flight waits for that review, however long that turn runs, and starts no
   other.
-- After an unconfirmed handover the commit is asked for again, so two sessions
-  can come to review one commit. Work admits one verdict; the other session's
-  review is spent.
+- After an unconfirmed handover the commit is asked for again, and a request
+  selected before a verdict was recorded is still handed over. The commit can
+  so be reviewed twice, by two sessions or twice by one. Work records the
+  first verdict and nothing for the second answer; that review is spent.
+- A pull request that targets another branch than the canonical one is
+  reviewed for everything its head adds to the canonical branch, which can be
+  more than the pull request shows as its change.
 - One computer observes a project's pull requests at a time. Another computer
   recognises review evidence once it is reflected on GitHub
   (`project/instrukt/spec/feature/work/github-apps`); a review in flight
-  elsewhere is invisible to it, and it asks for its own.
+  elsewhere is invisible to it, and it asks for its own. Two computers admitted
+  for one project at once each ask and publish.
 - A pull request outside eligibility starts no review, so no review status is
   published on its account. The status belongs to the commit and answers only
   the review check. Where a canonical branch requires that check, it is unmet

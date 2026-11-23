@@ -367,13 +367,13 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 
 <!-- planned:event-driven-pr-review-gate -->
 `runner.review_needed` is a state: a newer request for the same subject takes
-the place of an older one that has not been handed to a session. Its subject is
+the place of an older one that delivery has not selected for handover. Its subject is
 the pull request, or the integration branch for a candidate; the commit stays
 in data.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no queued or in-flight request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
+| `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no queued or in-flight request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, which is its merge base with the canonical branch, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Event-platform facts emitted
@@ -479,8 +479,9 @@ contract the runner records a derived approval and has outstanding evidence
 published, handing over the evidence records it read from GitHub and the
 eligible pull requests it observed at each head. It supplies work with a
 commit's review requests: each one's number, whether it is queued, was handed
-to a session and to which, or ended before it reached one, and its pinned base
-(`project/instrukt/spec/domain/context-map`).
+to a session and to which, or ended before it reached one, and its pinned
+base, and whether the calling session's current turn was entered by one of
+them (`project/instrukt/spec/domain/context-map`).
 <!-- /planned:event-driven-pr-review-gate -->
 
 The runtime adapter and the event-source boundary form an

@@ -77,10 +77,11 @@ that source's own store, not in the state database. An owed head produces
 `runner.review_needed` for the procedure subscribed to it; which heads are
 owed, how a request is repeated and where the pages are kept are owned by
 `project/instrukt/spec/feature/runner/pull-request-review`. On such a project
-the reviewer bot's review status is not a CI result: the candidate, canonical
-and dependency-update CI sources leave it out
+what the reviewer bot publishes for review is not a CI result: the candidate,
+canonical and dependency-update CI sources leave its review status and the
+check run and status of its evidence records out
 (`project/instrukt/spec/feature/workflow/integration-gate`). On a project that
-has not opted in, these sources read every status as before.
+has not opted in, these sources read every status and check run as before.
 <!-- /planned:event-driven-pr-review-gate -->
 
 State watching needs no public address; signed webhook sources additionally use the opt-in ingress receiver. Each tick considers watched upstream refs, CI

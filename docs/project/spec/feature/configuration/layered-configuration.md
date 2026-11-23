@@ -62,18 +62,21 @@ missing:
   an event response;
 - the project's code is not on GitHub
   (`project/instrukt/spec/feature/work/github-record`);
-- the published set for the project does not hold exactly one procedure that
-  subscribes to `runner.review_needed` by that exact type under the
-  `commit-reviewer` role, the role whose App publishes the verdict
+- the active published set for the project does not route
+  `runner.review_needed` to `sdlc/procedure/lifecycle/work/review-commits` and
+  to nothing else: that procedure is active in the set, subscribes by that
+  exact type and declares the `commit-reviewer` role, the role whose App
+  publishes the verdict, and it is the only procedure subscribed to the type
   (`project/instrukt/spec/feature/runner/procedure-subscription-routing`,
   `project/instrukt/spec/feature/work/github-apps`). A pattern that merely
-  matches the type, a procedure of another role and a second such procedure
-  each leave the finding standing;
-- the project identity cannot read the repository's pull requests, or the
-  reviewer identity cannot publish evidence records, pull-request reviews and
-  commit statuses there, as work's readiness reports each
-  (`project/instrukt/spec/feature/work/github-apps`, Readiness for automatic
-  review).
+  matches the type, another procedure in its place whatever role it declares,
+  that procedure under another role, and a second subscribed procedure each
+  leave the finding standing;
+- the project identity cannot read the repository's pull requests and review
+  evidence, or the reviewer identity cannot publish evidence records,
+  pull-request reviews and commit statuses there, as work's readiness reports
+  each (`project/instrukt/spec/feature/work/github-apps`, Readiness for
+  automatic review).
 
 `config patch` refuses a write that would switch it on with such a finding,
 under its revision check and whole-document validation
@@ -85,6 +88,18 @@ that computer; its other capabilities are unaffected
 (`project/instrukt/policy/checks-and-guards`). The readiness findings need
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
+
+A project that is admitted on this computer is served there, and the write
+that ends its admission here is how that service ends in order: switching
+`review.automatic` off, or switching off what the admission rests on. While
+work holds current review evidence for the project on this computer that
+GitHub does not carry yet, that is a finding at the key being written
+(`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
+computer changes). `config patch` refuses the write and names the commits and
+the door: a tick reflects them once GitHub answers, `instrukt tick` runs one
+now, and `instrukt review show <sha>` shows what is still outstanding.
+`config validate` and `install --check` report the same evidence for every
+opted-in project, admitted or not.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ### Layer rules
