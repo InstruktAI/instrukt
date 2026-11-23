@@ -1,6 +1,6 @@
 ---
 activation_trigger: 'Use when a new project/repository is about to be created — a design handoff arrived, a reference repo was named, or the human asks to build a new site, app, service, or tool from scratch.'
-description: 'The "what do you want me to build?" game for new projects: harvest, classify the workload, run the branching checklist, present the brief as the contract, then scaffold via the flavor''s own generator.'
+description: 'The "what do you want me to build?" game for new projects: apply adopt-before-build triage first, harvest, classify the workload, run the branching checklist, present the brief as the contract, then scaffold via the flavor''s own generator.'
 ---
 
 # Greenfield Intake — Procedure
@@ -19,6 +19,13 @@ every production default ships silently from the applicable baseline.
   reference repo are available for harvesting.
 
 ## Steps
+
+0. **Adopt before build.** Before harvesting or scaffolding a new repository,
+   run the adopt-before-build triage ladder in
+   `general/procedure/technical-coordinator` (evaluating existing SaaS/tools
+   over MCP and self-hosted OSS over MCP before custom software); continue to
+   Step 1 only when that ladder selects a custom build
+   (`general/principle/grounding`).
 
 1. **Harvest before asking.** Read the design handoff, reference repo, and any
    provided content. Everything derivable from those is pre-answered and
@@ -124,6 +131,7 @@ handoff, the reference repo, or a baseline already answers is a violation.
 
 ## See Also
 
+- [general/procedure/technical-coordinator](../../../general/procedure/technical-coordinator.md)
 - [sdlc/concept/delivery-portfolio](../concept/delivery-portfolio.md)
 - [sdlc/policy/frontend-production-baseline](../policy/frontend-production-baseline.md)
 - [sdlc/policy/ci-pipeline-conventions](../policy/ci-pipeline-conventions.md)

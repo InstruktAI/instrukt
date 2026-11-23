@@ -28,6 +28,25 @@ enum SecretCommand {
     Generate { name: String },
 }
 pub fn run(args: SecretsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    // Company-agent sessions never read or write any secrets file.
+    if let Some((assignment, _)) = crate::authorization::caller(ctx)?
+        && assignment.company.is_some()
+    {
+        anyhow::bail!(
+            "secrets access refused: company-agent sessions cannot read or write secrets; have the local operator run `instrukt secrets` outside any session"
+        );
+    }
+    let inspection = ctx.home.for_inspection();
+    let global = instrukt_core::config::Configuration::load_global(&inspection)?;
+    if global.caller(&crate::wiring::environment(ctx)?)?.is_some()
+        && let Ok(companies) = ctx.home.companies_dir().canonicalize()
+        && let Ok(here) = ctx.cwd.canonicalize()
+        && here.starts_with(&companies)
+    {
+        anyhow::bail!(
+            "secrets access refused: sessions in a company home cannot read or write secrets; have the local operator run `instrukt secrets` outside any session"
+        );
+    }
     let source = match args.company {
         Some(name) => SecretSource::Company(name),
         None => SecretSource::Machine,

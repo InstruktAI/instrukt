@@ -31,7 +31,7 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
             current: super::_agents::VERSION,
         });
     }
-    let retired = retire_session_recover(&mut value);
+    let retired = retire_session_recover(&mut value) | migrate_orchestrator_roles(&mut value);
     let from = match found {
         Some(from @ (1 | 2)) => from,
         Some(3) if retired => 3,
@@ -51,6 +51,53 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
         .unwrap_or_default();
     out.extend_from_slice(text.as_bytes());
     Ok(Some(Converted { from, bytes: out }))
+}
+
+/// Replace retired split orchestrators (`prepare-orchestrator`, `work-orchestrator`)
+/// with the unified `todo-orchestrator` entry, preserving customized model/tier/app
+/// settings when `todo-orchestrator` is not already configured.
+fn migrate_orchestrator_roles(value: &mut Value) -> bool {
+    let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) else {
+        return false;
+    };
+    let has_prepare = roles.contains_key("prepare-orchestrator");
+    let has_work = roles.contains_key("work-orchestrator");
+    if !has_prepare && !has_work {
+        return false;
+    }
+    let has_unified = roles.contains_key("todo-orchestrator");
+    if has_prepare
+        && has_work
+        && !has_unified
+        && roles.get("prepare-orchestrator") != roles.get("work-orchestrator")
+    {
+        tracing::warn!(
+            event = "agents_orchestrator_migration_preference",
+            "both prepare-orchestrator and work-orchestrator were customised; adopting work-orchestrator settings for todo-orchestrator"
+        );
+    }
+    let preferred = roles
+        .get("work-orchestrator")
+        .or_else(|| roles.get("prepare-orchestrator"))
+        .cloned();
+    let mut inserted = has_unified;
+    *roles = std::mem::take(roles)
+        .into_iter()
+        .filter_map(|(key, entry)| match key.as_str() {
+            Some("prepare-orchestrator" | "work-orchestrator") => {
+                if !inserted {
+                    inserted = true;
+                    preferred
+                        .clone()
+                        .map(|unified| (Value::from("todo-orchestrator"), unified))
+                } else {
+                    None
+                }
+            }
+            _ => Some((key, entry)),
+        })
+        .collect();
+    true
 }
 
 /// A removed command grants no continuing action. All other grants are retained.
@@ -239,5 +286,38 @@ mod tests {
     fn a_current_file_needs_no_conversion() {
         let roles = format!("{BEFORE_AND_AFTER}{COMPANY_AGENT}{AFTER}");
         assert_eq!(current(file(3, &roles, "effort").as_bytes()).unwrap(), None);
+    }
+
+    #[test]
+    fn split_orchestrator_roles_migrate_to_todo_orchestrator_preserving_work_settings() {
+        let roles = format!(
+            "{BEFORE_AND_AFTER}  prepare-orchestrator: {{class: agent, can: [read], order: [claude], tier: standard}}\n  work-orchestrator: {{class: agent, can: [read], order: [codex], tier: premium}}\n{AFTER}"
+        );
+        let converted = current(file(3, &roles, "effort").as_bytes())
+            .unwrap()
+            .expect("split orchestrators should trigger migration");
+        let parsed: Value = serde_yaml_ng::from_slice(&converted.bytes).unwrap();
+        let map = parsed["roles"].as_mapping().unwrap();
+        assert!(!map.contains_key("prepare-orchestrator"));
+        assert!(!map.contains_key("work-orchestrator"));
+        let unified = map
+            .get("todo-orchestrator")
+            .expect("todo-orchestrator created");
+        assert_eq!(unified["tier"].as_str(), Some("premium"));
+        assert_eq!(unified["order"][0].as_str(), Some("codex"));
+    }
+
+    #[test]
+    fn prepare_only_orchestrator_migrates_to_todo_orchestrator() {
+        let roles = format!(
+            "{BEFORE_AND_AFTER}  prepare-orchestrator: {{class: agent, can: [read], order: [claude], tier: strong}}\n{AFTER}"
+        );
+        let converted = current(file(3, &roles, "effort").as_bytes())
+            .unwrap()
+            .expect("prepare-orchestrator should migrate");
+        let parsed: Value = serde_yaml_ng::from_slice(&converted.bytes).unwrap();
+        let map = parsed["roles"].as_mapping().unwrap();
+        assert!(!map.contains_key("prepare-orchestrator"));
+        assert_eq!(map["todo-orchestrator"]["tier"].as_str(), Some("strong"));
     }
 }

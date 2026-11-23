@@ -36,7 +36,10 @@ validation errors, not missing fields. This read-time resolution preserves the
 edited file. Shipped named bundle definitions supply omitted definitions needed
 by resolved grants; an explicitly configured bundle wins.
 
-The role of conversation sessions is `company-agent`. An agents file of schema
+The default role of conversation sessions is `company-agent`; a named connector
+may declare a different `role` in its company home's `instrukt.yaml`, which is
+recorded on the session's `connected_conversations` binding and returned by
+caller assignment lookup. An agents file of schema
 version 2 converts to version 3 on the owned migration path
 (`project/instrukt/spec/feature/configuration/owned-files`): its
 `roles.conversation` entry becomes `roles.company-agent` with every field as
@@ -62,7 +65,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
 | Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`, Bug reports); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
-| Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo prepare|work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
+| Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
 | Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
 | Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
 | Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate|schema`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
@@ -71,6 +74,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
 | Events | `events-read` | `events list|schema|status`; subscription declarations retain their documentation/configuration write boundary. |
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
+| Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
 
 <!-- planned:event-driven-pr-review-gate -->
@@ -145,7 +149,7 @@ composition is:
 | `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
-| `tools` | `mcp-access` at `own`. |
+| `tools` | `mcp-access`, `company-reply`, each at `own`. |
 | `all` | Every catalog action at `any`. |
 
 A company's agent reports defects of the system it works through
@@ -168,7 +172,7 @@ column names the identity reference, not another model/provider choice.
 | `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer` | `focused` | `read`, `review` | reviewer |
 | `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
 | `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
-| `prepare-orchestrator`, `work-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
+| `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
 | `integrator` | `standing` | `read`, `record`, `orchestrate`, `integrate` | project |
 | `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |

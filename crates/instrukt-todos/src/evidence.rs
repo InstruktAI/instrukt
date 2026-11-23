@@ -79,12 +79,6 @@ pub struct TodoEvidence {
     pub timing: Option<TaskTiming>,
     /// A task's agent/model preference.
     pub agent: Option<AgentPreference>,
-    /// Whether the implementation plan was seeded: supplied with the
-    /// filing rather than drafted by preparation
-    /// (`implementation_plan.seeded`; `preparation`, "seeded derivation").
-    /// True when its first version was written by the todo's filer before
-    /// any plan review.
-    pub implementation_plan_seeded: bool,
 }
 
 /// One upstream artifact a version was derived from, as it stood when the

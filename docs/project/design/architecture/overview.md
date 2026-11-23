@@ -74,8 +74,9 @@ declares an interface for reading workflow state. The todos crate implements
 these contracts; the CLI wires them into the runner. Todo dispatch is realized
 in the runner against those interfaces, preserving todos → runner → core.
 The runner likewise declares conversation hosting in `instrukt run` and the
-conversation assignment lookup; `instrukt-company` implements them and the CLI
-wires them, preserving company → runner → core.
+conversation assignment lookup; `instrukt-company` implements them (along with
+explicit reply queueing for `instrukt company reply`) and the CLI wires them,
+preserving company → runner → core.
 Blueprint supplies its release-owned tool lifecycle to runner's module
 installation; runner consumes that API rather than defining tool policy.
 Core likewise declares the hook-generation interface; the CLI wires blueprint
@@ -197,9 +198,9 @@ validate`, `docs validate`, `docs render --check`, `install --check` and
 `specs coverage --check` exit 1 with findings; `status` exits 0 whatever its
 report says once every part was read, and 1 when a part could not be read
 (`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
-exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo prepare`
-and `todo work` exit 1 when the next obligation cannot be rendered, and
-their output says why.
+exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
+exits 1 when the todo cannot be claimed or its factual ledger cannot be
+rendered, and its output says why.
 Nothing on the terminal is a program's debug rendering of a value: durations
 are whole seconds, kinds and verdicts their plain names. Usage errors keep
 the command-line parser's own text and exit status 2.
@@ -216,7 +217,7 @@ the command-line parser's own text and exit status 2.
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
-| Slack | company, through its Slack connector | a Socket Mode connection opened outward per company home that declares the connector, hosted in `instrukt run` by the runner; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
+| Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 
@@ -351,14 +352,17 @@ each generation captures its native command/thread IDs and launch request before
 creation. Lost replies replay that fixed native identity; unknown observations
 and sends leave work pending. Outstanding work after confirmed native archive or
 deletion starts a successor generation through the same owner.
-instrukt derives `<slug>/prepare` or `<slug>/work`; T3 creates the corresponding
-worktree from main and refuses an existing local phase branch. Work on another
-computer creates its local `<slug>/work` branch from `origin/<slug>/work`. Native shared children use that recorded
-workspace serially and commit directly on the todo branch; completion stamps
-release attempts atomically. Preparation uses `<slug>/prepare`, reviewed and integrated immediately before a
-separate `<slug>/work` starts from updated main. The integrator removes the
-preparation worktree and deletes its branch locally and on origin. Ad hoc work
-uses its own reviewed one-off worktree; main is integrator-only.
+instrukt derives the single repository todo branch `<slug>/work`; T3 creates the
+corresponding worktree from `origin/main` (or from an un-integrated legacy
+prepare branch during upgrade) and refuses an existing local `<slug>/work`
+branch. Work on another computer creates its local `<slug>/work` branch from
+`origin/<slug>/work`. Native shared children (both preparation and build roles)
+use that recorded workspace serially and commit directly on `<slug>/work`;
+completion stamps release attempts atomically. `kind: task` creates no git
+worktree. Pending docs fold at work delivery, and after confirmed delivery
+the integrator removes the clean `<slug>/work` worktree and deletes `<slug>/work`
+locally and on origin. Ad hoc work uses its own reviewed one-off worktree; main
+is integrator-only.
 Before dispatch each tick, the runner fetches canonical remote main and
 fast-forwards a clean canonical checkout when it lags. Post-merge publication
 and blueprint maintenance run on each computer; dirty or diverged checkouts

@@ -16,7 +16,7 @@ parameters:
 
 ## Goal
 
-Independently review the exact committed preparation or one-off worktree head before the integrator merges it. The shared review procedure owns every review lane and its verdict arithmetic.
+Independently review an exact committed one-off worktree head (or human-directed branch) before the integrator merges it. Todo worktrees use `sdlc/procedure/lifecycle/work/review-build` with `--phase build_review`. The shared review procedure owns every review lane and its verdict arithmetic.
 
 ## Preconditions
 
@@ -42,7 +42,7 @@ Run the shared review procedure over that candidate, applying every triggered la
 
 ### 3. Retain the exact-head result
 
-Write the complete report required by the shared review procedure, with every executed lane and its clean-pass evidence. Retain the worktree path, branch, reviewed base, exact head, report digest and verdict. For preparation, write `preparation-review-findings` and record `instrukt todo stamp <slug> --verdict approve|needs_work --phase preparation_head` from the bound reviewer in that tree. Approval and reviewer release append `workflow.preparation_reviewed` atomically; the integrator integrates those docs as soon as possible before build. For a one-off candidate, return its report and reviewed head to the authoring session and integrator through the configured native route.
+Write the complete report required by the shared review procedure, with every executed lane and its clean-pass evidence. Retain the worktree path, branch, reviewed base, exact head, report digest and verdict. Return the digest-bound report and reviewed head to the authoring session and integrator through the configured native route. (For tracked todos, build review uses `sdlc/procedure/lifecycle/work/review-build` to write `review-findings` and stamp `--phase build_review`.)
 
 Do not write per-commit git notes or author commits on main. A changed head or report requires a current independent result before integration.
 
@@ -52,8 +52,7 @@ Follow the shared re-review boundaries. Read the producer's dispositions and ind
 
 ## Outputs
 
-- Complete review report, exact candidate head, report digest and verdict.
-- For approved preparation, a retained stamp, released reviewer attempt and immediate integrator event.
+- Complete review report, exact candidate head, report digest and verdict handed to the authoring session and integrator.
 
 ## Recovery
 

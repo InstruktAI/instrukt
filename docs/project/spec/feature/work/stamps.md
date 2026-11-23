@@ -39,9 +39,11 @@ transfer approval to its replacement. Rebuilding after a review does not turn
 the earlier review into a verdict on a different commit. Earlier decisions
 remain available as history when current evidence changes.
 
-### Preparation head review
+### Historical preparation-head stamps
 
-`--verdict approve|needs_work --phase preparation_head` binds the current clean preparation-worktree head and `preparation-review-findings`. It releases the independent `commit-reviewer` attempt atomically. Approval appends `workflow.preparation_reviewed` in the same transaction for immediate integrator attention. A later head or report invalidates that review. Preparation writers cannot review their own head.
+Legacy `preparation_head_reviewed` stamps remain readable on historical records
+for backward compatibility; new work uses `build_review` and `--finalize-ready`
+in the todo's single `<slug>/work` worktree.
 
 ### Mutation boundary
 

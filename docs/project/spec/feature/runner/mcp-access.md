@@ -45,14 +45,29 @@ mcp:
 | `speaker_login` | Company home only: how a speaker's login is obtained. `stored`, the default: the value stored for the speaker's member entry under `credential`. `sign-in`: the speaker signs in to the server once, and instrukt keeps that login (see Sign-in). |
 | `credential` | Company home only, with `speaker_login: stored`: the name under `members.<member>.credentials` whose value a speaker's call carries (`project/instrukt/spec/feature/configuration/company-homes`). |
 | `login` | A `${NAME}` reference, never a literal value. In a company home it is the company's own login, references that home's secrets file, requires `credential` or `speaker_login: sign-in`, and is carried only by a call with no speaker; it is a stored value whatever `speaker_login` says. In the global layer it is the machine's own login and references the machine's secrets file. |
+| `sign_in.mode` | With `speaker_login: sign-in`, optional: `authorization-code` (the default, interactive per-speaker browser sign-in) or `issuer` (zero-click Enterprise-Managed Authorization / ID-JAG `urn:ietf:params:oauth:grant-type:jwt-bearer` signed by the company's built-in per-company OIDC issuer). |
 | `sign_in.scopes` | With `speaker_login: sign-in`, optional: the scopes a sign-in asks for. Without it the scopes follow the MCP authorization specification's scope selection: those the server names when it refuses a call without a login, otherwise those its resource metadata lists, otherwise none. |
-| `sign_in.client.id`, `sign_in.client.secret` | With `speaker_login: sign-in`, optional: references into the company home's secrets file to a client registered with the authorization server beforehand. `id` is required when `client` is declared; `secret` only for a client that has one. Without them instrukt registers its own client (see Registrations). |
+| `sign_in.client_ref` | With `speaker_login: sign-in`, optional: the key name of a reusable host-level OAuth client declared under global `mcp_clients.<name>` (`~/.instrukt/instrukt.yaml`). Mutually exclusive with `sign_in.client`. Shares one host-level registration and return address across every company that references it, without exposing the host's secrets to any company home. |
+| `sign_in.client.id`, `sign_in.client.secret` | With `speaker_login: sign-in`, optional: references into the company home's secrets file to a client registered with the authorization server beforehand. `id` is required when `client` is declared; `secret` only for a client that has one. Mutually exclusive with `sign_in.client_ref`. Without `client_ref` or `client`, instrukt registers its own client dynamically where the server offers registration (see Registrations). |
 | `sign_in.accept_return_without_issuer` | With `speaker_login: sign-in`, optional, `true` or `false` (the default): the operator's acceptance of a return that does not name its issuer, for a server whose authorization server does not announce that it names itself on the return (see The return path and the issuer). |
 | `sign_in.identity.url`, `sign_in.identity.email_field` | With `speaker_login: sign-in`, optional, together: a request that answers who signed in, for a server whose authorization server is no OpenID Provider. `url` is an absolute `https` address without credentials or fragment, which the operator trusts to receive this server's tokens; instrukt sends a `GET` to it with the new access token and reads the email address from `email_field`, a dot-separated path into the JSON answer. |
 
+Global `mcp_clients.<name>` (declared only in `~/.instrukt/instrukt.yaml`) holds
+reusable host-level OAuth clients whose `issuer` (required authorization server
+issuer URL), `id` (required `${NAME}` reference into `~/.instrukt/secrets.env`),
+`secret` (optional `${NAME}` reference), and optional one-line `description`
+pin the shared client to one authorization server. Before sending the host
+client's secret to any authorization server endpoint, sign-in verifies that the
+server's discovered authorization server issuer matches `mcp_clients.<name>.issuer`;
+any mismatch is refused so a company declaration can never redirect a host client
+secret to another server. A
+company home's `issuer` block (`enabled: true`, `signing_key: ${NAME}`
+referencing the company home's `secrets.env`) enables that company's built-in
+lightweight OIDC issuer for `sign_in.mode: issuer`.
+
 `instrukt config schema --company <name> mcp` shows these fields with their
-contracts for a company home, and `instrukt config schema --global mcp` for
-the computer
+contracts for a company home, and `instrukt config schema --global mcp` (and
+`mcp_clients`) for the computer
 (`project/instrukt/spec/feature/configuration/configuration-editing`).
 
 A declaration that carries none of `credential`, `login` and `speaker_login:
@@ -60,18 +75,23 @@ sign-in` is an open server: its calls carry no login. A company home's
 declaration takes the place of a machine-wide declaration of the same name for
 that company's work.
 
-A third kind of speaker login, one identity the company holds acting at the
-server for a person it names, is not specified; `speaker_login` takes no other
-value.
+A shared company API key impersonating arbitrary users is not supported;
+`speaker_login` takes only `stored` or `sign-in` (including `sign_in.mode:
+issuer`, where the target server issues a scoped OAuth access token strictly
+for the speaker's verified identity assertion).
 
 These are validation findings naming the server and the field: an unknown
-field; a literal `login` or client value; `speaker_login`, `credential` or
-`sign_in` in the global layer; `speaker_login: stored` without `credential`;
-`speaker_login: sign-in` together with `credential`; `sign_in` without
-`speaker_login: sign-in`; `sign_in.client` without `id`; an
-`accept_return_without_issuer` that is not `true` or `false`; one of the two
-`sign_in.identity` fields without the other; an identity `url` that is not an
-absolute `https` address or carries credentials or a fragment; a `login`
+field; a literal `login`, `mcp_clients` or client value; `speaker_login`,
+`credential` or `sign_in` in the global layer; `mcp_clients` outside the global
+layer; `issuer` outside a company home; `speaker_login: stored` without
+`credential`; `speaker_login: sign-in` together with `credential`; `sign_in`
+without `speaker_login: sign-in`; both `sign_in.client` and `sign_in.client_ref`
+set together; `sign_in.client_ref` naming no declared global `mcp_clients.<name>`
+key; `sign_in.mode` other than `authorization-code` or `issuer`; `sign_in.mode:
+issuer` when the company home does not enable `issuer`; `sign_in.client` without
+`id`; an `accept_return_without_issuer` that is not `true` or `false`; one of
+the two `sign_in.identity` fields without the other; an identity `url` that is
+not an absolute `https` address or carries credentials or a fragment; a `login`
 without `credential` or `speaker_login: sign-in` in a company home; and a
 missing `url` or `description`.
 
@@ -170,19 +190,28 @@ followed by that path. Each registration is kept in the state database with its
 issuer, client identifier, return id and return address, and for a declared
 client the SHA-256 digest of its secret.
 
-The client is the one declared under `sign_in.client` when there is one. It
-authenticates at the token and revocation endpoints with its secret by HTTP
-Basic authentication, or in the request body when the authorization server
-lists only `client_secret_post`; a client declared without a secret sends only
-its identifier. The operator registers the declared client's return address
-with the authorization server; `instrukt mcp list --company <company>` shows
-it. When `ingress.url` changes, the operator updates it there. When the
-declared client's identifier or secret no longer matches its registration,
-that registration is retired and a new one, with a new return id, is made for
-the declared client as it now is. The logins and open sign-ins of the retired
-registration become unusable: they are removed and cancelled without a
-revocation request, and the next call starts a sign-in. A code or refresh
-token issued to one client is never sent with another client's credentials.
+The client is the one referenced by `sign_in.client_ref` (global
+`mcp_clients.<name>`) or declared under `sign_in.client` when there is one. A
+global `mcp_clients.<name>` registration is host-scoped: instrukt creates one
+stable `<return id>` and return address for that host client and reuses it
+across every company home referencing it, so the host operator registers the
+redirect URI with the vendor (such as Google Cloud or Microsoft Entra) once
+rather than per company. State binding and `iss` verification keep each
+company's and speaker's sign-ins isolated. The client authenticates at the
+token and revocation endpoints with its secret by HTTP Basic authentication, or
+in the request body when the authorization server lists only
+`client_secret_post`; a client declared without a secret sends only its
+identifier. The operator registers a declared client's return address with the
+authorization server; `instrukt mcp clients` (for global clients) and
+`instrukt mcp list --company <company>` show it along with the non-secret
+client identifier (never the secret). When `ingress.url` changes, the operator
+updates it there. When a declared client's identifier or secret no longer
+matches its registration, that registration is retired and a new one, with a
+new return id, is made for the declared client as it now is. The logins and
+open sign-ins of the retired registration become unusable: they are removed and
+cancelled without a revocation request, and the next call starts a sign-in. A
+code or refresh token issued to one client is never sent with another client's
+credentials.
 
 Without a declared client instrukt registers one where the authorization
 server offers registration: a public client (`token_endpoint_auth_method:
@@ -221,6 +250,61 @@ Who signed in is learned in one of two ways (see Who signed in). Without
 OpenID Connect discovery document names a UserInfo endpoint and a key set.
 When it is not, the call is refused naming the server and the missing
 `sign_in.identity`.
+
+#### Built-in per-company OIDC issuer (`sign_in.mode: issuer`)
+
+For MCP servers supporting Enterprise-Managed Authorization
+(`io.modelcontextprotocol/enterprise-managed-authorization` / IETF Identity
+Assertion JWT Authorization Grant, `urn:ietf:params:oauth:grant-type:jwt-bearer`),
+a company home may enable instrukt's built-in lightweight OIDC issuer without
+running an external IdP (such as Keycloak or Okta):
+
+- `instrukt mcp issuer init --company <name>` verifies cluster Redis and
+  `ingress.url` first, generates an ES256 signing keypair, publishes the public
+  discovery and JWKS documents to cluster Redis before storing the private key
+  in the company home's `secrets.env` under a `${NAME}` reference (never in the
+  repository, state database, or cluster Redis), records a stable 128-bit
+  `issuer_id` and public JWK Set in `company_issuers`, and enables `issuer:` in
+  the company home's `instrukt.yaml`.
+- Cluster Redis holds derived public issuer metadata rebuilt idempotently from
+  authoritative `company_issuers` + `ingress.url` without rotating keys on
+  ingress receiver startup, when `ingress.url` changes, or via
+  `instrukt mcp issuer publish [--company <name>]`.
+- The ingress receiver serves those public documents read-only at
+  `<ingress.url>/hooks/inbound/issuers/<issuer_id>/.well-known/openid-configuration`
+  and `<ingress.url>/hooks/inbound/issuers/<issuer_id>/jwks.json`.
+- `instrukt mcp issuer show --company <name>` prints the issuer URL so the
+  company administrator can register it once as a trusted issuer at any
+  EMA-capable target service.
+- When a speaker calls a server declared with `sign_in.mode: issuer` and holds
+  no valid access token, instrukt skips interactive browser sign-in: it signs a
+  short-lived (at most 5 minutes) ES256 ID-JAG JWT asserting the speaker's
+  verified connector email (`iss`, `sub`, `email`, `aud`, `resource`, `iat`,
+  `exp`, `jti`), exchanges it at the authorization server's token endpoint with
+  `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `assertion=<jwt>`,
+  and `resource=<server_url>`, and caches the returned Bearer access token in
+  `mcp_logins` under that speaker's address. When the access token expires,
+  instrukt renews it by issuing a fresh assertion automatically.
+
+#### Live OAuth discovery and ingress reachability check
+
+- **`instrukt mcp discover <url> [--json]`** probes a remote MCP server's HTTPS
+  endpoint, follows RFC 9728 protected resource metadata and RFC 8414 / OpenID
+  Connect authorization server metadata, and reports: `resource`,
+  `authorization_servers`, `scopes_supported`, `registration_supported` (whether
+  dynamic client registration is offered — Bucket A vs. pre-registered client
+  Bucket B), `pkce_s256_supported`, `iss_parameter_supported` (RFC 9207),
+  `openid_provider` (whether UserInfo and JWKS are published), and
+  `ema_jwt_bearer_supported` (whether `urn:ietf:params:oauth:grant-type:jwt-bearer`
+  is advertised). It writes no configuration or state.
+- **`instrukt mcp check-ingress [--json]`** verifies local-boundary callback
+  reachability without inspecting any other computer's configuration: it checks
+  that `ingress.url` is configured locally and cluster Redis is reachable
+  locally, sends one external HTTPS `GET` to
+  `<ingress.url>/hooks/inbound/sign-in/<probe_return_id>?state=<probe_state>&code=probe`
+  using a fresh random 256-bit `probe_state`, confirms that the matching
+  `SHA-256(probe_state)` entry arrives in cluster Redis through the real edge
+  and ingress receiver, and claims and deletes the entry immediately.
 
 #### When a sign-in starts
 
@@ -393,16 +477,20 @@ request closes it as `failed`.
 
 A login is kept in the state database for the company, the person's address
 and the server, with the resource it was issued for (the server's `url` at
-sign-in), its registration, the access token and when it runs out, the
-refresh token and the scopes. It is never written to the company home. No
-value of it is shown to the agent: the output rule below removes it from
-everything a server returns.
+sign-in), its registration (or `issuer:<issuer_id>` for `sign_in.mode: issuer`,
+which holds no `mcp_registrations` row and no refresh token), the access token
+and when it runs out, the refresh token and the scopes. It is never written to
+the company home. No value of it is shown to the agent: the output rule below
+removes it from everything a server returns.
 
 A login is used only for the resource it was issued for, and renewed only at
-its own authorization server with its own client. When the server's declared
-`url` differs from that resource, the login is unusable: it is removed,
-revoked at its own authorization server where it offers revocation, and the
-call starts a sign-in.
+its own authorization server with its own client (or, for `sign_in.mode:
+issuer`, renewed automatically by issuing a fresh ES256 ID-JAG assertion
+against the company's active `issuer_id` rather than a refresh-token grant).
+When the server's declared `url` differs from that resource, the login is
+unusable: it is removed, revoked at its own authorization server where it
+offers revocation (not applicable to `issuer:<issuer_id>` logins, which have no
+client registration or refresh token), and the call starts a sign-in.
 
 Before a call, instrukt renews a login whose access token runs out within a
 minute; it also renews once when the server answers a call's access token with
@@ -466,9 +554,11 @@ send the login and fails saying that it was removed. Network requests run
 outside the database's writer section; the generation is compared in the
 transaction that records each outcome. Removing a login revokes its refresh
 token, or its access token when it has none, at its own authorization server
-where it offers revocation, and removes it from the state database whether or
-not revocation succeeds. A call already carried out at the server is not
-undone. The next call of that person to that server starts a new sign-in.
+where it offers revocation (skipped for `issuer:<issuer_id>` logins, which have
+no client registration or refresh token), and removes it from the state
+database whether or not revocation succeeds. A call already carried out at the
+server is not undone. The next call of that person to that server starts a new
+sign-in (or, for `sign_in.mode: issuer`, exchanges a fresh assertion).
 
 #### Direct messages
 
@@ -504,7 +594,13 @@ is the local operator's.
 
 | Command | Does |
 | --- | --- |
-| `instrukt mcp list` | Names each server the caller sees with its description and where it is declared, and for a server with a declared sign-in client the return address to register for it. Contacts no server and reads no secret. |
+| `instrukt mcp list` | Names each server the caller sees with its description and where it is declared, and for a server with a declared or host-referenced sign-in client the client identifier and return address to register for it (never any secret). Contacts no server and reads no secret. |
+| `instrukt mcp clients [--company <name>] [--json]` | Without `--company`, lists global `mcp_clients.<name>` entries declared on this host with their pinned issuers, non-secret client identifiers, descriptions and stable shared return addresses; with `--company <name>`, lists company-declared `mcp.<server>.sign_in.client` entries with their client identifiers and return addresses. Outside any session (local operator), materializes or refreshes those registrations so the return address can be registered at the vendor before first sign-in; in an admin DM, strictly read-only (never reads secrets). |
+| `instrukt mcp discover <url> [--json]` | Probes a remote MCP server's OAuth/OIDC/EMA metadata live (Bucket A DCR vs. Bucket B pre-registered client vs. EMA `jwt-bearer`, PKCE `S256`, RFC 9207 `iss`, OpenID Provider). Writes nothing. |
+| `instrukt mcp check-ingress [--json]` | Verifies local `ingress.url` and cluster Redis reachability via an end-to-end probe through the real sign-in return path without inspecting any other computer's configuration. |
+| `instrukt mcp issuer init --company <name>` | Local operator only: initializes or rotates a company's built-in ES256 OIDC issuer key in the company home's `secrets.env` and publishes its public discovery/JWKS metadata to cluster Redis. |
+| `instrukt mcp issuer publish [--company <name>]` | Local operator only: idempotently republishes derived public discovery and JWKS metadata from `company_issuers` into cluster Redis without rotating keys (e.g. after a Redis restart or `ingress.url` change). |
+| `instrukt mcp issuer show [--company <name>]` | Shows the company's built-in OIDC issuer URL and JWKS URL (allowed for the local operator and for an authenticated company admin in a DM). |
 | `instrukt mcp list-tools <name>` | Returns that server's tool catalog: each tool's name, description and input shape. |
 | `instrukt mcp call <name> <tool> --json '<arguments>'` | Calls the tool with the given JSON object and prints the tool's result as JSON. |
 | `instrukt mcp sign-out [<name>]` | Removes the speaker's signed-in login for that server, or for every server of the company. Refused in a session with no speaker. |
@@ -657,6 +753,46 @@ But when the server answers a version instrukt does not speak
 Then the call fails naming both versions
 ```
 
+### UC-MA12: Inherit a host-level shared OAuth client across multiple companies
+
+```gherkin
+Given the host operator declared a reusable OAuth client under global `mcp_clients` and registered its single return address with the vendor once
+When two different companies declare MCP servers referencing that client via `sign_in.client_ref`
+Then each company validates and signs its own speakers in using that host client's shared return address
+And neither company's settings or secrets file holds the host client's secret
+And speakers' tokens remain isolated by company and email address
+```
+
+### UC-MA13: Discover a remote MCP server's auth mode and verify ingress reachability locally
+
+```gherkin
+Given an operator or admin is connecting a remote MCP server URL
+When they run `instrukt mcp discover <url>`
+Then instrukt reports whether the server supports dynamic registration, PKCE S256, RFC 9207 `iss`, OpenID Provider metadata and EMA `jwt-bearer`
+When they run `instrukt mcp check-ingress`
+Then instrukt verifies local `ingress.url` and cluster Redis end-to-end through the real external sign-in return path without reading any other computer's configuration
+```
+
+### UC-MA14: Company administrator connects or updates an MCP service in a direct message
+
+```gherkin
+Given a company member whose connector record marks them as a workspace administrator sends a direct message to the company's agent asking to connect a service
+When the company agent inspects `mcp` config and patches `mcp.<name>` for its own company
+Then the patch is accepted and validated
+But when a non-administrator asks, or when an administrator asks in a shared channel rather than a direct message, or when a patch touches keys outside `mcp`
+Then instrukt refuses the command naming the direct-message administrator requirement
+```
+
+### UC-MA15: Zero-click employee sign-in through the built-in per-company OIDC issuer
+
+```gherkin
+Given a company has enabled its built-in OIDC issuer and registered its public issuer URL at an EMA-capable MCP server
+And the server is declared with `speaker_login: sign-in` and `sign_in.mode: issuer`
+When a company member asks the company's agent to use that server
+Then instrukt signs a short-lived ID-JAG assertion for that member's verified email, exchanges it via `urn:ietf:params:oauth:grant-type:jwt-bearer` and completes the tool call with no interactive browser sign-in
+And the ingress serves only public discovery and JWKS metadata while the private signing key stays in the company home's `secrets.env`
+```
+
 ## Known caveats
 
 - Only servers reached over the network are supported. A server that runs as a
@@ -665,8 +801,9 @@ Then the call fails naming both versions
   recognised and is not removed.
 - Refusing a session in a company home until it is bound holds for a session
   that stays where the runner started it; it is not confinement.
-- A speaker's login is a stored value or a sign-in. One identity the company
-  holds acting for a person it names is not supported.
+- A speaker's login is a stored value or a sign-in (interactive OAuth or
+  zero-click built-in per-company OIDC issuer `jwt-bearer`). A shared company
+  API key impersonating arbitrary users is not supported.
 - A sign-in needs the person to open the link in a browser that reaches the
   authorization server. A server may ask the person to approve every sign-in.
 - A call that waits on a sign-in holds the agent's turn for up to 90 seconds.

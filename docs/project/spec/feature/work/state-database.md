@@ -183,6 +183,14 @@ verified runtime bindings, or from their recorded role and original phase branch
 An omitted placement title does not establish a key-only native title. Remote
 conversion is owned by `project/instrukt/spec/feature/work/github-record`.
 
+Version 34 evolves the conversation tables for named company connectors:
+`connected_conversations` adds `role` (default `'company-agent'`),
+`session_scope` (default `'conversation'`), and nullable `opening_conversation`;
+`conversation_messages` adds nullable `conversation_display`; and
+`conversation_refusals` widens its `reason` check constraint to admit
+`'not_admin'` alongside `'not_own'` and `'unavailable'`, preserving all
+existing rows verbatim.
+
 ### Work tables
 
 Owned and written by work through its command contract. Reflection to
@@ -269,7 +277,7 @@ is the row with `released_at IS NULL`; at most one per todo.
 | `todo_id`, `role`, `attempt` | Assignment and monotonic positive attempt, reserved before native delegation and reused on retry. |
 | `runtime`, `semantic_key`, `display_title` | Selected runtime, stable assignment identity and independently mutable display title. Native child keys are assignment facts, not adapter lookup entries. |
 | `session` | Scoped native identity from `todo bind`, or `NULL` while unresolved. |
-| `worktree`, `branch`, `base_head` | The work phase's one shared `<slug>/work` worktree and branch and captured starting head; preparation instead records its separate `<slug>/prepare` worktree and branch. Retained after release. |
+| `worktree`, `branch`, `base_head` | The todo's single shared `<slug>/work` worktree, branch, and captured starting head (`NULL` for worktree-less `kind: task` assignments; legacy prepare rows remain readable for history). Retained after release. |
 | `completion_sequence`, `completed_head` | Releasing stamp and its exact shared head; read-only roles retain their captured head. `NULL` until completion. |
 | `failure_reason`, `failure_head`, `failure_workspace`, `failed_at` | Failure evidence and current shared head, not a recovery source branch. |
 | `released_at` | Completion, verdict, disposition or confirmed failure release time; `NULL` while outstanding. |
@@ -549,12 +557,22 @@ status or recorded cause.
 
 | Column | Meaning |
 | --- | --- |
-| `company`, `server`, `issuer` | The company home, the server and the authorization server it was made for. |
-| `declared` | `1` for a client declared under `sign_in.client`, whose secret is read from the home's secrets file; `0` for a client instrukt registered. |
+| `company`, `server`, `issuer` | The company home, the server and the authorization server it was made for; `company` and `server` are `NULL` for a host-level shared OAuth client (`mcp_clients.<name>`), which shares one `return_id` across every company referencing it. |
+| `host_client` | The global `mcp_clients.<name>` key for a shared host client registration; `NULL` for a company-scoped registration. |
+| `declared` | `1` for a client declared under `sign_in.client` or global `mcp_clients.<name>`, whose secret is read from its owning secrets file; `0` for a client instrukt registered dynamically. |
 | `client_id` | The client's identifier, for a declared client as it was declared when the registration was made. |
 | `client_secret`, `secret_digest` | A registered client's secret, `NULL` for a public client and for a declared one; for a declared client the SHA-256 digest of its secret, `NULL` when it has none. |
 | `return_address` | The return address the client was registered with. |
 | `registered_at`, `retired_at` | When it was made, and when a newer registration replaced it; `NULL` while current. |
+
+**`company_issuers`** — durable identity of each company's built-in OIDC issuer. Key: `company`.
+
+| Column | Meaning |
+| --- | --- |
+| `company` | The company home name. |
+| `issuer_id` | Stable 32-character lowercase hexadecimal identifier from 128 random bits, forming `<ingress.url>/hooks/inbound/issuers/<issuer_id>`. Generated once and retained across restarts. |
+| `public_jwks_json` | Public ES256 JWK Set JSON matching the private signing key stored in the company home's `secrets.env`. Never contains private key material. Authoritative source for rebuilding the derived discovery and JWKS documents in cluster Redis (republished idempotently without key rotation on ingress receiver startup, on `ingress.url` change, or via `instrukt mcp issuer publish`; rebuild cost is one Redis write per enabled company). |
+| `updated_at` | RFC 3339 UTC timestamp when the public key set was last updated. |
 
 **`mcp_generations`** — Key: `(company, person, server)`. Column:
 `generation`, raised by every removal of that person's login or open sign-ins
@@ -566,7 +584,7 @@ for that server.
 | --- | --- |
 | `resource` | The server's `url` the login was issued for. |
 | `subject` | The OpenID Connect `sub` recorded at sign-in; `NULL` with a declared identity request. |
-| `return_id` | The registration it was issued to, which names its authorization server and client. |
+| `return_id` | For `authorization-code` logins, the registration it was issued to (`mcp_registrations.return_id`, naming its authorization server and client). For `sign_in.mode: issuer` logins, the sentinel `issuer:<issuer_id>` tying the cached token to the company's active `company_issuers.issuer_id` (no `mcp_registrations` row). |
 | `access_token`, `expires_at` | The access token and when it runs out; `expires_at` is `NULL` when the server gave no lifetime, which means unknown. |
 | `checked` | `1` once who the access token identifies as has been confirmed; `0` while a renewed access token waits for that check, during which it is not used. |
 | `refresh_token` | The refresh token; `NULL` when the server issued none. |
@@ -709,14 +727,20 @@ connectors keep, under
 `project/instrukt/spec/feature/company/conversations`. A conversation's address
 is `(company, connector, conversation)`.
 
-**`connected_conversations`** — one row per conversation. Key: the address.
+**`connected_conversations`** — one row per conversation session binding. Key:
+the address (`(company, connector, conversation)`, with `conversation = ''` for
+the shared standing session of a `session_scope: company` connector).
 
 | Column | Meaning |
 | --- | --- |
-| `semantic_key` | The key its one session is started and woken by. |
-| `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
+| `semantic_key` | The key its one session is started and woken by (`instrukt:conversation:<company>:<connector>:<conversation>` for `conversation` scope; `instrukt:conversation:<company>:<connector>` for `company` scope). |
+| `role` | The role recorded from the connector declaration when the binding was created (default `'company-agent'`); caller assignment lookup reads this column to grant the connector's role. |
+| `session_scope` | `'conversation'` (default) or `'company'`. |
+| `reply_mode` | `'turn_output'` (default) or `'explicit'`, recorded from the connector declaration when the binding was created so a running session stays aligned with its opening assignment. Migration 35 adds the column defaulting existing rows to `'turn_output'`. |
+| `opening`, `opening_conversation`, `request` | The addressed message (and its originating conversation when `session_scope = 'company'`) whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. An operator-confirmed replacement can rebind the conversation and reset its source position. |
 | `source_identity`, `position_json` | The fixed identity of the bound native source and its opaque read position. A mismatch or missing identity on an existing binding is a configuration error; it advances neither the position nor native work. Initial binding and confirmed replacement establish the identity. |
+| `display_title` | Readable title captured for the session. |
 | `failure` | Cause of a source read failure or a blocked bound session, with its recovery door where applicable. Cleared when work can resume. |
 
 **`conversation_messages`** — one row per addressed message. Key: the address
@@ -726,9 +750,12 @@ and `message`, the connector's identity of that message.
 | --- | --- |
 | `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
 | `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
+| `sender_is_admin`, `is_direct` | Booleans (`0` or `1`) recorded at admission: whether the provider reported the sender as a workspace administrator (`sender_is_admin`) and whether the conversation is a direct message (`is_direct`). Migrated rows default to `0`. Once written they do not change. |
+| `conversation_display` | Optional provider-supplied channel or DM label captured for this message (e.g. `#channel` or `DM with Name`), used to tag turns delivered to a company-scoped shared session. |
+| `thread` | Optional connector-supplied thread identifier when the message belongs to a thread (`NULL` for direct messages or unthreaded conversations). Keeps conversation IDs opaque to the company layer. Migration 35 adds the column. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
-| `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice eligibility without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
+| `state` | `received` once stored; `refused` once admission refused the sender (`not_own` or `not_admin`); `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice eligibility without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
 | `text` | The message's text as written. |
 | `context_json`, `boundary`, `content` | The captured earlier messages with provider IDs and the context limit, how far an early read was complete, whether more context must be read, the delivery boundary, and the framed input. These fields are null until capture. The framed input is set to the selected context before an attempt and retained through uncertain acceptance. |
 | `context_delivery_ids` | The provider IDs selected for the most recent attempted input. The delivery transaction uses these IDs to write the receipts. |
@@ -770,7 +797,9 @@ of pruning. The relay prunes at most 100 expired receipts per pass.
 Migration 25 seeds the IDs of already delivered addressed messages.
 Older accompanying messages have no stored provider IDs to recover.
 
-**`conversation_answers`** — retained ordered answer pieces. Key: the address,
+**`conversation_answers`** — retained ordered answer pieces (from finished
+turns under `reply_mode: turn_output` and explicit replies queued by
+`instrukt company reply` under `turn = 'reply:<id>'`). Key: the address,
 `turn` and `piece`. Columns: `text`, `admission_position`, `attempted_at`,
 `provider_post_id`, `posted_at` and `failure`. The attempt timestamp records the
 most recent posting attempt for status; it imposes no uncertainty deadline.
@@ -789,8 +818,9 @@ fields are retired.
 
 **`conversation_refusals`** — the platform's fixed replies and best-effort
 unavailable-notice attempts (`project/instrukt/spec/feature/company/conversations`).
-Key: the address, `sender` and `reason`: `not_own` for the fixed refusal, or
-`unavailable` for the person's current conversation outage. Columns:
+Key: the address, `sender` and `reason`: `not_own` for the non-member fixed
+refusal, `not_admin` for the administrator-only fixed refusal, or `unavailable`
+for the person's current conversation outage. Columns:
 `received_at`, `attempted_at`, `replied_at` and `failure`. For an unavailable
 notice, the attempt timestamp is recorded atomically before provider I/O and
 suppresses every further attempt in that outage, regardless of the response.

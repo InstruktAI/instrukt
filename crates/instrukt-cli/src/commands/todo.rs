@@ -111,9 +111,9 @@ struct BindArgs {
     #[arg(long)]
     worktree: Option<PathBuf>,
     #[arg(long)]
-    branch: String,
+    branch: Option<String>,
     #[arg(long)]
-    base: CommitSha,
+    base: Option<CommitSha>,
     #[arg(long)]
     json: bool,
 }
@@ -140,6 +140,9 @@ struct AddressArg {
     /// entry.
     #[arg(value_name = "TODO")]
     todo: TodoAddress,
+    /// Output structured factual ledger JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -397,7 +400,6 @@ enum VerdictArg {
     reason = "the values are the phase names `--phase` takes"
 )]
 enum PhaseArg {
-    PreparationHead,
     PrdReview,
     ArchitectureReview,
     PlanReview,
@@ -491,7 +493,37 @@ impl Session<'_> {
             }
             TodoCommand::Show(args) => {
                 let view = work.show(project, &args.todo)?;
-                ctx.out.text(&render_view(&view))?;
+                let ledger_result: anyhow::Result<Option<instrukt_todos::workflow::TodoLedger>> =
+                    match crate::wiring::work_evidence(ctx)? {
+                        Some(evidence) => {
+                            let env = crate::wiring::environment(ctx)?;
+                            instrukt_todos::workflow::Workflow::new(ctx.home.clone(), evidence, env)
+                                .ledger_for_view(&ctx.cwd, &view)
+                                .map(Some)
+                                .map_err(anyhow::Error::from)
+                        }
+                        None => Ok(None),
+                    };
+                if args.json {
+                    let ledger = ledger_result?;
+                    ctx.out.json(&serde_json::json!({
+                        "record": {
+                            "id": view.record.id,
+                            "slug": view.record.slug,
+                            "kind": view.record.kind,
+                            "status": view.record.status,
+                            "revision": view.record.revision,
+                            "issue": view.issue,
+                            "pull": view.pull,
+                        },
+                        "ledger": ledger,
+                    }))?;
+                } else {
+                    match ledger_result {
+                        Ok(ledger) => ctx.out.text(&render_view(&view, Ok(ledger.as_ref())))?,
+                        Err(err) => ctx.out.text(&render_view(&view, Err(&err)))?,
+                    }
+                }
                 Ok(ExitCode::SUCCESS)
             }
             TodoCommand::Update(args) => self.update(args, ctx),
@@ -631,8 +663,8 @@ impl Session<'_> {
                         attempt: args.attempt,
                         session: &args.session,
                         worktree: args.worktree.as_deref(),
-                        branch: &args.branch,
-                        base: &args.base,
+                        branch: args.branch.as_deref(),
+                        base: args.base.as_ref(),
                     },
                 )?;
                 ctx.out.json(&serde_json::json!({"role":args.role,"attempt":args.attempt,"session":args.session.to_string(),"bound":true}))?;
@@ -935,15 +967,6 @@ fn verdict_request(verdict: VerdictArg, phase: PhaseArg) -> anyhow::Result<Stamp
         }
     };
     match phase {
-        PhaseArg::PreparationHead => match verdict {
-            VerdictArg::Approve => Ok(StampRequest::PreparationHeadVerdict {
-                verdict: ReviewVerdict::Approve,
-            }),
-            VerdictArg::NeedsWork => Ok(StampRequest::PreparationHeadVerdict {
-                verdict: ReviewVerdict::NeedsWork,
-            }),
-            _ => bail!("preparation head review is approve or needs_work"),
-        },
         PhaseArg::PrdReview => preparation(PreparationReview::PrdReview),
         PhaseArg::ArchitectureReview => preparation(PreparationReview::ArchitectureReview),
         PhaseArg::PlanReview => preparation(PreparationReview::PlanReview),
@@ -1064,7 +1087,10 @@ fn list_line(entry: &ListEntry, now: Timestamp) -> String {
     parts.join(" · ")
 }
 
-fn render_view(view: &TodoView) -> String {
+fn render_view(
+    view: &TodoView,
+    ledger: Result<Option<&instrukt_todos::workflow::TodoLedger>, &anyhow::Error>,
+) -> String {
     let record = &view.record;
     let mut out = Vec::new();
     out.push(format!(
@@ -1312,6 +1338,59 @@ fn render_view(view: &TodoView) -> String {
         ));
     }
     text.push_str(&(stamps.join("\n") + "\n"));
+    match ledger {
+        Ok(Some(ledger)) if view.record.status == TodoStatus::Active => {
+            let mut extras = Vec::new();
+            if ledger.workspace.branch.is_some() || ledger.workspace.worktree_exists {
+                extras.push("workspace:".to_owned());
+                if let Some(branch) = &ledger.workspace.branch {
+                    extras.push(format!("  branch: {branch}"));
+                }
+                if let Some(path) = &ledger.workspace.worktree_path {
+                    let clean = match ledger.workspace.worktree_clean {
+                        Some(true) => "clean",
+                        Some(false) => "dirty",
+                        None => "absent",
+                    };
+                    extras.push(format!("  worktree: {} ({clean})", path.display()));
+                }
+                if let Some(head) = &ledger.workspace.worktree_head {
+                    extras.push(format!("  head: {head}"));
+                }
+                if let Some(remote) = &ledger.workspace.remote_head {
+                    extras.push(format!(
+                        "  remote: {remote} ({})",
+                        if ledger.workspace.pushed {
+                            "in sync"
+                        } else {
+                            "behind local"
+                        }
+                    ));
+                }
+            }
+            let mut open_findings = Vec::new();
+            for r in &ledger.preparation_reviews {
+                if r.open_findings {
+                    open_findings.push(format!("{} ({})", r.phase, r.report_digest));
+                }
+            }
+            if let Some(br) = &ledger.build_review
+                && br.open_findings
+            {
+                open_findings.push(format!("build_review ({})", br.report_digest));
+            }
+            if !open_findings.is_empty() {
+                extras.push(format!("open findings: {}", open_findings.join(", ")));
+            }
+            if !extras.is_empty() {
+                text.push_str(&(extras.join("\n") + "\n"));
+            }
+        }
+        Err(err) if view.record.status == TodoStatus::Active => {
+            text.push_str(&format!("ledger: unavailable ({err})\n"));
+        }
+        _ => {}
+    }
     text
 }
 

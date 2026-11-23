@@ -57,7 +57,7 @@ Apply these configured action values to the identified assignment and session.
 
 ### Ad hoc work and workspace placement
 
-- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A todo is created before preparation commits; its `<slug>/prepare` worktree serves preparation, is reviewed and integrated immediately, and is removed with its local/remote branch. Implementation later uses the separate `<slug>/work` worktree based on updated main. No agent other than the integrator commits on main.
+- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A repository todo uses a single `<slug>/work` worktree and branch for both pending documentation and implementation; pending markers are folded by the integrator at delivery and the worktree and branch are cleaned up after promotion. No agent other than the integrator commits on main.
 
 ### Unexpected bugs
 
@@ -142,7 +142,7 @@ once, deduplicated, while preserving the existing restoration obligation.
   this boundary; remaining judgment does. A small change whose correctness is
   genuinely contested still belongs in the lifecycle. A `change` todo created
   despite meeting these criteria may still take the in-context path at prepare
-  entry (`sdlc/procedure/lifecycle/prepare/overview`).
+  entry (`sdlc/procedure/lifecycle/overview`).
 
 - **Use the todo's `log` artifact for a breadcrumb.** A minimal FYI that
   changes neither scope nor a decision does not justify a new todo or a rewrite
@@ -195,7 +195,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   saw, where, and how it came to see it — through the channel its own
   procedure names, or else in its final report. The governing session decides
   each observation under this standard. A build's entries are decided by the
-  deferral worker the work orchestrator dispatches: deciding them, and
+  deferral worker `todo-orchestrator` dispatches: deciding them, and
   creating or filing what this policy admits, is that worker's job
   (`sdlc/procedure/lifecycle/work/deferrals`).
 

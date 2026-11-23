@@ -14,5 +14,3 @@ runner.upstream_changed v1 — A watched upstream ref changed. (subject: reposit
   instrukt events schema runner.upstream_changed
 workflow.finalized v1 — A finalize-ready todo was handed off to integration. (subject: todo, delivery: occurrence)
   instrukt events schema workflow.finalized
-workflow.preparation_reviewed v1 — Reviewed preparation documentation is ready for immediate integration. (subject: todo, delivery: occurrence)
-  instrukt events schema workflow.preparation_reviewed

@@ -48,7 +48,12 @@ Guide the human's request from the observed state:
   reviewer identities. Store instrukt secrets through `instrukt secrets
   set/generate` in the protected machine-local secrets file.
 - **Other requests:** use `instrukt -h` and `instrukt docs` to find the owning
-  command or contract.
+  command or contract. This cockpit covers platform setup on the computer
+  (binary, adopted repositories, runtime, models, GitHub Apps, modules); to
+  onboard a company (company home, members, connectors, and business services),
+  load
+  `instrukt docs get general/procedure/company-onboarding/overview --closure`
+  once platform setup stands.
 
 Ask for human-owned choices: runtime, which documentation repository to adopt
 when none publishes, agent preferences and git authors, modules, and required

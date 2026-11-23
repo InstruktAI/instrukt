@@ -128,6 +128,9 @@ enum Shape {
     Members,
     Connectors,
     Mcp,
+    McpClients,
+    Issuer,
+    IngressUrl,
     Runtimes,
     MachineId,
     Port,
@@ -178,6 +181,8 @@ fn schema() -> Node {
         ("connectors", Leaf(Rule::CompanyOnly, Shape::Connectors)),
         ("profiles", Leaf(Rule::CompanyOnly, Shape::StrList)),
         ("mcp", Leaf(Rule::GlobalOrCompany, Shape::Mcp)),
+        ("mcp_clients", Leaf(GlobalOnly, Shape::McpClients)),
+        ("issuer", Leaf(Rule::CompanyOnly, Shape::Issuer)),
         ("requires", Leaf(ProjectOnly, Shape::ModuleList)),
         ("board", Leaf(ProjectOnly, Shape::Board)),
         (
@@ -227,6 +232,7 @@ fn schema() -> Node {
                 ("computer", Leaf(GlobalOnly, Shape::MachineId)),
                 ("port", Leaf(GlobalOnly, Shape::Port)),
                 ("reactions", Leaf(GlobalOnly, Shape::MachineId)),
+                ("url", Leaf(GlobalOnly, Shape::IngressUrl)),
             ]),
         ),
         (
@@ -440,6 +446,18 @@ fn check_shape(
         Shape::Members => super::_company::check_members(value, path, out),
         Shape::Connectors => super::_company::check_connectors(value, path, out),
         Shape::Mcp => super::_mcp::check(value, path, layer, out),
+        Shape::McpClients => super::_mcp::check_clients(value, path, out),
+        Shape::Issuer => super::_mcp::check_issuer(value, path, out),
+        Shape::IngressUrl => {
+            if !value
+                .as_str()
+                .is_some_and(super::_webhooks::ingress_url_admitted)
+            {
+                out.push(invalid(
+                    "expected an absolute https address (or loopback http address) without credentials, query or fragment",
+                ));
+            }
+        }
         Shape::MachineId => {
             if value
                 .as_str()
@@ -730,6 +748,186 @@ pub fn editor_schema() -> serde_json::Value {
     schema
 }
 
+/// JSON Schema of `layer` (`Global`, `Project`, or `Company`), generated from
+/// the same schema tree [`check`] validates with.
+pub fn layer_json_schema(layer: LayerKind) -> serde_json::Value {
+    let mut schema = json_node(&schema(), layer).unwrap_or_else(|| json!({}));
+    if let Some(object) = schema.as_object_mut() {
+        let title = match layer {
+            LayerKind::Global => "instrukt.yaml (global layer)",
+            LayerKind::Project => "instrukt.yaml (project layer)",
+            LayerKind::Company => "instrukt.yaml (company home)",
+        };
+        let required = match layer {
+            LayerKind::Company => json!(["schema_version", "company"]),
+            _ => json!(["schema_version"]),
+        };
+        object.insert("required".to_owned(), required);
+        let mut head = serde_json::Map::new();
+        head.insert(
+            "$schema".to_owned(),
+            json!("https://json-schema.org/draft/2020-12/schema"),
+        );
+        head.insert("title".to_owned(), json!(title));
+        head.extend(std::mem::take(object));
+        *object = head;
+    }
+    schema
+}
+
+/// Describe what `layer` can declare at optional dotted `path`, as JSON Schema
+/// (`as_json = true`) or readable field documentation (`as_json = false`).
+pub fn describe_schema(
+    layer: LayerKind,
+    path: Option<&str>,
+    as_json: bool,
+) -> Result<String, super::_error::ConfigError> {
+    let root = layer_json_schema(layer);
+    let mut current = &root;
+    let mut walked = Vec::new();
+    if let Some(path) = path {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err(super::_error::ConfigError::InvalidValue {
+                key: "schema".into(),
+                message: "path must be nonempty".into(),
+            });
+        }
+        for segment in trimmed.split('.') {
+            if let Some(next) = current.get("properties").and_then(|p| p.get(segment)) {
+                current = next;
+                walked.push(segment.to_owned());
+            } else if let Some(next) = current
+                .get("additionalProperties")
+                .filter(|v| v.is_object())
+            {
+                current = next;
+                walked.push(segment.to_owned());
+            } else {
+                let mut available: Vec<&str> = current
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .map(|map| map.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                available.sort_unstable();
+                let scope = if walked.is_empty() {
+                    layer.described().to_owned()
+                } else {
+                    format!("`{}` in {}", walked.join("."), layer.described())
+                };
+                let keys = if available.is_empty() {
+                    "none".to_owned()
+                } else {
+                    available.join(", ")
+                };
+                return Err(super::_error::ConfigError::InvalidValue {
+                    key: trimmed.to_owned(),
+                    message: format!(
+                        "`{segment}` cannot be declared under {scope}; declarable keys: {keys}"
+                    ),
+                });
+            }
+        }
+    }
+    if as_json {
+        return serde_json::to_string_pretty(current).map_err(|error| {
+            super::_error::ConfigError::InvalidValue {
+                key: path.unwrap_or("").into(),
+                message: error.to_string(),
+            }
+        });
+    }
+    let prefix = walked.join(".");
+    let mut lines = Vec::new();
+    render_schema_text(&prefix, current, false, &mut lines);
+    Ok(lines.join("\n"))
+}
+
+fn render_schema_text(
+    prefix: &str,
+    schema: &serde_json::Value,
+    required: bool,
+    out: &mut Vec<String>,
+) {
+    let type_desc = schema_type_summary(schema);
+    let req = if required { "required" } else { "optional" };
+    let default = schema
+        .get("default")
+        .map(|d| format!(", default {d}"))
+        .unwrap_or_default();
+    let desc = schema
+        .get("description")
+        .and_then(|d| d.as_str())
+        .map(|d| format!(" — {d}"))
+        .unwrap_or_default();
+    if !prefix.is_empty() {
+        out.push(format!("{prefix} ({type_desc}, {req}{default}){desc}"));
+    }
+    let req_list: Vec<&str> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+        let mut keys: Vec<&String> = props.keys().collect();
+        keys.sort();
+        for key in keys {
+            let child_path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            render_schema_text(
+                &child_path,
+                &props[key],
+                req_list.contains(&key.as_str()),
+                out,
+            );
+        }
+    }
+    if let Some(extra) = schema.get("additionalProperties").filter(|v| v.is_object()) {
+        let child_path = if prefix.is_empty() {
+            "<name>".to_owned()
+        } else {
+            format!("{prefix}.<name>")
+        };
+        render_schema_text(&child_path, extra, false, out);
+    }
+}
+
+fn schema_type_summary(schema: &serde_json::Value) -> String {
+    if let Some(values) = schema.get("enum").and_then(|e| e.as_array()) {
+        let opts: Vec<String> = values
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .collect();
+        return format!("one of: {}", opts.join(" | "));
+    }
+    if let Some(pattern) = schema.get("pattern").and_then(|p| p.as_str())
+        && pattern.contains("\\$\\{")
+    {
+        return "${NAME} secret reference".to_owned();
+    }
+    if let Some(kind) = schema.get("type").and_then(|t| t.as_str()) {
+        if kind == "array" {
+            let item = schema
+                .get("items")
+                .map(schema_type_summary)
+                .unwrap_or_else(|| "any".into());
+            return format!("list of {item}");
+        }
+        return kind.to_owned();
+    }
+    if schema.get("anyOf").is_some() {
+        return "union".to_owned();
+    }
+    "value".to_owned()
+}
+
 /// `node` as JSON Schema for `layer`; `None` when the layer may hold none
 /// of it.
 fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
@@ -737,7 +935,7 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
         Node::Leaf(Rule::ShippedAdapterInProject, _) if layer == LayerKind::Project => {
             Some(json!({ "enum": SHIPPED_BLUEPRINT_ENGINES }))
         }
-        Node::Leaf(rule, shape) => rule.admits(layer).then(|| json_shape(*shape)),
+        Node::Leaf(rule, shape) => rule.admits(layer).then(|| json_shape(*shape, layer)),
         Node::Map { children, open } => {
             let properties: serde_json::Map<String, serde_json::Value> = children
                 .iter()
@@ -756,7 +954,7 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
     }
 }
 
-fn json_shape(shape: Shape) -> serde_json::Value {
+fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
     let strings = |names: &[&str]| json!({ "type": "array", "items": { "enum": names } });
     let record = |required: &[&str], optional: &[(&str, serde_json::Value)]| {
         let mut properties: serde_json::Map<String, serde_json::Value> = required
@@ -780,7 +978,11 @@ fn json_shape(shape: Shape) -> serde_json::Value {
             json!({"type":"object","additionalProperties":record(&super::_runtime::ACTIONS, &[])})
         }
         Shape::Webhooks => super::_webhooks::editor_schema(),
-        Shape::Members | Shape::Mcp => json!({ "type": "object" }),
+        Shape::Members => json!({ "type": "object" }),
+        Shape::Mcp => super::_mcp::mcp_json_schema(layer),
+        Shape::McpClients => super::_mcp::mcp_clients_json_schema(),
+        Shape::Issuer => super::_mcp::issuer_json_schema(),
+        Shape::IngressUrl => json!({ "type": "string", "format": "uri" }),
         Shape::Connectors => super::_company::connectors_schema(),
         Shape::MachineId => json!({"type": "string", "pattern": "^[0-9a-f]{16,64}$"}),
         Shape::Port => json!({"type": "integer", "minimum": 1, "maximum": 65535}),

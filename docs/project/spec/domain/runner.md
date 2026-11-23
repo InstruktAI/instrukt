@@ -155,11 +155,11 @@ Native agent-operation prose is supplied by configuration and rendered through `
   Agents use configured native operations in their own conversation and
   record native child attempts through work. The adapter starts only without
   an agent or for an explicit native-capability gap. Native delegation returns
-  shared workspace evidence. The work orchestrator and its native shared children
-  use one todo worktree and branch, with one workspace role admitted at a time
+  shared workspace evidence. The unified `todo-orchestrator` and its native shared children
+  use one `<slug>/work` worktree and branch, with one workspace role admitted at a time
   and atomic completion/release through the work and workflow contracts. Events include
   `runner.upstream_changed`,
-  `runner.ci_completed`, `runner.dependency_failing`, `workflow.preparation_reviewed`, `runner.main_failing` and
+  `runner.ci_completed`, `runner.dependency_failing`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** blueprint supplies its release-owned tool lifecycle to module installation; configuration supplies effective machine and
   project settings and company homes; publication supplies project checkout paths; docs supplies subscribed procedures; work
@@ -332,7 +332,7 @@ of event enablement and without a GitHub API call or a main-ahead event.
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
-`runner.upstream_changed`, `workflow.preparation_reviewed` → `workflow.preparation_reviewed`,
+`runner.upstream_changed`,
 `runner.ci_completed` → `runner.ci_completed`, `runner.main_failing` →
 `runner.main_failing`, `runner.dependency_failing` → `runner.dependency_failing`,
 and `workflow.finalized` → `workflow.finalized`.
@@ -346,8 +346,7 @@ upstream changes name the watched ref of the project's remote and main-failing
 names the project's main, each as a repository ref with the observed revision
 in its data, so a newer observation of the same ref takes the place of an
 undelivered older one; CI completion names the candidate commit (including the
-`no_ci` observation). Finalize-ready and reviewed
-preparation use project origin and a todo subject. The existing occurrence-key columns
+`no_ci` observation). Finalize-ready uses project origin and a todo subject. The existing occurrence-key columns
 below determine stable IDs, including producer type, independently of payload
 serialization. Producer declarations expose the existing payloads as typed data.
 
@@ -469,7 +468,7 @@ has no origin, as declared in Canonical fields.
 | work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
 | company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`); a connector's direct message to one person, which MCP sign-in sends its links through |
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
-| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
+| runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 
 <!-- planned:event-driven-pr-review-gate -->
 For automatic review the runner asks its suppliers and derives none of their

@@ -17,7 +17,8 @@ impl std::fmt::Display for PermissionRefused {
 impl std::error::Error for PermissionRefused {}
 
 pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
-    let config = Configuration::load_global(&ctx.home)?;
+    let inspection = ctx.home.for_inspection();
+    let config = Configuration::load_global(&inspection)?;
     let env = wiring::environment(ctx)?;
     let Some(session) = config.caller(&env)? else {
         return Ok(None);
@@ -49,7 +50,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
         ["todo", "artifacts", "write"] => ArtifactWrite,
         ["todo", "stamp"] => Stamp,
-        ["todo", "prepare" | "work"] => TodoOrchestration,
+        ["todo", "work"] => TodoOrchestration,
         ["todo", "attempt" | "bind"] => AssignmentWrite,
         ["todo", "deliver"] => Integration,
         [
@@ -57,6 +58,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "create" | "update" | "freeze" | "unfreeze" | "remove" | "reactivate",
         ] => TodoWrite,
         ["discuss", "open" | "close"] => ConversationLink,
+        ["company", "reply"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
         ["history", "import-teleclaude" | "extract"] => HistoryRead,
@@ -64,7 +66,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["events", "list" | "schema" | "status" | "dead-letters"] => EventsRead,
         ["agents", "list" | "availability"] => AgentsRead,
         ["agents", "status"] => AgentsWrite,
-        ["config", "get" | "show" | "validate"] => ConfigRead,
+        ["config", "get" | "show" | "validate" | "schema"] => ConfigRead,
         ["config", "init" | "patch"] => ConfigWrite,
         ["secrets", "set" | "generate"] => SecretsWrite,
         ["hooks", "status"] => RepositoryRead,
@@ -77,7 +79,11 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "affected" | "path" | "query" | "explain" | "status",
         ] => CodeCheck,
         ["eval", "report"] => EvalRead,
-        ["mcp", "list" | "list-tools" | "call"] => McpAccess,
+        [
+            "mcp",
+            "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress" | "sign-out",
+        ]
+        | ["mcp", "issuer", "init" | "publish" | "show"] => McpAccess,
         ["ticks", "status"] => InstallationRead,
         ["install"] => InstallationWrite,
         ["run"]
@@ -188,7 +194,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
         path.as_slice(),
         ["status"]
             | ["bugs", "suppressions" | "list"]
-            | ["config", "get" | "show" | "validate"]
+            | ["config", "get" | "show" | "validate" | "schema"]
             | ["docs", "get" | "index" | "schema" | "validate"]
             | ["events", "list" | "schema" | "status" | "dead-letters"]
             | ["agents", "list" | "availability"]
@@ -199,7 +205,11 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["todo", "list" | "show"]
             | ["todo", "artifacts", "list" | "read" | "diff"]
             | ["specs", "coverage" | "trace"]
-            | ["mcp", "list" | "list-tools" | "call"]
+            | [
+                "mcp",
+                "list" | "list-tools" | "call" | "discover" | "check-ingress"
+            ]
+            | ["mcp", "issuer", "show"]
             | [
                 "blueprint",
                 "status" | "query" | "path" | "explain" | "affected"
@@ -310,6 +320,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
         SessionObserve | ConversationLink => true,
+        CompanyReply => assignment.company.is_some(),
         // `own` reaches the servers of the assignment's own company, which
         // are all that company's sessions see; a machine-wide server that
         // carries a login is a machine-wide object no assignment owns.

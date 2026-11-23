@@ -174,4 +174,4 @@ These are continuous pressures across the lifecycle, not isolated later phases:
 ## See Also
 
 - [sdlc/procedure/lifecycle/overview](../../procedure/lifecycle/overview.md) —
-  operational steps and state machine commands for executing this lifecycle
+  operational steps and factual-ledger commands for executing this lifecycle

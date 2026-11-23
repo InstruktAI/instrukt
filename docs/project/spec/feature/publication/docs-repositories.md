@@ -50,7 +50,7 @@ their wording.
 | Always-on doctrine in every agent's global file | the `docs/general/` owner's `index.yaml` selection |
 | A domain's core set in its own docs | a required read naming the domain by its bare name, meaning that domain's `expanded` set, or a required read naming a snippet id (`project/instrukt/spec/domain/docs`) |
 | Its workflow, when `todos` is on | the published domain named by `workflow.domain` (default `sdlc`) |
-| The roles its workflow dispatches | that domain's `workflow/actions.yaml` `roles:`; subscribed procedure roles are independent |
+| The roles its workflow dispatches | that domain's `workflow/workflow.yaml` `roles:`; subscribed procedure roles are independent |
 | Its starting `docs/project/schema.yaml` | the published `sdlc` domain's `schema.yaml`, copied once by `instrukt init` (`project/instrukt/spec/feature/repository/project-initialization`) |
 | Retrieval during work | `instrukt docs index`, `instrukt docs get <id>` and `instrukt docs get --domain <x>` over everything published on the computer |
 

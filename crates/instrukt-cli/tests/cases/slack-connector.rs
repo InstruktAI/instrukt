@@ -539,3 +539,93 @@ fn a_member_is_answered_when_slack_cannot_read_the_earlier_messages() {
             .all(|post| post.thread.as_deref() == Some(thread.as_str()))
     );
 }
+
+// spec: project/instrukt/spec/feature/company/slack-connector UC-SL7
+#[test]
+fn two_named_slack_connectors_in_one_company_operate_independently() {
+    use crate::fixtures::conversing::{COMPANY, MEMBERS, patch_company};
+    let mut c = Company::new("");
+    let second = c
+        .slack
+        .register_app("xapp-second-app", "xoxb-second-bot", "UAGENT2", "BAGENT2");
+    let here = c.env.path("");
+    for (reference, value) in [
+        ("SECOND_APP_TOKEN", "xapp-second-app"),
+        ("SECOND_BOT_TOKEN", "xoxb-second-bot"),
+    ] {
+        c.env
+            .instrukt(&here)
+            .args(["secrets", "set", reference, "--company", COMPANY])
+            .write_stdin(value)
+            .assert()
+            .success();
+    }
+    patch_company(
+        &c.env,
+        COMPANY,
+        &format!(
+            "{{members: {MEMBERS}, connectors: {{slack: {{app_token: '${{SLACK_APP_TOKEN}}', bot_token: '${{SLACK_BOT_TOKEN}}'}}, second: {{kind: slack, app_token: '${{SECOND_APP_TOKEN}}', bot_token: '${{SECOND_BOT_TOKEN}}'}}}}}}"
+        ),
+    );
+    c.run();
+    wait("both Slack connectors connect", || {
+        c.slack.connections() >= 1 && second.connections() >= 1
+    });
+
+    // Rate-limit `users.info` on the primary `slack` connector for 60 seconds.
+    // The second Slack app in the same company must NOT be throttled by it.
+    c.slack.limit_lookup(60);
+    c.slack
+        .mention("C1", "USTEVEN", "<@UAGENT> primary question", None);
+    wait("primary connector hits its lookup rate limit", || {
+        c.slack.lookups() >= 1
+    });
+
+    let second_ts = second.mention("C2", "USTEVEN", "<@UAGENT2> secondary question", None);
+    let session = c.session();
+    let opening = c.opening(&session);
+    assert!(
+        opening.contains("Connector: second"),
+        "expected Connector: second in opening:\n{opening}"
+    );
+    let input = c.input(&session, 0);
+    assert!(
+        input.contains("secondary question"),
+        "expected secondary question in input:\n{input}"
+    );
+    c.finish_turn(&session, 0, "Answer from second app.");
+    wait("second app posts its answer", || {
+        second
+            .posts()
+            .iter()
+            .any(|post| post.markdown.as_deref() == Some("Answer from second app."))
+    });
+    assert!(
+        c.slack.posts().is_empty(),
+        "primary connector must not have posted while rate-limited: {:?}",
+        c.slack.posts()
+    );
+    assert_eq!(second.posts().len(), 1);
+    assert_eq!(second.posts()[0].channel, "C2");
+    assert_eq!(
+        second.posts()[0].thread.as_deref(),
+        Some(second_ts.as_str())
+    );
+
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let recorded: (String, String) = db
+        .query_row(
+            "SELECT connector, semantic_key FROM connected_conversations WHERE connector='second'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(recorded.0, "second");
+    assert_eq!(
+        recorded.1,
+        instrukt_company::conversations::key(&c.company(), "second", &format!("C2/{second_ts}"))
+    );
+}

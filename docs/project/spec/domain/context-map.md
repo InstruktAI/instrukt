@@ -93,10 +93,10 @@ not permission for an upstream module to depend on its consumer.
 | work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
 | runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
 | docs → runner | Customer / Supplier | Procedures and their event subscriptions |
-| publication → workflow | Customer / Supplier | Published flavor definitions, roles, actions and templates from the selected domain's `docs/domain/<x>/workflow/` |
+| publication → workflow | Customer / Supplier | Published flavor manifest (`workflow.yaml`: orchestrator, requires, roles) from the selected domain's `docs/domain/<x>/workflow/` |
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
-| runner → workflow | Published language | `runner.ci_completed` and `workflow.preparation_reviewed` wake the integrator to assess candidates and reviewed preparation heads; `runner.main_failing` and `runner.dependency_failing` supply their respective failed-check evidence |
+| runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` and `runner.dependency_failing` supply their respective failed-check evidence |
 | repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |

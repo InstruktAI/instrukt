@@ -15,11 +15,13 @@ use std::time::{Duration, Instant};
 
 use instrukt_connector::{
     Admission, Captured, Clock, Connector, ConnectorError, ContextSnapshot, Declared, Inbox,
-    Incoming, Kind, Place, SecretResolver, Sender, Status,
+    Incoming, Kind, Place, RefusalReason, SecretResolver, Sender, Status,
 };
-use instrukt_core::config::{Admitted, AdmittedSecrets, Current};
+use instrukt_core::config::{
+    Admitted, AdmittedSecrets, ConnectorAdmit, Current, ReplyMode, SessionScope,
+};
 use instrukt_core::home::Home;
-use instrukt_core::ids::ProjectSlug;
+use instrukt_core::ids::{ProjectSlug, RoleName};
 use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 use serde_yaml_ng::Value;
@@ -118,12 +120,13 @@ impl Connectors for Directory {
         let kind = self
             .kinds
             .iter()
-            .find(|kind| kind.declaration().key == key)
+            .find(|kind| kind.declaration().key == declared.kind)
             .ok_or_else(|| ConnectorError {
-                cause: format!("this instrukt has no {key} connector"),
+                cause: format!("this instrukt has no {} connector kind", declared.kind),
             })?;
         kind.open(
             company.as_str(),
+            key,
             &declared_values(&declared.entry),
             &AdmittedResolver(&admitted_company.secrets),
         )
@@ -447,10 +450,43 @@ fn state(
     }
 }
 
+fn connector_policy(
+    admitted: &Admitted,
+    company: &ProjectSlug,
+    key: &str,
+) -> Result<(RoleName, ConnectorAdmit, SessionScope, ReplyMode), ConnectorError> {
+    admitted
+        .company(company)
+        .and_then(|company| company.connectors.iter().find(|c| c.key == key))
+        .map(|declared| {
+            (
+                declared.role.clone(),
+                declared.admit,
+                declared.session_scope,
+                declared.reply_mode,
+            )
+        })
+        .ok_or_else(|| ConnectorError {
+            cause: format!("connector `{key}` is not admitted for company `{company}`"),
+        })
+}
+
+fn connector_admit(
+    admitted: &Admitted,
+    company: &ProjectSlug,
+    key: &str,
+) -> Option<ConnectorAdmit> {
+    admitted
+        .company(company)
+        .and_then(|company| company.connectors.iter().find(|c| c.key == key))
+        .map(|declared| declared.admit)
+}
+
 /// The host's side of one connection: what it retains is recorded and the
 /// intake nudged; the connection's state follows what the connector reports.
 struct HostInbox<'a> {
     home: &'a Home,
+    current: &'a Current,
     company: &'a ProjectSlug,
     key: &'a str,
     nudge: &'a SyncSender<()>,
@@ -460,11 +496,20 @@ struct HostInbox<'a> {
 
 impl Inbox for HostInbox<'_> {
     fn retain(&self, incoming: Incoming) -> Result<(), ConnectorError> {
-        conversations::retain(self.home, self.company, &incoming, self.clock.now()).map_err(
-            |error| ConnectorError {
-                cause: error.to_string(),
-            },
-        )?;
+        let (role, _, session_scope, reply_mode) =
+            connector_policy(&self.current.get(), self.company, self.key)?;
+        conversations::retain_with_policy(
+            self.home,
+            self.company,
+            &incoming,
+            &role,
+            session_scope,
+            reply_mode,
+            self.clock.now(),
+        )
+        .map_err(|error| ConnectorError {
+            cause: error.to_string(),
+        })?;
         let _ = self.nudge.try_send(());
         Ok(())
     }
@@ -524,11 +569,15 @@ fn connection(
         scope.spawn(move || {
             let _ended = Ended(ended);
             intake_worker(&quit, &nudges, || {
+                let Some(admit) = connector_admit(&reach.current.get(), company, key) else {
+                    return IntakeProgress::default();
+                };
                 intake_pass(home, reach, company, key, |connector| {
                     admit_messages(
                         home,
                         company,
                         key,
+                        admit,
                         connector.as_ref(),
                         &admitted,
                         context_nudge,
@@ -563,6 +612,9 @@ fn connection(
         scope.spawn(move || {
             notice_worker(home, reach, company, key, &quit);
         });
+        scope.spawn(move || {
+            sign_in_delivery_worker(home, reach, company, key, &quit);
+        });
         let scan_nudge = &nudge;
         scope.spawn(move || {
             let quit = || stop.load(Ordering::Acquire) || ended.load(Ordering::Acquire);
@@ -579,11 +631,30 @@ fn connection(
                 if event.is_err() && retry_at.is_none_or(|at| Instant::now() < at) {
                     continue;
                 }
-                let result = reach.connectors.open(&reach.current.get(), company, key).and_then(|connector| {
-                    conversations::read_back::scan(home, company, key, connector.as_ref(), &|| reach.connectors.now(), &quit, &|| {
-                        let _ = scan_nudge.try_send(());
-                    })
-                });
+                let admitted_gen = reach.current.get();
+                let result = connector_policy(&admitted_gen, company, key).and_then(
+                    |(role, _, session_scope, reply_mode)| {
+                        reach
+                            .connectors
+                            .open(&admitted_gen, company, key)
+                            .and_then(|connector| {
+                                conversations::read_back::scan(
+                                    home,
+                                    company,
+                                    key,
+                                    &role,
+                                    session_scope,
+                                    reply_mode,
+                                    connector.as_ref(),
+                                    &|| reach.connectors.now(),
+                                    &quit,
+                                    &|| {
+                                        let _ = scan_nudge.try_send(());
+                                    },
+                                )
+                            })
+                    },
+                );
                 match result {
                     Err(error) => {
                         tracing::warn!(target: LOG_TARGET, event = "connector_read_back_failed", company = %company, connector = key, error = %error);
@@ -602,6 +673,7 @@ fn connection(
             state(home, company, key, ConnectionState::Connecting, None);
             let inbox = HostInbox {
                 home,
+                current: reach.current,
                 company,
                 key,
                 nudge: &nudge,
@@ -761,10 +833,426 @@ fn notice_worker(
             }
             let until = Instant::now() + conversations::INTAKE_INTERVAL;
             while Instant::now() < until && !stop() {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(50));
             }
         }
     });
+}
+
+/// Dedicated worker delivering private MCP sign-in links and outcome notices
+/// by direct message through the conversation's connector. Polls read-only via
+/// `StateRead` (never taking the writer lock when idle) and never holds `StateDb`
+/// across connector network calls.
+fn sign_in_delivery_worker(
+    home: &Home,
+    reach: Reach<'_>,
+    company: &ProjectSlug,
+    key: &str,
+    stop: &dyn Fn() -> bool,
+) {
+    let mut sent_links = std::collections::HashSet::<String>::new();
+    let mut sent_outcomes = std::collections::HashSet::<String>::new();
+    while !stop() {
+        let now = reach.connectors.now();
+        deliver_pending_sign_in_dms(
+            home,
+            reach,
+            company,
+            key,
+            now,
+            &mut sent_links,
+            &mut sent_outcomes,
+        );
+        let until = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < until && !stop() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+/// Sanitize an OAuth error code for plain-text direct messages per `mcp-access`:
+/// up to 64 printable RFC 6749 NQCHAR bytes (`0x21..=0x7E`, excluding `"` and `\`),
+/// or `"unknown"` otherwise.
+fn sanitize_oauth_error_code(raw: Option<&str>) -> &str {
+    match raw.map(str::trim) {
+        Some(code)
+            if !code.is_empty()
+                && code.len() <= 64
+                && code
+                    .bytes()
+                    .all(|b| (0x21..=0x7E).contains(&b) && b != b'"' && b != b'\\') =>
+        {
+            code
+        }
+        _ => "unknown",
+    }
+}
+
+struct PendingLink {
+    state_digest: String,
+    server: String,
+    recipient: String,
+    link: String,
+    expires_at: String,
+}
+
+struct PendingOutcome {
+    state_digest: String,
+    server: String,
+    recipient: String,
+    state: String,
+    failure: Option<String>,
+}
+
+fn deliver_pending_sign_in_dms(
+    home: &Home,
+    reach: Reach<'_>,
+    company: &ProjectSlug,
+    key: &str,
+    now: Timestamp,
+    sent_links: &mut std::collections::HashSet<String>,
+    sent_outcomes: &mut std::collections::HashSet<String>,
+) {
+    use instrukt_connector::DirectMessageError;
+    use instrukt_core::state_db::rusqlite::params;
+    use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+
+    let inspection = home.for_inspection();
+    let (pending_links, pending_outcomes): (Vec<PendingLink>, Vec<PendingOutcome>) =
+        match StateRead::open(&inspection) {
+            Ok(Some(read)) => {
+                let links = match read.conn().prepare(
+                    "SELECT state_digest, server, recipient, link, expires_at
+                     FROM mcp_sign_ins
+                     WHERE company = ?1 AND connector = ?2 AND state = 'open'
+                       AND link_sent_at IS NULL AND link IS NOT NULL",
+                ) {
+                    Ok(mut stmt) => match stmt.query_map(params![company.as_str(), key], |r| {
+                        Ok(PendingLink {
+                            state_digest: r.get(0)?,
+                            server: r.get(1)?,
+                            recipient: r.get(2)?,
+                            link: r.get(3)?,
+                            expires_at: r.get(4)?,
+                        })
+                    }) {
+                        Ok(rows) => {
+                            let mut out = Vec::new();
+                            for row in rows {
+                                match row {
+                                    Ok(item) => out.push(item),
+                                    Err(error) => tracing::warn!(
+                                        target: LOG_TARGET,
+                                        event = "mcp_sign_in_link_row_error",
+                                        company = %company,
+                                        connector = key,
+                                        %error
+                                    ),
+                                }
+                            }
+                            out
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                event = "mcp_sign_in_link_query_failed",
+                                company = %company,
+                                connector = key,
+                                %error
+                            );
+                            Vec::new()
+                        }
+                    },
+                    Err(error) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            event = "mcp_sign_in_link_prepare_failed",
+                            company = %company,
+                            connector = key,
+                            %error
+                        );
+                        Vec::new()
+                    }
+                };
+                let outcomes = match read.conn().prepare(
+                    "SELECT state_digest, server, recipient, state, failure
+                     FROM mcp_sign_ins
+                     WHERE company = ?1 AND connector = ?2
+                       AND state IN ('completed', 'refused', 'declined', 'failed')
+                       AND told_at IS NULL",
+                ) {
+                    Ok(mut stmt) => match stmt.query_map(params![company.as_str(), key], |r| {
+                        Ok(PendingOutcome {
+                            state_digest: r.get(0)?,
+                            server: r.get(1)?,
+                            recipient: r.get(2)?,
+                            state: r.get(3)?,
+                            failure: r.get(4)?,
+                        })
+                    }) {
+                        Ok(rows) => {
+                            let mut out = Vec::new();
+                            for row in rows {
+                                match row {
+                                    Ok(item) => out.push(item),
+                                    Err(error) => tracing::warn!(
+                                        target: LOG_TARGET,
+                                        event = "mcp_sign_in_outcome_row_error",
+                                        company = %company,
+                                        connector = key,
+                                        %error
+                                    ),
+                                }
+                            }
+                            out
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                event = "mcp_sign_in_outcome_query_failed",
+                                company = %company,
+                                connector = key,
+                                %error
+                            );
+                            Vec::new()
+                        }
+                    },
+                    Err(error) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            event = "mcp_sign_in_outcome_prepare_failed",
+                            company = %company,
+                            connector = key,
+                            %error
+                        );
+                        Vec::new()
+                    }
+                };
+                (links, outcomes)
+            }
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    event = "mcp_sign_in_state_read_failed",
+                    company = %company,
+                    connector = key,
+                    %error
+                );
+                return;
+            }
+        };
+
+    // Prune local de-duplication sets once DB rows are settled.
+    sent_links.retain(|digest| pending_links.iter().any(|p| p.state_digest == *digest));
+    sent_outcomes.retain(|digest| pending_outcomes.iter().any(|p| p.state_digest == *digest));
+
+    if pending_links.is_empty() && pending_outcomes.is_empty() {
+        return;
+    }
+
+    let now_str = now.to_string();
+    let connector = match reach.connectors.open(&reach.current.get(), company, key) {
+        Ok(connector) => connector,
+        Err(error) => {
+            tracing::warn!(
+                target: LOG_TARGET,
+                event = "mcp_sign_in_connector_unavailable",
+                company = %company,
+                connector = key,
+                error = %error
+            );
+            return;
+        }
+    };
+
+    for item in pending_links {
+        if item
+            .expires_at
+            .parse::<Timestamp>()
+            .is_ok_and(|exp| exp <= now)
+        {
+            match StateDb::open(home) {
+                Ok(mut db) => {
+                    let path = db.path().to_path_buf();
+                    if let Err(error) = db.write::<_, StateDbError>(|tx| {
+                        tx.execute(
+                            "UPDATE mcp_sign_ins
+                             SET state = 'expired', closed_at = ?1, code_verifier = NULL, nonce = NULL, link = NULL
+                             WHERE state_digest = ?2 AND state = 'open'",
+                            params![now_str, item.state_digest],
+                        )
+                        .map_err(StateDbError::sqlite(&path))?;
+                        Ok(())
+                    }) {
+                        tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_expire_write_failed", company = %company, %error);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_expire_open_failed", company = %company, %error);
+                }
+            }
+            continue;
+        }
+
+        let already_sent = sent_links.contains(&item.state_digest);
+        let send_outcome = if already_sent {
+            Ok(())
+        } else {
+            let message = format!(
+                "To let the agent use {} as you, sign in here. The link works once, for ten minutes: {}",
+                item.server, item.link
+            );
+            connector
+                .direct_message(&item.recipient, &message)
+                .map(|_| ())
+        };
+        match send_outcome {
+            Ok(()) => {
+                sent_links.insert(item.state_digest.clone());
+                match StateDb::open(home) {
+                    Ok(mut db) => {
+                        let path = db.path().to_path_buf();
+                        if let Err(error) = db.write::<_, StateDbError>(|tx| {
+                            tx.execute(
+                                "UPDATE mcp_sign_ins
+                                 SET link_sent_at = ?1, link = NULL
+                                 WHERE state_digest = ?2 AND state = 'open'",
+                                params![now_str, item.state_digest],
+                            )
+                            .map_err(StateDbError::sqlite(&path))?;
+                            Ok(())
+                        }) {
+                            tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_sent_write_failed", company = %company, server = %item.server, %error);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_sent_open_failed", company = %company, server = %item.server, %error);
+                    }
+                }
+            }
+            Err(DirectMessageError::Retryable(cause)) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    event = "mcp_sign_in_dm_retryable",
+                    company = %company,
+                    connector = key,
+                    server = %item.server,
+                    cause = %cause
+                );
+            }
+            Err(DirectMessageError::Final(cause)) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    event = "mcp_sign_in_dm_undelivered",
+                    company = %company,
+                    connector = key,
+                    server = %item.server,
+                    cause = %cause
+                );
+                match StateDb::open(home) {
+                    Ok(mut db) => {
+                        let path = db.path().to_path_buf();
+                        if let Err(error) = db.write::<_, StateDbError>(|tx| {
+                            tx.execute(
+                                "UPDATE mcp_sign_ins
+                                 SET state = 'undelivered', failure = ?1, closed_at = ?2, code_verifier = NULL, nonce = NULL, link = NULL
+                                 WHERE state_digest = ?3 AND state = 'open'",
+                                params![cause, now_str, item.state_digest],
+                            )
+                            .map_err(StateDbError::sqlite(&path))?;
+                            Ok(())
+                        }) {
+                            tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_undelivered_write_failed", company = %company, server = %item.server, %error);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_undelivered_open_failed", company = %company, server = %item.server, %error);
+                    }
+                }
+            }
+        }
+    }
+
+    for item in pending_outcomes {
+        let already_sent = sent_outcomes.contains(&item.state_digest);
+        let send_outcome = if already_sent {
+            Ok(())
+        } else {
+            let text = match item.state.as_str() {
+                "completed" => format!(
+                    "You are signed in to {}. Ask the agent again to continue.",
+                    item.server
+                ),
+                "refused" => format!(
+                    "That sign-in to {} was not for your address and was not kept.",
+                    item.server
+                ),
+                "declined" | "failed" => {
+                    let code = sanitize_oauth_error_code(item.failure.as_deref());
+                    format!("The sign-in to {} did not complete: {code}.", item.server)
+                }
+                _ => continue,
+            };
+            connector.direct_message(&item.recipient, &text).map(|_| ())
+        };
+        match send_outcome {
+            Ok(()) => {
+                sent_outcomes.insert(item.state_digest.clone());
+                match StateDb::open(home) {
+                    Ok(mut db) => {
+                        let path = db.path().to_path_buf();
+                        if let Err(error) = db.write::<_, StateDbError>(|tx| {
+                            tx.execute(
+                                "UPDATE mcp_sign_ins SET told_at = ?1 WHERE state_digest = ?2 AND told_at IS NULL",
+                                params![now_str, item.state_digest],
+                            )
+                            .map_err(StateDbError::sqlite(&path))?;
+                            Ok(())
+                        }) {
+                            tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_told_write_failed", company = %company, server = %item.server, %error);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_told_open_failed", company = %company, server = %item.server, %error);
+                    }
+                }
+            }
+            Err(DirectMessageError::Retryable(cause)) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    event = "mcp_sign_in_outcome_dm_retryable",
+                    company = %company,
+                    connector = key,
+                    server = %item.server,
+                    cause = %cause
+                );
+            }
+            Err(DirectMessageError::Final(cause)) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    event = "mcp_sign_in_outcome_dm_failed",
+                    company = %company,
+                    connector = key,
+                    server = %item.server,
+                    cause = %cause
+                );
+                if let Ok(mut db) = StateDb::open(home) {
+                    let path = db.path().to_path_buf();
+                    if let Err(error) = db.write::<_, StateDbError>(|tx| {
+                        tx.execute(
+                            "UPDATE mcp_sign_ins SET told_at = ?1 WHERE state_digest = ?2 AND told_at IS NULL",
+                            params![now_str, item.state_digest],
+                        )
+                        .map_err(StateDbError::sqlite(&path))?;
+                        Ok(())
+                    }) {
+                        tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_told_final_write_failed", company = %company, %error);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Decide durably, then make one best-effort provider post without an answer lock.
@@ -814,21 +1302,30 @@ fn deliver_notice(
 }
 
 /// What a received message's record becomes from what the connector says
-/// about its sender.
+/// about its sender and the connector's `admit` policy.
 #[derive(Debug, PartialEq, Eq)]
 enum Next {
     /// Admitted, with what the provider gave about the sender.
     Admitted(Sender),
-    /// Refused: the sender receives the fixed reply.
-    Refused,
+    /// Refused: the sender receives the fixed reply for this reason.
+    Refused(RefusalReason),
     /// It waits, with this cause.
     Waiting(String),
 }
 
-fn next_record(admission: Admission) -> Next {
+fn next_record(admission: Admission, admit: ConnectorAdmit) -> Next {
     match admission {
-        Admission::Admitted(sender) => Next::Admitted(sender),
-        Admission::NotOwn => Next::Refused,
+        Admission::Admitted(sender) => {
+            if admit == ConnectorAdmit::AdminsOnly && !sender.is_admin {
+                Next::Refused(RefusalReason::NotAdmin)
+            } else {
+                Next::Admitted(sender)
+            }
+        }
+        Admission::NotOwn => Next::Refused(match admit {
+            ConnectorAdmit::Members => RefusalReason::NotOwn,
+            ConnectorAdmit::AdminsOnly => RefusalReason::NotAdmin,
+        }),
         Admission::Undecided(cause) => Next::Waiting(cause),
     }
 }
@@ -961,10 +1458,12 @@ impl Default for IntakeProgress {
 
 /// Sender decisions and refusals can call Slack. Context reads and relay
 /// handoff run on a different worker.
+#[allow(clippy::too_many_arguments)]
 fn admit_messages(
     home: &Home,
     company: &ProjectSlug,
     key: &str,
+    admit: ConnectorAdmit,
     connector: &dyn Connector,
     status: &SyncSender<()>,
     context: &SyncSender<()>,
@@ -980,14 +1479,22 @@ fn admit_messages(
             conversations::waiting(home, company, key, &unread, "the message has no sender")?;
             continue;
         };
-        match next_record(connector.admit(sender)) {
+        match next_record(connector.admit(sender), admit) {
             Next::Admitted(admitted) => {
                 conversations::admitted(home, company, key, &unread, &admitted, clock.now())?;
                 let _ = status.try_send(());
                 let _ = context.try_send(());
             }
-            Next::Refused => {
-                conversations::refused(home, company, key, &unread, sender, Timestamp::now())?;
+            Next::Refused(reason) => {
+                conversations::refused(
+                    home,
+                    company,
+                    key,
+                    &unread,
+                    sender,
+                    reason,
+                    Timestamp::now(),
+                )?;
             }
             Next::Waiting(cause) => {
                 progress.clean = false;
@@ -997,7 +1504,7 @@ fn admit_messages(
     }
     for refusal in owed(conversations::refusals(home, company, key)?) {
         let outcome = connector
-            .turn_away(&refusal.conversation)
+            .turn_away(&refusal.conversation, refusal.reason)
             .map_err(|error| error.cause);
         progress.clean &= outcome.is_ok();
         conversations::refusal_posted(home, company, key, &refusal, outcome, Timestamp::now())?;
@@ -1263,7 +1770,11 @@ mod test_connector {
         ) -> Result<instrukt_connector::AnswerReceipt, instrukt_connector::AnswerError> {
             Ok(instrukt_connector::AnswerReceipt::default())
         }
-        fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
+        fn turn_away(
+            &self,
+            _: &str,
+            _: instrukt_connector::RefusalReason,
+        ) -> Result<(), ConnectorError> {
             Ok(())
         }
         fn unavailable_notice(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
@@ -1408,14 +1919,41 @@ mod tests {
         let sender = Sender {
             name: "Ada".into(),
             email: None,
+            is_admin: false,
+        };
+        let admin = Sender {
+            name: "Root".into(),
+            email: None,
+            is_admin: true,
         };
         assert_eq!(
-            next_record(Admission::Admitted(sender.clone())),
-            Next::Admitted(sender)
+            next_record(Admission::Admitted(sender.clone()), ConnectorAdmit::Members),
+            Next::Admitted(sender.clone())
         );
-        assert_eq!(next_record(Admission::NotOwn), Next::Refused);
         assert_eq!(
-            next_record(Admission::Undecided("later".into())),
+            next_record(Admission::NotOwn, ConnectorAdmit::Members),
+            Next::Refused(RefusalReason::NotOwn)
+        );
+        assert_eq!(
+            next_record(Admission::Admitted(sender), ConnectorAdmit::AdminsOnly),
+            Next::Refused(RefusalReason::NotAdmin)
+        );
+        assert_eq!(
+            next_record(Admission::NotOwn, ConnectorAdmit::AdminsOnly),
+            Next::Refused(RefusalReason::NotAdmin)
+        );
+        assert_eq!(
+            next_record(
+                Admission::Admitted(admin.clone()),
+                ConnectorAdmit::AdminsOnly
+            ),
+            Next::Admitted(admin)
+        );
+        assert_eq!(
+            next_record(
+                Admission::Undecided("later".into()),
+                ConnectorAdmit::Members
+            ),
             Next::Waiting("later".into())
         );
     }
@@ -1425,6 +1963,7 @@ mod tests {
         let refusal = |conversation: &str| Refusal {
             conversation: conversation.into(),
             sender: "U1".into(),
+            reason: RefusalReason::NotOwn,
         };
         let owed = owed(vec![(refusal("C1/1"), true), (refusal("C1/2"), false)]);
         assert_eq!(

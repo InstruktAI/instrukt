@@ -47,7 +47,6 @@ origin and typed subject; external source payloads remain open domain facts.
 
 | Origin | Source | Runner-facing meaning |
 | --- | --- | --- |
-| Workflow | `workflow.preparation_reviewed` (occurrence) | Approved exact preparation head wakes the integrator for immediate documentation integration before build. |
 | Repository maintenance | Observe remote main with Git on each tick, fetch and fast-forward a clean canonical checkout | Post-merge publishes docs and hands the revision to blueprint; dirty/diverged checkouts are reported and preserved, with no main-ahead event. |
 | Workflow | `workflow.finalized` | Finalize-ready work wakes the subscribed standing integrator. |
 | Repositories | `git ls-remote` for configured watched upstream refs on each tick | A changed upstream produces `runner.upstream_changed`. |

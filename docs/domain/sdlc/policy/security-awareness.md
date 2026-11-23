@@ -128,7 +128,7 @@ Always escalate before:
 Inside a todo, its approved intent is where these triggers are settled: a
 change the intent calls for has already passed them, and a change it does not
 call for is a scope finding. Build, review, and fix never escalate them
-(`sdlc/procedure/lifecycle/work/overview`).
+(`sdlc/procedure/lifecycle/overview`).
 
 ## Rationale
 

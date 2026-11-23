@@ -21,45 +21,63 @@ state database's file and migrations (work).
 
 #### Conversation binding
 
-- **Root entity:** One conversation's binding to its agent session.
-- **Contains:** Company, connector and the connector's conversation identity;
-  the session's runtime identity; accepted messages awaiting delivery with
-  their senders; the speaker of the current turn; answers awaiting posting.
-- **Invariants:** One conversation has one session and one session serves one
-  conversation. Each addressed message is one turn. A message activates no
-  subscribed procedure and emits no event. Only the answer to an addressed
-  message is posted.
-- **Identifier:** Company, connector and conversation identity.
-- **Lifecycle:** The first addressed message from a member starts the session
-  by key; later ones wake it. The binding outlives a settled thread and ends
-  with nothing instrukt does. Its contract is
+- **Root entity:** One conversation's or company-scoped connector's binding to
+  its agent session.
+- **Contains:** Company, connector name and conversation binding key (the
+  connector's conversation identity under `session_scope: conversation`, or the
+  shared company binding under `session_scope: company`); the connector's
+  assigned role and session scope; the session's runtime identity; accepted
+  messages awaiting delivery with their senders; the speaker of the current
+  turn; answers awaiting posting.
+- **Invariants:** Under `session_scope: conversation`, one conversation has one
+  session and one session serves one conversation; under
+  `session_scope: company`, one shared standing session serves all admitted
+  conversations of `(company, connector)` serially, tagging each incoming turn
+  with its conversation identity, place context, thread and speaker. Each
+  addressed message is one turn. A message activates no subscribed procedure
+  and emits no event. Under `reply_mode: turn_output`, only the answer to an
+  addressed message is posted; under `reply_mode: explicit`, raw turn output is
+  suppressed and only explicit replies queued through `instrukt company reply`
+  are posted.
+- **Identifier:** Company, connector name and conversation identity (or shared
+  company binding).
+- **Lifecycle:** The first addressed message from an admitted sender starts the
+  session by key; later ones wake it. The binding outlives a settled thread and
+  ends with nothing instrukt does. Its contract is
   `project/instrukt/spec/feature/company/conversations`.
 
 #### Connector
 
-- **Root entity:** One company's declared connector of one kind.
-- **Contains:** Its kind, its declared settings, and its connection state.
+- **Root entity:** One company's named connector declaration of a registered
+  kind.
+- **Contains:** Its declared name, its registered kind (defaulting to the name
+  when omitted), its role (default `company-agent`), its admission policy
+  (`members` or `admins_only`), its session scope (`conversation` or `company`),
+  its reply mode (`turn_output` or `explicit`), its kind-specific settings, and
+  its connection state.
 - **Invariants:** A connector carries messages for the one company home that
-  declares it. What it supplies for each addressed message, and what it does
-  with an answer, is the connector contract of
-  `project/instrukt/spec/feature/company/conversations`; which messages count as
-  addressed, who counts as the company's own and how an answer is rendered are
-  its kind's own contract.
-- **Identifier:** Company and kind.
-- **Lifecycle:** Declared in the company home under `connectors.<kind>`; hosted
+  declares it; one company home may declare multiple named connectors of the
+  same kind with isolated identities and provider rate limits. What it supplies
+  for each addressed message, and what it does with an answer, is the connector
+  contract of `project/instrukt/spec/feature/company/conversations`; which
+  messages count as addressed, who counts as the company's own and how an answer
+  is rendered are its kind's own contract.
+- **Identifier:** Company and declared connector name.
+- **Lifecycle:** Declared in the company home under `connectors.<name>`; hosted
   while `instrukt run` runs; ends when the declaration is removed.
 
 ## Ubiquitous language
 
 **Connector**
-: The code for one channel provider. It carries messages addressed to a
-  company's agent in and the agent's answers out, and implements the connector
-  interface this context defines.
+: One company home's named channel connection, declared under
+  `connectors.<name>`. It uses a registered connector kind to carry addressed
+  messages in and answers out, and implements the connector interface this
+  context defines.
 
 **Connector kind**
-: The channel provider a connector speaks to, named by its key under
-  `connectors:` in a company home. Each kind declares the settings its
-  declaration takes.
+: A registered channel provider (such as `slack`), selected by a connector's
+  `kind` field or by its map key under `connectors:` when `kind` is omitted.
+  Each kind declares the provider settings its entry takes.
 
 **Conversation**
 : A person talking to a company's agent in one place of a connected channel,
@@ -100,7 +118,13 @@ state database's file and migrations (work).
     retained work is outstanding, the relay's state, and the conversations
     section of `instrukt events status`.
   - The conversation assignment lookup, which the runner's assignment
-    resolution takes beside work's own.
+    resolution takes beside work's own, returning the connector's recorded role
+    and company home.
+  - The explicit reply queueing operation (`instrukt company reply`), which
+    verifies an active company conversation binding, checks that the target
+    conversation is admitted on that `(company, connector)`, scrubs credentials,
+    and writes ordered pieces into `conversation_answers` for connector
+    delivery.
   - The speaker lookup: a function of this context that the CLI calls for
     `instrukt mcp` and hands to MCP access.
   Other contexts obtain conversation facts only through these; none reads the

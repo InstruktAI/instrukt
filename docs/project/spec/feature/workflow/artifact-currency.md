@@ -67,8 +67,11 @@ the current canonical head changes a referenced path (exactly, or under a
 directory prefix), when a referenced or owned snippet's digest changed, or
 when a prerequisite artifact's digest changed. When git cannot compare the two
 commits, or there is no current canonical head, the classification is
-pending. An artifact that references no paths has no code drift. A referenced
-path or snippet that cannot be resolved is incomplete provenance.
+pending. An artifact that references no paths has no code drift. A path absent
+at both heads is a planned creation. Its absence alone leaves the artifact
+fresh. A path missing from the current head is incomplete provenance if it
+existed at the recorded head or its prior absence cannot be established.
+An unresolved snippet is also incomplete provenance.
 
 Each tracked artifact has one effective drift classification: fresh, pending
 analysis, cosmetic or substantive. Where evidence classes disagree,
@@ -76,10 +79,12 @@ substantive takes precedence over pending, then cosmetic, then fresh. A
 pending classification requests agent analysis. A classification stamp records
 the artifact, verdict, reason and evidence it assessed.
 
-Cosmetic and fresh evidence permit continuation. Pending drift holds initial
-build admission for analysis; after the build has begun, pending drift alone
-does not return work to preparation. Substantive drift returns work to the
-owning preparation layer.
+Cosmetic and fresh evidence permit continuation. The factual ledger surfaces
+pending and substantive drift classifications per artifact so `todo-orchestrator`
+routes `drift-analyzer` (for pending drift) or re-derivation (for substantive
+drift) in prose before building; code enforces only the three hard integrity
+invariants (`approvals.prd` is revoked automatically when `prd` has substantive
+drift).
 
 ### Substantive settlement
 
@@ -94,11 +99,12 @@ rewritten against current grounding.
 | Diagnosis | Diagnosis is settled against its current content before planning continues. | Implementation plan. |
 | Implementation plan | Planning re-derives the implementation plan. | Implementation plan. |
 
-Substantive product-requirements drift enters intake before review of that
-artifact. Re-reviewing an unchanged artifact does not discharge its
+Substantive product-requirements drift invalidates `prd` review and approval
+in the factual ledger and revokes PRD approval in code until `prd` is rewritten
+and re-approved. Re-reviewing an unchanged artifact does not discharge its
 re-derivation obligation. A rewrite captures current provenance and clears
-the artifact's drift classification and re-derivation marker. An unresolved
-upstream obligation keeps dependent work from becoming prepared.
+the artifact's drift classification and re-derivation marker; `todo-orchestrator`
+reads these facts from the ledger before advancing dependent artifacts.
 
 An approval of an earlier product-requirements digest does not approve the
 rewritten artifact by digest coincidence or by the writer's identity. Approval

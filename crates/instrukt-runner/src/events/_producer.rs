@@ -92,7 +92,7 @@ impl Event {
             Self::MainFailing { project, .. } => {
                 EventRef::new(ReferenceKind::RepositoryRef, &format!("{project}/main"))?
             }
-            Self::PreparationReviewed { todo, .. } | Self::WorkflowFinalized { todo, .. } => {
+            Self::WorkflowFinalized { todo, .. } => {
                 EventRef::new(ReferenceKind::Todo, todo.as_str())?
             }
         };
