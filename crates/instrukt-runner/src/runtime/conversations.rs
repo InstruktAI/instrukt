@@ -120,9 +120,23 @@ pub enum SourceError {
     #[error("conversation source incompatible: {0}")]
     Shape(&'static str),
 }
+/// What one wait on a conversation source's notifications ended with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceWake {
+    /// Nothing within the caller's timeout.
+    Timeout,
+    /// The source changed: a native notification, or a missing source file
+    /// that is now watched.
+    Changed,
+    /// The source asks its readers to read again: a native notification can
+    /// arrive before the change it announces is readable.
+    ReadAgain,
+}
 pub trait ConversationNotifications: Send {
-    /// Waits for a change, a native notification or a missing source file that is now watched, or returns false only for the cancellation wait bound.
-    fn wait(&mut self, timeout: Duration) -> Result<bool, SourceError>;
+    /// Waits at most `timeout` for a source change, or for a request to read
+    /// again that has become due. A request only becomes due here: a caller
+    /// receives it at its next wait, once, and then does its own read.
+    fn wait(&mut self, timeout: Duration) -> Result<SourceWake, SourceError>;
 }
 pub trait ConversationSource: Send {
     fn identity(&self) -> &str;

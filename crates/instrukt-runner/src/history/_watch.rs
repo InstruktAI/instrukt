@@ -1,5 +1,6 @@
 //! Hosts an adapter's source notifications in the existing runner.
 use super::{HistoryError, extract};
+use crate::runtime::conversations::SourceWake;
 use instrukt_core::{
     config::{Current, Env},
     home::Home,
@@ -128,7 +129,7 @@ fn serve(
             if stopping.try_recv().is_ok() {
                 return Ok(());
             }
-            if notifications.wait(Duration::from_millis(100))? {
+            if notifications.wait(Duration::from_millis(100))? == SourceWake::Changed {
                 break;
             }
         }
