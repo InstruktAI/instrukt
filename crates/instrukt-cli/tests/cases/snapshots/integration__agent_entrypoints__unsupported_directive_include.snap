@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
 expression: "stdout(&env, &refused)"
 ---
-AGENTS.md: AGENTS.master.md: directive-include: notes.md
+AGENTS.md: docs/project/policy/house.md: directive-include: notes.md

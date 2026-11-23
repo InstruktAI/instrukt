@@ -116,7 +116,7 @@ pub struct SyncReport {
     /// in the primary worktree.
     pub editor: Vec<EditorChange>,
     /// What a publishing sync reports without refusing: a domain without
-    /// `index.yaml`, a root master without `docs/project/index.yaml`.
+    /// `index.yaml`.
     pub notices: Vec<Notice>,
     /// Each global agent file a publishing sync wrote or found current.
     pub global_files: Vec<GlobalDestination>,

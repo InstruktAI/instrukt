@@ -579,18 +579,16 @@ fn a_commit_carries_the_agent_instructions_its_content_yields() {
     assert!(own_mark.exists(), "the developer's own hook ran");
     assert_eq!(porcelain(&repo), Vec::<String>::new());
 
-    // 2. A partial commit of the master renders what is staged, not the
-    // unstaged edit beside it, and leaves the developer's staging as it was.
-    // The unstaged edit would drop the house policy from the rendering.
+    // 2. A partial commit of a selected snippet renders what is staged, not
+    // the unstaged edit beside it, and leaves the developer's staging as it
+    // was. The unstaged edit would drop the house policy from the rendering.
+    let house = "docs/project/policy/house.md";
     let edited_index = "expanded: []\n";
     repo.write("other.txt", "second\n")
         .write("docs/project/index.yaml", edited_index)
-        .write(
-            "AGENTS.master.md",
-            "## Purpose\n\nThe demo project, renamed.\n",
-        );
+        .write(house, &policy("House", "Be kind, renamed."));
     repo.git(["add", "other.txt"]);
-    commit_paths(&env, &repo, "rename", &["AGENTS.master.md"]);
+    commit_paths(&env, &repo, "rename", &[house]);
     insta::assert_snapshot!(
         "partial-commit-rendering",
         repo.git(["show", "HEAD:AGENTS.md"])
@@ -606,50 +604,22 @@ fn a_commit_carries_the_agent_instructions_its_content_yields() {
     repo.write("AGENTS.md", "# My staged notes\n");
     repo.git(["add", "AGENTS.md"]);
     let staged_blob = repo.git(["rev-parse", ":AGENTS.md"]);
-    repo.write(
-        "AGENTS.master.md",
-        "## Purpose\n\nThe demo project, again.\n",
-    );
-    commit_paths(&env, &repo, "again", &["AGENTS.master.md"]);
+    repo.write(house, &policy("House", "Be kind, again."));
+    commit_paths(&env, &repo, "again", &[house]);
     assert_eq!(repo.git(["rev-parse", ":AGENTS.md"]), staged_blob);
     repo.git(["reset", "--quiet", "--", "AGENTS.md"]);
 
     // 2, variant: a layer deleted in the working tree, unstaged, still
     // renders the commit as the project it is in the index.
     std::fs::remove_file(repo.path().join("instrukt.yaml")).unwrap();
-    repo.write(
-        "AGENTS.master.md",
-        "## Purpose\n\nThe demo project, still.\n",
-    );
-    commit_paths(&env, &repo, "still", &["AGENTS.master.md"]);
+    repo.write(house, &policy("House", "Be kind, still."));
+    commit_paths(&env, &repo, "still", &[house]);
     insta::assert_snapshot!(
         "rendering-from-the-index-layer",
         repo.git(["show", "HEAD:AGENTS.md"])
     );
     repo.git(["checkout", "--quiet", "--", "instrukt.yaml"]);
     env.finished_hook_run(repo.path(), Hook::PostCheckout);
-
-    // 2b. A nested master committed by path adds its rendering.
-    repo.write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n");
-    repo.git(["add", "tools/AGENTS.master.md"]);
-    commit_paths(&env, &repo, "tools", &["tools/AGENTS.master.md"]);
-    insta::assert_snapshot!(
-        "added-nested-rendering",
-        repo.git(["show", "HEAD:tools/AGENTS.md"])
-    );
-    assert_eq!(
-        porcelain(&repo),
-        [" M docs/project/index.yaml", "M  other.txt"]
-    );
-
-    // 2c. Its removal, committed by path, removes the rendering.
-    repo.git(["rm", "--quiet", "tools/AGENTS.master.md"]);
-    commit_paths(&env, &repo, "no tools", &["tools/AGENTS.master.md"]);
-    assert_eq!(
-        repo.git(["ls-tree", "-r", "--name-only", "HEAD", "--", "tools"]),
-        ""
-    );
-    assert!(!repo.path().join("tools/AGENTS.md").exists());
     assert_eq!(
         porcelain(&repo),
         [" M docs/project/index.yaml", "M  other.txt"]
@@ -659,14 +629,11 @@ fn a_commit_carries_the_agent_instructions_its_content_yields() {
     repo.commit("the developer's second commit");
     env.finished_hook_run(repo.path(), Hook::PostCommit);
 
-    // 3. A configured value in the master is a finding: the commit is made
-    // and the rendering stays as it was.
+    // 3. A configured value in a snippet the index expands is a finding: the
+    // commit is made and the rendering stays as it was.
     let committed = repo.git(["show", "HEAD:AGENTS.md"]);
-    let purpose = repo.read("AGENTS.master.md");
-    repo.write(
-        "AGENTS.master.md",
-        &format!("{purpose}\n<!-- @config: project -->\n"),
-    );
+    let kept = repo.read(house);
+    repo.write(house, &format!("{kept}\n<!-- @config: project -->\n"));
     let before = repo.head();
     repo.commit("a configured value");
     env.finished_hook_run(repo.path(), Hook::PostCommit);
@@ -676,7 +643,7 @@ fn a_commit_carries_the_agent_instructions_its_content_yields() {
         "status-names-the-configured-value",
         hooks_status(&env, &repo)
     );
-    repo.write("AGENTS.master.md", &purpose);
+    repo.write(house, &kept);
     repo.commit("no configured value");
     env.finished_hook_run(repo.path(), Hook::PostCommit);
 
@@ -685,8 +652,8 @@ fn a_commit_carries_the_agent_instructions_its_content_yields() {
     // name it.
     let committed = repo.git(["show", "HEAD:AGENTS.md"]);
     repo.write("notes/house.md", "The house notes.\n").write(
-        "AGENTS.master.md",
-        &format!("{purpose}\nRead it (@notes/house.md) first.\n"),
+        house,
+        &format!("{kept}\nRead it (@notes/house.md) first.\n"),
     );
     repo.commit("a reference");
     env.finished_hook_run(repo.path(), Hook::PostCommit);
@@ -696,11 +663,11 @@ fn a_commit_carries_the_agent_instructions_its_content_yields() {
         .run(repo.path(), ["docs", "render", "--check"])
         .failure();
     insta::assert_snapshot!("check-names-the-reference", stdout(&env, &check));
-    repo.write("AGENTS.master.md", &purpose);
+    repo.write(house, &kept);
     repo.commit("no reference");
     env.finished_hook_run(repo.path(), Hook::PostCommit);
 
-    // 5. An override beside the root master is named, and left as it is.
+    // 5. An override beside the root rendering is named, and left as it is.
     let override_text = format!("{GENERATED_LINE}\n# An old rendering\n");
     repo.write("AGENTS.override.md", &override_text);
     repo.git([

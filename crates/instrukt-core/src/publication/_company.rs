@@ -237,7 +237,7 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
     if override_beside_root {
         plan.findings.push(RenderFinding {
             path: PathBuf::from(OVERRIDE_FILE),
-            kind: RenderFindingKind::OverrideBesideMaster,
+            kind: RenderFindingKind::OverrideBesideRoot,
         });
     }
     let index = match read_index(&text) {

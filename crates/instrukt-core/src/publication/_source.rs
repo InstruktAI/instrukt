@@ -17,13 +17,10 @@ use crate::fsx::atomic_write;
 use crate::git;
 use crate::ids::{CommitSha, ProjectSlug};
 
-/// The file name of a project master.
-pub(super) const MASTER_FILE_NAME: &str = "AGENTS.master.md";
-
 /// The mode git records a symbolic link with.
 const LINK_MODE: &str = "120000";
 
-/// The file a master renders into, and the file Codex reads in its place.
+/// The file instrukt renders, and the file Codex reads in its place.
 const ENTRYPOINT_FILE_NAMES: [&str; 2] = ["AGENTS.md", "AGENTS.override.md"];
 
 /// What a view holds at the place of an entry index
@@ -116,9 +113,9 @@ pub(super) fn canonical_main(primary: &Path) -> Result<(String, CommitSha), Publ
     Ok((branch, commit))
 }
 
-/// The files of one view of a repository that publication reads: the
-/// documentation, the root `instrukt.yaml`, every master and every
-/// `AGENTS.md` and `AGENTS.override.md`. Regular files only; symbolic links
+/// The files of one view of a repository that publication reads: every
+/// file below `docs/`, by its place and whatever its name, the root
+/// `instrukt.yaml`, and every `AGENTS.md` and `AGENTS.override.md`. Regular files only; symbolic links
 /// and submodules are never followed. A symbolic link is recorded by its
 /// path and nothing is read through it, itself or a folder above a file,
 /// so what names a file through one can say so.
@@ -318,6 +315,13 @@ impl Committed {
         }
     }
 
+    /// This view with a symbolic link recorded at `path`.
+    #[cfg(test)]
+    pub(super) fn with_link(mut self, path: &str) -> Self {
+        self.links.insert(path.to_owned());
+        self
+    }
+
     pub(super) fn file(&self, path: &str) -> Option<&[u8]> {
         self.files.get(path).map(Vec::as_slice)
     }
@@ -369,15 +373,6 @@ impl Committed {
                 path: format!("docs/{rel}"),
                 text: String::from_utf8_lossy(bytes).into_owned(),
             })
-            .collect()
-    }
-
-    /// The repository-relative paths of every committed master.
-    pub(super) fn masters(&self) -> Vec<&str> {
-        self.files
-            .keys()
-            .filter(|path| is_master(path))
-            .map(String::as_str)
             .collect()
     }
 
@@ -441,14 +436,9 @@ pub(super) fn safe_relative(path: &str) -> Result<PathBuf, PublicationError> {
     Ok(rel)
 }
 
-fn is_master(path: &str) -> bool {
-    path.rsplit('/').next() == Some(MASTER_FILE_NAME)
-}
-
 fn is_read(path: &str) -> bool {
     path == CONFIG_FILE_NAME
         || path.starts_with("docs/")
-        || is_master(path)
         || path
             .rsplit('/')
             .next()

@@ -96,7 +96,6 @@ fn adopt(env: &TestEnv, remote: &Path, name: &str) -> (Repo, Assert) {
 fn consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
     app.write("instrukt.yaml", &layer("app", ""))
-        .write("AGENTS.master.md", "## Purpose\n\nThe app.\n")
         .write(
             "docs/project/index.yaml",
             "expanded:\n  - project/app/concept/way\n",

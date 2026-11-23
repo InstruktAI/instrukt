@@ -62,19 +62,21 @@ enum DocsCommand {
     /// triggered procedures. Exits non-zero when an id or domain is unknown
     /// or a configured value cannot be resolved.
     Get(GetArgs),
-    /// Render the repository's `AGENTS.md` files from its working tree.
+    /// Render the repository's root `AGENTS.md` from its working tree.
     ///
-    /// Each `AGENTS.md` beside an `AGENTS.master.md` is rendered from what
-    /// the working tree holds and nothing else: no home, publication or
-    /// configuration is read, so a fresh clone and the binary are enough.
-    /// Writes each rendering that differs, removes each rendering whose
-    /// master is gone, and prints one line per file changed, then each
-    /// finding and each notice. A finding leaves its file as it is and
-    /// fails the run. Stages nothing.
+    /// The root `AGENTS.md` is rendered from the repository's entry index —
+    /// `docs/project/index.yaml` in a project, `docs/index.yaml` in a company
+    /// home — and what the working tree holds, nothing else: no home,
+    /// publication or configuration is read, so a fresh clone and the binary
+    /// are enough. Writes the rendering when it differs, removes each
+    /// `AGENTS.md` instrukt rendered that is no longer rendered (any below
+    /// the root, and the root's where no entry index exists), and prints one
+    /// line per file changed, then each finding and each notice. A finding
+    /// leaves its file as it is and fails the run. Stages nothing.
     ///
-    /// With `--check`, writes nothing: prints each file that differs from
-    /// its rendering or is missing, each rendering whose master is gone and
-    /// each finding, and exits non-zero when it prints any.
+    /// With `--check`, writes nothing: prints the root file when it differs
+    /// from its rendering or is missing, each rendering no longer rendered
+    /// and each finding, and exits non-zero when it prints any.
     Render(RenderArgs),
 }
 
@@ -212,7 +214,7 @@ fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 
 /// One line per entrypoint whose file differs from its rendering or is
-/// missing, and per rendering whose master is gone.
+/// missing, and per rendering that is no longer rendered.
 fn check_lines(plan: &RenderPlan) -> Vec<String> {
     let mut lines = Vec::new();
     for file in plan.writes.iter().filter(|file| file.differs()) {
@@ -225,7 +227,7 @@ fn check_lines(plan: &RenderPlan) -> Vec<String> {
     }
     for path in &plan.removals {
         lines.push(format!(
-            "{}: its master is gone; `instrukt docs render` removes it",
+            "{}: no longer rendered; `instrukt docs render` removes it",
             path.display()
         ));
     }

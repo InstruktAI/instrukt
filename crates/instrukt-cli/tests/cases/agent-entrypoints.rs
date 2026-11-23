@@ -11,7 +11,7 @@ use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
 use instrukt_core::publication::GENERATED_LINE;
 
-/// A snippet of `taxonomy` (policy, principle or procedure) with every
+/// A snippet of `taxonomy` (concept, policy, principle or procedure) with every
 /// required section, `extra` frontmatter lines and `reads` as its required
 /// reads.
 fn snippet(taxonomy: &str, title: &str, extra: &str, reads: &[&str]) -> String {
@@ -24,6 +24,7 @@ fn snippet(taxonomy: &str, title: &str, extra: &str, reads: &[&str]) -> String {
             "Principle",
             &["Principle", "Rationale", "Implications", "Tensions"],
         ),
+        "concept" => ("Concept", &["What", "Why"]),
         _ => (
             "Procedure",
             &["Goal", "Preconditions", "Steps", "Outputs", "Recovery"],
@@ -96,18 +97,15 @@ fn ci_catches_instructions_a_commit_left_stale() {
         run
     };
 
-    // An unfinished index that no rendering reads blocks nothing, with no
-    // master and with one.
+    // An unfinished index that no rendering reads blocks nothing; a project
+    // without its own index has no rendering.
     repo.write("instrukt.yaml", &layer("demo"))
         .write("docs/domain/unselected/index.yaml", "[: no\n");
     let nothing = render(&[]).success();
-    insta::assert_snapshot!(stdout(&env, &nothing), @"");
+    insta::assert_snapshot!("render_without_project_index", stdout(&env, &nothing));
     assert!(!repo.path().join("AGENTS.md").exists());
-    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
-        .write(
-            "docs/project/policy/house.md",
-            &snippet("policy", "House", "", &["sdlc/policy/tests"]),
-        )
+    let house = snippet("policy", "House", "", &["sdlc/policy/tests"]);
+    repo.write("docs/project/policy/house.md", &house)
         .write(
             "docs/project/policy/style.md",
             &snippet("policy", "Style", "", &[]),
@@ -121,14 +119,11 @@ fn ci_catches_instructions_a_commit_left_stale() {
                 &[],
             ),
         );
+    render(&[]).success();
+    assert!(!repo.path().join("AGENTS.md").exists());
+    repo.commit("documentation");
 
-    // The developer renders the instruction files and commits them; a
-    // project without an index holds its purpose and procedures.
-    let rendered = render(&[]).success();
-    insta::assert_snapshot!("render_without_project_index", stdout(&env, &rendered));
-    repo.commit("instructions");
-
-    // A commit made without instrukt's hook changes the project's index.
+    // A commit made without instrukt's hook adds the project's index.
     repo.write(
         "docs/project/index.yaml",
         "expanded:\n  - project/demo/policy/house\nlisted:\n  - project/demo/policy/style\n",
@@ -148,26 +143,17 @@ fn ci_catches_instructions_a_commit_left_stale() {
     insta::assert_snapshot!("committed_root_agents_md", repo.read("AGENTS.md"));
     render(&["--check"]).success();
 
-    // A root master that carries required reads is a finding the check names.
-    let purpose = "## Purpose\n\nThe demo project.\n";
-    repo.write(
-        "AGENTS.master.md",
-        &format!("{purpose}\n## Required reads\n\n- project/demo/policy/style\n"),
-    );
-    let finding = render(&["--check"]).failure();
-    insta::assert_snapshot!(
-        "check_names_the_root_master_finding",
-        stdout(&env, &finding)
-    );
-
-    // A master carrying a directive the format does not support is a
-    // finding: the file keeps what it held, and both commands fail.
+    // A selected snippet carrying a directive the format does not support
+    // is a finding: the file keeps what it held, and both commands fail.
     let committed = repo.read("AGENTS.md");
     for (name, directive) in [
         ("exec", "<!-- @exec: echo harmless -->"),
         ("include", "<!-- @include: notes.md -->"),
     ] {
-        repo.write("AGENTS.master.md", &format!("{purpose}\n{directive}\n"));
+        repo.write(
+            "docs/project/policy/house.md",
+            &format!("{house}\n{directive}\n"),
+        );
         let refused = render(&[]).failure();
         let checked = render(&["--check"]).failure();
         assert_eq!(stdout(&env, &checked), stdout(&env, &refused));
@@ -818,14 +804,23 @@ fn an_agent_that_checks_out_the_project_starts_with_what_it_selected() {
     platform.commit("general");
     env.run(platform.path(), ["sync"]).success();
 
-    // The project selects a snippet that requires it, lists another, has a
-    // triggered procedure, and a nested master requiring a held snippet and
-    // the unheld one.
+    // The project selects its purpose and a snippet that requires that
+    // doctrine, lists another and has a triggered procedure. A subfolder
+    // holds an instruction file an earlier release rendered there, another
+    // one the developer wrote.
     let repo = env.git_repo("demo");
-    repo.write("README.md", "# demo\n");
+    let earlier = "<!-- Generated by instrukt from the AGENTS.master.md beside this file and the documentation its rendering selects; change those, not this file. -->\n## Tools\n\nOnly the tools.\n";
+    let own = "# Notes\n\nThe developer's own instructions.\n";
+    repo.write("README.md", "# demo\n")
+        .write("tools/AGENTS.md", earlier)
+        .write("notes/AGENTS.md", own);
     repo.commit("the developer's first commit");
     env.run(repo.path(), ["init"]).success();
     repo.write(
+        "docs/project/concept/purpose.md",
+        &snippet("concept", "Purpose", "", &[]),
+    )
+    .write(
         "docs/project/policy/house.md",
         &snippet("policy", "House", "", &["general/policy/care"]),
     )
@@ -844,21 +839,24 @@ fn an_agent_that_checks_out_the_project_starts_with_what_it_selected() {
     )
     .write(
         "docs/project/index.yaml",
-        "expanded:\n  - project/demo/policy/house\nlisted:\n  - project/demo/policy/style\n",
-    )
-    .write(
-        "tools/AGENTS.master.md",
-        "## Tools\n\nOnly the tools.\n\n## Required reads\n\n- project/demo/policy/style\n- general/policy/care\n",
+        "expanded:\n  - project/demo/concept/purpose\n  - project/demo/policy/house\nlisted:\n  - project/demo/policy/style\n",
     );
 
-    // The commit right after init carries both renderings.
+    // The commit right after init carries one rendering, at the root; the
+    // earlier release's nested rendering is gone and the developer's own
+    // file is as it was.
     commit_through_hook(&env, &repo, "adopt instrukt");
     let root = repo.git(["show", "HEAD:AGENTS.md"]);
-    let tools = repo.git(["show", "HEAD:tools/AGENTS.md"]);
     insta::assert_snapshot!("committed_root_instructions", root);
-    insta::assert_snapshot!("committed_nested_instructions", tools);
+    assert_eq!(
+        repo.git(["ls-files", "--", "AGENTS.md", "*/AGENTS.md"]),
+        "AGENTS.md\nnotes/AGENTS.md"
+    );
+    assert!(!repo.path().join("tools/AGENTS.md").exists());
+    assert_eq!(repo.git(["show", "HEAD:notes/AGENTS.md"]), own.trim_end());
+    assert_eq!(repo.read("notes/AGENTS.md"), own);
 
-    // A clone on a computer without instrukt holds the same files.
+    // A clone on a computer without instrukt holds the same file.
     let clone = env.path("clone");
     let empty_home = env.path("empty-home");
     std::fs::create_dir_all(&empty_home).unwrap();
@@ -879,12 +877,6 @@ fn an_agent_that_checks_out_the_project_starts_with_what_it_selected() {
             .unwrap()
             .trim_end(),
         root
-    );
-    assert_eq!(
-        std::fs::read_to_string(clone.join("tools/AGENTS.md"))
-            .unwrap()
-            .trim_end(),
-        tools
     );
 
     // A checkout renders nothing: a branch whose committed file is no

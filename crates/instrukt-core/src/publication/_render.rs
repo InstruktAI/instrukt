@@ -1,6 +1,5 @@
-//! Rendering: a position's `index.yaml` selection, a project's root
-//! `AGENTS.md`, a nested master and a global agent file, each as one
-//! self-contained text
+//! Rendering: a position's `index.yaml` selection, a repository's root
+//! `AGENTS.md` and a global agent file, each as one self-contained text
 //! (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 //!
 //! Snippets in full come with their closure — each required read before
@@ -23,7 +22,7 @@
 //! - [`Repository`] reads one tree of the repository and nothing from the
 //!   computer: a snippet of a position the tree holds is inlined, one it
 //!   does not hold is named by its reference line. It renders the
-//!   committed `AGENTS.md` files ([`render_tree`]); a configured value or a
+//!   committed root `AGENTS.md` ([`render_tree`]); a configured value or a
 //!   reference left in such a rendering is a finding that leaves the file
 //!   as it is.
 
@@ -31,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::_patch::Contribution;
-use super::_source::{Committed, EntryIndex, MASTER_FILE_NAME};
+use super::_source::{Committed, EntryIndex};
 use super::PublicationError;
 use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
 use crate::docs::{
@@ -46,7 +45,7 @@ use crate::index::{GlobalIndex, IndexEntry, IndexScope};
 /// The name of the position a project's own snippets belong to.
 const PROJECT: &str = "project";
 
-/// The file a master renders into, beside it.
+/// The one file a repository's entry index renders into, at its root.
 pub(super) const AGENTS_FILE: &str = "AGENTS.md";
 
 /// The file Codex reads in place of the `AGENTS.md` beside it.
@@ -239,11 +238,6 @@ impl Renderer<'_> {
             source,
             project: Some(self.project),
             index: self.index,
-            cx: RenderContext {
-                home: Some(self.home),
-                values: self.values,
-                project: Some(self.project),
-            },
         }
     }
 }
@@ -257,31 +251,21 @@ struct Rendering<'r> {
     /// The entries listing lines, triggers and configured
     /// responsibilities are read from.
     index: &'r GlobalIndex,
-    /// How a master is rendered.
-    cx: RenderContext<'r>,
 }
 
 impl Rendering<'_> {
-    /// The root `AGENTS.md`'s text: the master's text, then the rendering
-    /// of `docs/project/index.yaml` (or, without one, the project's
-    /// triggered procedures) and the configured responsibilities.
-    fn root_agents(
-        &self,
-        file: &str,
-        master: &str,
-        project_index: Option<&PositionIndex>,
-    ) -> Result<String, PublicationError> {
-        let rendered = self.render_master(file, master)?;
+    /// The root `AGENTS.md`'s text below the generated line: the rendering
+    /// of `docs/project/index.yaml` (`expanded`, `listed`, then the
+    /// project's triggered procedures), then the configured
+    /// responsibilities; empty when there are none.
+    fn root_agents(&self, project_index: &PositionIndex) -> Result<String, PublicationError> {
         let mut expansion = Expansion::default();
-        let mut listed = Vec::new();
         let index_file = "docs/project/index.yaml";
-        if let Some(index) = project_index {
-            self.expand(index.expanded(), index_file, &mut expansion)?;
-            listed = self.listings(index.listed(), index_file, &mut expansion)?;
-        }
+        self.expand(project_index.expanded(), index_file, &mut expansion)?;
+        let listed = self.listings(project_index.listed(), index_file, &mut expansion)?;
         let shown: BTreeSet<SnippetId> = expansion.shown(&listed).into_iter().cloned().collect();
         let triggered = self.triggered(|e| self.local(e), &shown);
-        let mut blocks = vec![rendered.text.trim().to_owned()];
+        let mut blocks = Vec::new();
         if !expansion.order.is_empty()
             || !expansion.references.is_empty()
             || !listed.is_empty()
@@ -304,34 +288,6 @@ impl Rendering<'_> {
             blocks.push(configured);
         }
         Ok(finish(&blocks.join("\n\n")))
-    }
-
-    /// A nested master's `AGENTS.md` text: its own text, then its required
-    /// reads in full with their closure.
-    fn nested(&self, file: &str, master: &str) -> Result<String, PublicationError> {
-        let rendered = self.render_master(file, master)?;
-        let mut expansion = Expansion::default();
-        for reference in &rendered.required_reads {
-            self.follow(reference, file, &mut expansion)?;
-        }
-        let mut blocks = vec![rendered.text.trim().to_owned()];
-        if let Some(first) = expansion.order.first() {
-            blocks.push(
-                Selection {
-                    position: first.position().to_owned(),
-                    in_full: expansion.order.clone(),
-                    references: expansion.references.clone(),
-                    listed: Vec::new(),
-                    triggered: Vec::new(),
-                }
-                .render(),
-            );
-        }
-        Ok(finish(&blocks.join("\n\n")))
-    }
-
-    fn render_master(&self, file: &str, text: &str) -> Result<Rendered, PublicationError> {
-        docs::render(text, Lens::Current, &self.cx).map_err(|e| self.source.failure(file, e))
     }
 
     /// Whether `entry` is one of this project's own snippets.
@@ -677,11 +633,12 @@ impl Source for Repository<'_> {
 /// rendering found and noticed. It writes nothing itself.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RenderPlan {
-    /// The `AGENTS.md` beside each master that rendered, whatever the file
-    /// there holds.
+    /// The root `AGENTS.md` the entry index renders, whatever the file there
+    /// holds.
     pub writes: Vec<PlannedFile>,
-    /// Each `AGENTS.md` whose master is gone and which is a rendering,
-    /// relative to the repository root.
+    /// Each `AGENTS.md` that is instrukt's rendering and is no longer
+    /// rendered — any below the root, and the root's where no entry index
+    /// exists — relative to the repository root.
     pub removals: Vec<PathBuf>,
     /// What leaves a file as it is, each naming its file.
     pub findings: Vec<RenderFinding>,
@@ -718,19 +675,17 @@ pub struct RenderFinding {
 /// What a rendering found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderFindingKind {
-    /// A master, or a document the rendering would hold in full, reads a
-    /// configured value.
+    /// A document the rendering would hold in full reads a configured
+    /// value.
     ConfigInCommittedRendering { document: String },
     /// The rendering keeps a reference an agent program would try to load.
     ImportInCommittedRendering { reference: String },
-    /// A master, or a document the rendering would hold in full, carries a
-    /// directive the format does not support (`@exec`, `@include`), as
-    /// validation reports it.
+    /// A document the rendering would hold in full carries a directive the
+    /// format does not support (`@exec`, `@include`), as validation reports
+    /// it.
     UnsupportedDirective { finding: docs::Finding },
-    /// An `AGENTS.override.md` beside the root master.
-    OverrideBesideMaster,
-    /// The root master carries `## Required reads`.
-    MasterRequiredReads,
+    /// An `AGENTS.override.md` beside the root `AGENTS.md` instrukt renders.
+    OverrideBesideRoot,
     /// The root `instrukt.yaml` cannot be read, so the rendering mode is
     /// unknown and nothing is rendered.
     UnreadableRoot { reason: String },
@@ -781,13 +736,9 @@ impl std::fmt::Display for RenderFinding {
                 "{path}: the rendering keeps `{reference}`, which an agent program would try to load; name the document by its id instead"
             ),
             RenderFindingKind::UnsupportedDirective { finding } => write!(f, "{path}: {finding}"),
-            RenderFindingKind::OverrideBesideMaster => write!(
+            RenderFindingKind::OverrideBesideRoot => write!(
                 f,
                 "{path}: Codex reads it in place of {AGENTS_FILE}, so it hides every committed update; instrukt never deletes it, so remove it unless it is your own"
-            ),
-            RenderFindingKind::MasterRequiredReads => write!(
-                f,
-                "{path}: the root master holds only `## Purpose`; `docs/project/{INDEX_FILE}` selects what the root {AGENTS_FILE} includes"
             ),
             RenderFindingKind::UnreadableRoot { reason } => write!(
                 f,
@@ -840,32 +791,39 @@ impl std::fmt::Display for RenderFinding {
     }
 }
 
-/// The notice for a root master without `docs/project/index.yaml`.
+/// The place of a project's entry index.
+fn project_index_path() -> String {
+    format!("{}/{INDEX_FILE}", Position::Project.dir())
+}
+
+/// The notice for a project without `docs/project/index.yaml`.
 pub(super) fn project_without_index() -> Notice {
     Notice {
-        path: PathBuf::from(format!("{}/{INDEX_FILE}", Position::Project.dir())),
+        path: PathBuf::from(project_index_path()),
         code: NoticeCode::ProjectWithoutIndex,
         value: Some(format!(
-            "the root AGENTS.md holds the purpose and the triggered procedures only; \
-             `docs/project/{INDEX_FILE}` selects what else it includes"
+            "the project has no rendering: no root {AGENTS_FILE} is rendered, and one instrukt rendered there is removed; \
+             create `docs/project/{INDEX_FILE}` to select what the project's agents start with"
         )),
     }
 }
 
-/// Renders every entrypoint of the repository whose view is `tree`, from
-/// the tree alone. What the root `instrukt.yaml` is decides the mode: a
-/// project layer renders the project's masters; a company's settings
-/// document, or no document beside a root master, is a company home, whose
-/// root master renders its company rendering; no document and no root
-/// master renders nothing. An `AGENTS.md` whose master is gone is removed
-/// while it is a rendering, in every mode but an unreadable root.
+/// Renders the root `AGENTS.md` of the repository whose view is `tree`,
+/// from the tree alone. What the root `instrukt.yaml` is decides the mode: a
+/// project layer renders from `docs/project/index.yaml`; a company's
+/// settings document, or no root document beside a `docs/index.yaml`, is a
+/// company home, rendered from that index; no root document and no company
+/// index renders nothing. Every `AGENTS.md` below the root that is
+/// instrukt's rendering is removed; the root's is removed only where the
+/// mode's entry index is absent, and left as it is where the index reports a
+/// finding or is linked.
 pub(super) fn render_tree(
     tree: &Committed,
     override_beside_root: bool,
 ) -> Result<RenderPlan, PublicationError> {
     let mut plan = RenderPlan::default();
-    let masters = tree.masters();
-    let project = match classify_root(tree.file(CONFIG_FILE_NAME)) {
+    let project_index = project_index_path();
+    let entry_index = match classify_root(tree.file(CONFIG_FILE_NAME)) {
         RootDocument::Unreadable(reason) => {
             plan.findings.push(RenderFinding {
                 path: PathBuf::from(CONFIG_FILE_NAME),
@@ -875,58 +833,64 @@ pub(super) fn render_tree(
         }
         RootDocument::CompanySettings(_) => {
             super::_company::render(tree, override_beside_root, &mut plan);
-            None
+            Some(super::_company::COMPANY_INDEX)
         }
         RootDocument::Absent
             if tree.entry_index(super::_company::COMPANY_INDEX) != EntryIndex::Absent =>
         {
             super::_company::render(tree, override_beside_root, &mut plan);
-            None
+            Some(super::_company::COMPANY_INDEX)
         }
         RootDocument::Absent => None,
-        RootDocument::ProjectLayer(project) => Some(project),
-    };
-    // Where a root rendering stays: in a company home, wherever its index is
-    // there, read or not; in a project, beside each master.
-    let mut kept: BTreeSet<&Path> = BTreeSet::new();
-    match &project {
-        Some(_) => kept.extend(
-            masters
-                .iter()
-                .map(|master| Path::new(master).parent().unwrap_or(Path::new(""))),
-        ),
-        None if tree.entry_index(super::_company::COMPANY_INDEX) != EntryIndex::Absent => {
-            kept.insert(Path::new(""));
+        RootDocument::ProjectLayer(project) => {
+            render_project(tree, project.as_ref(), override_beside_root, &mut plan)?;
+            Some(project_index.as_str())
         }
-        None => {}
-    }
-    if let Some(project) = project {
-        render_project(
-            tree,
-            project.as_ref(),
-            &masters,
-            override_beside_root,
-            &mut plan,
-        )?;
-    }
+    };
+    let root_kept = entry_index.is_some_and(|index| tree.entry_index(index) != EntryIndex::Absent);
     for (path, bytes) in tree.entrypoints() {
-        let dir = Path::new(path).parent().unwrap_or(Path::new(""));
-        if !kept.contains(dir) && is_rendering(bytes) {
+        let at_root = Path::new(path).parent() == Some(Path::new(""));
+        if !(at_root && root_kept) && is_rendering(bytes) {
             plan.removals.push(PathBuf::from(path));
         }
     }
     Ok(plan)
 }
 
-/// The project mode of [`render_tree`]: each master's rendering, or the
-/// finding that leaves its file as it is.
+/// The project mode of [`render_tree`]: the root `AGENTS.md` rendered from
+/// `docs/project/index.yaml`, or the finding that leaves it as it is, or the
+/// notice that the project has no index.
 fn render_project(
     tree: &Committed,
     project: Option<&ProjectSlug>,
-    masters: &[&str],
     override_beside_root: bool,
     plan: &mut RenderPlan,
 ) -> Result<(), PublicationError> {
+    let path = PathBuf::from(AGENTS_FILE);
+    let index_path = project_index_path();
+    match tree.entry_index(&index_path) {
+        EntryIndex::Absent => {
+            plan.notices.push(project_without_index());
+            return Ok(());
+        }
+        EntryIndex::Linked => {
+            plan.findings.push(RenderFinding {
+                path,
+                kind: RenderFindingKind::LinkedIndex { index: index_path },
+            });
+            return Ok(());
+        }
+        EntryIndex::Present(_) => {}
+    }
+    if override_beside_root {
+        plan.findings.push(RenderFinding {
+            path: PathBuf::from(OVERRIDE_FILE),
+            kind: RenderFindingKind::OverrideBesideRoot,
+        });
+    }
+    let Some(project_index) = super::_sync::committed_index(tree, &Position::Project)? else {
+        return Ok(());
+    };
     let (held, _reserved) = super::_tree::held_positions(tree);
     let corpus = Corpus::from_sources(project.cloned(), None, tree.doc_sources());
     let index = GlobalIndex {
@@ -947,83 +911,38 @@ fn render_project(
         source: &source,
         project,
         index: &index,
-        cx: RenderContext {
-            home: None,
-            values: &source.values,
-            project,
-        },
     };
-    for master in masters {
-        let text = String::from_utf8_lossy(tree.file(master).unwrap_or_default()).into_owned();
-        let dir = Path::new(master).parent().unwrap_or(Path::new(""));
-        let path = dir.join(AGENTS_FILE);
-        let root = *master == MASTER_FILE_NAME;
-        if root && override_beside_root {
-            plan.findings.push(RenderFinding {
-                path: PathBuf::from(OVERRIDE_FILE),
-                kind: RenderFindingKind::OverrideBesideMaster,
-            });
-        }
-        if root && docs::carries_required_reads(&text) {
-            plan.findings.push(RenderFinding {
-                path: PathBuf::from(*master),
-                kind: RenderFindingKind::MasterRequiredReads,
-            });
-            continue;
-        }
-        let unsupported = docs::unsupported_directives(Path::new(master), &text);
-        if !unsupported.is_empty() {
+    let text = match rendering.root_agents(&project_index) {
+        Ok(text) => text,
+        Err(PublicationError::CommittedDirectives { findings }) => {
             plan.findings
-                .extend(unsupported.into_iter().map(|finding| RenderFinding {
+                .extend(findings.into_iter().map(|finding| RenderFinding {
                     path: path.clone(),
                     kind: RenderFindingKind::UnsupportedDirective { finding },
                 }));
-            continue;
+            return Ok(());
         }
-        let rendered = if root {
-            // The project's index is read only for the root rendering
-            // that selects from it.
-            let project_index = super::_sync::committed_index(tree, &Position::Project)?;
-            if project_index.is_none() {
-                plan.notices.push(project_without_index());
-            }
-            rendering.root_agents(master, &text, project_index.as_ref())
-        } else {
-            rendering.nested(master, &text)
-        };
-        let text = match rendered {
-            Ok(text) => text,
-            Err(PublicationError::CommittedDirectives { findings }) => {
-                plan.findings
-                    .extend(findings.into_iter().map(|finding| RenderFinding {
-                        path: path.clone(),
-                        kind: RenderFindingKind::UnsupportedDirective { finding },
-                    }));
-                continue;
-            }
-            Err(PublicationError::CommittedConfig { document }) => {
-                plan.findings.push(RenderFinding {
-                    path,
-                    kind: RenderFindingKind::ConfigInCommittedRendering { document },
-                });
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        if let Some(reference) = kept_references(&text).into_iter().next() {
+        Err(PublicationError::CommittedConfig { document }) => {
             plan.findings.push(RenderFinding {
                 path,
-                kind: RenderFindingKind::ImportInCommittedRendering { reference },
+                kind: RenderFindingKind::ConfigInCommittedRendering { document },
             });
-            continue;
+            return Ok(());
         }
-        let current = tree.file(&path.to_string_lossy()).map(<[u8]>::to_vec);
-        plan.writes.push(PlannedFile {
+        Err(error) => return Err(error),
+    };
+    if let Some(reference) = kept_references(&text).into_iter().next() {
+        plan.findings.push(RenderFinding {
             path,
-            text: format!("{GENERATED_LINE}\n{text}"),
-            current,
+            kind: RenderFindingKind::ImportInCommittedRendering { reference },
         });
+        return Ok(());
     }
+    plan.writes.push(PlannedFile {
+        current: tree.file(AGENTS_FILE).map(<[u8]>::to_vec),
+        path,
+        text: format!("{GENERATED_LINE}\n{text}"),
+    });
     Ok(())
 }
 
@@ -1133,7 +1052,6 @@ mod tests {
     use super::*;
 
     const LAYER: &str = "schema_version: 6\nproject: demo\n";
-    const MASTER: &str = "## Purpose\n\nThe demo project.\n";
     const INDEX: &str = "expanded:\n  - project/demo/policy/house\n";
 
     /// A project policy whose rule is `rule`, requiring each of `reads`.
@@ -1149,18 +1067,25 @@ mod tests {
         text
     }
 
-    /// A project tree: its layer, root master and index, `house` as
-    /// `house`, and `more` files beside them.
+    /// A project tree: its layer and index, `house` as `house`, and `more`
+    /// files beside them.
     fn plan(house: &str, more: &[(&str, &str)]) -> RenderPlan {
         let mut files = vec![
             (CONFIG_FILE_NAME, LAYER),
-            (MASTER_FILE_NAME, MASTER),
             ("docs/project/index.yaml", INDEX),
             ("docs/project/policy/house.md", house),
         ];
         files.extend_from_slice(more);
-        let tree = Committed::of(&files);
+        rendered(Committed::of(&files))
+    }
+
+    fn rendered(tree: Committed) -> RenderPlan {
         render_tree(&tree, tree.file(OVERRIDE_FILE).is_some()).unwrap()
+    }
+
+    /// An earlier release's rendering, opening with the line it wrote.
+    fn earlier_rendering() -> String {
+        format!("{EARLIER_GENERATED_LINE}\n# Old\n")
     }
 
     fn root(plan: &RenderPlan) -> &PlannedFile {
@@ -1259,7 +1184,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_without_the_line_beside_a_master_is_written_over_without_a_finding() {
+    fn a_root_file_without_the_line_is_written_over_without_a_finding() {
         let mine = "# My own instructions\n";
         let plan = plan(&policy("Be kind.", &[]), &[(AGENTS_FILE, mine)]);
         assert_eq!(root(&plan).current.as_deref(), Some(mine.as_bytes()));
@@ -1268,26 +1193,106 @@ mod tests {
     }
 
     #[test]
-    fn only_a_masterless_rendering_is_removed() {
-        let rendering = format!("{GENERATED_LINE}\n# Old\n");
+    fn an_index_selecting_nothing_renders_the_generated_line_alone() {
+        let plan = rendered(Committed::of(&[
+            (CONFIG_FILE_NAME, LAYER),
+            ("docs/project/index.yaml", ""),
+        ]));
+        assert_eq!(root(&plan).text, format!("{GENERATED_LINE}\n"));
+    }
+
+    #[test]
+    fn every_rendering_below_the_root_is_removed_and_nothing_else() {
+        let current = format!("{GENERATED_LINE}\n# Old\n");
+        let near_match = format!(
+            "{}\n# Theirs\n",
+            GENERATED_LINE.replacen("instrukt", "instrukt-example", 1)
+        );
         let plan = plan(
             &policy("Be kind.", &[]),
             &[
-                ("old/AGENTS.md", &rendering),
+                ("old/AGENTS.md", &current),
+                ("older/AGENTS.md", &earlier_rendering()),
+                ("theirs/AGENTS.md", &near_match),
                 ("mine/AGENTS.md", "# Mine\n"),
+                ("tools/AGENTS.master.md", "## Tools\n\nThe tools.\n"),
             ],
         );
-        assert_eq!(plan.removals, [PathBuf::from("old/AGENTS.md")]);
+        assert_eq!(
+            plan.removals,
+            [
+                PathBuf::from("old/AGENTS.md"),
+                PathBuf::from("older/AGENTS.md")
+            ]
+        );
+        assert_eq!(
+            plan.writes
+                .iter()
+                .map(|file| &file.path)
+                .collect::<Vec<_>>(),
+            [Path::new(AGENTS_FILE)]
+        );
         assert_eq!(plan.findings, []);
     }
 
     #[test]
-    fn an_override_beside_the_root_master_is_named_and_beside_a_nested_one_is_not() {
+    fn a_root_rendering_is_removed_only_without_an_index() {
+        let without = rendered(Committed::of(&[
+            (CONFIG_FILE_NAME, LAYER),
+            ("AGENTS.master.md", "## Purpose\n\nThe demo project.\n"),
+            (AGENTS_FILE, &earlier_rendering()),
+        ]));
+        assert_eq!(without.removals, [PathBuf::from(AGENTS_FILE)]);
+        assert_eq!(without.writes, []);
+        assert_eq!(without.notices, [project_without_index()]);
+
+        // A present index whose rendering reports a finding: the root file is
+        // neither written nor removed.
+        let found = plan(
+            &policy("<!-- @config: project -->", &[]),
+            &[(AGENTS_FILE, &earlier_rendering())],
+        );
+        assert_eq!(found.writes, []);
+        assert_eq!(found.removals, Vec::<PathBuf>::new());
+        assert_eq!(found.findings.len(), 1);
+    }
+
+    #[test]
+    fn a_linked_index_is_a_finding_naming_it_and_the_root_file_stays() {
+        let tree = Committed::of(&[
+            (CONFIG_FILE_NAME, LAYER),
+            (AGENTS_FILE, &earlier_rendering()),
+        ])
+        .with_link("docs/project/index.yaml");
+        let plan = rendered(tree);
+        assert_eq!(plan.writes, []);
+        assert_eq!(plan.removals, Vec::<PathBuf>::new());
+        assert_eq!(
+            plan.findings,
+            [RenderFinding {
+                path: PathBuf::from(AGENTS_FILE),
+                kind: RenderFindingKind::LinkedIndex {
+                    index: "docs/project/index.yaml".to_owned(),
+                },
+            }]
+        );
+        let below = rendered(
+            Committed::of(&[
+                (CONFIG_FILE_NAME, LAYER),
+                (AGENTS_FILE, &earlier_rendering()),
+            ])
+            .with_link("docs"),
+        );
+        assert_eq!(below.findings, plan.findings);
+        assert_eq!(below.removals, Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn an_override_beside_a_planned_root_is_named_and_below_the_root_is_not() {
         let plan = plan(
             &policy("Be kind.", &[]),
             &[
                 (OVERRIDE_FILE, "# Override\n"),
-                ("tools/AGENTS.master.md", "## Tools\n\nThe tools.\n"),
                 ("tools/AGENTS.override.md", "# Tools override\n"),
             ],
         );
@@ -1295,7 +1300,7 @@ mod tests {
             plan.findings,
             [RenderFinding {
                 path: PathBuf::from(OVERRIDE_FILE),
-                kind: RenderFindingKind::OverrideBesideMaster,
+                kind: RenderFindingKind::OverrideBesideRoot,
             }]
         );
     }
