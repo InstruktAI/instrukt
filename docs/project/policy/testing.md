@@ -76,6 +76,7 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   pins when it enables the hook, or by the first commit or every-file run
   that needs it. That installation and the tool's first run after it are not
   counted in the ten seconds. No commit is refused because a tool is missing.
+<!-- planned-change:speed-up-pr-ci -->
 - GitHub CI runs every check in `.pre-commit-config.yaml` over every file
   without running colocated unit tests more than once per selected platform
   or repeating OS-independent checks across platforms:
@@ -114,6 +115,42 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     run every check. Every check `main` requires reports on every pull request,
     skipping its steps rather than itself. CI runs for a branch only through
     its pull request.
+<!-- change:speed-up-pr-ci -->
+- GitHub CI runs every check in `.pre-commit-config.yaml` over every file
+  without running colocated unit tests more than once per selected platform
+  or repeating OS-independent checks across platforms:
+  - On every pull request, Linux runs the OS-independent checks once,
+    doctests and the full workspace test suite (built once and sharded across
+    parallel runners); macOS runs workspace clippy across all targets and the
+    macOS-specific test suite (launchd, module installation, Darwin
+    process-group cleanup, kqueue notifications, hooks and write-fence paths).
+    `main` requires these pull-request checks: a failing Linux test or scoped
+    macOS test blocks a pull request, not a commit.
+  - On every `main` push and tagged release, macOS runs workspace clippy
+    across all targets, the full workspace test suite and doctests; a failure
+    in a non-platform-specific test that manifests only on macOS is detected
+    by the full macOS job on `main` pushes and tagged releases and blocks
+    tagged release publication, not pull requests.
+  - A pull request runs, of the checks above, only those its changed files
+    reach, as `scripts/ci-changes.sh` classifies them; a `main` push or tagged
+    release runs every check. A change to documents and configuration alone,
+    root `instrukt.yaml` and `AGENTS.master.md` among them, reaches no Rust
+    input: Linux builds the CLI binary and runs the document,
+    configuration, use-case coverage and instruction-file checks with it,
+    without the workspace test suite, doctests, macOS, the dependency audit,
+    the pinned contracts, or the commit checks whose inputs did not change.
+    Among the commit checks, fmt, clippy and the unit tests run when a Rust
+    input changes, shellcheck when a script or a hook file changes, and
+    the Python lint and type check when a Python file or their configuration
+    changes. A contract check runs when a crate on its path, the workspace
+    manifest or lock, or a pinned tool changes. A moved file counts as both
+    the path it left and the path it reached. A path no rule names, a change
+    whose files cannot be read, a classification that does not succeed, and
+    a change to the pipeline, to one of its scripts (`scripts/ci-*.sh`), or to
+    `scripts/test-tools.env` run every check. Every check `main` requires
+    reports on every pull request, skipping its steps rather than itself. CI
+    runs for a branch only through its pull request.
+<!-- /planned-change:speed-up-pr-ci -->
 - A version tag produces release binaries for macOS arm64 and Linux
   x86_64/arm64, and only from a revision that passed those checks.
 - Parity against the corpus instrukt was extracted from is a one-off
