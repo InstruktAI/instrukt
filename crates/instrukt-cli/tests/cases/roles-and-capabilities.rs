@@ -29,26 +29,46 @@ fn focused_reviewer() -> TestEnv {
 #[test]
 fn focused_help_and_execution_use_the_recorded_binding() {
     let env = focused_reviewer();
-    let output = env
-        .instrukt(env.home())
-        .env("T3CODE_THREAD_ID", "focused")
-        .args(["--help"])
-        .assert()
-        .success();
-    insta::assert_snapshot!(
-        "focused-role-help",
-        String::from_utf8_lossy(&output.get_output().stdout)
-    );
-    let output = env
-        .instrukt(env.home())
-        .env("T3CODE_THREAD_ID", "focused")
-        .args(["config", "init", "--global"])
-        .assert()
-        .failure();
-    insta::assert_snapshot!(
-        "focused-role-refusal",
-        String::from_utf8_lossy(&output.get_output().stderr)
-    );
+    let help_and_refusal = || {
+        let help = env
+            .instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "focused")
+            .args(["--help"])
+            .assert()
+            .success();
+        let refusal = env
+            .instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "focused")
+            .args(["config", "init", "--global"])
+            .assert()
+            .failure();
+        (
+            String::from_utf8_lossy(&help.get_output().stdout).into_owned(),
+            String::from_utf8_lossy(&refusal.get_output().stderr).into_owned(),
+        )
+    };
+    // On its first turn the runner has recorded the start, and the
+    // responsibility has not yet recorded the session.
+    let db = state_db(&env);
+    db.execute(
+        "UPDATE procedure_responsibilities SET session=NULL WHERE responsibility='handler'",
+        [],
+    )
+    .unwrap();
+    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3','handler','standing','handler','t3:focused',?1,0,1)",[env.home().to_str().unwrap()]).unwrap();
+    let first_turn = help_and_refusal();
+    db.execute(
+        "UPDATE procedure_responsibilities SET session='t3:focused' WHERE responsibility='handler'",
+        [],
+    )
+    .unwrap();
+    let (help, refusal) = help_and_refusal();
+    assert_eq!(first_turn, (help.clone(), refusal.clone()));
+    insta::assert_snapshot!("focused-role-help", help);
+    insta::assert_snapshot!("focused-role-refusal", refusal);
+
+    first_turn_of_a_started_orchestrator();
+    first_turn_of_a_successor();
 }
 
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
@@ -561,6 +581,23 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     // defect into any project, and no other work-record write.
     insta::assert_snapshot!("company-agent-help", help(&["--help"]));
 
+    // A conversation's agent reads that same help on its first turn, before
+    // its first accepted message binds the session, under its conversation.
+    let key = "instrukt:conversation:acme:slack:C1%2F1700.1";
+    let db = state_db(&env);
+    db.execute("INSERT INTO connected_conversations(company,connector,conversation,semantic_key,source_identity) VALUES ('acme','slack','C1/1700.1',?1,'src')",[key]).unwrap();
+    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3',?1,'conversation',?1,'t3:conversation',?2,0,1)",[key,env.home().to_str().unwrap()]).unwrap();
+    let conversation = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "conversation")
+        .args(["--help"])
+        .assert()
+        .success();
+    assert_eq!(
+        words(&String::from_utf8_lossy(&conversation.get_output().stdout)),
+        words(&help(&["--help"]).replace("assignment assistance", &format!("assignment {key}")))
+    );
+
     // An agents.yaml edited before `report` existed keeps working: its
     // company agent holds what that file gives it, and no `bug-report`.
     let file = env.instrukt_home().join("agents.yaml");
@@ -632,46 +669,80 @@ fn orchestrator_in_its_launch_window(
     (native, key, worktree)
 }
 
-// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
-#[test]
-fn a_started_orchestrator_is_admitted_on_its_first_turn_before_work_records_its_session() {
-    let p = crate::fixtures::flavor::Tracked::new(true);
-    let (native, key, worktree) = orchestrator_in_its_launch_window(&p);
-    let admitted = || {
-        for args in [&["todo", "show", "parser"][..], &["docs", "index"][..]] {
-            p.env
-                .instrukt(std::path::Path::new(&worktree))
-                .env("T3CODE_THREAD_ID", &native)
-                .args(args)
-                .assert()
-                .success();
-        }
-    };
-    // Before the runtime accepted the start.
-    admitted();
-    // After the runtime accepted it, before work records the session.
-    state_db(&p.env)
-        .execute(
-            "UPDATE runtime_bindings SET accepted=1,worktree=?2 WHERE semantic_key=?1",
-            [&key, &worktree],
-        )
-        .unwrap();
-    admitted();
+/// `text` as its whitespace-separated words, so wrapped help compares by content.
+fn words(text: &str) -> Vec<&str> {
+    text.split_whitespace().collect()
 }
 
-// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
-#[test]
-fn a_start_whose_attempt_is_bound_to_another_session_remains_a_resolution_failure() {
+/// The role line role-aware help shows `native` standing in `cwd`.
+fn role_line(env: &TestEnv, cwd: &std::path::Path, native: &str) -> String {
+    let output = env
+        .instrukt(cwd)
+        .env("T3CODE_THREAD_ID", native)
+        .args(["--help"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    let line = stdout
+        .split_once("Role:")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    format!(
+        "Role: {}",
+        words(
+            line.split_once("Usual capabilities")
+                .map_or(line, |(role, _)| role)
+        )
+        .join(" ")
+    )
+}
+
+/// A focused orchestrator the runner started reads its reserved assignment
+/// on its first turn, before work records its session; once the runtime
+/// records its worktree, that worktree is its workspace. An attempt bound to
+/// another session is not the start's assignment.
+fn first_turn_of_a_started_orchestrator() {
     let p = crate::fixtures::flavor::Tracked::new(true);
     let (native, key, worktree) = orchestrator_in_its_launch_window(&p);
-    state_db(&p.env).execute("UPDATE session_bindings SET session='t3:unrelated',evidence=json_set(evidence,'$.session','t3:unrelated') WHERE semantic_key=?1",[&key]).unwrap();
-    let refused = p
-        .env
-        .instrukt(std::path::Path::new(&worktree))
-        .env("T3CODE_THREAD_ID", &native)
-        .args(["todo", "show", "parser"])
-        .assert()
-        .failure();
+    let file = p.env.instrukt_home().join("agents.yaml");
+    let mut agents: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &std::fs::read_to_string(&file)
+            .unwrap_or_else(|_| instrukt_core::config::SHIPPED_AGENTS.to_owned()),
+    )
+    .unwrap();
+    agents["roles"]["todo-orchestrator"]["class"] = "focused".into();
+    std::fs::write(&file, serde_yaml_ng::to_string(&agents).unwrap()).unwrap();
+    let worktree = std::path::Path::new(&worktree);
+    let call = |args: &[&str]| {
+        p.env
+            .instrukt(worktree)
+            .env("T3CODE_THREAD_ID", &native)
+            .args(args)
+            .assert()
+    };
+    let first_turn = || {
+        assert_eq!(
+            role_line(&p.env, worktree, &native),
+            format!(
+                "Role: todo-orchestrator · class: focused. Scope comes from assignment {key}. Object claims, phase and writer constraints apply."
+            )
+        );
+        call(&["todo", "show", "parser"]).success();
+        call(&["docs", "index"]).success();
+    };
+    // Before the runtime accepted the start.
+    first_turn();
+    // After the runtime accepted it and recorded its worktree.
+    let db = state_db(&p.env);
+    db.execute(
+        "UPDATE runtime_bindings SET accepted=1,worktree=?2 WHERE semantic_key=?1",
+        [&key, worktree.to_str().unwrap()],
+    )
+    .unwrap();
+    first_turn();
+    call(&["docs", "render"]).success();
+    db.execute("UPDATE session_bindings SET session='t3:unrelated',evidence=json_set(evidence,'$.session','t3:unrelated') WHERE semantic_key=?1",[&key]).unwrap();
+    let refused = call(&["todo", "show", "parser"]).failure();
     insta::assert_snapshot!(
         "unrelated-binding-start-refused",
         String::from_utf8_lossy(&refused.get_output().stderr)
@@ -683,14 +754,15 @@ fn a_start_whose_attempt_is_bound_to_another_session_remains_a_resolution_failur
     );
 }
 
-// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
-#[test]
-fn a_successor_is_admitted_before_work_moves_the_attempt_to_it() {
+/// The successor of a deleted task thread reads the task's reserved
+/// assignment before work moves the attempt to it.
+fn first_turn_of_a_successor() {
     let mut p = crate::fixtures::flavor::Tracked::new(true);
     p.authorized_task("weekly-status", "2030-01-06T09:00:00Z", &[]);
     p.tick_at("2030-01-06T09:00:20Z");
     let fake = crate::fixtures::runtime::FakeT3::create(&p.env);
     let (old, key) = (format!("t3:{}", fake.native_id("s1")), fake.key("s1"));
+    let role = role_line(&p.env, p.repo.path(), &fake.native_id("s1"));
     fake.delete("s1");
     p.tick_at("2030-01-06T09:01:20Z");
     let successor = fake.native_id("s2");
@@ -716,65 +788,15 @@ fn a_successor_is_admitted_before_work_moves_the_attempt_to_it() {
         [&key],
     )
     .unwrap();
+    assert!(
+        role.contains(&format!("Scope comes from assignment {key}.")),
+        "{role}"
+    );
+    assert_eq!(role_line(&p.env, p.repo.path(), &successor), role);
     p.env
         .instrukt(p.repo.path())
         .env("T3CODE_THREAD_ID", &successor)
         .args(["todo", "show", "weekly-status"])
         .assert()
         .success();
-}
-
-// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
-#[test]
-fn a_started_standing_agent_carries_its_focused_role_before_its_responsibility_records_it() {
-    let env = focused_reviewer();
-    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
-    let db = instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
-    db.execute(
-        "UPDATE procedure_responsibilities SET session=NULL WHERE responsibility='handler'",
-        [],
-    )
-    .unwrap();
-    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3','handler','standing','handler','t3:focused',?1,0,1)",[env.home().to_str().unwrap()]).unwrap();
-    let output = env
-        .instrukt(env.home())
-        .env("T3CODE_THREAD_ID", "focused")
-        .args(["config", "init", "--global"])
-        .assert()
-        .failure();
-    insta::assert_snapshot!(
-        "focused-role-refusal",
-        String::from_utf8_lossy(&output.get_output().stderr)
-    );
-}
-
-// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP3
-#[test]
-fn a_started_conversation_agent_carries_its_company_role_before_its_first_message_binds_it() {
-    let env = TestEnv::new();
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
-    drop(instrukt_core::state_db::StateDb::open(&home).unwrap());
-    let db = instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
-    db.execute_batch("INSERT INTO connected_conversations(company,connector,conversation,semantic_key,source_identity) VALUES ('acme','slack','C1/1700.1','instrukt:conversation:acme:slack:C1%2F1700.1','src')").unwrap();
-    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3','instrukt:conversation:acme:slack:C1%2F1700.1','conversation','instrukt:conversation:acme:slack:C1%2F1700.1','t3:company',?1,0,1)",[env.home().to_str().unwrap()]).unwrap();
-    let output = env
-        .instrukt(env.home())
-        .env("T3CODE_THREAD_ID", "company")
-        .args(["--help"])
-        .assert()
-        .success();
-    let help = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
-    insta::assert_snapshot!(
-        help.lines().skip_while(|line| !line.starts_with("Role:")).collect::<Vec<_>>().join("\n"),
-        @r"
-    Role: company-agent · class: standing. Scope comes from assignment
-    instrukt:conversation:acme:slack:C1%2F1700.1. Object claims, phase and writer constraints apply.
-    Usual capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any,
-    bug-report:any, artifact-read:any, agents-read:any, config-read:any, repository-read:any,
-    code-check:any, eval-read:any, events-read:any, installation-read:any, mcp-access:own,
-    company-reply:own
-    "
-    );
 }
