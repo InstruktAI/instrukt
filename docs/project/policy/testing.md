@@ -146,10 +146,10 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     manifest or lock, or a pinned tool changes. A moved file counts as both
     the path it left and the path it reached. A path no rule names, a change
     whose files cannot be read, a classification that does not succeed, and
-    a change to the pipeline, to one of its scripts (`scripts/ci-*.sh`), or to
-    `scripts/test-tools.env` run every check. Every check `main` requires
-    reports on every pull request, skipping its steps rather than itself. CI
-    runs for a branch only through its pull request.
+    a change to the pipeline, `scripts/ci-changes.sh`, or `scripts/test-tools.env`
+    run every check. Every check `main` requires reports on every pull request,
+    skipping its steps rather than itself. CI runs for a branch only through
+    its pull request.
 <!-- /planned-change:speed-up-pr-ci -->
 - A version tag produces release binaries for macOS arm64 and Linux
   x86_64/arm64, and only from a revision that passed those checks.
