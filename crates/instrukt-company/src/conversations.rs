@@ -3942,22 +3942,23 @@ pub fn speaker(
     let row = db
         .conn()
         .query_row(
-            "SELECT sender, sender_name, sender_email, sender_is_admin, is_direct FROM conversation_messages
+            "SELECT message, sender, sender_name, sender_email, sender_is_admin, is_direct FROM conversation_messages
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND boundary=?4",
             [&company, &connector, &conversation, &boundary],
             |r| {
                 Ok((
-                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, String>(0)?,
                     r.get::<_, Option<String>>(1)?,
                     r.get::<_, Option<String>>(2)?,
-                    r.get::<_, i32>(3)? != 0,
+                    r.get::<_, Option<String>>(3)?,
                     r.get::<_, i32>(4)? != 0,
+                    r.get::<_, i32>(5)? != 0,
                 ))
             },
         )
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let (identity, name, email, is_admin, is_direct) =
+    let (message, identity, name, email, is_admin, is_direct) =
         row.ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
             cause: "the turn's addressed message is not one this conversation delivered".into(),
         })?;
@@ -3969,6 +3970,9 @@ pub fn speaker(
         email: email.filter(|email| !email.trim().is_empty()),
         is_admin,
         is_direct,
+        connector: Some(connector),
+        conversation: Some(conversation),
+        message: Some(message),
     }))
 }
 

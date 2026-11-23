@@ -135,10 +135,10 @@ pub(crate) fn discovery_document(issuer_url: &str) -> String {
 }
 
 /// Initialize (or rotate) a company's built-in OIDC issuer:
-/// 1. Generate ES256 keypair and store private PEM in the company's `secrets.env`.
-/// 2. Retain/create a stable 128-bit `issuer_id` and store public JWKS in `company_issuers`.
-/// 3. Enable `issuer:` in the company's `instrukt.yaml`.
-/// 4. Publish bounded public discovery + JWKS JSON to cluster Redis.
+/// 1. Verify `ingress.url` and cluster Redis reachability FIRST (fail fast, zero local mutation).
+/// 2. Retain/create a stable 128-bit `issuer_id` and generate an ES256 keypair.
+/// 3. Publish bounded public discovery + JWKS JSON to cluster Redis BEFORE updating `secrets.env`.
+/// 4. Store private PEM in the company's `secrets.env`, upsert `company_issuers`, and enable `issuer:`.
 pub fn init_company_issuer(
     home: &Home,
     company: &ProjectSlug,
@@ -162,9 +162,60 @@ pub fn init_company_issuer(
         })
         .unwrap_or_else(|| DEFAULT_ISSUER_SIGNING_KEY_NAME.to_owned());
 
+    // Verify cluster Redis is reachable before writing any private key or SQLite row.
+    let transport =
+        ScopedTransport::cluster_only(&global_cfg, &RunnerState::new(home)).map_err(|error| {
+            McpError::Server {
+                server: company.to_string(),
+                cause: format!("cluster Redis unavailable for issuer publication: {error}"),
+            }
+        })?;
+    super::_redis_mcp::ping_cluster(&transport).map_err(|error| McpError::Server {
+        server: company.to_string(),
+        cause: format!("cluster Redis unreachable for issuer publication: {error}"),
+    })?;
+
+    let existing_issuer_id = if let Some(read) = StateRead::open(home)? {
+        read.conn()
+            .query_row(
+                "SELECT issuer_id FROM company_issuers WHERE company = ?1",
+                [company.as_str()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(StateDbError::sqlite(read.path()))?
+    } else {
+        None
+    };
+    let issuer_id = match existing_issuer_id {
+        Some(id) => id,
+        None => random_hex_128()?,
+    };
+
     let keypair = generate_es256_keypair()?;
-    let fresh_issuer_id = random_hex_128()?;
     let now_str = now.to_string();
+
+    // Publish bounded public discovery and JWKS JSON to cluster Redis BEFORE updating secrets.env.
+    let issuer_url = issuer_url_for(&ingress_url, &issuer_id);
+    let discovery_json = discovery_document(&issuer_url);
+    if discovery_json.len() > MAX_ISSUER_DOC_BYTES
+        || keypair.public_jwks_json.len() > MAX_ISSUER_DOC_BYTES
+    {
+        return Err(McpError::Server {
+            server: company.to_string(),
+            cause: "public issuer metadata exceeds bounded size limit".into(),
+        });
+    }
+    publish_issuer_metadata(
+        &transport,
+        &issuer_id,
+        &discovery_json,
+        &keypair.public_jwks_json,
+    )
+    .map_err(|error| McpError::Server {
+        server: company.to_string(),
+        cause: format!("failed to publish public issuer metadata to cluster Redis: {error}"),
+    })?;
 
     // Store private key in company home's owner-only secrets.env (never in DB or Redis).
     set_secret_in(
@@ -174,20 +225,11 @@ pub fn init_company_issuer(
         &keypair.private_pem,
     )?;
 
-    // Record stable issuer_id + public JWKS in company_issuers, then drop writer.lock before Redis.
-    let issuer_id = {
+    // Record stable issuer_id + public JWKS in company_issuers, then drop writer.lock.
+    {
         let mut db = StateDb::open(home)?;
         let path = db.path().to_path_buf();
         db.write::<_, StateDbError>(|tx| {
-            let existing: Option<String> = tx
-                .query_row(
-                    "SELECT issuer_id FROM company_issuers WHERE company = ?1",
-                    [company.as_str()],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(StateDbError::sqlite(&path))?;
-            let issuer_id = existing.unwrap_or(fresh_issuer_id);
             tx.execute(
                 "INSERT INTO company_issuers (company, issuer_id, public_jwks_json, updated_at)
                  VALUES (?1, ?2, ?3, ?4)
@@ -202,9 +244,9 @@ pub fn init_company_issuer(
                 ],
             )
             .map_err(StateDbError::sqlite(&path))?;
-            Ok(issuer_id)
-        })?
-    };
+            Ok(())
+        })?;
+    }
 
     // Enable `issuer:` in the company home's instrukt.yaml.
     let layer = Layer::Company(company.clone());
@@ -214,35 +256,6 @@ pub fn init_company_issuer(
     let patch_val = config::parse_patch(&patch_yaml)?;
     config::patch(home, &layer, &rev, &patch_val)?;
 
-    // Publish bounded public discovery and JWKS JSON to cluster Redis.
-    let issuer_url = issuer_url_for(&ingress_url, &issuer_id);
-    let discovery_json = discovery_document(&issuer_url);
-    if discovery_json.len() > MAX_ISSUER_DOC_BYTES
-        || keypair.public_jwks_json.len() > MAX_ISSUER_DOC_BYTES
-    {
-        return Err(McpError::Server {
-            server: company.to_string(),
-            cause: "public issuer metadata exceeds bounded size limit".into(),
-        });
-    }
-    let transport =
-        ScopedTransport::cluster_only(&global_cfg, &RunnerState::new(home)).map_err(|error| {
-            McpError::Server {
-                server: company.to_string(),
-                cause: format!("cluster Redis unavailable for issuer publication: {error}"),
-            }
-        })?;
-    publish_issuer_metadata(
-        &transport,
-        &issuer_id,
-        &discovery_json,
-        &keypair.public_jwks_json,
-    )
-    .map_err(|error| McpError::Server {
-        server: company.to_string(),
-        cause: format!("failed to publish public issuer metadata to cluster Redis: {error}"),
-    })?;
-
     Ok(IssuerInfo {
         company: company.to_string(),
         issuer_id,
@@ -251,6 +264,97 @@ pub fn init_company_issuer(
         enabled: true,
         updated_at: now_str,
     })
+}
+
+/// Idempotently rebuild derived public discovery + JWKS documents in cluster Redis
+/// from authoritative `company_issuers` + current `ingress.url`, without rotating keys.
+pub fn republish_company_issuers(
+    home: &Home,
+    only_company: Option<&ProjectSlug>,
+) -> Result<Vec<IssuerInfo>, McpError> {
+    let inspection = home.for_inspection();
+    let global_cfg = Configuration::load_global(&inspection)?;
+    let ingress_url = global_cfg.ingress_url()?.ok_or_else(|| McpError::Server {
+        server: "issuer".into(),
+        cause: "global `ingress.url` is not configured".into(),
+    })?;
+    let Some(read) = StateRead::open(&inspection)? else {
+        return Ok(Vec::new());
+    };
+    let rows: Vec<(String, String, String, String)> = match only_company {
+        Some(company) => read
+            .conn()
+            .query_row(
+                "SELECT company, issuer_id, public_jwks_json, updated_at FROM company_issuers WHERE company = ?1",
+                [company.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(StateDbError::sqlite(read.path()))?
+            .into_iter()
+            .collect(),
+        None => {
+            let mut stmt = read
+                .conn()
+                .prepare("SELECT company, issuer_id, public_jwks_json, updated_at FROM company_issuers ORDER BY company")
+                .map_err(StateDbError::sqlite(read.path()))?;
+            let mapped = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .map_err(StateDbError::sqlite(read.path()))?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(StateDbError::sqlite(read.path()))?);
+            }
+            out
+        }
+    };
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let transport = ScopedTransport::cluster_only(&global_cfg, &RunnerState::new(&inspection))
+        .map_err(|error| McpError::Server {
+            server: "issuer".into(),
+            cause: format!("cluster Redis unavailable for issuer publication: {error}"),
+        })?;
+    let mut published = Vec::new();
+    for (company_name, issuer_id, public_jwks_json, updated_at) in rows {
+        let Ok(slug) = ProjectSlug::parse(&company_name) else {
+            continue;
+        };
+        let enabled = Configuration::load_company(&inspection, &slug)
+            .ok()
+            .and_then(|c| c.company_issuer().ok().flatten())
+            .is_some_and(|i| i.enabled);
+        if !enabled {
+            continue;
+        }
+        let issuer_url = issuer_url_for(&ingress_url, &issuer_id);
+        let discovery_json = discovery_document(&issuer_url);
+        if discovery_json.len() > MAX_ISSUER_DOC_BYTES
+            || public_jwks_json.len() > MAX_ISSUER_DOC_BYTES
+        {
+            return Err(McpError::Server {
+                server: company_name,
+                cause: "public issuer metadata exceeds bounded size limit".into(),
+            });
+        }
+        publish_issuer_metadata(&transport, &issuer_id, &discovery_json, &public_jwks_json)
+            .map_err(|error| McpError::Server {
+                server: company_name.clone(),
+                cause: format!(
+                    "failed to republish public issuer metadata to cluster Redis: {error}"
+                ),
+            })?;
+        published.push(IssuerInfo {
+            company: company_name,
+            issuer_id,
+            jwks_url: format!("{issuer_url}/jwks.json"),
+            issuer_url,
+            enabled: true,
+            updated_at,
+        });
+    }
+    Ok(published)
 }
 
 /// Show a company's built-in OIDC issuer URL and JWKS URL.
@@ -320,30 +424,19 @@ pub(crate) fn obtain_issuer_login(
         })?;
     let person = email.to_lowercase();
 
-    // 1. Check cached access token in mcp_logins unless forcing renewal (e.g. after 401).
-    if !force_refresh && let Some(db) = StateRead::open(home)? {
-        let cached: Option<(String, String, Option<String>, i32)> = db
-            .conn()
-            .query_row(
-                "SELECT resource, access_token, expires_at, checked
-                 FROM mcp_logins
-                 WHERE company = ?1 AND person = ?2 AND server = ?3",
-                params![company.as_str(), person, server.name.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .optional()
-            .map_err(StateDbError::sqlite(db.path()))?;
-        if let Some((resource, access_token, expires_at, checked)) = cached
-            && resource == server.url
-            && checked != 0
-            && is_token_fresh(expires_at.as_deref(), now)
-        {
-            return Ok(bearer_logins(&server.name, access_token));
-        }
-    }
-
-    // 2. Capture generation and company issuer metadata using read-only snapshot (never hold writer lock across HTTP).
-    let (generation, issuer_id, public_jwks_json) = {
+    // 1. Verify company issuer is enabled and capture generation + issuer_id + cached login
+    //    in one read-only snapshot so cached tokens are invalidated if issuer changes or is disabled.
+    let company_cfg = Configuration::load_company(&home.for_inspection(), company)?;
+    let issuer_cfg = company_cfg
+        .company_issuer()?
+        .filter(|c| c.enabled)
+        .ok_or_else(|| McpError::Server {
+            server: server.name.to_string(),
+            cause: format!(
+                "company `{company}` does not have its built-in OIDC issuer enabled; run `instrukt mcp issuer init --company {company}`"
+            ),
+        })?;
+    let (generation, issuer_id, public_jwks_json, cached_login) = {
         let read = StateRead::open(home)?.ok_or_else(|| McpError::Server {
             server: server.name.to_string(),
             cause: format!(
@@ -375,21 +468,33 @@ pub(crate) fn obtain_issuer_login(
                     "company `{company}` has no initialized OIDC issuer; run `instrukt mcp issuer init --company {company}`"
                 ),
             })?;
-        (generation, issuer_id, public_jwks_json)
+        let cached: Option<(String, String, String, Option<String>, i32)> = read
+            .conn()
+            .query_row(
+                "SELECT resource, return_id, access_token, expires_at, checked
+                 FROM mcp_logins
+                 WHERE company = ?1 AND person = ?2 AND server = ?3",
+                params![company.as_str(), person, server.name.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .map_err(StateDbError::sqlite(read.path()))?;
+        (generation, issuer_id, public_jwks_json, cached)
     };
 
-    // 3. Load company issuer config + public kid + private PEM.
-    let company_cfg = Configuration::load_company(home, company)?;
-    let issuer_cfg = company_cfg
-        .company_issuer()?
-        .filter(|c| c.enabled)
-        .ok_or_else(|| McpError::Server {
-            server: server.name.to_string(),
-            cause: format!(
-                "company `{company}` does not have its built-in OIDC issuer enabled; run `instrukt mcp issuer init --company {company}`"
-            ),
-        })?;
-    let global_cfg = Configuration::load_global(home)?;
+    let expected_return_id = format!("issuer:{issuer_id}");
+    if !force_refresh
+        && let Some((resource, return_id, access_token, expires_at, checked)) = cached_login
+        && resource == server.url
+        && return_id == expected_return_id
+        && checked != 0
+        && is_token_fresh(expires_at.as_deref(), now)
+    {
+        return Ok(bearer_logins(&server.name, access_token));
+    }
+
+    // 2. Load global ingress.url + public kid + private PEM.
+    let global_cfg = Configuration::load_global(&home.for_inspection())?;
     let ingress_url = global_cfg.ingress_url()?.ok_or_else(|| McpError::Server {
         server: server.name.to_string(),
         cause: "global `ingress.url` is not configured".into(),

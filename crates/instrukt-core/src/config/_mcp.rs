@@ -107,6 +107,8 @@ impl McpServer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpClient {
     pub name: ProjectSlug,
+    /// Required authorization server issuer URL (`https`, or loopback `http`) this client is pinned to.
+    pub issuer: String,
     /// Required `${NAME}` reference into `~/.instrukt/secrets.env`.
     pub id: String,
     /// Optional `${NAME}` reference into `~/.instrukt/secrets.env`.
@@ -159,6 +161,19 @@ pub fn admitted_identity_url(url: &str) -> bool {
         && parsed.fragment().is_none()
 }
 
+/// Whether `url` is a valid OAuth issuer identifier: an absolute `https` address
+/// (or loopback `http` address) with no credentials, query, or fragment.
+pub fn admitted_issuer_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    admitted_address(parsed.as_str())
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+}
+
 fn finding(path: &str, kind: FindingKind, message: impl Into<String>) -> KeyFinding {
     KeyFinding::new(path, kind, message)
 }
@@ -191,6 +206,15 @@ pub(super) fn check_clients(value: &Value, path: &str, out: &mut Vec<KeyFinding>
             ));
             continue;
         };
+        if !fields.contains_key("issuer") {
+            out.push(finding(
+                &join(&at, "issuer"),
+                FindingKind::Missing,
+                format!(
+                    "mcp client `{name}`: missing `issuer` (required authorization server issuer URL this host client is pinned to)"
+                ),
+            ));
+        }
         if !fields.contains_key("id") {
             out.push(finding(
                 &join(&at, "id"),
@@ -204,6 +228,16 @@ pub(super) fn check_clients(value: &Value, path: &str, out: &mut Vec<KeyFinding>
             let field = key_text(field);
             let field_at = join(&at, &field);
             match field.as_str() {
+                "issuer" => match value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(url) if admitted_issuer_url(url) => {}
+                    _ => out.push(finding(
+                        &field_at,
+                        FindingKind::InvalidValue,
+                        format!(
+                            "mcp client `{name}`: `issuer` expects an absolute https URL (or loopback http URL) with no credentials, query, or fragment"
+                        ),
+                    )),
+                },
                 "id" | "secret" => {
                     if !value.as_str().is_some_and(super::is_secret_reference) {
                         out.push(finding(
@@ -232,7 +266,7 @@ pub(super) fn check_clients(value: &Value, path: &str, out: &mut Vec<KeyFinding>
                     &field_at,
                     FindingKind::UnknownKey,
                     format!(
-                        "mcp client `{name}`: unknown field; a host OAuth client takes id, secret and description"
+                        "mcp client `{name}`: unknown field; a host OAuth client takes issuer, id, secret and description"
                     ),
                 )),
             }
@@ -839,6 +873,7 @@ pub(super) fn clients(
             name.clone(),
             McpClient {
                 name,
+                issuer: text("issuer").unwrap_or_default(),
                 id: text("id").unwrap_or_default(),
                 secret: text("secret"),
                 description: text("description"),
@@ -986,8 +1021,12 @@ pub(super) fn mcp_clients_json_schema() -> serde_json::Value {
         "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id"],
+            "required": ["issuer", "id"],
             "properties": {
+                "issuer": {
+                    "type": "string",
+                    "description": "Required authorization server issuer URL (https, or loopback http) this host client is pinned to; sign-in refuses any other issuer before reading the secret."
+                },
                 "id": {
                     "type": "string",
                     "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
@@ -1140,18 +1179,32 @@ mod tests {
     fn mcp_clients_and_cross_refs_reject_missing_global_client_and_disabled_issuer() {
         let mut out = Vec::new();
         let clients_val: Value = serde_yaml_ng::from_str(
-            "google: {id: '${GOOGLE_ID}', secret: '${GOOGLE_SECRET}', description: Google}\n",
+            "google: {issuer: 'https://accounts.google.com', id: '${GOOGLE_ID}', secret: '${GOOGLE_SECRET}', description: Google}\n",
         )
         .unwrap();
         check_clients(&clients_val, "mcp_clients", &mut out);
         assert!(out.is_empty());
 
+        let missing_issuer: Value =
+            serde_yaml_ng::from_str("google: {id: '${GOOGLE_ID}'}\n").unwrap();
+        let mut issuer_out = Vec::new();
+        check_clients(&missing_issuer, "mcp_clients", &mut issuer_out);
+        assert_eq!(
+            issuer_out
+                .into_iter()
+                .map(|f| (f.key, f.kind))
+                .collect::<Vec<_>>(),
+            [("mcp_clients.google.issuer".to_owned(), FindingKind::Missing)]
+        );
+
         let company_doc: Value = serde_yaml_ng::from_str(
             "mcp:\n  drive: {url: 'https://d.example/mcp', description: D, speaker_login: sign-in, sign_in: {client_ref: missing}}\n  ema: {url: 'https://e.example/mcp', description: E, speaker_login: sign-in, sign_in: {mode: issuer}}\n",
         )
         .unwrap();
-        let global_doc: Value =
-            serde_yaml_ng::from_str("mcp_clients: {google: {id: '${GOOGLE_ID}'}}\n").unwrap();
+        let global_doc: Value = serde_yaml_ng::from_str(
+            "mcp_clients: {google: {issuer: 'https://accounts.google.com', id: '${GOOGLE_ID}'}}\n",
+        )
+        .unwrap();
         check_company_cross_refs(&company_doc, Some(&global_doc), &mut out);
         let pairs: Vec<_> = out.into_iter().map(|f| (f.key, f.kind)).collect();
         assert_eq!(

@@ -42,6 +42,7 @@ pub(crate) struct DiscoveredAuth {
     pub authorization_endpoint: Option<String>,
     pub token_endpoint: Option<String>,
     pub registration_endpoint: Option<String>,
+    pub revocation_endpoint: Option<String>,
     pub userinfo_endpoint: Option<String>,
     pub jwks_uri: Option<String>,
     pub token_endpoint_auth_methods_supported: Vec<String>,
@@ -247,6 +248,7 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
         authorization_endpoint: get_str("authorization_endpoint"),
         token_endpoint: get_str("token_endpoint"),
         registration_endpoint,
+        revocation_endpoint: get_str("revocation_endpoint"),
         userinfo_endpoint,
         jwks_uri,
         token_endpoint_auth_methods_supported: string_list(

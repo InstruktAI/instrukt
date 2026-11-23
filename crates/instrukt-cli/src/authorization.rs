@@ -82,7 +82,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "mcp",
             "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress" | "sign-out",
         ]
-        | ["mcp", "issuer", "init" | "show"] => McpAccess,
+        | ["mcp", "issuer", "init" | "publish" | "show"] => McpAccess,
         ["ticks", "status"] => InstallationRead,
         ["install"] => InstallationWrite,
         ["run"]
@@ -206,7 +206,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["specs", "coverage" | "trace"]
             | [
                 "mcp",
-                "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress"
+                "list" | "list-tools" | "call" | "discover" | "check-ingress"
             ]
             | ["mcp", "issuer", "show"]
             | [

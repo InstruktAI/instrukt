@@ -83,6 +83,12 @@ enum IssuerCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Local operator only: idempotently republish derived public discovery/JWKS
+    /// metadata from `company_issuers` to cluster Redis without rotating keys.
+    Publish {
+        #[arg(long)]
+        json: bool,
+    },
     /// Show a company's built-in OIDC issuer URL and JWKS URL.
     Show {
         #[arg(long)]
@@ -114,14 +120,23 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                         .as_deref()
                         .map(|d| format!(" — {d}"))
                         .unwrap_or_default();
-                    let ret = client
-                        .return_address
-                        .as_deref()
-                        .unwrap_or("(set ingress.url to form return address)");
-                    ctx.out.line(&format!(
-                        "{}: client_id={} return_address={}{desc}",
-                        client.name, client.client_id, ret
-                    ))?;
+                    let status = if client.initialized {
+                        let id = client.client_id.as_deref().unwrap_or("(unset)");
+                        let ret = client
+                            .return_address
+                            .as_deref()
+                            .unwrap_or("(set ingress.url to form return address)");
+                        format!(
+                            "issuer={} client_id={id} return_address={ret}",
+                            client.issuer
+                        )
+                    } else {
+                        format!(
+                            "issuer={} (not initialized yet; local operator must run `instrukt mcp clients`)",
+                            client.issuer
+                        )
+                    };
+                    ctx.out.line(&format!("{}: {status}{desc}", client.name))?;
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -206,6 +221,27 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 }
                 Ok(ExitCode::SUCCESS)
             }
+            IssuerCommand::Publish { json } => {
+                if caller.session.is_some() {
+                    anyhow::bail!(
+                        "issuer publish refused: `instrukt mcp issuer publish` is for the local operator outside any session"
+                    );
+                }
+                let published = mcp::republish_company_issuers(&ctx.home, asked.as_ref())?;
+                if json {
+                    ctx.out.json(&published)?;
+                } else if published.is_empty() {
+                    ctx.out.line("No enabled company OIDC issuer to publish.")?;
+                } else {
+                    for info in &published {
+                        ctx.out.line(&format!(
+                            "{}: issuer_url={} jwks_url={}",
+                            info.company, info.issuer_url, info.jwks_url
+                        ))?;
+                    }
+                }
+                Ok(ExitCode::SUCCESS)
+            }
             IssuerCommand::Show { json } => {
                 let is_session = require_operator_or_admin_dm(ctx, &caller, asked.as_ref())?;
                 let company = if is_session {
@@ -279,7 +315,7 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         }
         Command::List { json } => {
             let view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
-            list(ctx, &view, caller.session.is_some(), json)
+            list(ctx, &view, json)
         }
         Command::ListTools { name, json } => {
             let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
@@ -387,7 +423,7 @@ fn require_operator_or_admin_dm(
         }
         .into());
     }
-    let runtime = Configuration::load_global(&ctx.home)?.runner_runtime()?;
+    let runtime = Configuration::load_global(&ctx.home.for_inspection())?.runner_runtime()?;
     let adapter = instrukt_runner::runtime::adapter(runtime);
     let speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())?
         .ok_or_else(|| {
@@ -431,7 +467,7 @@ fn speak(ctx: &Ctx, caller: &Caller, view: &mut View) -> anyhow::Result<()> {
     let (Some(session), Some(_)) = (&caller.session, &caller.company) else {
         return Ok(());
     };
-    let runtime = Configuration::load_global(&ctx.home)?.runner_runtime()?;
+    let runtime = Configuration::load_global(&ctx.home.for_inspection())?.runner_runtime()?;
     let adapter = instrukt_runner::runtime::adapter(runtime);
     view.speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())?;
     Ok(())
@@ -455,41 +491,45 @@ fn completed(
     );
 }
 
-fn list(ctx: &mut Ctx, view: &View, read_only: bool, json: bool) -> anyhow::Result<ExitCode> {
+fn list(ctx: &mut Ctx, view: &View, json: bool) -> anyhow::Result<ExitCode> {
     let declared = |visible: &Visible| match &visible.origin {
         Origin::Machine => "this computer".to_owned(),
         Origin::Company(company) => format!("company {company}"),
     };
     if json {
-        let servers: Vec<_> = view
-            .servers
-            .values()
-            .map(|visible| {
-                let mut entry = serde_json::json!({
-                    "name": visible.server.name.as_str(),
-                    "description": visible.server.description,
-                    "declared": match &visible.origin {
-                        Origin::Machine => "machine",
-                        Origin::Company(_) => "company",
-                    },
-                });
-                if let Origin::Company(company) = &visible.origin {
-                    entry["company"] = company.as_str().into();
-                    if let Some((client_id, return_address)) = mcp::server_registration_hint(
-                        &ctx.home,
-                        company,
-                        &visible.server,
-                        read_only,
-                    ) {
-                        entry["client_id"] = client_id.into();
-                        if let Some(addr) = return_address {
-                            entry["return_address"] = addr.into();
+        let mut servers = Vec::with_capacity(view.servers.len());
+        for visible in view.servers.values() {
+            let mut entry = serde_json::json!({
+                "name": visible.server.name.as_str(),
+                "description": visible.server.description,
+                "declared": match &visible.origin {
+                    Origin::Machine => "machine",
+                    Origin::Company(_) => "company",
+                },
+            });
+            if let Origin::Company(company) = &visible.origin {
+                entry["company"] = company.as_str().into();
+                if let Some(hint) =
+                    mcp::server_registration_hint(&ctx.home, company, &visible.server)?
+                {
+                    match hint {
+                        mcp::ServerRegistrationHint::Initialized {
+                            client_id,
+                            return_address,
+                        } => {
+                            entry["client_id"] = client_id.into();
+                            if let Some(addr) = return_address {
+                                entry["return_address"] = addr.into();
+                            }
+                        }
+                        mcp::ServerRegistrationHint::Uninitialized { message } => {
+                            entry["registration_status"] = message.into();
                         }
                     }
                 }
-                entry
-            })
-            .collect();
+            }
+            servers.push(entry);
+        }
         ctx.out.json(&servers)?;
     } else if view.servers.is_empty() {
         ctx.out.line("No MCP server is declared for this caller.")?;
@@ -497,12 +537,20 @@ fn list(ctx: &mut Ctx, view: &View, read_only: bool, json: bool) -> anyhow::Resu
         for visible in view.servers.values() {
             let extra = match &visible.origin {
                 Origin::Company(company) => {
-                    mcp::server_registration_hint(&ctx.home, company, &visible.server, read_only)
-                        .map(|(client_id, addr)| match addr {
-                            Some(addr) => format!(" [client_id={client_id}, return={addr}]"),
-                            None => format!(" [client_id={client_id}]"),
-                        })
-                        .unwrap_or_default()
+                    match mcp::server_registration_hint(&ctx.home, company, &visible.server)? {
+                        Some(mcp::ServerRegistrationHint::Initialized {
+                            client_id,
+                            return_address: Some(addr),
+                        }) => format!(" [client_id={client_id}, return={addr}]"),
+                        Some(mcp::ServerRegistrationHint::Initialized {
+                            client_id,
+                            return_address: None,
+                        }) => format!(" [client_id={client_id}]"),
+                        Some(mcp::ServerRegistrationHint::Uninitialized { message }) => {
+                            format!(" [{message}]")
+                        }
+                        None => String::new(),
+                    }
                 }
                 Origin::Machine => String::new(),
             };

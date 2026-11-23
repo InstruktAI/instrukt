@@ -128,7 +128,8 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
 
 /// Remove a speaker's signed-in login(s) and cancel open/exchanging sign-ins
 /// for one server (or all servers of `company`), raising `mcp_generations` in
-/// one transaction.
+/// one transaction, followed by best-effort OAuth token revocation for any
+/// removed refresh tokens.
 pub fn sign_out(
     home: &Home,
     company: &ProjectSlug,
@@ -143,57 +144,220 @@ pub fn sign_out(
             cause: "an email address is required to sign out".into(),
         });
     }
-    let mut db = StateDb::open(home)?;
-    let path = db.path().to_path_buf();
     let now_str = now.to_string();
-    db.write::<_, StateDbError>(|tx| {
-        let servers: Vec<String> = match server {
-            Some(name) => vec![name.to_string()],
-            None => {
-                let mut set = std::collections::BTreeSet::new();
-                for sql in [
-                    "SELECT server FROM mcp_logins WHERE company = ?1 AND person = ?2",
-                    "SELECT server FROM mcp_sign_ins WHERE company = ?1 AND person = ?2 AND state IN ('open', 'exchanging')",
-                ] {
-                    let mut stmt = tx.prepare(sql).map_err(StateDbError::sqlite(&path))?;
-                    let rows = stmt
-                        .query_map(params![company.as_str(), person], |r| r.get::<_, String>(0))
-                        .map_err(StateDbError::sqlite(&path))?;
-                    for row in rows {
-                        set.insert(row.map_err(StateDbError::sqlite(&path))?);
+    let (affected, to_revoke) = {
+        let mut db = StateDb::open(home)?;
+        let path = db.path().to_path_buf();
+        db.write::<_, StateDbError>(|tx| {
+            let servers: Vec<String> = match server {
+                Some(name) => vec![name.to_string()],
+                None => {
+                    let mut set = std::collections::BTreeSet::new();
+                    for sql in [
+                        "SELECT server FROM mcp_logins WHERE company = ?1 AND person = ?2",
+                        "SELECT server FROM mcp_sign_ins WHERE company = ?1 AND person = ?2 AND state IN ('open', 'exchanging')",
+                    ] {
+                        let mut stmt = tx.prepare(sql).map_err(StateDbError::sqlite(&path))?;
+                        let rows = stmt
+                            .query_map(params![company.as_str(), person], |r| r.get::<_, String>(0))
+                            .map_err(StateDbError::sqlite(&path))?;
+                        for row in rows {
+                            set.insert(row.map_err(StateDbError::sqlite(&path))?);
+                        }
                     }
+                    set.into_iter().collect()
                 }
-                set.into_iter().collect()
-            }
-        };
+            };
 
-        let mut affected = 0usize;
-        for srv in &servers {
-            tx.execute(
-                "INSERT INTO mcp_generations (company, person, server, generation)
-                 VALUES (?1, ?2, ?3, 1)
-                 ON CONFLICT(company, person, server) DO UPDATE SET generation = generation + 1",
-                params![company.as_str(), person, srv],
-            )
-            .map_err(StateDbError::sqlite(&path))?;
-            affected += tx
-                .execute(
-                    "DELETE FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = ?3",
+            let mut revoke_list: Vec<(String, String, String, String)> = Vec::new();
+            let mut affected = 0usize;
+            for srv in &servers {
+                if let Some((resource, return_id, Some(refresh_token))) = tx
+                    .query_row(
+                        "SELECT resource, return_id, refresh_token FROM mcp_logins
+                         WHERE company = ?1 AND person = ?2 AND server = ?3",
+                        params![company.as_str(), person, srv],
+                        |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, String>(1)?,
+                                r.get::<_, Option<String>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(StateDbError::sqlite(&path))?
+                {
+                    revoke_list.push((srv.clone(), resource, return_id, refresh_token));
+                }
+                tx.execute(
+                    "INSERT INTO mcp_generations (company, person, server, generation)
+                     VALUES (?1, ?2, ?3, 1)
+                     ON CONFLICT(company, person, server) DO UPDATE SET generation = generation + 1",
                     params![company.as_str(), person, srv],
                 )
                 .map_err(StateDbError::sqlite(&path))?;
-            affected += tx
-                .execute(
-                    "UPDATE mcp_sign_ins
-                     SET state = 'cancelled', closed_at = ?4, code_verifier = NULL, nonce = NULL, link = NULL
-                     WHERE company = ?1 AND person = ?2 AND server = ?3 AND state IN ('open', 'exchanging')",
-                    params![company.as_str(), person, srv, now_str],
-                )
-                .map_err(StateDbError::sqlite(&path))?;
+                affected += tx
+                    .execute(
+                        "DELETE FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = ?3",
+                        params![company.as_str(), person, srv],
+                    )
+                    .map_err(StateDbError::sqlite(&path))?;
+                affected += tx
+                    .execute(
+                        "UPDATE mcp_sign_ins
+                         SET state = 'cancelled', closed_at = ?4, code_verifier = NULL, nonce = NULL, link = NULL
+                         WHERE company = ?1 AND person = ?2 AND server = ?3 AND state IN ('open', 'exchanging')",
+                        params![company.as_str(), person, srv, now_str],
+                    )
+                    .map_err(StateDbError::sqlite(&path))?;
+            }
+            Ok((affected, revoke_list))
+        })
+        .map_err(McpError::State)?
+    };
+
+    // Best-effort RFC 7009 revocation after writer.lock has been released.
+    for (_srv, resource, return_id, refresh_token) in to_revoke {
+        best_effort_revoke_refresh_token(home, company, &resource, &return_id, &refresh_token);
+    }
+
+    Ok(affected)
+}
+
+fn best_effort_revoke_refresh_token(
+    home: &Home,
+    company: &ProjectSlug,
+    resource: &str,
+    return_id: &str,
+    refresh_token: &str,
+) {
+    let Ok(Some(read)) = StateRead::open(&home.for_inspection()) else {
+        return;
+    };
+    struct RevokeReg {
+        host_client: Option<String>,
+        server: Option<String>,
+        issuer: String,
+        client_id: String,
+        dcr_secret: Option<String>,
+    }
+    let reg_row = read
+        .conn()
+        .query_row(
+            "SELECT host_client, server, issuer, client_id, client_secret
+             FROM mcp_registrations WHERE return_id = ?1",
+            [return_id],
+            |r| {
+                Ok(RevokeReg {
+                    host_client: r.get(0)?,
+                    server: r.get(1)?,
+                    issuer: r.get(2)?,
+                    client_id: r.get(3)?,
+                    dcr_secret: r.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .ok()
+        .flatten();
+    drop(read);
+    let Some(RevokeReg {
+        host_client,
+        server: reg_server,
+        issuer: pinned_issuer,
+        client_id,
+        dcr_secret,
+    }) = reg_row
+    else {
+        return;
+    };
+    let Ok(auth) = discover_auth(resource) else {
+        return;
+    };
+    if !pinned_issuer.is_empty() && auth.issuer != pinned_issuer {
+        return;
+    }
+    let Some(revocation_endpoint) = auth.revocation_endpoint.as_deref() else {
+        return;
+    };
+    if !instrukt_core::config::mcp_address_admitted(revocation_endpoint) {
+        return;
+    }
+
+    let inspection = home.for_inspection();
+    let client_secret = if let Some(ref host_name) = host_client {
+        ProjectSlug::parse(host_name).ok().and_then(|slug| {
+            Configuration::load_global(&inspection)
+                .ok()?
+                .mcp_clients()
+                .ok()?
+                .get(&slug)?
+                .secret
+                .as_deref()
+                .and_then(|r| resolve_secret_from(&inspection, &SecretSource::Machine, r).ok())
+        })
+    } else if let Some(ref srv_name) = reg_server {
+        ProjectSlug::parse(srv_name)
+            .ok()
+            .and_then(|slug| {
+                Configuration::load_company(&inspection, company)
+                    .ok()?
+                    .mcp_servers(instrukt_core::config::LayerKind::Company)
+                    .ok()?
+                    .get(&slug)?
+                    .sign_in
+                    .as_ref()?
+                    .client
+                    .as_ref()?
+                    .secret
+                    .as_deref()
+                    .and_then(|r| {
+                        resolve_secret_from(&inspection, &SecretSource::Company(company.clone()), r)
+                            .ok()
+                    })
+            })
+            .or(dcr_secret)
+    } else {
+        dcr_secret
+    };
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_global(Some(Duration::from_secs(10)))
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .build()
+        .into();
+    let use_post_secret = client_secret.is_some()
+        && auth
+            .token_endpoint_auth_methods_supported
+            .iter()
+            .any(|m| m == "client_secret_post")
+        && !auth
+            .token_endpoint_auth_methods_supported
+            .iter()
+            .any(|m| m == "client_secret_basic");
+    let mut form: Vec<(&str, &str)> = vec![
+        ("token", refresh_token),
+        ("token_type_hint", "refresh_token"),
+    ];
+    let mut req = agent.post(revocation_endpoint);
+    match (client_secret.as_deref(), use_post_secret) {
+        (Some(secret), false) => {
+            let encoded =
+                base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{secret}"));
+            req = req.header("Authorization", format!("Basic {encoded}"));
         }
-        Ok(affected)
-    })
-    .map_err(McpError::State)
+        (Some(secret), true) => {
+            form.push(("client_id", &client_id));
+            form.push(("client_secret", secret));
+        }
+        (None, _) => {
+            form.push(("client_id", &client_id));
+        }
+    }
+    let _ = req.send_form(form);
 }
 
 /// Obtain a speaker's Bearer login for a `speaker_login: sign-in` server,
@@ -242,20 +406,57 @@ fn obtain_authorization_code_login(
         })?;
     let person = email.to_lowercase();
     let sign_in_cfg = server.sign_in.clone().unwrap_or_default();
+    let inspection = home.for_inspection();
+    let global = Configuration::load_global(&inspection)?;
+    let ingress_url_opt = global.ingress_url()?;
 
-    // 1. Check cached login in mcp_logins.
-    if let Some(db) = StateRead::open(home)? {
-        type LoginRow = (
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-            i32,
-            Option<String>,
-        );
-        let cached: Option<LoginRow> = db
-            .conn()
+    // 1. Check declared client registration FIRST (no network call) so any rotation or
+    //    switch (`client_ref` <-> `client`, or rotated client_id/secret/issuer) retires
+    //    its old logins BEFORE we ever honor a cached token!
+    let prechecked_reg: Option<Registration> = if let Some(ref client_ref) = sign_in_cfg.client_ref
+    {
+        let slug = ProjectSlug::parse(client_ref).map_err(|e| McpError::Server {
+            server: server.name.to_string(),
+            cause: e.to_string(),
+        })?;
+        let clients = global.mcp_clients()?;
+        let host_client = clients.get(&slug).ok_or_else(|| McpError::Server {
+            server: server.name.to_string(),
+            cause: format!("global `mcp_clients.{client_ref}` is not declared"),
+        })?;
+        Some(ensure_host_client_registration(
+            home,
+            &slug,
+            host_client,
+            ingress_url_opt.as_deref(),
+            now,
+        )?)
+    } else if let Some(ref local_client) = sign_in_cfg.client {
+        Some(ensure_company_client_registration(
+            home,
+            company,
+            &server.name,
+            local_client,
+            "",
+            ingress_url_opt.as_deref(),
+            now,
+        )?)
+    } else {
+        None
+    };
+
+    // 2. Check cached login in mcp_logins, verifying it belongs to the active registration.
+    type LoginRow = (
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        i32,
+        Option<String>,
+    );
+    let cached: Option<LoginRow> = if let Some(db) = StateRead::open(&inspection)? {
+        db.conn()
             .query_row(
                 "SELECT resource, subject, return_id, access_token, expires_at, checked, refresh_token
                  FROM mcp_logins
@@ -274,19 +475,29 @@ fn obtain_authorization_code_login(
                 },
             )
             .optional()
-            .map_err(StateDbError::sqlite(db.path()))?;
-        if let Some((resource, _subject, _return_id, access_token, expires_at, checked, _refresh)) =
-            cached
-            && !force_refresh
-            && resource == server.url
-            && checked != 0
-            && is_token_fresh(expires_at.as_deref(), now)
-        {
-            return Ok(bearer_logins(&server.name, access_token));
-        }
+            .map_err(StateDbError::sqlite(db.path()))?
+    } else {
+        None
+    };
+
+    let cached_matches_reg = |ret_id: &str| {
+        prechecked_reg
+            .as_ref()
+            .is_none_or(|reg| reg.return_id == ret_id)
+    };
+
+    if let Some((ref resource, _, ref ret_id, ref access_token, ref expires_at, checked, _)) =
+        cached
+        && !force_refresh
+        && resource == &server.url
+        && cached_matches_reg(ret_id)
+        && checked != 0
+        && is_token_fresh(expires_at.as_deref(), now)
+    {
+        return Ok(bearer_logins(&server.name, access_token.clone()));
     }
 
-    // 2. Discover AS metadata and enforce security gates.
+    // 3. Discover AS metadata and enforce security gates BEFORE resolving any client secret.
     let auth = discover_auth(&server.url)?;
     if !auth.report.pkce_s256_supported {
         return Err(McpError::Server {
@@ -329,21 +540,19 @@ fn obtain_authorization_code_login(
         });
     }
 
-    // 3. Resolve local ingress.url & cluster Redis transport.
-    let global = Configuration::load_global(home)?;
-    let ingress_url = global.ingress_url()?.ok_or_else(|| McpError::Server {
+    // 4. Resolve local ingress.url & cluster Redis transport.
+    let ingress_url = ingress_url_opt.ok_or_else(|| McpError::Server {
         server: server.name.to_string(),
         cause: "global `ingress.url` must be configured for MCP sign-in".into(),
     })?;
-    let transport =
-        ScopedTransport::cluster_only(&global, &RunnerState::new(home)).map_err(|error| {
-            McpError::Server {
-                server: server.name.to_string(),
-                cause: format!("cluster Redis is unavailable for MCP sign-in: {error}"),
-            }
+    let transport = ScopedTransport::cluster_only(&global, &RunnerState::new(&inspection))
+        .map_err(|error| McpError::Server {
+            server: server.name.to_string(),
+            cause: format!("cluster Redis is unavailable for MCP sign-in: {error}"),
         })?;
 
-    // 4. Obtain registration (host client_ref -> company client -> DCR).
+    // 5. Enforce issuer pinning BEFORE resolving client secret (prevents cross-tenant
+    //    secret exfiltration to a company-controlled rogue authorization server).
     let (registration, client_secret) = if let Some(ref client_ref) = sign_in_cfg.client_ref {
         let slug = ProjectSlug::parse(client_ref).map_err(|e| McpError::Server {
             server: server.name.to_string(),
@@ -354,8 +563,21 @@ fn obtain_authorization_code_login(
             server: server.name.to_string(),
             cause: format!("global `mcp_clients.{client_ref}` is not declared"),
         })?;
-        let reg =
-            ensure_host_client_registration(home, &slug, host_client, Some(&ingress_url), now)?;
+        if auth.issuer != host_client.issuer {
+            return Err(McpError::Server {
+                server: server.name.to_string(),
+                cause: format!(
+                    "discovered authorization server `{}` does not match host client `mcp_clients.{client_ref}` pinned issuer `{}`",
+                    auth.issuer, host_client.issuer
+                ),
+            });
+        }
+        let reg = match prechecked_reg {
+            Some(reg) => reg,
+            None => {
+                ensure_host_client_registration(home, &slug, host_client, Some(&ingress_url), now)?
+            }
+        };
         let secret = host_client
             .secret
             .as_deref()
@@ -385,7 +607,26 @@ fn obtain_authorization_code_login(
         (reg, secret)
     };
 
-    // 5. Capture generation and record (or join) the pending sign-in + waiter,
+    // 6. Attempt silent refresh-token renewal before falling back to interactive sign-in.
+    if let Some((ref resource, _, ref ret_id, _, _, _, Some(ref refresh_token))) = cached
+        && resource == &server.url
+        && ret_id == &registration.return_id
+        && let Some(renewed) = try_refresh_login(
+            home,
+            company,
+            server,
+            &person,
+            &auth,
+            &registration,
+            client_secret.as_deref(),
+            refresh_token,
+            now,
+        )?
+    {
+        return Ok(renewed);
+    }
+
+    // 7. Capture generation and record (or join) the pending sign-in + waiter,
     //    then release the writer lock immediately before waiting or calling network endpoints.
     let mut scopes = if !sign_in_cfg.scopes.is_empty() {
         sign_in_cfg.scopes.clone()
@@ -429,6 +670,11 @@ fn obtain_authorization_code_login(
         nonce.as_deref(),
     )?;
 
+    let connector_name = speaker.connector.as_deref().unwrap_or_default();
+    let conversation_id = speaker.conversation.as_deref().unwrap_or_default();
+    let message_id = speaker.message.as_deref().unwrap_or_default();
+    let recipient_id = speaker.identity.as_deref().unwrap_or(&person);
+
     let (active_digest, active_generation, active_verifier, active_nonce) = {
         let mut db = StateDb::open(home)?;
         let path = db.path().to_path_buf();
@@ -471,7 +717,7 @@ fn obtain_authorization_code_login(
                          (state_digest, company, person, server, return_id, resource, scopes, generation,
                           connector, conversation, message, recipient, code_verifier, nonce, link,
                           created_at, expires_at, state)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '', '', '', ?9, ?10, ?11, ?12, ?13, ?14, 'open')",
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 'open')",
                         params![
                             state_digest,
                             company.as_str(),
@@ -481,7 +727,10 @@ fn obtain_authorization_code_login(
                             server.url,
                             scope_param,
                             current_gen,
-                            speaker.identity.as_deref().unwrap_or(&person),
+                            connector_name,
+                            conversation_id,
+                            message_id,
+                            recipient_id,
                             code_verifier,
                             nonce,
                             auth_link,
@@ -1230,4 +1479,223 @@ fn verify_oidc_identity(
         .ok_or_else(|| "UserInfo omitted `email`".to_owned())?
         .to_owned();
     Ok((email, Some(sub)))
+}
+
+/// Attempt silent OAuth 2.1 refresh-token renewal using `grant_type=refresh_token`.
+/// Acquires a short `renewing_until` lease, releases `writer.lock` before HTTP,
+/// persists the renewed token behind a generation check, and clears the stale row
+/// on `invalid_grant` so the caller can fall back to interactive sign-in.
+#[allow(clippy::too_many_arguments)]
+fn try_refresh_login(
+    home: &Home,
+    company: &ProjectSlug,
+    server: &McpServer,
+    person: &str,
+    auth: &DiscoveredAuth,
+    registration: &Registration,
+    client_secret: Option<&str>,
+    refresh_token: &str,
+    now: Timestamp,
+) -> Result<Option<(Login, Vec<Login>)>, McpError> {
+    let Some(token_endpoint) = auth.token_endpoint.as_deref() else {
+        return Ok(None);
+    };
+    if !instrukt_core::config::mcp_address_admitted(token_endpoint) {
+        return Ok(None);
+    }
+
+    // Capture generation and set a short renewing_until lease, then drop writer.lock before HTTP.
+    let lease_until = now
+        .checked_add(jiff::SignedDuration::from_secs(30))
+        .unwrap_or(now)
+        .to_string();
+    let generation: i64 = {
+        let mut db = StateDb::open(home)?;
+        let path = db.path().to_path_buf();
+        db.write::<_, StateDbError>(|tx| {
+            let gen_val: i64 = tx
+                .query_row(
+                    "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
+                    params![company.as_str(), person, server.name.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(StateDbError::sqlite(&path))?
+                .unwrap_or(0);
+            tx.execute(
+                "UPDATE mcp_logins SET renewing_until = ?4
+                 WHERE company = ?1 AND person = ?2 AND server = ?3",
+                params![company.as_str(), person, server.name.as_str(), lease_until],
+            )
+            .map_err(StateDbError::sqlite(&path))?;
+            Ok(gen_val)
+        })?
+    };
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_global(Some(Duration::from_secs(30)))
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .build()
+        .into();
+    let use_post_secret = client_secret.is_some()
+        && auth
+            .token_endpoint_auth_methods_supported
+            .iter()
+            .any(|m| m == "client_secret_post")
+        && !auth
+            .token_endpoint_auth_methods_supported
+            .iter()
+            .any(|m| m == "client_secret_basic");
+
+    let mut form: Vec<(&str, &str)> = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("resource", &server.url),
+    ];
+    let mut request = agent
+        .post(token_endpoint)
+        .header("Accept", "application/json");
+    match (client_secret, use_post_secret) {
+        (Some(secret), false) => {
+            let encoded = base64::engine::general_purpose::STANDARD
+                .encode(format!("{}:{secret}", registration.client_id));
+            request = request.header("Authorization", format!("Basic {encoded}"));
+        }
+        (Some(secret), true) => {
+            form.push(("client_id", &registration.client_id));
+            form.push(("client_secret", secret));
+        }
+        (None, _) => {
+            form.push(("client_id", &registration.client_id));
+        }
+    }
+
+    let mut response = match request.send_form(form) {
+        Ok(resp) => resp,
+        Err(_) => return Ok(None),
+    };
+    let status = response.status().as_u16();
+    let body_text = response
+        .body_mut()
+        .with_config()
+        .limit(1024 * 1024)
+        .read_to_string()
+        .unwrap_or_default();
+
+    if !(200..300).contains(&status) {
+        let err_code = serde_json::from_str::<Value>(&body_text)
+            .ok()
+            .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned));
+        if matches!(status, 400 | 401)
+            && matches!(
+                err_code.as_deref(),
+                Some("invalid_grant" | "invalid_client") | None
+            )
+        {
+            // Refresh grant is no longer usable: delete stale login and fall back to interactive sign-in.
+            if let Ok(mut db) = StateDb::open(home) {
+                let path = db.path().to_path_buf();
+                let _ = db.write::<_, StateDbError>(|tx| {
+                    tx.execute(
+                        "DELETE FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?4",
+                        params![company.as_str(), person, server.name.as_str(), registration.return_id],
+                    )
+                    .map_err(StateDbError::sqlite(&path))?;
+                    Ok(())
+                });
+            }
+            return Ok(None);
+        }
+        return Err(McpError::Server {
+            server: server.name.to_string(),
+            cause: format!(
+                "token renewal failed ({})",
+                err_code.unwrap_or_else(|| format!("HTTP {status}"))
+            ),
+        });
+    }
+
+    let Ok(body) = serde_json::from_str::<Value>(&body_text) else {
+        return Ok(None);
+    };
+    let token_type = body
+        .get("token_type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !token_type.eq_ignore_ascii_case("Bearer") {
+        return Ok(None);
+    }
+    let Some(access_token) = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned)
+    else {
+        return Ok(None);
+    };
+    let new_refresh = body
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| refresh_token.to_owned());
+    let now_done = Timestamp::now();
+    let expires_at = body
+        .get("expires_in")
+        .and_then(Value::as_i64)
+        .filter(|&secs| secs > 0)
+        .and_then(|secs| {
+            now_done
+                .checked_add(jiff::SignedDuration::from_secs(secs))
+                .ok()
+        })
+        .map(|ts| ts.to_string());
+    let granted_scopes = body.get("scope").and_then(Value::as_str).map(str::to_owned);
+
+    let saved = {
+        let mut db = StateDb::open(home)?;
+        let path = db.path().to_path_buf();
+        db.write::<_, StateDbError>(|tx| {
+            let current_gen: i64 = tx
+                .query_row(
+                    "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
+                    params![company.as_str(), person, server.name.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(StateDbError::sqlite(&path))?
+                .unwrap_or(0);
+            if current_gen != generation {
+                return Ok(false);
+            }
+            tx.execute(
+                "UPDATE mcp_logins
+                 SET access_token = ?4, expires_at = ?5, checked = 1, refresh_token = ?6,
+                     scopes = COALESCE(?7, scopes), renewed_at = ?8, renewing_until = NULL
+                 WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?9",
+                params![
+                    company.as_str(),
+                    person,
+                    server.name.as_str(),
+                    access_token,
+                    expires_at,
+                    new_refresh,
+                    granted_scopes,
+                    now_done.to_string(),
+                    registration.return_id,
+                ],
+            )
+            .map_err(StateDbError::sqlite(&path))?;
+            Ok(true)
+        })?
+    };
+    if !saved {
+        return Err(McpError::Server {
+            server: server.name.to_string(),
+            cause: "login was signed out while renewing".into(),
+        });
+    }
+    Ok(Some(bearer_logins(&server.name, access_token)))
 }

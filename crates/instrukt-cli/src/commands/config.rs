@@ -140,7 +140,7 @@ pub fn run(args: ConfigArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         ConfigCommand::Schema(args) => schema(args, ctx),
-        ConfigCommand::Patch(args) => patch(args, ctx, company_scope.is_some()),
+        ConfigCommand::Patch(args) => patch(args, ctx, company_scope.as_ref()),
         ConfigCommand::Init(args) => init(&args, ctx),
         ConfigCommand::Validate(args) => validate(&args, ctx),
     }
@@ -311,7 +311,11 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn patch(args: PatchArgs, ctx: &mut Ctx, mcp_only: bool) -> anyhow::Result<ExitCode> {
+fn patch(
+    args: PatchArgs,
+    ctx: &mut Ctx,
+    company_scope: Option<&ProjectSlug>,
+) -> anyhow::Result<ExitCode> {
     if args.global
         && let Some(root) = instrukt_core::git::worktree_root(&ctx.cwd)?
     {
@@ -331,7 +335,8 @@ fn patch(args: PatchArgs, ctx: &mut Ctx, mcp_only: bool) -> anyhow::Result<ExitC
         }
     };
     let patch = parse_patch(&text)?;
-    if mcp_only {
+    if let Some(own_company) = company_scope {
+        const DOOR: &str = "ask in a direct message as a workspace administrator for non-secret `mcp` settings (`sign_in.client_ref`, dynamic registration, or `sign_in.mode: issuer`), or have the local operator run the command outside any session";
         let Some(map) = patch.as_mapping() else {
             anyhow::bail!("patch must be a YAML mapping");
         };
@@ -344,13 +349,24 @@ fn patch(args: PatchArgs, ctx: &mut Ctx, mcp_only: bool) -> anyhow::Result<ExitC
             .collect();
         if map.is_empty() || !forbidden.is_empty() {
             anyhow::bail!(
-                "config patch refused: a company-agent session may only patch keys under `mcp` (forbidden keys: {}); have the local operator run the command outside any session",
+                "config patch refused: a company-agent session may only patch keys under `mcp` (forbidden keys: {}); {DOOR}",
                 if forbidden.is_empty() {
                     "empty patch".to_owned()
                 } else {
                     forbidden.join(", ")
                 }
             );
+        }
+        // Prevent a company-agent patch from introducing or rebinding any `${NAME}` secret
+        // reference (e.g. pointing a new server URL at `${SLACK_BOT_TOKEN}` or `${INSTRUKT_ISSUER_SIGNING_KEY}`).
+        let inspection = ctx.home.for_inspection();
+        let existing_doc = std::fs::read_to_string(layer.path(&inspection))
+            .ok()
+            .and_then(|raw| serde_yaml_ng::from_str::<Value>(&raw).ok());
+        let existing_mcp = existing_doc.as_ref().and_then(|doc| doc.get("mcp"));
+        if let Some(mcp_patch) = map.get(Value::String("mcp".into())) {
+            reject_new_secret_references(mcp_patch, existing_mcp, "mcp", own_company)?;
+            reject_url_rebind_on_secret_server(mcp_patch, existing_mcp, own_company)?;
         }
     }
     config::patch(
@@ -360,6 +376,100 @@ fn patch(args: PatchArgs, ctx: &mut Ctx, mcp_only: bool) -> anyhow::Result<ExitC
         &patch,
     )?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Returns true if `value` contains any `${...}` secret reference anywhere in its subtree.
+fn contains_secret_reference(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("${"),
+        Value::Mapping(map) => map.values().any(contains_secret_reference),
+        Value::Sequence(items) => items.iter().any(contains_secret_reference),
+        _ => false,
+    }
+}
+
+/// Refuse changing `url` on an existing `mcp.<server>` entry that still carries any
+/// `${NAME}` secret reference (such as `login` or `sign_in.client`), so a company-agent
+/// DM patch cannot redirect an existing company secret to a new endpoint.
+fn reject_url_rebind_on_secret_server(
+    incoming_mcp: &Value,
+    existing_mcp: Option<&Value>,
+    company: &ProjectSlug,
+) -> anyhow::Result<()> {
+    let (Some(in_map), Some(ex_map)) = (
+        incoming_mcp.as_mapping(),
+        existing_mcp.and_then(Value::as_mapping),
+    ) else {
+        return Ok(());
+    };
+    for (server_key, incoming_server) in in_map {
+        let Some(existing_server) = ex_map.get(server_key) else {
+            continue;
+        };
+        if !contains_secret_reference(existing_server) {
+            continue;
+        }
+        let Some(new_url) = incoming_server
+            .as_mapping()
+            .and_then(|m| m.get(Value::String("url".into())))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let old_url = existing_server
+            .as_mapping()
+            .and_then(|m| m.get(Value::String("url".into())))
+            .and_then(Value::as_str);
+        if old_url != Some(new_url) {
+            let server_name = server_key.as_str().unwrap_or("<server>");
+            anyhow::bail!(
+                "config patch refused: company-agent direct-message patches for `{company}` may not change `mcp.{server_name}.url` while it still references a company secret; clear the secret reference or have the local operator update it outside any session"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Refuse any `${...}` secret reference inside a company-agent `mcp` patch unless
+/// the exact same string already existed at the exact same path in the company's
+/// current `mcp` configuration.
+fn reject_new_secret_references(
+    incoming: &Value,
+    existing: Option<&Value>,
+    path: &str,
+    company: &ProjectSlug,
+) -> anyhow::Result<()> {
+    match incoming {
+        Value::String(text) if text.contains("${") => {
+            let unchanged = existing.and_then(Value::as_str) == Some(text.as_str());
+            if !unchanged {
+                anyhow::bail!(
+                    "config patch refused: company-agent direct-message patches for `{company}` may not introduce or change secret references (at `{path}`); use a host `sign_in.client_ref`, dynamic registration, or `sign_in.mode: issuer`, or have the local operator set secret references outside any session"
+                );
+            }
+            Ok(())
+        }
+        Value::Mapping(map) => {
+            let existing_map = existing.and_then(Value::as_mapping);
+            for (k, v) in map {
+                let key = k.as_str().unwrap_or("<key>");
+                let child_path = format!("{path}.{key}");
+                let existing_child = existing_map.and_then(|m| m.get(k));
+                reject_new_secret_references(v, existing_child, &child_path, company)?;
+            }
+            Ok(())
+        }
+        Value::Sequence(items) => {
+            let existing_seq = existing.and_then(Value::as_sequence);
+            for (idx, v) in items.iter().enumerate() {
+                let child_path = format!("{path}[{idx}]");
+                let existing_child = existing_seq.and_then(|s| s.get(idx));
+                reject_new_secret_references(v, existing_child, &child_path, company)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {

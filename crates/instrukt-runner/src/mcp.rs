@@ -25,14 +25,18 @@ use serde_json::Value;
 
 pub use _client::{CALL_TOOL, INITIALIZE, INITIALIZED, LIST_TOOLS, PROTOCOL_VERSIONS, Tool};
 pub use _discover::{DiscoveryReport, JWT_BEARER_GRANT_TYPE, discover};
-pub use _issuer::{IssuerInfo, init_company_issuer, show_company_issuer};
+pub use _issuer::{
+    IssuerInfo, init_company_issuer, republish_company_issuers, show_company_issuer,
+};
 pub use _logins::StoredLogins;
 pub use _oauth::{IngressCheckReport, check_ingress, sign_out};
 pub use _redis_mcp::{
     SignInReturnEntry, StoreOutcome, claim_sign_in_return, read_issuer_discovery, read_issuer_jwks,
     store_sign_in_return,
 };
-pub use _registrations::{HostClientView, list_host_clients, server_registration_hint};
+pub use _registrations::{
+    HostClientView, ServerRegistrationHint, list_host_clients, server_registration_hint,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
@@ -126,6 +130,12 @@ pub struct Speaker {
     pub is_admin: bool,
     /// Whether this turn's conversation is a direct message.
     pub is_direct: bool,
+    /// The connector delivering this conversation (e.g., `"slack"`).
+    pub connector: Option<String>,
+    /// The conversation id on that connector.
+    pub conversation: Option<String>,
+    /// The addressed message id that started this turn.
+    pub message: Option<String>,
 }
 
 impl std::fmt::Display for Speaker {

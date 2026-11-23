@@ -50,7 +50,10 @@ pub fn store_sign_in_return(
     now_unix: i64,
 ) -> Result<StoreOutcome, TransportError> {
     let key = format!("{SIGN_IN_RETURN_PREFIX}{state_digest}");
-    let payload = serde_json::to_string(entry).unwrap_or_default();
+    let payload = serde_json::to_string(entry).map_err(|error| TransportError::Redis {
+        source_id: "cluster".into(),
+        kind: format!("serialize sign-in return failed: {error}"),
+    })?;
     let script = redis::Script::new(
         r#"
         local now = tonumber(ARGV[3])

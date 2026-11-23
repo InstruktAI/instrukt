@@ -190,12 +190,37 @@ pub fn serve_prepared(request: ServeRequest<'_>) -> Result<(), WebhookError> {
         port = ingress.port,
         "signed webhook receiver ready on loopback"
     );
+    // Rebuild derived public per-company OIDC issuer documents in cluster Redis
+    // from authoritative `company_issuers` + current `ingress.url` without rotating keys.
+    let mut last_ingress_url = ingress.url.clone();
+    if last_ingress_url.is_some()
+        && let Err(error) = crate::mcp::republish_company_issuers(&inspection, None)
+    {
+        tracing::warn!(
+            event = "issuer_republish_failed",
+            error = %error,
+            "could not republish public company issuer metadata at receiver startup"
+        );
+    }
     loop {
         // A valid placement change withdraws this receiver even when no requests arrive.
         match Configuration::load_global(&inspection).and_then(|config| config.ingress()) {
             Ok(current) if current.computer != computer => return Err(WebhookError::Placement),
+            Ok(current) => {
+                if current.url != last_ingress_url {
+                    last_ingress_url = current.url;
+                    if last_ingress_url.is_some()
+                        && let Err(error) = crate::mcp::republish_company_issuers(&inspection, None)
+                    {
+                        tracing::warn!(
+                            event = "issuer_republish_failed",
+                            error = %error,
+                            "could not republish public company issuer metadata after ingress.url change"
+                        );
+                    }
+                }
+            }
             Err(error) => tracing::warn!(event = "webhook_configuration_invalid", error = %error),
-            _ => {}
         }
         let Some(mut request) = server
             .recv_timeout(Duration::from_secs(1))
@@ -510,7 +535,24 @@ fn receive_http(
 ) -> HttpReply {
     let url = request.url();
     if url.starts_with("/hooks/inbound/sign-in/") {
-        return receive_sign_in(home, request, now);
+        let mut reply = receive_sign_in(home, request, now);
+        // Every reply on the sign-in return path carries no-store & no-referrer,
+        // including 4xx/5xx error replies, because the request URL may carry `code`/`state`.
+        if !reply
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("Cache-Control"))
+        {
+            reply.headers.push(("Cache-Control", "no-store"));
+        }
+        if !reply
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("Referrer-Policy"))
+        {
+            reply.headers.push(("Referrer-Policy", "no-referrer"));
+        }
+        return reply;
     }
     if url.starts_with("/hooks/inbound/issuers/") {
         return receive_issuer(home, request);

@@ -53,11 +53,16 @@ mcp:
 | `sign_in.identity.url`, `sign_in.identity.email_field` | With `speaker_login: sign-in`, optional, together: a request that answers who signed in, for a server whose authorization server is no OpenID Provider. `url` is an absolute `https` address without credentials or fragment, which the operator trusts to receive this server's tokens; instrukt sends a `GET` to it with the new access token and reads the email address from `email_field`, a dot-separated path into the JSON answer. |
 
 Global `mcp_clients.<name>` (declared only in `~/.instrukt/instrukt.yaml`) holds
-reusable host-level OAuth clients whose `id` (required) and `secret` (optional)
-are `${NAME}` references into `~/.instrukt/secrets.env`, with an optional
-one-line `description`. A company home's `issuer` block (`enabled: true`,
-`signing_key: ${NAME}` referencing the company home's `secrets.env`) enables
-that company's built-in lightweight OIDC issuer for `sign_in.mode: issuer`.
+reusable host-level OAuth clients whose `issuer` (required authorization server
+issuer URL), `id` (required `${NAME}` reference into `~/.instrukt/secrets.env`),
+`secret` (optional `${NAME}` reference), and optional one-line `description`
+pin the shared client to one authorization server. Before reading the host
+client's secret, sign-in verifies that the server's discovered authorization
+server issuer matches `mcp_clients.<name>.issuer`; any mismatch is refused so a
+company declaration can never redirect a host client secret to another server. A
+company home's `issuer` block (`enabled: true`, `signing_key: ${NAME}`
+referencing the company home's `secrets.env`) enables that company's built-in
+lightweight OIDC issuer for `sign_in.mode: issuer`.
 
 `instrukt config schema --company <name> mcp` shows these fields with their
 contracts for a company home, and `instrukt config schema --global mcp` (and
@@ -253,12 +258,17 @@ Assertion JWT Authorization Grant, `urn:ietf:params:oauth:grant-type:jwt-bearer`
 a company home may enable instrukt's built-in lightweight OIDC issuer without
 running an external IdP (such as Keycloak or Okta):
 
-- `instrukt mcp issuer init --company <name>` generates an ES256 signing
-  keypair, stores the private key in the company home's `secrets.env` under a
-  `${NAME}` reference (never in the repository, state database, or cluster
-  Redis), records a stable 128-bit `issuer_id` and public JWK Set in
-  `company_issuers`, enables `issuer:` in the company home's `instrukt.yaml`,
-  and publishes the public discovery and JWKS documents to cluster Redis.
+- `instrukt mcp issuer init --company <name>` verifies cluster Redis and
+  `ingress.url` first, generates an ES256 signing keypair, publishes the public
+  discovery and JWKS documents to cluster Redis before storing the private key
+  in the company home's `secrets.env` under a `${NAME}` reference (never in the
+  repository, state database, or cluster Redis), records a stable 128-bit
+  `issuer_id` and public JWK Set in `company_issuers`, and enables `issuer:` in
+  the company home's `instrukt.yaml`.
+- Cluster Redis holds derived public issuer metadata rebuilt idempotently from
+  authoritative `company_issuers` + `ingress.url` without rotating keys on
+  ingress receiver startup, when `ingress.url` changes, or via
+  `instrukt mcp issuer publish [--company <name>]`.
 - The ingress receiver serves those public documents read-only at
   `<ingress.url>/hooks/inbound/issuers/<issuer_id>/.well-known/openid-configuration`
   and `<ingress.url>/hooks/inbound/issuers/<issuer_id>/jwks.json`.
@@ -578,10 +588,11 @@ is the local operator's.
 | Command | Does |
 | --- | --- |
 | `instrukt mcp list` | Names each server the caller sees with its description and where it is declared, and for a server with a declared or host-referenced sign-in client the client identifier and return address to register for it (never any secret). Contacts no server and reads no secret. |
-| `instrukt mcp clients [--json]` | Lists global `mcp_clients.<name>` entries declared on this host with their non-secret client identifiers, descriptions and stable shared return addresses. Local operator or admin DM (read-only names/client IDs, never secrets). |
+| `instrukt mcp clients [--json]` | Lists global `mcp_clients.<name>` entries declared on this host with their pinned issuers, non-secret client identifiers, descriptions and stable shared return addresses. Outside any session (local operator), materializes or refreshes host registrations; in an admin DM, strictly read-only (never reads secrets). |
 | `instrukt mcp discover <url> [--json]` | Probes a remote MCP server's OAuth/OIDC/EMA metadata live (Bucket A DCR vs. Bucket B pre-registered client vs. EMA `jwt-bearer`, PKCE `S256`, RFC 9207 `iss`, OpenID Provider). Writes nothing. |
 | `instrukt mcp check-ingress [--json]` | Verifies local `ingress.url` and cluster Redis reachability via an end-to-end probe through the real sign-in return path without inspecting any other computer's configuration. |
 | `instrukt mcp issuer init --company <name>` | Local operator only: initializes or rotates a company's built-in ES256 OIDC issuer key in the company home's `secrets.env` and publishes its public discovery/JWKS metadata to cluster Redis. |
+| `instrukt mcp issuer publish [--company <name>]` | Local operator only: idempotently republishes derived public discovery and JWKS metadata from `company_issuers` into cluster Redis without rotating keys (e.g. after a Redis restart or `ingress.url` change). |
 | `instrukt mcp issuer show [--company <name>]` | Shows the company's built-in OIDC issuer URL and JWKS URL (allowed for the local operator and for an authenticated company admin in a DM). |
 | `instrukt mcp list-tools <name>` | Returns that server's tool catalog: each tool's name, description and input shape. |
 | `instrukt mcp call <name> <tool> --json '<arguments>'` | Calls the tool with the given JSON object and prints the tool's result as JSON. |

@@ -759,12 +759,120 @@ fn notice_worker(
                     tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, %error)
                 }
             }
-            let until = Instant::now() + conversations::INTAKE_INTERVAL;
+            deliver_pending_sign_in_links(home, reach, company, key, now);
+            let until = Instant::now() + Duration::from_millis(250);
             while Instant::now() < until && !stop() {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(50));
             }
         }
     });
+}
+
+/// Deliver pending MCP authorization-code sign-in links by direct message
+/// through the conversation's connector, never holding `StateDb` across network calls.
+fn deliver_pending_sign_in_links(
+    home: &Home,
+    reach: Reach<'_>,
+    company: &ProjectSlug,
+    key: &str,
+    now: Timestamp,
+) {
+    use instrukt_core::state_db::rusqlite::params;
+    use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+
+    let pending: Vec<(String, String, String, String, String)> = match StateRead::open(home) {
+        Ok(Some(read)) => {
+            let mut stmt = match read.conn().prepare(
+                "SELECT state_digest, server, recipient, link, expires_at
+                 FROM mcp_sign_ins
+                 WHERE company = ?1 AND connector = ?2 AND state = 'open'
+                   AND link_sent_at IS NULL AND link IS NOT NULL",
+            ) {
+                Ok(stmt) => stmt,
+                Err(_) => return,
+            };
+            stmt.query_map(params![company.as_str(), key], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .ok()
+            .map(|rows| rows.filter_map(Result::ok).collect())
+            .unwrap_or_default()
+        }
+        _ => return,
+    };
+    if pending.is_empty() {
+        return;
+    }
+
+    let now_str = now.to_string();
+    let connector = match reach.connectors.open(&reach.current.get(), company, key) {
+        Ok(connector) => connector,
+        Err(error) => {
+            tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_connector_unavailable", company = %company, connector = key, error = %error);
+            return;
+        }
+    };
+
+    for (state_digest, server, recipient, link, expires_at) in pending {
+        if expires_at.parse::<Timestamp>().is_ok_and(|exp| exp <= now) {
+            if let Ok(mut db) = StateDb::open(home) {
+                let path = db.path().to_path_buf();
+                let _ = db.write::<_, StateDbError>(|tx| {
+                    tx.execute(
+                        "UPDATE mcp_sign_ins
+                         SET state = 'expired', closed_at = ?1, code_verifier = NULL, nonce = NULL, link = NULL
+                         WHERE state_digest = ?2 AND state = 'open'",
+                        params![now_str, state_digest],
+                    )
+                    .map_err(StateDbError::sqlite(&path))?;
+                    Ok(())
+                });
+            }
+            continue;
+        }
+
+        let message =
+            format!("Sign in to `{server}` for {company} to continue your request:\n{link}");
+        match connector.direct_message(&recipient, &message) {
+            Ok(()) => {
+                if let Ok(mut db) = StateDb::open(home) {
+                    let path = db.path().to_path_buf();
+                    let _ = db.write::<_, StateDbError>(|tx| {
+                        tx.execute(
+                            "UPDATE mcp_sign_ins
+                             SET link_sent_at = ?1, link = NULL
+                             WHERE state_digest = ?2 AND state = 'open'",
+                            params![now_str, state_digest],
+                        )
+                        .map_err(StateDbError::sqlite(&path))?;
+                        Ok(())
+                    });
+                }
+            }
+            Err(error) => {
+                tracing::warn!(target: LOG_TARGET, event = "mcp_sign_in_dm_failed", company = %company, connector = key, server = %server, error = %error);
+                if let Ok(mut db) = StateDb::open(home) {
+                    let path = db.path().to_path_buf();
+                    let _ = db.write::<_, StateDbError>(|tx| {
+                        tx.execute(
+                            "UPDATE mcp_sign_ins
+                             SET state = 'undelivered', failure = ?1, closed_at = ?2, code_verifier = NULL, nonce = NULL, link = NULL
+                             WHERE state_digest = ?3 AND state = 'open'",
+                            params![error.to_string(), now_str, state_digest],
+                        )
+                        .map_err(StateDbError::sqlite(&path))?;
+                        Ok(())
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// Decide durably, then make one best-effort provider post without an answer lock.

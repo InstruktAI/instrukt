@@ -947,6 +947,20 @@ impl Connector for Slack {
             .map_err(failed)
     }
 
+    fn direct_message(&self, recipient: &str, text: &str) -> Result<(), ConnectorError> {
+        let opened = self
+            .api
+            .call("conversations.open", false, &[("users", recipient)])
+            .map_err(failed)?;
+        let channel = opened
+            .get("channel")
+            .and_then(|c| c.get("id"))
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| failed("Slack conversations.open returned no channel id"))?;
+        self.api.post(channel, text).map_err(failed)
+    }
+
     /// A channel conversation's thread; a direct message's addressed message.
     fn place(&self, conversation: &str, message: &str) -> Place {
         let (channel, thread) = split_conversation(conversation);

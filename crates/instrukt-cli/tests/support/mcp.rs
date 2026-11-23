@@ -288,9 +288,13 @@ struct IssuedCode {
 struct OAuthState {
     codes: std::collections::BTreeMap<String, IssuedCode>,
     tokens: std::collections::BTreeMap<String, String>,
+    refresh_tokens: std::collections::BTreeMap<String, String>,
     revoked_tokens: std::collections::BTreeSet<String>,
+    revoked_refresh_tokens: Vec<String>,
     jwt_bearers: Vec<ObservedJwtBearer>,
     auth_code_exchanges: usize,
+    refresh_exchanges: usize,
+    total_token_requests: usize,
     next_token_id: usize,
 }
 
@@ -344,9 +348,13 @@ impl FakeOAuthMcp {
         let state = Arc::new(Mutex::new(OAuthState {
             codes: std::collections::BTreeMap::new(),
             tokens: std::collections::BTreeMap::new(),
+            refresh_tokens: std::collections::BTreeMap::new(),
             revoked_tokens: std::collections::BTreeSet::new(),
+            revoked_refresh_tokens: Vec::new(),
             jwt_bearers: Vec::new(),
             auth_code_exchanges: 0,
+            refresh_exchanges: 0,
+            total_token_requests: 0,
             next_token_id: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -397,6 +405,7 @@ impl FakeOAuthMcp {
                             "issuer": base,
                             "authorization_endpoint": format!("{base}/authorize"),
                             "token_endpoint": format!("{base}/token"),
+                            "revocation_endpoint": format!("{base}/revoke"),
                             "scopes_supported": ["openid", "email", "mcp:read"],
                             "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
                         });
@@ -462,7 +471,24 @@ impl FakeOAuthMcp {
                         continue;
                     }
 
+                    if method == tiny_http::Method::Post && path == "/revoke" {
+                        let mut body = String::new();
+                        request.as_reader().read_to_string(&mut body).unwrap();
+                        let params: std::collections::BTreeMap<String, String> =
+                            form_urlencoded::parse(body.as_bytes())
+                                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                                .collect();
+                        if let Some(tok) = params.get("token") {
+                            let mut s = state.lock().unwrap();
+                            s.refresh_tokens.remove(tok);
+                            s.revoked_refresh_tokens.push(tok.clone());
+                        }
+                        request.respond(tiny_http::Response::empty(200)).unwrap();
+                        continue;
+                    }
+
                     if method == tiny_http::Method::Post && path == "/token" {
+                        state.lock().unwrap().total_token_requests += 1;
                         let mut body = String::new();
                         request.as_reader().read_to_string(&mut body).unwrap();
                         let params: std::collections::BTreeMap<String, String> =
@@ -470,6 +496,68 @@ impl FakeOAuthMcp {
                                 .map(|(k, v)| (k.into_owned(), v.into_owned()))
                                 .collect();
                         let grant = params.get("grant_type").map(String::as_str).unwrap_or("");
+                        if grant == "refresh_token" {
+                            if let Some((exp_id, exp_sec)) = &opts.expected_client {
+                                let expected_basic = format!(
+                                    "Basic {}",
+                                    base64::engine::general_purpose::STANDARD
+                                        .encode(format!("{exp_id}:{exp_sec}"))
+                                );
+                                if auth_header.as_deref() != Some(expected_basic.as_str()) {
+                                    request
+                                        .respond(
+                                            tiny_http::Response::from_string(
+                                                r#"{"error":"invalid_client"}"#,
+                                            )
+                                            .with_status_code(401),
+                                        )
+                                        .unwrap();
+                                    continue;
+                                }
+                            }
+                            let refresh_tok =
+                                params.get("refresh_token").cloned().unwrap_or_default();
+                            let refreshed = {
+                                let mut s = state.lock().unwrap();
+                                s.refresh_tokens.remove(&refresh_tok).map(|email| {
+                                    s.next_token_id += 1;
+                                    s.refresh_exchanges += 1;
+                                    let access =
+                                        format!("oauth-token-{}-{}", s.next_token_id, email);
+                                    let next_refresh =
+                                        format!("refresh-token-{}-{}", s.next_token_id, email);
+                                    s.tokens.insert(access.clone(), email.clone());
+                                    s.refresh_tokens.insert(next_refresh.clone(), email);
+                                    (access, next_refresh)
+                                })
+                            };
+                            let Some((access_token, next_refresh)) = refreshed else {
+                                request
+                                    .respond(
+                                        tiny_http::Response::from_string(
+                                            r#"{"error":"invalid_grant"}"#,
+                                        )
+                                        .with_status_code(400),
+                                    )
+                                    .unwrap();
+                                continue;
+                            };
+                            let resp = json!({
+                                "token_type": "Bearer",
+                                "access_token": access_token,
+                                "refresh_token": next_refresh,
+                                "expires_in": 3600,
+                                "scope": "openid email mcp:read",
+                            })
+                            .to_string();
+                            request
+                                .respond(
+                                    tiny_http::Response::from_string(resp)
+                                        .with_header(hdr("Content-Type", "application/json")),
+                                )
+                                .unwrap();
+                            continue;
+                        }
                         if grant == "authorization_code" {
                             if let Some((exp_id, exp_sec)) = &opts.expected_client {
                                 let expected_basic = format!(
@@ -520,14 +608,17 @@ impl FakeOAuthMcp {
                                     .unwrap();
                                 continue;
                             }
-                            let access_token = {
+                            let (access_token, refresh_token) = {
                                 let mut s = state.lock().unwrap();
                                 s.next_token_id += 1;
                                 s.auth_code_exchanges += 1;
                                 let tok =
                                     format!("oauth-token-{}-{}", s.next_token_id, issued.email);
+                                let rtok =
+                                    format!("refresh-token-{}-{}", s.next_token_id, issued.email);
                                 s.tokens.insert(tok.clone(), issued.email.clone());
-                                tok
+                                s.refresh_tokens.insert(rtok.clone(), issued.email.clone());
+                                (tok, rtok)
                             };
                             let now_s = jiff::Timestamp::now().as_second();
                             let mut id_claims = json!({
@@ -551,6 +642,7 @@ impl FakeOAuthMcp {
                             let resp = json!({
                                 "token_type": "Bearer",
                                 "access_token": access_token,
+                                "refresh_token": refresh_token,
                                 "id_token": id_token,
                                 "expires_in": 3600,
                                 "scope": "openid email mcp:read",
@@ -763,6 +855,18 @@ impl FakeOAuthMcp {
 
     pub fn auth_code_exchanges(&self) -> usize {
         self.state.lock().unwrap().auth_code_exchanges
+    }
+
+    pub fn refresh_exchanges(&self) -> usize {
+        self.state.lock().unwrap().refresh_exchanges
+    }
+
+    pub fn total_token_requests(&self) -> usize {
+        self.state.lock().unwrap().total_token_requests
+    }
+
+    pub fn revoked_refresh_tokens(&self) -> Vec<String> {
+        self.state.lock().unwrap().revoked_refresh_tokens.clone()
     }
 }
 

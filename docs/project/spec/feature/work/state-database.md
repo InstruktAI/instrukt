@@ -553,7 +553,7 @@ status or recorded cause.
 | --- | --- |
 | `company` | The company home name. |
 | `issuer_id` | Stable 32-character lowercase hexadecimal identifier from 128 random bits, forming `<ingress.url>/hooks/inbound/issuers/<issuer_id>`. Generated once and retained across restarts. |
-| `public_jwks_json` | Public ES256 JWK Set JSON matching the private signing key stored in the company home's `secrets.env`. Never contains private key material. |
+| `public_jwks_json` | Public ES256 JWK Set JSON matching the private signing key stored in the company home's `secrets.env`. Never contains private key material. Authoritative source for rebuilding the derived discovery and JWKS documents in cluster Redis (republished idempotently without key rotation on ingress receiver startup, on `ingress.url` change, or via `instrukt mcp issuer publish`; rebuild cost is one Redis write per enabled company). |
 | `updated_at` | RFC 3339 UTC timestamp when the public key set was last updated. |
 
 **`mcp_generations`** — Key: `(company, person, server)`. Column:

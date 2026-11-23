@@ -60,6 +60,13 @@ pub trait Connector: Send + Sync {
     /// Make one bounded post of the connector's fixed unavailable notice,
     /// beginning with `member`'s mention. The caller records the attempt first.
     fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError>;
+    /// Send a direct message to `recipient` (a provider user identity) with `text`,
+    /// such as a private MCP sign-in link.
+    fn direct_message(&self, _recipient: &str, _text: &str) -> Result<(), ConnectorError> {
+        Err(ConnectorError {
+            cause: "this connector does not support direct messages".into(),
+        })
+    }
     /// Where the status for `message` of `conversation` sits.
     fn place(&self, conversation: &str, message: &str) -> Place;
     /// Show `state` at `place`, or clear what is shown there with `None`;

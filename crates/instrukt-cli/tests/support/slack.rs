@@ -649,6 +649,10 @@ impl FakeSlack {
             "chat.postMessage" if w.fail_posts => {
                 json!({"ok": false, "error": "not_in_channel"})
             }
+            "conversations.open" => {
+                let user = arg("users").unwrap_or_default();
+                json!({"ok": true, "channel": {"id": format!("DM-{user}")}})
+            }
             "chat.postMessage" => {
                 let post = Post {
                     channel: arg("channel").unwrap().to_owned(),

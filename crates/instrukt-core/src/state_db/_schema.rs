@@ -77,12 +77,12 @@ fn v33(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
             registered_at  TEXT NOT NULL,
             retired_at     TEXT
         );
-        CREATE INDEX IF NOT EXISTS mcp_registrations_host_client
+        CREATE UNIQUE INDEX IF NOT EXISTS mcp_registrations_host_client
             ON mcp_registrations(host_client)
             WHERE host_client IS NOT NULL AND retired_at IS NULL;
-        CREATE INDEX IF NOT EXISTS mcp_registrations_company_server
-            ON mcp_registrations(company, server)
-            WHERE company IS NOT NULL AND retired_at IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS mcp_registrations_company_server
+            ON mcp_registrations(company, server, declared)
+            WHERE company IS NOT NULL AND server IS NOT NULL AND retired_at IS NULL;
         CREATE TABLE IF NOT EXISTS company_issuers (
             company          TEXT PRIMARY KEY NOT NULL,
             issuer_id        TEXT NOT NULL UNIQUE,

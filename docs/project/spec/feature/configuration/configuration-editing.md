@@ -152,8 +152,12 @@ requires an authenticated administrator speaking in a direct message:
 - Allowed verbs inside that scope are `schema --company <own> mcp`,
   `get --company <own> mcp`, `get --company <own> --revision`,
   `validate --company <own>`, and `patch --company <own> --revision <rev>`
-  whose mapping touches only keys under `mcp` (and never references literal
-  secrets). Any other verb, `--global`, project-layer edit, or key outside
+  whose mapping touches only keys under `mcp`, never contains literal secrets,
+  and never introduces or alters any `${NAME}` secret reference (such as
+  `login` or `sign_in.client.id`/`secret`) — secret references are set only by
+  the local operator outside any session, while company admins connect services
+  via host `sign_in.client_ref`, dynamic registration, or `sign_in.mode:
+  issuer`. Any other verb, `--global`, project-layer edit, or key outside
   `mcp` (such as `connectors`, `members`, `profiles`, `webhooks`, or `issuer`)
   is refused.
 - Company-agent sessions never read or write any secrets file through
@@ -230,6 +234,10 @@ And a repeated setup repairs only differing owned resources
 
 - `instrukt config get --revision` prints the addressed layer's current revision.
 - `get --json` renders JSON, including when no path is supplied.
+- Company-agent caller-scope enforcement on `instrukt config` and `instrukt
+  secrets` keys off the runtime's session identity variable; as with MCP
+  session binding (`project/instrukt/spec/feature/runner/mcp-access`), it
+  governs sessions that keep their identity and is not OS-level confinement.
 
 ## See Also
 
