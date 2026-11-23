@@ -152,6 +152,42 @@ pub(crate) enum Refusal {
     /// Another live todo of the project carries the slug the change gives
     /// this one.
     Taken,
+    /// The todo is being withdrawn on this computer, or its withdrawal was
+    /// interrupted: its intent is recorded (`withdrawal_intents`).
+    Withdrawing,
+}
+
+/// One worktree a withdrawal releases, and whether it is released yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct IntentWorktree {
+    pub path: PathBuf,
+    pub released: bool,
+}
+
+/// A withdrawal's durable intent (`state-database`, `withdrawal_intents`):
+/// what it releases, recorded before anything is released, so an
+/// interrupted withdrawal is completed from it rather than from what
+/// remains. Local-only; never reflected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WithdrawalIntent {
+    pub todo: TodoId,
+    pub branch: Option<String>,
+    /// The commit `branch` pointed at when the withdrawal last read it; the
+    /// branch is deleted only against this commit.
+    pub branch_head: Option<CommitSha>,
+    pub worktrees: Vec<IntentWorktree>,
+    pub started_at: Timestamp,
+}
+
+/// What [`Store::complete_withdrawal`] committed.
+pub(crate) enum Completed {
+    /// The withdrawn record; its intent is closed.
+    Withdrawn(Box<LocalItem>),
+    /// The todo was no longer live, delivered or withdrawn elsewhere and
+    /// taken in meanwhile; its intent is closed and its record left as it is.
+    NotLive(Box<LocalItem>),
+    /// The todo is gone from the project; its intent went with it.
+    Gone,
 }
 
 /// What a [`Store::swap`] found.
@@ -443,6 +479,137 @@ impl Store {
         })
     }
 
+    /// The recorded withdrawal intent of `id`, `None` when it has none.
+    pub fn withdrawal_intent(&self, id: &TodoId) -> Result<Option<WithdrawalIntent>, WorkError> {
+        self.read(None, |conn, path, project| {
+            load_intent(conn, path, project, id)
+        })
+    }
+
+    /// Records `intent`, the withdrawal of the todo the command entered as
+    /// `base` under `slug`, before anything is released. Inside the
+    /// transaction the project's live todo under `slug` must be `base`'s
+    /// identity, its record unchanged since the entry and no conflict mark
+    /// new since then ([`admission`]), and no withdrawal of it recorded.
+    /// The todo's own row is not written: it stays live and claimed until
+    /// the withdrawal completes. Returns the live row, or why it was
+    /// refused.
+    pub fn open_withdrawal(
+        &self,
+        base: &LocalItem,
+        slug: &TodoSlug,
+        intent: &WithdrawalIntent,
+    ) -> Result<Result<LocalItem, Refusal>, WorkError> {
+        let id = &base.record.id;
+        self.write(|tx, path, project| {
+            let items = load_items(tx, path, project)?;
+            let live = items
+                .iter()
+                .find(|it| &it.record.slug == slug && it.record.is_live());
+            let Some(live) = live.filter(|it| &it.record.id == id) else {
+                let now = items
+                    .iter()
+                    .find(|it| &it.record.id == id)
+                    .map(|it| it.record.slug.clone());
+                return Ok(Err(Refusal::Changed(now)));
+            };
+            match admission(live, base) {
+                Admission::Conflicted => return Ok(Err(Refusal::Conflicted(Box::new(live.clone())))),
+                Admission::Changed => {
+                    return Ok(Err(Refusal::Changed(Some(live.record.slug.clone()))));
+                }
+                Admission::Admitted => {}
+            }
+            if load_intent(tx, path, project, id)?.is_some() {
+                return Ok(Err(Refusal::Withdrawing));
+            }
+            tx.execute(
+                "INSERT INTO withdrawal_intents (todo_id, branch, branch_head, worktrees, started_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    id.as_str(),
+                    intent.branch,
+                    intent.branch_head.as_ref().map(CommitSha::as_str),
+                    json_of(&intent.worktrees)?,
+                    intent.started_at.to_string(),
+                ],
+            )
+            .map_err(StateDbError::sqlite(path))?;
+            Ok(Ok(live.clone()))
+        })
+    }
+
+    /// Records what an open withdrawal has learned or done since: the
+    /// branch's commit before the branch is deleted, the worktrees released
+    /// before a refusal that leaves the rest. `false` when no intent of the
+    /// todo is recorded.
+    pub fn record_withdrawal(&self, intent: &WithdrawalIntent) -> Result<bool, WorkError> {
+        self.write(|tx, path, project| {
+            if load_intent(tx, path, project, &intent.todo)?.is_none() {
+                return Ok(false);
+            }
+            tx.execute(
+                "UPDATE withdrawal_intents SET branch_head = ?2, worktrees = ?3 WHERE todo_id = ?1",
+                params![
+                    intent.todo.as_str(),
+                    intent.branch_head.as_ref().map(CommitSha::as_str),
+                    json_of(&intent.worktrees)?,
+                ],
+            )
+            .map_err(StateDbError::sqlite(path))?;
+            Ok(true)
+        })
+    }
+
+    /// Closes the withdrawal intent of `id` with nothing released: the todo
+    /// stays as it is.
+    pub fn abandon_withdrawal(&self, id: &TodoId) -> Result<(), WorkError> {
+        self.write(|tx, path, project| {
+            if load_intent(tx, path, project, id)?.is_some() {
+                tx.execute(
+                    "DELETE FROM withdrawal_intents WHERE todo_id = ?1",
+                    params![id.as_str()],
+                )
+                .map_err(StateDbError::sqlite(path))?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Commits the withdrawal of `id` and closes its intent, in one
+    /// transaction: the live row is withdrawn at `at` with `branch` and
+    /// `worktrees`, what was released, as its `removal`, as a new revision
+    /// pending reflection ([`TodoRecord::withdraw`]). The withdrawal is
+    /// written onto the live row, whatever reflection committed there
+    /// while the resources were released; a row no longer live is left as
+    /// it is.
+    pub fn complete_withdrawal(
+        &self,
+        id: &TodoId,
+        at: Timestamp,
+        branch: Option<ReleasedBranch>,
+        worktrees: Vec<PathBuf>,
+    ) -> Result<Completed, WorkError> {
+        self.write(|tx, path, project| {
+            let Some(mut live) = load_own(tx, path, project, id)? else {
+                return Ok(Completed::Gone);
+            };
+            tx.execute(
+                "DELETE FROM withdrawal_intents WHERE todo_id = ?1",
+                params![id.as_str()],
+            )
+            .map_err(StateDbError::sqlite(path))?;
+            if !live.record.is_live() {
+                return Ok(Completed::NotLive(Box::new(live)));
+            }
+            live.record.withdraw(at, branch, worktrees);
+            live.record.revision += 1;
+            live.reflection.pending = true;
+            save_in(tx, path, &live)?;
+            Ok(Completed::Withdrawn(Box::new(written(tx, path, id)?)))
+        })
+    }
+
     /// Makes `item`, a todo read from GitHub, a local item when no row of
     /// its identity exists; the written or the live row. An identity that
     /// is already a local item of another project is refused, and that
@@ -479,6 +646,9 @@ pub(crate) fn commit_local(
     others: &[TodoId],
 ) -> Result<Result<LocalItem, Refusal>, WorkError> {
     let id = &mine.record.id;
+    if load_intent(tx, path, project, id)?.is_some() {
+        return Ok(Err(Refusal::Withdrawing));
+    }
     let next = match base {
         Some(base) => match admit(tx, path, project, base)? {
             Ok(live) => rebase_local(&live, mine),
@@ -640,6 +810,43 @@ pub(crate) fn referenced(
     Ok(found)
 }
 
+/// The local rows of `project` that refer to todo `id`, as `tx` holds
+/// them: those naming it as a prerequisite or as their group.
+pub(crate) fn referrers(
+    tx: &Transaction<'_>,
+    path: &Path,
+    project: &ProjectSlug,
+    id: &TodoId,
+) -> Result<Vec<(TodoId, TodoSlug)>, WorkError> {
+    let sql = StateDbError::sqlite(path);
+    let mut rows = tx
+        .prepare(
+            "SELECT t.id, t.slug FROM todos t
+             WHERE t.project = ?1
+               AND (t.group_id = ?2
+                    OR EXISTS (SELECT 1 FROM prerequisites p
+                               WHERE p.todo_id = t.id AND p.prerequisite_id = ?2))
+             ORDER BY t.id",
+        )
+        .map_err(&sql)?;
+    let found = rows
+        .query_map(params![project.as_str(), id.as_str()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(&sql)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(&sql)?;
+    found
+        .into_iter()
+        .map(|(id, slug)| {
+            Ok((
+                TodoId::parse(&id).ok_or_else(|| invalid(path, "a todo identity"))?,
+                TodoSlug::parse(&slug).map_err(|e| invalid(path, e.to_string()))?,
+            ))
+        })
+        .collect()
+}
+
 /// What a local change's precondition finds on the live row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Admission {
@@ -658,24 +865,11 @@ pub(crate) enum Admission {
 pub(crate) fn admission(live: &LocalItem, base: &LocalItem) -> Admission {
     if live.reflection.conflicted && !base.reflection.conflicted {
         Admission::Conflicted
-    } else if unlearned(&live.record) != unlearned(&base.record) {
+    } else if !live.record.same_as(&base.record) {
         Admission::Changed
     } else {
         Admission::Admitted
     }
-}
-
-/// `record` without what reflection learns of its artifact versions: the
-/// provider's artifact address, the remote version number and the content.
-fn unlearned(record: &TodoRecord) -> TodoRecord {
-    let mut bare = record.without_contents();
-    for artifact in &mut bare.artifacts {
-        artifact.address = None;
-        for version in &mut artifact.versions {
-            version.remote = None;
-        }
-    }
-    bare
 }
 
 /// The carrying step: `mine`'s record with the `live` row's reflection
@@ -779,7 +973,7 @@ pub(crate) fn merge_reflection(
             to.commands_seen.push(*comment);
         }
     }
-    if unlearned(&live.record) != unlearned(&loaded.record) {
+    if !live.record.same_as(&loaded.record) {
         to.pending = true;
         to.etag = None;
     }
@@ -888,6 +1082,37 @@ fn save_copy_in(
     )
     .map_err(StateDbError::sqlite(path))?;
     Ok(())
+}
+
+/// The withdrawal intent of `id` in `project`, as `conn` holds it.
+fn load_intent(
+    conn: &Connection,
+    path: &Path,
+    project: &ProjectSlug,
+    id: &TodoId,
+) -> Result<Option<WithdrawalIntent>, WorkError> {
+    let row: Option<(Option<String>, Option<String>, String, String)> = conn
+        .query_row(
+            "SELECT w.branch, w.branch_head, w.worktrees, w.started_at
+             FROM withdrawal_intents w JOIN todos t ON t.id = w.todo_id
+             WHERE w.todo_id = ?1 AND t.project = ?2",
+            params![id.as_str(), project.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(StateDbError::sqlite(path))?;
+    let Some((branch, head, worktrees, started_at)) = row else {
+        return Ok(None);
+    };
+    Ok(Some(WithdrawalIntent {
+        todo: id.clone(),
+        branch,
+        branch_head: head
+            .map(|head| CommitSha::parse(&head).map_err(|e| invalid(path, e.to_string())))
+            .transpose()?,
+        worktrees: parse_json(path, &worktrees)?,
+        started_at: time(path, &started_at)?,
+    }))
 }
 
 fn load_copies(
@@ -1924,19 +2149,24 @@ mod tests {
     }
 
     #[test]
-    fn a_slug_only_several_retained_entries_carry_is_refused_naming_each() {
+    fn a_plain_slug_only_retained_entries_carry_names_no_entry_to_replace() {
         use super::super::_model::TodoAddress;
-        use super::super::_session::addressed;
+        use super::super::_session::live_or_exact;
         let items = [withdrawn("aa"), withdrawn("bb")];
         let plain: TodoAddress = "list-depth".parse().unwrap();
-        let refused = addressed(&items, &plain).unwrap_err().to_string();
-        assert_eq!(
-            refused,
-            "no live todo is named `list-depth`; address a retained entry exactly: `list-depth@aaaaaaaa` (removed), `list-depth@bbbbbbbb` (removed)"
-        );
+        assert!(matches!(
+            live_or_exact(&items, &plain),
+            Err(WorkError::Refused(_))
+        ));
+        assert!(matches!(
+            live_or_exact(&items[..1], &plain),
+            Err(WorkError::Refused(_))
+        ));
         let exact: TodoAddress = "list-depth@bbbb".parse().unwrap();
-        assert_eq!(addressed(&items, &exact).unwrap(), Some(1));
-        assert_eq!(addressed(&items[..1], &plain).unwrap(), Some(0));
+        assert_eq!(live_or_exact(&items, &exact).unwrap(), Some(1));
+        let mut live = items.to_vec();
+        live.push(item(1, &["one"]));
+        assert_eq!(live_or_exact(&live, &plain).unwrap(), Some(2));
     }
 
     #[test]

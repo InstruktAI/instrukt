@@ -291,7 +291,7 @@ fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
 fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {
     match status {
         ReflectionStatus::Reflected => ClaimOutcome::Claimed,
-        ReflectionStatus::Conflicted => ClaimOutcome::ClaimedElsewhere,
+        ReflectionStatus::Conflicted { .. } => ClaimOutcome::ClaimedElsewhere,
         ReflectionStatus::Pending(_) => ClaimOutcome::NotReflected,
     }
 }
@@ -350,6 +350,44 @@ fn checked_replacement(
         }
     }
     Ok(index)
+}
+
+/// Whether item `index`, as the state database holds it after this
+/// command's flush, admits a native start or follow-up on this computer:
+/// reflected and not conflicted, still active, unheld and claimed by
+/// `machine` with no session, and holding the assignment `holds` accepts.
+/// The session's own copy is never the evidence: another command, a
+/// refresh or a reflection can have replaced the row between the commit and
+/// the flush. Why it does not, otherwise.
+fn admitted(
+    s: &Session<'_>,
+    index: usize,
+    machine: &instrukt_core::machine::MachineId,
+    holds: impl Fn(&Binding) -> bool,
+) -> Result<(), &'static str> {
+    let Some(live) = s.confirmed(index).map_err(|_| "cannot be read back")? else {
+        return Err("is gone from this computer's record");
+    };
+    if live.reflection.conflicted {
+        return Err("met a newer GitHub revision");
+    }
+    if live.reflection.pending {
+        return Err("remains pending GitHub reflection");
+    }
+    let record = &live.record;
+    if record.status != TodoStatus::Active
+        || record.hold.is_some()
+        || !record
+            .claim
+            .as_ref()
+            .is_some_and(|c| &c.machine == machine && c.session.is_none())
+    {
+        return Err("no longer stands on this computer's unassigned execution claim");
+    }
+    if !record.bindings.iter().any(holds) {
+        return Err("is no longer recorded");
+    }
+    Ok(())
 }
 
 pub(super) fn matches_driver_role(bound: &RoleName, requested: &RoleName) -> bool {
@@ -492,9 +530,19 @@ impl SessionBindings for Work {
                     Ok(())
                 })?;
                 s.flush()?;
-                if s.items[index].reflection.pending || s.items[index].reflection.conflicted {
-                    return Err(WorkError::refused("resumed assignment awaits reflection").into());
-                }
+                let key = &retained.attempt.semantic_key;
+                admitted(&s, index, &machine, |b| {
+                    &b.attempt.semantic_key == key
+                        && b.attempt.released_at.is_none()
+                        && b.session == retained.session
+                })
+                .map_err(|why| {
+                    WorkError::refused(format!(
+                        "the resumed assignment {why}; no runtime follow-up was attempted"
+                    ))
+                })?;
+            } else if s.unjudged(index) {
+                return Err(super::_session::unjudged_refusal(todo).into());
             }
             return Ok(DispatchReservation::Existing(SessionBinding {
                 title: retained
@@ -591,6 +639,9 @@ impl SessionBindings for Work {
                 ))
                 .into());
             }
+            if s.unjudged(index) {
+                return Err(super::_session::unjudged_refusal(todo).into());
+            }
             return Ok(DispatchReservation::Start {
                 key: pending.attempt.semantic_key.clone(),
                 worktree: placement,
@@ -602,6 +653,9 @@ impl SessionBindings for Work {
                 && (occurrence.is_none() || Some(&b.attempt.semantic_key) == task_key.as_ref())
         }) && let Some(session) = &active.session
         {
+            if s.unjudged(index) {
+                return Err(super::_session::unjudged_refusal(todo).into());
+            }
             return Ok(DispatchReservation::Existing(SessionBinding {
                 title: active
                     .attempt
@@ -678,9 +732,14 @@ impl SessionBindings for Work {
             Ok(())
         })?;
         s.flush()?;
-        if s.items[index].reflection.pending || s.items[index].reflection.conflicted {
-            return Err(WorkError::refused("the dispatch reservation remains pending GitHub reflection; no runtime start was attempted").into());
-        }
+        admitted(&s, index, &machine, |b| {
+            b.attempt.semantic_key == key && b.attempt.released_at.is_none() && b.session.is_none()
+        })
+        .map_err(|why| {
+            WorkError::refused(format!(
+                "the dispatch reservation {why}; no runtime start was attempted"
+            ))
+        })?;
         Ok(DispatchReservation::Start {
             key,
             worktree: placement,
@@ -716,7 +775,7 @@ impl SessionBindings for Work {
         let mut s = Session::open(self, project)?;
         let machine = s.machine()?;
         let todo = replacement_todo(&s, key)?;
-        let index = s.enter(&todo)?;
+        let index = s.enter_judged(&todo)?;
         checked_replacement(&s.items[index].record, &machine, key, stopped)?;
         Ok(())
     }
@@ -787,7 +846,7 @@ impl SessionBindings for Work {
             ReflectionStatus::Pending(reason) => {
                 Err(WorkError::refused(super::_session::describe(&reason)).into())
             }
-            ReflectionStatus::Conflicted => Err(WorkError::refused(
+            ReflectionStatus::Conflicted { .. } => Err(WorkError::refused(
                 "todo reflection has a conflicting revision. Run `instrukt todo refresh`",
             )
             .into()),
@@ -872,7 +931,7 @@ impl Reflection for Work {
             return Err(WorkError::refused(format!("cockpit setup pending: {cause}")).into());
         }
         let reach = match s.github_read() {
-            GitHubRead::Read => GitHubReach::Reachable,
+            GitHubRead::Read | GitHubRead::Unjudged => GitHubReach::Reachable,
             GitHubRead::NotRead(PendingReason::RateLimited { until }) => {
                 GitHubReach::RateLimited { until }
             }
@@ -883,7 +942,7 @@ impl Reflection for Work {
         for (index, item) in s.items.iter().enumerate() {
             match s.status(index) {
                 ReflectionStatus::Pending(_) => pending.push(item.record.slug.clone()),
-                ReflectionStatus::Conflicted => conflicted.push(item.record.slug.clone()),
+                ReflectionStatus::Conflicted { .. } => conflicted.push(item.record.slug.clone()),
                 ReflectionStatus::Reflected => {}
             }
         }

@@ -1063,9 +1063,10 @@ fn reflection_word(status: &ReflectionStatus) -> String {
     match status {
         ReflectionStatus::Reflected => "reflected to GitHub".to_owned(),
         ReflectionStatus::Pending(reason) => format!("pending: {}", describe(reason)),
-        ReflectionStatus::Conflicted => {
-            "conflicted with a newer GitHub revision; refresh with `instrukt todo refresh <slug>`"
-                .to_owned()
+        ReflectionStatus::Conflicted { door } => {
+            format!(
+                "conflicted with a newer GitHub revision; refresh with `instrukt todo refresh {door}`"
+            )
         }
     }
 }
@@ -1111,7 +1112,7 @@ fn list_line(entry: &ListEntry, now: Timestamp) -> String {
     if let Some(ReflectionStatus::Pending(_)) = &entry.reflection {
         parts.push("reflection pending".to_owned());
     }
-    if let Some(ReflectionStatus::Conflicted) = &entry.reflection {
+    if let Some(ReflectionStatus::Conflicted { .. }) = &entry.reflection {
         parts.push("conflicted".to_owned());
     }
     parts.join(" · ")
@@ -1156,6 +1157,12 @@ fn render_view(
         Some(status) => format!("reflection: {}", reflection_word(status)),
         None => "reflection: read from GitHub; not on this computer".to_owned(),
     });
+    if let instrukt_todos::work::GitHubRead::Unjudged = &view.refresh {
+        out.push(
+            "GitHub holds a revision of this todo that this computer has not recorded; shown as this computer records it. A reflection is in progress on this computer, so that revision is judged by the next refresh or reflection of this todo that holds the reflection lock"
+                .to_owned(),
+        );
+    }
     if let instrukt_todos::work::GitHubRead::NotRead(reason) = &view.refresh {
         out.push(format!(
             "not refreshed from GitHub ({}); shown as this computer last knew it",

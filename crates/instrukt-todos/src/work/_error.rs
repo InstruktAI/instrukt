@@ -100,14 +100,8 @@ impl WorkError {
     /// The conflict of `record`, naming the address its refresh takes: a
     /// plain slug means the live todo, so a retained one is named exactly.
     pub(crate) fn conflicted(record: &TodoRecord) -> Self {
-        let todo = if record.is_live() {
-            TodoAddress {
-                slug: record.slug.clone(),
-                identity: None,
-            }
-        } else {
-            TodoAddress::exact(record)
-        };
-        Self::Conflicted { todo }
+        Self::Conflicted {
+            todo: TodoAddress::door(record),
+        }
     }
 }

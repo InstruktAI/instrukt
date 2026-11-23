@@ -77,58 +77,47 @@ pub(crate) fn check_compatible(gh: &GitHub, item: &LocalItem) -> Result<(), GitH
     Ok(())
 }
 
-/// What a pull found.
+/// What a pull found: the read of an issue's revision chain, before any of
+/// it is committed ([`judgment`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pulled {
-    /// Nothing reflected yet, or GitHub holds what this computer knows.
+    /// Nothing reflected yet, the issue did not change, or its head is the
+    /// revision this computer recorded: nothing to judge.
     Current,
-    /// A newer remote revision entered the local record.
+    /// A head this computer has not recorded holds the local record: this
+    /// computer's own revision, whose answer never arrived.
+    Landed,
+    /// A newer remote revision entered the local record, which had nothing
+    /// pending.
     Adopted,
-    /// A head this computer does not know met pending local changes; who
-    /// can have posted it ([`origin`]).
-    Conflicted { origin: HeadOrigin },
+    /// A head this computer has not recorded met pending local changes.
+    Conflicted,
 }
 
-/// Who can have posted a committed head that differs from the pending
-/// local record, judged from what the head carries.
+/// Whether what a pull found may be committed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HeadOrigin {
-    /// Another computer: this computer never committed that state.
-    Foreign,
-    /// Possibly this computer, by a reflection that has not recorded its
-    /// post yet.
-    PossiblyOwn,
+pub(crate) enum Judgment {
+    /// Commit what the pull found: the refreshed row, a confirmation, an
+    /// adoption or the conflict mark.
+    Commit,
+    /// Commit nothing about the head: it may be this computer's own post,
+    /// which a reflection in progress has not recorded yet, or another
+    /// computer's, and only the holder of the reflection lock can tell.
+    Unjudged,
 }
 
-/// Who can have posted `head`, GitHub's committed head, which differs from
-/// `item`'s pending record. A reflection on this computer posts only a
-/// revision this computer committed after the last one GitHub confirmed,
-/// and a todo's stamps and artifact versions are only ever added: its own
-/// post is a revision strictly between the confirmed remote revision and the
-/// local one, whose stamps and versions the local record still holds. A head
-/// at the local revision differs from the one this computer committed under
-/// that number, and one at or below the confirmed revision forks the chain
-/// this computer confirmed; either, like a head carrying evidence the local
-/// record lacks, is another computer's.
-pub(crate) fn origin(item: &LocalItem, head: &TodoRecord) -> HeadOrigin {
-    let local = &item.record;
-    let confirmed = item.reflection.remote_revision.unwrap_or(0);
-    let between = confirmed < head.revision && head.revision < local.revision;
-    let held = head.sequence <= local.sequence
-        && head.stamps.iter().all(|stamp| local.stamps.contains(stamp))
-        && head.artifacts.iter().all(|artifact| {
-            artifact.versions.iter().all(|version| {
-                local.artifact(artifact.name.as_str()).is_some_and(|mine| {
-                    mine.versions
-                        .iter()
-                        .any(|v| v.sequence == version.sequence && v.digest == version.digest)
-                })
-            })
-        });
-    if between && held {
-        HeadOrigin::PossiblyOwn
-    } else {
-        HeadOrigin::Foreign
+/// Whether a pull that found `pulled` for a row with `pending` local
+/// changes may commit it, `held` telling whether the puller holds the
+/// reflection lock. Every reflection on this computer posts and records
+/// under that lock, so under it no post of this computer is unrecorded and
+/// a head this computer has not recorded is judged on what it holds. A row
+/// with nothing pending has nothing a head could conflict with, and a head
+/// this computer recorded needs no judgment.
+pub(crate) fn judgment(pending: bool, held: bool, pulled: Pulled) -> Judgment {
+    match pulled {
+        Pulled::Current | Pulled::Adopted => Judgment::Commit,
+        Pulled::Landed | Pulled::Conflicted if !pending || held => Judgment::Commit,
+        Pulled::Landed | Pulled::Conflicted => Judgment::Unjudged,
     }
 }
 
@@ -261,12 +250,11 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
         item.reflection.record_comment = Some(head.comment);
         item.reflection.remote_revision = Some(item.record.revision);
         item.reflection.etag = etag;
-        return Ok(Pulled::Current);
+        return Ok(Pulled::Landed);
     }
     if item.reflection.pending {
-        let origin = origin(item, &head.record);
         item.reflection.conflicted = true;
-        return Ok(Pulled::Conflicted { origin });
+        return Ok(Pulled::Conflicted);
     }
     let record = with_contents(gh, issue.number, head.record, &item.record)?;
     item.record = record;
@@ -1109,68 +1097,27 @@ mod tests {
         assert_eq!((head.comment, head.record), (11, theirs));
     }
 
-    /// A pending local record at `revision`, confirmed on GitHub at
-    /// `confirmed`, holding one artifact version per digest in `versions`.
-    fn pending(revision: u64, confirmed: u64, versions: &[&str]) -> LocalItem {
-        let mut record = record(revision, "depth");
-        record.sequence = versions.len() as u64;
-        if !versions.is_empty() {
-            record.artifacts.push(super::super::_model::Artifact {
-                name: crate::evidence::ArtifactName::new("log"),
-                address: None,
-                versions: versions
-                    .iter()
-                    .enumerate()
-                    .map(|(i, text)| super::super::_model::Version {
-                        digest: super::super::_model::digest_of(text),
-                        writer: Actor::Person { name: "dev".into() },
-                        created: jiff::Timestamp::UNIX_EPOCH,
-                        derived_from: Vec::new(),
-                        sequence: i as u64 + 1,
-                        grounding: Default::default(),
-                        remote: None,
-                        content: Some((*text).to_owned()),
-                    })
-                    .collect(),
-            });
-        }
-        LocalItem {
-            record,
-            reflection: ReflectionState {
-                pending: true,
-                remote_revision: Some(confirmed),
-                ..ReflectionState::default()
-            },
+    #[test]
+    fn an_unrecorded_head_meeting_a_pending_change_is_judged_only_under_the_reflection_lock() {
+        for pulled in [Pulled::Landed, Pulled::Conflicted] {
+            assert_eq!(judgment(true, true, pulled), Judgment::Commit);
+            assert_eq!(judgment(true, false, pulled), Judgment::Unjudged);
         }
     }
 
     #[test]
-    fn an_earlier_state_of_the_local_record_after_the_confirmed_one_may_be_this_computer_s_post() {
-        let local = pending(4, 2, &["one", "two"]);
-        let posted = pending(3, 2, &["one"]).record;
-        assert_eq!(origin(&local, &posted), HeadOrigin::PossiblyOwn);
-    }
-
-    #[test]
-    fn a_different_head_at_the_local_revision_is_another_computer_s() {
-        let local = pending(2, 1, &["mine"]);
-        let mut theirs = pending(2, 1, &["mine"]).record;
-        theirs.slug = TodoSlug::parse("theirs").unwrap();
-        assert_eq!(origin(&local, &theirs), HeadOrigin::Foreign);
-    }
-
-    #[test]
-    fn a_head_carrying_a_version_the_local_record_lacks_is_another_computer_s() {
-        let local = pending(4, 2, &["one", "two"]);
-        let theirs = pending(3, 2, &["one", "else"]).record;
-        assert_eq!(origin(&local, &theirs), HeadOrigin::Foreign);
-    }
-
-    #[test]
-    fn a_head_at_or_below_the_confirmed_revision_is_another_computer_s() {
-        let local = pending(4, 3, &["one"]);
-        let forked = pending(3, 2, &["one"]).record;
-        assert_eq!(origin(&local, &forked), HeadOrigin::Foreign);
+    fn a_recorded_head_or_a_row_with_nothing_pending_is_committed_with_or_without_the_lock() {
+        for held in [true, false] {
+            assert_eq!(judgment(true, held, Pulled::Current), Judgment::Commit);
+            for pulled in [
+                Pulled::Current,
+                Pulled::Landed,
+                Pulled::Adopted,
+                Pulled::Conflicted,
+            ] {
+                assert_eq!(judgment(false, held, pulled), Judgment::Commit);
+            }
+        }
     }
 
     #[test]

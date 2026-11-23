@@ -17,15 +17,15 @@ use instrukt_runner::interfaces::{AgentPreference, CatchUp, ProjectRef, TaskSche
 use super::_diff::{DiffLine, diff_lines};
 use super::_error::WorkError;
 use super::_model::{
-    Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef,
-    Version, digest_of, valid_artifact_name,
+    Artifact, Delivery, ReleasedBranch, ReleasedHold, SCHEMA, TodoAddress, TodoId, TodoRecord,
+    TodoRef, Version, digest_of, valid_artifact_name,
 };
 use super::_session::{
-    GitHubRead, Located, ReflectionStatus, Session, Unrestored, addressed, exact_local, find_in,
-    past_recovery, status_of,
+    GitHubRead, Located, ReflectionStatus, Session, Unrestored, exact_local, find_in,
+    live_or_exact, past_recovery, status_of,
 };
 use super::_stamps::{self, StampInputs, StampRequest};
-use super::_store::{LocalItem, Store};
+use super::_store::{Completed, IntentWorktree, LocalItem, Store, WithdrawalIntent};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, StampFact, StampRecord,
@@ -252,6 +252,10 @@ impl Work {
             delivery: None,
             removal: None,
         };
+        // The todo created is the command's target, whatever todo its
+        // checks entered first: a refusal of a change to its group or a
+        // prerequisite sends the caller back to creating it.
+        s.set_target(&record.id);
         let index = s.commit("created", |s| {
             s.items.push(super::_store::LocalItem {
                 record,
@@ -288,7 +292,7 @@ impl Work {
                     reflection: Some(s.status(index)),
                     issue: item.reflection.issue.map(|i| i.number),
                     pull: item.reflection.pull,
-                    refresh: s.github_read(),
+                    refresh: s.refresh_of(index),
                     ..view
                 })
             }
@@ -296,8 +300,9 @@ impl Work {
                 item,
                 refreshed,
                 copied_at,
+                issue_number,
             } => {
-                let issue = item.reflection.issue.map(|i| i.number);
+                let issue = Some(issue_number);
                 let view = view(&mut s, item.record, false);
                 let refresh = if refreshed {
                     GitHubRead::Read
@@ -330,7 +335,7 @@ impl Work {
         let mut s = Session::open(self, project)?;
         s.pull_all()?;
         let conflicted: Vec<TodoSlug> = (0..s.items.len())
-            .filter(|&index| s.status(index) == ReflectionStatus::Conflicted)
+            .filter(|&index| matches!(s.status(index), ReflectionStatus::Conflicted { .. }))
             .map(|index| s.items[index].record.slug.clone())
             .collect();
         let mut records: Vec<TodoRecord> = s.items.iter().map(|it| it.record.clone()).collect();
@@ -461,15 +466,17 @@ impl Work {
 
     /// `instrukt todo refresh`: replaces the local item `address` names
     /// with GitHub's committed record. It is the door a conflicted todo
-    /// names, retained work included: a withdrawn todo's reactivation
-    /// refuses until it is refreshed, and its door gives its exact address.
+    /// names. A plain slug means the live item only (`todos`, "Identity and
+    /// creation"): with no live item of that name, retained work is left as
+    /// it is and the refusal names each retained entry's exact address,
+    /// which a conflicted withdrawn or delivered todo's door gives.
     pub fn refresh(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
-        let index = addressed(&s.items, address)?.ok_or_else(|| unknown(&s, &address.slug))?;
+        let index = live_or_exact(&s.items, address)?.ok_or_else(|| unknown(&s, &address.slug))?;
         s.refresh(index)?;
         s.flush()?;
         Ok(Outcome {
@@ -514,34 +521,94 @@ impl Work {
         })
     }
 
+    /// `instrukt todo remove`: withdraws the live todo `slug` and releases
+    /// its working resources (`todos`, "Parking, withdrawal and delivery").
+    ///
+    /// 1. The entry reads GitHub, with no lock beyond what a point refresh
+    ///    takes; a conflict or a head this computer could not judge refuses
+    ///    with nothing done. No GitHub request follows until the flush.
+    /// 2. Under the withdrawal lock, the todo's worktrees, workspace and
+    ///    work branch are checked; work that would be lost refuses with
+    ///    nothing done. Then one writer transaction records the intent
+    ///    (`withdrawal_intents`) while the live todo under `slug` is still
+    ///    the one entered, unchanged. The todo's own row is not written: it
+    ///    stays live and claimed, and nothing withdrawn reaches GitHub
+    ///    before its resources are released.
+    /// 3. The resources are released outside the writer lock, the intent
+    ///    recording each outcome that must be recognized afterwards. A
+    ///    refusal before anything was released closes the intent and leaves
+    ///    the todo as it was; one after leaves the intent naming what was
+    ///    released, for the withdrawal run again to complete.
+    /// 4. One writer transaction commits the withdrawn record, with
+    ///    `removal` naming exactly what was released, and closes the intent.
+    /// 5. The withdrawal lock is released and the change flushed under the
+    ///    reflection lock.
+    ///
+    /// A withdrawal interrupted with its intent recorded is completed by
+    /// running it again, which continues from the intent.
     pub fn remove(
         &self,
         project: &ProjectRef,
         slug: &TodoSlug,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
-        let index = s.enter(slug)?;
+        let index = s.enter_judged(slug)?;
         writable(&s.items[index].record)?;
-        let now = s.now;
-        // One writer transaction, with no network request: the live row is
-        // judged first, so a refused withdrawal releases nothing; every
-        // working resource is checked before any is released, a worktree
-        // holding uncommitted work or locked refusing the withdrawal; then
-        // they are released, and the withdrawal commits naming only what
-        // was. A resource git keeps after all refuses the withdrawal whole.
-        s.commit_admitted("removed", index, |record| {
-            writable(record)?;
-            let released = plan_release(&project.root, record)?.perform(&project.root, slug)?;
-            record.removal = Some(Removal {
-                at: now,
-                from: record.status,
-                branch: released.branch,
-                worktrees: released.worktrees,
-            });
-            record.status = TodoStatus::Removed;
-            record.claim = None;
-            Ok(())
+        let base = s.base(index).ok_or_else(|| {
+            WorkError::refused(format!("`{slug}` has no stored record to withdraw"))
         })?;
+        let id = base.record.id.clone();
+        let store = Store::new(&self.home, &project.slug);
+        let withdrawing = WithdrawalLock::acquire(&self.home)?;
+        let intent = match store.withdrawal_intent(&id)? {
+            Some(intent) => {
+                tracing::info!(
+                    event = "work_withdrawal_resumed",
+                    project = %project.slug,
+                    todo = %slug,
+                    started = %intent.started_at,
+                    "continuing an interrupted withdrawal from its recorded intent"
+                );
+                intent
+            }
+            None => {
+                let checked = plan_release(&project.root, &base.record)?;
+                let intent = WithdrawalIntent {
+                    todo: id.clone(),
+                    branch: checked.branch,
+                    branch_head: checked.head,
+                    worktrees: checked
+                        .worktrees
+                        .into_iter()
+                        .map(|path| IntentWorktree {
+                            path,
+                            released: false,
+                        })
+                        .collect(),
+                    started_at: s.now,
+                };
+                if let Err(refusal) = store.open_withdrawal(&base, slug, &intent)? {
+                    return Err(s.refusal(index, refusal));
+                }
+                intent
+            }
+        };
+        let released = release(&project.root, slug, &store, intent)?;
+        match store.complete_withdrawal(&id, s.now, released.branch, released.worktrees)? {
+            Completed::Withdrawn(row) => s.take_written(index, *row, "removed"),
+            Completed::NotLive(row) => {
+                let status = status_word(row.record.status);
+                return Err(WorkError::refused(format!(
+                    "`{slug}` became {status} while its working resources were released; its record is left as it is"
+                )));
+            }
+            Completed::Gone => {
+                return Err(WorkError::refused(format!(
+                    "`{slug}` left this computer's record while its working resources were released"
+                )));
+            }
+        }
+        drop(withdrawing);
         s.flush()?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
@@ -610,6 +677,11 @@ impl Work {
             )));
         }
         s.pull_through(index)?;
+        if s.items[index].record.status != TodoStatus::Removed {
+            return Err(WorkError::refused(format!(
+                "`{slug}` is no longer withdrawn: it changed while this command ran; nothing was restored"
+            )));
+        }
         s.commit("reactivated", |s| {
             let record = &mut s.items[index].record;
             let from = record
@@ -1061,17 +1133,19 @@ impl Work {
     /// The record `address` names for a read of artifact `name`, with why
     /// each version `wanted` asks for still has no content. A record this
     /// computer holds answers alone when it settles the read
-    /// ([`Held::answers`]). Otherwise the todo is located and refreshed as [`Work::show`] does;
-    /// each version still without content is then asked of GitHub and
-    /// verified against its digest, and content restored onto a local item
-    /// is committed to its row before the read returns it.
+    /// ([`Held::answers`]). Otherwise the todo is located and refreshed as
+    /// [`Work::show`] does; each version still without content is then asked
+    /// of GitHub and verified against its digest, and content restored onto a
+    /// local item is committed to its row before the read returns it. A todo
+    /// GitHub could not be read for is answered from its last known copy,
+    /// which says why it is unverified ([`Answer::unverified`]).
     fn artifact_record(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
         name: &str,
         wanted: &Wanted<'_>,
-    ) -> Result<(TodoRecord, BTreeMap<String, Unrestored>), WorkError> {
+    ) -> Result<Answer, WorkError> {
         let lacking = |record: &TodoRecord| -> Vec<String> {
             record
                 .artifact(name)
@@ -1080,26 +1154,55 @@ impl Work {
         if let Some(held) = self.local_record(project, address)?
             && held.answers(name, wanted)
         {
-            return Ok((held.into_record(), BTreeMap::new()));
+            return Ok(Answer {
+                record: held.into_record(),
+                missing: BTreeMap::new(),
+                unverified: None,
+            });
         }
         let mut s = Session::open(self, project)?;
-        let (mut record, issue, local) = match s.locate(address)? {
+        let (mut record, issue, local, unverified) = match s.locate(address)? {
             Located::Local(index) => {
                 match s.pull_through(index) {
                     Ok(()) | Err(WorkError::Conflicted { .. }) => {}
                     Err(err) => return Err(err),
                 }
                 let item = &s.items[index];
-                (item.record.clone(), item.reflection.issue, Some(index))
+                let issue = item.reflection.issue.map(|issue| issue.number);
+                (item.record.clone(), issue, Some(index), None)
             }
-            Located::Remote { item, .. } => (item.record, item.reflection.issue, None),
+            Located::Remote {
+                item,
+                refreshed,
+                copied_at,
+                issue_number,
+            } => {
+                let unverified = (!refreshed).then(|| {
+                    let why = match s.github_read() {
+                        GitHubRead::NotRead(reason) => super::_session::describe(&reason),
+                        GitHubRead::Read | GitHubRead::Unjudged => {
+                            "GitHub's answer was not read".to_owned()
+                        }
+                    };
+                    format!(
+                        "the last known copy of `{}`, read at {}, may be behind GitHub, which cannot verify it now: {why}",
+                        item.record.slug,
+                        copied_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    )
+                });
+                (item.record, Some(issue_number), None, unverified)
+            }
         };
         let wanted = lacking(&record);
         let missing = s.restore_contents(issue, &mut record, name, &wanted);
         if let Some(index) = local {
             s.keep_restored(index, &record, name)?;
         }
-        Ok((record, missing))
+        Ok(Answer {
+            record,
+            missing,
+            unverified,
+        })
     }
 
     /// A todo's artifacts and their retained versions: from the record this
@@ -1123,16 +1226,22 @@ impl Work {
         address: &TodoAddress,
         name: &str,
     ) -> Result<String, WorkError> {
-        let (record, missing) = self.artifact_record(project, address, name, &Wanted::Current)?;
-        let version = record
+        let answer = self.artifact_record(project, address, name, &Wanted::Current)?;
+        let version = answer
+            .record
             .artifact(name)
             .and_then(|a| a.versions.last())
-            .ok_or_else(|| no_artifact(&address.slug, name))?;
+            .ok_or_else(|| {
+                answer.absent(
+                    no_artifact(&address.slug, name),
+                    &format!("holds no artifact `{name}`"),
+                )
+            })?;
         let digest = version.digest.as_str();
         version
             .content
             .clone()
-            .ok_or_else(|| content_missing(name, digest, missing.get(digest)))
+            .ok_or_else(|| content_missing(name, digest, answer.missing.get(digest)))
     }
 
     /// The line diff between two retained versions of artifact `name`.
@@ -1144,22 +1253,27 @@ impl Work {
         old: &str,
         new: &str,
     ) -> Result<Vec<DiffLine>, WorkError> {
-        let (record, missing) =
-            self.artifact_record(project, address, name, &Wanted::Digests(&[old, new]))?;
+        let answer = self.artifact_record(project, address, name, &Wanted::Digests(&[old, new]))?;
         let slug = &address.slug;
-        let artifact = record
-            .artifact(name)
-            .ok_or_else(|| no_artifact(slug, name))?;
+        let artifact = answer.record.artifact(name).ok_or_else(|| {
+            answer.absent(
+                no_artifact(slug, name),
+                &format!("holds no artifact `{name}`"),
+            )
+        })?;
         let content = |digest: &str| -> Result<String, WorkError> {
             let version = Wanted::version(artifact, digest).ok_or_else(|| {
-                WorkError::refused(format!(
-                    "`{name}` of `{slug}` retains no version {digest}; `instrukt todo artifacts list {slug}` shows its versions"
-                ))
+                answer.absent(
+                    WorkError::refused(format!(
+                        "`{name}` of `{slug}` retains no version {digest}; `instrukt todo artifacts list {slug}` shows its versions"
+                    )),
+                    &format!("retains no version {digest} of `{name}`"),
+                )
             })?;
             version
                 .content
                 .clone()
-                .ok_or_else(|| content_missing(name, digest, missing.get(digest)))
+                .ok_or_else(|| content_missing(name, digest, answer.missing.get(digest)))
         };
         Ok(diff_lines(&content(old)?, &content(new)?))
     }
@@ -1331,22 +1445,21 @@ fn apply_update(
     Ok(warnings)
 }
 
-/// The working resources a withdrawn todo owns, checked and ready to be
+/// The working resources a withdrawal releases, as checked before any is
 /// released (`todos`, "Parking, withdrawal and delivery").
-struct Release {
+struct Checked {
     /// The todo's worktrees.
     worktrees: Vec<std::path::PathBuf>,
-    /// Its work branch, when it exists.
+    /// Its work branch, when it exists, and the commit it points at.
     branch: Option<String>,
-    /// Its empty workspace directory, when present.
-    workspace: Option<std::path::PathBuf>,
+    head: Option<CommitSha>,
 }
 
-/// What a [`Release`] released, kept as recovery evidence: the worktrees
+/// What a withdrawal released, kept as recovery evidence: the worktrees
 /// removed, and the branch deleted with the commit it pointed at.
 struct Released {
     worktrees: Vec<std::path::PathBuf>,
-    branch: Option<super::_model::ReleasedBranch>,
+    branch: Option<ReleasedBranch>,
 }
 
 /// A worktree of the project as git lists it.
@@ -1382,18 +1495,75 @@ fn worktrees(root: &Path) -> Result<Vec<Worktree>, git::GitError> {
     Ok(found)
 }
 
-/// Checks the working resources a withdrawn todo owns: each worktree its
-/// session bindings returned that is a worktree of this project, then its
-/// work branch. Only git's own worktree list and the recorded branch are
-/// acted on; a path that is not one of the project's worktrees is left
-/// alone. A worktree with uncommitted work or locked, a workspace holding
-/// files or a work branch checked out in the project refuses the
-/// withdrawal. Nothing is released yet.
-fn plan_release(root: &Path, record: &TodoRecord) -> Result<Release, WorkError> {
+/// Refuses releasing `worktree` when git keeps it by its lock or it holds
+/// uncommitted work, naming where it is (`UC-TD5`).
+fn check_worktree(worktree: &Worktree) -> Result<(), WorkError> {
+    if let Some(reason) = &worktree.locked {
+        let why = if reason.is_empty() {
+            String::new()
+        } else {
+            format!(" ({reason})")
+        };
+        return Err(WorkError::refused(format!(
+            "the worktree {} is locked{why}; unlock it with `git worktree unlock`, then withdraw again",
+            worktree.path.display()
+        )));
+    }
+    let changes = git::run(&worktree.path, ["status", "--porcelain"])?;
+    if !changes.trim().is_empty() {
+        return Err(WorkError::refused(format!(
+            "the worktree {} holds uncommitted changes; commit or discard them, then withdraw again",
+            worktree.path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// The todo's workspace `<project>/workspace/<slug>/` when it is present:
+/// an empty one is released with the withdrawal, one holding files refuses
+/// it.
+fn empty_workspace(root: &Path, slug: &TodoSlug) -> Result<Option<std::path::PathBuf>, WorkError> {
+    let workspace = root.join("workspace").join(slug.as_str());
+    let present = match std::fs::symlink_metadata(&workspace) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(WorkError::Symlink { path: workspace });
+        }
+        Ok(meta) => meta.is_dir(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(source) => {
+            return Err(WorkError::Io {
+                path: workspace,
+                source,
+            });
+        }
+    };
+    if !present {
+        return Ok(None);
+    }
+    let mut entries = std::fs::read_dir(&workspace).map_err(|source| WorkError::Io {
+        path: workspace.clone(),
+        source,
+    })?;
+    if entries.next().is_some() {
+        return Err(WorkError::refused(format!(
+            "the workspace {} still holds files; keep or remove them, then withdraw again",
+            workspace.display()
+        )));
+    }
+    Ok(Some(workspace))
+}
+
+/// Checks the working resources a withdrawn todo owns, releasing nothing:
+/// each worktree its session bindings returned that is a worktree of this
+/// project, any other worktree with its work branch checked out, its
+/// workspace, and its work branch with the commit it points at. Only git's
+/// own worktree list and the recorded branch are acted on; a path that is
+/// not one of the project's worktrees is left alone. A worktree with
+/// uncommitted work or locked, a workspace holding files or a work branch
+/// checked out in the project refuses the withdrawal.
+fn plan_release(root: &Path, record: &TodoRecord) -> Result<Checked, WorkError> {
     let listed = worktrees(root)?;
     let main = listed.first().map(|w| w.path.clone());
-    // The todo's working copies: worktrees its sessions returned, and any
-    // other worktree with its work branch checked out.
     let mut owned: Vec<&Worktree> = Vec::new();
     for worktree in &listed {
         let bound = record
@@ -1408,76 +1578,33 @@ fn plan_release(root: &Path, record: &TodoRecord) -> Result<Release, WorkError> 
             owned.push(worktree);
         }
     }
-    // Check everything before releasing anything: work that would be lost,
-    // or a worktree git keeps by its lock, refuses the withdrawal and names
-    // where it is.
     for worktree in &owned {
-        if let Some(reason) = &worktree.locked {
-            let why = if reason.is_empty() {
-                String::new()
-            } else {
-                format!(" ({reason})")
-            };
-            return Err(WorkError::refused(format!(
-                "the worktree {} is locked{why}; unlock it with `git worktree unlock`, then withdraw again",
-                worktree.path.display()
-            )));
-        }
-        let changes = git::run(&worktree.path, ["status", "--porcelain"])?;
-        if !changes.trim().is_empty() {
-            return Err(WorkError::refused(format!(
-                "the worktree {} holds uncommitted changes; commit or discard them, then withdraw again",
-                worktree.path.display()
-            )));
-        }
+        check_worktree(worktree)?;
     }
-    let workspace = root.join("workspace").join(record.slug.as_str());
-    let workspace_present = match std::fs::symlink_metadata(&workspace) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            return Err(WorkError::Symlink { path: workspace });
-        }
-        Ok(meta) if meta.is_dir() => true,
-        Ok(_) => false,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
-        Err(source) => {
-            return Err(WorkError::Io {
-                path: workspace,
-                source,
-            });
-        }
-    };
-    if workspace_present {
-        let mut entries = std::fs::read_dir(&workspace).map_err(|source| WorkError::Io {
-            path: workspace.clone(),
-            source,
-        })?;
-        if entries.next().is_some() {
-            return Err(WorkError::refused(format!(
-                "the workspace {} still holds files; keep or remove them, then withdraw again",
-                workspace.display()
-            )));
-        }
-    }
-    let branch = match &record.branch {
-        Some(name) if branch_head(root, name)?.is_some() => {
-            let current = match git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]) {
-                Ok(current) => Some(current.trim().to_owned()),
-                Err(git::GitError::Failed { .. }) => None,
-                Err(err) => return Err(err.into()),
-            };
-            if current.as_deref() == Some(name.as_str()) {
-                return Err(WorkError::refused(format!(
-                    "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
-                )));
+    empty_workspace(root, &record.slug)?;
+    let (branch, head) = match &record.branch {
+        Some(name) => match branch_head(root, name)? {
+            Some(head) => {
+                let current = match git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]) {
+                    Ok(current) => Some(current.trim().to_owned()),
+                    Err(git::GitError::Failed { .. }) => None,
+                    Err(err) => return Err(err.into()),
+                };
+                if current.as_deref() == Some(name.as_str()) {
+                    return Err(WorkError::refused(format!(
+                        "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
+                    )));
+                }
+                (Some(name.clone()), Some(head))
             }
-            Some(name.clone())
-        }
-        _ => None,
+            None => (None, None),
+        },
+        None => (None, None),
     };
-    Ok(Release {
+    Ok(Checked {
         worktrees: owned.iter().map(|w| w.path.clone()).collect(),
         branch,
-        workspace: workspace_present.then_some(workspace),
+        head,
     })
 }
 
@@ -1495,91 +1622,142 @@ fn branch_head(root: &Path, name: &str) -> Result<Option<CommitSha>, git::GitErr
     }
 }
 
-impl Release {
-    /// Releases what [`plan_release`] checked: the workspace, the
-    /// worktrees, then the work branch. Git's own refusals protect what
-    /// changed since the check: a worktree that gained uncommitted work or a
-    /// lock is kept, as is a workspace that gained files, and a branch that
-    /// moved on keeps its newer commits ([`delete_branch`]). Anything kept
-    /// refuses the withdrawal of `slug`, naming it and what was already
-    /// released; nothing is released after it.
-    fn perform(self, root: &Path, slug: &TodoSlug) -> Result<Released, WorkError> {
-        let mut done = Released {
-            worktrees: Vec::new(),
-            branch: None,
-        };
-        let mut already: Vec<String> = Vec::new();
-        let kept = |why: String, already: &[String]| {
-            let released = if already.is_empty() {
-                String::new()
-            } else {
-                format!(" (already released: {})", already.join(", "))
+/// Releases what `intent` records for the withdrawal of `slug`, outside the
+/// writer lock and under the withdrawal lock: each worktree not yet
+/// released, the empty workspace, then the work branch. Each worktree is
+/// checked again just before it goes, and git's own refusals protect what
+/// changes after that. A worktree already gone, as after an interrupted
+/// run, counts as released. The branch's commit is recorded in the intent
+/// before the branch is deleted against it, so a branch that moved since it
+/// was checked is deleted at, and recorded with, the commit it moved to,
+/// and one deleted before an interruption is recorded with the commit the
+/// intent holds. Anything kept refuses: with nothing released yet the
+/// intent is closed and the todo stays as it was; otherwise the intent
+/// keeps what was released and the refusal names it.
+fn release(
+    root: &Path,
+    slug: &TodoSlug,
+    store: &Store,
+    mut intent: WithdrawalIntent,
+) -> Result<Released, WorkError> {
+    let refused = |intent: &WithdrawalIntent, cause: WorkError| -> WorkError {
+        let already: Vec<String> = intent
+            .worktrees
+            .iter()
+            .filter(|w| w.released)
+            .map(|w| format!("its worktree {}", w.path.display()))
+            .collect();
+        if already.is_empty() {
+            return match store.abandon_withdrawal(&intent.todo) {
+                Ok(()) => cause,
+                Err(err) => err,
             };
-            WorkError::refused(format!(
-                "`{slug}` is not withdrawn: {why}{released}; make its work safe, then withdraw again"
-            ))
-        };
-        if let Some(workspace) = &self.workspace {
-            if let Err(source) = instrukt_core::fsx::remove_dir(workspace) {
-                return Err(kept(
-                    format!(
-                        "its workspace {} was not removed ({source})",
-                        workspace.display()
-                    ),
-                    &already,
-                ));
-            }
-            already.push(format!("its workspace {}", workspace.display()));
         }
-        for path in self.worktrees {
-            let target = path.to_string_lossy().into_owned();
-            let why = match git::run(root, ["worktree", "remove", target.as_str()]) {
-                Ok(_) => {
-                    already.push(format!("its worktree {}", path.display()));
-                    done.worktrees.push(path);
-                    continue;
-                }
-                Err(git::GitError::Failed { stderr, .. }) => format!(
+        match store.record_withdrawal(intent) {
+            Ok(true) => WorkError::refused(format!(
+                "`{slug}` is not withdrawn yet: {cause} (already released: {}); make its work safe, then run `instrukt todo remove {slug}` again to complete the withdrawal",
+                already.join(", ")
+            )),
+            Ok(false) => WorkError::refused(format!(
+                "`{slug}`'s withdrawal record vanished while its resources were released; {cause}"
+            )),
+            Err(err) => err,
+        }
+    };
+    let listed = match worktrees(root) {
+        Ok(listed) => listed,
+        Err(err) => return Err(refused(&intent, err.into())),
+    };
+    for at in 0..intent.worktrees.len() {
+        if intent.worktrees[at].released {
+            continue;
+        }
+        let path = intent.worktrees[at].path.clone();
+        let Some(worktree) = listed.iter().find(|w| w.path == path) else {
+            intent.worktrees[at].released = true;
+            continue;
+        };
+        if let Err(cause) = check_worktree(worktree) {
+            return Err(refused(&intent, cause));
+        }
+        let target = path.to_string_lossy().into_owned();
+        match git::run(root, ["worktree", "remove", target.as_str()]) {
+            Ok(_) => intent.worktrees[at].released = true,
+            Err(git::GitError::Failed { stderr, .. }) => {
+                let cause = WorkError::refused(format!(
                     "git kept its worktree {} ({})",
                     path.display(),
                     stderr.trim()
-                ),
-                Err(err) => format!("its worktree {} was not removed ({err})", path.display()),
-            };
-            return Err(kept(why, &already));
+                ));
+                return Err(refused(&intent, cause));
+            }
+            Err(err) => return Err(refused(&intent, err.into())),
         }
-        if let Some(name) = &self.branch {
-            done.branch = delete_branch(root, name).map_err(|why| kept(why, &already))?;
-        }
-        Ok(done)
     }
+    match empty_workspace(root, slug) {
+        Ok(Some(workspace)) => {
+            if let Err(source) = instrukt_core::fsx::remove_dir(&workspace) {
+                let cause = WorkError::refused(format!(
+                    "its workspace {} was not removed ({source})",
+                    workspace.display()
+                ));
+                return Err(refused(&intent, cause));
+            }
+        }
+        Ok(None) => {}
+        Err(cause) => return Err(refused(&intent, cause)),
+    }
+    let branch = match intent.branch.clone() {
+        Some(name) => match delete_branch(root, &name, store, &mut intent) {
+            Ok(branch) => branch,
+            Err(cause) => return Err(refused(&intent, cause)),
+        },
+        None => None,
+    };
+    Ok(Released {
+        worktrees: intent.worktrees.into_iter().map(|w| w.path).collect(),
+        branch,
+    })
 }
 
 /// Deletes work branch `name` once no worktree has it checked out, with
-/// git's compare-and-delete against the head it read: a branch that moves
-/// on in between is kept with its newer commits. Returns the branch and
-/// the commit it pointed at when deleted, `None` when there is no such
-/// branch; otherwise why it is kept.
-fn delete_branch(root: &Path, name: &str) -> Result<Option<super::_model::ReleasedBranch>, String> {
-    let kept = |why: String| format!("its work branch `{name}` is kept: {why}");
-    let listed = worktrees(root).map_err(|err| kept(err.to_string()))?;
+/// git's compare-and-delete against the commit `intent` records for it,
+/// recorded first when the branch moved since. A branch gone already, as
+/// after an interrupted run, is released at the commit the intent holds.
+/// Returns the branch and its last commit, `None` when there is none to
+/// record.
+fn delete_branch(
+    root: &Path,
+    name: &str,
+    store: &Store,
+    intent: &mut WithdrawalIntent,
+) -> Result<Option<ReleasedBranch>, WorkError> {
+    let kept = |why: String| WorkError::refused(format!("its work branch `{name}` is kept: {why}"));
+    let listed = worktrees(root)?;
     if let Some(user) = listed.iter().find(|w| w.branch.as_deref() == Some(name)) {
         return Err(kept(format!(
             "the worktree {} has it checked out",
             user.path.display()
         )));
     }
-    let head = match branch_head(root, name) {
-        Ok(Some(head)) => head,
-        Ok(None) => return Ok(None),
-        Err(err) => return Err(kept(err.to_string())),
+    let Some(head) = branch_head(root, name)? else {
+        return Ok(intent.branch_head.clone().map(|head| ReleasedBranch {
+            name: name.to_owned(),
+            head,
+        }));
     };
+    if intent.branch_head.as_ref() != Some(&head) {
+        intent.branch_head = Some(head.clone());
+        if !store.record_withdrawal(intent)? {
+            return Err(kept("its withdrawal record vanished".to_owned()));
+        }
+    }
     let reference = format!("refs/heads/{name}");
-    tracing::info!(
-        event = "work_branch_releasing",
+    tracing::trace!(
+        event = "work_branch_delete_attempted",
         branch = name,
         head = %head,
-        "deleting a withdrawn todo's work branch at its last commit"
+        "deleting a withdrawn todo's work branch against its recorded commit"
     );
     match git::run(
         root,
@@ -1592,7 +1770,7 @@ fn delete_branch(root: &Path, name: &str) -> Result<Option<super::_model::Releas
                 stderr.trim()
             )));
         }
-        Err(err) => return Err(kept(err.to_string())),
+        Err(err) => return Err(err.into()),
     }
     // Git's own branch deletion also drops the branch's configuration; a
     // branch without any has none to drop.
@@ -1600,10 +1778,37 @@ fn delete_branch(root: &Path, name: &str) -> Result<Option<super::_model::Releas
     if let Err(err) = git::run(root, ["config", "--remove-section", section.as_str()]) {
         tracing::debug!(event = "work_branch_config_kept", branch = name, error = %err, "no branch configuration removed");
     }
-    Ok(Some(super::_model::ReleasedBranch {
+    Ok(Some(ReleasedBranch {
         name: name.to_owned(),
         head,
     }))
+}
+
+/// The per-computer withdrawal lock `state/withdrawal.lock`, held while a
+/// withdrawal's intent is open, so a withdrawal in progress is told apart
+/// from an interrupted one: only its holder releases resources or closes an
+/// intent. Taken before the writer lock and never while it is held;
+/// released before the withdrawal's reflection.
+struct WithdrawalLock {
+    _guard: instrukt_core::fsx::LockGuard,
+}
+
+impl WithdrawalLock {
+    /// How long a withdrawal waits for another one on this computer.
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+    fn acquire(home: &instrukt_core::home::Home) -> Result<Self, WorkError> {
+        let path = home.withdrawal_lock_file();
+        instrukt_core::state_db::refuse_link("the withdrawal lock", &path)
+            .map_err(instrukt_core::state_db::StateDbError::from)?;
+        match instrukt_core::fsx::LockGuard::acquire(&path, Self::TIMEOUT) {
+            Ok(guard) => Ok(Self { _guard: guard }),
+            Err(instrukt_core::fsx::FsError::LockTimeout { .. }) => Err(WorkError::refused(
+                "another withdrawal on this computer is still releasing working resources; nothing was done. Run the command again once it has ended",
+            )),
+            Err(err) => Err(err.into()),
+        }
+    }
 }
 
 fn change_kind(record: &mut TodoRecord, kind: TodoKind, force: bool) -> Result<(), WorkError> {
@@ -1971,7 +2176,27 @@ fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>,
     Ok(refs)
 }
 
-/// A record this computer holds for a todo ([`Work::local_record`]).
+/// What an artifact read is answered from: the record, why each version it
+/// asks for still lacks content, and, for a todo GitHub could not be read
+/// for, why its last known copy is unverified.
+struct Answer {
+    record: TodoRecord,
+    missing: BTreeMap<String, Unrestored>,
+    unverified: Option<String>,
+}
+
+impl Answer {
+    /// The refusal of a read whose record lacks what it asks for:
+    /// `absence` when the record is current, and from an unverified copy only
+    /// what that copy lacks (`lacking`), never established absence.
+    fn absent(&self, absence: WorkError, lacking: &str) -> WorkError {
+        match &self.unverified {
+            Some(why) => WorkError::refused(format!("{why}; that copy {lacking}")),
+            None => absence,
+        }
+    }
+}
+
 enum Held {
     /// A local item's: the local record it reads.
     Item(TodoRecord),

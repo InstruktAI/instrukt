@@ -62,6 +62,20 @@ pub(crate) const SHOWN_PREFIX: usize = 8;
 
 impl TodoAddress {
     /// The address of `record`'s exact entry.
+    /// The address an action on `record` takes: its plain slug for a live
+    /// todo, since a plain slug always means the live item, else its exact
+    /// address.
+    pub fn door(record: &TodoRecord) -> Self {
+        if record.is_live() {
+            Self {
+                slug: record.slug.clone(),
+                identity: None,
+            }
+        } else {
+            Self::exact(record)
+        }
+    }
+
     pub fn exact(record: &TodoRecord) -> Self {
         Self {
             slug: record.slug.clone(),
@@ -320,6 +334,49 @@ impl TodoRecord {
             }
         }
         copy
+    }
+
+    /// The record without what reflection learns of its artifact versions:
+    /// the provider's artifact address, the remote version number and the
+    /// content.
+    pub(crate) fn unlearned(&self) -> Self {
+        let mut bare = self.without_contents();
+        for artifact in &mut bare.artifacts {
+            artifact.address = None;
+            for version in &mut artifact.versions {
+                version.remote = None;
+            }
+        }
+        bare
+    }
+
+    /// Whether `other` holds the same record as this one, apart from what
+    /// reflection learns of artifact versions ([`TodoRecord::unlearned`]):
+    /// the one comparison a local change's admission, the merge of a
+    /// reflection's receipt and an explicit refresh's recheck use. A
+    /// revision number does not stand for a record; its content does.
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
+        self.unlearned() == other.unlearned()
+    }
+
+    /// Withdraws the todo at `at`: its status becomes `removed`, its claim
+    /// is cleared, and `removal` records the status restoration returns to
+    /// with the working resources the withdrawal released (`todos`,
+    /// "Parking, withdrawal and delivery").
+    pub(crate) fn withdraw(
+        &mut self,
+        at: Timestamp,
+        branch: Option<ReleasedBranch>,
+        worktrees: Vec<PathBuf>,
+    ) {
+        self.removal = Some(Removal {
+            at,
+            from: self.status,
+            branch,
+            worktrees,
+        });
+        self.status = TodoStatus::Removed;
+        self.claim = None;
     }
 }
 

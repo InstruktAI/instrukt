@@ -114,6 +114,57 @@ fn orchestrator(s: &Session<'_>, index: usize) -> Result<(), WorkError> {
     }
     Ok(())
 }
+/// Whether `assignment`, just reserved on item `index` and flushed, may be
+/// returned with `dispatch_allowed`: the row the state database holds now,
+/// never the session's copy, must not be conflicted and must still stand on
+/// the calling orchestrator's claim, active and unheld, with the
+/// reservation unbound. A flush that found another computer's head, or a
+/// refresh that replaced the row meanwhile, refuses; the reservation stays
+/// recorded, with nothing started.
+fn dispatch_admitted(
+    s: &Session<'_>,
+    index: usize,
+    assignment: &NativeAssignment,
+) -> Result<(), WorkError> {
+    let slug = s.items[index].record.slug.clone();
+    let not_admitted = |why: &str| {
+        WorkError::refused(format!(
+            "attempt {} of `{}` on `{slug}` is recorded, but {why}; it is not admitted for dispatch, so start nothing. Record that it did not start with `instrukt todo attempt {slug} --role {} --attempt {} --not-started --reason <why>`",
+            assignment.attempt, assignment.role, assignment.role, assignment.attempt
+        ))
+    };
+    let Some(live) = s.confirmed(index)? else {
+        return Err(not_admitted("the todo is gone from this computer's record"));
+    };
+    if live.reflection.conflicted {
+        return Err(WorkError::conflicted(&live.record));
+    }
+    let record = &live.record;
+    let caller = s.caller_session()?;
+    let machine = s.machine()?;
+    let claimed = record
+        .claim
+        .as_ref()
+        .is_some_and(|c| c.machine == machine && caller.is_some() && c.session == caller);
+    if !claimed {
+        return Err(not_admitted("the todo is claimed elsewhere now"));
+    }
+    if record.status != TodoStatus::Active || record.hold.is_some() {
+        return Err(not_admitted("the todo is no longer active and unheld"));
+    }
+    let reserved = record.bindings.iter().any(|b| {
+        b.attempt.semantic_key == assignment.semantic_key
+            && b.attempt.released_at.is_none()
+            && b.session.is_none()
+    });
+    if !reserved {
+        return Err(not_admitted(
+            "the todo's record no longer holds the reservation",
+        ));
+    }
+    Ok(())
+}
+
 /// Invariant 3: enforce configured `approvals.prd` before implementation or
 /// finalization for features and any todo carrying a `prd` artifact.
 fn require_prd_approval(
@@ -306,6 +357,9 @@ impl Work {
             let mut result = assignment.clone();
             result.dispatch_allowed = active.attempt.no_start_reason.is_some();
             if result.dispatch_allowed {
+                if s.unjudged(index) {
+                    return Err(super::_session::unjudged_refusal(todo));
+                }
                 result.selection = native_selection(&s, record, procedure)?;
                 let key = result.semantic_key.clone();
                 s.commit("native dispatch retry admitted", |s| {
@@ -321,8 +375,12 @@ impl Work {
                     Ok(())
                 })?;
                 s.flush()?;
+                dispatch_admitted(&s, index, &result)?;
             }
             return Ok(result);
+        }
+        if s.unjudged(index) {
+            return Err(super::_session::unjudged_refusal(todo));
         }
         let is_task = record.kind == instrukt_runner::interfaces::TodoKind::Task;
         let (lane, worktree, branch, base, assignment_kind) = if is_task {
@@ -442,6 +500,7 @@ impl Work {
             Ok(())
         })?;
         s.flush()?;
+        dispatch_admitted(&s, index, &assignment)?;
         Ok(assignment)
     }
     /// Bind the native result only after verifying the reserved shared placement.
