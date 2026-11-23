@@ -75,8 +75,10 @@ All Committizen types are allowed.
   between components, concurrency, security, or what a governed snippet
   directs other agents to do. The author dispatches that
   reviewer and waits for the verdict. Every other commit owes no review, and
-  the author asks no one: removal of dead code or files, a merge of work already reviewed where it was written, a
-  validation or mechanical repair, a rename or move, formatting, and wording or
+  the author asks no one: removal of dead code, files, or obsolete snippets, a merge of work already reviewed where it was written, a
+  validation or mechanical repair, a rename or move (including snippet relocation),
+  documentation curation that leaves rule semantics unchanged and adds nothing to an always-on set (demoting an `index.yaml` entry from `expanded` to `listed`, reordering index entries, or wiring `Required reads` on non-expanded snippets, where `instrukt docs validate` checks structural validity),
+  formatting, and wording or
   prompt prose whose effect is presentation. Presentation wording its owner
   judged while it was being written — wording a human shaped with the authoring
   session — is already reviewed where it was written. A change carrying one of
