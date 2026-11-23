@@ -549,7 +549,10 @@ published for a head, the one decided last, from its status, the review that
 status links and its reviews on the pull requests observed there. Every
 publication carries the moment its verdict was decided, and that moment orders
 them; the date GitHub gives a publication says when it was delivered, and a
-verdict repeated on a further pull request keeps the moment it had. The
+verdict repeated on a further pull request keeps the moment it had. A verdict
+that an import keeps or makes current over another settlement is given a
+moment later than that settlement's, so the operator's choice orders two
+settlements as a revision orders two versions. The
 computer brings a status or a pull request that lags behind that verdict up to
 it and asks for the rest.
 Observation rides the tick's existing
@@ -712,6 +715,13 @@ the gate adds no webhook, queue or process.
   decided last although GitHub received it earlier. The status and the other
   pull request are brought up to the change request with its findings, and the
   head is not reviewed again.
+- **An import chose a change request over a settlement whose approval was
+  recorded later and is on GitHub, the publication stopped between the review
+  and the status, and a computer without the evidence serves next:** the
+  import gave the chosen change request a moment later than the approval's, so
+  the review on the pull request is the verdict decided last although its
+  review was judged first. The status is brought up to it, the approval that
+  was set aside is written nowhere again, and the head is not reviewed again.
 - **The publication store is lost after a tick withdrew a derived approval:**
   the account of that withdrawal and of the commit found uncovered is gone and
   no derivation gives it again. Nothing is published from the loss: an approval

@@ -361,16 +361,28 @@ that found its coverage again (Admission of review evidence).
 
 A version is named by the digest of its report, and a derived approval by the
 digest of its coverage. Each verdict also has its moment, which says when it
-was decided and never when it was published. A version's moment is the moment
-it was recorded with, for an admitted revision the moment it was offered;
-where that is not later than the moment of the version it replaces, it is the
-first moment after that one, so the moments of a settlement keep the order of
-its versions whatever the clocks of the computers that held it read. A derived
-approval's moment is the moment the tick recorded the coverage it is published
-with. The moment is kept with the verdict, travels with it through an export
-and an import, and is the same in every publication of it. The status carries
-the name and the moment in its description, and the review carries both at the
-head of its body, ahead of the report or the coverage.
+was decided and never when it was published. A head verdict is decided when
+it is recorded, and decided again when an import keeps or makes its settlement
+the commit's over another one. Its moment is later than the moment of the
+verdict it was decided over.
+
+| Decided by | The moment of the version |
+| --- | --- |
+| Its recording | The moment it was recorded with, for an admitted revision the moment it was offered. Where that is not later than the moment of the version it replaces, it is the first moment after that one. |
+| An import that sets a settlement aside for the one that stands on this computer (Evidence when the serving computer changes) | Unchanged where the standing settlement's current version already has a later moment than the latest version of the settlement set aside. Otherwise that current version takes the moment of the import, or the first moment after the set-aside one's where the import's is not later. |
+
+The moments of a commit's head verdicts thus keep the order in which they
+became current, across the versions of a settlement and across a settlement
+and one an import set aside for it, whatever the clocks of the computers that
+held them read. An import moves the moment of no other version and changes
+nothing else of one: when and where a version was recorded stay with it, and
+`instrukt review show` gives both beside its moment. A derived approval's
+moment is the moment the tick recorded the coverage it is published with. The
+moment is kept with the verdict and travels with it through an export and an
+import, and a publication carries the moment its verdict has when it is
+written. The status carries the name and the moment in its description, and
+the review carries both at the head of its body, ahead of the report or the
+coverage.
 
 | Destination | Owed while |
 | --- | --- |
@@ -393,7 +405,10 @@ reviewer bot's newest status on the commit and its latest review of the commit
 on the pull request, never an earlier one. A revision is therefore published
 over an earlier version of the same commit, also when it reverses it and when
 it makes an earlier outcome current again: a verdict that returns after
-another one was published is written as a new review. A status or a review
+another one was published is written as a new review. A verdict whose moment
+an import moved is published again with that moment, over what GitHub shows
+of it with the earlier one and over what it shows of the settlement set aside.
+A status or a review
 GitHub no longer shows is written again from the evidence; and a destination
 whose latest already shows the current verdict is not written again, so a
 publication repeated after an interruption leaves no duplicate. What GitHub
@@ -502,7 +517,9 @@ writes the publication store, so no command waits behind a tick
 (`sdlc/policy/state-storage`). Neither store takes the state database's writer
 lock, and readers take no lock. The publication store refers to evidence by
 commit and version and shares no transaction with the evidence store. What it
-holds of GitHub is read again when it is missing, and whether the integration
+holds of GitHub is held with the name and the moment GitHub shows, so a
+verdict whose moment an import moved is owed again at each destination. It is
+read again when it is missing, and whether the integration
 head is covered now is derived again. Three things in it are obtained from
 nowhere else and are kept there until they are retired: the derived approval
 of a candidate the canonical branch has since taken, the answer that decided a
@@ -629,6 +646,16 @@ settlements records the other, two statements contradict: a settlement that
 stands here is not displaced without a new statement, and one that was handed
 off gives way to the settlement an export brings.
 
+An import that sets a settlement aside decides the commit's verdict again,
+whether the choice is stated at it or was recorded at an earlier one. From
+that import on, the current version of the settlement that stands on this
+computer has a later moment than every version of the one set aside (Verdict
+publication), and its destinations are owed with that moment. What is
+published after the import is therefore recognised ahead of everything that
+was published of the settlement set aside, by this computer and by one that
+holds no evidence. A settlement that keeps its place as handed off stands on
+another computer and is not changed here.
+
 Setting a settlement aside takes a revision that is pending on it along. A
 settlement that was set aside is kept whole: its identity, versions, reports
 and reviewing sessions, where and when each was recorded, that pending
@@ -739,12 +766,21 @@ But a later head of that pull request carries no status from that verdict
   review for it: its pull requests show the commit's status and no findings
   until the evidence is imported.
 - Recognition orders published verdicts by the moments they carry. Within one
-  settlement that is the order of its versions. Two verdicts that are not
-  versions of one settlement, two settlements of one commit or a head verdict
-  and a derived approval, carry moments read from the clocks of the computers
-  that recorded them, and their order is as true as those clocks agree. Of two
-  verdicts of one moment the order is not known, and the refusing one is taken
-  as the later.
+  settlement that is the order of its versions, and between a settlement and
+  one an import set aside for it that is the choice. Two verdicts that neither
+  a revision nor an import put in order, two settlements of one commit that no
+  import has met together or a head verdict and a derived approval, carry
+  moments read from the clocks of the computers that recorded them, and their
+  order is as true as those clocks agree. Of two verdicts of one moment the
+  order is not known, and the refusing one is taken as the later.
+- A choice between two settlements reaches GitHub with the publications that
+  follow the import. Until the importing computer has written them, GitHub
+  orders the two settlements as before the import, and a computer that is lost
+  in between takes the choice with it. A moment is moved past the set-aside
+  settlement as the importing computer holds it: where that settlement was
+  handed off and is revised further on the computer it was handed to, a
+  version published from there carries a later moment again, until that
+  computer imports the chosen settlement.
 - A derived approval is derived again until GitHub shows it as the commit's
   status. A covering head's verdict that changes after the derivation of the
   tick that publishes it, or after the status is shown, withdraws nothing: the
