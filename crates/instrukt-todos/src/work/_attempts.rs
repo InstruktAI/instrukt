@@ -118,9 +118,10 @@ fn orchestrator(s: &Session<'_>, index: usize) -> Result<(), WorkError> {
 /// returned with `dispatch_allowed`: the row the state database holds now,
 /// never the session's copy, must not be conflicted and must still stand on
 /// the calling orchestrator's claim, active and unheld, with the
-/// reservation unbound. A flush that found another computer's head, or a
-/// refresh that replaced the row meanwhile, refuses; the reservation stays
-/// recorded, with nothing started.
+/// reservation unbound, and in the same snapshot no withdrawal of the todo
+/// may be open. A flush that found another computer's head, a refresh that
+/// replaced the row meanwhile, or a withdrawal opened meanwhile refuses;
+/// the reservation stays recorded, with nothing started by this call.
 fn dispatch_admitted(
     s: &Session<'_>,
     index: usize,
@@ -129,13 +130,18 @@ fn dispatch_admitted(
     let slug = s.items[index].record.slug.clone();
     let not_admitted = |why: &str| {
         WorkError::refused(format!(
-            "attempt {} of `{}` on `{slug}` is recorded, but {why}; it is not admitted for dispatch, so start nothing. Record that it did not start with `instrukt todo attempt {slug} --role {} --attempt {} --not-started --reason <why>`",
-            assignment.attempt, assignment.role, assignment.role, assignment.attempt
+            "attempt {} of `{}` on `{slug}` is recorded, but {why}; it is not admitted for dispatch, so start nothing for it. See where the todo and this attempt stand with `instrukt todo show {slug}` before acting on it",
+            assignment.attempt, assignment.role
         ))
     };
-    let Some(live) = s.confirmed(index)? else {
+    let Some((live, withdrawing)) = s.confirmed(index)? else {
         return Err(not_admitted("the todo is gone from this computer's record"));
     };
+    if withdrawing {
+        return Err(not_admitted(
+            "the todo's withdrawal is releasing its working resources",
+        ));
+    }
     if live.reflection.conflicted {
         return Err(WorkError::conflicted(&live.record));
     }

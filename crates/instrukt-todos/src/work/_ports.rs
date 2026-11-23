@@ -365,9 +365,12 @@ fn admitted(
     machine: &instrukt_core::machine::MachineId,
     holds: impl Fn(&Binding) -> bool,
 ) -> Result<(), &'static str> {
-    let Some(live) = s.confirmed(index).map_err(|_| "cannot be read back")? else {
+    let Some((live, withdrawing)) = s.confirmed(index).map_err(|_| "cannot be read back")? else {
         return Err("is gone from this computer's record");
     };
+    if withdrawing {
+        return Err("belongs to a todo whose withdrawal is releasing its working resources");
+    }
     if live.reflection.conflicted {
         return Err("met a newer GitHub revision");
     }

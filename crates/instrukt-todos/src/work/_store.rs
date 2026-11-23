@@ -490,6 +490,19 @@ impl Store {
         })
     }
 
+    /// The stored row of `id` and whether its withdrawal intent is open,
+    /// read in one snapshot; `None` when there is no row or it belongs to
+    /// another project.
+    pub fn item_withdrawing(&self, id: &TodoId) -> Result<Option<(LocalItem, bool)>, WorkError> {
+        self.read(None, |conn, path, project| {
+            let Some(item) = load_own(conn, path, project, id)? else {
+                return Ok(None);
+            };
+            let withdrawing = load_intent(conn, path, project, id)?.is_some();
+            Ok(Some((item, withdrawing)))
+        })
+    }
+
     /// The recorded withdrawal intent of `id`, `None` when it has none.
     pub fn withdrawal_intent(&self, id: &TodoId) -> Result<Option<WithdrawalIntent>, WorkError> {
         self.read(None, |conn, path, project| {

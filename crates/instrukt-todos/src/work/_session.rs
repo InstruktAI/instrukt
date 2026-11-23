@@ -1267,8 +1267,10 @@ impl<'w> Session<'w> {
     /// Item `index`'s row as the state database holds it now, `None` when
     /// it is gone from the project: what a flush confirmed, whatever another
     /// command or reflection committed since this command last read it.
-    pub fn confirmed(&self, index: usize) -> Result<Option<LocalItem>, WorkError> {
-        self.store.item(&self.items[index].record.id)
+    /// Read in the same snapshot, whether the todo's withdrawal intent is
+    /// open (`withdrawal_intents`).
+    pub fn confirmed(&self, index: usize) -> Result<Option<(LocalItem, bool)>, WorkError> {
+        self.store.item_withdrawing(&self.items[index].record.id)
     }
 
     /// Refuses acting on item `index` while its withdrawal is recorded and
