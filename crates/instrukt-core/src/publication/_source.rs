@@ -26,6 +26,19 @@ const LINK_MODE: &str = "120000";
 /// The file a master renders into, and the file Codex reads in its place.
 const ENTRYPOINT_FILE_NAMES: [&str; 2] = ["AGENTS.md", "AGENTS.override.md"];
 
+/// What a view holds at the place of an entry index
+/// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "One
+/// file, at the root").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EntryIndex<'a> {
+    /// No file there, and no link at or above it.
+    Absent,
+    /// The index's bytes.
+    Present(&'a [u8]),
+    /// The index is, or lies behind, a symbolic link: nothing is read.
+    Linked,
+}
+
 /// The project a sync publishes.
 #[derive(Debug, Clone)]
 pub(super) struct Project {
@@ -307,6 +320,18 @@ impl Committed {
 
     pub(super) fn file(&self, path: &str) -> Option<&[u8]> {
         self.files.get(path).map(Vec::as_slice)
+    }
+
+    /// What the view holds at `path`, the place of an entry index: no file
+    /// and no link at or above it, its bytes, or a link at or above it,
+    /// through which nothing is read.
+    pub(super) fn entry_index(&self, path: &str) -> EntryIndex<'_> {
+        if self.is_link(path) {
+            EntryIndex::Linked
+        } else {
+            self.file(path)
+                .map_or(EntryIndex::Absent, EntryIndex::Present)
+        }
     }
 
     /// Whether `path`, or a folder above it, is a symbolic link, through

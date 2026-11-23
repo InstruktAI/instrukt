@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::_patch::Contribution;
-use super::_source::{Committed, MASTER_FILE_NAME};
+use super::_source::{Committed, EntryIndex, MASTER_FILE_NAME};
 use super::PublicationError;
 use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
 use crate::docs::{
@@ -753,6 +753,19 @@ pub enum RenderFindingKind {
     /// each after what it requires: each document of the cycle, in order,
     /// the first again last.
     CompanyCycle { documents: Vec<String> },
+    /// The company index, or one of its entries, cannot be rendered.
+    CompanyIndex {
+        index: String,
+        problem: super::CompanyIndexProblem,
+    },
+    /// A `listed` company document has no description to name it by.
+    CompanyListedWithoutDescription { document: String },
+    /// A `listed` company document is already held in full, brought in by
+    /// the `expanded` document `carrier`.
+    CompanyListedCarried { document: String, carrier: String },
+    /// The entry index is, or lies behind, a symbolic link, through which
+    /// nothing is read.
+    LinkedIndex { index: String },
 }
 
 impl std::fmt::Display for RenderFinding {
@@ -807,6 +820,22 @@ impl std::fmt::Display for RenderFinding {
                 "{path}: {} require each other in a cycle, so no order puts each document after what it requires; nothing is rendered until one of these required reads is removed",
                 documents.join(" → ")
             ),
+            RenderFindingKind::CompanyIndex { index, problem } => write!(
+                f,
+                "{path}: {index} {problem}; nothing is rendered until it is fixed"
+            ),
+            RenderFindingKind::CompanyListedWithoutDescription { document } => write!(
+                f,
+                "{path}: {document} is listed but has no `description` in its frontmatter, the line that names it; add one; nothing is rendered until it is fixed"
+            ),
+            RenderFindingKind::CompanyListedCarried { document, carrier } => write!(
+                f,
+                "{path}: {document} is listed, but {carrier} in `expanded` already brings it in full; remove it from `listed`; nothing is rendered until it is fixed"
+            ),
+            RenderFindingKind::LinkedIndex { index } => write!(
+                f,
+                "{path}: {index} is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then"
+            ),
         }
     }
 }
@@ -848,13 +877,29 @@ pub(super) fn render_tree(
             super::_company::render(tree, override_beside_root, &mut plan);
             None
         }
-        RootDocument::Absent if masters.contains(&MASTER_FILE_NAME) => {
+        RootDocument::Absent
+            if tree.entry_index(super::_company::COMPANY_INDEX) != EntryIndex::Absent =>
+        {
             super::_company::render(tree, override_beside_root, &mut plan);
             None
         }
         RootDocument::Absent => None,
         RootDocument::ProjectLayer(project) => Some(project),
     };
+    // Where a root rendering stays: in a company home, wherever its index is
+    // there, read or not; in a project, beside each master.
+    let mut kept: BTreeSet<&Path> = BTreeSet::new();
+    match &project {
+        Some(_) => kept.extend(
+            masters
+                .iter()
+                .map(|master| Path::new(master).parent().unwrap_or(Path::new(""))),
+        ),
+        None if tree.entry_index(super::_company::COMPANY_INDEX) != EntryIndex::Absent => {
+            kept.insert(Path::new(""));
+        }
+        None => {}
+    }
     if let Some(project) = project {
         render_project(
             tree,
@@ -864,13 +909,9 @@ pub(super) fn render_tree(
             &mut plan,
         )?;
     }
-    let beside_master: BTreeSet<&Path> = masters
-        .iter()
-        .map(|master| Path::new(master).parent().unwrap_or(Path::new("")))
-        .collect();
     for (path, bytes) in tree.entrypoints() {
         let dir = Path::new(path).parent().unwrap_or(Path::new(""));
-        if !beside_master.contains(dir) && is_rendering(bytes) {
+        if !kept.contains(dir) && is_rendering(bytes) {
             plan.removals.push(PathBuf::from(path));
         }
     }

@@ -39,7 +39,7 @@ pub use _adoption::{
     published_schema,
 };
 pub use _agents::{InstructionOutcome, InstructionTarget, NonDelivery};
-pub use _company::CompanyReadProblem;
+pub use _company::{CompanyIndexProblem, CompanyReadProblem};
 pub use _editor::{
     EditorChange, EditorChangeKind, SCHEMAS_DIR, committed_modeline, editor_schema_describes,
     refresh_editor_schemas,

@@ -1,15 +1,17 @@
 //! A company document as a company rendering reads it
 //! (`project/instrukt/spec/feature/publication/agent-entrypoints`, "Company
 //! home entrypoint"): its text without its `## Required reads` section, each
-//! entry of that section as written, the references in its text and its
-//! directives. What the entries and references name is publication's to
-//! judge.
+//! entry of that section as written, the references in its text, its
+//! directives and the `description` of its frontmatter. What the entries and
+//! references name, and what a document without a description means, is
+//! publication's to judge.
 
 use std::ops::Range;
 
 use super::_corpus::required_reads_section;
+use super::_frontmatter::{Frontmatter, parse_mapping};
 use super::_refs;
-use super::_text::{self, Directive};
+use super::_text::{self, Directive, split_frontmatter};
 use crate::ids::SnippetId;
 
 /// One company document, read.
@@ -25,6 +27,9 @@ pub(crate) struct CompanyDocument {
     /// Its `@config`, `@exec` and `@include` directives, the `## Required
     /// reads` section's included.
     pub directives: Vec<Directive>,
+    /// The `description` of its frontmatter, as any description is read:
+    /// trimmed, inner line breaks kept; `None` when it is missing or blank.
+    pub description: Option<String>,
 }
 
 /// A reference in a company document's text, as written.
@@ -70,11 +75,14 @@ pub(crate) fn company_document(text: &str) -> CompanyDocument {
             .map_or(text.len(), |line| line.span.start);
         body = format!("{}{}", &text[..from], &text[to..]);
     }
+    let description = parse_mapping(split_frontmatter(text).frontmatter)
+        .and_then(|mapping| Frontmatter::read(mapping, None).description);
     CompanyDocument {
         references: references(&body),
         directives,
         body,
         reads,
+        description,
     }
 }
 
@@ -282,5 +290,24 @@ mod tests {
             document.directives.as_slice(),
             [Directive::Config { path, .. }] if path == "company"
         ));
+    }
+
+    #[test]
+    fn a_company_documents_description_is_read_from_its_frontmatter() {
+        let described = company_document("---\ndescription: Who works here.\n---\n\n# People\n");
+        assert_eq!(described.description.as_deref(), Some("Who works here."));
+        let absent = company_document("---\nvisibility: internal\n---\n\n# People\n");
+        assert_eq!(absent.description, None);
+        let bare = company_document("# People\n");
+        assert_eq!(bare.description, None);
+        let blank = company_document("---\ndescription: '  '\n---\n\n# People\n");
+        assert_eq!(blank.description, None);
+        let across = company_document(
+            "---\ndescription: |\n  Who works here,\n  and since when.\n---\n\n# People\n",
+        );
+        assert_eq!(
+            across.description.as_deref(),
+            Some("Who works here,\nand since when.")
+        );
     }
 }

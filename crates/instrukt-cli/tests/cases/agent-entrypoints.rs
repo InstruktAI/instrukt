@@ -934,15 +934,25 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
         .unwrap()
         .to_owned();
     let home = env.git_repo(&relative);
-    home.write(
-        "AGENTS.master.md",
-        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/people.md\n",
-    )
-    .write(
-        "docs/people.md",
-        "# People\n\nWho works at Acme.\n\n## Required reads\n\n- roles.md\n",
-    )
-    .write("docs/roles.md", "# Roles\n\nWhat each role at Acme does.\n");
+    let index = "expanded:\n  - company.md\nlisted:\n  - systems.md\n  - teams/suppliers.md\n";
+    home.write("docs/index.yaml", index)
+        .write(
+            "docs/company.md",
+            "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- people.md\n",
+        )
+        .write(
+            "docs/people.md",
+            "# People\n\nWho works at Acme.\n\n## Required reads\n\n- roles.md\n",
+        )
+        .write("docs/roles.md", "# Roles\n\nWhat each role at Acme does.\n")
+        .write(
+            "docs/systems.md",
+            "---\ndescription: The systems Acme works with.\n---\n\n# Systems\n\nThe workshop runs on ERPNext.\n",
+        )
+        .write(
+            "docs/teams/suppliers.md",
+            "---\ndescription: >-\n  Who supplies Acme's frames,\n  and on what terms.\n---\n\n# Suppliers\n",
+        );
     env.run(home.path(), ["hooks", "install"]).success();
     commit_through_hook(&env, &home, "the company's knowledge");
     let committed = home.git(["show", "HEAD:AGENTS.md"]);
@@ -962,15 +972,15 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     // The home's file is the committed one: its status is clean.
     assert_eq!(clone.read("AGENTS.md"), home.read("AGENTS.md"));
 
-    // The master gains a required read of a snippet: the commit is made, its
-    // AGENTS.md is the one before, and both commands name the master and
-    // the read.
+    // The index gains an entry naming a snippet: the commit is made, its
+    // AGENTS.md is the one before, and both commands name the index and the
+    // entry.
     let head = home.git(["rev-parse", "HEAD"]);
     home.write(
-        "AGENTS.master.md",
-        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/people.md\n- general/policy/commits\n",
+        "docs/index.yaml",
+        "expanded:\n  - company.md\n  - general/policy/commits\nlisted:\n  - systems.md\n",
     );
-    commit_through_hook(&env, &home, "doctrine in the master");
+    commit_through_hook(&env, &home, "doctrine in the index");
     assert_ne!(home.git(["rev-parse", "HEAD"]), head);
     assert_eq!(home.git(["show", "HEAD:AGENTS.md"]), committed);
     let validated = env
@@ -992,10 +1002,11 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     // A required read naming a symbolic link is never read: in the working
     // tree and in the index the commit is made from, the finding names it as
     // a link.
-    home.write(
-        "AGENTS.master.md",
-        "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- docs/team.md\n",
-    );
+    home.write("docs/index.yaml", "expanded:\n  - company.md\n")
+        .write(
+            "docs/company.md",
+            "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- team.md\n",
+        );
     std::os::unix::fs::symlink("roles.md", home.path().join("docs/team.md")).unwrap();
     let linked = env
         .run(home.path(), ["docs", "render", "--check"])
@@ -1017,28 +1028,88 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     );
     assert_eq!(home.git(["show", "HEAD:AGENTS.md"]), committed);
 
-    // Each of these leaves the home's rendering as it is, and the render
-    // names why.
+    // Each of these leaves the home's rendering as it is, and both the render
+    // and configuration's validation name why.
     let refused = |step: &str| {
         let before = home.read("AGENTS.md");
         let output = env.run(home.path(), ["docs", "render"]).failure();
         assert_eq!(home.read("AGENTS.md"), before);
+        let validated = env
+            .run(&env.path(""), ["config", "validate", "--company", "acme"])
+            .failure();
         format!(
-            "{step}:\n{}{}",
+            "{step}:\n{}{}config validate --company acme:\n{}",
             stdout(&env, &output),
-            shown(&env, &output.get_output().stderr)
+            shown(&env, &output.get_output().stderr),
+            stdout(&env, &validated)
         )
     };
     let mut refusals = Vec::new();
+    let company = "# Acme\n\nAcme builds bicycles to order.\n";
+    home.write("docs/company.md", company);
+
+    // Index entries naming no company document.
+    for (step, entry) in [
+        ("an entry naming a snippet", "general/policy/commits"),
+        ("an entry naming a domain", "sdlc"),
+        ("an entry outside docs", "../README.md"),
+        ("an entry naming a missing file", "nowhere.md"),
+        ("an entry naming a link", "team.md"),
+        ("an entry naming the index itself", "index.yaml"),
+    ] {
+        home.write("docs/index.yaml", &format!("expanded:\n  - {entry}\n"));
+        refusals.push(refused(step));
+    }
+    std::fs::remove_file(home.path().join("docs/team.md")).unwrap();
+
+    // A required read naming a file that is no Markdown document, though the
+    // home holds it.
+    home.write("docs/index.yaml", "expanded:\n  - company.md\n")
+        .write("docs/notes.txt", "Notes.\n")
+        .write(
+            "docs/company.md",
+            "# Acme\n\n## Required reads\n\n- notes.txt\n",
+        );
+    refusals.push(refused("a required read that is no Markdown document"));
+    std::fs::remove_file(home.path().join("docs/notes.txt")).unwrap();
+
+    // A key the index does not allow.
+    home.write(
+        "docs/index.yaml",
+        "description: Acme\nexpanded:\n  - company.md\n",
+    );
+    refusals.push(refused("a key the index does not allow"));
+
+    // A listed document the expanded documents already bring in, and one
+    // without a description.
+    home.write(
+        "docs/company.md",
+        "# Acme\n\n## Required reads\n\n- people.md\n",
+    )
+    .write(
+        "docs/index.yaml",
+        "expanded:\n  - company.md\nlisted:\n  - people.md\n  - notes.md\n",
+    )
+    .write("docs/notes.md", "# Notes\n");
+    refusals.push(refused("listed documents"));
+
+    // A linked index is never read.
+    home.write("docs/real-index.yaml", "expanded:\n  - company.md\n");
+    std::fs::remove_file(home.path().join("docs/index.yaml")).unwrap();
+    std::os::unix::fs::symlink("real-index.yaml", home.path().join("docs/index.yaml")).unwrap();
+    refusals.push(refused("a linked index"));
+    std::fs::remove_file(home.path().join("docs/index.yaml")).unwrap();
+    std::fs::remove_file(home.path().join("docs/real-index.yaml")).unwrap();
+    home.write("docs/index.yaml", "expanded:\n  - company.md\n");
 
     // A read through a linked folder is never read, though the index holds
     // the file below it.
     home.write(
-        "AGENTS.master.md",
-        "# Acme\n\n## Required reads\n\n- docs/team/people.md\n",
+        "docs/company.md",
+        "# Acme\n\n## Required reads\n\n- team/people.md\n",
     )
     .write("docs/team/people.md", "# Team\n");
-    home.git(["add", "AGENTS.master.md", "docs/team/people.md"]);
+    home.git(["add", "docs/company.md", "docs/team/people.md"]);
     std::fs::remove_dir_all(home.path().join("docs/team")).unwrap();
     home.write("outside/people.md", "# Outside\n\nNot the company's.\n");
     std::os::unix::fs::symlink("../outside", home.path().join("docs/team")).unwrap();
@@ -1048,8 +1119,8 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
 
     // Nor through a linked `docs/`.
     home.write(
-        "AGENTS.master.md",
-        "# Acme\n\n## Required reads\n\n- docs/people.md\n",
+        "docs/company.md",
+        "# Acme\n\n## Required reads\n\n- people.md\n",
     );
     std::fs::rename(home.path().join("docs"), home.path().join("shelf")).unwrap();
     std::os::unix::fs::symlink("shelf", home.path().join("docs")).unwrap();
@@ -1068,42 +1139,34 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     home.git(["reset", "--quiet"]);
 
     // A configured value among the required reads is a directive all the
-    // same; configuration's validation names it too.
+    // same.
     home.write(
-        "AGENTS.master.md",
-        "# Acme\n\n## Required reads\n\n<!-- @config: company -->\n- docs/people.md\n",
+        "docs/company.md",
+        "# Acme\n\n## Required reads\n\n<!-- @config: company -->\n- people.md\n",
     );
     refusals.push(refused("a configured value among the required reads"));
-    let validated = env
-        .run(&env.path(""), ["config", "validate", "--company", "acme"])
-        .failure();
-    refusals.push(format!(
-        "config validate --company acme:\n{}",
-        stdout(&env, &validated)
-    ));
 
     // Documents requiring each other have no order.
-    home.write(
-        "AGENTS.master.md",
-        "# Acme\n\n## Required reads\n\n- docs/a.md\n",
-    )
-    .write("docs/a.md", "# A\n\n## Required reads\n\n- b.md\n")
-    .write("docs/b.md", "# B\n\n## Required reads\n\n- a.md\n");
+    home.write("docs/company.md", "# Acme\n\n## Required reads\n\n- a.md\n")
+        .write("docs/a.md", "# A\n\n## Required reads\n\n- b.md\n")
+        .write("docs/b.md", "# B\n\n## Required reads\n\n- a.md\n");
     refusals.push(refused("a cycle"));
 
     // Every reference form in the text is held to the company's own
     // documents; a reference to one of them stays.
     home.write(
-        "AGENTS.master.md",
-        "# Acme\n\nSee @general/policy/commits for details.\nSee @general for details.\nRead [Outside](../secret.md).\nSee @docs/people.md for details.\n\n## See Also\n\n- general/policy/commits\n",
+        "docs/company.md",
+        "# Acme\n\nSee @general/policy/commits for details.\nSee @general for details.\nRead [Outside](../secret.md).\nSee @people.md for details.\n\n## See Also\n\n- general/policy/commits\n",
     );
     refusals.push(refused("references in the text"));
     insta::assert_snapshot!("company_rendering_refusals", refusals.join("\n"));
 
-    // A bare `@word` mentions someone: it is prose, and the home renders.
+    // A bare `@word` mentions someone, and a link to a file of the home that
+    // is no Markdown document is kept as written: the home renders.
+    std::fs::write(home.path().join("docs/frame.png"), [0x89, b'P', b'N', b'G']).unwrap();
     home.write(
-        "AGENTS.master.md",
-        "# Acme\n\nAsk @maurice about frames.\n\n## Required reads\n\n- docs/people.md\n",
+        "docs/company.md",
+        "# Acme\n\nAsk @maurice about frames.\n\n![A frame](frame.png)\n\n## Required reads\n\n- people.md\n",
     );
     let mentioned = env.run(home.path(), ["docs", "render"]).success();
     insta::assert_snapshot!(
