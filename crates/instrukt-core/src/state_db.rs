@@ -868,16 +868,13 @@ mod tests {
      {
         let path = Path::new(":memory:");
         let mut conn = Connection::open_in_memory().unwrap();
-        for migration in _schema::MIGRATIONS.iter().take(32) {
-            let tx = conn.transaction().unwrap();
-            match migration {
-                _schema::Migration::Sql(script) => tx.execute_batch(script),
-                _schema::Migration::Step(step) => step(&tx),
-            }
-            .unwrap();
-            tx.commit().unwrap();
-        }
-        conn.pragma_update(None, "user_version", 32).unwrap();
+        let at_32 = Store {
+            file: path.to_path_buf(),
+            migrations: &_schema::MIGRATIONS[..32],
+            ..Store::state(&Home::at_user_home(PathBuf::from("/")))
+        };
+        migrate_store(&mut conn, &at_32).unwrap();
+        assert_eq!(user_version(&conn, path).unwrap(), 32);
         let request = |key: &str, selection: serde_json::Value| {
             serde_json::json!({
                 "preferences": [{"agent": "antigravity", "tier": "strong"}],
