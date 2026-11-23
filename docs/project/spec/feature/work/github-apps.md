@@ -552,9 +552,10 @@ as a verdict of that commit would be. So are two things this computer keeps of
 a settlement it handed off: the computer the settlement was handed to, which
 the refusals of a further version and of an import that meets the settlement
 name, and the moment the settlement's current version had when it was handed
-off, which an import that sets the settlement aside compares (Evidence when
-the serving computer changes). Both are kept with the settlement and not with
-its versions, so retiring those versions removes neither. An
+off, which an import compares when it sets the settlement aside while this
+computer holds it in place as handed off (Evidence when the serving computer
+changes). Both are kept with the settlement and not with its versions, so
+retiring those versions removes neither. An
 exemption is current while the canonical
 branch does not contain the commit and a branch of the project still does; an
 outstanding publication until it is published or refused; a derived approval
@@ -662,11 +663,19 @@ was published of the settlement set aside, by this computer and by one that
 holds no evidence. A settlement that keeps its place as handed off stands on
 another computer and is not changed here.
 
-Where the settlement set aside is one this computer handed off, the moment
-compared is the one this computer keeps of it: the moment its current version
-had when it was handed off (Review evidence storage). The import
-reads it from the evidence store, so it decides the same before and after that
-settlement's versions were retired, and it reads nothing but the evidence
+Which moment of the settlement set aside is compared follows from the side
+that settlement is on at this import: the export's, or the one this computer
+holds in place.
+
+| The settlement set aside at this import | The moment compared |
+| --- | --- |
+| The export's settlement, set aside for one that stands here | The latest among the versions the export carries of it. A settlement this computer met before at a lower hand-off number, as its holder, as a former holder or as one it set aside, is compared the same way: nothing this computer keeps of it from that lower number is read, the moment it had when this computer handed it off included. |
+| The settlement this computer holds in place as standing | That of its current version, read from the evidence store. |
+| The settlement this computer holds in place as handed off | The one this computer keeps of it: the moment its current version had when it was handed off (Review evidence storage). |
+
+The kept moment is read from the evidence store, so an import that sets a
+handed-off settlement aside decides the same before and after that
+settlement's versions were retired. An import reads nothing but the evidence
 store and the export.
 
 Setting a settlement aside takes a revision that is pending on it along. A
@@ -790,10 +799,12 @@ But a later head of that pull request carries no status from that verdict
   follow the import. Until the importing computer has written them, GitHub
   orders the two settlements as before the import, and a computer that is lost
   in between takes the choice with it. A moment is moved past the set-aside
-  settlement as the importing computer holds it: where that settlement was
-  handed off and is revised further on the computer it was handed to, a
-  version published from there carries a later moment again, until that
-  computer imports the chosen settlement.
+  settlement as that import reads it (Evidence when the serving computer
+  changes): where the settlement set aside was held here as handed off and is
+  revised further on the computer it was handed to, a version published from
+  there carries a later moment again, until that computer imports the chosen
+  settlement, or this one imports an export that carries that version while
+  the chosen settlement stands here.
 - A derived approval is derived again until GitHub shows it as the commit's
   status. A covering head's verdict that changes after the derivation of the
   tick that publishes it, or after the status is shown, withdraws nothing: the
