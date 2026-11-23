@@ -139,10 +139,14 @@ command-wide. What a failure stops depends on the operation it interrupts:
   requests, and any other failure, an App setup mismatch or refusal and a
   refused credential included, lets the pass continue.
 
-Rate limits, including a secondary limit GitHub reports in a successful GraphQL
-answer, retain their retry boundary, counted from when the throttled answer is
-received: GitHub's `Retry-After` delay, or without one its reset (a minute for a
-secondary limit), and the later of the two when no requests remain. Locally accepted
+Rate limits retain their retry boundary: GitHub's `Retry-After` delay, counted
+from when the throttled answer is received, or without one its reset, and the
+later of the two when no requests remain. A secondary limit GitHub reports in the
+errors of a successful GraphQL answer without a `Retry-After` waits a minute from
+receipt instead of the reset, unless no requests remain. An HTTP 403 or 429
+refusal is judged by its headers alone, never by its body: a 429, or a 403 with no
+requests remaining or a `Retry-After`, is a rate limit with the boundary its
+headers name, and any other 403 stays a refusal. Locally accepted
 work and its pending reflection survive; no credential failure is reported as
 remote success or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.
