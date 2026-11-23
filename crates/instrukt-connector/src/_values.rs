@@ -156,6 +156,32 @@ pub enum Admission {
     Undecided(String),
 }
 
+/// Why an addressed message was refused without starting or waking a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalReason {
+    /// Sender is not a full member of the company's workspace.
+    NotOwn,
+    /// Connector admits workspace administrators only and sender is not one.
+    NotAdmin,
+}
+
+impl RefusalReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotOwn => "not_own",
+            Self::NotAdmin => "not_admin",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "not_own" => Some(Self::NotOwn),
+            "not_admin" => Some(Self::NotAdmin),
+            _ => None,
+        }
+    }
+}
+
 /// Optional provider-owned presentation facts; never conversation identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConversationDisplay {

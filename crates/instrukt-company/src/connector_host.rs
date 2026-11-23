@@ -15,11 +15,13 @@ use std::time::{Duration, Instant};
 
 use instrukt_connector::{
     Admission, Captured, Clock, Connector, ConnectorError, ContextSnapshot, Declared, Inbox,
-    Incoming, Kind, Place, SecretResolver, Sender, Status,
+    Incoming, Kind, Place, RefusalReason, SecretResolver, Sender, Status,
 };
-use instrukt_core::config::{Admitted, AdmittedSecrets, Current};
+use instrukt_core::config::{
+    Admitted, AdmittedSecrets, COMPANY_AGENT_ROLE, ConnectorAdmit, Current, SessionScope,
+};
 use instrukt_core::home::Home;
-use instrukt_core::ids::ProjectSlug;
+use instrukt_core::ids::{ProjectSlug, RoleName};
 use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 use serde_yaml_ng::Value;
@@ -118,12 +120,13 @@ impl Connectors for Directory {
         let kind = self
             .kinds
             .iter()
-            .find(|kind| kind.declaration().key == key)
+            .find(|kind| kind.declaration().key == declared.kind)
             .ok_or_else(|| ConnectorError {
-                cause: format!("this instrukt has no {key} connector"),
+                cause: format!("this instrukt has no {} connector kind", declared.kind),
             })?;
         kind.open(
             company.as_str(),
+            key,
             &declared_values(&declared.entry),
             &AdmittedResolver(&admitted_company.secrets),
         )
@@ -447,10 +450,40 @@ fn state(
     }
 }
 
+fn connector_policy(
+    admitted: &Admitted,
+    company: &ProjectSlug,
+    key: &str,
+) -> Result<(RoleName, ConnectorAdmit, SessionScope), ConnectorError> {
+    if let Some(declared) = admitted
+        .company(company)
+        .and_then(|company| company.connectors.iter().find(|c| c.key == key))
+    {
+        return Ok((
+            declared.role.clone(),
+            declared.admit,
+            declared.session_scope,
+        ));
+    }
+    let role = RoleName::parse(COMPANY_AGENT_ROLE).map_err(|error| ConnectorError {
+        cause: error.to_string(),
+    })?;
+    Ok((role, ConnectorAdmit::default(), SessionScope::default()))
+}
+
+fn connector_admit(admitted: &Admitted, company: &ProjectSlug, key: &str) -> ConnectorAdmit {
+    admitted
+        .company(company)
+        .and_then(|company| company.connectors.iter().find(|c| c.key == key))
+        .map(|declared| declared.admit)
+        .unwrap_or_default()
+}
+
 /// The host's side of one connection: what it retains is recorded and the
 /// intake nudged; the connection's state follows what the connector reports.
 struct HostInbox<'a> {
     home: &'a Home,
+    current: &'a Current,
     company: &'a ProjectSlug,
     key: &'a str,
     nudge: &'a SyncSender<()>,
@@ -460,11 +493,19 @@ struct HostInbox<'a> {
 
 impl Inbox for HostInbox<'_> {
     fn retain(&self, incoming: Incoming) -> Result<(), ConnectorError> {
-        conversations::retain(self.home, self.company, &incoming, self.clock.now()).map_err(
-            |error| ConnectorError {
-                cause: error.to_string(),
-            },
-        )?;
+        let (role, _, session_scope) =
+            connector_policy(&self.current.get(), self.company, self.key)?;
+        conversations::retain_with_policy(
+            self.home,
+            self.company,
+            &incoming,
+            &role,
+            session_scope,
+            self.clock.now(),
+        )
+        .map_err(|error| ConnectorError {
+            cause: error.to_string(),
+        })?;
         let _ = self.nudge.try_send(());
         Ok(())
     }
@@ -524,11 +565,13 @@ fn connection(
         scope.spawn(move || {
             let _ended = Ended(ended);
             intake_worker(&quit, &nudges, || {
+                let admit = connector_admit(&reach.current.get(), company, key);
                 intake_pass(home, reach, company, key, |connector| {
                     admit_messages(
                         home,
                         company,
                         key,
+                        admit,
                         connector.as_ref(),
                         &admitted,
                         context_nudge,
@@ -582,11 +625,29 @@ fn connection(
                 if event.is_err() && retry_at.is_none_or(|at| Instant::now() < at) {
                     continue;
                 }
-                let result = reach.connectors.open(&reach.current.get(), company, key).and_then(|connector| {
-                    conversations::read_back::scan(home, company, key, connector.as_ref(), &|| reach.connectors.now(), &quit, &|| {
-                        let _ = scan_nudge.try_send(());
-                    })
-                });
+                let admitted_gen = reach.current.get();
+                let result = connector_policy(&admitted_gen, company, key).and_then(
+                    |(role, _, session_scope)| {
+                        reach
+                            .connectors
+                            .open(&admitted_gen, company, key)
+                            .and_then(|connector| {
+                                conversations::read_back::scan(
+                                    home,
+                                    company,
+                                    key,
+                                    &role,
+                                    session_scope,
+                                    connector.as_ref(),
+                                    &|| reach.connectors.now(),
+                                    &quit,
+                                    &|| {
+                                        let _ = scan_nudge.try_send(());
+                                    },
+                                )
+                            })
+                    },
+                );
                 match result {
                     Err(error) => {
                         tracing::warn!(target: LOG_TARGET, event = "connector_read_back_failed", company = %company, connector = key, error = %error);
@@ -605,6 +666,7 @@ fn connection(
             state(home, company, key, ConnectionState::Connecting, None);
             let inbox = HostInbox {
                 home,
+                current: reach.current,
                 company,
                 key,
                 nudge: &nudge,
@@ -1233,21 +1295,30 @@ fn deliver_notice(
 }
 
 /// What a received message's record becomes from what the connector says
-/// about its sender.
+/// about its sender and the connector's `admit` policy.
 #[derive(Debug, PartialEq, Eq)]
 enum Next {
     /// Admitted, with what the provider gave about the sender.
     Admitted(Sender),
-    /// Refused: the sender receives the fixed reply.
-    Refused,
+    /// Refused: the sender receives the fixed reply for this reason.
+    Refused(RefusalReason),
     /// It waits, with this cause.
     Waiting(String),
 }
 
-fn next_record(admission: Admission) -> Next {
+fn next_record(admission: Admission, admit: ConnectorAdmit) -> Next {
     match admission {
-        Admission::Admitted(sender) => Next::Admitted(sender),
-        Admission::NotOwn => Next::Refused,
+        Admission::Admitted(sender) => {
+            if admit == ConnectorAdmit::AdminsOnly && !sender.is_admin {
+                Next::Refused(RefusalReason::NotAdmin)
+            } else {
+                Next::Admitted(sender)
+            }
+        }
+        Admission::NotOwn => Next::Refused(match admit {
+            ConnectorAdmit::Members => RefusalReason::NotOwn,
+            ConnectorAdmit::AdminsOnly => RefusalReason::NotAdmin,
+        }),
         Admission::Undecided(cause) => Next::Waiting(cause),
     }
 }
@@ -1380,10 +1451,12 @@ impl Default for IntakeProgress {
 
 /// Sender decisions and refusals can call Slack. Context reads and relay
 /// handoff run on a different worker.
+#[allow(clippy::too_many_arguments)]
 fn admit_messages(
     home: &Home,
     company: &ProjectSlug,
     key: &str,
+    admit: ConnectorAdmit,
     connector: &dyn Connector,
     status: &SyncSender<()>,
     context: &SyncSender<()>,
@@ -1399,14 +1472,22 @@ fn admit_messages(
             conversations::waiting(home, company, key, &unread, "the message has no sender")?;
             continue;
         };
-        match next_record(connector.admit(sender)) {
+        match next_record(connector.admit(sender), admit) {
             Next::Admitted(admitted) => {
                 conversations::admitted(home, company, key, &unread, &admitted, clock.now())?;
                 let _ = status.try_send(());
                 let _ = context.try_send(());
             }
-            Next::Refused => {
-                conversations::refused(home, company, key, &unread, sender, Timestamp::now())?;
+            Next::Refused(reason) => {
+                conversations::refused(
+                    home,
+                    company,
+                    key,
+                    &unread,
+                    sender,
+                    reason,
+                    Timestamp::now(),
+                )?;
             }
             Next::Waiting(cause) => {
                 progress.clean = false;
@@ -1416,7 +1497,7 @@ fn admit_messages(
     }
     for refusal in owed(conversations::refusals(home, company, key)?) {
         let outcome = connector
-            .turn_away(&refusal.conversation)
+            .turn_away(&refusal.conversation, refusal.reason)
             .map_err(|error| error.cause);
         progress.clean &= outcome.is_ok();
         conversations::refusal_posted(home, company, key, &refusal, outcome, Timestamp::now())?;
@@ -1682,7 +1763,11 @@ mod test_connector {
         ) -> Result<instrukt_connector::AnswerReceipt, instrukt_connector::AnswerError> {
             Ok(instrukt_connector::AnswerReceipt::default())
         }
-        fn turn_away(&self, _: &str) -> Result<(), ConnectorError> {
+        fn turn_away(
+            &self,
+            _: &str,
+            _: instrukt_connector::RefusalReason,
+        ) -> Result<(), ConnectorError> {
             Ok(())
         }
         fn unavailable_notice(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
@@ -1829,13 +1914,39 @@ mod tests {
             email: None,
             is_admin: false,
         };
+        let admin = Sender {
+            name: "Root".into(),
+            email: None,
+            is_admin: true,
+        };
         assert_eq!(
-            next_record(Admission::Admitted(sender.clone())),
-            Next::Admitted(sender)
+            next_record(Admission::Admitted(sender.clone()), ConnectorAdmit::Members),
+            Next::Admitted(sender.clone())
         );
-        assert_eq!(next_record(Admission::NotOwn), Next::Refused);
         assert_eq!(
-            next_record(Admission::Undecided("later".into())),
+            next_record(Admission::NotOwn, ConnectorAdmit::Members),
+            Next::Refused(RefusalReason::NotOwn)
+        );
+        assert_eq!(
+            next_record(Admission::Admitted(sender), ConnectorAdmit::AdminsOnly),
+            Next::Refused(RefusalReason::NotAdmin)
+        );
+        assert_eq!(
+            next_record(Admission::NotOwn, ConnectorAdmit::AdminsOnly),
+            Next::Refused(RefusalReason::NotAdmin)
+        );
+        assert_eq!(
+            next_record(
+                Admission::Admitted(admin.clone()),
+                ConnectorAdmit::AdminsOnly
+            ),
+            Next::Admitted(admin)
+        );
+        assert_eq!(
+            next_record(
+                Admission::Undecided("later".into()),
+                ConnectorAdmit::Members
+            ),
             Next::Waiting("later".into())
         );
     }
@@ -1845,6 +1956,7 @@ mod tests {
         let refusal = |conversation: &str| Refusal {
             conversation: conversation.into(),
             sender: "U1".into(),
+            reason: RefusalReason::NotOwn,
         };
         let owed = owed(vec![(refusal("C1/1"), true), (refusal("C1/2"), false)]);
         assert_eq!(

@@ -80,8 +80,12 @@ admission findings, including provider permission checks
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters, never discovered by the running runner):
 
-- a published procedure declaring the role `company-agent` on that computer —
-  publishing it is part of setting the company up;
+- a valid `role` (default `company-agent`) that is configured in `agents.yaml`
+  or declared by a delivered published procedure on that computer, together with
+  a delivered published procedure declaring that role (or declaring
+  `company-agent` when the role is configured in `agents.yaml` without a
+  dedicated procedure of its own) — publishing it is part of setting the company
+  up;
 - a value in the home's secrets file for each secret the declaration references,
   not blank;
 - at admission, the provider permissions the connector requires, as the provider

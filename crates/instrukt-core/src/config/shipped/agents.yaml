@@ -74,6 +74,7 @@ bundles:
     - {action: agents-write, scope: any}
   tools:
     - {action: mcp-access, scope: own}
+    - {action: company-reply, scope: own}
   all:
     - {action: docs-read, scope: any}
     - {action: docs-write, scope: any}
@@ -106,6 +107,7 @@ bundles:
     - {action: installation-write, scope: any}
     - {action: runner-execute, scope: any}
     - {action: mcp-access, scope: any}
+    - {action: company-reply, scope: any}
 profiles:
   codex:
     instance: codex

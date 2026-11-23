@@ -74,8 +74,9 @@ declares an interface for reading workflow state. The todos crate implements
 these contracts; the CLI wires them into the runner. Todo dispatch is realized
 in the runner against those interfaces, preserving todos → runner → core.
 The runner likewise declares conversation hosting in `instrukt run` and the
-conversation assignment lookup; `instrukt-company` implements them and the CLI
-wires them, preserving company → runner → core.
+conversation assignment lookup; `instrukt-company` implements them (along with
+explicit reply queueing for `instrukt company reply`) and the CLI wires them,
+preserving company → runner → core.
 Blueprint supplies its release-owned tool lifecycle to runner's module
 installation; runner consumes that API rather than defining tool policy.
 Core likewise declares the hook-generation interface; the CLI wires blueprint
@@ -216,7 +217,7 @@ the command-line parser's own text and exit status 2.
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
-| Slack | company, through its Slack connector | a Socket Mode connection opened outward per company home that declares the connector, hosted in `instrukt run` by the runner; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
+| Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 

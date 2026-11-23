@@ -20,6 +20,6 @@ pub use _declaration::{Declaration, Declared, Field, Rule};
 pub use _values::{
     Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Clock, ConnectorError,
     ContextSnapshot, ConversationDisplay, DirectMessageError, DirectMessageReceipt, Earlier,
-    Incoming, Limits, Place, ReadBackCoverage, ReadBackError, ReadBackGap, ReadBackPage, Sender,
-    Status,
+    Incoming, Limits, Place, ReadBackCoverage, ReadBackError, ReadBackGap, ReadBackPage,
+    RefusalReason, Sender, Status,
 };

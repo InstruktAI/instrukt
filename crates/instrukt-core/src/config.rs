@@ -44,7 +44,10 @@ pub use _admitted::{
     Current, Offer, serve,
 };
 pub use _company::{Member, Members};
-pub use _connectors::{DeclaredConnector, install_connector_declarations};
+pub use _connectors::{
+    ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope, connector_declaration,
+    install_connector_declarations,
+};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable, availability as feature_availability};
@@ -68,7 +71,9 @@ pub use _schema::{
     CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema,
     layer_json_schema,
 };
-pub use _validate::{connector_procedure_finding, validate, validate_local};
+pub use _validate::{
+    connector_procedure_finding, connector_role_procedure_finding, validate, validate_local,
+};
 pub use _webhooks::{
     Ingress, SigningSecrets, WebhookProtocol, WebhookSource, WebhookSources, ingress_url_admitted,
     webhook_domain, webhook_name,
@@ -78,8 +83,8 @@ use crate::home::Home;
 use crate::ids::ProjectSlug;
 
 pub use _secrets::{
-    SecretSource, generate_secret, generate_secret_in, resolve_secret, resolve_secret_from,
-    set_secret, set_secret_in,
+    SecretSource, generate_secret, generate_secret_in, readable_secret_values, resolve_secret,
+    resolve_secret_from, set_secret, set_secret_in,
 };
 
 /// The project slug the repository rooted at `repo_root` declares in its

@@ -36,7 +36,10 @@ validation errors, not missing fields. This read-time resolution preserves the
 edited file. Shipped named bundle definitions supply omitted definitions needed
 by resolved grants; an explicitly configured bundle wins.
 
-The role of conversation sessions is `company-agent`. An agents file of schema
+The default role of conversation sessions is `company-agent`; a named connector
+may declare a different `role` in its company home's `instrukt.yaml`, which is
+recorded on the session's `connected_conversations` binding and returned by
+caller assignment lookup. An agents file of schema
 version 2 converts to version 3 on the owned migration path
 (`project/instrukt/spec/feature/configuration/owned-files`): its
 `roles.conversation` entry becomes `roles.company-agent` with every field as
@@ -71,6 +74,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
 | Events | `events-read` | `events list|schema|status`; subscription declarations retain their documentation/configuration write boundary. |
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
+| Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
@@ -135,7 +139,7 @@ composition is:
 | `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
-| `tools` | `mcp-access` at `own`. |
+| `tools` | `mcp-access`, `company-reply`, each at `own`. |
 | `all` | Every catalog action at `any`. |
 
 A company's agent reports defects of the system it works through

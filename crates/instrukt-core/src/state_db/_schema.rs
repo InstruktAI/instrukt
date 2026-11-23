@@ -44,7 +44,59 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v31),
     Step(v32),
     Step(v33),
+    Step(v34),
 ];
+
+/// Version 34: named company connectors (`role`, `session_scope`,
+/// `opening_conversation` on `connected_conversations`; `conversation_display`
+/// on `conversation_messages`; `'not_admin'` refusal reason on
+/// `conversation_refusals`).
+fn v34(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    for (table, column, ddl) in [
+        (
+            "connected_conversations",
+            "role",
+            "ALTER TABLE connected_conversations ADD COLUMN role TEXT NOT NULL DEFAULT 'company-agent';",
+        ),
+        (
+            "connected_conversations",
+            "session_scope",
+            "ALTER TABLE connected_conversations ADD COLUMN session_scope TEXT NOT NULL DEFAULT 'conversation';",
+        ),
+        (
+            "connected_conversations",
+            "opening_conversation",
+            "ALTER TABLE connected_conversations ADD COLUMN opening_conversation TEXT;",
+        ),
+        (
+            "conversation_messages",
+            "conversation_display",
+            "ALTER TABLE conversation_messages ADD COLUMN conversation_display TEXT;",
+        ),
+    ] {
+        let present: bool = tx.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+            [column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(ddl)?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE TABLE conversation_refusals_v34 (
+            company TEXT NOT NULL, connector TEXT NOT NULL, conversation TEXT NOT NULL,
+            sender TEXT NOT NULL, reason TEXT NOT NULL CHECK(reason IN ('not_own','not_admin','unavailable')),
+            received_at TEXT NOT NULL, replied_at TEXT, failure TEXT, attempted_at TEXT,
+            PRIMARY KEY(company,connector,conversation,sender,reason)
+        );
+        INSERT INTO conversation_refusals_v34(rowid,company,connector,conversation,sender,reason,received_at,replied_at,failure,attempted_at)
+            SELECT rowid,company,connector,conversation,sender,reason,received_at,replied_at,failure,attempted_at
+            FROM conversation_refusals;
+        DROP TABLE conversation_refusals;
+        ALTER TABLE conversation_refusals_v34 RENAME TO conversation_refusals;",
+    )
+}
 
 /// Version 33: company-admin DM self-service columns on `conversation_messages`,
 /// MCP sign-in tables (including host-scoped `mcp_registrations`), and built-in

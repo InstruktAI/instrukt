@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 pub struct Declaration {
     /// The kind's key under `connectors`.
     pub key: &'static str,
+    /// The most characters one posted part of an answer holds for this kind.
+    pub message_chars: usize,
     pub fields: &'static [Field],
 }
 

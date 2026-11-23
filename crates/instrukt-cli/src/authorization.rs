@@ -58,6 +58,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "create" | "update" | "freeze" | "unfreeze" | "remove" | "reactivate",
         ] => TodoWrite,
         ["discuss", "open" | "close"] => ConversationLink,
+        ["company", "reply"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
         ["history", "import-teleclaude" | "extract"] => HistoryRead,
@@ -319,6 +320,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
         SessionObserve | ConversationLink => true,
+        CompanyReply => assignment.company.is_some(),
         // `own` reaches the servers of the assignment's own company, which
         // are all that company's sessions see; a machine-wide server that
         // carries a login is a machine-wide object no assignment owns.

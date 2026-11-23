@@ -4,7 +4,7 @@ use crate::_declaration::{Declaration, Declared};
 use crate::_values::{
     Admission, AnswerError, AnswerReceipt, Captured, ConnectorError, ContextSnapshot,
     DirectMessageError, DirectMessageReceipt, Incoming, Limits, Place, ReadBackError, ReadBackGap,
-    ReadBackPage, Status,
+    ReadBackPage, RefusalReason, Status,
 };
 use jiff::Timestamp;
 
@@ -57,7 +57,7 @@ pub trait Connector: Send + Sync {
     /// Post one answer piece, returning the provider's optional id and posting time.
     fn answer(&self, conversation: &str, part: &str) -> Result<AnswerReceipt, AnswerError>;
     /// Post the connector's fixed reply to someone who is not answered.
-    fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError>;
+    fn turn_away(&self, conversation: &str, reason: RefusalReason) -> Result<(), ConnectorError>;
     /// Make one bounded post of the connector's fixed unavailable notice,
     /// beginning with `member`'s mention. The caller records the attempt first.
     fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError>;
@@ -89,10 +89,11 @@ pub trait SecretResolver: Send + Sync {
 pub trait Kind: Send + Sync {
     /// The fields its `connectors.<kind>` entry takes.
     fn declaration(&self) -> &'static Declaration;
-    /// One company's connector, from what that company declared.
+    /// One company's named connector, from what that company declared.
     fn open(
         &self,
         company: &str,
+        connector: &str,
         declared: &Declared,
         secrets: &dyn SecretResolver,
     ) -> Result<Box<dyn Connector>, ConnectorError>;

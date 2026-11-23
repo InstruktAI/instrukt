@@ -198,7 +198,6 @@ impl Admitted {
         let mut findings = Vec::new();
         let mut complete = true;
         let mut companies = Vec::new();
-        let mut procedure_available = None;
         for (name, unreadable_folder) in super::company_folders(home)? {
             let admitted = match unreadable_folder {
                 Some(error) => Err(vec![unreadable(home.company_dir(&name), &error)]),
@@ -206,14 +205,21 @@ impl Admitted {
             };
             match admitted {
                 Ok(Some(mut company)) => {
-                    if !company.connectors.is_empty()
-                        && !*procedure_available.get_or_insert_with(|| {
-                            super::_validate::company_procedure_available(home)
-                        })
-                    {
-                        findings.push(super::_validate::missing_company_procedure(home, &name));
-                        company.connectors.clear();
+                    let mut retained = Vec::with_capacity(company.connectors.len());
+                    for connector in company.connectors {
+                        if let Some(finding) = super::_validate::connector_role_procedure_finding(
+                            home,
+                            &name,
+                            &connector.key,
+                            connector.role.as_str(),
+                            Some(&agents),
+                        ) {
+                            findings.push(finding);
+                        } else {
+                            retained.push(connector);
+                        }
                     }
+                    company.connectors = retained;
                     companies.push(company);
                 }
                 Ok(None) => {}

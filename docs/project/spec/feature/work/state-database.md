@@ -173,6 +173,14 @@ verified runtime bindings, or from their recorded role and original phase branch
 An omitted placement title does not establish a key-only native title. Remote
 conversion is owned by `project/instrukt/spec/feature/work/github-record`.
 
+Version 34 evolves the conversation tables for named company connectors:
+`connected_conversations` adds `role` (default `'company-agent'`),
+`session_scope` (default `'conversation'`), and nullable `opening_conversation`;
+`conversation_messages` adds nullable `conversation_display`; and
+`conversation_refusals` widens its `reason` check constraint to admit
+`'not_admin'` alongside `'not_own'` and `'unavailable'`, preserving all
+existing rows verbatim.
+
 ### Work tables
 
 Owned and written by work through its command contract. Reflection to
@@ -709,14 +717,19 @@ connectors keep, under
 `project/instrukt/spec/feature/company/conversations`. A conversation's address
 is `(company, connector, conversation)`.
 
-**`connected_conversations`** — one row per conversation. Key: the address.
+**`connected_conversations`** — one row per conversation session binding. Key:
+the address (`(company, connector, conversation)`, with `conversation = ''` for
+the shared standing session of a `session_scope: company` connector).
 
 | Column | Meaning |
 | --- | --- |
-| `semantic_key` | The key its one session is started and woken by. |
-| `opening`, `request` | The addressed message whose delivery starts the session, and the start request captured for that message before the runtime is called. |
+| `semantic_key` | The key its one session is started and woken by (`instrukt:conversation:<company>:<connector>:<conversation>` for `conversation` scope; `instrukt:conversation:<company>:<connector>` for `company` scope). |
+| `role` | The role recorded from the connector declaration when the binding was created (default `'company-agent'`); caller assignment lookup reads this column to grant the connector's role. |
+| `session_scope` | `'conversation'` (default) or `'company'`. |
+| `opening`, `opening_conversation`, `request` | The addressed message (and its originating conversation when `session_scope = 'company'`) whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. An operator-confirmed replacement can rebind the conversation and reset its source position. |
 | `source_identity`, `position_json` | The fixed identity of the bound native source and its opaque read position. A mismatch or missing identity on an existing binding is a configuration error; it advances neither the position nor native work. Initial binding and confirmed replacement establish the identity. |
+| `display_title` | Readable title captured for the session. |
 | `failure` | Cause of a source read failure or a blocked bound session, with its recovery door where applicable. Cleared when work can resume. |
 
 **`conversation_messages`** — one row per addressed message. Key: the address
@@ -727,6 +740,7 @@ and `message`, the connector's identity of that message.
 | `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
 | `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
 | `sender_is_admin`, `is_direct` | Booleans (`0` or `1`) recorded at admission: whether the provider reported the sender as a workspace administrator (`sender_is_admin`) and whether the conversation is a direct message (`is_direct`). Migrated rows default to `0`. Once written they do not change. |
+| `conversation_display` | Optional provider-supplied channel or DM label captured for this message (e.g. `#channel` or `DM with Name`), used to tag turns delivered to a company-scoped shared session. |
 | `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
 | `arrived_at` | When it was stored. |
 | `state` | `received` once stored; `refused` once the provider's answer showed that the sender is not one of the company's own; `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully, keeping its status and notice eligibility without blocking later messages; `answered` once its turn finished with an answer or completed successfully with nothing to post. |
@@ -771,7 +785,9 @@ of pruning. The relay prunes at most 100 expired receipts per pass.
 Migration 25 seeds the IDs of already delivered addressed messages.
 Older accompanying messages have no stored provider IDs to recover.
 
-**`conversation_answers`** — retained ordered answer pieces. Key: the address,
+**`conversation_answers`** — retained ordered answer pieces (from finished
+turns under `reply_mode: turn_output` and explicit replies queued by
+`instrukt company reply` under `turn = 'reply:<id>'`). Key: the address,
 `turn` and `piece`. Columns: `text`, `admission_position`, `attempted_at`,
 `provider_post_id`, `posted_at` and `failure`. The attempt timestamp records the
 most recent posting attempt for status; it imposes no uncertainty deadline.
@@ -790,8 +806,9 @@ fields are retired.
 
 **`conversation_refusals`** — the platform's fixed replies and best-effort
 unavailable-notice attempts (`project/instrukt/spec/feature/company/conversations`).
-Key: the address, `sender` and `reason`: `not_own` for the fixed refusal, or
-`unavailable` for the person's current conversation outage. Columns:
+Key: the address, `sender` and `reason`: `not_own` for the non-member fixed
+refusal, `not_admin` for the administrator-only fixed refusal, or `unavailable`
+for the person's current conversation outage. Columns:
 `received_at`, `attempted_at`, `replied_at` and `failure`. For an unavailable
 notice, the attempt timestamp is recorded atomically before provider I/O and
 suppresses every further attempt in that outage, regardless of the response.

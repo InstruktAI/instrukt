@@ -4,9 +4,10 @@ use instrukt_connector::{
     Connector, ConnectorError, Incoming, ReadBackCoverage, ReadBackGap, ReadBackPage,
 };
 use instrukt_core::{
+    config::SessionScope,
     fsx::{self, FsError},
     home::Home,
-    ids::ProjectSlug,
+    ids::{ProjectSlug, RoleName},
     state_db::{
         self,
         rusqlite::{Connection, OpenFlags, OptionalExtension, params},
@@ -295,10 +296,13 @@ fn failed(error: impl std::fmt::Display) -> ConnectorError {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn scan(
     home: &Home,
     company: &ProjectSlug,
     key: &str,
+    role: &RoleName,
+    session_scope: SessionScope,
     connector: &dyn Connector,
     clock: &dyn Fn() -> Timestamp,
     quit: &dyn Fn() -> bool,
@@ -400,7 +404,17 @@ pub(crate) fn scan(
         if quit() {
             break;
         }
-        match retain_page(&mut conn, home, company, key, &page, &window, clock) {
+        match retain_page(
+            &mut conn,
+            home,
+            company,
+            key,
+            role,
+            session_scope,
+            &page,
+            &window,
+            clock,
+        ) {
             Ok(true) => nudge(),
             Ok(false) => {}
             Err(error) => {
@@ -429,11 +443,14 @@ fn channel(item: &Incoming) -> &str {
 
 /// Page contents remain durable until intake commits and scan progress advances.
 /// If the process stops between the two, the intake lookup recognises the commit.
+#[allow(clippy::too_many_arguments)]
 fn retain_page(
     conn: &mut Connection,
     home: &Home,
     company: &ProjectSlug,
     key: &str,
+    role: &RoleName,
+    session_scope: SessionScope,
     page: &ReadBackPage,
     window: &ScanWindow,
     clock: &dyn Fn() -> Timestamp,
@@ -476,7 +493,8 @@ fn retain_page(
                 let mut missed = Vec::with_capacity(novel.len());
                 for (item, link) in &novel {
                     if item.written_at >= answer_from {
-                        inserted |= retain_in(tx, company, item, arrived_at)? != 0;
+                        inserted |=
+                            retain_in(tx, company, item, role, session_scope, arrived_at)? != 0;
                         missed.push(None);
                     } else {
                         missed.push(miss_in(tx, company, item)?.then_some(*link));

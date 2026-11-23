@@ -7,11 +7,12 @@ use serde_yaml_ng::Value;
 
 use instrukt_connector::{Declaration, Rule};
 
-use super::_connectors::DeclaredConnector;
+use super::_agents::COMPANY_AGENT_ROLE;
+use super::_connectors::{ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope};
 use super::_error::{ConfigError, FindingKind};
 use super::_interpolate::{join, key_text};
 use super::_schema::KeyFinding;
-use crate::ids::ProjectSlug;
+use crate::ids::{ProjectSlug, RoleName};
 
 /// Why an empty `profiles` list is a finding.
 pub(super) const EMPTY_PROFILES: &str = "lists no profile; name the profiles its sessions start on, or remove profiles to use the machine-wide order";
@@ -99,15 +100,59 @@ impl Members {
     }
 }
 
-/// The editor schema of a company home's `connectors` map: one property
-/// per installed kind, its fields as its declaration states them.
+/// The editor schema of a company home's `connectors` map: one named entry per
+/// connector, defaulting `kind` to the map key when omitted, plus common
+/// conversation settings (`role`, `admit`, `session_scope`, `reply_mode`) and
+/// the provider fields declared by its kind.
 pub(super) fn connectors_schema() -> serde_json::Value {
     let reference =
         serde_json::json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
-    let mut kinds = serde_json::Map::new();
-    for declaration in super::_connectors::declarations() {
+    let entry_schema = |declaration: &Declaration, kind_required: bool| {
         let mut properties = serde_json::Map::new();
-        let mut required = Vec::new();
+        let mut required: Vec<&str> = Vec::new();
+        properties.insert(
+            "kind".to_owned(),
+            serde_json::json!({
+                "enum": [declaration.key],
+                "default": declaration.key,
+                "description": "registered connector kind; defaults to the map key when omitted",
+            }),
+        );
+        if kind_required {
+            required.push("kind");
+        }
+        properties.insert(
+            "role".to_owned(),
+            serde_json::json!({
+                "type": "string",
+                "default": COMPANY_AGENT_ROLE,
+                "description": "role assigned to this connector's session(s); defaults to company-agent",
+            }),
+        );
+        properties.insert(
+            "admit".to_owned(),
+            serde_json::json!({
+                "enum": ["members", "admins_only"],
+                "default": "members",
+                "description": "who is admitted to address this connector",
+            }),
+        );
+        properties.insert(
+            "session_scope".to_owned(),
+            serde_json::json!({
+                "enum": ["conversation", "company"],
+                "default": "conversation",
+                "description": "whether each conversation gets its own session or all admitted conversations share one standing session per (company, connector)",
+            }),
+        );
+        properties.insert(
+            "reply_mode".to_owned(),
+            serde_json::json!({
+                "enum": ["turn_output", "explicit"],
+                "default": "turn_output",
+                "description": "whether finished turn output posts automatically or only explicit `instrukt company reply` calls post",
+            }),
+        );
         for field in declaration.fields {
             let schema = match field.rule {
                 Rule::SecretReference { required: needed } => {
@@ -125,19 +170,29 @@ pub(super) fn connectors_schema() -> serde_json::Value {
             };
             properties.insert(field.name.to_owned(), schema);
         }
-        kinds.insert(
-            declaration.key.to_owned(),
-            serde_json::json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": required,
-                "properties": properties,
-            }),
-        );
+        serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": required,
+            "properties": properties,
+        })
+    };
+    let mut kinds = serde_json::Map::new();
+    let mut named_variants = Vec::new();
+    for declaration in super::_connectors::declarations() {
+        kinds.insert(declaration.key.to_owned(), entry_schema(declaration, false));
+        named_variants.push(entry_schema(declaration, true));
     }
+    let additional = match named_variants.len() {
+        0 => serde_json::json!(false),
+        1 => named_variants
+            .pop()
+            .unwrap_or_else(|| serde_json::json!(false)),
+        _ => serde_json::json!({ "anyOf": named_variants }),
+    };
     serde_json::json!({
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": additional,
         "properties": kinds,
     })
 }
@@ -249,7 +304,8 @@ fn check_credentials(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
     }
 }
 
-/// The findings of a `connectors` map, against the installed kinds.
+/// The findings of a `connectors` map, against the installed kinds and common
+/// connector settings.
 pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFinding>) {
     let Some(connectors) = value.as_mapping() else {
         out.push(finding(
@@ -259,21 +315,23 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
         ));
         return;
     };
+    let supported_list = || {
+        super::_connectors::declarations()
+            .iter()
+            .map(|declaration| declaration.key)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     for (name, declaration) in connectors {
         let name = key_text(name);
         let at = join(path, &name);
-        let Some(kind) = super::_connectors::declaration(&name) else {
-            let supported: Vec<&str> = super::_connectors::declarations()
-                .iter()
-                .map(|declaration| declaration.key)
-                .collect();
+        if ProjectSlug::parse(&name).is_err() {
             out.push(finding(
                 &at,
-                FindingKind::UnknownKey,
-                format!("unsupported connector; supported: {}", supported.join(", ")),
+                FindingKind::InvalidValue,
+                "a connector name follows the grammar of a project slug",
             ));
-            continue;
-        };
+        }
         let Some(fields) = declaration.as_mapping() else {
             out.push(finding(
                 &at,
@@ -281,6 +339,49 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
                 "expected a mapping",
             ));
             continue;
+        };
+        let kind = match fields.get("kind") {
+            Some(raw_kind) => {
+                let Some(kind_str) = raw_kind.as_str() else {
+                    out.push(finding(
+                        &join(&at, "kind"),
+                        FindingKind::InvalidValue,
+                        format!(
+                            "expected a connector kind name; supported: {}",
+                            supported_list()
+                        ),
+                    ));
+                    continue;
+                };
+                match super::_connectors::declaration(kind_str) {
+                    Some(kind) => kind,
+                    None => {
+                        out.push(finding(
+                            &join(&at, "kind"),
+                            FindingKind::InvalidValue,
+                            format!(
+                                "unsupported connector kind `{kind_str}`; supported: {}",
+                                supported_list()
+                            ),
+                        ));
+                        continue;
+                    }
+                }
+            }
+            None => match super::_connectors::declaration(&name) {
+                Some(kind) => kind,
+                None => {
+                    out.push(finding(
+                        &at,
+                        FindingKind::UnknownKey,
+                        format!(
+                            "unsupported connector; supported kinds: {} (set `kind` for a named connector)",
+                            supported_list()
+                        ),
+                    ));
+                    continue;
+                }
+            },
         };
         for field in kind.fields {
             if matches!(field.rule, Rule::SecretReference { required: true })
@@ -296,28 +397,83 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
         for (field, value) in fields {
             let field = key_text(field);
             let field_at = join(&at, &field);
-            match kind.fields.iter().find(|known| known.name == field) {
-                Some(known) => match known.rule {
-                    Rule::SecretReference { .. } => {
-                        if !value.as_str().is_some_and(super::is_secret_reference) {
-                            out.push(finding(
-                                &field_at,
-                                FindingKind::InvalidValue,
-                                "expected an exact ${NAME} reference; a literal token is not stored",
-                            ));
-                        }
+            match field.as_str() {
+                "kind" => {}
+                "role" => {
+                    if !value
+                        .as_str()
+                        .is_some_and(|role| RoleName::parse(role).is_ok())
+                    {
+                        out.push(finding(
+                            &field_at,
+                            FindingKind::InvalidValue,
+                            "expected a valid role name",
+                        ));
                     }
-                    Rule::PositiveCount { meaning, .. } => {
-                        if !value.as_u64().is_some_and(|count| count > 0) {
-                            out.push(finding(&field_at, FindingKind::InvalidValue, meaning));
-                        }
+                }
+                "admit" => {
+                    if !value
+                        .as_str()
+                        .is_some_and(|v| ConnectorAdmit::parse(v).is_some())
+                    {
+                        out.push(finding(
+                            &field_at,
+                            FindingKind::InvalidValue,
+                            "expected `members` or `admins_only`",
+                        ));
                     }
+                }
+                "session_scope" => {
+                    if !value
+                        .as_str()
+                        .is_some_and(|v| SessionScope::parse(v).is_some())
+                    {
+                        out.push(finding(
+                            &field_at,
+                            FindingKind::InvalidValue,
+                            "expected `conversation` or `company`",
+                        ));
+                    }
+                }
+                "reply_mode" => {
+                    if !value
+                        .as_str()
+                        .is_some_and(|v| ReplyMode::parse(v).is_some())
+                    {
+                        out.push(finding(
+                            &field_at,
+                            FindingKind::InvalidValue,
+                            "expected `turn_output` or `explicit`",
+                        ));
+                    }
+                }
+                _ => match kind.fields.iter().find(|known| known.name == field) {
+                    Some(known) => match known.rule {
+                        Rule::SecretReference { .. } => {
+                            if !value.as_str().is_some_and(super::is_secret_reference) {
+                                out.push(finding(
+                                    &field_at,
+                                    FindingKind::InvalidValue,
+                                    "expected an exact ${NAME} reference; a literal token is not stored",
+                                ));
+                            }
+                        }
+                        Rule::PositiveCount { meaning, .. } => {
+                            if !value.as_u64().is_some_and(|count| count > 0) {
+                                out.push(finding(&field_at, FindingKind::InvalidValue, meaning));
+                            }
+                        }
+                    },
+                    None => out.push(finding(
+                        &field_at,
+                        FindingKind::UnknownKey,
+                        format!(
+                            "unknown field; {} takes {}, kind, role, admit, session_scope and reply_mode",
+                            kind.key,
+                            listed(kind)
+                        ),
+                    )),
                 },
-                None => out.push(finding(
-                    &field_at,
-                    FindingKind::UnknownKey,
-                    format!("unknown field; {} takes {}", kind.key, listed(kind)),
-                )),
             }
         }
     }
@@ -391,15 +547,48 @@ pub(super) fn connectors(raw: Option<&Value>) -> Result<Vec<DeclaredConnector>, 
     if let Some(first) = found.first() {
         return Err(invalid(&first.key, &first.message));
     }
-    Ok(raw
-        .as_mapping()
+    raw.as_mapping()
         .into_iter()
         .flatten()
-        .map(|(key, entry)| DeclaredConnector {
-            key: key_text(key),
-            entry: entry.clone(),
+        .map(|(key, entry)| {
+            let name = key_text(key);
+            let kind = entry
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or(&name)
+                .to_owned();
+            let role_str = entry
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or(COMPANY_AGENT_ROLE);
+            let role = RoleName::parse(role_str)
+                .map_err(|e| invalid(&join("connectors", &join(&name, "role")), &e.to_string()))?;
+            let admit = entry
+                .get("admit")
+                .and_then(Value::as_str)
+                .and_then(ConnectorAdmit::parse)
+                .unwrap_or_default();
+            let session_scope = entry
+                .get("session_scope")
+                .and_then(Value::as_str)
+                .and_then(SessionScope::parse)
+                .unwrap_or_default();
+            let reply_mode = entry
+                .get("reply_mode")
+                .and_then(Value::as_str)
+                .and_then(ReplyMode::parse)
+                .unwrap_or_default();
+            Ok(DeclaredConnector {
+                key: name,
+                kind,
+                role,
+                admit,
+                session_scope,
+                reply_mode,
+                entry: entry.clone(),
+            })
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]

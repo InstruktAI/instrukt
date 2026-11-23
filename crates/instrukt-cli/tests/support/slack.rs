@@ -207,6 +207,88 @@ struct Workspace {
     dm_channels: std::collections::BTreeMap<String, String>,
     /// One-shot error code returned by the next `chat.postMessage` call (e.g. `ratelimited` or `user_not_found`).
     next_post_error: Option<String>,
+    /// Additional Slack apps hosted on the same fake Web API endpoint, routed
+    /// by their app/bot Bearer tokens.
+    extra_apps: Vec<Arc<Mutex<ExtraAppState>>>,
+}
+
+struct ExtraAppState {
+    app_token: String,
+    bot_token: String,
+    bot_user: String,
+    bot_id: String,
+    socket_url: String,
+    outgoing: VecDeque<String>,
+    posts: Vec<Post>,
+    acknowledged: Vec<String>,
+    connections: usize,
+    limit_lookup: Option<u64>,
+    lookups: usize,
+}
+
+/// Handle to an additional Slack app registered on a [`FakeSlack`] server.
+#[derive(Clone)]
+pub struct ExtraSlackApp {
+    state: Arc<Mutex<ExtraAppState>>,
+    workspace: Arc<Mutex<Workspace>>,
+}
+
+impl ExtraSlackApp {
+    pub fn mention(&self, channel: &str, user: &str, text: &str, thread: Option<&str>) -> String {
+        let ts = {
+            let mut w = self.workspace.lock().unwrap();
+            let ts = FakeSlack::stamp(&mut w);
+            let mut message = json!({"channel": channel, "ts": ts, "user": user, "text": text});
+            if let Some(thread) = thread {
+                message["thread_ts"] = json!(thread);
+            }
+            w.messages.push(message);
+            ts
+        };
+        let mut event = json!({"type": "app_mention", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
+        if let Some(thread) = thread {
+            event["thread_ts"] = json!(thread);
+        }
+        self.deliver(&format!("envelope-{ts}"), event);
+        ts
+    }
+
+    pub fn direct(&self, channel: &str, user: &str, text: &str) -> String {
+        let ts = {
+            let mut w = self.workspace.lock().unwrap();
+            let ts = FakeSlack::stamp(&mut w);
+            w.messages
+                .push(json!({"channel": channel, "ts": ts, "user": user, "text": text}));
+            w.dm_channels.insert(user.to_owned(), channel.to_owned());
+            ts
+        };
+        let event = json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
+        self.deliver(&format!("envelope-{ts}"), event);
+        ts
+    }
+
+    fn deliver(&self, envelope: &str, event: Value) {
+        self.state.lock().unwrap().outgoing.push_back(
+            json!({"envelope_id": envelope, "type": "events_api", "accepts_response_payload": false, "payload": {"type": "event_callback", "event": event}})
+                .to_string(),
+        );
+    }
+
+    pub fn posts(&self) -> Vec<Post> {
+        self.state.lock().unwrap().posts.clone()
+    }
+
+    pub fn connections(&self) -> usize {
+        self.state.lock().unwrap().connections
+    }
+
+    pub fn limit_lookup(&self, seconds: u64) {
+        self.state.lock().unwrap().limit_lookup = Some(seconds);
+    }
+
+    pub fn lookups(&self) -> usize {
+        self.state.lock().unwrap().lookups
+    }
 }
 
 pub struct FakeSlack {
@@ -308,9 +390,20 @@ impl FakeSlack {
                         }
                         let limited = {
                             let mut w = workspace.lock().unwrap();
+                            let extra_app = w
+                                .extra_apps
+                                .iter()
+                                .find(|app| app.lock().unwrap().bot_token == token)
+                                .cloned();
                             if method == "users.info" {
-                                w.lookups += 1;
-                                w.limit_lookup.take()
+                                if let Some(extra) = extra_app {
+                                    let mut e = extra.lock().unwrap();
+                                    e.lookups += 1;
+                                    e.limit_lookup.take()
+                                } else {
+                                    w.lookups += 1;
+                                    w.limit_lookup.take()
+                                }
                             } else if method == "conversations.history" {
                                 let args = form(&body);
                                 let channel = args.get("channel").unwrap();
@@ -469,18 +562,43 @@ impl FakeSlack {
     ) -> Value {
         let mut w = workspace.lock().unwrap();
         let app = method == "apps.connections.open";
-        let accepted = if app {
-            w.app_token.as_deref().unwrap_or(APP_TOKEN)
+        let extra = w
+            .extra_apps
+            .iter()
+            .find(|slot| {
+                let s = slot.lock().unwrap();
+                if app {
+                    s.app_token == token
+                } else {
+                    s.bot_token == token
+                }
+            })
+            .cloned();
+        let (eff_socket_url, eff_bot_user, eff_bot_id) = if let Some(ref slot) = extra {
+            if w.refuse {
+                return json!({"ok": false, "error": "invalid_auth"});
+            }
+            let s = slot.lock().unwrap();
+            (s.socket_url.clone(), s.bot_user.clone(), s.bot_id.clone())
         } else {
-            BOT_TOKEN
+            let accepted = if app {
+                w.app_token.as_deref().unwrap_or(APP_TOKEN)
+            } else {
+                BOT_TOKEN
+            };
+            if app && w.refuse_app_connection {
+                w.refused_app_connections += 1;
+                return json!({"ok": false, "error": "invalid_auth"});
+            }
+            if w.refuse || token != accepted {
+                return json!({"ok": false, "error": "invalid_auth"});
+            }
+            (
+                socket_url.to_owned(),
+                BOT_USER.to_owned(),
+                BOT_ID.to_owned(),
+            )
         };
-        if app && w.refuse_app_connection {
-            w.refused_app_connections += 1;
-            return json!({"ok": false, "error": "invalid_auth"});
-        }
-        if w.refuse || token != accepted {
-            return json!({"ok": false, "error": "invalid_auth"});
-        }
         let arg = |name: &str| args.get(name).map(String::as_str);
         let bound = |m: &Value, name: &str, below: bool| {
             arg(name).is_none_or(|edge| {
@@ -495,9 +613,9 @@ impl FakeSlack {
             })
         };
         match method {
-            "apps.connections.open" => json!({"ok": true, "url": socket_url}),
+            "apps.connections.open" => json!({"ok": true, "url": eff_socket_url}),
             "auth.test" => {
-                json!({"ok": true, "user_id": BOT_USER, "bot_id": BOT_ID, "team_id": TEAM})
+                json!({"ok": true, "user_id": eff_bot_user, "bot_id": eff_bot_id, "team_id": TEAM})
             }
             "users.conversations" => json!({
                 "ok": true,
@@ -513,7 +631,10 @@ impl FakeSlack {
                         .iter()
                         .filter(|message| message["channel"].as_str() == Some(channel))
                         .filter_map(|message| message["user"].as_str())
-                        .filter(|user| *user != BOT_USER)
+                        .filter(|user| {
+                            *user != BOT_USER
+                                && !w.people.get(*user).is_some_and(|person| person.bot)
+                        })
                         .collect::<std::collections::BTreeSet<_>>();
                     if users.len() == 1 {
                         json!({"ok":true,"channel":{"id":channel,"is_im":true,"user":users.into_iter().next().unwrap()}})
@@ -695,7 +816,7 @@ impl FakeSlack {
                 }
                 let ts = Self::posted(&mut w);
                 let rendered = w.rendered_posts.get(&shown).unwrap_or(&shown);
-                let mut message = json!({"channel": post.channel, "ts": ts, "user": BOT_USER, "bot_id": BOT_ID, "text": rendered});
+                let mut message = json!({"channel": post.channel, "ts": ts, "user": eff_bot_user, "bot_id": eff_bot_id, "text": rendered});
                 if let Some(metadata) = arg("metadata") {
                     message["metadata"] = serde_json::from_str(metadata).unwrap();
                 }
@@ -714,7 +835,11 @@ impl FakeSlack {
                         || post.thread.as_ref().is_some_and(|posted| posted != thread)
                 });
                 let reply_channel = post.channel.clone();
-                w.posts.push(post);
+                if let Some(ref slot) = extra {
+                    slot.lock().unwrap().posts.push(post);
+                } else {
+                    w.posts.push(post);
+                }
                 if fate == Some(Fate::Lost) {
                     return json!({"ok": false, "error": "request_timeout"});
                 }
@@ -1299,6 +1424,93 @@ impl FakeSlack {
 
     pub fn connections(&self) -> usize {
         self.workspace.lock().unwrap().connections
+    }
+
+    /// Register an additional Slack app on the same fake Web API endpoint,
+    /// with its own Socket Mode WebSocket listener and Bearer tokens.
+    pub fn register_app(
+        &mut self,
+        app_token: &str,
+        bot_token: &str,
+        bot_user: &str,
+        bot_id: &str,
+    ) -> ExtraSlackApp {
+        let sockets = TcpListener::bind("127.0.0.1:0").unwrap();
+        let socket_url = format!("ws://{}/", sockets.local_addr().unwrap());
+        let state = Arc::new(Mutex::new(ExtraAppState {
+            app_token: app_token.to_owned(),
+            bot_token: bot_token.to_owned(),
+            bot_user: bot_user.to_owned(),
+            bot_id: bot_id.to_owned(),
+            socket_url,
+            outgoing: VecDeque::new(),
+            posts: Vec::new(),
+            acknowledged: Vec::new(),
+            connections: 0,
+            limit_lookup: None,
+            lookups: 0,
+        }));
+        {
+            let mut w = self.workspace.lock().unwrap();
+            let mut bot = Person::member(bot_user, "bot", "bot", "bot@example.com");
+            bot.bot = true;
+            w.people.insert(bot_user.to_owned(), bot);
+            w.extra_apps.push(Arc::clone(&state));
+        }
+        sockets.set_nonblocking(true).unwrap();
+        let slot = Arc::clone(&state);
+        let stop = Arc::clone(&self.stop);
+        self.threads.push(std::thread::spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                let stream = match sockets.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(20)))
+                    .unwrap();
+                let Ok(mut socket) = tungstenite::accept(stream) else {
+                    continue;
+                };
+                slot.lock().unwrap().connections += 1;
+                let _ = socket.send(tungstenite::Message::text(
+                    json!({"type":"hello","num_connections":1}).to_string(),
+                ));
+                while !stop.load(Ordering::Acquire) {
+                    let next = slot.lock().unwrap().outgoing.pop_front();
+                    if let Some(next) = next
+                        && socket.send(tungstenite::Message::text(next)).is_err()
+                    {
+                        break;
+                    }
+                    match socket.read() {
+                        Ok(tungstenite::Message::Text(text)) => {
+                            if let Ok(ack) = serde_json::from_str::<Value>(&text)
+                                && let Some(id) = ack["envelope_id"].as_str()
+                            {
+                                slot.lock().unwrap().acknowledged.push(id.to_owned());
+                            }
+                        }
+                        Ok(tungstenite::Message::Close(_)) => break,
+                        Ok(_) => {}
+                        Err(tungstenite::Error::Io(error))
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+        }));
+        ExtraSlackApp {
+            state,
+            workspace: Arc::clone(&self.workspace),
+        }
     }
 }
 

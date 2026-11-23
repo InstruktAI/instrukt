@@ -17,8 +17,21 @@ stay the path for facts
 
 ### Enablement and hosting
 
-A company home declares its connectors under `connectors:`
-(`project/instrukt/spec/feature/configuration/layered-configuration`).
+A company home declares its named connectors under `connectors.<name>`
+(`project/instrukt/spec/feature/configuration/layered-configuration`). Each
+entry selects a registered provider kind via optional `kind` (defaulting to the
+map key `<name>` when omitted), so one company home may declare multiple named
+connectors of the same kind (for example, multiple Slack apps). Each entry also
+accepts four generic conversation settings:
+
+| Field | Allowed values | Default | Contract |
+| --- | --- | --- | --- |
+| `kind` | Registered connector kind name | The map key `<name>` | Selects the channel provider implementation. |
+| `role` | Configured or published role name | `company-agent` | Role recorded on the connector's session binding(s), governing procedure selection, model order/tier, and capabilities. |
+| `admit` | `members` \| `admins_only` | `members` | Who is admitted to address the connector. |
+| `session_scope` | `conversation` \| `company` | `conversation` | Whether each conversation gets its own session or all admitted conversations of `(company, connector)` share one standing session. |
+| `reply_mode` | `turn_output` \| `explicit` | `turn_output` | Whether finished turn output is posted automatically or suppressed in favor of explicit `instrukt company reply` calls. |
+
 Declaring a connector is what gives a company conversations. The long-lived
 `instrukt run` hosts every declared connector of every company home on the
 computer; a scheduled tick hosts none. While a connector is declared,
@@ -82,21 +95,37 @@ path is the same for every connector, whichever channel it speaks to
   starts with the company's own knowledge
   (`project/instrukt/spec/feature/publication/agent-entrypoints`). It answers
   no event subscription.
-- It starts from the company-assistance procedure: the published procedure that
-  declares the role `company-agent`. One procedure on a computer declares a
-  role, so every company's conversations start from the same one. It comes
-  from the docs repository that publishes it
+- It starts from the delivered published procedure declaring the connector's
+  configured `role` (default `company-agent`). When a connector configures a
+  custom role present in `agents.yaml` that has no dedicated published procedure
+  of its own, it falls back to the delivered published procedure declaring
+  `company-agent` while retaining the connector's recorded role on the session
+  binding. The procedure comes from the docs repository that publishes it
   (`project/instrukt/spec/feature/publication/docs-repositories`); instrukt's
-  own publishes it as `general/procedure/company-assistance`. The procedure is
-  instrukt's and the knowledge is the company's; neither repeats the other.
+  own publishes `company-agent`'s as `general/procedure/company-assistance`. The
+  procedure is instrukt's and the knowledge is the company's; neither repeats
+  the other.
 - The session's opening input is the runner-authored assignment envelope,
   followed by the first addressed message's input. The assignment is the
   loader of `project/instrukt/spec/feature/runner/procedure-event-delivery`:
-  it names the procedure, the role with its resolved grants, the company, the
-  connector and the conversation, and directs
+  it names the procedure, the connector's role with its resolved grants, the
+  company, the connector and the conversation (or company session scope, and
+  explicit reply instructions when `reply_mode: explicit`), and directs
   `instrukt docs get <procedure-id> --closure` before the message is handled.
   The procedure is read from current publication when the session starts; a
   woken session keeps the assignment it started with.
+- Under `session_scope: conversation` (the default), each `(company, connector,
+  conversation)` has its own session keyed by
+  `instrukt:conversation:<company>:<connector>:<conversation>`. Under
+  `session_scope: company`, one shared standing session keyed by
+  `instrukt:conversation:<company>:<connector>` serves all admitted direct
+  messages and channel threads of that `(company, connector)` serially. Every
+  incoming turn delivered to a company-scoped session is preceded by a control
+  notification header naming the connector, conversation ID, channel or DM
+  context, thread timestamp (when threaded), and speaker identity (name,
+  provider ID, email when available, and administrator status), alongside the
+  conversation-context and member envelopes so the shared agent maintains
+  cross-user awareness and knows which conversation ID to address when replying.
 - The conversation's agent works through the company's declared MCP servers
   (`project/instrukt/spec/feature/runner/mcp-access`) and on the company's
   own documents in its home, which it may change and commit
@@ -106,9 +135,11 @@ path is the same for every connector, whichever channel it speaks to
   and manage that company's `mcp` service declarations under the company-agent
   scope of `project/instrukt/spec/feature/configuration/configuration-editing`.
   It declines anything else. Its procedure instructs it so.
-- Its role is `company-agent`; model selection, class and grants follow that
-  role's entry in `agents.yaml`
-  (`project/instrukt/spec/feature/configuration/agent-selection`).
+- Its role is the connector's `role` (default `company-agent`), stored on the
+  session's `connected_conversations` binding so caller assignment lookup
+  grants that role's class, capabilities, and model selection from `agents.yaml`
+  (`project/instrukt/spec/feature/configuration/agent-selection`,
+  `project/instrukt/spec/feature/configuration/roles-and-capabilities`).
 - Resolution is serialized per conversation. A delivery pass that cannot take
   one conversation's lock within its wait skips that conversation, whose messages
   stay pending for the next pass, and goes on with the others; this is apart from
@@ -172,28 +203,53 @@ the state-database spec.
 
 ### Who is answered
 
-The agent answers the company's own people, as the connector's provider knows
-them; nobody is listed for it. Whether a sender is one of them is decided for
-each addressed message, from what the provider says about the sender after
-that message was written. An earlier answer about the same person admits
-nothing. A message is delivered only once that is decided; while the provider
-cannot be asked, the message waits, nothing is delivered and nothing is
-replied, and the cause shows in `instrukt events status`. A message that was
-admitted is delivered, and a turn that has started runs to its end.
+Under `admit: members` (the default), the agent answers the company's own
+people, as the connector's provider knows them; nobody is listed for it. Under
+`admit: admins_only`, the agent answers only authenticated workspace
+administrators (`is_admin = true` on a full member of the company's workspace).
+Whether a sender is admitted is decided for each addressed message, from what
+the provider says about the sender after that message was written. An earlier
+answer about the same person admits nothing. A message is delivered only once
+that is decided; while the provider cannot be asked, the message waits, nothing
+is delivered and nothing is replied, and the cause shows in
+`instrukt events status`. A message that was admitted is delivered, and a turn
+that has started runs to its end.
 
-A sender who is not one of the company's own gets one fixed reply in that
-conversation, worded by the connector; no session is started or woken and
-nothing is delivered. The reply is sent once per sender and conversation. Such
-a person still appears in a context envelope as a speaker, by the name the
-connector gives.
+Under `admit: members`, a sender who is not one of the company's own gets one
+fixed `'not_own'` reply in that conversation, worded by the connector; under
+`admit: admins_only`, a sender who is not an authenticated workspace
+administrator (whether a non-admin member or not one of the company's own) gets
+one fixed `'not_admin'` reply in that conversation, worded by the connector. In
+both cases no session is started or woken and nothing is delivered. Each fixed
+reply is sent once per sender, conversation and refusal reason. Such a person
+still appears in a context envelope as a speaker, by the name the connector
+gives.
 
 ### The answer back
 
-- When a turn started by an addressed message finishes, the agent's
-  conversational output of that turn is posted to the conversation as the
-  agent wrote it, in parts where the connector's message size limit requires,
-  in order. Tool calls, tool results,
-  thinking and control input are not posted. A bare `NOOP` posts nothing.
+- Under `reply_mode: turn_output` (the default), when a turn started by an
+  addressed message finishes, the agent's conversational output of that turn is
+  posted to the conversation as the agent wrote it (with resolved credentials
+  scrubbed), in parts where the connector's message size limit requires, in
+  order. Tool calls, tool results, thinking and control input are not posted. A
+  bare `NOOP` posts nothing.
+- Under `reply_mode: explicit`, the runner suppresses automatic posting of raw
+  turn output (and suppresses relaying raw turn text to the connector's status
+  line, showing only the generic working or unavailable state) so internal
+  monologue and status lines never leak to the channel. Replies are posted only
+  when the agent explicitly queues them via
+  `instrukt company reply [--conversation <id>] [--text <text> | -]`.
+- `instrukt company reply` is admitted through caller assignment lookup: the
+  caller must be an active company conversation session bound in
+  `connected_conversations` (and pass its role's `company-reply` capability
+  check). Under `session_scope: conversation`, `--conversation` defaults to the
+  session's own bound conversation and refuses any other target; under
+  `session_scope: company`, `--conversation <id>` is required and must name an
+  admitted conversation of that `(company, connector)`. The command scrubs
+  resolved company/machine secrets and stored MCP credentials from the reply
+  text and its own CLI output, splits the reply to the connector kind's message
+  limit, and writes ordered pieces into `conversation_answers`, so the runner's
+  existing answer-posting relay delivers them with full retry and recovery.
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
   conversation links. The relay advances its position in the transaction
@@ -552,6 +608,38 @@ Scenario Outline: Receive the complete answer when it can be read
   Examples:
     | interruption                                                  |
     | the source temporarily holds only part of the completed answer |
+```
+
+### UC-CV22: Restrict a named connector to workspace administrators
+
+```gherkin
+Given a company home declares a named connector with admit set to admins_only
+When a non-admin member addresses that connector
+Then they receive one fixed administrator-only refusal reply in that conversation
+And no agent session starts or wakes
+When a workspace administrator addresses that connector
+Then their message is admitted and answered normally
+```
+
+### UC-CV23: Share one standing session across a named connector's conversations
+
+```gherkin
+Given a company home declares a named connector with session_scope set to company
+When two admitted members address that connector from different conversations
+Then both messages are delivered serially to the one shared standing session
+And each turn's input tags its conversation ID, place context, thread and speaker identity
+And each answer posts back to the conversation where its message was asked
+```
+
+### UC-CV24: Suppress raw turn output and deliver explicit replies
+
+```gherkin
+Given a company home declares a named connector with reply_mode set to explicit
+When a member addresses that connector and the agent finishes its turn with raw output
+Then the raw turn output is not posted to the conversation
+When the active conversation session runs instrukt company reply for an admitted conversation
+Then credentials are scrubbed from the queued reply and CLI output
+And the connector posts the explicit reply to that conversation through the durable answer outbox
 ```
 
 ## Known caveats
