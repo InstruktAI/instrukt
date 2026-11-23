@@ -5,12 +5,14 @@ description: Reservation of use cases before the build — a todo's planned bind
 
 ## What it is
 
-Before a build binds a use case, its todo reserves it in the preparation worktree. Integration publishes that ownership on main, preserving it independently of pending visibility, so a concurrent todo sees the claim and reuses or
-authors a distinct use case instead of adding a second binding
-(`sdlc/policy/testing`). `instrukt specs reserve` is the check: given the
-requesting todo's slug and the bindings its plan declares, it reports every
-binding another todo already holds. The command reads; the claim itself is the
-marker the todo authors.
+Before a build binds a use case, its todo reserves it in `<slug>/work` using
+pending markers (`planned:<slug>` or `planned-change:<slug>`). `instrukt specs reserve`
+checks proposed bindings against on-main reservations (pending markers and
+`binding_reservations` frontmatter), and delivery folding activates pending
+contracts on `main` while clearing owned reservations once attached test
+bindings exist; any concurrent cross-worktree duplicate is caught at the
+integration gate (`sdlc/policy/testing`). The command reads; the claim itself is
+the marker the todo authors.
 
 ## Canonical fields
 
@@ -19,7 +21,7 @@ marker the todo authors.
 - An explicit `binding_reservations` entry claims its use case; otherwise a use case is claimed by the slug of the pending marker that encloses its
   definition line: a `planned:<slug>` block (a newly authored use case) or a
   `planned-change:<slug>` block (an existing use case restated unchanged, or
-  changed). Preparation folding activates documentation while preserving each unbound use case's ownership in frontmatter `binding_reservations: {UC-id: todo-slug}`. This metadata is independent of pending visibility. Work-delivery folding clears an owned reservation only when an attached test binding exists in the candidate. The marker grammar is owned by docs
+  changed). When folded before tests exist, unbound use-case ownership is preserved in frontmatter `binding_reservations: {UC-id: todo-slug}`; work-delivery folding clears an owned reservation once an attached test binding exists in the candidate. The marker grammar is owned by docs
   (`project/instrukt/spec/domain/docs`).
 - Whole-file `delivered_by` claims all use cases only when it names exactly
   one delivering slug. With several slugs, claims come from in-body pending

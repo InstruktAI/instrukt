@@ -230,22 +230,17 @@ the mismatch and resolve it through a grounded adaptation, a separately-owned
 platform gap, or an explicit architectural alternative; never improvise a
 one-off silently.
 
-### 5. Advance the state machine
+### 5. Complete and return to `todo-orchestrator`
 
-When the architecture artifact is written, call:
-
-```
-instrukt todo show {slug}
-```
-
-The state machine routes the next action. It will direct you to dispatch the
-architecture reviewer and tail it. On `approve` it advances to the next phase.
-On `needs_work` it routes you back here. Read
-`architecture-review-findings` and apply the finding-validation, disposition
-and evidence-recording rules in `sdlc/procedure/lifecycle/fix-review-findings`
-to the indexed design and its thin `architecture` artifact. Architecture
-retains snippet and index authoring, revision validation and advancement. Then
-advance again.
+When the `architecture` artifact and pending doc updates are committed in
+`<slug>/work`, stamp `instrukt todo stamp {slug} --role-complete` and end your
+turn. `todo-orchestrator` reads the factual ledger (`instrukt todo show {slug} --json`)
+and dispatches an independent `architecture-reviewer`. On `approve`,
+`todo-orchestrator` advances to planning or build; on `needs_work`, it routes
+findings back here. Read `architecture-review-findings` and apply the
+finding-validation, disposition, and evidence-recording rules in
+`sdlc/procedure/lifecycle/fix-review-findings` to the indexed design and its
+thin `architecture` artifact, then stamp `--role-complete` again.
 
 ## Outputs
 

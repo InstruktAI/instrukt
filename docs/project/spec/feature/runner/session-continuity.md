@@ -458,7 +458,7 @@ instruction prose is a separate configuration surface.
 | Operation | Native translation and evidence |
 | --- | --- |
 | Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
-| Todo phase orchestrator start | Native `worktree` carries the captured remote base and phase branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
+| Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |
@@ -552,12 +552,13 @@ conversations remains the runtime's responsibility.
 
 ### Fresh canonical base
 
-Before creating either `<slug>/prepare` or `<slug>/work`, fetch origin and use
-`t3 thread start <project> - --worktree origin/main --branch <slug>/<phase> --title <display-title>`.
+Before creating `<slug>/work`, fetch origin and use
+`t3 thread start <project> - --worktree origin/main --branch <slug>/work --title <display-title>`
+(or carry forward an un-integrated legacy prepare branch when present).
 Only the integrator writes and pushes gate-green exact commits to main; local
-main can lag and supplies no new-phase base. A fetch failure leaves startup
+main can lag and supplies no new-worktree base. A fetch failure leaves startup
 unperformed, with its cause visible. A retained published `<slug>/work` on
-another computer is continuation of the existing phase, using freshly fetched
+another computer is continuation of the existing branch, using freshly fetched
 `origin/<slug>/work` with the same local branch name; it is never reset to main.
 For repositories whose canonical branch has another name, use that remote ref.
 

@@ -217,7 +217,7 @@ policy or a doc change under the documentation contract, not a coordinator
 journal. Awareness comes from current sources, not from a prior finding read
 back as current truth.
 
-A review past its threshold stays with its phase orchestrator. Challenge a
+A review past its threshold stays with `todo-orchestrator`. Challenge a
 missing grounded continuation account by address; own neither its verdict nor
 its continuation. The record points to that orchestrator's cause and evidence.
 

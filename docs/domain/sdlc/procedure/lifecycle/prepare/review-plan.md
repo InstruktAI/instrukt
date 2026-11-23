@@ -377,7 +377,7 @@ to pre-satisfy:
   context decides is an Important finding whose closure is removal or a
   one-sentence pointer to the owner. A third disposition is
   `doc_deferred: <holding-slug> — <inline-snippet-reference>#<section>`. Accept
-  it only when the named region in the target preparation worktree is enclosed by that slug's pending
+  it only when the named region in the target `<slug>/work` worktree is enclosed by that slug's pending
   marker, that slug is already in this todo's `after` set, the inline reference
   points to the held snippet using the form required by
   `general/policy/referencing-doc-snippets`, and replacement text is drafted
@@ -388,20 +388,20 @@ to pre-satisfy:
   collision, a nested marker, or an untracked wait as deferral.
   When the delivery removes a capability that a whole live snippet describes,
   or the last dispatcher of a command artifact, the plan names each retiring
-  file and verifies its empty companion was authored in the preparation worktree under this slug
+  file and verifies its empty companion was authored in `<slug>/work` under this slug
   (`general/procedure/doc-snippet-authoring` step 13). A retiring file with no
   companion, a task that deletes it, or a removal left to an act after
   delivery is a Requirement-Violation.
-- **ADR discipline (hard gate)**: any ADR the plan schedules, or that prepare
-  authored in the preparation worktree, is held to `general/policy/adr-discipline` and
+- **ADR discipline (hard gate)**: any ADR the plan schedules, or that was
+  authored in `<slug>/work`, is held to `general/policy/adr-discipline` and
   `general/procedure/adr-authoring`. It must record one real, contestable
   architectural fork — reject design or current-state cast as an ADR, a
   non-decision (cleanup or alignment that carries no fork — the default is none),
   work/slugs in the body, or an ADR pre-authored for undelivered work. A
   scheduled or authored ADR that fails this bar is a Requirement-Violation
   (blocking); the reviewer does not approve until it is dropped or corrected.
-  This bar is the plan reviewer's: the build reviewer never assesses ADRs, because
-  the doc layer is authored in the preparation worktree, reviewed and integrated to main before build, never in the work-phase worktree.
+  Both plan review and build review enforce this bar when ADRs are authored in
+  `<slug>/work`.
 - **Process-change governance (hard gate)**: per
   `sdlc/policy/process-change-authority`, when any plan task
   implies a behavioral delta to a process-layer contract (lifecycle state

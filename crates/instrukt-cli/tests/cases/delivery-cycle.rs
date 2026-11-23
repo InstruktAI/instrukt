@@ -497,21 +497,45 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
     );
     assert!(after_kickback["ledger"]["finalize_ready_commit"].is_null());
 
-    // Shipped sdlc worker procedures keep planning/checklist/diagnosis conditional for the fast track.
-    let docs_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/domain/sdlc/procedure/lifecycle/work");
-    let build_md = std::fs::read_to_string(docs_root.join("build.md")).unwrap();
+    // Shipped sdlc and general directive docs contain no retired two-phase or state-machine contradictions.
+    let repo_docs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+    let work_docs = repo_docs.join("domain/sdlc/procedure/lifecycle/work");
+    let build_md = std::fs::read_to_string(work_docs.join("build.md")).unwrap();
     assert!(!build_md.contains(
         "`instrukt todo artifacts read {slug} implementation-plan` exists and is readable."
     ));
     assert!(build_md.contains("fast track"));
-    let review_md = std::fs::read_to_string(docs_root.join("review-build.md")).unwrap();
+    let review_md = std::fs::read_to_string(work_docs.join("review-build.md")).unwrap();
     assert!(!review_md.contains("`implementation-plan` exists for every kind."));
     assert!(!review_md.contains("`quality-checklist` exists with Build and Review sections."));
-    let finalize_md = std::fs::read_to_string(docs_root.join("finalize.md")).unwrap();
+    let finalize_md = std::fs::read_to_string(work_docs.join("finalize.md")).unwrap();
     assert!(
         !finalize_md.contains("- `instrukt todo artifacts read {slug} quality-checklist` exists.")
     );
+    let forbidden = [
+        "<slug>/prepare",
+        "state machine routes",
+        "integrated to main before build",
+        "Work-phase doc freeze",
+    ];
+    let mut stack = vec![repo_docs.join("domain/sdlc"), repo_docs.join("general")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                for needle in forbidden {
+                    assert!(
+                        !text.contains(needle),
+                        "shipped directive doc {} still contains retired phrase {needle:?}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
 }
 
 // spec: project/instrukt/spec/feature/workflow/preparation UC-PR4
@@ -631,6 +655,32 @@ fn task_preparer_child_attempt_completes_without_worktree_and_task_firing_requir
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("task approval: pending human approval"));
+
+    // Non-task-preparer roles are refused on worktree-less task todos.
+    let wrong_role = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "builder",
+            "--procedure",
+            "crew/procedure/build",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+        ])
+        .write_stdin("Builder should not reserve on a task todo.")
+        .assert()
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&wrong_role.get_output().stderr)
+            .contains("only task-preparer may reserve a worktree-less attempt on a task todo")
+    );
 
     // Reserve and bind a worktree-less task-preparer child attempt.
     let reserved = crew
@@ -819,4 +869,217 @@ fn todo_show_json_matches_todo_work_json_for_prerequisite_grounding_and_legacy_p
     assert_eq!(placement["placement"]["branch"], "legacy-prep/work");
     assert_eq!(placement["placement"]["from"], "origin/legacy-prep/prepare");
     assert_eq!(placement["placement"]["base"], prep_head.trim());
+
+    // 3. An ALREADY-MERGED leftover `<slug>/prepare` branch falls through to fresh `origin/main` (not behind main).
+    let merged_slug = "already-merged-prep";
+    crew.project.create(
+        merged_slug,
+        "feature",
+        "Feature whose prepare branch already merged.",
+    );
+    crew.project
+        .repo
+        .git(["branch", "already-merged-prep/prepare", "main"]);
+    crew.project.repo.git([
+        "push",
+        "--quiet",
+        "origin",
+        "already-merged-prep/prepare:already-merged-prep/prepare",
+    ]);
+    // Advance main one commit past the already-merged prepare branch.
+    std::fs::write(crew.root().join("newer-on-main.txt"), "newer\n").unwrap();
+    crew.project.repo.git(["add", "newer-on-main.txt"]);
+    crew.project
+        .repo
+        .git(["commit", "--quiet", "-m", "chore: advance main"]);
+    let new_main_head = crew.project.repo.git(["rev-parse", "HEAD"]);
+    crew.project.repo.git(["push", "--quiet", "origin", "main"]);
+
+    let merged_placement_out = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args(["todo", "work", merged_slug, "--json"])
+        .assert()
+        .success();
+    let merged_placement: serde_json::Value =
+        serde_json::from_slice(&merged_placement_out.get_output().stdout).unwrap();
+    assert_eq!(
+        merged_placement["placement"]["branch"],
+        "already-merged-prep/work"
+    );
+    assert_eq!(merged_placement["placement"]["from"], "origin/main");
+    assert_eq!(merged_placement["placement"]["base"], new_main_head.trim());
+}
+
+#[test]
+fn legacy_prepare_driver_retires_and_retained_work_driver_is_adopted_on_dispatch() {
+    use instrukt_core::state_db::rusqlite::Connection;
+
+    // 1. Unreleased legacy `prepare-orchestrator` driver binding does not block dispatch and is retired.
+    let project = crate::fixtures::flavor::Tracked::new(true);
+    project.todo([
+        "create",
+        "retire-prep",
+        "In-flight legacy prepare todo.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    let db_path = project.env.instrukt_home().join("state/instrukt.db");
+    {
+        let db = Connection::open(&db_path).unwrap();
+        let todo_id: String = db
+            .query_row("SELECT id FROM todos WHERE slug='retire-prep'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let key = format!("instrukt:todo:demo/{todo_id}:prepare-orchestrator:1");
+        let evidence = serde_json::json!({
+            "role": "prepare-orchestrator",
+            "session": null,
+            "worktree": null,
+            "runtime": "t3",
+            "native_placement": null,
+            "assignment": "driver",
+            "occurrence": null,
+            "attempt": 1,
+            "semantic_key": key,
+            "native_assignment": null,
+            "lane": "prepare",
+            "start_from": null,
+            "no_start_reason": null,
+            "branch": "retire-prep/prepare",
+            "base_head": null,
+            "completion_sequence": null,
+            "completed_head": null,
+            "failure_reason": null,
+            "failure_head": null,
+            "failure_workspace": null,
+            "failed_at": null,
+            "released_at": null
+        })
+        .to_string();
+        db.execute(
+            "INSERT INTO session_bindings(todo_id,role,attempt,runtime,semantic_key,branch,evidence) \
+             VALUES (?1,'prepare-orchestrator',1,'t3',?2,'retire-prep/prepare',?3)",
+            instrukt_core::state_db::rusqlite::params![todo_id, key, evidence],
+        )
+        .unwrap();
+    }
+    project.tick();
+    assert_eq!(
+        project.rt.started_count(),
+        1,
+        "todo-orchestrator should dispatch despite legacy unbound prepare-orchestrator binding"
+    );
+    {
+        let db = Connection::open(&db_path).unwrap();
+        let released: Option<String> = db
+            .query_row(
+                "SELECT released_at FROM session_bindings WHERE role='prepare-orchestrator'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            released.is_some(),
+            "legacy prepare-orchestrator driver binding should be retired on takeover"
+        );
+    }
+
+    // 2. Retained legacy `work-orchestrator` driver on existing `<slug>/work` worktree is adopted in place.
+    let project2 = crate::fixtures::flavor::Tracked::new(true);
+    project2.todo([
+        "create",
+        "adopt-work",
+        "In-flight legacy work todo.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    // First dispatch creates a real worktree, T3 thread, and runtime_bindings row;
+    // we then rewrite its recorded role/key to the pre-upgrade `work-orchestrator`
+    // shape, end the turn, and release the claim so the next tick must adopt it in place.
+    project2.tick();
+    assert_eq!(project2.rt.started_count(), 1);
+    let db_path2 = project2.env.instrukt_home().join("state/instrukt.db");
+    let (session_id, old_key, legacy_key) = {
+        let db = Connection::open(&db_path2).unwrap();
+        let (todo_id, session, old_key, evidence): (String, String, String, String) = db
+            .query_row(
+                "SELECT t.id, b.session, b.semantic_key, b.evidence \
+                 FROM todos t JOIN session_bindings b ON b.todo_id = t.id \
+                 WHERE t.slug='adopt-work'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        let legacy_key = format!("instrukt:todo:demo/{todo_id}:work-orchestrator:1");
+        let mut parsed: serde_json::Value = serde_json::from_str(&evidence).unwrap();
+        parsed["role"] = serde_json::json!("work-orchestrator");
+        parsed["semantic_key"] = serde_json::json!(legacy_key);
+        db.execute(
+            "UPDATE session_bindings SET role='work-orchestrator', semantic_key=?1, evidence=?2 WHERE todo_id=?3",
+            instrukt_core::state_db::rusqlite::params![legacy_key, parsed.to_string(), todo_id],
+        )
+        .unwrap();
+        let req_json: Option<String> = db
+            .query_row(
+                "SELECT request FROM runtime_bindings WHERE semantic_key=?1",
+                instrukt_core::state_db::rusqlite::params![old_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let updated_req = req_json.map(|raw| {
+            let mut req: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            req["key"] = serde_json::json!(legacy_key);
+            req.to_string()
+        });
+        db.execute(
+            "UPDATE runtime_bindings SET semantic_key=?1, request=?2 WHERE semantic_key=?3",
+            instrukt_core::state_db::rusqlite::params![legacy_key, updated_req, old_key],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE todos SET claim_machine=NULL, claim_session=NULL, claim_at=NULL WHERE id=?1",
+            instrukt_core::state_db::rusqlite::params![todo_id],
+        )
+        .unwrap();
+        let bare_id = session.strip_prefix("t3:").unwrap().to_owned();
+        (bare_id, old_key, legacy_key)
+    };
+    let _ = (old_key, legacy_key);
+    project2
+        .rt
+        .finish(&session_id, "completed", "paused before upgrade");
+    let before_messages = project2.rt.message_count(&session_id);
+
+    project2.tick();
+    assert_eq!(
+        project2.rt.started_count(),
+        1,
+        "retained legacy work-orchestrator session should be resumed rather than starting a new thread: {:?}",
+        project2.rt.calls()
+    );
+    assert!(
+        project2.rt.message_count(&session_id) > before_messages,
+        "adopted legacy work-orchestrator session should receive the wakeup prompt; calls={:?}",
+        project2.rt.calls()
+    );
+    {
+        let db = Connection::open(&db_path2).unwrap();
+        let claim_session: Option<String> = db
+            .query_row(
+                "SELECT claim_session FROM todos WHERE slug='adopt-work'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            claim_session.as_deref(),
+            Some(format!("t3:{session_id}").as_str()),
+            "adopted legacy work-orchestrator session must be accepted into the todo claim"
+        );
+    }
 }

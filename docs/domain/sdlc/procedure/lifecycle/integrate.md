@@ -127,11 +127,14 @@ builders, reviewers and the evaluator add no suite execution of their own.
 - **Red:** read the failure. Return it to the responsible todo as findings and
   record `instrukt todo stamp <slug> --kickback --reason "<failure summary>"`
   (which resets the finalized handoff so the runner wakes `todo-orchestrator`
-  even when no new commit was pushed yet), make a trivial fix within integration
-  scope, or isolate the culprit among a batch. A change to intent or the
-  prepared contract returns through `todo-orchestrator`; a trivial integration
-  correction is no substitute for it. Any changed candidate is pushed to
-  `integrate` and verified again.
+  even when no new commit was pushed yet; note that `--kickback` also marks any
+  existing `plan_review` invalidated in the ledger, so `todo-orchestrator`
+  inspects the recorded reason and routes directly to `builder`/`fixer` for
+  code-only or CI failures rather than re-planning unless the contract or plan
+  itself is defective), make a trivial fix within integration scope, or isolate
+  the culprit among a batch. A change to intent or the prepared contract returns
+  through `todo-orchestrator`; a trivial integration correction is no substitute
+  for it. Any changed candidate is pushed to `integrate` and verified again.
 
 Work branches and one-off heads receive the same candidate verification.
 A change to the candidate after a green

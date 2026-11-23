@@ -67,8 +67,10 @@ with the governing contract.
    present (fast track), derive the minimal bounded implementation directly from
    `input` (plus `diagnosis` when settled) and stop to escalate to `todo-orchestrator`
    if blast radius exceeds a small localized change.
-4. Work from the scenario delta. The prepared artifacts identify the feature-spec scenarios this
-   todo delivers — added, changed, and removed. For each:
+4. When prepared artifacts or feature-spec deltas are present, work from the
+   scenario delta they identify — added, changed, and removed. (On the fast track
+   with no feature-spec delta, bind or update tests covering the `input` intent
+   under `policy/testing`.) For each spec scenario:
    - **Added scenario** — bind it: write the test at the spec-mirrored path
      and confirm it fails, implement the required behavior, then confirm it passes.
    - **Changed scenario** — update the bound test to the new contract
@@ -171,9 +173,9 @@ execution evidence, not this self-review.
    `quality-checklist` when present, or in the build report on the fast track).
 6. Record applicable project quality obligations; hooks and CI own their checks.
 7. User-facing verification:
-   - For browser-based frontend or web UI changes, run a browser-automation smoke check in a real browser that exercises the changed path. Record the path exercised and the observed result in `quality-checklist.md` under the Build section.
-   - For other user-facing changes (CLI output, TUI, interactive behavior), verify the change is observable and record what was checked and the result in `quality-checklist.md`.
-   - If verification is not possible in the build environment, note the gap explicitly in `quality-checklist.md`.
+   - For browser-based frontend or web UI changes, run a browser-automation smoke check in a real browser that exercises the changed path. Record the path exercised and the observed result in `quality-checklist` when present, or in your build report on the fast track.
+   - For other user-facing changes (CLI output, TUI, interactive behavior), verify the change is observable and record what was checked and the result in `quality-checklist` when present, or in your build report on the fast track.
+   - If verification is not possible in the build environment, note the gap explicitly in `quality-checklist` (or in your build report on the fast track).
 8. Working tree is clean: `git status`.
    - If not clean, commit all remaining files in the worktree. Everything in the worktree belongs to the task.
 9. Verify commits exist: `git log --oneline -10`.

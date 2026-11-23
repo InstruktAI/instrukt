@@ -44,10 +44,9 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 - **Evidence available:** the approved intent artifacts, current task plan or output,
   declared dependencies, changed artifact or commit, and the producing session's role
   contract (`sdlc/procedure/lifecycle/coordinate`; lifecycle prepare/work contracts).
-- **Ownership:** the judgment owner is the role named by the affected phase contract
-  for scope or drift; the producing session executes any correction; the affected
-  lifecycle state machine is state authority only when correction changes governed
-  state.
+- **Ownership:** the judgment owner is the role named by the affected contract
+  for scope or drift; the producing session executes any correction; the todo
+  work record is state authority only when correction changes governed state.
 - **Coordinator:** ask how the changed-output address reconciles with the approved
   intent/role address for the named obligation. Never supply the drift verdict.
 - **Stop and settlement:** the intervention stops after one pointer. The observation
@@ -98,7 +97,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
   authority gate and executes refusal or continuation. Process evolution is
   agent-owned; the human owns only a consequence on the closed list of
   `general/policy/human-contract` (`sdlc/policy/process-change-authority`). The
-  Prepare state machine records the resulting phase state.
+  todo work record records the resulting state.
 - **Coordinator:** intervene only on positive evidence that the claimant proceeded
   past such a human-owned consequence without the recorded decision, or that its
   stated basis contradicts those addresses. Never infer ratification or ask Human to re-decide a recorded decision.
@@ -129,8 +128,8 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 - **Evidence available:** creation record, input, current lifecycle phase, Prepare
   transcript and derived artifacts, and runner output or logs. A question-shaped
   origin is evidence to inspect, not proof of invalidity.
-- **Ownership:** The live claimant, resolved from the todo/session record, judges and executes the audit; the Prepare/todo state
-  machine records its result. Runner eligibility is mechanical, not creation approval.
+- **Ownership:** The live claimant, resolved from the todo/session record, judges and executes the audit; the todo work record
+  records its result. Runner eligibility is mechanical, not creation approval.
 - **Coordinator:** only on positive evidence that derivation began before the
   mandatory check, flag the live claimant with the complete first message the reconciliation
   clause of `sdlc/policy/todo-creation-discipline` defines; never
@@ -151,8 +150,8 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 - **Ownership:** Human owns only a consequence on the closed list of
   `general/policy/human-contract` that the process delta carries
-  (`sdlc/policy/process-change-authority`); Prepare Orchestrator presents that
-  question and later executes the decision; the Prepare state machine records
+  (`sdlc/policy/process-change-authority`); `todo-orchestrator` presents that
+  question and later executes the decision; the todo work record records
   progression.
 - **Coordinator:** leave a correctly delivered beacon alone. If the human-owned need
   is newly live and undelivered, add it once to the human batch with evidence and the
@@ -167,13 +166,13 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 - **Evidence available:** todo state, phase checkpoint, current owner/session
   association, runner output or logs where relevant, and the recovery section of the
   governing phase contract.
-- **Ownership:** use the recovery owner named by that phase contract. If the contract
-  and runner name none, judgment and execution remain unresolved; the corresponding
-  state machine remains the only state authority.
+- **Ownership:** use the recovery owner named by that contract. If the contract
+  and runner name none, judgment and execution remain unresolved; the todo work
+  record remains the only state authority.
 - **Coordinator:** route to a grounded recovery owner. If none or the path is broken,
   check existing defect coverage and, when uncovered, log one grounded `defect` and
   dispose of it per the coordinate procedure's step 7; never invent an owner or adopt
-  the slug by invoking its state machine.
+  the slug by claiming or driving its orchestration.
 - **Stop and settlement:** the intervention stops after routing, or after the defect is
   logged and disposed of. The
   slug observation settles only when a valid owner takes it or governed state becomes
@@ -196,14 +195,14 @@ authority, coordinator act, intervention stop, and settlement evidence match.
   Settle when the association resolves to its project, is repaired, or disappears
   with a valid terminal session.
 
-##### NC-07 — Idle Work Orchestrator on unfinished work
+##### NC-07 — Idle `todo-orchestrator` on unfinished work
 
-- **Evidence available:** live Work Orchestrator, nonterminal slug, last state-machine
-  output, relevant artifacts/child state, and terminal-handoff/recovery contracts in
-  `sdlc/procedure/lifecycle/overview`.
+- **Evidence available:** live `todo-orchestrator`, nonterminal slug, current
+  factual ledger, relevant artifacts/child state, and terminal-handoff/recovery
+  contracts in `sdlc/procedure/lifecycle/overview`.
 
-- **Ownership:** Work Orchestrator judges and executes its next work/recovery act; the
-  Work state machine owns phase state.
+- **Ownership:** `todo-orchestrator` judges and executes its next work/recovery
+  act; the todo work record owns governed state.
 - **Coordinator:** idle is positive evidence of unfinished work, not by itself of
   failure. Point only when evidence shows a contractually due act was skipped and is
   not deliberately waiting.
@@ -213,9 +212,9 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 ##### NC-08 — Dropped child recovery
 
 - **Evidence available:** child error/finding, child and orchestrator transcripts,
-  worktree/state-machine evidence, and Work recovery contract.
-- **Ownership:** the existing child recovers from its own brief; Work state machine
-  owns governed phase state; the Work Orchestrator escalates blockers that are
+  worktree and factual-ledger evidence, and orchestration recovery contract.
+- **Ownership:** the existing child recovers from its own brief; the todo work
+  record owns governed state; `todo-orchestrator` escalates blockers that are
   human-owned, architectural, or beyond the child's brief.
 - **Coordinator:** point the orchestrator to the child evidence only after positive
   evidence that a contractually due escalation was skipped.
@@ -226,12 +225,12 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 ##### NC-09 — Review threshold crossed
 
 - **Evidence available:** configured round threshold, round counter, current review
-  findings/verdict, the phase orchestrator's recorded continuation ground or stop
-  cause, and Work recovery contract.
-- **Ownership:** the phase orchestrator owns continuation and routing the next
+  findings/verdict, `todo-orchestrator`'s recorded continuation ground or stop
+  cause, and review convergence contract.
+- **Ownership:** `todo-orchestrator` owns continuation and routing the next
   contribution under the shared convergence contract
   (`sdlc/procedure/lifecycle/review`); reviewer and producer retain verdict,
-  finding-disposition, and remediation authority; Work state machine owns
+  finding-disposition, and remediation authority; the todo work record owns
   resulting state.
 - **Coordinator:** when passes continue past the threshold with no grounded account
   of what the next pass resolves, point to the convergence contract's address and
@@ -245,9 +244,9 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 - **Evidence available:** `INTEGRATION COMPLETE`, empty candidate queue, synced main,
   and Integrator lease (`sdlc/procedure/lifecycle/integrate`).
-- **Ownership:** completion is mechanically determined by the Integration state
-  machine; Integrator reconciles delivery and cleanup, then parks in its standing
-  session; the Integration state machine owns delivery state.
+- **Ownership:** completion is established from the factual ledger and git refs;
+  Integrator reconciles delivery and cleanup, then parks in its standing session;
+  the todo work record owns delivery state.
 - **Coordinator:** no intervention and no log line.
 - **Stop and settlement:** settle when the Integrator records delivery and any owed cleanup,
   then parks under its standing binding. A later integration event continues
@@ -260,7 +259,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 - **Ownership:** Integrator retains the failed sync and routes clearance to the
   owner of the blocking work under `sdlc/procedure/lifecycle/integrate`. Once
   clearance is evidenced, the integrator rechecks ancestry and continues the
-  owed fast-forward; the Integration state machine owns delivery state.
+  owed fast-forward; the todo work record owns delivery state.
 - **Coordinator:** leave the retained recovery with the standing integrator. Event-driven
   continuation rechecks the unresolved operation; human-owned questions stay
   in that session. Point only on positive evidence that the integrator
@@ -274,7 +273,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
   Integrator log/lease, and whether its human delivery already occurred.
 - **Ownership:** Human owns the irreducible decision; Integrator executes the chosen
   recovery or disposition, with the authoring role acting where its own work must
-  change; Integration state machine owns candidate state.
+  change; the integration worktree and work record own candidate state.
 - **Coordinator:** do not duplicate a delivered beacon. Otherwise batch its evidence
   and smallest live question once; never instruct overwrite, stash, or forced retry.
 - **Stop and settlement:** delivery ends the intervention. Settle when the human
@@ -363,14 +362,15 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 ##### NC-17 — Prepared artifact with referenced-path drift
 
 - **Evidence available:** grounding stamps, artifact path references, current path
-  fingerprints, and any state-machine drift report
-  (`sdlc/procedure/lifecycle/overview`, Handle drift).
-- **Ownership:** the dispatched drift analyzer exclusively judges and stamps impact;
-  Prepare Orchestrator executes dispatch/re-entry when its state machine requests it;
-  the Prepare state machine owns phase invalidation and progression.
+  fingerprints, and factual-ledger drift facts
+  (`sdlc/procedure/lifecycle/overview`).
+- **Ownership:** the dispatched `drift-analyzer` exclusively judges and stamps impact;
+  `todo-orchestrator` dispatches drift analysis or re-derivation from the factual
+  ledger; the todo work record owns invalidation and drift stamps.
 - **Coordinator:** do not classify drift or dispatch the analyzer independently. Point
-  a live Prepare owner only after the contract's drift condition/report exists. If no
-  owner or recovery path exists, preserve the missing path as a mechanism finding.
+  a live `todo-orchestrator` only after the ledger reports pending or substantive
+  drift. If no owner or recovery path exists, preserve the missing path as a
+  mechanism finding.
 - **Stop and settlement:** stop after pointer or unresolved finding. Settle on the
   digest/path-bound `drift-reviewed` verdict and resulting re-entry or continuation.
 
@@ -488,28 +488,28 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 
 ##### NC-27 — Human PRD approval gate
 
-- **Evidence available:** reviewed PRD, Prepare gate state, approval absence, current
-  delivery record, and Prepare session
-  (`sdlc/procedure/lifecycle/overview`).
-- **Ownership:** Human judges approval; Prepare Orchestrator executes the recorded
-  decision; Prepare state machine owns approval/progression state.
+- **Evidence available:** reviewed PRD, `approvals.prd` gate state in the factual
+  ledger, approval absence, current delivery record, and `todo-orchestrator`
+  session (`sdlc/procedure/lifecycle/overview`).
+- **Ownership:** Human judges approval; `todo-orchestrator` executes the recorded
+  decision; the todo work record owns approval state and enforces `approvals.prd`.
 - **Coordinator:** leave a delivered gate alone. Otherwise add the source-linked PRD
   question once to the human batch; never approve or refine it.
 - **Stop and settlement:** delivery ends the intervention. Settle when the human
-  decision is durably recorded and Prepare produces resulting state/artifact evidence.
+  decision is durably recorded and `todo-orchestrator` produces resulting state/artifact evidence.
 
 ##### NC-28 — Kickback
 
-- **Evidence available:** builder's unbuildable-plan reason, Work Orchestrator's read,
-  reviewed plan, current state and delivery record
-  (`sdlc/procedure/lifecycle/overview`, Kickback).
-- **Ownership:** Work Orchestrator owns the technical kickback decision and executes
-  the stamp (`sdlc/procedure/lifecycle/overview`, Kickback); Work state machine
-  mutates lifecycle state.
+- **Evidence available:** builder's unbuildable-plan reason or red CI failure,
+  `todo-orchestrator`'s read, reviewed plan, current factual ledger and delivery
+  record (`sdlc/procedure/lifecycle/overview`).
+- **Ownership:** `todo-orchestrator` (or `integrator` on red CI) owns the
+  technical kickback decision and executes `--kickback --reason ...`; the todo
+  work record mutates governed state.
 - **Coordinator:** never stamp, recommend kickback from plausibility, or bypass the
   orchestrator.
-- **Stop and settlement:** settle when the orchestrator's recorded direction and the
-  state machine produce the resulting state.
+- **Stop and settlement:** settle when the recorded kickback stamp and subsequent
+  orchestration produce the resulting state.
 
 ##### NC-29 — Escalation answered by a governing contract
 
@@ -572,7 +572,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
   the governing gate records/executes it; the configured runner and lifecycle
   mechanisms govern any subsequent movement.
 - **Coordinator:** state the boundary and route the mandate to the gate owner for
-  durable recording. Never start or dispatch the work, drive its state machine, or
+  durable recording. Never start or dispatch the work, drive its orchestration, or
   override a runner skip. If no gate owner/path exists, preserve it unresolved.
 - **Stop and settlement:** routing ends intervention. Settle when governed state
   reflects the decision; any later lack of movement is assessed separately under

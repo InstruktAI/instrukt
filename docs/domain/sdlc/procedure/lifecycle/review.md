@@ -301,7 +301,7 @@ threshold, and points at this continuation contract. It is emitted once, on the
 pass that crosses the threshold, and not again; the count keeps rendering
 afterwards. The count summons no one.
 
-The phase orchestrator owns continuation, as it owns the loop's lifecycle
+`todo-orchestrator` owns continuation, as it owns the loop's lifecycle
 execution (`general/procedure/orchestration`); the reviewer keeps verdict
 authority, and the producer keeps disposition and implementation authority.
 Before requesting another pass, the orchestrator establishes from the current
@@ -310,8 +310,8 @@ within the frozen scope. Either party may halt continuation by identifying a
 grounded defect in continuing; the orchestrator resolves or routes that defect
 before requesting another pass.
 
-When continuation stops, the phase orchestrator records the grounded cause and
-routes the next contribution under the invoking phase's correction procedure.
+When continuation stops, `todo-orchestrator` records the grounded cause and
+routes the next contribution under the invoking primitive's correction procedure.
 The target returns to drafting only when the evidence requires re-deriving a
 prepared artifact. Reviewer incompleteness stays a review correction; an
 implementation defect within the approved contract stays with the producer. The

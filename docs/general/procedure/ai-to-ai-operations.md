@@ -36,9 +36,11 @@ lifecycle contract.
    selected runtime instruction below, then record `instrukt todo bind` with the
    native child id and matching shared workspace evidence before admitting work. Retain an
    interrupted reservation and recover its existing native task before retrying.
-   Todo-work children inherit the parent's one todo worktree and branch with
-   shared isolation; preparation writers and reviewers inherit the project folder
-   in `<slug>/prepare`, with immediate reviewed integration before a separate `<slug>/work` starts. Bind the recorded phase placement, not an incidental shell cwd.
+   Repository todo children (preparation writers, builders, reviewers, deferrer,
+   finalizer) all inherit `todo-orchestrator`'s single `<slug>/work` worktree
+   and branch with shared isolation (`task-preparer` on `kind: task` runs as a
+   worktree-less child attempt). Bind the recorded placement, not an incidental
+   shell cwd.
 
    <!-- @config: runtime.dispatch -->
 

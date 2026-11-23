@@ -67,7 +67,9 @@ retaining thread and attempt records.
 - If a legacy `prepare-orchestrator` session still holds an active claim on
   upgrade, release it with `instrukt todo update <slug> --unclaim` (or from the
   claiming computer) so `todo-orchestrator` can pick it up on `<slug>/work`,
-  then remove any leftover `<slug>/prepare` branch once `<slug>/work` is created.
+  then remove any leftover `<slug>/prepare` worktree (`git worktree remove <path>`)
+  before deleting the local and remote `<slug>/prepare` branch once `<slug>/work`
+  is created.
 - `agents.yaml` v3 migration converts `prepare-orchestrator` / `work-orchestrator`
   entries into `todo-orchestrator` (preferring `work-orchestrator` settings when
   both exist, logging a warning if they differed).

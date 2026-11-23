@@ -271,9 +271,9 @@ owner's rule into the bug's current context is still scope and ownership creep.
 ### 2d. Reserve scenario test bindings in preparation when the project has tests
 
 Before drafting the tasks in a project that opts into tests, reserve every
-feature-spec scenario the plan will bind so a concurrent prepare cannot bind
+feature-spec scenario the plan will bind so concurrent work does not bind
 the same scenario. Read the
-current scenario inventory on main and in the target preparation worktree for each feature spec the plan touches — the
+current scenario inventory on main and in `<slug>/work` for each feature spec the plan touches — the
 live scenarios via `instrukt docs get <id>`, and any pending claims via
 `instrukt docs index --target <slug>` and `instrukt docs get <id> --target <slug>`.
 
@@ -292,14 +292,14 @@ For each scenario the plan will bind:
   scenario unchanged; the delivery fold clears the wrap and the test binding becomes
   the permanent record.
 - **A scenario already reserved by another in-flight todo** — enclosed by that todo's
-  pending marker in its owning preparation worktree — is not claimed again: reuse it by reference with no
+  pending marker or `binding_reservations` entry — is not claimed again: reuse it by reference with no
   second binding, or author a distinct scenario. When both todos must author the same
   region, serialize with `instrukt todo update <this-slug> --after <owning-slug>` so this
   plan drafts against the owner's approved scenarios.
 
 A scenario enclosed by no pending marker and bound by no test is unclaimed and free
 to reserve. The plan's declared bindings are what the plan-review reservation check
-validates against the published claims and the pending preparation worktrees.
+validates against the published claims and the todo's `<slug>/work` pending markers.
 
 ### 3. Draft the implementation plan
 
@@ -579,7 +579,7 @@ or re-derivation under step 1b.
 
 ## Discipline
 
-Reserve every scenario binding in the preparation worktree before drafting tasks — plan-draft step
+Reserve every scenario binding in `<slug>/work` before drafting tasks — plan-draft step
 2d. Skipping it lets a concurrent prepare bind the same scenario in its own
 worktree; the plan-review reservation check exists to catch that late, not to
 excuse skipping the reservation early.

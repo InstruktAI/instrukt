@@ -352,6 +352,11 @@ fn checked_replacement(
     Ok(index)
 }
 
+fn matches_driver_role(bound: &RoleName, requested: &RoleName) -> bool {
+    bound == requested
+        || (requested.as_str() == "todo-orchestrator" && bound.as_str() == "work-orchestrator")
+}
+
 fn replacement_todo(s: &Session<'_>, key: &str) -> Result<TodoSlug, WorkError> {
     let mut owners = s.items.iter().filter(|item| {
         item.record
@@ -456,18 +461,13 @@ impl SessionBindings for Work {
             )
             .into());
         }
-        let matches_driver_role = |bound_role: &RoleName| -> bool {
-            bound_role == role
-                || (role.as_str() == "todo-orchestrator"
-                    && bound_role.as_str() == "work-orchestrator")
-        };
         if occurrence.is_none()
             && let Some(retained) = record
                 .bindings
                 .iter()
                 .rev()
                 .find(|b| {
-                    matches_driver_role(&b.role)
+                    matches_driver_role(&b.role, role)
                         && b.attempt.assignment == AssignmentKind::Driver
                         && b.attempt.lane == Some(*lane)
                         && b.session.is_some()
@@ -573,12 +573,16 @@ impl SessionBindings for Work {
         let task_key = occurrence.map(|at| {
             instrukt_runner::keyed::task_key(project.slug.as_str(), record.id.as_str(), at)
         });
+        let is_legacy_driver_pending = |b: &Binding| -> bool {
+            role.as_str() == "todo-orchestrator"
+                && matches!(
+                    b.role.as_str(),
+                    "prepare-orchestrator" | "work-orchestrator"
+                )
+                && b.attempt.assignment == AssignmentKind::Driver
+        };
         if let Some(pending) = record.bindings.iter().find(|b| {
-            b.attempt.released_at.is_none()
-                && b.session.is_none()
-                && !(role.as_str() == "todo-orchestrator"
-                    && b.role.as_str() == "prepare-orchestrator"
-                    && b.attempt.assignment == AssignmentKind::Driver)
+            b.attempt.released_at.is_none() && b.session.is_none() && !is_legacy_driver_pending(b)
         }) {
             if &pending.role != role || pending.attempt.occurrence != occurrence {
                 return Err(WorkError::refused(format!(
@@ -656,13 +660,15 @@ impl SessionBindings for Work {
         let now = s.now;
         s.commit("dispatch reserved", |s| {
             let record = &mut s.items[index].record;
-            // Retire any legacy prepare-orchestrator driver binding when the
-            // unified todo-orchestrator takes over on `<slug>/work`.
+            // Retire any legacy prepare-orchestrator driver binding (and any
+            // unbound legacy work-orchestrator reservation) when the unified
+            // todo-orchestrator takes over on `<slug>/work`.
             if role.as_str() == "todo-orchestrator" {
                 for b in &mut record.bindings {
-                    if b.role.as_str() == "prepare-orchestrator"
-                        && b.attempt.assignment == AssignmentKind::Driver
+                    if b.attempt.assignment == AssignmentKind::Driver
                         && b.attempt.released_at.is_none()
+                        && (b.role.as_str() == "prepare-orchestrator"
+                            || (b.role.as_str() == "work-orchestrator" && b.session.is_none()))
                     {
                         b.attempt.released_at = Some(now);
                     }
@@ -697,7 +703,7 @@ impl SessionBindings for Work {
             .bindings
             .into_iter()
             .rev()
-            .find(|b| &b.role == role)
+            .find(|b| matches_driver_role(&b.role, role))
             .map(|b| b.binding))
     }
 
@@ -810,7 +816,7 @@ impl SessionBindings for Work {
                 .iter_mut()
                 .find(|b| b.attempt.semantic_key == dispatch.key)
                 .ok_or_else(|| WorkError::refused("the runtime result has no reserved assignment"))?;
-            if binding.attempt.runtime.is_some_and(|runtime|runtime.name()!=dispatch.binding.session.runtime.as_str()) || binding.role != dispatch.role
+            if binding.attempt.runtime.is_some_and(|runtime|runtime.name()!=dispatch.binding.session.runtime.as_str()) || !matches_driver_role(&binding.role, &dispatch.role)
                 || binding.attempt.occurrence != dispatch.occurrence
                 || binding.attempt.released_at.is_some()
                 || binding.session.as_ref().is_some_and(|id| id != &dispatch.binding.session)

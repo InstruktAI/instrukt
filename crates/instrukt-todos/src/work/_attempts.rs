@@ -27,28 +27,36 @@ fn head(root: &Path, revision: &str) -> Result<CommitSha, WorkError> {
 }
 /// Fetch before a todo workspace is placed. A retained remote work branch
 /// continues that branch; if a legacy `<slug>/prepare` branch exists (remote or
-/// local) with un-integrated commits, `<slug>/work` starts from it so in-flight
-/// preparation work is never lost; otherwise freshly fetched canonical main
-/// supplies its base.
+/// local) with un-integrated commits not yet on `origin/<main>`, `<slug>/work`
+/// starts from it so in-flight preparation work is never lost; otherwise freshly
+/// fetched canonical main supplies its base.
 pub(super) fn phase_base(root: &Path, branch: &str) -> Result<(String, CommitSha), WorkError> {
     git::run(root, ["fetch", "--prune", "origin"])?;
     let main = instrukt_core::github::default_branch(root)?;
+    let origin_main = format!("origin/{main}");
     let remote = format!("origin/{branch}");
     let has_ref = |refname: &str| git::succeeds(root, ["show-ref", "--verify", "--quiet", refname]);
+    let is_unintegrated = |candidate: &str| -> Result<bool, WorkError> {
+        Ok(!git::succeeds(
+            root,
+            ["merge-base", "--is-ancestor", candidate, &origin_main],
+        )?)
+    };
     let from = if has_ref(&format!("refs/remotes/{remote}"))? {
         remote
     } else if let Some(slug) = branch.strip_suffix("/work") {
         let legacy_remote = format!("origin/{slug}/prepare");
         let legacy_local = format!("{slug}/prepare");
-        if has_ref(&format!("refs/remotes/{legacy_remote}"))? {
+        if has_ref(&format!("refs/remotes/{legacy_remote}"))? && is_unintegrated(&legacy_remote)? {
             legacy_remote
-        } else if has_ref(&format!("refs/heads/{legacy_local}"))? {
+        } else if has_ref(&format!("refs/heads/{legacy_local}"))? && is_unintegrated(&legacy_local)?
+        {
             legacy_local
         } else {
-            format!("origin/{main}")
+            origin_main
         }
     } else {
-        format!("origin/{main}")
+        origin_main
     };
     let base = head(root, &from)?;
     Ok((from, base))
@@ -318,6 +326,11 @@ impl Work {
         }
         let is_task = record.kind == instrukt_runner::interfaces::TodoKind::Task;
         let (lane, worktree, branch, base, assignment_kind) = if is_task {
+            if role.as_str() != "task-preparer" {
+                return Err(WorkError::refused(
+                    "only task-preparer may reserve a worktree-less attempt on a task todo",
+                ));
+            }
             (
                 instrukt_runner::interfaces::Lane::Work,
                 None,
