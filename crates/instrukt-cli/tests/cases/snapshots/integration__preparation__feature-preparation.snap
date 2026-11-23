@@ -19,7 +19,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (no artifact yet)
-  integrate gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -39,7 +39,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (target <digest 2>)
-  integrate gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -60,7 +60,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (target <digest 2>)
-  integrate gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -81,7 +81,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (target <digest 4>)
-  integrate gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -102,7 +102,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (target <digest 4>)
-  integrate gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -123,7 +123,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -147,7 +147,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -171,7 +171,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -195,7 +195,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -219,7 +219,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -243,7 +243,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -267,7 +267,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -291,7 +291,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 4>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: nested-lists (demo) [feature · active]
@@ -315,4 +315,4 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (target <digest 8>)
-  integrate gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)

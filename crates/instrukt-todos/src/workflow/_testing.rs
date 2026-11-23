@@ -48,7 +48,6 @@ pub(crate) fn todo(kind: instrukt_runner::interfaces::TodoKind) -> EvidenceBuild
             delivery: None,
             timing: None,
             agent: None,
-            implementation_plan_seeded: false,
         },
         tick: 0,
     }

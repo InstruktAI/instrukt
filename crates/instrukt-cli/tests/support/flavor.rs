@@ -89,7 +89,7 @@ impl Tracked {
     /// A project integrating through the standing integrator: work and
     /// events on, pickup deliberate, the flavor publishing an `integrator`
     /// procedure subscribed to `workflow.finalized`, `runner.ci_completed`,
-    /// `workflow.preparation_reviewed` and `runner.main_failing`, and `main` pushed to
+    /// `workflow.finalized` and `runner.main_failing`, and `main` pushed to
     /// a bare `origin`.
     pub fn integrating() -> Self {
         Self::build(
@@ -138,7 +138,7 @@ impl Tracked {
                     "procedure",
                     "Integrate",
                     "Integrate exact verified candidates.",
-                    "role: integrator\nparameters:\n  - name: slug\nsubscription_home: project\ninterruptible: false\nsubscriptions:\n  - workflow.preparation_reviewed\n  - workflow.finalized\n  - runner.ci_completed\n  - runner.main_failing\n  - runner.dependency_failing\n",
+                    "role: integrator\nparameters:\n  - name: slug\nsubscription_home: project\ninterruptible: false\nsubscriptions:\n  - workflow.finalized\n  - runner.ci_completed\n  - runner.main_failing\n  - runner.dependency_failing\n",
                     &[],
                     "Integrate.\n",
                 ),

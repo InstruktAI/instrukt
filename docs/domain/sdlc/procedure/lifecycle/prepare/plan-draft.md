@@ -110,13 +110,13 @@ approved architecture carries the Governing contracts section, the plan
 references it; otherwise the plan carries that section itself.
 
 
-### 1b. Re-entry classification from the current obligation
+### 1b. Re-entry classification from the factual ledger
 
 Re-entry is the base case for plan drafting — fresh production is the special
-case (first time only). Read the action and rendered template returned by
-`instrukt todo show {slug}`, then ground that obligation in current
-artifacts, findings, provenance and stamps. Wording belongs to the flavor's
-actions and templates; no dispatch-reason header or token selects behavior.
+case (first time only). Read the factual ledger returned by
+`instrukt todo show {slug}` and the orchestrator's brief, then ground the task
+in current artifacts, findings, provenance and stamps. No synthetic
+dispatch-reason header or token selects behavior.
 
 - **Fresh derivation** — no prior implementation plan exists. Produce one
   from the approved intent artifact and any reviewer-approved architecture.
@@ -132,7 +132,7 @@ actions and templates; no dispatch-reason header or token selects behavior.
   grounding. Read the existing plan and examined evidence, re-derive affected
   tasks and preserve unaffected tasks. Distinguish changed code from changed
   upstream artifacts. Skip atomicity and continue at step 4c.
-- **Kickback** — read the work orchestrator's recorded reason in `input`
+- **Kickback** — read `todo-orchestrator`'s recorded reason in `input`
   first. It names why the build could not execute the plan and how far back
   re-derivation reaches: a localized replan or the feature-spec scenarios it
   binds. Re-ground against that reason as well as code. A new input version
@@ -542,23 +542,19 @@ If the todo is grouped instead:
 - Do not change todo status beyond the child dependency links needed for a split.
 - If blocked by uncertainty, record the blocker and continue with what is known.
 
-### 7. Final step — advance
+### 7. Final step — complete and return to `todo-orchestrator`
 
 When the implementation-plan artifact is written (or child grouping has been
 executed via `instrukt todo create ... --approved --group` and each child's filing outcome
-reports it created), call:
+reports it created), stamp role completion (`instrukt todo stamp {slug} --role-complete`)
+and inspect `instrukt todo show {slug}`.
 
-```
-instrukt todo show {slug}
-```
-
-The returned action and rendered template carry the next obligation. Dispatch
-or reuse the independent plan-review session through configured runtime
-delegation and child messaging under `general/procedure/ai-to-ai-operations`.
-The review is done when the record carries the current findings artifact and
-verdict stamp. Approval permits the next derived obligation; needs-work
+The dispatching `todo-orchestrator` reads the factual ledger (`instrukt todo show {slug} --json`)
+and dispatches an independent `plan-reviewer` session. The review is done when
+the record carries the current `plan-review-findings` artifact and `plan_review`
+verdict stamp. Approval lets `todo-orchestrator` advance to build; `needs_work`
 returns here with `plan-review-findings` for fix, evidence-backed rejection,
-or re-derivation under step 1b. Record the revision and call prepare again.
+or re-derivation under step 1b.
 
 ## Outputs
 

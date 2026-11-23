@@ -29,7 +29,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by peer (<digest 1>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 ---
 human required:
 pickup: held by this session
@@ -51,7 +51,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (target <digest 1>)
-  integrate gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 ---
 nested-lists · feature · active
 identity: <id 1>

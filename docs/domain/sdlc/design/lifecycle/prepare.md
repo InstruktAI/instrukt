@@ -39,30 +39,27 @@ human, who is the sole authority on intent.
 
 ## Invariants
 
-- One session drives the whole prepare lifecycle. The same session loads
-  each phase's procedure, does the phase's work, advances the state machine, and
-  loads the next procedure when the state machine routes there.
+- One unified `todo-orchestrator` drives the lifecycle in prose from the factual
+  ledger (`instrukt todo show <slug> --json`), dispatching only the preparation
+  primitives that earn their keep in `<slug>/work`. Bounded bugs and small
+  localized changes may fast-track directly to build and independent review;
+  non-trivial changes and features run the appropriate preparation steps.
 
-- Each phase has its own focus, sharpened by a hat. Intake = BA hat
-  (`sdlc/procedure/lifecycle/prepare/intake`). Architecture = Architect hat
-  (`sdlc/procedure/lifecycle/prepare/architecture`). Plan = Planner hat
-  (`sdlc/procedure/lifecycle/prepare/plan-draft`). The hat is the loaded
-  procedure; loading it changes nothing about the session's role; the lifecycle
-  awareness underneath persists across hats.
+- Each preparation primitive has its own focused role and procedure:
+  Intake (`intaker` → `sdlc/procedure/lifecycle/prepare/intake`),
+  Architecture (`architect` → `sdlc/procedure/lifecycle/prepare/architecture`),
+  and Plan (`planner` → `sdlc/procedure/lifecycle/prepare/plan-draft`).
 
 - Reviewers are independently dispatched. Each derived artifact
-  (architecture, plan) is reviewed by a separate reviewer session. The active
-  procedure dispatches the reviewer,
-  tails it, and reads its findings and verdict on the next state-machine
-  advance.
-- The PRD is the only human approval gate. The human reviews the PRD and
-  stamps `prd_approved`; a later revision can carry that approval
-  (`sdlc/procedure/lifecycle/overview`). Architecture and plan advance
-  on reviewer verdict alone.
-- The architecture phase may be skipped when it doesn't earn its place.
-  During intake, the BA stamps `architecture_skipped` with
-  reason when the work doesn't warrant the phase. Plan and PRD are
-  non-skippable.
+  (PRD, architecture, plan) is reviewed by a separate reviewer session
+  (`prd-reviewer`, `architecture-reviewer`, `plan-reviewer`). `todo-orchestrator`
+  reads the findings and verdict from the factual ledger before routing the next step.
+- The PRD is the human approval gate (`approvals.prd`), enforced in code before
+  implementation or finalization for features and any todo carrying a `prd`.
+  Architecture and plan advance under reviewer judgment and prose orchestration.
+- The architecture step is optional and runs only when structural boundaries or
+  durable state change. Planning is optional for bounded bugs and small localized
+  changes on the fast track.
 - Each phase grounds in the prior phase's output. Human refinement at any
   layer invalidates downstream approvals and re-enters the affected phase.
 - Automation supplies supporting facts for judgment; it does not decide
@@ -78,40 +75,39 @@ human, who is the sole authority on intent.
 
 ## Primary flows
 
-### The chain
+### Composable preparation primitives
 
-The state machine drives a deterministic phase chain. Each phase is one focus
-turn of the same driving session.
+`todo-orchestrator` routes preparation in prose from the factual ledger rather
+than a fixed state machine:
 
-| Phase        | Procedure                                       | Hat       | Authority gate                          |
+| Primitive    | Procedure                                       | Role      | Authority gate                          |
 | ------------ | ----------------------------------------------- | --------- | --------------------------------------- |
-| Intake       | `sdlc/procedure/lifecycle/prepare/intake`       | BA        | `prd_approved` (human only)             |
-| Architecture | `sdlc/procedure/lifecycle/prepare/architecture` | Architect | `architecture_review` verdict `approve` |
-| Plan         | `sdlc/procedure/lifecycle/prepare/plan-draft`   | Planner   | `plan_review` verdict `approve`         |
+| Intake       | `sdlc/procedure/lifecycle/prepare/intake`       | `intaker` | `prd_approved` (`approvals.prd` gate)   |
+| Architecture | `sdlc/procedure/lifecycle/prepare/architecture` | `architect` | `architecture_review` verdict `approve` |
+| Plan         | `sdlc/procedure/lifecycle/prepare/plan-draft`   | `planner` | `plan_review` verdict `approve`         |
 
-Each phase ends by checking `instrukt todo show {slug}`. The unified
-`todo-orchestrator` routes the next primitive in prose — load the next
-procedure, dispatch a reviewer, pause for human approval, or advance to build.
+After each primitive completes, `todo-orchestrator` reads `instrukt todo show {slug} --json`
+and routes the next primitive in prose — dispatch an independent reviewer, pause
+for human approval, or advance to build in the same `<slug>/work` worktree.
 
 ### Intake
 
-The BA interviews the Product Owner — the human — and fills the PRD template
+The `intaker` interviews the Product Owner — the human — and fills the PRD template
 via elicitation. PRD success
-criteria are outcome-shaped, in PO language. For Category A work the BA also
-authors the feature spec snippet's Gherkin acceptance scenarios. When the
-work warrants it, the BA stamps `architecture_skipped` with reason. The BA
-writes the PRD and presents it to the human for review and approval. The
+criteria are outcome-shaped, in PO language. For Category A work the `intaker` also
+authors the feature spec snippet's Gherkin acceptance scenarios in `<slug>/work`. When the
+work warrants it, `architecture_skipped` may be recorded with reason. The `intaker`
+writes the PRD and presents it for review and approval. The
 human is the sole authority on PRD correctness because only the human owns
 intent.
 
-### Derivation phases (architecture, plan)
+### Derivation primitives (architecture, plan)
 
-For each derivation phase, the same session loads the phase's procedure, grounds
-in upstream artifacts, produces the phase artifact, and advances the state
-machine. The state machine then dispatches a separate reviewer session. The
-active procedure tails the reviewer; on `approve` the chain advances; on
-`needs_work` the active procedure addresses the findings and advances again to
-re-dispatch the reviewer.
+For each derivation primitive, `todo-orchestrator` dispatches the owning role in
+`<slug>/work`, then dispatches an independent reviewer session against the written
+artifact. On `approve`, `todo-orchestrator` advances to the next primitive or build;
+on `needs_work`, it routes findings back to the owning role for remediation and
+re-review.
 
 ### No human in the conversation
 
@@ -136,11 +132,12 @@ scopes:
 
 ### Drift
 
-When reconciliation detects that artifact-referenced paths changed since the
-artifact was authored, a lean `sdlc/procedure/lifecycle/prepare/drift-analyze` worker is dispatched. It
-stamps each pending artifact as `cosmetic` or `substantive`. Substantive
-drift invalidates the affected phase and the active procedure re-derives. The
-PREPARED terminal requires fresh grounding.
+When the factual ledger reports that artifact-referenced paths, snippets, or
+dependencies changed since an artifact was authored, `todo-orchestrator`
+dispatches a lean `sdlc/procedure/lifecycle/prepare/drift-analyze` worker. It
+stamps each pending artifact as `cosmetic` or `substantive`. Substantive drift
+invalidates the affected review/approval and `todo-orchestrator` re-derives the
+affected artifact before continuing.
 
 ## Failure modes
 

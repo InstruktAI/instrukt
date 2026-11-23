@@ -24,13 +24,13 @@ another session, prescribe a fix, stamp the diagnosis, or drive preparation.
 
 ## Preconditions
 
-- The prepare-driving session dispatched this session for a todo whose kind is `bug` and
-  whose current derived obligation is diagnosis.
+- The dispatching `todo-orchestrator` (or `diagnosis-driver`) dispatched this
+  session for a todo whose kind is `bug` needing root-cause diagnosis.
 - `instrukt todo artifacts read {slug} input` contains the reported symptom and discovery
   context.
-- This session is recorded as the diagnosis peer for the todo. The
-  prepare-driving session retains the execution claim; the peer owns
-  investigation and revisions of `diagnosis`.
+- This session is recorded as the `diagnoser` for the todo. The dispatching
+  orchestrator retains the execution claim; the peer owns investigation and
+  revisions of `diagnosis`.
 
 ## Steps
 

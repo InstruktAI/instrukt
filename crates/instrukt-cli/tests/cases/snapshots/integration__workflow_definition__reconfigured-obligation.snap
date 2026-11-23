@@ -19,4 +19,4 @@ reviews:
 gates:
   interference lock: free
   prd approval: not required
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)

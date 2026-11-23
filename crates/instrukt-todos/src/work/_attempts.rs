@@ -26,21 +26,27 @@ fn head(root: &Path, revision: &str) -> Result<CommitSha, WorkError> {
     .map_err(|e| WorkError::refused(e.to_string()))
 }
 /// Fetch before a todo workspace is placed. A retained remote work branch
-/// continues that branch; otherwise freshly fetched canonical main supplies its base.
+/// continues that branch; if a legacy `<slug>/prepare` branch exists (remote or
+/// local) with un-integrated commits, `<slug>/work` starts from it so in-flight
+/// preparation work is never lost; otherwise freshly fetched canonical main
+/// supplies its base.
 pub(super) fn phase_base(root: &Path, branch: &str) -> Result<(String, CommitSha), WorkError> {
     git::run(root, ["fetch", "--prune", "origin"])?;
     let main = instrukt_core::github::default_branch(root)?;
     let remote = format!("origin/{branch}");
-    let from = if git::succeeds(
-        root,
-        [
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/remotes/{remote}"),
-        ],
-    )? {
+    let has_ref = |refname: &str| git::succeeds(root, ["show-ref", "--verify", "--quiet", refname]);
+    let from = if has_ref(&format!("refs/remotes/{remote}"))? {
         remote
+    } else if let Some(slug) = branch.strip_suffix("/work") {
+        let legacy_remote = format!("origin/{slug}/prepare");
+        let legacy_local = format!("{slug}/prepare");
+        if has_ref(&format!("refs/remotes/{legacy_remote}"))? {
+            legacy_remote
+        } else if has_ref(&format!("refs/heads/{legacy_local}"))? {
+            legacy_local
+        } else {
+            format!("origin/{main}")
+        }
     } else {
         format!("origin/{main}")
     };
@@ -119,6 +125,24 @@ fn require_prd_approval(
     }
     Ok(())
 }
+/// Invariant 3: enforce configured `approvals.task` before executing a task firing.
+pub(super) fn require_task_approval(
+    record: &TodoRecord,
+    approver: instrukt_core::config::Approver,
+) -> Result<(), WorkError> {
+    let evidence = super::_ports::to_evidence(record.clone(), Vec::new());
+    if !crate::workflow::task_approval_satisfied(&evidence, approver) {
+        let by = match approver {
+            instrukt_core::config::Approver::Human => "human",
+            instrukt_core::config::Approver::Peer => "peer",
+        };
+        return Err(WorkError::refused(format!(
+            "task approval is required before starting a task firing; record it with `instrukt todo stamp {} --task-approved --by {by}`",
+            record.slug
+        )));
+    }
+    Ok(())
+}
 fn native_selection(
     s: &Session<'_>,
     record: &TodoRecord,
@@ -162,9 +186,12 @@ pub struct NativeAssignment {
     pub attempt: u64,
     pub semantic_key: String,
     pub title: String,
-    pub worktree: PathBuf,
-    pub branch: String,
-    pub base: CommitSha,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<CommitSha>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,9 +200,12 @@ pub struct StoppedChild {
     pub session: SessionRef,
     pub stopped: bool,
     pub source: String,
-    pub worktree: PathBuf,
-    pub branch: String,
-    pub head: CommitSha,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<CommitSha>,
 }
 
 pub struct AttemptRequest<'a> {
@@ -191,8 +221,8 @@ pub struct NativeBinding<'a> {
     pub attempt: u64,
     pub session: &'a SessionRef,
     pub worktree: Option<&'a Path>,
-    pub branch: &'a str,
-    pub base: &'a CommitSha,
+    pub branch: Option<&'a str>,
+    pub base: Option<&'a CommitSha>,
 }
 pub struct AttemptResolution<'a> {
     pub todo: &'a TodoSlug,
@@ -286,43 +316,63 @@ impl Work {
             }
             return Ok(result);
         }
-        let driver = record
-            .bindings
-            .iter()
-            .rev()
-            .find(|b| {
-                b.attempt.assignment == AssignmentKind::Driver
-                    && b.attempt.released_at.is_none()
-                    && b.session == record.claim.as_ref().and_then(|c| c.session.clone())
-            })
-            .ok_or_else(|| {
-                WorkError::refused("claim-holding orchestrator has no recorded phase workspace")
-            })?;
-        let lane = driver
-            .attempt
-            .lane
-            .unwrap_or(instrukt_runner::interfaces::Lane::Work);
-        if matches!(role.as_str(), "builder" | "fixer" | "finalizer") {
-            let prd_approver = s
-                .config
-                .approver(instrukt_core::config::ApprovalGate::Prd)?;
-            require_prd_approval(record, prd_approver)?;
-        }
-        let path = driver
-            .worktree
-            .clone()
-            .ok_or_else(|| WorkError::refused("todo workspace missing"))?;
-        let branch = driver
-            .attempt
-            .branch
-            .clone()
-            .ok_or_else(|| WorkError::refused("todo branch missing"))?;
-        clean(&path)?;
-        if git::run(&path, ["branch", "--show-current"])? != branch {
-            return Err(WorkError::refused(
-                "shared workspace is not on the recorded branch",
-            ));
-        }
+        let is_task = record.kind == instrukt_runner::interfaces::TodoKind::Task;
+        let (lane, worktree, branch, base, assignment_kind) = if is_task {
+            (
+                instrukt_runner::interfaces::Lane::Work,
+                None,
+                None,
+                None,
+                AssignmentKind::Child,
+            )
+        } else {
+            let driver = record
+                .bindings
+                .iter()
+                .rev()
+                .find(|b| {
+                    b.attempt.assignment == AssignmentKind::Driver
+                        && b.attempt.released_at.is_none()
+                        && b.session == record.claim.as_ref().and_then(|c| c.session.clone())
+                })
+                .ok_or_else(|| {
+                    WorkError::refused("claim-holding orchestrator has no recorded phase workspace")
+                })?;
+            let lane = driver
+                .attempt
+                .lane
+                .unwrap_or(instrukt_runner::interfaces::Lane::Work);
+            if matches!(role.as_str(), "builder" | "fixer" | "finalizer") {
+                let prd_approver = s
+                    .config
+                    .approver(instrukt_core::config::ApprovalGate::Prd)?;
+                require_prd_approval(record, prd_approver)?;
+            }
+            let path = driver
+                .worktree
+                .clone()
+                .ok_or_else(|| WorkError::refused("todo workspace missing"))?;
+            let branch = driver
+                .attempt
+                .branch
+                .clone()
+                .ok_or_else(|| WorkError::refused("todo branch missing"))?;
+            clean(&path)?;
+            if git::run(&path, ["branch", "--show-current"])? != branch {
+                return Err(WorkError::refused(
+                    "shared workspace is not on the recorded branch",
+                ));
+            }
+            let canon = canonical(&path)?;
+            let base = head(&path, "HEAD")?;
+            (
+                lane,
+                Some(canon),
+                Some(branch),
+                Some(base),
+                AssignmentKind::Workspace,
+            )
+        };
         let number = record
             .bindings
             .iter()
@@ -354,21 +404,21 @@ impl Work {
                 &format!("{role} · {}", record.slug),
                 &key,
             ),
-            worktree: canonical(&path)?,
+            worktree: worktree.clone(),
             branch: branch.clone(),
-            base: head(&path, "HEAD")?,
+            base: base.clone(),
         };
         let binding = Binding {
             role: role.clone(),
             session: None,
-            worktree: Some(assignment.worktree.clone()),
+            worktree,
             attempt: Attempt {
-                assignment: AssignmentKind::Workspace,
+                assignment: assignment_kind,
                 lane: Some(lane),
                 number,
                 semantic_key: key,
-                branch: Some(branch),
-                base_head: Some(assignment.base.clone()),
+                branch,
+                base_head: base,
                 runtime: Some(runtime),
                 native_assignment: Some(assignment.clone()),
                 ..Default::default()
@@ -426,27 +476,47 @@ impl Work {
                 "selected runtime differs from the reserved assignment",
             ));
         }
-        let path = worktree.unwrap_or(&assignment.worktree);
-        if binding.session.as_ref().is_some_and(|id| id != session)
-            || canonical(path)? != assignment.worktree
-            || assignment.branch != branch
-            || &assignment.base != base
-        {
+        if binding.session.as_ref().is_some_and(|id| id != session) {
             return Err(WorkError::refused(
                 "native identity or shared placement differs from the reservation",
             ));
         }
-        if binding.session.as_ref() == Some(session) {
-            return Ok(());
-        }
-        if binding.attempt.released_at.is_some() {
-            return Err(WorkError::refused("attempt has been released"));
-        }
-        clean(path)?;
-        if head(path, "HEAD")? != *base || git::run(path, ["branch", "--show-current"])? != branch {
-            return Err(WorkError::refused(
-                "native child must bind before work at the captured clean head",
-            ));
+        if let Some(expected_worktree) = &assignment.worktree {
+            let path = worktree.unwrap_or(expected_worktree);
+            if canonical(path)? != *expected_worktree
+                || assignment.branch.as_deref() != branch
+                || assignment.base.as_ref() != base
+            {
+                return Err(WorkError::refused(
+                    "native identity or shared placement differs from the reservation",
+                ));
+            }
+            if binding.session.as_ref() == Some(session) {
+                return Ok(());
+            }
+            if binding.attempt.released_at.is_some() {
+                return Err(WorkError::refused("attempt has been released"));
+            }
+            clean(path)?;
+            if Some(head(path, "HEAD")?).as_ref() != base
+                || Some(git::run(path, ["branch", "--show-current"])?.as_str()) != branch
+            {
+                return Err(WorkError::refused(
+                    "native child must bind before work at the captured clean head",
+                ));
+            }
+        } else {
+            if worktree.is_some() || branch.is_some() || base.is_some() {
+                return Err(WorkError::refused(
+                    "worktree-less task assignment takes no worktree, branch, or base",
+                ));
+            }
+            if binding.session.as_ref() == Some(session) {
+                return Ok(());
+            }
+            if binding.attempt.released_at.is_some() {
+                return Err(WorkError::refused("attempt has been released"));
+            }
         }
         s.commit("native child bound", |s| {
             let b = s.items[index]
@@ -504,12 +574,23 @@ impl Work {
                 next.attempt.no_start_reason = Some(reason.into());
             }
             Some(e) => {
+                let placement_matches = match &assignment.worktree {
+                    Some(expected_wt) => {
+                        let wt_ok = binding.attempt.released_at.is_some()
+                            || e.worktree
+                                .as_ref()
+                                .map(|p| canonical(p))
+                                .transpose()?
+                                .as_ref()
+                                == Some(expected_wt);
+                        wt_ok && e.branch == assignment.branch
+                    }
+                    None => e.worktree.is_none() && e.branch.is_none() && e.head.is_none(),
+                };
                 if !e.stopped
                     || e.source.trim().is_empty()
                     || binding.session.as_ref() != Some(&e.session)
-                    || (binding.attempt.released_at.is_none()
-                        && canonical(&e.worktree)? != assignment.worktree)
-                    || e.branch != assignment.branch
+                    || !placement_matches
                 {
                     return Err(WorkError::refused(
                         "failure requires native stopped-child evidence matching the binding",
@@ -531,16 +612,18 @@ impl Work {
                         docs_changed: vec![],
                     });
                 }
-                clean(&e.worktree)?;
-                if head(&e.worktree, "HEAD")? != e.head
-                    || git::run(&e.worktree, ["branch", "--show-current"])? != e.branch
-                {
-                    return Err(WorkError::refused(
-                        "failed child workspace evidence differs from current shared placement",
-                    ));
+                if let Some(wt) = &e.worktree {
+                    clean(wt)?;
+                    if Some(head(wt, "HEAD")?) != e.head
+                        || Some(git::run(wt, ["branch", "--show-current"])?) != e.branch
+                    {
+                        return Err(WorkError::refused(
+                            "failed child workspace evidence differs from current shared placement",
+                        ));
+                    }
                 }
                 next.attempt.failure_reason = Some(reason.into());
-                next.attempt.failure_head = Some(e.head.clone());
+                next.attempt.failure_head = e.head.clone();
                 next.attempt.failure_workspace = Some(encoded);
                 next.attempt.failed_at = Some(s.now);
                 next.attempt.released_at = Some(s.now);
@@ -692,7 +775,6 @@ pub(super) fn completion_binding(
         (index, &record.bindings[index])
     } else {
         let roles: &[&str] = match request {
-            StampRequest::PreparationHeadVerdict { .. } => &["commit-reviewer"],
             StampRequest::RoleComplete => &[
                 "setup",
                 "finalizer",
@@ -755,18 +837,22 @@ pub(super) fn completion_binding(
                 ));
             }
         }
-        if matches!(request, StampRequest::PreparationHeadVerdict { .. })
-            && record.bindings.iter().any(|writer| {
-                writer.session.as_ref() == Some(caller)
-                    && writer_artifact(writer.role.as_str()).is_some()
-            })
-        {
-            return Err(WorkError::refused(
-                "preparation head review requires an independent reviewer",
-            ));
-        }
         (index, b)
     };
+    if b.worktree.is_none()
+        && record.kind == instrukt_runner::interfaces::TodoKind::Task
+        && b.attempt.assignment == AssignmentKind::Child
+    {
+        if b.attempt.released_at.is_some() {
+            if b.attempt.completion_sequence.is_none() {
+                return Err(WorkError::refused(
+                    "released attempt has no matching completion",
+                ));
+            }
+            return Ok(Some((index, true)));
+        }
+        return Ok(Some((index, true)));
+    }
     let path = b
         .worktree
         .as_ref()
@@ -794,7 +880,6 @@ pub(super) fn completion_binding(
             | StampRequest::DiagnosisSettled
             | StampRequest::DriftReviewed { .. }
             | StampRequest::PreparationVerdict { .. }
-            | StampRequest::PreparationHeadVerdict { .. }
     );
     if readonly && b.attempt.base_head.as_ref() != Some(&current) {
         return Err(WorkError::refused(
@@ -979,7 +1064,8 @@ impl Work {
         }
         let lane = instrukt_runner::interfaces::Lane::Work;
         let existing = record.bindings.iter().rev().find(|b| {
-            b.role == *role
+            (b.role == *role
+                || (role.as_str() == "todo-orchestrator" && b.role.as_str() == "work-orchestrator"))
                 && b.attempt.assignment == AssignmentKind::Driver
                 && b.attempt.released_at.is_none()
         });
@@ -1106,8 +1192,19 @@ impl Work {
         };
         if admitted && !already_bound {
             let runtime = s.config.runner_runtime()?;
+            let now = s.now;
             s.commit("todo workspace placement", |s| {
                 let record = &mut s.items[index].record;
+                // Retire any unreleased legacy prepare-orchestrator driver binding
+                // now that the unified todo-orchestrator owns `<slug>/work`.
+                for b in &mut record.bindings {
+                    if b.role.as_str() == "prepare-orchestrator"
+                        && b.attempt.assignment == AssignmentKind::Driver
+                        && b.attempt.released_at.is_none()
+                    {
+                        b.attempt.released_at = Some(now);
+                    }
+                }
                 record.bindings.push(Binding {
                     role: role.clone(),
                     session: caller.clone(),

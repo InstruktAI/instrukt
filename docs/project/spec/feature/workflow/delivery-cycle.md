@@ -46,13 +46,31 @@ follow with independent `build-reviewer`, push the exact reviewed HEAD, stamp
 radius surfaces mid-build, the orchestrator routes to planning or doc updates in
 prose without skip-flag proliferation.
 
-### Single workspace & cleanup
+### Single workspace, cleanup & in-flight legacy migration
 
 Repository todos share `<slug>/work` from freshly fetched `origin/main` (or
 `origin/<slug>/work` when resuming on another computer). After `integrate`
 promotes the exact verified commit and records `instrukt todo deliver <slug> --commit <sha>`,
 the clean worktree and local/origin `<slug>/work` branch are removed while
 retaining thread and attempt records.
+
+**In-flight migration from the retired two-phase model:**
+- When creating `<slug>/work` for an existing todo that still has an
+  un-integrated `origin/<slug>/prepare` or local `<slug>/prepare` branch (and no
+  `origin/<slug>/work`), placement automatically branches `<slug>/work` from
+  that `<slug>/prepare` head so reviewed or in-progress pending docs carry
+  forward with zero commit loss.
+- Retained `work-orchestrator` driver bindings on an existing `<slug>/work`
+  worktree are adopted automatically by `todo-orchestrator`; unreleased legacy
+  `prepare-orchestrator` driver bindings are retired when `todo-orchestrator`
+  takes over.
+- If a legacy `prepare-orchestrator` session still holds an active claim on
+  upgrade, release it with `instrukt todo update <slug> --unclaim` (or from the
+  claiming computer) so `todo-orchestrator` can pick it up on `<slug>/work`,
+  then remove any leftover `<slug>/prepare` branch once `<slug>/work` is created.
+- `agents.yaml` v3 migration converts `prepare-orchestrator` / `work-orchestrator`
+  entries into `todo-orchestrator` (preferring `work-orchestrator` settings when
+  both exist, logging a warning if they differed).
 
 ## Use cases
 

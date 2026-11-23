@@ -117,34 +117,20 @@ impl Workflow {
 
     /// Read-only factual ledger derived directly from an already-loaded
     /// [`crate::work::TodoView`], avoiding a second work-session open or
-    /// GitHub round-trip during `instrukt todo show`.
+    /// GitHub round-trip for the subject todo during `instrukt todo show`
+    /// while still loading related evidence and prerequisite standings identically
+    /// to `todo work`.
     pub fn ledger_for_view(
         &self,
         cwd: &Path,
         view: &crate::work::TodoView,
     ) -> Result<TodoLedger, WorkflowError> {
         let reading = self.read_project_for_ledger(cwd)?;
-        let prereq_standings: Vec<(TodoSlug, PrerequisiteStanding)> = view
-            .prerequisites
-            .iter()
-            .map(|p| {
-                let standing = match p.status {
-                    Some(TodoStatus::Delivered) => PrerequisiteStanding::Delivered,
-                    Some(_) => PrerequisiteStanding::Undelivered,
-                    None => PrerequisiteStanding::NotFound,
-                };
-                (p.slug.clone(), standing)
-            })
-            .collect();
-        let evidence = crate::work::_ports::to_evidence(view.record.clone(), Vec::new());
-        let observed = observe(&self.home, &reading.project.root, &evidence, &[])?;
-        let approvers = approvers_of(&reading.config)?;
-        Ok(derive_ledger(
-            &evidence,
-            &observed,
-            approvers,
-            prereq_standings,
-        ))
+        let evidence = crate::work::_ports::to_evidence(
+            view.record.clone(),
+            view.expanded_prerequisites.clone(),
+        );
+        self.build_ledger(&reading.config, &reading.project, &evidence)
     }
 
     /// Deliberate pickup (`instrukt todo work <slug>`): records the calling
@@ -393,6 +379,21 @@ pub fn related_evidence(
             }
         }
     }
+    // Also load dependencies captured in drift-review stamps' assessed
+    // grounding, whose dependencies may no longer be current prerequisites.
+    for stamp in &evidence.stamps {
+        if let crate::evidence::StampFact::DriftReviewed { grounding, .. } = &stamp.fact {
+            for dep in &grounding.dependencies {
+                if let Some(id) = &dep.id
+                    && !ids.contains(id)
+                    && let Some(other) = store.evidence_by_id(project, id)?
+                    && ids.insert(other.id.clone())
+                {
+                    out.push(other);
+                }
+            }
+        }
+    }
     Ok(out)
 }
 
@@ -443,7 +444,6 @@ impl FlavorRoles for SelectedFlavorRoles {
         Flavor::load(&dir)
             .map(|flavor| FlavorMembership {
                 roles: flavor.roles().to_vec(),
-                dispatched_procedures: Vec::new(),
             })
             .map_err(|err| failed(err.to_string()))
     }
@@ -457,4 +457,198 @@ pub fn todos_enabled(home: &Home, cwd: &Path) -> Result<bool, WorkflowError> {
         root.as_deref(),
         Module::Todos,
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use instrukt_core::ids::{CommitSha, RoleName};
+    use instrukt_runner::interfaces::TodoKind;
+
+    use super::super::_testing::{digest, session, todo};
+    use super::*;
+    use crate::evidence::{
+        Actor, ApprovalGate, ApprovedBy, ArtifactName, DependencyDigest, Grounding,
+        PreparationReview, ReviewVerdict, StampFact, StampRecord, artifact_names,
+    };
+
+    struct MemStore(BTreeMap<crate::work::TodoId, TodoEvidence>);
+
+    impl WorkEvidence for MemStore {
+        fn evidence(
+            &self,
+            _project: &ProjectRef,
+            slug: &TodoSlug,
+        ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
+            Ok(self.0.values().find(|e| &e.slug == slug).cloned())
+        }
+
+        fn evidence_by_id(
+            &self,
+            _project: &ProjectRef,
+            id: &crate::work::TodoId,
+        ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
+            Ok(self.0.get(id).cloned())
+        }
+    }
+
+    fn stamp(fact: StampFact, seq: u64) -> StampRecord {
+        StampRecord {
+            source_comment: None,
+            fact,
+            at: jiff::Timestamp::from_second(1_800_000_000 + seq as i64).unwrap(),
+            actor: Actor::Session(session("reviewer")),
+            model: None,
+            eval_fingerprint: None,
+            role: Some(RoleName::parse("prd-reviewer").unwrap()),
+            human_involved: None,
+            sequence: seq,
+            model_provenance: Default::default(),
+        }
+    }
+
+    #[test]
+    fn related_evidence_includes_dependencies_from_drift_review_stamps() {
+        let mut upstream = todo(TodoKind::Change).build();
+        upstream.id = crate::work::TodoId::parse(&"22".repeat(16)).unwrap();
+        upstream.slug = TodoSlug::parse("former-prereq").unwrap();
+
+        let mut subject = todo(TodoKind::Feature).build();
+        subject.stamps.push(stamp(
+            StampFact::DriftReviewed {
+                artifact: ArtifactName::new(artifact_names::PRD),
+                examined: digest("prd-v1"),
+                class: crate::evidence::DriftClass::Cosmetic,
+                reason: "checked".into(),
+                grounding: Grounding {
+                    dependencies: vec![DependencyDigest {
+                        id: Some(upstream.id.clone()),
+                        todo: upstream.slug.clone(),
+                        artifact: ArtifactName::new(artifact_names::INPUT),
+                        digest: Some(digest("upstream-input")),
+                    }],
+                    ..Default::default()
+                },
+            },
+            1,
+        ));
+
+        let mut map = BTreeMap::new();
+        map.insert(upstream.id.clone(), upstream.clone());
+        map.insert(subject.id.clone(), subject.clone());
+        let store = MemStore(map);
+        let project = ProjectRef {
+            slug: ProjectSlug::parse("demo").unwrap(),
+            root: PathBuf::from("/tmp/demo"),
+        };
+
+        let related = related_evidence(&store, &project, &subject).unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].id, upstream.id);
+    }
+
+    #[test]
+    fn assignment_suppresses_human_approval_wait_and_finalized_handoff_until_kickback() {
+        let dir = tempfile::tempdir().unwrap();
+        let home_dir = dir.path().join("home");
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        std::fs::create_dir_all(home_dir.join(".instrukt/docs/sdlc/workflow")).unwrap();
+        std::fs::write(
+            home_dir.join(".instrukt/docs/sdlc/workflow/workflow.yaml"),
+            "orchestrator: todo-orchestrator\nrequires: []\nroles: [todo-orchestrator]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home_dir.join(".instrukt/instrukt.yaml"),
+            "schema_version: 1\nmodules:\n  todos: true\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo_dir.join("instrukt.yaml"),
+            "schema_version: 1\nproject: demo\n",
+        )
+        .unwrap();
+        git::run(&repo_dir, ["init", "-q"]).unwrap();
+        git::run(&repo_dir, ["config", "user.email", "test@example.com"]).unwrap();
+        git::run(&repo_dir, ["config", "user.name", "Test"]).unwrap();
+        std::fs::write(repo_dir.join("README.md"), "hi\n").unwrap();
+        git::run(&repo_dir, ["add", "README.md"]).unwrap();
+        git::run(&repo_dir, ["commit", "-q", "-m", "init"]).unwrap();
+        let head =
+            CommitSha::parse(git::run(&repo_dir, ["rev-parse", "HEAD"]).unwrap().trim()).unwrap();
+        git::run(&repo_dir, ["branch", "add-login/work"]).unwrap();
+
+        let project = ProjectRef {
+            slug: ProjectSlug::parse("demo").unwrap(),
+            root: repo_dir.clone(),
+        };
+        let home = Home::at_user_home(home_dir);
+
+        // 1. Unclaimed feature with approved prd_review waiting on human PRD approval -> suppressed.
+        let mut waiting = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-v1")
+            .artifact(artifact_names::PRD_REVIEW_FINDINGS, "ok")
+            .build();
+        waiting.stamps.push(stamp(
+            StampFact::PreparationVerdict {
+                phase: PreparationReview::PrdReview,
+                verdict: ReviewVerdict::Approve,
+                target: digest("prd-v1"),
+                report: digest("ok"),
+            },
+            1,
+        ));
+        let mut map = BTreeMap::new();
+        map.insert(waiting.id.clone(), waiting.clone());
+        let wf = Workflow::new(home.clone(), Arc::new(MemStore(map)), Env::default());
+        assert!(wf.assignment(&project, &waiting.slug).unwrap().is_none());
+
+        // Once human approves PRD, runner dispatches todo-orchestrator again.
+        waiting.stamps.push(stamp(
+            StampFact::Approval {
+                gate: ApprovalGate::Prd,
+                target: digest("prd-v1"),
+                by: ApprovedBy::Human,
+                carried_from: None,
+                reasoning: None,
+            },
+            2,
+        ));
+        let mut map = BTreeMap::new();
+        map.insert(waiting.id.clone(), waiting.clone());
+        let wf = Workflow::new(home.clone(), Arc::new(MemStore(map)), Env::default());
+        let assigned = wf.assignment(&project, &waiting.slug).unwrap().unwrap();
+        assert_eq!(assigned.lane, Lane::Work);
+
+        // 2. FinalizeReady at current head -> suppressed while unclaimed awaiting integrate.
+        waiting.branch = Some("add-login/work".into());
+        waiting.stamps.push(stamp(
+            StampFact::FinalizeReady {
+                commit: head.clone(),
+            },
+            3,
+        ));
+        let mut map = BTreeMap::new();
+        map.insert(waiting.id.clone(), waiting.clone());
+        let wf = Workflow::new(home.clone(), Arc::new(MemStore(map)), Env::default());
+        assert!(wf.assignment(&project, &waiting.slug).unwrap().is_none());
+
+        // 3. Kickback at same head resets handoff -> runner wakes todo-orchestrator again!
+        waiting.stamps.push(stamp(
+            StampFact::Kickback {
+                reason: "CI red".into(),
+                input: digest("input"),
+                invalidated_plan: None,
+                invalidated_reviews: Vec::new(),
+            },
+            4,
+        ));
+        let mut map = BTreeMap::new();
+        map.insert(waiting.id.clone(), waiting.clone());
+        let wf = Workflow::new(home, Arc::new(MemStore(map)), Env::default());
+        let woken = wf.assignment(&project, &waiting.slug).unwrap().unwrap();
+        assert_eq!(woken.lane, Lane::Work);
+    }
 }

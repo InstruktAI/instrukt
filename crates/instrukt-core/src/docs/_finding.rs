@@ -175,15 +175,8 @@ codes! {
     // Workflow flavor
     /// A workflow schema finding, located in its file.
     WorkflowSchemaInvalid => "workflow-schema-invalid",
-    /// A flow's `orchestrator` role that no procedure declares.
+    /// A flavor's `orchestrator` role that no procedure declares.
     OrchestratorWithoutProcedure => "workflow-orchestrator-without-procedure",
-    /// An action naming a procedure that declares no `role`.
-    ActionProcedureWithoutRole => "workflow-action-procedure-without-role",
-    /// An action naming a procedure that neither the repository nor the
-    /// home's published procedures hold.
-    ActionProcedureUnresolved => "workflow-action-procedure-unresolved",
-    /// An action naming a snippet that is not a procedure.
-    ActionTargetNotProcedure => "workflow-action-target-not-procedure",
 
     // Masters
     /// A repository-root `AGENTS.master.md` carrying `## Required reads`:

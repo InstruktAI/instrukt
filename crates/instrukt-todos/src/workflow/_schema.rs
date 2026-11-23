@@ -39,7 +39,6 @@ fn declarations(flavor: &Flavor) -> FlavorDeclarations {
     FlavorDeclarations {
         roles: flavor.roles().to_vec(),
         orchestrators: vec![("workflow".to_owned(), flavor.orchestrator().clone())],
-        action_procedures: Vec::new(),
     }
 }
 
@@ -67,7 +66,6 @@ mod tests {
             declared.orchestrators,
             vec![("workflow".to_owned(), role("todo-orchestrator"))]
         );
-        assert!(declared.action_procedures.is_empty());
     }
 
     #[test]

@@ -103,6 +103,10 @@ pub struct TodoView {
     pub issue: Option<u64>,
     pub pull: Option<u64>,
     pub prerequisites: Vec<PrerequisiteView>,
+    /// Prerequisites expanded through structural holders, matching
+    /// `WorkEvidence::evidence` so `todo show` derives the same ledger as
+    /// `todo work`.
+    pub expanded_prerequisites: Vec<crate::evidence::Prerequisite>,
     /// A structural holder's children.
     pub children: Vec<TodoRef>,
     /// Whether the todo was refreshed from GitHub for this view; when not,
@@ -692,6 +696,12 @@ impl Work {
                 prd_approver,
             )?;
         }
+        if matches!(request, StampRequest::TaskFiringStarted { .. }) {
+            let task_approver = s
+                .config
+                .approver(instrukt_core::config::ApprovalGate::Task)?;
+            super::_attempts::require_task_approval(&record, task_approver)?;
+        }
         let base = s.base.clone();
         let resolved = _stamps::resolve(
             request,
@@ -863,7 +873,11 @@ impl Work {
                 let b = &mut record.bindings[binding];
                 if b.attempt.released_at.is_none() {
                     b.attempt.completion_sequence = Some(stamp.sequence);
-                    b.attempt.completed_head = Some(super::_stamps::head(cwd)?);
+                    b.attempt.completed_head = if b.worktree.is_some() {
+                        Some(super::_stamps::head(cwd)?)
+                    } else {
+                        None
+                    };
                     b.attempt.released_at = Some(now);
                 }
             }
@@ -1774,6 +1788,7 @@ fn view(s: &mut Session<'_>, record: TodoRecord, local: bool) -> TodoView {
             status: s.record_by_id(&r.id).map(|p| p.status),
         })
         .collect();
+    let expanded_prerequisites = super::_ports::expand(s, &record);
     let mut children: Vec<TodoRef> = s
         .items
         .iter()
@@ -1800,6 +1815,7 @@ fn view(s: &mut Session<'_>, record: TodoRecord, local: bool) -> TodoView {
         issue: None,
         pull: None,
         prerequisites,
+        expanded_prerequisites,
         children,
         refresh: GitHubRead::Read,
         copied_at: None,

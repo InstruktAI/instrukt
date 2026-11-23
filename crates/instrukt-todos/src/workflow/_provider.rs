@@ -27,8 +27,9 @@ pub(crate) const DRIFT_ARTIFACTS: [&str; 3] = [
     artifact_names::IMPLEMENTATION_PLAN,
 ];
 
-/// Writer/authoring roles whose sessions cannot independently approve a build.
-const WRITER_ROLES: [&str; 7] = [
+/// Writer and authoring/analysis roles whose sessions cannot independently
+/// approve a build (`setup` is retained for legacy and test-flavor records).
+const WRITER_ROLES: [&str; 11] = [
     "builder",
     "fixer",
     "setup",
@@ -36,6 +37,10 @@ const WRITER_ROLES: [&str; 7] = [
     "intaker",
     "architect",
     "planner",
+    "diagnoser",
+    "deferrer",
+    "task-preparer",
+    "drift-analyzer",
 ];
 
 /// Who may approve each gate (`approvals.prd`, `approvals.task`).
@@ -485,13 +490,10 @@ impl TodoLedger {
                 } else {
                     "ready to stamp --finalize-ready"
                 };
-                lines.push(format!("  integrate gate: ready ({commit}; {handoff})"));
+                lines.push(format!("  review gate: ready ({commit}; {handoff})"));
             }
             IntegrateGateStatus::Blocked { reasons } => {
-                lines.push(format!(
-                    "  integrate gate: blocked ({})",
-                    reasons.join("; ")
-                ));
+                lines.push(format!("  review gate: blocked ({})", reasons.join("; ")));
             }
         }
 
@@ -827,11 +829,16 @@ pub(crate) fn current_build_verdict(
 /// The latest finalize-ready commit if it still stands (no later build
 /// completion or kickback).
 pub(crate) fn current_finalize_ready(evidence: &TodoEvidence) -> Option<&CommitSha> {
-    evidence.stamps.iter().rev().find_map(|s| match &s.fact {
-        StampFact::FinalizeReady { commit } => Some(commit),
-        StampFact::BuildComplete { .. } | StampFact::Kickback { .. } => None,
-        _ => None,
-    })
+    evidence
+        .stamps
+        .iter()
+        .rev()
+        .find_map(|s| match &s.fact {
+            StampFact::FinalizeReady { commit } => Some(Some(commit)),
+            StampFact::BuildComplete { .. } | StampFact::Kickback { .. } => Some(None),
+            _ => None,
+        })
+        .flatten()
 }
 
 /// Whether a finalize handoff is already pending for the current published
@@ -1538,5 +1545,68 @@ mod tests {
             IntegrateGateStatus::Blocked { ref reasons }
                 if reasons.iter().any(|r| r.contains("PRD approval"))
         ));
+    }
+
+    #[test]
+    fn kickback_or_build_complete_resets_finalize_ready_at_same_head() {
+        let head = sha('d');
+        let observed = Observations {
+            worktree: Some(WorktreeObservation {
+                clean: true,
+                head: Some(head.clone()),
+            }),
+            worktree_path: Some(PathBuf::from("/tmp/wt")),
+            branch_head: Some(head.clone()),
+            remote_head: Some(head.clone()),
+            reviewed_change: Some(ChangeSinceReview::Unchanged),
+            ..Default::default()
+        };
+        let stamp = |fact: StampFact, seq: u64| crate::evidence::StampRecord {
+            source_comment: None,
+            fact,
+            at: jiff::Timestamp::from_second(1_800_000_000 + seq as i64).unwrap(),
+            actor: Actor::Session(session("lead")),
+            model: None,
+            eval_fingerprint: None,
+            role: Some(RoleName::parse("todo-orchestrator").unwrap()),
+            human_involved: None,
+            sequence: seq,
+            model_provenance: Default::default(),
+        };
+
+        let mut kicked = todo(TodoKind::Change).build();
+        kicked.stamps.push(stamp(
+            StampFact::FinalizeReady {
+                commit: head.clone(),
+            },
+            1,
+        ));
+        assert_eq!(current_finalize_ready(&kicked), Some(&head));
+        assert!(finalize_handoff_pending(&kicked, &observed));
+
+        kicked.stamps.push(stamp(
+            StampFact::Kickback {
+                reason: "CI failed on main".into(),
+                input: digest("input"),
+                invalidated_plan: None,
+                invalidated_reviews: Vec::new(),
+            },
+            2,
+        ));
+        assert_eq!(current_finalize_ready(&kicked), None);
+        assert!(!finalize_handoff_pending(&kicked, &observed));
+
+        let mut rebuilt = todo(TodoKind::Change).build();
+        rebuilt.stamps.push(stamp(
+            StampFact::FinalizeReady {
+                commit: head.clone(),
+            },
+            1,
+        ));
+        rebuilt
+            .stamps
+            .push(stamp(StampFact::BuildComplete { head: head.clone() }, 2));
+        assert_eq!(current_finalize_ready(&rebuilt), None);
+        assert!(!finalize_handoff_pending(&rebuilt, &observed));
     }
 }

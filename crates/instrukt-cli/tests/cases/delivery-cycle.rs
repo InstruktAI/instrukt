@@ -366,7 +366,8 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
     let builder_path = PathBuf::from(builder_assignment["worktree"].as_str().unwrap());
 
     // Invariant 1 (no interference): a second concurrent workspace attempt is refused.
-    crew.project
+    let concurrent = crew
+        .project
         .env
         .instrukt(crew.root())
         .args([
@@ -385,6 +386,11 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
         .write_stdin("Concurrent review attempt.")
         .assert()
         .failure();
+    let concurrent_err = String::from_utf8_lossy(&concurrent.get_output().stderr);
+    assert!(
+        concurrent_err.contains("outstanding role attempt blocks"),
+        "expected interference lock refusal, got: {concurrent_err}"
+    );
 
     // Commit fix, push, and complete builder atomically.
     std::fs::write(
@@ -411,13 +417,20 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
         .success();
 
     // Invariant 2 (no self-approval): orchestrator cannot finalize without independent APPROVE.
-    crew.project
+    let unreviewed = crew
+        .project
         .env
         .instrukt(&builder_path)
         .env("T3CODE_THREAD_ID", "lead-1")
         .args(["todo", "stamp", slug, "--finalize-ready"])
         .assert()
         .failure();
+    let unreviewed_err = String::from_utf8_lossy(&unreviewed.get_output().stderr);
+    assert!(
+        unreviewed_err
+            .contains("independent reviewer's APPROVE stamp bound to this exact commit SHA"),
+        "expected exact-SHA independent review refusal, got: {unreviewed_err}"
+    );
 
     // Independent build-reviewer approves exact HEAD.
     let reviewer_assignment =
@@ -460,6 +473,45 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
         shown_json["ledger"]["gates"]["integrate_review_gate"]["finalize_stamped"],
         true
     );
+
+    // Kickback at the same head resets finalize_stamped so the handoff no longer stands.
+    crew.project
+        .env
+        .instrukt(&builder_path)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args([
+            "todo",
+            "stamp",
+            slug,
+            "--kickback",
+            "--reason",
+            "CI failed on integrate",
+        ])
+        .assert()
+        .success();
+    let after_kickback: serde_json::Value =
+        serde_json::from_str(&crew.todo(["show", slug, "--json"])).unwrap();
+    assert_eq!(
+        after_kickback["ledger"]["gates"]["integrate_review_gate"]["finalize_stamped"],
+        false
+    );
+    assert!(after_kickback["ledger"]["finalize_ready_commit"].is_null());
+
+    // Shipped sdlc worker procedures keep planning/checklist/diagnosis conditional for the fast track.
+    let docs_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/domain/sdlc/procedure/lifecycle/work");
+    let build_md = std::fs::read_to_string(docs_root.join("build.md")).unwrap();
+    assert!(!build_md.contains(
+        "`instrukt todo artifacts read {slug} implementation-plan` exists and is readable."
+    ));
+    assert!(build_md.contains("fast track"));
+    let review_md = std::fs::read_to_string(docs_root.join("review-build.md")).unwrap();
+    assert!(!review_md.contains("`implementation-plan` exists for every kind."));
+    assert!(!review_md.contains("`quality-checklist` exists with Build and Review sections."));
+    let finalize_md = std::fs::read_to_string(docs_root.join("finalize.md")).unwrap();
+    assert!(
+        !finalize_md.contains("- `instrukt todo artifacts read {slug} quality-checklist` exists.")
+    );
 }
 
 // spec: project/instrukt/spec/feature/workflow/preparation UC-PR4
@@ -469,31 +521,57 @@ fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
     let slug = "gated-feature";
     crew.project
         .create(slug, "feature", "Add multi-level heading anchor links.");
+    let wt = crew.workspace(slug);
     crew.next("work", slug);
     crew.write(slug, "prd", "Headings receive stable slug anchors.");
     crew.write(slug, "prd-review-findings", "PRD reviewed and approved.");
     crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
 
-    // Invariant 3: without human PRD approval, builder reservation is refused.
-    crew.project
+    // Invariant 3: without human PRD approval, builder, fixer, finalizer, and --finalize-ready are refused.
+    for (role, proc_id) in [
+        ("builder", "crew/procedure/build"),
+        ("fixer", "crew/procedure/fix"),
+        ("finalizer", "crew/procedure/finalize"),
+    ] {
+        let refused = crew
+            .project
+            .env
+            .instrukt(crew.root())
+            .args([
+                "todo",
+                "attempt",
+                slug,
+                "--role",
+                role,
+                "--procedure",
+                proc_id,
+                "--args",
+                slug,
+                "--brief",
+                "-",
+            ])
+            .write_stdin("Start before PRD approval.")
+            .assert()
+            .failure();
+        let err = String::from_utf8_lossy(&refused.get_output().stderr);
+        assert!(
+            err.contains("PRD approval is required"),
+            "role {role} should be refused for missing PRD approval, got: {err}"
+        );
+    }
+    let finalize_refused = crew
+        .project
         .env
-        .instrukt(crew.root())
-        .args([
-            "todo",
-            "attempt",
-            slug,
-            "--role",
-            "builder",
-            "--procedure",
-            "crew/procedure/build",
-            "--args",
-            slug,
-            "--brief",
-            "-",
-        ])
-        .write_stdin("Start building before approval.")
+        .instrukt(&wt)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["todo", "stamp", slug, "--finalize-ready"])
         .assert()
         .failure();
+    let finalize_err = String::from_utf8_lossy(&finalize_refused.get_output().stderr);
+    assert!(
+        finalize_err.contains("PRD approval is required"),
+        "expected PRD approval refusal on --finalize-ready, got: {finalize_err}"
+    );
 
     // Once human PRD approval is stamped, builder reservation succeeds immediately.
     crew.stamp(
@@ -502,4 +580,243 @@ fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
     );
     let builder_assignment = crew.worker(slug, "builder", Some("crew/procedure/build"));
     assert_eq!(builder_assignment["role"], "builder");
+
+    // Non-feature todo carrying a prd artifact is also gated by approvals.prd (fresh session).
+    let crew2 = Crew::new();
+    let change_slug = "change-with-prd";
+    crew2
+        .project
+        .create(change_slug, "change", "Refactor with explicit PRD.");
+    crew2.next("work", change_slug);
+    crew2.write(change_slug, "prd", "Explicit PRD for change todo.");
+    let change_refused = crew2
+        .project
+        .env
+        .instrukt(crew2.root())
+        .args([
+            "todo",
+            "attempt",
+            change_slug,
+            "--role",
+            "builder",
+            "--procedure",
+            "crew/procedure/build",
+            "--args",
+            change_slug,
+            "--brief",
+            "-",
+        ])
+        .write_stdin("Start change carrying PRD before approval.")
+        .assert()
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&change_refused.get_output().stderr)
+            .contains("PRD approval is required")
+    );
+}
+
+#[test]
+fn task_preparer_child_attempt_completes_without_worktree_and_task_firing_requires_approval() {
+    let crew = Crew::new();
+    let slug = "daily-check";
+    crew.project
+        .create(slug, "task", "Check daily build health.");
+    // Deliberate pickup on a task creates no worktree.
+    let out = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args(["todo", "work", slug])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("task approval: pending human approval"));
+
+    // Reserve and bind a worktree-less task-preparer child attempt.
+    let reserved = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "task-preparer",
+            "--procedure",
+            "crew/procedure/prepare-task",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+            "--json",
+        ])
+        .write_stdin("Draft task-plan.")
+        .assert()
+        .success();
+    let assignment: serde_json::Value =
+        serde_json::from_slice(&reserved.get_output().stdout).unwrap();
+    assert!(assignment.get("worktree").is_none());
+    assert!(assignment.get("branch").is_none());
+    assert!(assignment.get("base").is_none());
+
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "bind",
+            slug,
+            "--role",
+            "task-preparer",
+            "--attempt",
+            &assignment["attempt"].as_u64().unwrap().to_string(),
+            "--session",
+            "t3:task-prep-1",
+        ])
+        .assert()
+        .success();
+
+    // Child drafts task-plan and stamps --role-complete without a worktree.
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .env("T3CODE_THREAD_ID", "task-prep-1")
+        .args([
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            "task-plan",
+            "Run daily health check.",
+        ])
+        .assert()
+        .success();
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .env("T3CODE_THREAD_ID", "task-prep-1")
+        .args(["todo", "stamp", slug, "--role-complete"])
+        .assert()
+        .success();
+
+    // Invariant 3: --task-firing-started is refused before approvals.task is satisfied.
+    let unapproved_firing = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args(["todo", "stamp", slug, "--task-firing-started"])
+        .assert()
+        .failure();
+    let err = String::from_utf8_lossy(&unapproved_firing.get_output().stderr);
+    assert!(
+        err.contains("task approval is required"),
+        "expected task approval refusal, got: {err}"
+    );
+}
+
+#[test]
+fn todo_show_json_matches_todo_work_json_for_prerequisite_grounding_and_legacy_prepare_branch_carries_forward()
+ {
+    let crew = Crew::new();
+    // 1. Prerequisite grounding parity between `todo show --json` and `todo work --json`.
+    crew.project
+        .create("prereq-base", "change", "Base prerequisite change.");
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "create",
+            "dep-child",
+            "Depends on prereq-base.",
+            "--kind",
+            "change",
+            "--after",
+            "prereq-base",
+            "--approved",
+        ])
+        .assert()
+        .success();
+    crew.write(
+        "dep-child",
+        "implementation-plan",
+        "Plan grounded on prereq-base.",
+    );
+    let show_json: serde_json::Value =
+        serde_json::from_str(&crew.todo(["show", "dep-child", "--json"])).unwrap();
+    let work_out = crew
+        .project
+        .env
+        .instrukt(&crew.workspace("dep-child"))
+        .args([
+            "todo",
+            "work",
+            "dep-child",
+            "--json",
+            "--placement-evidence",
+            "-",
+        ])
+        .write_stdin(crate::fixtures::runtime::placement_evidence(
+            &crew.project.env,
+            &crate::fixtures::runtime::NativePlacement {
+                cwd: &crew.workspace("dep-child"),
+                slug: "dep-child",
+                role: "todo-lead",
+                session: "lead-1",
+            },
+        ))
+        .assert()
+        .success();
+    let work_json: serde_json::Value =
+        serde_json::from_slice(&work_out.get_output().stdout).unwrap();
+    assert_eq!(
+        show_json["ledger"]["artifacts"], work_json["ledger"]["artifacts"],
+        "todo show --json and todo work --json must agree on artifact drift/grounding"
+    );
+
+    // 2. Legacy `<slug>/prepare` branch commits carry forward when placing `<slug>/work`.
+    let legacy_slug = "legacy-prep";
+    crew.project.create(
+        legacy_slug,
+        "feature",
+        "In-flight feature with legacy prepare commits.",
+    );
+    let prep_wt = crew.project.env.path("legacy-prep-wt");
+    crew.project.repo.git([
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "legacy-prep/prepare",
+        prep_wt.to_str().unwrap(),
+        "main",
+    ]);
+    std::fs::write(prep_wt.join("pending-doc.md"), "Prepared spec.\n").unwrap();
+    crew.project.env.git(&prep_wt, ["add", "pending-doc.md"]);
+    crew.project
+        .env
+        .git(&prep_wt, ["commit", "--quiet", "-m", "docs: pending spec"]);
+    let prep_head = crew.project.env.git(&prep_wt, ["rev-parse", "HEAD"]);
+    crew.project.env.git(
+        &prep_wt,
+        ["push", "--quiet", "origin", "HEAD:legacy-prep/prepare"],
+    );
+    crew.project
+        .repo
+        .git(["worktree", "remove", prep_wt.to_str().unwrap()]);
+
+    // Deliberate `todo work` placement for `legacy-prep` derives `from: origin/legacy-prep/prepare` at `prep_head`.
+    let placement_out = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args(["todo", "work", legacy_slug, "--json"])
+        .assert()
+        .success();
+    let placement: serde_json::Value =
+        serde_json::from_slice(&placement_out.get_output().stdout).unwrap();
+    assert_eq!(placement["placement"]["branch"], "legacy-prep/work");
+    assert_eq!(placement["placement"]["from"], "origin/legacy-prep/prepare");
+    assert_eq!(placement["placement"]["base"], prep_head.trim());
 }

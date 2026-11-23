@@ -22,18 +22,13 @@ use crate::evidence::{
 /// One admitted stamp form, as `instrukt todo stamp <slug>` takes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StampRequest {
-    PreparationHeadVerdict {
-        verdict: ReviewVerdict,
-    },
     /// `--verdict approve|needs_work --phase prd_review|architecture_review|plan_review`.
     PreparationVerdict {
         phase: PreparationReview,
         verdict: ReviewVerdict,
     },
     /// `--verdict approve|changes_requested --phase build_review`.
-    BuildVerdict {
-        verdict: BuildVerdict,
-    },
+    BuildVerdict { verdict: BuildVerdict },
     /// `--prd-approved|--task-approved --by human|peer [--session
     /// <runtime:id>] [--reason <text>]`; a peer approval names its
     /// session and reason.
@@ -45,26 +40,17 @@ pub enum StampRequest {
     },
     /// `--prd-approved|--task-approved --carry-from <stamp-id>`: an earlier
     /// approval carried to the current evidence (`approvals`).
-    CarriedApproval {
-        gate: ApprovalGate,
-        from: u64,
-    },
+    CarriedApproval { gate: ApprovalGate, from: u64 },
     /// `--intent-checked`.
     IntentChecked,
     /// `--kickback --reason <text>`.
-    Kickback {
-        reason: String,
-    },
+    Kickback { reason: String },
     /// `--architecture-skipped <reason>`.
-    ArchitectureSkipped {
-        reason: String,
-    },
+    ArchitectureSkipped { reason: String },
     /// `--diagnosis-settled`.
     DiagnosisSettled,
     /// `--diagnosis-unresolved --reason <text>`.
-    DiagnosisUnresolved {
-        reason: String,
-    },
+    DiagnosisUnresolved { reason: String },
     /// `--drift-reviewed <artifact> cosmetic|substantive <reason>`.
     DriftReviewed {
         artifact: ArtifactName,
@@ -83,9 +69,7 @@ pub enum StampRequest {
     FinalizeReady,
     /// `--task-firing-started [--occurrence <RFC 3339>]`: the occurrence
     /// the run executes; now when not given (deliberate pickup).
-    TaskFiringStarted {
-        occurrence: Option<Timestamp>,
-    },
+    TaskFiringStarted { occurrence: Option<Timestamp> },
     /// `--task-outcome success|error [--reason <text>] [--occurrence <RFC 3339>]`.
     TaskOutcome {
         result: TaskResult,
@@ -135,13 +119,6 @@ pub(crate) fn resolve(
         releases_claim: false,
     };
     Ok(match request {
-        StampRequest::PreparationHeadVerdict { verdict } => {
-            plain(StampFact::PreparationHeadReviewed {
-                verdict: *verdict,
-                head: head(inputs.cwd)?,
-                report: current(record, "preparation-review-findings")?,
-            })
-        }
         StampRequest::PreparationVerdict { phase, verdict } => {
             let (target, report) = reviewed_artifacts(record.kind, *phase);
             plain(StampFact::PreparationVerdict {
@@ -346,33 +323,36 @@ pub(crate) fn resolve(
                 .iter()
                 .find(|b| b.session.as_ref() == inputs.session && b.attempt.released_at.is_none())
                 .ok_or_else(|| WorkError::refused("no active role attempt"))?;
-            let base = binding
-                .attempt
-                .base_head
-                .clone()
-                .ok_or_else(|| WorkError::refused("role base is absent"))?;
+            let current_head = head(inputs.cwd)?;
+            let is_worktreeless_task = binding.worktree.is_none()
+                && record.kind == instrukt_runner::interfaces::TodoKind::Task;
+            let base = match binding.attempt.base_head.clone() {
+                Some(base) => base,
+                None if is_worktreeless_task => current_head.clone(),
+                None => return Err(WorkError::refused("role base is absent")),
+            };
             let artifacts = super::_attempts::writer_artifact(binding.role.as_str())
                 .into_iter()
                 .map(|name| Ok((ArtifactName::new(name), current(record, name)?)))
                 .collect::<Result<Vec<_>, WorkError>>()?;
-            let commits = git::run(
-                inputs.cwd,
-                ["log", "--format=%H", &format!("{}..HEAD", base)],
-            )?
-            .lines()
-            .map(|sha| CommitSha::parse(sha).map_err(|e| WorkError::refused(e.to_string())))
-            .collect::<Result<Vec<_>, _>>()?;
+            let commits = if is_worktreeless_task {
+                Vec::new()
+            } else {
+                git::run(
+                    inputs.cwd,
+                    ["log", "--format=%H", &format!("{}..HEAD", base)],
+                )?
+                .lines()
+                .map(|sha| CommitSha::parse(sha).map_err(|e| WorkError::refused(e.to_string())))
+                .collect::<Result<Vec<_>, _>>()?
+            };
             plain(StampFact::RoleComplete {
                 artifacts,
                 commits,
-                head: head(inputs.cwd)?,
+                head: current_head,
                 role: binding.role.clone(),
                 attempt: binding.attempt.number,
-                base: binding
-                    .attempt
-                    .base_head
-                    .clone()
-                    .ok_or_else(|| WorkError::refused("role base is absent"))?,
+                base,
             })
         }
         StampRequest::BuildComplete => Resolved {

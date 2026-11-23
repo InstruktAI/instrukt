@@ -57,7 +57,7 @@ Apply these configured action values to the identified assignment and session.
 
 ### Ad hoc work and workspace placement
 
-- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A todo is created before preparation commits; its `<slug>/prepare` worktree serves preparation, is reviewed and integrated immediately, and is removed with its local/remote branch. Implementation later uses the separate `<slug>/work` worktree based on updated main. No agent other than the integrator commits on main.
+- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A repository todo uses a single `<slug>/work` worktree and branch for both pending documentation and implementation; pending markers are folded by the integrator at delivery and the worktree and branch are cleaned up after promotion. No agent other than the integrator commits on main.
 
 ### Unexpected bugs
 

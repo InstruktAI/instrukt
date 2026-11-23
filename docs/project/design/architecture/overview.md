@@ -197,9 +197,9 @@ validate`, `docs validate`, `docs render --check`, `install --check` and
 `specs coverage --check` exit 1 with findings; `status` exits 0 whatever its
 report says once every part was read, and 1 when a part could not be read
 (`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
-exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo prepare`
-and `todo work` exit 1 when the next obligation cannot be rendered, and
-their output says why.
+exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
+exits 1 when the todo cannot be claimed or its factual ledger cannot be
+rendered, and its output says why.
 Nothing on the terminal is a program's debug rendering of a value: durations
 are whole seconds, kinds and verdicts their plain names. Usage errors keep
 the command-line parser's own text and exit status 2.

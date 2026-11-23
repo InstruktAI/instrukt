@@ -1,4 +1,4 @@
-//! `instrukt todo prepare`
+//! `instrukt todo work` preparation ledger & grounding currency.
 //! (`docs/project/spec/feature/workflow/preparation.md`): a feature is
 //! released for implementation only once its derivations, reviews and
 //! approval are current, and review findings return to their author.

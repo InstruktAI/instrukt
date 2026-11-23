@@ -819,9 +819,7 @@ fn workflow_capabilities(home: &Home, effective: &Value, out: &mut Vec<KeyFindin
     for entry in entries {
         let result = (|| -> Result<(), String> {
             let file = entry.map_err(|e| e.to_string())?.path();
-            if file.extension().is_none_or(|e| e != "yaml")
-                || file.file_name().is_some_and(|n| n == "actions.yaml")
-            {
+            if file.extension().is_none_or(|e| e != "yaml") {
                 return Ok(());
             }
             let text =

@@ -42,7 +42,8 @@ and an objective of alleviation never reliably reaches cause.
 
 ## Preconditions
 
-- `kind == bug`, and the current derived preparation obligation is diagnosis.
+- `kind == bug`, and `todo-orchestrator` routed this bug to diagnosis because
+  its root cause is non-obvious.
 - `instrukt todo artifacts read {slug} input` exists with the reported symptom and discovery
   context.
 - A `diagnosis` carrying no current settled stamp means the phase is mid-exchange, not

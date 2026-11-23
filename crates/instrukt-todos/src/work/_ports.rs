@@ -23,7 +23,6 @@ use super::Work;
 use crate::evidence::{
     Actor, ArtifactHistory, ArtifactVersion, ClaimRecord, HoldRecord, HoldSource, Prerequisite,
     RoleBinding, StampFact, StampRecord, TaskResult, TodoEvidence, TodoStatus, WorkEvidence,
-    artifact_names,
 };
 
 /// The actor automatic holds and runner claims are attributed to: the
@@ -457,13 +456,18 @@ impl SessionBindings for Work {
             )
             .into());
         }
+        let matches_driver_role = |bound_role: &RoleName| -> bool {
+            bound_role == role
+                || (role.as_str() == "todo-orchestrator"
+                    && bound_role.as_str() == "work-orchestrator")
+        };
         if occurrence.is_none()
             && let Some(retained) = record
                 .bindings
                 .iter()
                 .rev()
                 .find(|b| {
-                    b.role == *role
+                    matches_driver_role(&b.role)
                         && b.attempt.assignment == AssignmentKind::Driver
                         && b.attempt.lane == Some(*lane)
                         && b.session.is_some()
@@ -569,11 +573,13 @@ impl SessionBindings for Work {
         let task_key = occurrence.map(|at| {
             instrukt_runner::keyed::task_key(project.slug.as_str(), record.id.as_str(), at)
         });
-        if let Some(pending) = record
-            .bindings
-            .iter()
-            .find(|b| b.attempt.released_at.is_none() && b.session.is_none())
-        {
+        if let Some(pending) = record.bindings.iter().find(|b| {
+            b.attempt.released_at.is_none()
+                && b.session.is_none()
+                && !(role.as_str() == "todo-orchestrator"
+                    && b.role.as_str() == "prepare-orchestrator"
+                    && b.attempt.assignment == AssignmentKind::Driver)
+        }) {
             if &pending.role != role || pending.attempt.occurrence != occurrence {
                 return Err(WorkError::refused(format!(
                     "unresolved assignment `{}` must be reconciled first",
@@ -647,8 +653,22 @@ impl SessionBindings for Work {
                 ..Default::default()
             },
         };
+        let now = s.now;
         s.commit("dispatch reserved", |s| {
-            s.items[index].record.bindings.push(binding);
+            let record = &mut s.items[index].record;
+            // Retire any legacy prepare-orchestrator driver binding when the
+            // unified todo-orchestrator takes over on `<slug>/work`.
+            if role.as_str() == "todo-orchestrator" {
+                for b in &mut record.bindings {
+                    if b.role.as_str() == "prepare-orchestrator"
+                        && b.attempt.assignment == AssignmentKind::Driver
+                        && b.attempt.released_at.is_none()
+                    {
+                        b.attempt.released_at = Some(now);
+                    }
+                }
+            }
+            record.bindings.push(binding);
             Ok(())
         })?;
         s.flush()?;
@@ -1152,7 +1172,7 @@ impl TodoExistence for WorkExistence {
 
 /// The record's prerequisites with structural holders expanded to the
 /// todos whose milestones satisfy them.
-fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
+pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
     let mut out = Vec::new();
     let mut seen = Vec::new();
     let mut stack: Vec<_> = record.after.iter().rev().cloned().collect();
@@ -1196,7 +1216,6 @@ fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
 }
 
 pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
-    let implementation_plan_seeded = seeded(&record);
     TodoEvidence {
         branch: record.branch.clone(),
         timing: timing(&record),
@@ -1249,33 +1268,7 @@ pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) 
         prerequisites,
         delivery: record.delivery.map(|d| d.commit),
         agent: record.agent,
-        implementation_plan_seeded,
     }
-}
-
-/// Whether the implementation plan was seeded: its first version was
-/// written by the todo's filer, before any plan review (`preparation`,
-/// "seeded derivation": a plan present at first entry with no prior
-/// review). No spec names how a seed is recorded; this reads it from the
-/// record rather than adding a surface.
-fn seeded(record: &TodoRecord) -> bool {
-    let Some(first) = record
-        .artifact(artifact_names::IMPLEMENTATION_PLAN)
-        .and_then(|a| a.versions.first())
-    else {
-        return false;
-    };
-    let reviewed_before = record.stamps.iter().any(|s| {
-        s.at <= first.created
-            && matches!(
-                s.fact,
-                StampFact::PreparationVerdict {
-                    phase: crate::evidence::PreparationReview::PlanReview,
-                    ..
-                }
-            )
-    });
-    first.writer == record.created_by && !reviewed_before
 }
 
 /// A task's schedule and its last firing.
@@ -1310,104 +1303,4 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
         catch_up: record.catch_up,
         last_fired,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::evidence::{ArtifactName, PreparationReview, ReviewVerdict};
-    use crate::work::_model::{Artifact, TodoId, Version, digest_of};
-    use instrukt_core::ids::ProjectSlug;
-    use instrukt_runner::interfaces::CatchUp;
-
-    fn filer() -> Actor {
-        Actor::Person {
-            name: "filer".into(),
-        }
-    }
-
-    fn at(second: i64) -> Timestamp {
-        Timestamp::from_second(1_800_000_000 + second).unwrap()
-    }
-
-    fn with_plan(writer: Actor, written: i64) -> TodoRecord {
-        TodoRecord {
-            schema: 1,
-            id: TodoId::parse(&"ef".repeat(16)).unwrap(),
-            project: ProjectSlug::parse("demo").unwrap(),
-            slug: TodoSlug::parse("depth").unwrap(),
-            prior_slugs: Vec::new(),
-            kind: TodoKind::Change,
-            status: TodoStatus::Active,
-            created: at(0),
-            created_by: filer(),
-            human_involved: None,
-            revision: 1,
-            sequence: 0,
-            artifacts: vec![Artifact {
-                name: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
-                address: None,
-                versions: vec![Version {
-                    digest: digest_of("plan"),
-                    writer,
-                    created: at(written),
-                    derived_from: Vec::new(),
-                    sequence: 0,
-                    grounding: Default::default(),
-                    remote: None,
-                    content: None,
-                }],
-            }],
-            stamps: Vec::new(),
-            claim: None,
-            bindings: Vec::new(),
-            hold: None,
-            hold_history: Vec::new(),
-            label_actions: Vec::new(),
-            after: Vec::new(),
-            group: None,
-            schedule: None,
-            catch_up: CatchUp::Once,
-            agent: None,
-            branch: None,
-            delivery: None,
-            removal: None,
-        }
-    }
-
-    #[test]
-    fn a_plan_the_filer_supplied_before_any_review_is_seeded() {
-        assert!(seeded(&with_plan(filer(), 1)));
-    }
-
-    #[test]
-    fn a_plan_drafted_by_preparation_is_not_seeded() {
-        let drafter = Actor::Person {
-            name: "planner".into(),
-        };
-        assert!(!seeded(&with_plan(drafter, 1)));
-    }
-
-    #[test]
-    fn a_plan_first_written_after_a_plan_review_is_not_seeded() {
-        let mut record = with_plan(filer(), 5);
-        record.stamps.push(StampRecord {
-            source_comment: None,
-            fact: StampFact::PreparationVerdict {
-                phase: PreparationReview::PlanReview,
-                verdict: ReviewVerdict::NeedsWork,
-                target: digest_of("older"),
-                report: digest_of("report"),
-            },
-            at: at(2),
-            actor: filer(),
-            model: None,
-            eval_fingerprint: None,
-            role: None,
-            human_involved: None,
-            sequence: 0,
-            model_provenance: Default::default(),
-        });
-        assert!(!seeded(&record));
-    }
 }

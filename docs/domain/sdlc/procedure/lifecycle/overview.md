@@ -102,11 +102,22 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      `--finalize-ready` + `--unclaim` → `integrate`.
 
 - **Task (`kind: task`):**
-  Tasks never create a git worktree. Draft `task-plan` (directly or via
-  `task-preparer`, `sdlc/procedure/lifecycle/task/prepare-task`), then unclaim
-  and wait for `approvals.task` when human-owned. Once approved, the runner
-  dispatches `task-runner` (`sdlc/procedure/lifecycle/task/run-task`) on
+  Tasks never create a git worktree. Draft `task-plan` directly, or delegate to
+  `task-preparer` (`sdlc/procedure/lifecycle/task/prepare-task`) as a
+  worktree-less child attempt (`instrukt todo attempt` / `bind` without
+  `--worktree`, `--branch`, or `--base`, completed via `--role-complete`), then
+  unclaim and wait for `approvals.task` when human-owned. Once approved, the
+  runner dispatches `task-runner` (`sdlc/procedure/lifecycle/task/run-task`) on
   schedule.
+
+### Waiting & Re-Dispatch Discipline
+
+The runner suppresses re-dispatch for unclaimed active todos only while waiting
+on configured human approval (`approvals.prd` / `approvals.task`) or while a
+`--finalize-ready` handoff stands for `integrate`. When waiting on anything else
+(a human clarification, external input, or a peer reply), keep the claim on your
+live session or place an explicit hold (`instrukt todo update <slug> --hold --reason "..."`)
+so the runner does not re-dispatch a fresh turn on every tick.
 
 ## Preconditions
 

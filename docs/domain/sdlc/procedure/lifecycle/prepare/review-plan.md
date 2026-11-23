@@ -238,16 +238,13 @@ policy:
 - Every prescribed act is executable by the role and phase receiving it, from
   the environment that role runs in. A task that schedules an act its assigned
   role cannot legally or physically perform is Critical.
-- No work-phase task takes the doc layer's state as its subject. Authoring or
-  editing under `docs/**`, folding pending markers, and confirming or verifying
-  whether they are folded are the same violation: the doc layer is authored in
-  `<slug>/prepare`, then reviewed, folded and integrated by the integrator before
-  build -> Critical.
-  Judge the task's subject, not its verb — a documentation task phrased as a
-  confirmation of marker state passes an executability check and is still
-  invalid. Reading doc snippets as implementation input is not this violation;
-  binding in-scope feature-spec scenarios and implementing against published
-  contracts is required work-phase behavior.
+- Pending documentation lives in the same `<slug>/work` worktree and is folded
+  by `integrate` at delivery. No plan task may direct a worker to fold pending
+  markers (`instrukt docs fold`) or commit directly on `main` — both belong
+  exclusively to `integrate` -> Critical. Reading doc snippets as implementation
+  input, updating or adding pending doc snippets in `<slug>/work`, binding
+  in-scope feature-spec scenarios, and implementing against published contracts
+  are valid `<slug>/work` work.
 - Referenced file paths are explicit in the plan tasks for grounding review.
   Missing or incomplete -> Important.
 
@@ -545,9 +542,9 @@ Severity tiers and verdict arithmetic are owned by
 When the current implementation-plan digest differs from the prior reviewed
 target, compare the retained versions with
 `instrukt todo artifacts diff {slug} implementation-plan <old-digest> <new-digest>`.
-The action and rendered template identify the current review obligation;
-no synthetic header is required. Re-validate the changed evidence under the
-shared discovery and remediation boundaries.
+The factual ledger (`instrukt todo show {slug}`) and orchestrator brief identify
+the current review target; no synthetic header is required. Re-validate the
+changed evidence under the shared discovery and remediation boundaries.
 
 ### 9. Write verdict
 
@@ -564,12 +561,11 @@ Verdict rules:
 - The §6a lane execution gate passes first: the `Lane anticipation` section verdicts every catalog lane. A verdict is not stamped over an incomplete sweep.
 - `approve` only when no Requirement-Violation, Critical or Important finding remains unresolved.
 - `needs_work` when any finding in those three tiers remains unresolved.
-- **Round threshold.** The workflow derives plan-review counts from the record
-  against the configured threshold and refuses none. The count summons no one;
-  continuation stays with the prepare orchestrator under
-  `sdlc/procedure/lifecycle/review`. The threshold never changes
-  verdict arithmetic: the reviewer writes the complete report and stamps
-  `approve` only at zero unresolved findings, or `needs_work` otherwise.
+- **Round threshold.** Plan-review counts are observed from the record
+  and refuse none. The count summons no one; continuation stays with
+  `todo-orchestrator` under `sdlc/procedure/lifecycle/review`. The threshold
+  never changes verdict arithmetic: the reviewer writes the complete report and
+  stamps `approve` only at zero unresolved findings, or `needs_work` otherwise.
 
 Write the complete pass via `instrukt todo artifacts write {slug} plan-review-findings <content>`
 before stamping, with findings classified under

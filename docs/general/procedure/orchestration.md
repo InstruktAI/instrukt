@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Orchestration loop for the derived lifecycle obligations and worker session handling.'
+description: 'Orchestration loop for prose-routed lifecycle primitives and worker session handling.'
 visibility: 'public'
 ---
 
@@ -12,8 +12,8 @@ visibility: 'public'
 
 ## Goal
 
-Drive the configured preparation or work flow, execute its actions and owed
-effects, and keep recovery with its responsible owner until a grounded handoff.
+Drive a todo's prose-routed lifecycle primitives from the factual ledger, manage
+worker sessions and recovery, and keep ownership clear until a grounded handoff.
 
 ### Dispatch Rules
 
@@ -22,15 +22,20 @@ effects, and keep recovery with its responsible owner until a grounded handoff.
   Documentation that changes what a snippet establishes and directs no agent
   differently uses the lighter scope under `general/policy/documentation-discipline`.
   The dispatching session carries that classification to the reviewer.
-  Select through the reviewer's role mapping in `~/.instrukt/agents.yaml`;
-  shipped `strong` and `standard` choices are configurable heuristics, not
-  procedure-level model or tier defaults.
+  Select through the reviewer's role mapping in `~/.instrukt/agents.yaml` (with
+  any per-task agent/tier override taking precedence first); shipped `strong`
+  and `standard` choices are configurable heuristics, not procedure-level model
+  or tier defaults.
 
 Intelligence maintains the preference order for performance and then cost;
-availability is the first selection condition. The parent or orchestrator
-uses the strongest available entry, with the next as fallback. Valid agent
-profile names come from `~/.instrukt/agents.yaml`, whose role mappings and
-typed chains own model choice independently of procedure content.
+availability is the first selection condition. The parent or orchestrator uses
+the strongest available entry, with the next as fallback. Valid agent profile
+names come from `~/.instrukt/agents.yaml`, whose role mappings and typed chains
+own model choice independently of procedure content. A proven rejection before
+native session creation (`instrukt todo attempt --not-started`) permits fallback
+to the next available entry in the configured order; an ambiguous native start
+retains its attempt identity for reconciliation rather than starting a
+duplicate session.
 
 ### Review Quality Gate (Orchestrator-Owned)
 
@@ -79,9 +84,8 @@ workflow policy; the record supplies facts rather than a stored phase machine.
 
 ### Terminal Child Cleanup
 
-At terminal handoff, execute `instrukt todo update <slug> --unclaim` and the shipped
-flavor's cleanup commands
-and confirm their outcomes. The next owner waits on claim release, not on the
+At terminal handoff, execute `instrukt todo update <slug> --unclaim` and confirm
+its outcome. The next owner waits on claim release, not on the
 end of this session. An unfinished human conversation retains the session,
 never the claim. A refused release remains unresolved.
 
@@ -218,15 +222,16 @@ tier blocks the verdict — there is no fourth tier and no deferral path.
 
 ## Preconditions
 
-- A target todo and configured flow are available.
-- The record and runtime can supply the evidence needed for the next obligation.
+- A target todo and configured workflow flavor (`workflow.yaml`) are available.
+- The factual ledger (`instrukt todo show <slug> --json`) and runtime can supply
+  the evidence needed for the next step.
 
 ## Steps
 
-1. Derive the current obligation and execute its configured action and effects.
+1. Read the factual ledger and select the next composable primitive from `sdlc/procedure/lifecycle/overview`.
 2. Observe workers through configured runtime operations and inspect their record-backed outputs.
-3. Route recovery to the owning role and re-derive after material outcomes.
-4. Confirm terminal handoff and claim release; retain other live obligations.
+3. Route recovery to the owning role and re-read the factual ledger after material outcomes.
+4. Confirm terminal handoff (`--finalize-ready`) and claim release (`--unclaim`); retain other live obligations.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
 then record the handoff and any remaining obligations. Preserve conversations
@@ -236,15 +241,15 @@ cleanup.
 ## Outputs
 
 - Record-backed progress, with command failures and next ownership explicit.
-- Current independent review evidence before finalization or preparation release.
+- Current independent exact-SHA review evidence before finalization.
 
 ## Recovery
 
 - Apply Agent Degradation Handling to startup or session failures and When
   Worker Needs Help to an executing worker's obstruction.
-- Execute owed effects through the shipped flavor's workflow bindings. A
-  failed effect, unavailable observation or runtime-reported missing capability
-  remains unresolved; no prose token or elapsed-time assumption discharges it.
+- A failed git operation, unavailable observation, or runtime-reported missing
+  capability remains unresolved; no prose token or elapsed-time assumption
+  discharges it.
 
 ## See Also
 

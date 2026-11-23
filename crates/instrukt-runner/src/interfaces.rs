@@ -10,7 +10,7 @@
 //! | Trait | Spec it serves | Implemented by | Used by |
 //! | --- | --- | --- | --- |
 //! | [`Pickup`] | `work-dispatch` "Todo pickup", `task-timing` | work (`instrukt_todos::work`) | runner dispatch |
-//! | [`Claims`] | `work-dispatch` "Execution contract" | work | runner dispatch; workflow's `todo prepare\|work` |
+//! | [`Claims`] | `work-dispatch` "Execution contract" | work | runner dispatch; workflow's `todo work` |
 //! | [`SessionBindings`] | `session-continuity` "Identity and reuse" | work | runner dispatch and sessions facade |
 //! | [`Reflection`] | `work-dispatch` "Execution contract", `github-record` | work | runner tick |
 //! | [`TaskFirings`] | `task-timing` "Task and schedule" | work | runner task timing |
@@ -182,7 +182,7 @@ pub enum Claimant {
     /// The runner on automatic dispatch, before any session starts.
     Runner,
     /// A session picking the todo up deliberately with
-    /// `instrukt todo prepare|work`.
+    /// `instrukt todo work`.
     Session(SessionRef),
 }
 

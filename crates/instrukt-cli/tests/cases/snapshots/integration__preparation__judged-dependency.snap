@@ -24,7 +24,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 2>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: render-lists (demo) [feature · active]
@@ -49,7 +49,7 @@ prerequisites (blocked): parse-lists (undelivered)
 gates:
   interference lock: free
   prd approval: approved by human (<digest 2>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
 pickup: held by this session
 todo: render-lists (demo) [feature · active]
@@ -73,4 +73,4 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by human (<digest 2>)
-  integrate gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)

@@ -24,4 +24,4 @@ finalize_ready: <commit 1>
 gates:
   interference lock: free
   prd approval: not required
-  integrate gate: blocked (worktree not present; branch head not pushed to origin; build review approve does not match exact current HEAD and findings)
+  review gate: blocked (worktree not present; branch head not pushed to origin; build review approve does not match exact current HEAD and findings)

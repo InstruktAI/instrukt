@@ -24,12 +24,12 @@ Legacy todos may still reference `requirements-review-findings` → `requirement
 current feature preparation reviews the PRD under
 `sdlc/procedure/lifecycle/overview`.
 
-The artifact targets (`prd`, `architecture`, `implementation-plan`) are writable only
-during the prepare review-fix loops, which the prepare orchestrator runs. In the
-work build-review loop the target is `review-findings` → code; a finding that
-implicates a prepare artifact is not fixed here — it bounces the todo to prepare.
-The workflow service refuses prepare-artifact writes from work-phase sessions, so
-a work-phase fixer cannot target one regardless of the dispatch message.
+The unified `todo-orchestrator` routes remediation to the owning role. During
+a code build-review loop the target is `review-findings` → code in `<slug>/work`;
+a finding that invalidates an upstream artifact (`prd`, `architecture`,
+`implementation-plan`) is surfaced back to `todo-orchestrator` so it can route
+the owning preparation role rather than having a code fixer silently alter
+approved scope.
 
 A finding against a prepare artifact's own narrative does not automatically
 bounce, though — check it first against the record-drift exception in
@@ -62,7 +62,7 @@ procedure is ever dispatched.
    it with the earlier finding, its disposition, and the change that answered it;
    a repeated failure on the same invariant re-derives the affected unit rather
    than patching it again (`sdlc/procedure/lifecycle/review`). A grounded defect
-   in continuing the loop is raised to the phase orchestrator, which owns
+   in continuing the loop is raised to `todo-orchestrator`, which owns
    continuation under the same contract.
 
 2. **Dispose of every finding, then remediate the fixes.** Each finding

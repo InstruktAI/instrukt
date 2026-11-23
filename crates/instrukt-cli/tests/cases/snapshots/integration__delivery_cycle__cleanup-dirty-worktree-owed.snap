@@ -27,4 +27,4 @@ finalize_ready: <commit 1>
 gates:
   interference lock: free
   prd approval: not required
-  integrate gate: blocked (worktree has uncommitted changes)
+  review gate: blocked (worktree has uncommitted changes)

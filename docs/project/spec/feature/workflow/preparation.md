@@ -29,11 +29,17 @@ in code before implementation or finalization; tasks enforce configured
   `fixer`, and `finalizer` attempt reservations and on `--finalize-ready` for
   `kind: feature` and any todo with a `prd` artifact.
 - `approvals.task` (default `human`, or `peer`): enforced in code before the
-  runner dispatches `Lane::TaskRun` (`task-runner`).
+  runner dispatches `Lane::TaskRun` (`task-runner`) and when recording
+  `--task-firing-started`.
+- Approval attribution (`--by human|peer`) follows the platform's trusted-agent
+  record model (`general/principle/trust-and-guardrails`): any authorized
+  session may record an approval stamp with its attribution, and code enforces
+  that an eligible stamp exists for the current artifact digest before gated
+  execution proceeds.
 - While unclaimed and waiting for a human approval (`waiting_for_human_approval`),
   the runner does not re-dispatch `todo-orchestrator`; applying an approval
-  decision wakes the live orchestrator when present or makes the todo eligible
-  for next pickup.
+  decision wakes the live orchestrator when present, or lifts the suppression
+  so the runner dispatches `todo-orchestrator` on the next pickup tick.
 
 ### Carry and attribution
 
@@ -67,9 +73,9 @@ Given a developer's todo is waiting at its configured approval gate
 When an admissible approval or request-changes decision is applied
 Then its live claim-holding orchestrator receives that decision as soon as possible
 And inspects the updated factual ledger to continue
-But when no live orchestrator exists
-Then the decision remains recorded for the next pickup or deliberate start
-And no orchestrator is started solely to deliver the decision
+But when no live orchestrator holds the claim
+Then the decision clears the approval-wait suppression on the record
+And the next runner pickup tick (or deliberate `instrukt todo work`) resumes orchestration
 ```
 
 ### UC-PR3: A derivation that changes no repository file proceeds to its review
