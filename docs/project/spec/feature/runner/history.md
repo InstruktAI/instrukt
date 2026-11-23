@@ -92,14 +92,20 @@ shortly after the subscription, an established watch or a native notification,
 then after a delay that doubles up to a longest delay, for as long as both
 stay watched. The next native notification starts the delays from the shortest
 again. The T3 notification producer owns the shortest and the longest delay.
+Such a request becomes due in the producer; a reader receives it when it next
+waits on the source, and then does its own read. History extraction, whose
+read covers the whole source, follows the first request after a native change
+and after that a request only once the time since that change has doubled.
 While T3's database or its WAL does not exist or cannot be watched, the runner
 tries every two seconds to watch it, reading nothing, and catches up once when
 the watch is established: a source that is absent or unwatchable is recovered
-from, not failed on (`sdlc/principle/design-fundamentals`). Explicit extraction
-and every history search also catch up before reading the local index. Each
-remote participant performs its own catch-up before answering. There is no
-tick-driven extraction, and outside these repeated reads nothing reads T3's
-state on a schedule.
+from, not failed on (`sdlc/principle/design-fundamentals`). Only the repeated
+requests pause while either file is unwatched; the catch-up at startup, at an
+established watch and on a native notification is unchanged. Explicit
+extraction and every history search also catch up before reading the local
+index. Each remote participant performs its own catch-up before answering.
+There is no tick-driven extraction, and outside these repeated reads nothing
+reads T3's state on a schedule.
 <!-- /planned-change:fix-flaky-conversation-links-wait-tests -->
 
 Extraction and the query responder each retry inside themselves when their
@@ -333,9 +339,10 @@ Then that conversation is in the developer's instrukt history without a search o
   import is incomplete is not imported.
 <!-- planned:fix-flaky-conversation-links-wait-tests -->
 - A turn whose commit becomes readable after the read its notification
-  triggered is read at the next repeated read. That read comes within the
-  shortest delay or about as long again as the commit took to become readable,
-  and never later than the longest delay.
+  triggered is read at a later repeated read. The source asks for one no later
+  than its longest delay after the previous request. When a reader acts on it
+  depends on when that reader next waits on the source and on the work its
+  read takes, which this contract does not bound.
 <!-- /planned:fix-flaky-conversation-links-wait-tests -->
 
 ## See Also

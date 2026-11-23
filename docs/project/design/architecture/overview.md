@@ -520,10 +520,12 @@ session-fixed timing through A3's bounded batch log.
 - **A turn's commit becomes readable after the read its notification triggered:**
   that read finds nothing new and ends successfully, no native notification
   follows, and the link shows neither a failure nor a pending handover for the
-  turn. Each reader then reaches the turn on its own trigger. Link relay and
-  history extraction read again each time the source asks its readers to
+  turn. Each reader then reaches the turn on its own trigger. Link relay reads
+  again each time the source asks its readers to
   (`project/instrukt/spec/feature/runner/history`, Freshness and
-  participation). A company conversation with outstanding work reads again on
-  the company relay's own retry. A history search or an explicit extraction
-  catches up history only.
+  participation), except for a link awaiting the retry of a failed pass, which
+  keeps to that retry. History extraction reads again on the requests it
+  follows, as that contract states. A company conversation with outstanding
+  work reads again on the company relay's own retry. A history search or an
+  explicit extraction catches up history only.
 <!-- /planned:fix-flaky-conversation-links-wait-tests -->
