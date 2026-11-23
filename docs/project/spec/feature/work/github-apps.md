@@ -509,7 +509,7 @@ and a head with none that counts is owed its review.
 
 | Store | Holds | Written by | Write-isolation unit |
 | --- | --- | --- | --- |
-| `state/review.db` | Settlements as recorded on or imported to this computer, each with its identity, its hand-off number, the settlements it was chosen over and its verdict versions with their reports; pending revisions; exemptions; imported derived approvals; for a settlement this computer handed off, the computer it was handed to; and the settlements an import set aside. | `instrukt review record`, `exempt`, `export` and `import` only: commands their caller waits on. | `state/review.lock` |
+| `state/review.db` | Settlements as recorded on or imported to this computer, each with its identity, its hand-off number, the settlements it was chosen over and its verdict versions with their reports; pending revisions; exemptions; imported derived approvals; for a settlement this computer handed off, the computer it was handed to and the moment its current version had when it was handed off; and the settlements an import set aside. | `instrukt review record`, `exempt`, `export` and `import` only: commands their caller waits on. | `state/review.lock` |
 | `state/review-publication.db` | The derived approvals the tick recorded, with their coverage; each withdrawal of a derived approval, of one an import brought as well, with the commit found uncovered and when it was withdrawn; the answer that decided each pending revision; per current verdict and destination what GitHub shows of it, with the cause of an outstanding or refused one; and the verdicts recognised as already published, each with its state, name, moment and review body. | The tick only. | `state/review-publication.lock` |
 
 No background work writes the evidence store and no command a caller waits on
@@ -548,7 +548,13 @@ current until it is decided or set aside with its settlement. What this
 computer knows of each settlement of a commit, its identity, the highest
 hand-off number it has met it at, as its holder, as a former holder or as one
 it set aside, and the settlements it was chosen over, is current for as long
-as a verdict of that commit would be. An
+as a verdict of that commit would be. So are two things this computer keeps of
+a settlement it handed off: the computer the settlement was handed to, which
+the refusals of a further version and of an import that meets the settlement
+name, and the moment the settlement's current version had when it was handed
+off, which an import that sets the settlement aside compares (Evidence when
+the serving computer changes). Both are kept with the settlement and not with
+its versions, so retiring those versions removes neither. An
 exemption is current while the canonical
 branch does not contain the commit and a branch of the project still does; an
 outstanding publication until it is published or refused; a derived approval
@@ -655,6 +661,13 @@ published after the import is therefore recognised ahead of everything that
 was published of the settlement set aside, by this computer and by one that
 holds no evidence. A settlement that keeps its place as handed off stands on
 another computer and is not changed here.
+
+Where the settlement set aside is one this computer handed off, the moment
+compared is the one this computer keeps of it: the moment its current version
+had when it was handed off (Review evidence storage). The import
+reads it from the evidence store, so it decides the same before and after that
+settlement's versions were retired, and it reads nothing but the evidence
+store and the export.
 
 Setting a settlement aside takes a revision that is pending on it along. A
 settlement that was set aside is kept whole: its identity, versions, reports
