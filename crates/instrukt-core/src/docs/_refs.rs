@@ -6,7 +6,7 @@
 //! (`project/instrukt/spec/domain/docs`, "Reference").
 //!
 //! The `@` path forms ([`parse`]) remain only for the non-snippet sources
-//! publication still compiles from paths — masters and baseline manifests:
+//! publication still compiles from paths, baseline manifests:
 //! the published-home form (`~/.instrukt/docs/<id>.md` or its
 //! home-expanded absolute form) naming a published snippet, the same form
 //! naming a domain bundle (`~/.instrukt/docs/<domain>/bundle.md`), and

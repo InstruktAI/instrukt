@@ -366,11 +366,6 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         .write(
             "docs/domain/acme/principle/session.md",
             &snippet("principle", "", "\n<!-- @config: runtime.session_id -->\n"),
-        )
-        .write(
-            "AGENTS.master.md",
-            "## Required reads\n\n@~/.instrukt/docs/acme/principle/session.md\n\n## Purpose\n\n\
-             <!-- @config: runtime.session_id -->\n\n<!-- @exec: touch ran -->\n",
         );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);

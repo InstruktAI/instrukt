@@ -87,7 +87,6 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError
         schemas: &schemas,
     };
     let (mut findings, mut notices) = check_all(&corpus, &env)?;
-    check_masters(&corpus, &env, &mut findings)?;
     notices.extend(unreferenced(&corpus, request.repo_root)?);
     super::_directives::check(
         &corpus,
@@ -521,30 +520,6 @@ fn check_references(
             out,
         );
     }
-}
-
-/// The required reads of every master of the repository, through the
-/// checks a snippet's required reads get: a read of a domain no repository
-/// on the computer publishes, or of a snippet that does not resolve, is a
-/// finding naming the master.
-fn check_masters(
-    corpus: &Corpus,
-    env: &CheckEnv<'_>,
-    out: &mut Vec<Finding>,
-) -> Result<(), DocsError> {
-    for (rel, text) in super::_directives::compiled_sources(env.repo_root)? {
-        let path = Path::new(&rel);
-        let master = Version::parse(&rel, &text, None, corpus.project(), corpus.user_home());
-        for reference in master.required_reads() {
-            match &reference.target {
-                Some(RefTarget::Domain(domain)) => {
-                    check_domain_read(corpus, env, path, domain, out)
-                }
-                target => check_target(corpus, path, false, &reference.raw, target.as_ref(), out),
-            }
-        }
-    }
-    Ok(())
 }
 
 fn reference_link_finding(
