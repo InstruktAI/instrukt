@@ -477,16 +477,20 @@ request closes it as `failed`.
 
 A login is kept in the state database for the company, the person's address
 and the server, with the resource it was issued for (the server's `url` at
-sign-in), its registration, the access token and when it runs out, the
-refresh token and the scopes. It is never written to the company home. No
-value of it is shown to the agent: the output rule below removes it from
-everything a server returns.
+sign-in), its registration (or `issuer:<issuer_id>` for `sign_in.mode: issuer`,
+which holds no `mcp_registrations` row and no refresh token), the access token
+and when it runs out, the refresh token and the scopes. It is never written to
+the company home. No value of it is shown to the agent: the output rule below
+removes it from everything a server returns.
 
 A login is used only for the resource it was issued for, and renewed only at
-its own authorization server with its own client. When the server's declared
-`url` differs from that resource, the login is unusable: it is removed,
-revoked at its own authorization server where it offers revocation, and the
-call starts a sign-in.
+its own authorization server with its own client (or, for `sign_in.mode:
+issuer`, renewed automatically by issuing a fresh ES256 ID-JAG assertion
+against the company's active `issuer_id` rather than a refresh-token grant).
+When the server's declared `url` differs from that resource, the login is
+unusable: it is removed, revoked at its own authorization server where it
+offers revocation (not applicable to `issuer:<issuer_id>` logins, which have no
+client registration or refresh token), and the call starts a sign-in.
 
 Before a call, instrukt renews a login whose access token runs out within a
 minute; it also renews once when the server answers a call's access token with
@@ -550,9 +554,11 @@ send the login and fails saying that it was removed. Network requests run
 outside the database's writer section; the generation is compared in the
 transaction that records each outcome. Removing a login revokes its refresh
 token, or its access token when it has none, at its own authorization server
-where it offers revocation, and removes it from the state database whether or
-not revocation succeeds. A call already carried out at the server is not
-undone. The next call of that person to that server starts a new sign-in.
+where it offers revocation (skipped for `issuer:<issuer_id>` logins, which have
+no client registration or refresh token), and removes it from the state
+database whether or not revocation succeeds. A call already carried out at the
+server is not undone. The next call of that person to that server starts a new
+sign-in (or, for `sign_in.mode: issuer`, exchanges a fresh assertion).
 
 #### Direct messages
 

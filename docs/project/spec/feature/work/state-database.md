@@ -566,7 +566,7 @@ for that server.
 | --- | --- |
 | `resource` | The server's `url` the login was issued for. |
 | `subject` | The OpenID Connect `sub` recorded at sign-in; `NULL` with a declared identity request. |
-| `return_id` | The registration it was issued to, which names its authorization server and client. |
+| `return_id` | For `authorization-code` logins, the registration it was issued to (`mcp_registrations.return_id`, naming its authorization server and client). For `sign_in.mode: issuer` logins, the sentinel `issuer:<issuer_id>` tying the cached token to the company's active `company_issuers.issuer_id` (no `mcp_registrations` row). |
 | `access_token`, `expires_at` | The access token and when it runs out; `expires_at` is `NULL` when the server gave no lifetime, which means unknown. |
 | `checked` | `1` once who the access token identifies as has been confirmed; `0` while a renewed access token waits for that check, during which it is not used. |
 | `refresh_token` | The refresh token; `NULL` when the server issued none. |
