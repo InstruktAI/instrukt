@@ -110,6 +110,19 @@ Then they are told the domain has no index and is reachable only by listing its 
 And the run does not fail on that alone
 ```
 
+<!-- planned:unify-index-yaml-entrypoints -->
+### UC-PI3: An operator validating a company's repository is told nothing about its index
+
+```gherkin
+Given an operator's clone of a company's repository, whose documents are selected by its index
+When they validate the repository's documentation
+Then nothing is reported about the company's index
+Given a developer's project that holds an index at that same place
+When they validate the project's documentation
+Then that index is reported as sitting at no position's root
+```
+<!-- /planned:unify-index-yaml-entrypoints -->
+
 ## Known caveats
 
 - An `agents` snippet is not checked for type: by convention it is a `policy` snippet.
