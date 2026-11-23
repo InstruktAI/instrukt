@@ -625,18 +625,9 @@ fn renamed_target_retrieval_reads_the_retained_preparation_assignment() {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
-// spec: project/instrukt/spec/feature/work/todos UC-TD7
-#[test]
-fn native_dispatch_facts_carry_the_resolved_family_model_effort_and_options() {
-    let crew = workflow::Crew::new();
-    let slug = "native-selection";
-    common::agent_profiles(
-        &crew.project.env,
-        "default: {order: [claude], tier: standard}\nprofiles:\n  claude:\n    standard: [{model: claude-opus-5-5, effort: high, fastMode: false}]\n",
-    );
-    crew.project
-        .create(slug, "change", "Carry resolved native inputs.");
+/// Enters preparation and reserves the todo's planner through the CLI,
+/// returning its normalized dispatch output.
+fn planner_attempt_output(crew: &workflow::Crew, slug: &str) -> String {
     crew.next("prepare", slug);
     let tree = crew.phase_workspace(slug, true);
     let result = crew
@@ -659,19 +650,34 @@ fn native_dispatch_facts_carry_the_resolved_family_model_effort_and_options() {
         .write_stdin("Use the resolved native model inputs.")
         .assert()
         .success();
+    support::redact(
+        &String::from_utf8_lossy(&result.get_output().stdout).replace(
+            crew.project
+                .env
+                .path("")
+                .to_str()
+                .unwrap()
+                .trim_end_matches('/'),
+            "[TMP]",
+        ),
+    )
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
+// spec: project/instrukt/spec/feature/work/todos UC-TD7
+#[test]
+fn native_dispatch_facts_carry_the_resolved_family_model_effort_and_options() {
+    let crew = workflow::Crew::new();
+    let slug = "native-selection";
+    common::agent_profiles(
+        &crew.project.env,
+        "default: {order: [claude], tier: standard}\nprofiles:\n  claude:\n    standard: [{model: claude-opus-5-5, effort: high, fastMode: false}]\n",
+    );
+    crew.project
+        .create(slug, "change", "Carry resolved native inputs.");
     insta::assert_snapshot!(
         "native-selection-facts",
-        support::redact(
-            &String::from_utf8_lossy(&result.get_output().stdout).replace(
-                crew.project
-                    .env
-                    .path("")
-                    .to_str()
-                    .unwrap()
-                    .trim_end_matches('/'),
-                "[TMP]"
-            )
-        )
+        planner_attempt_output(&crew, slug)
     );
 }
 
@@ -686,41 +692,9 @@ fn native_delegation_translates_antigravity_effort_to_thought_level() {
     );
     crew.project
         .create(slug, "change", "Translate Antigravity effort natively.");
-    crew.next("prepare", slug);
-    let tree = crew.phase_workspace(slug, true);
-    let result = crew
-        .project
-        .env
-        .instrukt(&tree)
-        .args([
-            "todo",
-            "attempt",
-            slug,
-            "--role",
-            "planner",
-            "--procedure",
-            "crew/procedure/plan",
-            "--args",
-            slug,
-            "--brief",
-            "-",
-        ])
-        .write_stdin("Use the resolved native model inputs.")
-        .assert()
-        .success();
     insta::assert_snapshot!(
         "antigravity-native-effort-option",
-        support::redact(
-            &String::from_utf8_lossy(&result.get_output().stdout).replace(
-                crew.project
-                    .env
-                    .path("")
-                    .to_str()
-                    .unwrap()
-                    .trim_end_matches('/'),
-                "[TMP]"
-            )
-        )
+        planner_attempt_output(&crew, slug)
     );
 }
 
