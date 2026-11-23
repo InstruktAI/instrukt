@@ -82,9 +82,12 @@ pub fn recorded_assignment(
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0").map_err(StateDbError::sqlite(db.path()))?;
+    // The third branch admits a start the runner has recorded for a reserved,
+    // unreleased attempt before work records its session: a fresh start whose
+    // binding has no session yet, or a successor of the session it names.
+    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,r.worktree FROM runtime_bindings r JOIN session_bindings b ON b.semantic_key=r.semantic_key AND (b.runtime IS NULL OR b.runtime=r.runtime) JOIN todos t ON t.id=b.todo_id WHERE r.runtime=?2 AND r.session=?1 AND b.released_at IS NULL AND (b.session IS NULL OR b.session=r.replaced_session)").map_err(StateDbError::sqlite(db.path()))?;
     let rows = stmt
-        .query_map([caller.to_string()], |r| {
+        .query_map(params![caller.to_string(), caller.runtime.as_str()], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -95,13 +98,24 @@ pub fn recorded_assignment(
                 r.get::<_, Option<String>>(6)?,
                 r.get::<_, Option<String>>(7)?,
                 r.get::<_, i64>(8)?,
+                r.get::<_, Option<String>>(9)?,
             ))
         })
         .map_err(StateDbError::sqlite(db.path()))?;
     let mut candidates = Vec::new();
     for row in rows {
-        let (role, key, workspace, evidence, project, todo, current_session, released_at, attempt) =
-            row.map_err(StateDbError::sqlite(db.path()))?;
+        let (
+            role,
+            key,
+            workspace,
+            evidence,
+            project,
+            todo,
+            current_session,
+            released_at,
+            attempt,
+            started_workspace,
+        ) = row.map_err(StateDbError::sqlite(db.path()))?;
         let binding: Binding = serde_json::from_str(&evidence).map_err(|e| {
             StateDbError::invalid(
                 db.path(),
@@ -150,7 +164,7 @@ pub fn recorded_assignment(
                         .map_err(|error| StateDbError::invalid(db.path(), error.to_string()))
                 })
                 .transpose()?,
-            workspace: workspace.map(Into::into),
+            workspace: workspace.or(started_workspace).map(Into::into),
             project: Some(
                 instrukt_core::ids::ProjectSlug::parse(&project)
                     .map_err(|error| StateDbError::invalid(db.path(), error.to_string()))?,

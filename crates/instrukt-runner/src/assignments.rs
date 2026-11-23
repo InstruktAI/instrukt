@@ -13,17 +13,22 @@ fn standing_assignment(
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    let mut stmt = db.conn().prepare("SELECT semantic_key,exact_home,checkout,declaration,procedure FROM procedure_responsibilities WHERE session=?1 UNION ALL SELECT g.semantic_key,r.exact_home,json_extract(g.request,'$.checkout'),g.declaration,r.procedure FROM procedure_generations g JOIN procedure_responsibilities r ON r.responsibility=g.responsibility WHERE g.session=?1").map_err(StateDbError::sqlite(db.path()))?;
+    // The third branch admits the start this runner recorded for the current
+    // generation before the responsibility records that start's session.
+    let mut stmt = db.conn().prepare("SELECT semantic_key,exact_home,checkout,declaration,procedure FROM procedure_responsibilities WHERE session=?1 UNION ALL SELECT g.semantic_key,r.exact_home,json_extract(g.request,'$.checkout'),g.declaration,r.procedure FROM procedure_generations g JOIN procedure_responsibilities r ON r.responsibility=g.responsibility WHERE g.session=?1 UNION ALL SELECT p.semantic_key,p.exact_home,p.checkout,p.declaration,p.procedure FROM runtime_bindings b JOIN procedure_responsibilities p ON p.semantic_key=b.semantic_key WHERE b.runtime=?2 AND b.session=?1 AND p.session IS NULL").map_err(StateDbError::sqlite(db.path()))?;
     let rows = stmt
-        .query_map([caller.to_string()], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-            ))
-        })
+        .query_map(
+            instrukt_core::state_db::rusqlite::params![caller.to_string(), caller.runtime.as_str()],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
+        )
         .map_err(StateDbError::sqlite(db.path()))?;
     let mut found = None;
     for row in rows {

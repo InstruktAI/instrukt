@@ -583,3 +583,198 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     "
     );
 }
+
+/// The state database of `env`'s instrukt home, opened directly.
+fn state_db(env: &TestEnv) -> instrukt_core::state_db::rusqlite::Connection {
+    instrukt_core::state_db::rusqlite::Connection::open(
+        env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap()
+}
+
+/// A runner-picked-up `parser` orchestrator rewound to its recorded launch
+/// window: the runner holds the start of `key` for the returned native thread,
+/// while work still holds the reserved attempt without its session. Returns
+/// the native thread id, the semantic key and the thread's worktree.
+fn orchestrator_in_its_launch_window(
+    p: &crate::fixtures::flavor::Tracked,
+) -> (String, String, String) {
+    p.todo([
+        "create",
+        "parser",
+        "Improve the parser.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    p.tick();
+    let fake = crate::fixtures::runtime::FakeT3::create(&p.env);
+    let (native, key) = (fake.native_id("s1"), fake.key("s1"));
+    let db = state_db(&p.env);
+    let worktree: String = db
+        .query_row(
+            "SELECT worktree FROM runtime_bindings WHERE semantic_key=?1",
+            [&key],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute("UPDATE session_bindings SET session=NULL,worktree=NULL,evidence=json_set(evidence,'$.session',json('null'),'$.worktree',json('null')) WHERE semantic_key=?1",[&key]).unwrap();
+    db.execute(
+        "UPDATE todos SET claim_session=NULL WHERE slug='parser'",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE runtime_bindings SET accepted=0,worktree=NULL WHERE semantic_key=?1",
+        [&key],
+    )
+    .unwrap();
+    (native, key, worktree)
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
+#[test]
+fn a_started_orchestrator_is_admitted_on_its_first_turn_before_work_records_its_session() {
+    let p = crate::fixtures::flavor::Tracked::new(true);
+    let (native, key, worktree) = orchestrator_in_its_launch_window(&p);
+    let admitted = || {
+        for args in [&["todo", "show", "parser"][..], &["docs", "index"][..]] {
+            p.env
+                .instrukt(std::path::Path::new(&worktree))
+                .env("T3CODE_THREAD_ID", &native)
+                .args(args)
+                .assert()
+                .success();
+        }
+    };
+    // Before the runtime accepted the start.
+    admitted();
+    // After the runtime accepted it, before work records the session.
+    state_db(&p.env)
+        .execute(
+            "UPDATE runtime_bindings SET accepted=1,worktree=?2 WHERE semantic_key=?1",
+            [&key, &worktree],
+        )
+        .unwrap();
+    admitted();
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
+#[test]
+fn a_start_whose_attempt_is_bound_to_another_session_remains_a_resolution_failure() {
+    let p = crate::fixtures::flavor::Tracked::new(true);
+    let (native, key, worktree) = orchestrator_in_its_launch_window(&p);
+    state_db(&p.env).execute("UPDATE session_bindings SET session='t3:unrelated',evidence=json_set(evidence,'$.session','t3:unrelated') WHERE semantic_key=?1",[&key]).unwrap();
+    let refused = p
+        .env
+        .instrukt(std::path::Path::new(&worktree))
+        .env("T3CODE_THREAD_ID", &native)
+        .args(["todo", "show", "parser"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "unrelated-binding-start-refused",
+        String::from_utf8_lossy(&refused.get_output().stderr)
+            .replace(
+                p.env.path("").to_str().unwrap().trim_end_matches('/'),
+                "[TMP]"
+            )
+            .replace(&native, "[NATIVE]")
+    );
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
+#[test]
+fn a_successor_is_admitted_before_work_moves_the_attempt_to_it() {
+    let mut p = crate::fixtures::flavor::Tracked::new(true);
+    p.authorized_task("weekly-status", "2030-01-06T09:00:00Z", &[]);
+    p.tick_at("2030-01-06T09:00:20Z");
+    let fake = crate::fixtures::runtime::FakeT3::create(&p.env);
+    let (old, key) = (format!("t3:{}", fake.native_id("s1")), fake.key("s1"));
+    fake.delete("s1");
+    p.tick_at("2030-01-06T09:01:20Z");
+    let successor = fake.native_id("s2");
+    // Rewind work to the successor's launch window: the attempt and claim
+    // still name the deleted thread the runner's start replaces.
+    let db = state_db(&p.env);
+    let replaced: String = db
+        .query_row(
+            "SELECT replaced_session FROM runtime_bindings WHERE semantic_key=?1",
+            [&key],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(replaced, old);
+    db.execute("UPDATE session_bindings SET session=?2,evidence=json_set(evidence,'$.session',?2) WHERE semantic_key=?1",[&key,&old]).unwrap();
+    db.execute(
+        "UPDATE todos SET claim_session=?1 WHERE slug='weekly-status'",
+        [&old],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE runtime_bindings SET accepted=0 WHERE semantic_key=?1",
+        [&key],
+    )
+    .unwrap();
+    p.env
+        .instrukt(p.repo.path())
+        .env("T3CODE_THREAD_ID", &successor)
+        .args(["todo", "show", "weekly-status"])
+        .assert()
+        .success();
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
+#[test]
+fn a_started_standing_agent_carries_its_focused_role_before_its_responsibility_records_it() {
+    let env = focused_reviewer();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    let db = instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
+    db.execute(
+        "UPDATE procedure_responsibilities SET session=NULL WHERE responsibility='handler'",
+        [],
+    )
+    .unwrap();
+    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3','handler','standing','handler','t3:focused',?1,0,1)",[env.home().to_str().unwrap()]).unwrap();
+    let output = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "focused")
+        .args(["config", "init", "--global"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "focused-role-refusal",
+        String::from_utf8_lossy(&output.get_output().stderr)
+    );
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP3
+#[test]
+fn a_started_conversation_agent_carries_its_company_role_before_its_first_message_binds_it() {
+    let env = TestEnv::new();
+    env.run(env.home(), ["config", "init", "--global"])
+        .success();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+    drop(instrukt_core::state_db::StateDb::open(&home).unwrap());
+    let db = instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
+    db.execute_batch("INSERT INTO connected_conversations(company,connector,conversation,semantic_key,source_identity) VALUES ('acme','slack','C1/1700.1','instrukt:conversation:acme:slack:C1%2F1700.1','src')").unwrap();
+    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3','instrukt:conversation:acme:slack:C1%2F1700.1','conversation','instrukt:conversation:acme:slack:C1%2F1700.1','t3:company',?1,0,1)",[env.home().to_str().unwrap()]).unwrap();
+    let output = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "company")
+        .args(["--help"])
+        .assert()
+        .success();
+    let help = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    insta::assert_snapshot!(
+        help.lines().skip_while(|line| !line.starts_with("Role:")).collect::<Vec<_>>().join("\n"),
+        @r"
+    Role: company-agent · class: standing. Scope comes from assignment
+    instrukt:conversation:acme:slack:C1%2F1700.1. Object claims, phase and writer constraints apply.
+    Usual capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any,
+    bug-report:any, artifact-read:any, agents-read:any, config-read:any, repository-read:any,
+    code-check:any, eval-read:any, events-read:any, installation-read:any, mcp-access:own,
+    company-reply:own
+    "
+    );
+}

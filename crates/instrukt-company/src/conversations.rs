@@ -4345,8 +4345,11 @@ pub fn conversation_assignment(
     let row = db
         .conn()
         .query_row(
-            "SELECT company,semantic_key,NULL,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0",
-            [caller.to_string()],
+            // The third branch admits the start the runner recorded for this
+            // conversation before its first accepted message binds the session:
+            // a first start, or a successor of the session the conversation names.
+            "SELECT company,semantic_key,NULL,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT c.company,c.semantic_key,NULL,c.role FROM runtime_bindings r JOIN connected_conversations c ON c.semantic_key=r.semantic_key WHERE r.runtime=?2 AND r.session=?1 AND (c.session IS NULL OR c.session=r.replaced_session)",
+            params![caller.to_string(), caller.runtime.as_str()],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
