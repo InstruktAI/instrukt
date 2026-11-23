@@ -91,6 +91,29 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     in a non-platform-specific test that manifests only on macOS is detected
     by the full macOS job on `main` pushes and tagged releases and blocks
     tagged release publication, not pull requests.
+  - A pull request runs, of the checks above, only those its changed files
+    reach, as `scripts/ci-changes.sh` classifies them; a `main` push or tagged
+    release runs every check. While the sharded Linux and scoped macOS platform
+    placement above remains the prepared contract of `speed-up-pr-ci`, a pull
+    request that selects Rust currently runs the unsharded workspace test suite,
+    doctests, and commit, document, configuration, use-case coverage and
+    instruction-file checks on both Linux and macOS. A change to documents and
+    configuration alone, root `instrukt.yaml` and `AGENTS.master.md` among them,
+    reaches no Rust input: Linux builds the CLI binary and runs the document,
+    configuration, use-case coverage and instruction-file checks with it,
+    without the workspace test suite, doctests, macOS, the dependency audit,
+    the pinned contracts, or the commit checks whose inputs did not change.
+    Among the commit checks, fmt, clippy and the unit tests run when a Rust
+    input changes, shellcheck when a script or a hook file changes, and
+    the Python lint and type check when a Python file or their configuration
+    changes. A contract check runs when a crate on its path, the workspace
+    manifest or lock, or a pinned tool changes. A moved file counts as both
+    the path it left and the path it reached. A path no rule names, a change
+    whose files cannot be read, a classification that does not succeed, and
+    a change to the pipeline, `scripts/ci-changes.sh`, or `scripts/test-tools.env`
+    run every check. Every check `main` requires reports on every pull request,
+    skipping its steps rather than itself. CI runs for a branch only through
+    its pull request.
 - A version tag produces release binaries for macOS arm64 and Linux
   x86_64/arm64, and only from a revision that passed those checks.
 - Parity against the corpus instrukt was extracted from is a one-off
@@ -164,6 +187,10 @@ Running OS-independent checks once on Linux, compiling the Linux test archive
 once for parallel shards, and scoping macOS pull-request runs to
 platform-specific surfaces keeps pull-request feedback fast while preserving
 full cross-platform verification on `main` and every tagged release.
+Running, of those checks, only the ones a pull request's files reach spares a
+document change the workspace test suite, macOS and every check its files do
+not reach; an unnamed, unreadable or unclassified change runs everything, so a
+gap in the classification costs time, never a missed check.
 
 ## Scope
 

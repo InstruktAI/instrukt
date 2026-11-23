@@ -1537,11 +1537,9 @@ fn older_remote_schema_converts_without_losing_retained_evidence() {
 fn missing_board_is_set_up_automatically_and_reused() {
     let project = Project::new();
     // This project has no board reference; the existing unrelated board is preserved.
+    without_board(project.repo.path());
     let file = project.repo.path().join("instrukt.yaml");
-    let config = std::fs::read_to_string(&file)
-        .unwrap()
-        .replace("board: acme/1\n", "");
-    std::fs::write(&file, &config).unwrap();
+    let config = std::fs::read_to_string(&file).unwrap();
     project.create("cockpit", "bug", INTENT);
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
@@ -1560,6 +1558,87 @@ fn missing_board_is_set_up_automatically_and_reused() {
     assert_eq!(project.github.project_fields("acme", 2).len(), 3);
     insta::assert_snapshot!(
         "automatic-board-state",
+        board_state(
+            &project,
+            "acme",
+            2,
+            &[(1, issue_node(&project, 1).as_str())]
+        )
+    );
+}
+
+/// Removes the board reference from the project layer at `checkout`.
+fn without_board(checkout: &Path) {
+    let file = checkout.join("instrukt.yaml");
+    let config = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("board: acme/1\n", "");
+    std::fs::write(&file, config).unwrap();
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR11
+#[test]
+fn a_public_projects_new_board_is_public_and_a_maintainers_later_choice_is_kept() {
+    let project = Project::new();
+    project.github.set_repo_public(REPOSITORY);
+    without_board(project.repo.path());
+    project.create("cockpit", "bug", INTENT);
+    let todo = issue_node(&project, 1);
+    assert!(project.github.project_public("acme", 2));
+    assert!(on_board(&project, "acme", 2).contains(&todo));
+
+    project.github.set_project_public("acme", 2, false);
+    project.ok(["update", "cockpit"]);
+    assert!(
+        !project.github.project_public("acme", 2),
+        "the recorded board keeps the maintainer's choice"
+    );
+    let elsewhere = project.other_computer();
+    without_board(elsewhere.repo.path());
+    project.github.clear_project_items("acme", 2);
+    elsewhere.ok(["update", "cockpit"]);
+    assert!(
+        on_board(&project, "acme", 2).contains(&todo),
+        "the other computer reflects the todo onto the board it found"
+    );
+    assert_eq!(
+        project.github.project_numbers("acme"),
+        [1, 2],
+        "the other computer reuses the board instead of creating one"
+    );
+    assert!(
+        !project.github.project_public("acme", 2),
+        "a board found by its title keeps the maintainer's choice"
+    );
+
+    choose_board(&project, "acme/1");
+    project.ok(["update", "cockpit"]);
+    assert!(
+        !project.github.project_public("acme", 1),
+        "a named board keeps its visibility"
+    );
+    assert!(on_board(&project, "acme", 1).contains(&todo));
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR12
+#[test]
+fn a_new_board_github_will_not_make_public_is_set_up_private_and_holds_the_work() {
+    let project = Project::new();
+    project.github.set_repo_public(REPOSITORY);
+    project.github.set_project_visibility_refused(true);
+    without_board(project.repo.path());
+    let created = project.ok([
+        "create",
+        "cockpit",
+        INTENT,
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    assert!(!project.github.project_public("acme", 2));
+    insta::assert_snapshot!("refused-visibility-created", redact(&created));
+    insta::assert_snapshot!(
+        "refused-visibility-board-state",
         board_state(
             &project,
             "acme",

@@ -7,17 +7,14 @@ use crate::runtime::conversations::{ConversationChanges, RecordKind, SourcePosit
 use instrukt_core::{
     home::Home,
     state_db::{
-        StateDb, StateRead,
+        StoreDb,
         rusqlite::{OptionalExtension, params},
     },
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-pub(super) fn position(home: &Home, source: &str) -> Result<Option<SourcePosition>, HistoryError> {
-    let Some(db) = StateRead::open(home)? else {
-        return Ok(None);
-    };
+pub(super) fn position(db: &StoreDb, source: &str) -> Result<Option<SourcePosition>, HistoryError> {
     let stored: Option<String> = db
         .conn()
         .query_row(
@@ -32,11 +29,11 @@ pub(super) fn position(home: &Home, source: &str) -> Result<Option<SourcePositio
 }
 pub(super) fn apply(
     home: &Home,
+    db: &mut StoreDb,
     source: &str,
     batch: &ConversationChanges,
 ) -> Result<usize, HistoryError> {
     let computer = instrukt_core::machine::machine_id(home)?.to_string();
-    let mut db = StateDb::open(home)?;
     db.write(|tx|->Result<usize,HistoryError>{
         let mut affected=BTreeSet::new();
         for record in &batch.records {

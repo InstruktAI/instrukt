@@ -2,7 +2,8 @@
 activation_trigger: >-
   Use as soon as you consider creating, changing or retiring a taxonomy snippet
   under `docs/general/`, `docs/domain/<name>/` or `docs/project/`, companions
-  included. Ordinary README or website prose never activates it. Changes to
+  included, or company home knowledge (`AGENTS.master.md` and documents under
+  `docs/`). Ordinary README or website prose never activates it. Changes to
   directive text for agents elsewhere still require an update to the owning
   snippet and independent review of the commit under
   `general/policy/documentation-discipline`.
@@ -28,13 +29,13 @@ tooling.
 
 ## Preconditions
 
-- Snippet taxonomy and schema references available.
-- Target position and folder determined (step 1).
+- For taxonomy snippets: snippet taxonomy and schema references available, and target position and folder determined (step 1).
+- For company home knowledge: company repository available for worktree authoring (see Company home knowledge below).
 - Authoring authority established in Step 0.
 
 ## Steps
 
-Authoring reads and edits the snippet's source file in the repository. `instrukt docs get` is for knowledge: it renders the snippet, filters pending content and resolves references, so its output is not the file you are changing. Before committing, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed.
+For taxonomy snippets, authoring reads and edits the snippet's source file in the repository. `instrukt docs get` is for knowledge: it renders the snippet, filters pending content and resolves references, so its output is not the file you are changing. Before committing taxonomy snippets, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed. For company home knowledge (`AGENTS.master.md` and documents anywhere under `docs/` in a company repository), follow Step 0 and **Company home knowledge** below, and verify with `instrukt docs render --check` instead of `instrukt docs validate`.
 
 0.  **Establish authoring authority, then earn the snippet.** Load this procedure
     when a snippet first enters consideration, before drafting its shape. A
@@ -241,10 +242,28 @@ Authoring reads and edits the snippet's source file in the repository. `instrukt
     enters its awareness only when that event arrives
     (`general/principle/priming`).
 
+18. **Company home knowledge.** A company repository's `AGENTS.master.md` and
+    documents anywhere under `docs/` carry no taxonomy ID and reference nothing
+    outside the company's own documents, so taxonomy placement, snippet
+    schemas, `index.yaml`, `instrukt docs validate`, and pending markers do not
+    apply; retain ordinary Markdown and relative required reads. Give each
+    document under `docs/` frontmatter with a non-empty `description` (and
+    optional `visibility: internal` or `public`, defaulting to `internal`, so
+    the company skill publisher accepts it alongside `AGENTS.md` rendering).
+    Apply Step 0, `general/policy/snippet-value-contract`, and
+    `general/policy/agent-facing-text`. Author routine knowledge updates in
+    documents under `docs/` inside a separate worktree (keeping the serving
+    company home checkout on the reviewed default branch), render with
+    `instrukt docs render` (or commit through the installed pre-commit hook)
+    and verify the committed worktree with `instrukt docs render --check`, then
+    route the committed worktree head through independent review before
+    integration onto the default branch (`general/policy/commits`,
+    `general/policy/documentation-discipline`).
+
 ## Outputs
 
-- New or updated snippet with correct structure.
+- New or updated snippet or company home document with correct structure.
 
 ## Recovery
 
-- If `instrukt docs validate` reports findings, fix them and rerun it.
+- If `instrukt docs validate` (for taxonomy snippets) or `instrukt docs render --check` (for company home knowledge) reports findings, fix them and rerun it.

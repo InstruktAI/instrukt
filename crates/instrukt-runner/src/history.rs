@@ -1,4 +1,5 @@
 //! Retains source conversations locally and answers searches with explicit source failures.
+mod _db;
 mod _fleet;
 mod _legacy;
 mod _projection;
@@ -11,6 +12,7 @@ use instrukt_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -24,6 +26,8 @@ pub enum HistoryError {
     Disabled,
     #[error(transparent)]
     Db(#[from] instrukt_core::state_db::StateDbError),
+    #[error(transparent)]
+    Store(#[from] instrukt_core::state_db::StoreError),
     #[error("history SQLite operation failed: {0}")]
     Sql(#[from] instrukt_core::state_db::rusqlite::Error),
     #[error("history source I/O failed at {}: {source}", path.display())]
@@ -35,8 +39,6 @@ pub enum HistoryError {
     Json(#[from] serde_json::Error),
     #[error("history source unavailable: {0}")]
     Source(String),
-    #[error(transparent)]
-    Lock(#[from] instrukt_core::fsx::FsError),
     #[error(transparent)]
     Machine(#[from] instrukt_core::machine::MachineError),
     #[error(transparent)]
@@ -50,25 +52,36 @@ pub enum HistoryError {
 }
 
 impl HistoryError {
-    pub fn public_message(&self) -> &'static str {
+    /// What a caller is told, here and across the fleet boundary: no path,
+    /// version or internal detail; a refusal names its recovery.
+    pub fn public_message(&self) -> Cow<'static, str> {
+        use instrukt_core::state_db::{StateDbError, StoreError};
         match self {
             Self::Disabled => {
-                "the history module is off; switch it on with `modules.history: true` in instrukt.yaml"
+                "the history module is off; switch it on with `modules.history: true` in instrukt.yaml".into()
             }
-            Self::Db(_) | Self::Sql(_) => {
-                "history storage or source schema is unavailable; inspect this computer's history logs"
+            Self::Store(StoreError::Newer { .. }) | Self::Db(StateDbError::Newer { .. }) => format!(
+                "history storage is newer than this instrukt knows; upgrade with `{}`",
+                instrukt_core::INSTALLER_COMMAND
+            )
+            .into(),
+            Self::Store(StoreError::Symlink { .. }) | Self::Db(StateDbError::Symlink { .. }) => {
+                "history storage is a symbolic link; link the instrukt home or state/ directory instead".into()
+            }
+            Self::Db(_) | Self::Store(_) | Self::Sql(_) => {
+                "history storage or source schema is unavailable; inspect this computer's history logs".into()
             }
             Self::Runtime(crate::sessions::SessionsError::MissingCapability { .. }) => {
-                "selected runtime does not support durable conversation extraction"
+                "selected runtime does not support durable conversation extraction".into()
             }
             Self::Runtime(crate::sessions::SessionsError::NoActiveRuntime) => {
-                "choose a runtime before extracting conversation history"
+                "choose a runtime before extracting conversation history".into()
             }
             Self::ConversationSource(crate::runtime::conversations::SourceError::Watch(_)) => {
-                "history source notifications are unavailable; inspect this computer's history logs"
+                "history source notifications are unavailable; inspect this computer's history logs".into()
             }
             _ => {
-                "history source or operation is unavailable or incompatible; inspect this computer's history logs"
+                "history source or operation is unavailable or incompatible; inspect this computer's history logs".into()
             }
         }
     }
@@ -131,19 +144,19 @@ pub struct Extraction {
     pub position: Value,
 }
 
-/// Catch up through T3's ordered state; no local writer lock spans runtime I/O.
+/// Catch up through T3's ordered state into the history store, under the
+/// history lock alone; the state database's writer lock spans no runtime I/O.
 pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
     let source = source(home, env)?;
-    let _lock =
-        instrukt_core::fsx::LockGuard::acquire(&home.history_lock_file(), Duration::from_secs(30))?;
-    let mut position = _projection::position(home, source.identity())?;
+    let mut db = _db::open(home)?;
+    let mut position = _projection::position(&db, source.identity())?;
     let mut report = Extraction::default();
     loop {
         let started = std::time::Instant::now();
         let batch =
             source.changed_since(position.as_ref(), crate::runtime::conversations::Scope::All)?;
         let changed = position.as_ref() != Some(&batch.position);
-        let loaded = _projection::apply(home, source.identity(), &batch)?;
+        let loaded = _projection::apply(home, &mut db, source.identity(), &batch)?;
         if changed || !batch.records.is_empty() {
             tracing::debug!(event="history_extract_completed",source=source.identity(),loaded,position=?batch.position,duration_ms=started.elapsed().as_millis() as u64);
         }
@@ -157,7 +170,12 @@ pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
     Ok(report)
 }
 
-/// One atomic, repeat-safe import. A completed source is never opened again.
+/// Imports the TeleClaude mirror store once, in resumable batches: an
+/// interrupted import continues after its last committed mirror, and a
+/// completed one is preserved without opening the source again. Reports the
+/// conversations this run loaded and, as its position, the last mirror id
+/// committed; the position is `null` when the import was already complete or
+/// no mirror has been committed.
 pub fn import_teleclaude(
     home: &Home,
     path: Option<&std::path::Path>,

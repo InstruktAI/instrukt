@@ -449,6 +449,16 @@ impl FakeGitHub {
         self
     }
 
+    /// Makes the repository `owner/name` public.
+    pub fn set_repo_public(&self, full_name: &str) -> &Self {
+        self.lock()
+            .repos
+            .get_mut(full_name)
+            .expect("repository was added")
+            .public = true;
+        self
+    }
+
     /// The login the client's own writes are attributed to.
     pub fn set_login(&self, login: &str) -> &Self {
         self.lock().login = login.to_owned();
@@ -1019,6 +1029,8 @@ struct State {
     /// GitHub projects (Projects v2), served through `/graphql`.
     projects: Vec<Project>,
     project_discovery_available: bool,
+    /// Whether GitHub refuses this viewer's project visibility changes.
+    project_visibility_refused: bool,
     auth_clock: std::path::PathBuf,
     tokens: BTreeMap<String, (u64, jiff::Timestamp, bool)>,
     active_token: Option<String>,
@@ -1038,6 +1050,7 @@ impl State {
             poll_interval: None,
             projects: Vec::new(),
             project_discovery_available: true,
+            project_visibility_refused: false,
             auth_clock,
             tokens: BTreeMap::new(),
             active_token: None,
@@ -1140,6 +1153,8 @@ struct Repo {
     id: u64,
     owner: String,
     name: String,
+    /// Whether the repository is public; private by default.
+    public: bool,
     next_number: u64,
     issues: BTreeMap<u64, Issue>,
     comments: BTreeMap<u64, Comment>,
@@ -1232,6 +1247,7 @@ impl Repo {
             id,
             owner: owner.to_owned(),
             name: name.to_owned(),
+            public: false,
             next_number: 0,
             issues: BTreeMap::new(),
             comments: BTreeMap::new(),
@@ -1250,7 +1266,8 @@ impl Repo {
             "node_id":format!("R_{}",self.id),
             "owner": actor(&self.owner),
             "default_branch": "main",
-            "private": true,
+            "private": !self.public,
+            "visibility": if self.public { "public" } else { "private" },
         })
     }
 
@@ -2575,10 +2592,29 @@ struct Project {
     owner: String,
     number: u64,
     title: String,
+    /// Whether the project is public; GitHub creates projects private.
+    public: bool,
     fields: Vec<ProjectField>,
     items: Vec<ProjectItem>,
     views: Vec<Value>,
     workflows: Vec<Value>,
+}
+
+impl Project {
+    /// A new project as GitHub creates it: private, empty.
+    fn new(id: String, owner: String, number: u64, title: String) -> Self {
+        Self {
+            id,
+            owner,
+            number,
+            title,
+            public: false,
+            fields: Vec::new(),
+            items: Vec::new(),
+            views: Vec::new(),
+            workflows: Vec::new(),
+        }
+    }
 }
 
 /// A single-select field (other field types are seeded as fields without
@@ -2642,17 +2678,37 @@ impl FakeGitHub {
     pub fn add_project(&self, owner: &str, number: u64) -> &Self {
         let mut state = self.lock();
         let id = format!("PVT_{}", state.next_id());
-        state.projects.push(Project {
-            id,
-            owner: owner.to_owned(),
-            number,
-            title: String::new(),
-            fields: Vec::new(),
-            items: Vec::new(),
-            views: Vec::new(),
-            workflows: Vec::new(),
-        });
+        state
+            .projects
+            .push(Project::new(id, owner.to_owned(), number, String::new()));
         self
+    }
+
+    /// Whether project `<owner>/<number>` is public.
+    pub fn project_public(&self, owner: &str, number: u64) -> bool {
+        self.lock()
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .expect("project exists")
+            .public
+    }
+
+    /// Changes project `<owner>/<number>`'s visibility, as a maintainer
+    /// does in the project's settings.
+    pub fn set_project_public(&self, owner: &str, number: u64, public: bool) {
+        self.lock()
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .expect("project exists")
+            .public = public;
+    }
+
+    /// Makes GitHub refuse this viewer's project visibility changes, as an
+    /// organization that reserves them for its owners does.
+    pub fn set_project_visibility_refused(&self, refused: bool) {
+        self.lock().project_visibility_refused = refused;
     }
 
     /// Adds a field to project `<owner>/<number>`: a single-select field
@@ -2881,6 +2937,26 @@ fn field_payload(field: &ProjectField) -> Value {
     field.json()
 }
 
+/// The value `query` gives `field` in the `input` object of its
+/// `mutation(input:{...})` call, as GitHub reads it: a `$variable` resolved
+/// from `vars`, or a literal. `None` when that input does not set the field.
+fn input_field(query: &str, mutation: &str, field: &str, vars: &Value) -> Option<Value> {
+    let call = &query[query.find(&format!("{mutation}("))?..];
+    let input = &call[call.find('{')? + 1..];
+    let input = &input[..input.find('}')?];
+    input.split(',').find_map(|entry| {
+        let (name, value) = entry.split_once(':')?;
+        if name.trim() != field {
+            return None;
+        }
+        let value = value.trim();
+        match value.strip_prefix('$') {
+            Some(variable) => Some(vars[variable].clone()),
+            None => serde_json::from_str(value).ok(),
+        }
+    })
+}
+
 /// Serves the GraphQL documents the work record sends; any other document
 /// is an error.
 fn graphql(state: &mut State, input: &Value) -> Reply {
@@ -2930,19 +3006,38 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
             .unwrap_or(0)
             + 1;
         let id = format!("PVT_{}", state.next_id());
-        state.projects.push(Project {
-            id: id.clone(),
+        state.projects.push(Project::new(
+            id.clone(),
             owner,
             number,
-            title: vars["title"].as_str().unwrap().into(),
-            fields: Vec::new(),
-            items: Vec::new(),
-            views: Vec::new(),
-            workflows: Vec::new(),
-        });
+            vars["title"].as_str().unwrap().into(),
+        ));
         return Reply::ok(
             json!({"data":{"createProjectV2":{"projectV2":{"id":id,"number":number}}}}),
         );
+    }
+    if query.contains("updateProjectV2(input:") {
+        let public = input_field(query, "updateProjectV2", "public", vars);
+        if public.is_some() && state.project_visibility_refused {
+            // What GitHub was observed to answer an App the organization's
+            // visibility policy does not admit.
+            return Reply::ok(json!({"data": {"updateProjectV2": null}, "errors": [{
+                "type": "FORBIDDEN",
+                "path": ["updateProjectV2"],
+                "message": "Viewer not authorized to change project visibility",
+            }]}));
+        }
+        let Some(project) = state
+            .projects
+            .iter_mut()
+            .find(|p| vars["project"] == p.id.as_str())
+        else {
+            return graphql_error("no such project");
+        };
+        if let Some(public) = public.as_ref().and_then(Value::as_bool) {
+            project.public = public;
+        }
+        return Reply::ok(json!({"data": {"updateProjectV2": {"projectV2": {"id": project.id}}}}));
     }
     if query.contains("views(first:") {
         let project = state
