@@ -1,5 +1,5 @@
 ---
-description: 'What an orchestrator writes: the process state of its slug, plus what its entry procedure assigns it; every other change reaches the repository through the worker session it dispatches.'
+description: 'What an orchestrator writes: the process state of its slug, what its entry procedure assigns it, and human-directed ad-hoc process changes under process-change authority; every other change reaches the repository through the worker session it dispatches.'
 visibility: 'public'
 ---
 
@@ -18,12 +18,15 @@ visibility: 'public'
 - **An entry procedure may assign its orchestrator further writes.** What it
   names — authoring the orchestrator performs itself, or a change it
   executes on `main` — is inside the orchestrator's jurisdiction under that
-  procedure's own review routing, and nothing beyond what it names is.
+  procedure's own review routing, and nothing beyond what it names is, except
+  the ad-hoc process path below.
 - **Human-directed ad-hoc process changes follow process-change authority.**
-  When the human explicitly directs an ad-hoc process change in an orchestrator
-  session, the orchestrator may author it outside the active slug as its entry
-  procedure and `sdlc/policy/process-change-authority` specify, leaving the
-  active slug's worktree and branch untouched.
+  When the human explicitly directs an ad-hoc process change in any
+  orchestrator session covered by this policy (`todo-orchestrator`,
+  `integrator`, `coordinator`), that orchestrator is authorized to author it
+  outside its active slug or integration workspace under
+  `sdlc/policy/process-change-authority`, leaving the active delivery or
+  integration worktree untouched.
 - **The active slug is the focus.** Changes elsewhere in the repository belong to
   their own owners and are taken as intended.
 
@@ -44,8 +47,9 @@ same chain of custody holds.
 ## Enforcement
 
 - Build and commit reviewers read the todo log and the commits made under the
-  claim; a change produced outside the dispatched worker session, and
-  outside what the entry procedure assigns, is a scope finding.
+  claim; a change produced outside the dispatched worker session, outside what
+  the entry procedure assigns, and outside a human-directed ad-hoc process
+  change under `sdlc/policy/process-change-authority` is a scope finding.
 
 ## Exceptions
 

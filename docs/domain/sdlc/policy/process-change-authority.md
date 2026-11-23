@@ -102,13 +102,9 @@ and stays its author's.
 When the human is present in an eligible authoring session — including an
 orchestrator supervising an active review loop — and explicitly directs an
 ad-hoc process adjustment, that session is carrying human intent rather than
-rewriting its own judge autonomously. It authors the adjustment in a separate
-clean ad-hoc worktree and branch off the canonical branch, leaves the active
-delivery's worktree and branch untouched, declares human presence at each
-commit under `general/policy/human-involvement-recording`, and submits the
-commit to an independent no-stake commit reviewer. A focused role whose grants
-forbid authoring refuses with the door to an eligible session, and a process
-todo editing its own pending deliverable remains on its assigned worktree.
+rewriting its own judge autonomously; it follows the isolated ad-hoc path under
+**Process changes are authored where the human is**, routed to an independent
+no-stake commit reviewer.
 
 ### Operation and recovery remain with intelligence
 
