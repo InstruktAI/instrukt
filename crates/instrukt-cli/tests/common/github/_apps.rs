@@ -15,7 +15,7 @@ pub(super) fn app_login(id: u64) -> &'static str {
 }
 
 /// Publicly committed RSA fixtures used only by the isolated fake App.
-pub(super) fn test_keys() -> (&'static str, &'static str) {
+fn test_keys() -> (&'static str, &'static str) {
     (
         include_str!("../../fixtures/test-app-private.pem"),
         include_str!("../../fixtures/test-app-public.pem"),

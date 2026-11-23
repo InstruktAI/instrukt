@@ -11,21 +11,21 @@ use super::_serve::Reply;
 
 /// A GitHub project of an owner.
 pub(super) struct Project {
-    pub(super) id: String,
+    id: String,
     pub(super) owner: String,
     pub(super) number: u64,
-    pub(super) title: String,
+    title: String,
     /// Whether the project is public; GitHub creates projects private.
-    pub(super) public: bool,
+    public: bool,
     pub(super) fields: Vec<ProjectField>,
-    pub(super) items: Vec<ProjectItem>,
+    items: Vec<ProjectItem>,
     pub(super) views: Vec<Value>,
-    pub(super) workflows: Vec<Value>,
+    workflows: Vec<Value>,
 }
 
 impl Project {
     /// A new project as GitHub creates it: private, empty.
-    pub(super) fn new(id: String, owner: String, number: u64, title: String) -> Self {
+    fn new(id: String, owner: String, number: u64, title: String) -> Self {
         Self {
             id,
             owner,
@@ -44,34 +44,34 @@ impl Project {
 /// options and are never served as single-select).
 pub(super) struct ProjectField {
     pub(super) id: String,
-    pub(super) name: String,
-    pub(super) single_select: bool,
-    pub(super) options: Vec<FieldOption>,
+    name: String,
+    single_select: bool,
+    options: Vec<FieldOption>,
 }
 
-pub(super) struct FieldOption {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) color: String,
-    pub(super) description: String,
+struct FieldOption {
+    id: String,
+    name: String,
+    color: String,
+    description: String,
 }
 
-pub(super) struct ProjectItem {
-    pub(super) id: String,
+struct ProjectItem {
+    id: String,
     /// The node id of the issue the item shows.
-    pub(super) content: String,
+    content: String,
     /// Field id → option id.
-    pub(super) values: BTreeMap<String, String>,
+    values: BTreeMap<String, String>,
 }
 
 impl FieldOption {
-    pub(super) fn json(&self) -> Value {
+    fn json(&self) -> Value {
         json!({"id": self.id, "name": self.name, "color": self.color, "description": self.description})
     }
 }
 
 impl ProjectField {
-    pub(super) fn json(&self) -> Value {
+    fn json(&self) -> Value {
         if self.single_select {
             json!({"id": self.id, "databaseId": field_database_id(&self.id), "name": self.name, "options": self.options.iter().map(FieldOption::json).collect::<Vec<_>>()})
         } else {
@@ -344,18 +344,18 @@ impl FakeGitHub {
     }
 }
 
-pub(super) fn graphql_error(message: &str) -> Reply {
+fn graphql_error(message: &str) -> Reply {
     Reply::ok(json!({"data": null, "errors": [{"message": message}]}))
 }
 
-pub(super) fn field_payload(field: &ProjectField) -> Value {
+fn field_payload(field: &ProjectField) -> Value {
     field.json()
 }
 
 /// The value `query` gives `field` in the `input` object of its
 /// `mutation(input:{...})` call, as GitHub reads it: a `$variable` resolved
 /// from `vars`, or a literal. `None` when that input does not set the field.
-pub(super) fn input_field(query: &str, mutation: &str, field: &str, vars: &Value) -> Option<Value> {
+fn input_field(query: &str, mutation: &str, field: &str, vars: &Value) -> Option<Value> {
     let call = &query[query.find(&format!("{mutation}("))?..];
     let input = &call[call.find('{')? + 1..];
     let input = &input[..input.find('}')?];

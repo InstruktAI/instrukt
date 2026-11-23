@@ -11,7 +11,7 @@ use super::_fake::{CannedResponse, CheckRun, RecordedRequest, StatusState};
 use super::_projects::Project;
 
 /// The login the fake attributes the client's own writes to.
-pub(super) const DEFAULT_LOGIN: &str = "instrukt-test";
+const DEFAULT_LOGIN: &str = "instrukt-test";
 
 /// The `author_association` GitHub reports for the client's own comments:
 /// the token's user has write access to the repository.
@@ -33,8 +33,8 @@ pub(super) struct PausedRequest {
 pub(super) struct State {
     pub(super) base: String,
     pub(super) login: String,
-    pub(super) ids: u64,
-    pub(super) clock: u64,
+    ids: u64,
+    clock: u64,
     pub(super) repos: BTreeMap<String, Repo>,
     pub(super) requests: Vec<RecordedRequest>,
     pub(super) canned: VecDeque<Canned>,
@@ -164,17 +164,17 @@ impl State {
 }
 
 pub(super) struct Repo {
-    pub(super) id: u64,
-    pub(super) owner: String,
-    pub(super) name: String,
+    id: u64,
+    owner: String,
+    name: String,
     /// Whether the repository is public; private by default.
     pub(super) public: bool,
-    pub(super) next_number: u64,
+    next_number: u64,
     pub(super) issues: BTreeMap<u64, Issue>,
     pub(super) comments: BTreeMap<u64, Comment>,
     pub(super) labels: BTreeMap<String, Label>,
     pub(super) branches: BTreeMap<String, String>,
-    pub(super) statuses: BTreeMap<String, Vec<Status>>,
+    statuses: BTreeMap<String, Vec<Status>>,
     pub(super) check_runs: BTreeMap<String, Vec<(String, u64, CheckRun)>>,
 }
 
@@ -187,7 +187,7 @@ pub(super) struct Issue {
     pub(super) state_reason: Option<String>,
     pub(super) labels: Vec<String>,
     pub(super) login: String,
-    pub(super) created_at: String,
+    created_at: String,
     pub(super) updated_at: String,
     pub(super) closed_at: Option<String>,
     pub(super) sub_issues: Vec<u64>,
@@ -206,13 +206,13 @@ pub(super) struct Pull {
 }
 
 pub(super) struct Comment {
-    pub(super) id: u64,
+    id: u64,
     pub(super) issue: u64,
     pub(super) body: String,
     pub(super) login: String,
     /// GitHub's `author_association` for the comment's author.
     pub(super) association: String,
-    pub(super) created_at: String,
+    created_at: String,
     pub(super) updated_at: String,
 }
 
@@ -223,11 +223,11 @@ pub(super) struct Label {
     pub(super) description: Option<String>,
 }
 
-pub(super) struct Status {
-    pub(super) id: u64,
-    pub(super) context: String,
-    pub(super) state: StatusState,
-    pub(super) updated_at: String,
+struct Status {
+    id: u64,
+    context: String,
+    state: StatusState,
+    updated_at: String,
 }
 
 pub(super) struct Artifact {

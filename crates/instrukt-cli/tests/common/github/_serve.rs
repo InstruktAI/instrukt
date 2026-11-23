@@ -13,13 +13,13 @@ use super::_model::State;
 use super::_routes::route;
 
 pub(super) struct Reply {
-    pub(super) status: u16,
-    pub(super) body: Option<Value>,
-    pub(super) headers: Vec<(String, String)>,
+    status: u16,
+    body: Option<Value>,
+    headers: Vec<(String, String)>,
 }
 
 impl Reply {
-    pub(super) fn json(status: u16, body: Value) -> Self {
+    fn json(status: u16, body: Value) -> Self {
         Self {
             status,
             body: Some(body),
@@ -209,18 +209,18 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
     let _sent = request.respond(response);
 }
 
-pub(super) fn header(name: &str, value: &str) -> tiny_http::Header {
+fn header(name: &str, value: &str) -> tiny_http::Header {
     tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
 }
 
-pub(super) fn etag_of(text: &str) -> String {
+fn etag_of(text: &str) -> String {
     use std::hash::{DefaultHasher, Hash as _, Hasher as _};
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     format!("W/\"{:016x}\"", hasher.finish())
 }
 
-pub(super) fn same_etag(given: &str, etag: &str) -> bool {
+fn same_etag(given: &str, etag: &str) -> bool {
     let bare = |tag: &str| tag.trim().trim_start_matches("W/").to_owned();
     given.trim() == "*" || bare(given) == bare(etag)
 }

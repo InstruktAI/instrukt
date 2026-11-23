@@ -50,15 +50,15 @@ pub(super) struct Front {
 
 /// One connection the fake is relaying.
 pub(super) struct Relayed {
-    pub(super) client: TcpStream,
+    client: TcpStream,
     /// The relay's connection to the HTTP server once it is made, with the
     /// address the HTTP server sees its requests come from.
-    pub(super) server: Option<(SocketAddr, TcpStream)>,
+    server: Option<(SocketAddr, TcpStream)>,
 }
 
 impl Relayed {
     /// Ends the connection on both sides, whatever exchange it is in.
-    pub(super) fn close(self) {
+    fn close(self) {
         // A side its peer already closed leaves nothing to end.
         let _client_closed = self.client.shutdown(Shutdown::Both);
         if let Some((_, server)) = self.server {
@@ -77,7 +77,7 @@ impl Front {
     }
 
     /// Ends relayed connection `id` on both sides and forgets it.
-    pub(super) fn close(&mut self, id: u64) {
+    fn close(&mut self, id: u64) {
         if let Some(relayed) = self.relayed.remove(&id) {
             relayed.close();
         }
@@ -95,7 +95,7 @@ impl Front {
     }
 
     /// Answers again and tells the waiting `resume`.
-    pub(super) fn answer_again(&mut self) {
+    fn answer_again(&mut self) {
         if let Reach::Resuming { resumed, .. } =
             std::mem::replace(&mut self.reach, Reach::Answering)
         {
@@ -144,7 +144,7 @@ pub(super) fn accept(
 
 /// Takes connections from the public address until the fake is dropped or
 /// accepting fails, which it records.
-pub(super) fn accept_connections(
+fn accept_connections(
     listener: &TcpListener,
     backend: SocketAddr,
     front: &Arc<Mutex<Front>>,
@@ -210,7 +210,7 @@ pub(super) fn accept_connections(
 /// Runs `part` of one of the fake's threads. A panic in it is recorded as a
 /// failure of `operation`, with its message, instead of ending the thread
 /// unseen.
-pub(super) fn run_part(front: &Mutex<Front>, operation: &str, part: impl FnOnce()) {
+fn run_part(front: &Mutex<Front>, operation: &str, part: impl FnOnce()) {
     if let Err(panic) = std::panic::catch_unwind(AssertUnwindSafe(part)) {
         let message = panic
             .downcast_ref::<&str>()
@@ -223,7 +223,7 @@ pub(super) fn run_part(front: &Mutex<Front>, operation: &str, part: impl FnOnce(
 
 /// Relays one client connection to the HTTP server until either side ends
 /// it, then ends and forgets it, also after a panic in the relay.
-pub(super) fn relay(
+fn relay(
     client: TcpStream,
     backend: SocketAddr,
     id: u64,
@@ -248,7 +248,7 @@ pub(super) fn relay(
 /// connection `id`, before any request crosses it. False when the fake
 /// stopped since it accepted the connection, which closed it, or when the
 /// server side cannot be held.
-pub(super) fn hold_server_side(front: &Mutex<Front>, id: u64, server: &TcpStream) -> bool {
+fn hold_server_side(front: &Mutex<Front>, id: u64, server: &TcpStream) -> bool {
     let held = server
         .local_addr()
         .and_then(|from| Ok((from, server.try_clone()?)));
@@ -270,7 +270,7 @@ pub(super) fn hold_server_side(front: &Mutex<Front>, id: u64, server: &TcpStream
 
 /// Whether an accept failed only because the connection's client left
 /// first or a signal interrupted the call.
-pub(super) fn peer_left_or_interrupted(cause: &io::Error) -> bool {
+fn peer_left_or_interrupted(cause: &io::Error) -> bool {
     matches!(
         cause.kind(),
         io::ErrorKind::ConnectionAborted
@@ -281,7 +281,7 @@ pub(super) fn peer_left_or_interrupted(cause: &io::Error) -> bool {
 
 /// Copies bytes both ways between `client` and `server`; when the server
 /// side ends, both connections end.
-pub(super) fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Arc<Mutex<Front>>) {
+fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Arc<Mutex<Front>>) {
     let (mut request_from, mut request_to) = match (client.try_clone(), server.try_clone()) {
         (Ok(from), Ok(to)) => (from, to),
         (Err(cause), _) | (_, Err(cause)) => {

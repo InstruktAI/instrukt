@@ -355,7 +355,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
     }
 }
 
-pub(super) fn string_list(value: &Value) -> Vec<String> {
+fn string_list(value: &Value) -> Vec<String> {
     value
         .as_array()
         .map(|items| {
@@ -371,13 +371,7 @@ pub(super) fn string_list(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub(super) fn list_issues(
-    state: &mut State,
-    base: &str,
-    full: &str,
-    path: &str,
-    query: &str,
-) -> Reply {
+fn list_issues(state: &mut State, base: &str, full: &str, path: &str, query: &str) -> Reply {
     let wanted = query_param(query, "state").unwrap_or("open");
     let labels: Vec<String> = query_param(query, "labels")
         .map(|l| decode(l).split(',').map(str::to_owned).collect())
@@ -403,7 +397,7 @@ pub(super) fn list_issues(
     clippy::too_many_arguments,
     reason = "one dispatch over the request's parts"
 )]
-pub(super) fn issue_route(
+fn issue_route(
     state: &mut State,
     method: &str,
     base: &str,
@@ -745,7 +739,7 @@ pub(super) fn issue_route(
     clippy::too_many_arguments,
     reason = "one dispatch over the request's parts"
 )]
-pub(super) fn pull_route(
+fn pull_route(
     state: &mut State,
     method: &str,
     base: &str,
@@ -825,6 +819,6 @@ pub(super) fn pull_route(
 }
 
 /// The number of the issue whose REST `id` is `id`.
-pub(super) fn number_of(repo: &Repo, id: u64) -> Option<u64> {
+fn number_of(repo: &Repo, id: u64) -> Option<u64> {
     repo.issues.values().find(|i| i.id == id).map(|i| i.number)
 }
