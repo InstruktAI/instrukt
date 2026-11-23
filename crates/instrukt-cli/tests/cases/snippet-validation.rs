@@ -656,6 +656,28 @@ fn a_publisher_is_told_a_domain_has_no_index_and_the_run_does_not_fail() {
     insta::assert_snapshot!("domain_without_index", run.out);
 }
 
+// spec: project/instrukt/spec/feature/docs/position-index UC-PI3
+#[test]
+fn an_operator_validating_a_companys_repository_is_told_nothing_about_its_index() {
+    // Bytes that are no text: validation that opened the file before deciding
+    // what it is would fail to read it.
+    const NOT_TEXT: &[u8] = &[0xff, 0xfe, 0x00, 0x9f];
+    let env = TestEnv::new();
+    let clone = env.git_repo("acme-company");
+    std::fs::create_dir_all(clone.path().join("docs")).unwrap();
+    std::fs::write(clone.path().join("docs/index.yaml"), NOT_TEXT).unwrap();
+    let company = validate(&env, &clone, &[]);
+    assert!(company.success, "{}{}", company.out, company.err);
+    insta::assert_snapshot!("company_index_left_alone", company.out);
+
+    let repo = project(&env);
+    valid_tree(&repo);
+    std::fs::write(repo.path().join("docs/index.yaml"), NOT_TEXT).unwrap();
+    let project = validate(&env, &repo, &[]);
+    assert!(!project.success, "{}", project.err);
+    insta::assert_snapshot!("project_index_at_no_position", project.out);
+}
+
 // spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV2
 #[test]
 fn a_required_read_another_required_read_already_brings_is_reported() {

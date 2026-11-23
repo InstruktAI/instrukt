@@ -8,7 +8,11 @@
 //! shape of each value, the ids it names (delivered, of its own position
 //! unless it is `general`'s), the agent CLIs `agents` maps, and the listed
 //! ids the expanded ones already bring in. An `index.yaml` anywhere but a
-//! position's root is a finding; a domain without one is a notice.
+//! position's root is a finding, reported from its path without reading it;
+//! a domain without one is a notice. Whether `docs/index.yaml` is such a
+//! misplaced index or a company's index, which validation leaves alone,
+//! follows from the repository's root document
+//! ([`crate::config::classify_root`]), decided before the file is read.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -19,6 +23,7 @@ use super::_corpus::{Corpus, relative};
 use super::_finding::{Finding, FindingCode, Notice, NoticeCode};
 use super::_position::{AgentCli, GENERAL, INDEX_FILE, Position, PositionIndex};
 use super::DocsError;
+use crate::config::RootDocument;
 use crate::ids::{DomainName, SnippetId};
 use crate::index::GlobalIndex;
 
@@ -101,8 +106,8 @@ fn read_optional(path: &Path) -> Result<Option<String>, DocsError> {
 }
 
 /// Every `index.yaml` below `<repo_root>/docs/`, skipping `_` directories,
-/// as its repository path and text.
-fn index_files(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError> {
+/// as its repository path and its path on disk; none is read here.
+fn index_files(repo_root: &Path) -> Result<Vec<(String, PathBuf)>, DocsError> {
     let docs = super::_corpus::confined_docs(repo_root)?;
     if !docs.is_dir() {
         return Ok(Vec::new());
@@ -126,13 +131,33 @@ fn index_files(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError> {
         if !entry.file_type().is_file() || entry.file_name() != INDEX_FILE {
             continue;
         }
-        let text = std::fs::read_to_string(entry.path()).map_err(|source| DocsError::Read {
-            path: entry.path().to_path_buf(),
-            source,
-        })?;
-        out.push((relative(repo_root, entry.path()), text));
+        out.push((
+            relative(repo_root, entry.path()),
+            entry.path().to_path_buf(),
+        ));
     }
     Ok(out)
+}
+
+/// The place a company home keeps its index, which is no position's.
+const COMPANY_INDEX: &str = "docs/index.yaml";
+
+/// Whether `docs/index.yaml` in the repository at `repo_root` is a
+/// company's index, which validation neither reads nor reports: so when the
+/// root holds a company's settings document or no `instrukt.yaml`. A project
+/// layer, or a root document that cannot be read, does not show the tree to
+/// be a company's.
+fn holds_company_index(repo_root: &Path) -> Result<bool, DocsError> {
+    let path = repo_root.join(crate::config::CONFIG_FILE_NAME);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(source) => return Err(DocsError::Read { path, source }),
+    };
+    Ok(matches!(
+        crate::config::classify_root(bytes.as_deref()),
+        RootDocument::Absent | RootDocument::CompanySettings(_)
+    ))
 }
 
 /// Which snippets an id may name, and what each id is.
@@ -156,11 +181,16 @@ pub(super) fn check(
     notices: &mut Vec<Notice>,
 ) -> Result<(), DocsError> {
     let mut indexed = BTreeSet::new();
-    for (rel, text) in index_files(repo_root)? {
+    for (rel, path) in index_files(repo_root)? {
+        if rel == COMPANY_INDEX && holds_company_index(repo_root)? {
+            continue;
+        }
         let Some(position) = position_of(&rel) else {
             out.push(Finding::new(&rel, FindingCode::IndexNested, None));
             continue;
         };
+        let text =
+            std::fs::read_to_string(&path).map_err(|source| DocsError::Read { path, source })?;
         indexed.insert(position.clone());
         Index {
             corpus,
