@@ -184,14 +184,16 @@ pull request that has it as its head at that moment. Each further request for
 one commit waits longer than the one before, up to a bound, so a reviewer that
 cannot finish is not started in a loop and the commit is never given up.
 
-Work reads two answers from the runner when it admits a verdict, and the
-second again when a tick decides a revision the runtime could not judge at
-once (`project/instrukt/spec/feature/work/github-apps`, Admission of review
+Work reads two answers from the runner when it admits a verdict: the first
+always, the second only where the first shows that a request of the commit
+reached the session that offers a revision, and again when a tick decides a
+revision the runtime could not judge at once
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
 evidence).
 
 | Asked | Answered from |
 | --- | --- |
-| A commit's requests: each one's number, its standing, the session that holds a handed-over request, an ended request's disposition, and its pinned base | Delivery's own records. |
+| A commit's requests: each one's number, its standing, the session it was handed over to, an ended request's disposition, whether an ended request that delivery selected is still to be handed over, and its pinned base | Delivery's own records. |
 | Which input opened the turn a named session had in progress at a stated moment, with regard to that commit's requests handed over to that session | One read of the runtime for the turn the session had in progress at that moment and the input that opened it, compared with the frozen content of those handovers. |
 
 The second answer is one of four: a request of that commit opened the turn,
@@ -213,8 +215,10 @@ capability and bounded batches). A handover that a runtime steers into a
 running turn is not that turn's opening input and is not seen by this answer.
 
 A request's records are kept while it is live, while its commit is still owed,
-while a session it was selected for can still take it up, and while work holds
-a pending revision of its commit.
+while a session it was selected for can still take it up, while a turn it
+opened is in progress, and while work holds a pending revision of its commit.
+A session of which no kept record says a request of the commit reached it is
+therefore in no turn that such a request opened.
 
 ### Placement and consumer
 

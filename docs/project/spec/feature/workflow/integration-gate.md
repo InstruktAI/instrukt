@@ -67,7 +67,15 @@ Classification leaves it out, and a project whose commits carry nothing else
 has no CI. There a
 candidate's result is complete only once the review status is reported on the
 candidate commit: it is pending while that status is absent, `failure` when it
-is a failure, and otherwise the CI result. On a project that has not opted in,
+is a failure, and otherwise the CI result. It is also pending for as long as
+work answers the candidate commit as undecided, a revision of its verdict
+being pending (`project/instrukt/spec/feature/work/github-apps`, Admission of
+review evidence), whatever review status the commit already carries. From the
+tick that finds the pending revision until the tick that finds it decided, the
+candidate has no completed result, `runner.ci_completed` is not emitted for
+it, and the integrator keeps it unpromoted. A result that was reported
+complete before the revision was offered is not recalled. On a
+project that has not opted in,
 classification reads every status and check run as before, a review status
 published earlier included.
 <!-- /planned:event-driven-pr-review-gate -->
@@ -122,6 +130,10 @@ An approval in a todo's record covers the exact commit it names and no other:
 a head that changed after its approval, and one whose approval a later verdict
 replaced, is not an approved head.
 
+A head that work answers as undecided is neither an approved head nor an
+uncovered commit. A derivation that depends on it determines nothing in that
+tick.
+
 The commits a red head's promotion added are the first-parent commits after
 the canonical head it was promoted from, up to that head. Where work holds no
 evidence of the red head as a candidate, that extent is not known and no
@@ -134,7 +146,7 @@ this way.
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). The candidate owes no review, and a request for it that is still queued ends. |
 | A commit is not covered | The candidate owes a review. The runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
-| The repository cannot answer | Nothing is recorded and nothing is asked; the next tick derives again. |
+| The repository cannot answer, or a head the finding depends on is undecided | Nothing is recorded and nothing is asked; the next tick derives again. |
 
 A candidate is never approved on its covered part alone, and a different
 candidate commit is derived afresh. Whether a commit owes review stays its
@@ -159,6 +171,15 @@ Where the repository owner also requires the review status from the reviewer
 bot, the same push needs that status on the candidate commit. Requiring it is
 the owner's administration act
 (`project/instrukt/spec/feature/runner/pull-request-review`).
+
+GitHub checks the status the commit carries, which is the last verdict the
+reviewer bot published. While a revision of that verdict is pending, an
+approving status published before it still satisfies this guard, and GitHub
+would accept the push. What holds the candidate back in that interval is its
+missing completed result (Candidate and verification); the status changes
+only when the revision is decided and published
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence).
 <!-- /planned:event-driven-pr-review-gate -->
 
 The canonical-branch push promotes the exact candidate without creating an

@@ -161,16 +161,19 @@ an exemption is not.
 | Command | Contract |
 | --- | --- |
 | `instrukt review record --head <sha> --base <sha> --verdict approve\|needs_work --report <file\|->` | Records the calling session's head verdict of the commits after the base up to the head. |
-| `instrukt review record --head <sha> --base <sha> --verdict approve --report <file\|-> --reviewer <session>` | Records the approving head verdict that the named session reached and handed over (A handed-over approval). |
+| `instrukt review record --head <sha> --base <sha> --verdict approve --report <file\|-> --reviewer <session>` | Records the approving head verdict that the named session reached, entered by the calling session as that session's standing result (A handed-over approval). |
 | `instrukt review exempt --commit <sha> --basis <text>` | Records an exemption for a commit the canonical branch does not contain yet. |
-| `instrukt review show <sha>` | What this computer holds for the commit: its verdict versions, a pending revision, its exemption and its derived approval, each with its pinned base and where it was recorded, a history an import set aside, every publication with its state and the cause of an outstanding or refused one, and a verdict recognised as already published where this computer holds none. |
+| `instrukt review show <sha>` | What this computer holds for the commit: its settlement with its identity, its hand-off number and its verdict versions; a pending revision with the moment it was offered; every pending revision that was decided, with the answer that decided it, as the version it became or as the offer that was refused; its exemption and its derived approval; each of these with its pinned base and where it was recorded; a settlement an import set aside, with a revision that was pending on it; every publication with its state and the cause of an outstanding or refused one; and a verdict recognised as already published where this computer holds none. |
 | `instrukt review export --to <file> --for <computer>` | Hands the project's review evidence held on this computer off into one file for the named computer (Evidence when the serving computer changes). |
 | `instrukt review import <file> [--standing imported\|held]` | Takes in an export written for this computer (Evidence when the serving computer changes). |
 
-The first verdict admitted for a commit settles its review. A later version
-exists only as a revision: the session that recorded the current version judges
-its own findings again, as when the author disputes them with evidence and no
-new commit. The latest version is current and earlier ones are kept as history.
+The first verdict admitted for a commit settles its review and starts the
+commit's settlement: that verdict with every later version of it. A settlement
+has an identity, given when it starts and unique among all computers. A later
+version exists only as a revision: the session that recorded the current
+version judges its own findings again, as when the author disputes them with
+evidence and no new commit. The latest version is current and earlier ones are
+kept as history.
 
 A verdict and an exemption are separate facts of a commit. Recording, importing
 or publishing one never replaces, hides or retires the other, and work's answer
@@ -194,48 +197,72 @@ to it, and they bind every caller, a session without a role included
 | Request | Read from the runner (`project/instrukt/spec/feature/runner/pull-request-review`, One review per commit). While a request for exactly this project and commit is queued, selected or handed over, the review is that request's: only the session it was handed over to records it, and every other caller is refused, also while no session holds it yet. A commit with no such request is unrequested, and its verdict is a one-off review's whoever reviewed, a session whose request has ended included. | The request with its standing, and the session that holds it once it was handed over. |
 | Range | The pinned base is fixed by instrukt and the caller cannot narrow it. A request of the commit, live or ended, carries the pinned base the runner selected for it (`project/instrukt/spec/feature/runner/pull-request-review`, Review requests). For a commit that has had no request, work pins the head's merge base with the canonical branch, as `sdlc/procedure/lifecycle/work/review-commits` pins its candidate, and refuses a head that has none. A verdict whose pinned base does not lie on the canonical branch is recorded as not covering that branch. A later version of a settled commit keeps the pinned base of the version it replaces. `--base` states where the review started and is admitted when it is the pinned base or one of that base's ancestors. | The pinned base. |
 | Independence | No commit after the pinned base up to the head names the reviewing session in its `Session:` trailer. | The commits that name the reviewing session. The door is a review by a session none of them names. |
-| Settlement | The commit has no verdict yet, or the verdict is a revision: the caller is the session that recorded the current version, the commit has no pending revision, and the turn that session had in progress when it offered the verdict was not opened by a review request for this commit. | The settled verdict and `instrukt review show`; for the session that recorded it, which of the answers below applied, or the pending revision. |
+| Settlement | The commit has no verdict yet, or the verdict is a revision: the caller is the session that recorded the current version, the commit has no pending revision, and, where a review request for this commit reached that session, the turn the session had in progress when it offered the verdict was not opened by such a request. | The settled verdict and `instrukt review show`; for the session that recorded it, which of the answers below applied, or the pending revision. |
 | Report | A non-empty report is supplied. It is stored whole with the version. | The missing report. |
 
 A review request is answered in the turn it opened. A verdict the settling
 session offers in such a turn, for a commit that is already settled, answers
-that request a second time. Which input opened the turn a session had in
-progress at a stated moment is the runner's answer
+that request a second time. Only a session that a request of the commit
+reached can be in such a turn, so work reads the commit's requests first
 (`project/instrukt/spec/feature/runner/pull-request-review`, One review per
-commit). Work asks it only for a settled commit and its settling session, and
-always for the moment the verdict was offered, so every other verdict is
-admitted or refused from the stores alone.
+commit).
+
+| The commit's requests | The settling session's offer |
+| --- | --- |
+| None was handed over to that session, and none that delivery selected is still to be handed over | Is admitted as a revision from the stores alone. The reviewer of a commit that never had a request is always in this row. |
+| One was handed over to that session, or one that delivery selected is still to be handed over | Is decided by which input opened the turn the session had in progress when it offered the verdict. |
+
+Which input opened that turn is the runner's answer, asked for the moment the
+verdict was offered. Every other verdict is admitted or refused from the
+stores alone.
 
 | The runner answers | The offered verdict |
 | --- | --- |
 | Something other than a review request for this commit opened that turn | Is admitted as a revision. |
 | A review request for this commit opened that turn | Is refused; no version is recorded. |
 | The session had no turn in progress at that moment | Is refused; a revision is recorded within a turn of its session. |
-| The runtime cannot say | Is asked for again until the command's own wait has passed. Then the offer is kept as a pending revision and the command returns with it. That is no refusal, and its caller has nothing to repeat. |
+| The runtime cannot say | Is asked for again until the command's own wait has passed. Then the offer is kept as a pending revision, and the command ends with an outcome of its own that is neither recorded nor refused. Its caller has nothing to repeat. |
+
+The command that keeps a pending revision ends with an exit status of its own,
+distinct from a recorded verdict and from a refusal. Its answer states that no
+version is recorded and that the revision is offered and undecided, names the
+commit and the offer by the digest of its report, and names
+`instrukt review show <sha>` as where the decision is read.
 
 A pending revision is the offered verdict with its report, its session and the
 moment it was offered, stored in the evidence store by the command that
-received it. It is not a version yet. While a commit has one:
+received it. It belongs to the settlement it would revise and is not a version
+yet. While a commit's standing settlement has one, the commit is undecided:
 
+- no review is asked for the commit, and a further verdict offered for it is
+  refused and names the pending revision;
 - nothing is published for the commit, so no destination is written with the
-  earlier version, and what GitHub already shows stays;
-- work answers the commit as settled and undecided: no review is asked for it
-  and it counts as approved nowhere;
-- a further verdict offered for the commit is refused and names the pending
-  revision;
-- an export leaves the commit's head verdict on this computer (Evidence when
-  the serving computer changes).
+  earlier version;
+- work answers the commit as settled and undecided, neither approved nor
+  refused. What a candidate's coverage and its promotion make of an undecided
+  commit is workflow's
+  (`project/instrukt/spec/feature/workflow/integration-gate`, Candidate and
+  verification; Review coverage of a candidate);
+- what GitHub already shows stays, and GitHub enforces by it. A status the
+  reviewer bot published for the earlier version still answers a required
+  check on the commit, at a pull request and at a push to the canonical
+  branch, until the revision is decided and, when admitted, published. Work
+  writes nothing to GitHub for an offer that is no version;
+- an export of this computer's evidence is refused (Evidence when the serving
+  computer changes).
 
 On each tick of the computer that holds it, work asks the runner the same
-question for the same session and the same moment, and the runtime is reported
-to the operator for as long as it cannot say
-(`project/instrukt/policy/checks-and-guards`). The first of the other three
-answers decides the pending revision as the table says. Admitted, it is the
-commit's current version, recorded with the moment it was offered, and is
-published. Refused, it is kept as history with the answer that refused it, and
-the earlier version is published as current again. The question names the
-moment of the offer, so a turn the session starts or ends afterwards changes
-nothing about the answer.
+question for the same session and the same moment, for the pending revision of
+each standing settlement, and the runtime is reported to the operator for as
+long as it cannot say (`project/instrukt/policy/checks-and-guards`). The first
+of the other three answers decides the pending revision as the table says.
+Admitted, it is the commit's current version, recorded with the moment it was
+offered, and is published. Refused, it is kept as history with the answer that
+refused it, and the earlier version is published as current again. The
+question names the moment of the offer, so a turn the session starts or ends
+afterwards changes nothing about the answer. A pending revision of a
+settlement that an import set aside is decided by no tick; it stays with that
+settlement as it was offered.
 
 A commit without a `Session:` trailer names no session, and that is its true
 state (`general/concept/lineage-vs-authorship`). Work refuses nothing on that
@@ -266,32 +293,43 @@ rests on.
 ### A handed-over approval
 
 An approval its reviewing session returned through native messaging and did
-not record is admitted from that session's own conversation.
-`instrukt review record --reviewer <session>` names the session; the caller
-supplies the head, the base and the report, and adds no judgment of its own.
+not record is entered by another session.
+`instrukt review record --reviewer <session>` names the reviewing session; the
+entering session supplies the head, the base and the report, and adds no
+judgment of the reviewed change.
 
-| Checked | Rule |
+The command is the entering session's statement that the report is the named
+session's result for the head as it stands: it read that session's
+conversation from the return of the report to its end and found no later
+result for the head and no withdrawal. Whether a later message replaces,
+withdraws or only mentions an approval is read by that session and is not
+computed (`general/principle/intelligence-boundaries`). Work records the
+statement with the entering session and establishes these facts beside it.
+
+| Established by work | Rule |
 | --- | --- |
-| The session's handover | The named session's conversation is read through the runner (`project/instrukt/spec/feature/runner/history`). Of the messages that session itself authored, in their order, the last one that names the full head commit is its handover for that head. That message names the SHA-256 digest of the supplied report and no other SHA-256 digest. |
-| The base | The base the caller supplies is named, as a full commit, in that message or in the supplied report. |
+| The return | The named session's conversation is read through the runner (`project/instrukt/spec/feature/runner/history`). A message that session itself authored names the full head commit together with the SHA-256 digest of the supplied report. Other digests in that message, and what other messages name, decide nothing. |
+| The base | The base the entering session supplies is named, as a full commit, in such a message or in the supplied report. |
 | The verdict | The supplied report ends in the approving verdict line, in the form `sdlc/procedure/lifecycle/review` fixes for a report. A needs-work result is not admitted this way. |
+| The entering session | It resolves as the Reviewer row resolves a caller, is not the named session, and no commit after the pinned base up to the head names it in its `Session:` trailer. |
 | The commit | Repository, Request, Range, Independence and Report hold as above with the named session as the reviewing session, and the commit has no verdict. |
 
-A reviewing session returns the reviewed head with its report's digest, keeps
-the base with the report, and returns a changed result for the same head as a
-new report (`sdlc/procedure/lifecycle/work/review-commits`). The last message
-therefore decides: an approval the session later replaced or withdrew, and one
-it only quoted beside another report, is not its handover. Whatever the
-session last said of the head without this report's digest, or with a further
-one, leaves the approval unrecorded. Work compares identifiers and reads one
-fixed line; it judges no prose.
+A reviewing session returns the reviewed head with its report's digest and
+keeps the base with the report
+(`sdlc/procedure/lifecycle/work/review-commits`). What work establishes is
+that this report is the named session's own, for this head and this range.
+That it still stands is established by the statement and by nothing else: the
+identifiers of a conversation admit no approval on their own, and no command
+enters one without a session that states it.
 
-The verdict is recorded as the named session's, with the caller as the session
-that entered it, and counts like any other head verdict. A conversation that
-cannot be read, a last message on the head that does not name exactly this
-report's digest, a base named in neither place, and a report without that
-verdict line each leave the approval unrecorded, and the refusal names which.
-Such a head owes its review like any other.
+The verdict is recorded as the named session's, with the entering session and
+its statement, and counts like any other head verdict. A conversation that
+cannot be read, no authored message that names the head together with this
+report's digest, a base named in neither place, a report without that verdict
+line, and an entering session that is the named session or that a reviewed
+commit names each leave the approval unrecorded, and the refusal names which.
+The named session records its own result without `--reviewer`. A head whose
+approval is not entered owes its review like any other.
 
 ### Verdict publication
 
@@ -312,8 +350,16 @@ the review in its body.
 
 | Destination | Owed while |
 | --- | --- |
-| The review status on the commit | GitHub has the commit in the project's repository, and the reviewer bot's newest status named `instrukt/review` on it does not have the current verdict's state together with its name. |
+| The review status on the commit | GitHub has the commit in the project's repository, and the reviewer bot's newest status named `instrukt/review` on it does not have the current verdict's state together with its name, or links no review although a pull request holds the reviewer bot's review of the current verdict. |
 | A pull-request review on each eligible pull request whose current head is the commit | The runner observes that pull request eligible at that head, and the reviewer bot's latest review of exactly that commit on that pull request does not have the current verdict's native state together with its name in the body. |
+
+The status links the review. Its target address is the address GitHub gives
+the reviewer bot's review that carries the current verdict, on the
+lowest-numbered pull request that holds one. A tick writes a commit's reviews
+before its status, so a commit that heads an eligible pull request receives
+one status with the link. A status never waits for a review: while no pull
+request holds one it is written without a link, and it is written once more,
+with the link, when the first review of the current verdict exists.
 
 Each destination follows the current verdict. What a destination shows is the
 reviewer bot's newest status on the commit and its latest review of the commit
@@ -363,11 +409,17 @@ is not retried while what was observed of it holds; the refusal ends when the
 destination is owed again.
 
 A computer that holds no evidence for an eligible head recognises a verdict the
-reviewer bot already published for that commit: the reviewer bot's newest
-`instrukt/review` status on the commit, and the reviewer bot's latest review
-of that commit on one of the pull requests GitHub associates with the commit,
-carry the same name and agree in state. Such a head carries the reviewer
-identity's verdict and is asked for no review.
+reviewer bot already published for that commit by following the status to its
+review.
+
+| Read | Recognised when |
+| --- | --- |
+| The reviewer bot's newest `instrukt/review` status on the commit | Its target address is that of a pull-request review in the project's repository. |
+| That review, read by its own address | Its author is the reviewer bot, it is a review of exactly that commit, its native state agrees with the status's state, and its body carries the name the status carries. |
+
+The review is read where it was written, whatever became of its pull request:
+one that was closed without merging still gives it. Such a head carries the
+reviewer identity's verdict and is asked for no review.
 
 Recognition keeps what GitHub shows of the verdict: its state, its name and
 that review's body. An eligible pull request at that head whose latest review
@@ -375,14 +427,15 @@ by the reviewer bot of the commit does not show them is owed a review of that
 state carrying that body. A further pull request at a recognised head thus
 receives the same verdict with the same findings, and the commit is judged
 once. Recognition is no evidence: it earns no candidate coverage, admits no
-revision and writes no status. A status without such a review, and a review
-without such a status, recognise nothing, and such a head is owed its review.
+revision and writes no status. A status that links no review, a link that
+leads to no such review, and a review that no status links recognise nothing,
+and such a head is owed its review.
 
 ### Review evidence storage
 
 | Store | Holds | Written by | Write-isolation unit |
 | --- | --- | --- | --- |
-| `state/review.db` | Head verdict versions with their reports, pending revisions, and exemptions, as recorded on or imported to this computer; imported derived approvals; each commit's hand-off number with the computer its head verdict was handed to; and the histories an import set aside. | `instrukt review record`, `exempt`, `export` and `import` only: commands their caller waits on. | `state/review.lock` |
+| `state/review.db` | Settlements as recorded on or imported to this computer, each with its identity, its hand-off number, the settlements it was chosen over and its verdict versions with their reports; pending revisions; exemptions; imported derived approvals; for a settlement this computer handed off, the computer it was handed to; and the settlements an import set aside. | `instrukt review record`, `exempt`, `export` and `import` only: commands their caller waits on. | `state/review.lock` |
 | `state/review-publication.db` | The derived approvals the tick recorded, with their coverage; the answer that decided each pending revision; per current verdict and destination what GitHub shows of it, with the cause of an outstanding or refused one; and the verdicts recognised as already published, each with its state, name and review body. | The tick only. | `state/review-publication.lock` |
 
 No background work writes the evidence store and no command a caller waits on
@@ -401,14 +454,17 @@ Evidence is current for as long as it can still admit something. A commit's
 current verdict is current while the canonical branch does not contain the
 commit, whether or not a branch still reaches it: the status GitHub keeps for
 the commit admits it wherever it is proposed again. A pending revision is
-current until it is decided, and a commit's hand-off number for as long as a
-verdict of that commit would be. An exemption is current while the canonical
+current until it is decided or set aside with its settlement. What this
+computer knows of each settlement of a commit, its identity and the highest
+hand-off number it has met it at, as its holder, as a former holder or as one
+it set aside, is current for as long as a verdict of that commit would be. An
+exemption is current while the canonical
 branch does not contain the commit and a branch of the project still does; an
 outstanding publication until it is published or refused; a derived approval
 while its candidate is the integration head. Everything else is history:
-replaced versions, refused offers, head verdicts an export handed off,
-histories an import set aside, evidence of a commit the canonical branch
-contains, an exemption of a commit no branch reaches any more, and completed
+replaced versions, refused offers, the versions and reports of a settlement
+an export handed off or an import set aside, evidence of a commit the
+canonical branch contains, an exemption of a commit no branch reaches any more, and completed
 publications. History is retired after a retention period. Current evidence
 and outstanding publications are never retired by age, so the evidence store
 keeps one current verdict for every reviewed commit that has not reached the
@@ -424,33 +480,44 @@ computer to one named computer.
 
 | Command | Contract |
 | --- | --- |
-| `instrukt review export --to <file> --for <computer>` | Writes one cut of the project's review evidence on this computer for the computer named by its instrukt machine ID: every current head verdict with all its versions and reports, every current exemption and every derived approval it keeps, with what is not yet published and what concerns commits GitHub does not have. It holds `state/review.lock`, so a recording command falls wholly before the cut or wholly after it. The file names the computer that wrote it and the computer it is for. It is complete on disk before the cut is committed, and with the cut the exported head verdicts are handed off to that computer. A commit with a pending revision is left out and named; a later export carries it once the revision is decided. |
+| `instrukt review export --to <file> --for <computer>` | Writes one cut of the project's review evidence on this computer for the computer named by its instrukt machine ID: every standing settlement with its identity, its hand-off number, the settlements it was chosen over and all its versions and reports, every current exemption and every derived approval it keeps, with what is not yet published and what concerns commits GitHub does not have. It holds `state/review.lock`, so a recording command falls wholly before the cut or wholly after it. The file names the computer that wrote it and the computer it is for. It is complete on disk before the cut is committed, and with the cut the exported settlements are handed off to that computer. |
 | `instrukt review import <file>` | Takes in an export written for this computer, holding `state/review.lock`, commit by commit. On any other computer it is refused whole, and the refusal names the computer the file is for. It removes nothing the importing computer holds. |
-| `instrukt review import <file> --standing imported\|held` | The same, and states which settlement stands for every commit of which both the export and this computer hold one. |
+| `instrukt review import <file> --standing imported\|held` | The same, and states which settlement stands for every commit of which the export and this computer hold two different ones. |
 
-A commit's head verdict carries a hand-off number: zero where it was recorded
-and one higher with each export that hands it off. The export writes the
-raised number into the file, and the exporting computer keeps it with the
-computer the verdict was handed to. A handed-off head verdict is history on
-the exporting computer. That computer publishes nothing further of it and
-admits no further version for its commit; the refusal names the export and its
-door, which is recording on the computer the verdict was handed to or
-importing an export that computer wrote for this one. Evidence recorded after
-the cut is not part of it. A later export for the same computer carries it,
-and carries again, at their unchanged hand-off numbers, the head verdicts
-earlier exports handed to that computer for as long as they are kept, so a
-lost file loses no evidence. An export for another computer carries none of
-them.
+An export leaves nothing out. While a standing settlement on this computer has
+a pending revision, the export is refused whole and writes nothing. The
+refusal names each such commit and its door: a tick of this computer decides
+the revision once the runtime answers, and `instrukt review show <sha>` gives
+its state. A pending revision is decided only where its session's turn is
+recorded, so a transfer is complete only when none is left to decide.
 
-An import compares, commit by commit, the export's hand-off number with the
-one this computer holds for that commit, as the holder of its verdict or from
-its own hand-off of it.
+A settlement keeps its identity on every computer it reaches, and it carries a
+hand-off number: zero where it started and one higher with each export that
+hands it off. The number counts the hand-offs of that one settlement. It is
+compared only with a number of the same settlement and orders nothing between
+two settlements. The export writes the raised number into the file, and the
+exporting computer keeps it with the computer the settlement was handed to. A
+handed-off settlement is history on the exporting computer. That computer
+publishes nothing further of it and admits no further version for its commit;
+the refusal names the export and its door, which is recording on the computer
+the settlement was handed to or importing an export that computer wrote for
+this one. Evidence recorded after the cut is not part of it. A later export
+for the same computer carries it, and carries again, at their unchanged
+hand-off numbers, the settlements earlier exports handed to that computer for
+as long as they are kept, so a lost file loses no evidence. An export for
+another computer carries none of them.
 
-| The export's head verdict of a commit | This computer | Result |
+An import takes the export's settlement of each commit and reads two things
+this computer holds: whether it has met that settlement before, as its holder,
+as a former holder or as one it set aside, and at which hand-off number; and
+which settlement of the commit it holds, standing or handed off.
+
+| The export's settlement of a commit | This computer | Result |
 | --- | --- | --- |
-| Has a higher hand-off number, or this computer holds nothing for the commit | Holds no version, the same versions, or versions the export's continue | The export's versions in their order; the latest is current here, at the export's hand-off number. |
-| Has a hand-off number that is not higher | Holds a verdict of the commit or its own hand-off of it | An earlier transfer of that commit: nothing changes, and the import names it. A file imported a second time, and one that returns to a computer which has since handed the commit on, make nothing current. |
-| Has a higher hand-off number | Holds a current verdict of its own that the export's versions do not continue | Two settlements of one commit. Without `--standing` the import is refused whole: nothing changes, and the refusal names every such commit and that option. With `--standing imported` the export's versions are current here and the ones held are set aside. With `--standing held` the ones held stay current and the export's are set aside. Either way the commit takes the export's hand-off number. |
+| Was met here at the export's hand-off number or a higher one | Holds it as standing, as handed off or as set aside | An earlier transfer of that settlement: nothing changes, and the import names it. A file imported a second time, and one that returns to a computer which has since handed the settlement on, make nothing current. |
+| Was not met here at that number | Holds no settlement of the commit, or holds this same settlement at a lower number | The export's versions in their order; the latest is current here, at the export's hand-off number. |
+| Was not met here at that number | Holds another settlement of the commit, standing or handed off, which the export's settlement records as one it was chosen over | The choice between the two was stated at an earlier import and travels with the settlement that stands. The export's versions are current here at the export's hand-off number and the one held is set aside. No statement is asked for again. |
+| Was not met here at that number | Holds another settlement of the commit, standing or handed off, which the export's settlement does not record so | Two settlements of one commit, whatever their hand-off numbers. Without `--standing` the import is refused whole: nothing changes, and the refusal names every such commit and that option. With `--standing imported` the export's versions are current here at the export's hand-off number, the one held is set aside, and the export's settlement records it as one it was chosen over. With `--standing held` the one held keeps its place, the export's is set aside at its hand-off number, and a standing settlement held here records the export's as one it was chosen over. |
 
 An exemption or a derived approval in an export is added where none is held
 for that commit; where one is held, nothing changes. A verdict and an
@@ -459,10 +526,18 @@ exemption of one commit never replace each other.
 Which settlement stands is the importing operator's statement of which
 computer's record the project was served from. Work chooses between no two
 reviews, and no import changes a commit's current verdict without that
-statement. A history that was set aside is kept whole: its versions, reports
-and reviewing sessions, where and when each was recorded, and the import and
-choice that set it aside. `instrukt review show` gives it beside the standing
-one. It publishes nothing, earns no coverage and admits no revision.
+statement, made at this import or recorded on the settlement an earlier one
+chose. A settlement chosen over another is thereby chosen over every
+settlement that one records. The settlement that stands carries its recorded
+choices in every later export, so a computer that held one of the others takes
+the chosen settlement back without a second statement.
+
+Setting a settlement aside takes a revision that is pending on it along. A
+settlement that was set aside is kept whole: its identity, versions, reports
+and reviewing sessions, where and when each was recorded, that pending
+revision, and the import and choice that set it aside. `instrukt review show` gives it beside the standing one. It
+publishes nothing, earns no coverage and admits no revision, and its pending
+revision is decided by no tick.
 
 Imported evidence is the importing computer's from then on. It keeps its
 reviewing session and where and when it was recorded, counts like evidence
@@ -557,16 +632,15 @@ But a later head of that pull request carries no status from that verdict
   holds the commit's evidence. A computer that holds none cannot restore it.
 - A verdict recognised as already published is no evidence, and the head earns
   no candidate coverage on a computer that holds none. Recognition needs the
-  reviewer bot's review on a pull request GitHub still associates with the
-  commit. Where GitHub returns none, as for a commit whose only reviewed pull
-  request was closed unmerged, the status alone recognises nothing and a
-  computer without the evidence has the head reviewed again.
+  reviewer bot's status to link its review. A status written while no pull
+  request held a review of that verdict links none, as for a head reviewed
+  before any eligible pull request had it. Such a status recognises nothing,
+  and a computer without the evidence has the head reviewed again.
 - A handed-over approval is admitted only from a conversation instrukt can
-  still read, as the named session's last message on the head, and with a
-  report that ends in the fixed verdict line. Without them its head owes a
-  review. Work establishes that this message names the report; that the named
-  session reviewed the head is the entering caller's statement and is recorded
-  with that caller.
+  still read and with a report that ends in the fixed verdict line. Work
+  establishes that the named session returned that report for that head. That
+  the result still stands is the entering session's statement after reading
+  that conversation; work records it and verifies nothing of it.
 - A revision offered in a turn that a review request for the same commit
   opened is refused; the reviewing session records it in another turn. The
   answer rests on the input that opened the turn, so a request that a runtime
@@ -574,10 +648,17 @@ But a later head of that pull request carries no status from that verdict
   (`project/instrukt/spec/feature/runner/pull-request-review`, One review per
   commit).
 - While the runtime cannot say which input opened the turn a revision was
-  offered in, the revision is pending. GitHub keeps showing the earlier
-  version meanwhile, nothing further is published for the commit and it counts
-  as approved nowhere. It is decided on a tick of the computer that holds it;
-  where no tick runs for the project it stays pending.
+  offered in, the revision is pending and its commit undecided. GitHub keeps
+  showing the earlier version and enforces by it: where that version
+  approved, a required review check on the commit stays met on GitHub until
+  the revision is decided and published. Only a session that a review request
+  of the commit reached can have a pending revision. It is decided on a tick
+  of the computer that holds it; where no tick runs for the project, or the
+  runtime does not answer, it stays pending and that computer's evidence
+  cannot be exported.
+- A settlement is handed off to one computer at a time, and a choice between
+  two settlements of one commit is recorded where it was stated. A computer
+  that has not imported the chosen settlement keeps what it holds.
 - A verdict whose pinned base does not lie on the canonical branch covers
   nothing on the canonical branch.
 - Work verifies a reviewer's independence only against the sessions the

@@ -468,12 +468,12 @@ sequenceDiagram
   participant I as integrator (agent)
   R->>G: open pull requests and heads (conditional requests)
   R->>W: does this head carry a verdict?
-  W->>G: for a head with no evidence here, the reviewer bot's status and review on it
+  W->>G: for a head with no evidence here, the reviewer bot's status on it and the review that status links
   R-->>V: runner.review_needed for an owed commit with no live request (head, pinned base, request number)
   V->>W: instrukt review show (head), then instrukt review record (head, base, verdict, report)
   W->>R: this commit's requests with their standing and pinned base, and for a settled commit which input opened the caller's turn when it offered the verdict
   R->>W: publish what is outstanding to the pull requests observed at each head
-  W->>G: review status on the commit and a review on each such pull request, as the reviewer bot, until the newest of each shows the current verdict
+  W->>G: a review on each such pull request and the review status on the commit, linking one of those reviews, as the reviewer bot, until the newest of each shows the current verdict
   R->>F: active candidate: is its content covered?
   F->>W: current evidence of each head and commit the finding depends on
   alt every commit covered
@@ -495,9 +495,12 @@ its outcome is known, whichever pull requests point at it meanwhile. The
 outcome is delivered to every eligible pull request at that commit. The runner
 reads GitHub and decides what is owed; it decides nothing about a verdict.
 Work admits the first verdict for a commit; only the settling session revises
-it, in a turn no request for the commit opened. Work asks which turn that was
-for the moment of the offer; while the runtime cannot say, the offer is a
-pending revision that a later tick decides for that same moment.
+it, in a turn no request for the commit opened. Where a request of the commit
+reached that session, work asks which turn that was for the moment of the
+offer; while the runtime cannot say, the offer is a pending revision that a
+later tick decides for that same moment, and its commit is undecided: nothing
+is published for it, no coverage is derived from it and, as a candidate, it is
+not promoted. GitHub keeps enforcing by the status it already shows.
 
 instrukt owns the review state and GitHub reflects and enforces it. Evidence
 is recorded locally before anything is published, and GitHub receives two
@@ -505,7 +508,9 @@ publications and no evidence: the review status and the pull-request reviews.
 Each follows the commit's current verdict by what the reviewer bot published
 last, so a revision replaces what an earlier version left there, also when it
 returns to an earlier outcome, and a publication is retried from the evidence
-without another review (`sdlc/policy/state-storage`).
+without another review (`sdlc/policy/state-storage`). The status links the
+review that carries the same verdict, so the review of a commit is found from
+the commit itself.
 
 Review state has three stores, split by who writes and who waits. Commands
 wait on the evidence store alone; the tick writes the other two, and none of
@@ -513,7 +518,7 @@ them takes the state database's writer lock.
 
 | Path | Holds | Re-created from |
 | --- | --- | --- |
-| `state/review.db` | head verdict versions with their reports, pending revisions, exemptions, imported derived approvals, each commit's hand-off number and the histories an import set aside; written only by the `instrukt review` commands | nothing: it is the only copy of this computer's evidence and must be preserved; another computer receives it through an export |
+| `state/review.db` | settlements with their identity, hand-off number, recorded choices and head verdict versions with their reports, pending revisions, exemptions, imported derived approvals and the settlements an import set aside; written only by the `instrukt review` commands | nothing: it is the only copy of this computer's evidence and must be preserved; another computer receives it through an export |
 | `state/review.lock` | the evidence store's write-isolation unit, held for each of those commands' transactions | taken again by the next command |
 | `state/review-publication.db` | the derived approvals the tick recorded, the answer that decided each pending revision, what GitHub shows of each current verdict per destination, and the verdicts recognised as already published with their review body; written only by the tick | what GitHub shows, and a fresh coverage derivation for the integration head; the derived approval of a candidate the canonical branch has taken and the answer that decided a pending revision are not re-created |
 | `state/review-publication.lock` | the publication store's write-isolation unit, held for each tick's publication writes | taken again by the next tick |
@@ -525,12 +530,16 @@ admitted on. It alone observes and publishes. Serving moves to another
 computer with the evidence store's content, through
 `instrukt review export` on the one and `instrukt review import` on the other.
 An export is one cut under the evidence lock, written for one named computer,
-and hands the exported head verdicts off under a hand-off number that only
-rises, so a commit's verdict is current on one computer at a time and an
-earlier transfer makes nothing current again. An import adds to what the
-importing computer holds; where both hold a settlement of one commit it
-changes nothing until its operator states which stands. A computer that serves
-without an import recognises what the reviewer bot already published, gives a
+and is refused while a revision is pending here, so it leaves nothing behind
+to decide. It hands the exported settlements off: each keeps its identity and
+carries a hand-off number that only rises, so a settlement is current on one
+computer at a time and an earlier transfer of it makes nothing current again.
+An import adds to what the importing computer holds; where it holds another
+settlement of a commit, whatever the two hand-off numbers, it changes nothing
+until its operator states which stands. That choice is recorded on the
+settlement that stands and travels with it. A computer that serves
+without an import recognises what the reviewer bot already published by
+following the status to its review, gives a
 further pull request at such a head the same review, and asks for the rest.
 Observation rides the tick's existing
 conditional GitHub pass, requests the event platform and publication the tick;
@@ -628,11 +637,19 @@ the gate adds no webhook, queue or process.
 - **A session records a verdict while a request of that commit is selected and
   no session holds it yet:** the verdict is refused; the review is that
   request's.
-- **The runtime cannot say which input opened the settling session's turn:**
-  the offered revision is kept as pending with the moment of the offer, and the
-  command returns. Nothing is published for the commit meanwhile and the
+- **The runtime cannot say which input opened the turn of a settling session
+  that a request of the commit reached:** the offered revision is kept as
+  pending with the moment of the offer, and the command ends with an outcome
+  that is neither recorded nor refused. The commit is undecided and the
   runtime is reported; a later tick asks for that same moment and admits or
-  refuses the revision.
+  refuses the revision, and `instrukt review show` gives the decision with the
+  answer that made it.
+- **A candidate's approving status was published before a revision of its
+  verdict became pending:** GitHub would still accept its promotion. The
+  candidate has no completed result until the revision is decided, so the
+  integrator is not woken to promote it.
+- **An export is asked for while a revision is pending:** it is refused whole
+  and names the commit; the tick that decides the revision is its door.
 - **A candidate adds a commit that is neither an approved head, reproducible
   nor exempted by its author:** it receives no derived approval; the exact
   candidate is reviewed, and promotion waits for that verdict.
@@ -640,20 +657,23 @@ the gate adds no webhook, queue or process.
   added:** it is not covered as a revert; the exact candidate is reviewed.
 - **A verdict is recorded while its project's evidence is being exported:**
   the recording falls wholly before the cut or wholly after it; a later
-  version of a handed-off verdict is refused on the exporting computer and
+  version of a handed-off settlement is refused on the exporting computer and
   names the importing computer as its door.
-- **An import meets a verdict the importing computer recorded itself for the
-  same commit:** the import is refused whole and names the commit; nothing
-  changes until the operator states which settlement stands, and the other
-  one is kept as a history that was set aside.
+- **An import meets another settlement of the same commit, at an equal, lower
+  or higher hand-off number:** the import is refused whole and names the
+  commit; nothing changes until the operator states which settlement stands,
+  and the other one is set aside with a revision that was pending on it.
+- **The chosen settlement returns to the computer that held the other one:**
+  it carries the choice, becomes current there and sets the other aside
+  without a second statement.
 - **An export file is imported again, on the computer that wrote it or on one
   it was not written for:** it is refused where it is not addressed, and where
-  it is, a commit whose hand-off number is not higher than the one held makes
-  nothing current.
+  it is, a settlement already met at that hand-off number or a higher one
+  makes nothing current.
 - **A head with no evidence here already carries the reviewer bot's status,
-  and another eligible pull request has it as its head:** the review GitHub
-  holds for the commit is recognised and written to that pull request too; no
-  review is asked for.
+  and another eligible pull request has it as its head:** the review that
+  status links is read, also from a pull request that was closed unmerged, and
+  written to that pull request too; no review is asked for.
 - **A computer is lost, or loses its home, without an export:** what it had
   not published is gone. The computer that serves next recognises what the
   reviewer bot published, has every other owed head reviewed again, and shows

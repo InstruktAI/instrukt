@@ -477,8 +477,9 @@ a verdict and whether both identities are ready, and workflow says whether the
 active candidate's content is covered. Through work's command contract the
 runner records a derived approval and has outstanding verdicts published,
 handing over the eligible pull requests it observed at each head. It supplies
-work with a commit's review requests, each with its number, standing and
-pinned base, with the input that opened the turn a session had in progress at
+work with a commit's review requests, each with its number, standing, the
+session it reached and pinned base, with the input that opened the turn a
+session had in progress at
 a stated moment, and with a named session's conversation
 (`project/instrukt/spec/domain/context-map`).
 <!-- /planned:event-driven-pr-review-gate -->

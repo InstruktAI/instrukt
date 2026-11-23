@@ -90,28 +90,34 @@ runner owns dispatch, and the configured runtime owns conversations.
 : The record that an integration candidate's content is covered, from
   workflow's finding and with no review of its own.
 
+**Settlement**
+: A commit's first admitted head verdict with every later version of it. It
+  has an identity of its own, given when it starts and kept on every computer
+  it reaches.
+
 **Revision**
 : A later version of a settled verdict, recorded by the session that recorded
   the current one in a turn that no review request for that commit opened.
 
 **Pending revision**
-: A revision offered while the runtime could not say which input opened its
-  turn. It is kept with the moment of the offer and is no version until that
-  turn is known.
+: A revision offered by a session that a review request of the commit reached,
+  while the runtime could not say which input opened its turn. It is kept with
+  the moment of the offer and is no version until that turn is known; its
+  commit is undecided meanwhile.
 
 **Handed-over approval**
-: A head verdict admitted from the reviewing session's own conversation,
-  entered by another session that adds no judgment.
+: A head verdict its reviewing session returned and did not record, entered by
+  another session that states it is that session's standing result and adds
+  no judgment of the reviewed change.
 
 **Export**
 : One cut of a computer's review evidence for a project, written to a file
-  for one named computer to import. The exported head verdicts are handed off:
+  for one named computer to import. The exported settlements are handed off:
   they stay current only where they were imported.
 
 **Hand-off number**
-: How often a commit's head verdict has been handed off. An import makes a
-  verdict current only at a higher number than the importing computer holds
-  for that commit.
+: How often one settlement has been handed off. It orders the transfers of
+  that settlement and nothing between two settlements of a commit.
 <!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
@@ -217,9 +223,11 @@ and issues installation credentials under
 
 - **Root entity:** the review evidence of one exact commit of a project's
   repository.
-- **Contains:** its head verdict versions, each with verdict, pinned base,
-  report, reviewing session and the request it answers; a pending revision;
-  the head verdict's hand-off number; its exemption; for an integration
+- **Contains:** its settlement, with identity, hand-off number, the
+  settlements it was chosen over and its head verdict versions, each with
+  verdict, pinned base, report, reviewing session and the request it answers;
+  a pending revision; settlements an import set aside; its exemption; for an
+  integration
   candidate its derived approval with the coverage it rests on; and what
   GitHub shows of the current verdict at each destination.
 - **Invariants:** evidence is recorded before anything of it is published; a
@@ -229,11 +237,13 @@ and issues installation credentials under
   review is settled by the first verdict admitted for it, and only its
   settling session revises it; a verdict and an exemption of one commit never
   replace each other; each publication follows the current verdict, and
-  nothing is published for a commit while a revision of it is pending; a head
-  verdict is current on one computer, the one that recorded it or the one it
-  was last handed to; an import never changes which verdict of a commit is
-  current where both sides hold a settlement, unless its operator states
-  which stands; only the reviewer identity publishes. Admission, publication,
+  nothing is published for a commit while a revision of it is pending, and
+  nothing is exported from a computer that holds one; a settlement is current
+  on one computer, the one that started it or the one it was last handed to;
+  an import never changes which verdict of a commit is current where this
+  computer holds another settlement of it, unless an operator stated which
+  stands, at this import or at the one whose choice the imported settlement
+  carries; only the reviewer identity publishes. Admission, publication,
   storage, transfer and readiness belong to
   `project/instrukt/spec/feature/work/github-apps`.
 - **Identifier:** project and commit.
@@ -331,8 +341,9 @@ owning design snippet or decision record is declared.
   session's conversation; work consults them when it admits a head verdict
   and when a tick decides a pending revision.
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
-  evidence is current for a commit; workflow reads approval of a head that is
-  not a todo's, and exemptions, from that answer alone.
+  evidence is current for a commit and whether its verdict is undecided;
+  workflow reads approval of a head that is not a todo's, and exemptions, from
+  that answer alone.
 <!-- /planned:event-driven-pr-review-gate -->
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation
