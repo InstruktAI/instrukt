@@ -534,8 +534,10 @@ impl Work {
     ///    nothing done. Then one writer transaction records the intent
     ///    (`withdrawal_intents`) while the live todo under `slug` is still
     ///    the one entered, unchanged. The todo's own row is not written: it
-    ///    stays live and claimed, and nothing withdrawn reaches GitHub
-    ///    before its resources are released.
+    ///    stays live with its claim as it was, or unclaimed when it had
+    ///    none, and nothing withdrawn reaches GitHub before its resources
+    ///    are released. While the intent is open no other command changes
+    ///    the record and nothing read from GitHub replaces it.
     /// 3. The resources are released outside the writer lock, the intent
     ///    recording each outcome that must be recognized afterwards. A
     ///    refusal before anything was released closes the intent and leaves

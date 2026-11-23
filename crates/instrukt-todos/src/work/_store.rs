@@ -551,9 +551,9 @@ impl Store {
     /// transaction the project's live todo under `slug` must be `base`'s
     /// identity, its record unchanged since the entry and no conflict mark
     /// new since then ([`admission`]), and no withdrawal of it recorded.
-    /// The todo's own row is not written: it stays live and claimed until
-    /// the withdrawal completes. Returns the live row, or why it was
-    /// refused.
+    /// The todo's own row is not written: it stays live, with its claim as
+    /// it was or unclaimed when it had none, until the withdrawal completes.
+    /// Returns the live row, or why it was refused.
     pub fn open_withdrawal(
         &self,
         base: &LocalItem,
