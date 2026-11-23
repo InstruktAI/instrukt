@@ -690,6 +690,7 @@ fn delete_branch(
                     head = %head,
                     "deleting a withdrawn todo's work branch against its recorded commit"
                 );
+                let attempted_before = *acted;
                 *acted = true;
                 let transaction = format!(
                     "create {} {head}\ndelete refs/heads/{name} {head}\n",
@@ -700,8 +701,10 @@ fn delete_branch(
                 {
                     // Git applies such a transaction whole or not at all,
                     // its creations before its deletions: without the
-                    // marker, nothing was deleted.
+                    // marker, nothing was deleted, and the attempt changed
+                    // nothing.
                     if ref_tip(root, &marker(&intent.todo))?.is_none() {
+                        *acted = attempted_before;
                         return Err(match err {
                             git::GitError::Failed { stderr, .. } => kept(format!(
                                 "it moved on from {head} while it was released ({})",
