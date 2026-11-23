@@ -165,18 +165,11 @@ fn permissions(operation: Operation) -> Value {
         Operation::Observe => json!({"checks":"read","statuses":"read","contents":"read"}),
     }
 }
-/// The split orchestrator roles `todo-orchestrator` replaced. Work recorded
-/// under them keeps its binding's role; agents.yaml migration moves their
-/// settings, `github_app` included, to the unified role.
-const RETIRED_ORCHESTRATORS: [&str; 2] = ["prepare-orchestrator", "work-orchestrator"];
-const UNIFIED_ORCHESTRATOR: &str = "todo-orchestrator";
-
 #[derive(PartialEq, Eq)]
 struct IdentitySettings {
     apps: BTreeMap<String, App>,
     project: String,
     roles: BTreeMap<String, String>,
-    declared: BTreeSet<String>,
 }
 impl IdentitySettings {
     fn read(config: &Configuration, home: &Home) -> Result<Self, AppError> {
@@ -189,7 +182,6 @@ impl IdentitySettings {
             .ok_or_else(|| setup("github.project_app is missing"))?
             .to_owned();
         let agents = Agents::load(home).map_err(|_| setup("cannot read agents.yaml roles"))?;
-        let declared = agents.roles.keys().cloned().collect();
         let roles: BTreeMap<_, _> = agents
             .roles
             .into_iter()
@@ -204,24 +196,17 @@ impl IdentitySettings {
             apps,
             project,
             roles,
-            declared,
         })
     }
+    /// The App a recorded `role` selects: the `github_app` of the role
+    /// configuration says now governs it (a retired split orchestrator's
+    /// work selects `todo-orchestrator`'s), else the project App.
     fn selected(&self, role: Option<&str>) -> &App {
         let name = role
-            .map(|r| self.successor(r))
+            .map(instrukt_core::config::current_role)
             .and_then(|r| self.roles.get(r))
             .unwrap_or(&self.project);
         &self.apps[name]
-    }
-    /// The role whose `github_app` a recorded `role` selects: a retired split
-    /// orchestrator agents.yaml no longer declares resolves to its successor.
-    fn successor<'r>(&self, role: &'r str) -> &'r str {
-        if RETIRED_ORCHESTRATORS.contains(&role) && !self.declared.contains(role) {
-            UNIFIED_ORCHESTRATOR
-        } else {
-            role
-        }
     }
 }
 struct Apps {
@@ -545,12 +530,11 @@ mod tests {
         }
     }
 
-    fn settings(roles: &[(&str, &str)], declared: &[&str]) -> IdentitySettings {
+    fn settings(roles: &[(&str, &str)]) -> IdentitySettings {
         IdentitySettings {
             apps: [
                 ("project".into(), app(1, "project")),
                 ("author".into(), app(2, "author")),
-                ("legacy".into(), app(3, "legacy")),
             ]
             .into(),
             project: "project".into(),
@@ -558,39 +542,20 @@ mod tests {
                 .iter()
                 .map(|(role, app)| ((*role).into(), (*app).into()))
                 .collect(),
-            declared: declared.iter().map(|role| (*role).into()).collect(),
         }
     }
 
     #[test]
     fn a_retired_orchestrator_binding_selects_the_unified_orchestrator_app() {
-        let identity = settings(&[("todo-orchestrator", "author")], &["todo-orchestrator"]);
-        for retired in RETIRED_ORCHESTRATORS {
-            assert_eq!(identity.selected(Some(retired)).app_id, 2, "{retired}");
-        }
-    }
-
-    #[test]
-    fn a_retired_orchestrator_agents_yaml_still_declares_keeps_its_own_selection() {
-        let identity = settings(
-            &[
-                ("todo-orchestrator", "author"),
-                ("work-orchestrator", "legacy"),
-            ],
-            &[
-                "todo-orchestrator",
-                "work-orchestrator",
-                "prepare-orchestrator",
-            ],
-        );
-        assert_eq!(identity.selected(Some("work-orchestrator")).app_id, 3);
-        // Declared without github_app: the omitted mapping is the project App.
-        assert_eq!(identity.selected(Some("prepare-orchestrator")).app_id, 1);
+        let identity = settings(&[("todo-orchestrator", "author")]);
+        assert_eq!(identity.selected(Some("prepare-orchestrator")).app_id, 2);
+        assert_eq!(identity.selected(Some("work-orchestrator")).app_id, 2);
     }
 
     #[test]
     fn an_unmapped_unified_orchestrator_leaves_retired_bindings_on_the_project_app() {
-        let identity = settings(&[], &[]);
+        let identity = settings(&[]);
+        assert_eq!(identity.selected(Some("prepare-orchestrator")).app_id, 1);
         assert_eq!(identity.selected(Some("work-orchestrator")).app_id, 1);
         assert_eq!(identity.selected(None).app_id, 1);
     }
