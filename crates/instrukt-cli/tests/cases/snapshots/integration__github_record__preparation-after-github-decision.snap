@@ -1,16 +1,24 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-assertion_line: 1091
 expression: "redact(&crew.next(\"prepare\", \"approval-work\"))"
 ---
-todo: approval-work (demo)
-flow: prepare
-claim: held by this session
-state: plan_drafting
-transition: prd_approval -> plan_drafting (#5)
-action: draft-plan
-responsible: planner (crew/procedure/plan)
-command: instrukt docs get crew/procedure/plan
-effects: none
-instructions:
-Draft the implementation plan of approval-work.
+pickup: held by this session
+todo: approval-work (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: approval-work/work
+  worktree: [TMP]/team-approval-work-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v1): <digest 2> [drift: fresh]
+  prd-review-findings (v1): <digest 3>
+reviews:
+  prd_review: approve (current; target <digest 2>, report <digest 3>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 2>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)

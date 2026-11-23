@@ -24,17 +24,28 @@ connectors:
     app_token: ${SLACK_APP_TOKEN}
     bot_token: ${SLACK_BOT_TOKEN}
     context_messages: 30
+  ops:
+    kind: slack
+    role: company-agent
+    admit: admins_only
+    session_scope: company
+    reply_mode: explicit
+    app_token: ${OPS_SLACK_APP_TOKEN}
+    bot_token: ${OPS_SLACK_BOT_TOKEN}
 ```
 
 | Field | Contract |
 | --- | --- |
-| `connectors.slack` | Company home only; one Slack workspace per company home. |
+| `connectors.<name>` | Company home only; `<name>` is a slug identifying the connector within the company home. Multiple named Slack apps may be declared in one company home by setting `kind: slack`. When `<name>` is `slack`, `kind` may be omitted. |
+| `kind` | Optional registered connector kind (`slack`); defaults to `<name>` when omitted. |
+| `role`, `admit`, `session_scope`, `reply_mode` | Common connector settings owned by `project/instrukt/spec/feature/company/conversations`. |
 | `app_token` | Reference to the Slack app's connection token in the home's secrets file. Required. |
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
 | `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
 
-A literal token, a missing token and an unknown field are validation findings
-naming the company and the field.
+A literal token, a missing token, an unsupported `kind`, an invalid common
+setting and an unknown field are validation findings naming the company and the
+field.
 
 ### The Slack app
 
@@ -95,8 +106,10 @@ requires and reconnects after a drop. A connection that cannot be established,
 or whose tokens Slack refuses, is a visible failure for that company's
 connector; other connectors, event readers and local work continue. Where
 Slack limits a method and names a wait, the connector does not call that
-method for that workspace again before the wait is over, for as long as the
-runner runs; after a restart it learns the wait again from Slack's answer.
+method for that `(company, connector)` again before the wait is over, for as
+long as the runner runs; bot identity caches and rate-limit waits are keyed by
+`(company, connector)` so multiple Slack apps in one company home never collide;
+after a restart it learns the wait again from Slack's answer.
 The runner admits declared connectors when it starts and at every wake: a
 connector declared, changed or removed while it runs is connected, reconnected or
 disconnected at the wake that admits the change
@@ -157,10 +170,17 @@ decided and the message waits; Slack is asked again until it answers
 
 The sender's name and email address come from that same record and are kept
 with the message. The name is the person's display name, their real name when
-that is empty, and their Slack id when Slack gives neither. Anyone who is not
-one of the company's own gets the fixed reply
+that is empty, and their Slack id when Slack gives neither. The sender's
+administrator flag (`is_admin`) comes from that same freshly read `users.info`
+record — `true` when `is_admin`, `is_owner`, or `is_primary_owner` is `true`,
+and `false` otherwise, never cached across messages. `is_direct` is `true` for
+a direct-message (`im`) conversation and `false` for any channel or group
+conversation. Anyone who is not
+one of the company's own (under `admit: members`) gets the fixed reply
 `I only answer members of this workspace.`, in a channel and in a direct
-message alike.
+message alike. Anyone refused under `admit: admins_only` gets the fixed reply
+`I only answer workspace administrators.`, in a channel and in a direct message
+alike.
 
 ### While the agent works
 
@@ -406,6 +426,14 @@ When Slack returns the earlier messages
 Then the agent receives the saved question with its context and the answer posts
 ```
 
+### UC-SL7: Host multiple named Slack apps in one company home with isolated identities and rate limits
+
+```gherkin
+Given a company home declares two named Slack connectors with distinct app and bot tokens
+When both connectors receive addressed messages and one hits a provider rate limit
+Then each connector carries its declared connector name, keeps its own bot identity and rate-limit waits, and answers through its own Slack app without colliding with the other
+```
+
 ### Conversation display facts
 
 Capture optionally resolves channel name or DM counterpart through existing
@@ -431,7 +459,7 @@ remain opaque to runner. No new required scope is introduced.
   documented; the connector passes them on unchanged.
 - The agent's earlier answers come back among the accompanying messages as
   Slack returns their text, which can differ from what the agent wrote.
-- One Slack workspace serves one company home.
+- Multiple named Slack apps may serve one company home when declared under distinct `connectors.<name>` entries with `kind: slack`.
 - Two people with the same name look alike to the agent.
 - Slack does not promise the order in which it sends messages. A message that
   reaches instrukt after a later-written one of its conversation keeps its own

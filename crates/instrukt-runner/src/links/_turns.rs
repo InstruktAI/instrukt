@@ -36,6 +36,8 @@ fn human_contributions(
                 connector,
                 conversation,
                 member,
+                is_admin,
+                is_direct,
                 at,
                 body,
                 ..
@@ -46,7 +48,16 @@ fn human_contributions(
                     source,
                     &envelopes::speaker(AuthorKind::Human, Some(member)),
                     at,
-                    &envelopes::member_at(connector, conversation, member, at, &token, body),
+                    &envelopes::member_at(
+                        connector,
+                        conversation,
+                        member,
+                        is_admin,
+                        is_direct,
+                        at,
+                        &token,
+                        body,
+                    ),
                 )?);
             }
             _ => {}
@@ -184,7 +195,16 @@ mod tests {
             let framed = format!(
                 "{}\n{}",
                 envelopes::context(token, &[], false),
-                envelopes::member(connector, conversation, author, None, token, text)
+                envelopes::member(
+                    connector,
+                    conversation,
+                    author,
+                    false,
+                    false,
+                    None,
+                    token,
+                    text
+                )
             );
             let output = relayed(A, vec![contribution(AuthorKind::Human, framed)]);
             // One contribution of a, authored by the member, with the member
@@ -242,6 +262,8 @@ mod tests {
             "slack",
             "C1/1.2",
             "steven",
+            false,
+            false,
             None,
             "0123456789abcdef0123456789abcdef",
             "x",

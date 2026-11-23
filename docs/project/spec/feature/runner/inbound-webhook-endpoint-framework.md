@@ -41,11 +41,16 @@ The general path is `/hooks/inbound/<kind>/<slug>/<domain>`: kind and slug
 identify the origin home; domain selects its declared source and event domain.
 Projects and company homes have endpoints. A person home is vocabulary only and
 has no endpoint. No other path segment or query parameter is accepted;
-secrets never occur in URLs. The one other path under the prefix is the MCP
-sign-in return, `GET /hooks/inbound/sign-in/<return id>`: it is no source,
-verifies no signature and publishes no event, and by OAuth's design its query
-carries an authorization code and a state, which the receiver never logs. Its
-contract is `project/instrukt/spec/feature/runner/mcp-access`. An undeclared domain, an unregistered project or
+secrets never occur in URLs. The other non-source paths under the prefix belong to MCP access
+(`project/instrukt/spec/feature/runner/mcp-access`): the MCP sign-in return
+(`GET /hooks/inbound/sign-in/<return id>`), which verifies no signature and
+publishes no event (and by OAuth's design carries an authorization code and a
+state in its query that the receiver never logs), and the built-in per-company
+OIDC issuer endpoints
+(`GET /hooks/inbound/issuers/<issuer-id>/.well-known/openid-configuration` and
+`GET /hooks/inbound/issuers/<issuer-id>/jwks.json`), which serve public issuer
+discovery and JWKS documents read-only from cluster Redis. An undeclared
+domain, an unregistered project or
 a company without a home has no endpoint, even with valid signing material. An
 empty map creates none.
 Effective events-off sources are a plain finding and are not served; source

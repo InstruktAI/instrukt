@@ -21,6 +21,8 @@ repository = "https://github.com/InstruktAI/instrukt"
 [workspace.dependencies]
 darwin-libproc = "=0.1.2"
 jsonwebtoken = "=9.3.1"
+pem = "=3.0.6"
+ring = "=0.17.14"
 instrukt-core = { path = "crates/instrukt-core", version = "0.1.0" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint", version = "0.1.0" }
 instrukt-runner = { path = "crates/instrukt-runner", version = "0.1.0" }

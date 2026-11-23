@@ -13,6 +13,7 @@ Commands:
   agents     Configured profiles and expiring profile/model availability
   mcp        Reach the MCP servers declared for this caller: list them, list one's tools, call a
              tool
+  company    Queue explicit replies to company conversations
   secrets    Store or generate protected machine-local secrets
   config     Read, edit, initialize and validate `instrukt.yaml`
   docs       Validate, list and read documentation snippets
@@ -43,4 +44,5 @@ Role: company-agent · class: standing. Scope comes from assignment assistance. 
 and writer constraints apply.
 Usual capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any,
 bug-report:any, artifact-read:any, agents-read:any, config-read:any, repository-read:any,
-code-check:any, eval-read:any, events-read:any, installation-read:any, mcp-access:own
+code-check:any, eval-read:any, events-read:any, installation-read:any, mcp-access:own,
+company-reply:own

@@ -160,21 +160,29 @@ sessions; release changes the claim, not their lifecycle.
 `instrukt todo attempt <slug> --role <role> [--procedure <id>] [--args <text>]
 --brief <file|->` reserves an attempt for the claim-holding orchestrator. It
 returns the rendered assignment, declared role, monotonic attempt, semantic key,
-display title and captured starting SHA. Every assignment carries its phase's recorded worktree and branch: `<slug>/prepare` for preparation, `<slug>/work` for work. The command records facts and calls no runtime.
+and display title. For repository todos (`feature`, `change`, `bug`), the
+assignment carries the todo's single recorded `<slug>/work` worktree, branch,
+and captured starting SHA; for `kind: task` todos, only `task-preparer` is
+admitted and the reservation is a worktree-less `Child` assignment with no
+`worktree`, `branch`, or `base`. The command records facts and calls no runtime.
 Setup admits its setup-only brief; other roles match the procedure's declared role.
 
 Reservation commits before native delegation. An outstanding same-role retry
-returns the same attempt and inputs. Changed inputs or a second workspace role
-refuse while that attempt is outstanding. Claim, hold and preparation checks
-apply. Every new work attempt captures the current shared todo head. The
-orchestrator delegates with shared isolation through `runtime.dispatch`.
+returns the same attempt and inputs. Changed inputs or a second workspace/child
+role refuse while that attempt is outstanding. Claim, hold, and configured
+`approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
+require PRD approval when configured). Every new repository attempt captures the
+current shared `<slug>/work` head. The orchestrator delegates with shared
+isolation through `runtime.dispatch`.
 
 Immediately after delegation it records `instrukt todo bind <slug> --role <role>
---attempt <n> --session <runtime:id> [--worktree <path>] --branch <branch>
---base <sha>`. Binding requires the reservation, same claim holder and selected
-runtime, exact role/attempt, and workspace, branch and clean initial head matching
-the reserved assignment. Work children inherit the orchestrator's recorded todo
-worktree; preparation children inherit the preparation orchestrator's `<slug>/prepare` worktree. Bind
+--attempt <n> --session <runtime:id> [--worktree <path>] [--branch <branch>]
+[--base <sha>]`. Binding requires the reservation, same claim holder and selected
+runtime, and exact role/attempt. For repository todos, `--branch` and `--base`
+(and matching worktree, branch, and clean initial head) are required and every
+child inherits `todo-orchestrator`'s single `<slug>/work` worktree. For
+worktree-less `kind: task` (`task-preparer`) reservations, `--worktree`,
+`--branch`, and `--base` must be omitted. Bind
 before workspace work, record writes or stamps. If a child starts before binding,
 it reports that prerequisite and awaits its parent's native follow-up. Exact
 replay succeeds; changed child identity or workspace refuses. Binding neither
@@ -189,9 +197,11 @@ flight, before retrying the same assignment. Silence, missing binding and empty
 listings supply no such evidence. A workspace mismatch stays a visible binding
 gap; resolve that assignment before admitting work.
 
-The work orchestrator coordinates only. Setup, builder, fixer, reviewer,
-deferrer and finalizer operate serially in that same worktree, with one
-outstanding workspace-role attempt at a time. Completion stamps release writing
+`todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
+`planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
+`deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
+outstanding workspace-role attempt at a time (`task-preparer` runs without a
+worktree on `kind: task`). Completion stamps release writing
 attempts atomically; review verdicts and deferral-processing stamps release their
 read-only attempts. Released bindings remain tracking and evaluation evidence.
 Native parent linkage and child attention remain runtime-owned.
@@ -257,11 +267,13 @@ the record; deciding whether a candidate passes the integration gate belongs
 to workflow. Delivered entries are read-only. `instrukt todo work <slug>` may derive and
 return the delivered workspace-removal obligation from retained evidence; it
 changes no delivered record. The integrator executes removal outside evaluation.
-Claim release belongs to the work lane before integration handoff. After delivery,
-the integrator removes the todo's one worktree from the project folder, retaining
-failed removal as owed work and preserving the runtime thread record.
+Claim release belongs to the work lane before integration handoff. After delivery
+or withdrawal, the work record retains its recorded `sessions:` bindings and
+attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
+for audit and for identifying the todo's recorded orchestrator sessions
+(`project/instrukt/spec/feature/configuration/layered-configuration`).
 
-Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded phase assignment, preserving original preparation branches and ownership across successive renames.
+Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
 
 ## Use cases
 

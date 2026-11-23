@@ -94,7 +94,7 @@ Apply these configured action values to the identified assignment and session.
 6. When any recorded approval binds an earlier digest of this PRD
    (`approved_digest` in `instrukt todo show {slug}`), judge whether that
    approval carries to this revision under the carry rule owned by
-   `sdlc/procedure/lifecycle/prepare/overview`. Compare the two versions with
+   `sdlc/procedure/lifecycle/overview`. Compare the two versions with
    `instrukt todo artifacts diff {slug} prd <approved-digest> <current-digest>`.
    In an `## Approval carry` section, state for each change the ground it
    carries on or why it returns to the configured approval gate, and conclude
@@ -108,8 +108,9 @@ Apply these configured action values to the identified assignment and session.
    shared review procedure defines, and derive the verdict arithmetically from
    the unresolved findings in those tiers. Then stamp
    `needs_work` or `approve` for `prd_review`. The stamp binds the current PRD
-   digest and the current report digest. The state machine returns `needs_work`
-   to intake and routes a current approved PRD to human approval.
+   digest and the current report digest. `todo-orchestrator` reads the updated
+   factual ledger, routes `needs_work` back to `intaker`, and presents a current
+   approved PRD for configured `approvals.prd` approval.
 
 ## Outputs
 

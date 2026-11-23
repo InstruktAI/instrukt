@@ -15,8 +15,8 @@ use instrukt_core::repository::RepositoryError;
 use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
 
 use super::_provider::{
-    ChangeSinceReview, CodeChange, DRIFT_FACTS, GroundingChange, Observations, WorktreeObservation,
-    current_build_verdict, dependency_change,
+    ChangeSinceReview, CodeChange, DRIFT_ARTIFACTS, GroundingChange, Observations,
+    WorktreeObservation, current_build_verdict, dependency_change, is_independent_reviewer,
 };
 
 /// The remote todo branches are published to (the sdlc flavor's
@@ -58,19 +58,17 @@ pub(crate) fn observe(
         }),
         None => None,
     };
-    let branch_head = resolve(
-        project_root,
-        &format!(
-            "refs/heads/{}",
-            evidence.branch.as_deref().unwrap_or(slug.as_str())
-        ),
-    )?;
+    let branch_name = evidence
+        .branch
+        .as_deref()
+        .or_else(|| {
+            super::_provider::selected_workspace(evidence).and_then(|b| b.attempt.branch.as_deref())
+        })
+        .unwrap_or(slug.as_str());
+    let branch_head = resolve(project_root, &format!("refs/heads/{branch_name}"))?;
     let remote_head = resolve(
         project_root,
-        &format!(
-            "refs/remotes/{REMOTE}/{}",
-            evidence.branch.as_deref().unwrap_or(slug.as_str())
-        ),
+        &format!("refs/remotes/{REMOTE}/{branch_name}"),
     )?;
     let current_head = branch_head.clone();
     let reviewed_change = match (current_build_verdict(evidence), &current_head) {
@@ -83,42 +81,7 @@ pub(crate) fn observe(
     let owned_root = owned_snippet_root(project_root, evidence)?;
     let (grounding, judged_grounding) =
         grounding(home, project_root, &owned_root, evidence, prerequisites)?;
-    let preparation_branch = evidence
-        .bindings
-        .iter()
-        .rev()
-        .find(|b| b.attempt.lane == Some(instrukt_runner::interfaces::Lane::Prepare))
-        .and_then(|b| b.attempt.branch.as_deref());
-    let preparation_head = preparation_branch
-        .map(|branch| resolve(project_root, branch))
-        .transpose()?
-        .flatten()
-        .or_else(|| {
-            evidence.stamps.iter().rev().find_map(|s| match &s.fact {
-                StampFact::PreparationHeadReviewed { head, .. } => Some(head.clone()),
-                _ => None,
-            })
-        });
-    let preparation_integrated = preparation_head
-        .as_ref()
-        .map(|head| {
-            let main = instrukt_core::github::default_branch(project_root)?;
-            let remote = format!("refs/remotes/origin/{main}");
-            let reference =
-                if git::succeeds(project_root, ["show-ref", "--verify", "--quiet", &remote])? {
-                    remote
-                } else {
-                    main
-                };
-            git::succeeds(
-                project_root,
-                ["merge-base", "--is-ancestor", head.as_str(), &reference],
-            )
-        })
-        .transpose()?;
     Ok(Observations {
-        preparation_head,
-        preparation_integrated,
         worktree_path: worktree_dir,
         worktree,
         branch_head,
@@ -337,7 +300,7 @@ fn grounding(
     };
     let mut versions = BTreeMap::new();
     let mut judged = BTreeMap::new();
-    for (name, _) in DRIFT_FACTS {
+    for name in DRIFT_ARTIFACTS {
         let Some(version) = evidence
             .artifacts
             .iter()
@@ -346,7 +309,7 @@ fn grounding(
         else {
             continue;
         };
-        versions.insert((*name).to_owned(), reader.change(&version.grounding)?);
+        versions.insert(name.to_owned(), reader.change(&version.grounding)?);
         // The evidence the latest drift judgment of the artifact assessed,
         // when it recorded any.
         let assessed = evidence
@@ -362,7 +325,7 @@ fn grounding(
                 _ => None,
             });
         if let Some(assessed) = assessed.filter(|g| **g != Grounding::default()) {
-            judged.insert((*name).to_owned(), reader.change(assessed)?);
+            judged.insert(name.to_owned(), reader.change(assessed)?);
         }
     }
     Ok((versions, judged))
@@ -447,24 +410,47 @@ impl Current<'_> {
         })
     }
 
-    /// Whether a referenced path does not exist on the current canonical
-    /// head: unresolved, so incomplete provenance. Without a canonical head
-    /// nothing resolves; the code comparison already reports that.
+    /// A missing path is unresolved unless its absence at the recorded head
+    /// establishes it as a planned creation. Code comparison handles a missing
+    /// canonical head and intervening commits that touched a planned path.
     fn missing_path(&self, recorded: &Grounding) -> Result<bool, ObservationError> {
-        let Some(head) = &self.canonical else {
+        let Some(now) = &self.canonical else {
             return Ok(false);
         };
         for path in &recorded.referenced_paths {
-            let object = format!("{head}:{}", path.trim_end_matches('/'));
-            if !git::run_output(self.project_root, ["cat-file", "-e", object.as_str()])?
-                .status
-                .success()
-            {
+            let path = path.trim_end_matches('/');
+            match tree_contains_path(self.project_root, now, path)? {
+                Some(true) => continue,
+                None => return Ok(true),
+                Some(false) => {}
+            }
+            let Some(then) = &recorded.head else {
+                return Ok(true);
+            };
+            if then != now && tree_contains_path(self.project_root, then, path)? != Some(false) {
                 return Ok(true);
             }
         }
         Ok(false)
     }
+}
+
+/// A successful empty listing proves absence. An unreadable commit or tree
+/// cannot establish whether the path existed.
+fn tree_contains_path(dir: &Path, head: &CommitSha, path: &str) -> Result<Option<bool>, GitError> {
+    let commit = format!("{head}^{{commit}}");
+    let output = git::run_output(
+        dir,
+        [
+            "--literal-pathspecs",
+            "ls-tree",
+            "--full-tree",
+            &commit,
+            "--",
+            path,
+        ],
+    )?;
+    Ok(output.status.success().then_some(!output.stdout.is_empty()))
 }
 
 /// Whether a non-merge commit between the recorded canonical head and the
@@ -537,10 +523,11 @@ fn snippet_digest(
     }
 }
 
-/// Readiness consumes the same review currency interpretation as derivation.
+/// Invariant 2: readiness requires an independent reviewer's `APPROVE` stamp
+/// bound to the exact candidate commit SHA and current `review-findings` digest.
 pub(crate) fn readiness_approved(
     record: &crate::work::TodoRecord,
-    root: &Path,
+    _root: &Path,
     candidate: &CommitSha,
     caller: &instrukt_core::ids::SessionRef,
 ) -> bool {
@@ -549,19 +536,167 @@ pub(crate) fn readiness_approved(
         return false;
     };
     if verdict != crate::evidence::BuildVerdict::Approve
+        || target != candidate
         || record.current_digest(crate::evidence::artifact_names::REVIEW_FINDINGS) != Some(report)
     {
         return false;
     }
-    let independent = record
+    let bindings: Vec<(
+        instrukt_core::ids::RoleName,
+        instrukt_runner::interfaces::AssignmentKind,
+        Option<&instrukt_core::ids::SessionRef>,
+    )> = record
+        .bindings
+        .iter()
+        .map(|b| (b.role.clone(), b.attempt.assignment, b.session.as_ref()))
+        .collect();
+    record
         .stamps
         .iter()
         .rev()
         .find(|s| matches!(s.fact, StampFact::BuildVerdict { .. }))
-        .is_some_and(|s| s.actor != crate::evidence::Actor::Session(caller.clone()));
-    independent
-        && matches!(
-            change_since(root, root, target, candidate),
-            ChangeSinceReview::Unchanged | ChangeSinceReview::CleanUpstreamMerges
-        )
+        .is_some_and(|s| {
+            is_independent_reviewer(
+                record.claim.as_ref().and_then(|c| c.session.as_ref()),
+                &bindings,
+                &s.actor,
+                Some(caller),
+            )
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    struct History {
+        repo: TempDir,
+        then: CommitSha,
+        now: CommitSha,
+    }
+
+    impl History {
+        fn new() -> Self {
+            let repo = tempfile::tempdir().unwrap();
+            let dir = repo.path();
+            git::run(dir, ["init", "-q", "-b", "main"]).unwrap();
+            git::run(dir, ["config", "user.name", "Test"]).unwrap();
+            git::run(dir, ["config", "user.email", "test@example.com"]).unwrap();
+            git::run(dir, ["config", "commit.gpgsign", "false"]).unwrap();
+            std::fs::create_dir(dir.join("old")).unwrap();
+            std::fs::write(dir.join("old/file"), "tracked").unwrap();
+            std::fs::write(dir.join("stable.txt"), "tracked").unwrap();
+            git::run(dir, ["add", "old/file", "stable.txt"]).unwrap();
+            git::run(dir, ["commit", "-qm", "record original files"]).unwrap();
+            let then = resolve(dir, "HEAD").unwrap().unwrap();
+            git::run(dir, ["mv", "old", "new"]).unwrap();
+            git::run(dir, ["commit", "-qm", "move original file"]).unwrap();
+            let now = resolve(dir, "HEAD").unwrap().unwrap();
+            Self { repo, then, now }
+        }
+
+        fn change(&self, head: Option<&CommitSha>, paths: &[&str]) -> GroundingChange {
+            let root = self.repo.path();
+            let mut current = Current {
+                home: &Home::at_user_home(root.to_owned()),
+                project_root: root,
+                owned_root: root,
+                todo: &TodoSlug::parse("planned-file").unwrap(),
+                canonical: Some(self.now.clone()),
+                corpus: None,
+                owned_corpus: None,
+                prerequisites: &[],
+            };
+            current
+                .change(&Grounding {
+                    head: head.cloned(),
+                    referenced_paths: paths.iter().map(|path| (*path).to_owned()).collect(),
+                    ..Grounding::default()
+                })
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn an_unrelated_commit_leaves_planned_paths_fresh() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["future.snap", "planned/"]),
+            GroundingChange::default()
+        );
+    }
+
+    #[test]
+    fn an_unrelated_commit_leaves_an_existing_file_fresh() {
+        let history = History::new();
+        let change = history.change(Some(&history.then), &["stable.txt"]);
+        assert!(!change.unresolved);
+        assert_eq!(change.code, CodeChange::Unchanged);
+    }
+
+    #[test]
+    fn creating_a_planned_file_is_code_drift() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["new/file"]),
+            GroundingChange {
+                code: CodeChange::Changed,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn deleting_a_grounded_file_is_unresolved_code_drift() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["future.snap", "old/file"]),
+            GroundingChange {
+                code: CodeChange::Changed,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn deleting_a_grounded_directory_prefix_is_unresolved_code_drift() {
+        let history = History::new();
+        assert_eq!(
+            history.change(Some(&history.then), &["old/"]),
+            GroundingChange {
+                code: CodeChange::Changed,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_path_without_a_recorded_head_remains_unresolved() {
+        let history = History::new();
+        assert_eq!(
+            history.change(None, &["future.snap"]),
+            GroundingChange {
+                code: CodeChange::Uncomparable,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_path_with_an_unknown_recorded_head_remains_unresolved() {
+        let history = History::new();
+        let unknown = super::super::_testing::sha('a');
+        assert_eq!(
+            history.change(Some(&unknown), &["future.snap"]),
+            GroundingChange {
+                code: CodeChange::Uncomparable,
+                unresolved: true,
+                ..GroundingChange::default()
+            }
+        );
+    }
 }

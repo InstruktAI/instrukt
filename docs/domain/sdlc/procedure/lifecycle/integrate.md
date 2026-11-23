@@ -1,12 +1,11 @@
 ---
-description: 'Integrate exact verified candidates, publish reviewed preparation and one-off worktree heads through the same gate, restore a red main before repair, and assess failed dependency updates.'
+description: 'Integrate exact verified candidates carrying independent exact-SHA review approval, restore a red main before repair, and assess failed dependency updates.'
 visibility: 'public'
 role: integrator
 parameters:
   - name: slug
 subscriptions:
   - workflow.finalized
-  - workflow.preparation_reviewed
   - runner.ci_completed
   - runner.main_failing
   - runner.dependency_failing
@@ -23,8 +22,8 @@ interruptible: false
 
 ## Goal
 
-Merge finalized work and reviewed preparation and one-off worktree heads into a verified candidate,
-advance canonical main to exactly that commit, and recover a red baseline
+Merge finalized work and reviewed one-off worktree heads into a verified candidate,
+advance canonical main to exactly that commit, recover a red baseline
 before repairing its cause, and assess failed dependency updates for bug work.
 The standing integrator owns composition,
 failure interpretation, promotion and recovery.
@@ -32,8 +31,7 @@ failure interpretation, promotion and recovery.
 ## Preconditions
 
 - Main names the repository's canonical default branch; use its actual ref.
-- `workflow.preparation_reviewed` identifies an approved preparation head and report,
-  or `workflow.finalized` identifies a todo and finalized commit, or
+- `workflow.finalized` identifies a todo and finalized commit, or
   `runner.ci_completed` identifies the submitted candidate and result, or
   `runner.main_failing` identifies remote main's head commit whose CI completed red,
   or `runner.dependency_failing` identifies a dependency branch, commit and failed check run for assessment.
@@ -41,7 +39,10 @@ failure interpretation, promotion and recovery.
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
   `trees/_integration/`, separately from the project checkout and todo worktrees.
-- A work candidate has finalized evidence. Preparation arrives as `workflow.preparation_reviewed` with the exact reviewed head and report; integrate it as soon as possible before build, then remove its clean worktree and delete `<slug>/prepare` locally and on origin. Keep any failed cleanup owed. Ad hoc candidates likewise retain exact-head review.
+- Every work or ad hoc candidate MUST carry an independent reviewer's `APPROVE`
+  stamp (or digest-bound cross-model review report for human-directed ad hoc
+  branches) bound to that **exact commit SHA** plus green CI before advancing
+  `main`. Only `integrate` writes `main`.
 - Project CI and required checks, or the documented project test command when CI is
   absent, provide verification. GitHub branch protection guards main where CI exists.
 
@@ -61,10 +62,10 @@ Apply these configured action values to the identified assignment and session.
 
 ### 1. Route the activating event
 
-- **`workflow.finalized`:** read the todo's artifacts, approval and matching
-  finalized commit. Reconcile the handoff against repository state. A replay
-  of the same project, todo and commit is the same logical handoff.
-- **`workflow.preparation_reviewed`:** verify the exact reviewed preparation head and complete report, then integrate its docs as soon as possible before build. Confirm the preparer released its claim while its worktree existed. Fold its pending markers in the integration worktree before candidate verification. After confirmed integration remove the clean prepare worktree and delete `<slug>/prepare` locally and on origin; retain any failed cleanup as owed work.
+- **`workflow.finalized`:** read the todo's factual ledger, independent
+  exact-SHA `build_review` `approve` stamp, and matching finalized commit.
+  Reconcile the handoff against repository state. A replay of the same project,
+  todo and commit is the same logical handoff.
 - **`runner.ci_completed`:** reconcile the result with the exact submitted
   candidate and current GitHub check state. Proceed under Step 3 only when
   the required result is complete for that commit.
@@ -87,7 +88,7 @@ or promote whatever commit now occupies the integration branch.
 1. Fetch current remote main and candidate branches. Inspect the integration
    worktree before reuse; preserve any unique edits or an in-flight candidate.
 2. Compose from accepted upstream main in the integration worktree. Merge the
-   finalized work branch, reviewed preparation branch or reviewed one-off branch.
+   finalized `<slug>/work` branch or reviewed one-off branch.
    Match independent approval to that exact branch head and complete report.
    A changed or unreviewed head waits for current review; no per-commit git-note
    verdict admits a candidate.
@@ -95,9 +96,11 @@ or promote whatever commit now occupies the integration branch.
 3. Read the delivery context, diff and branch history. Where integration needs
    a commit, compose it around the delivery intent and record it through
    `instrukt repo commit` under `general/policy/commits`.
-4. Preserve binding ownership: preparation folding activates docs but retains unbound `binding_reservations`; work-delivery folding clears them only after their attached tests are present. Run `instrukt docs fold <slug>` to reconcile the todo's pending documentation at preparation integration (or work delivery for code-associated pending material) under the owning
-   documentation contract before freezing the candidate. The work lane authors
-   no new doc contract here. Include the resulting content in the commit verified.
+4. Fold pending documentation at delivery: run `instrukt docs fold <slug>` to
+   reconcile the todo's pending documentation (clearing `binding_reservations`
+   once their attached tests are present) under the owning documentation
+   contract before freezing the candidate. Include the resulting content in the
+   commit verified.
 5. The integrator may batch finalized candidates according to its judgment.
    Retain the work and commits represented by the batch so a failure can be
    attributed to its responsible todo.
@@ -121,13 +124,19 @@ builders, reviewers and the evaluator add no suite execution of their own.
 - **Green:** fast-forward main to exactly the verified candidate and push it.
   Create no additional merge commit during promotion. Confirm the remote main
   points to that commit. GitHub's required checks guard that push.
-- **Red:** read the failure. Return it to the responsible todo as findings,
-  make a trivial fix within integration scope, or isolate the culprit among
-  a batch. A change to intent or the prepared contract returns through the
-  work orchestrator; a trivial integration correction is no substitute for it.
-  Any changed candidate is pushed to `integrate` and verified again.
+- **Red:** read the failure. Return it to the responsible todo as findings and
+  record `instrukt todo stamp <slug> --kickback --reason "<failure summary>"`
+  (which resets the finalized handoff so the runner wakes `todo-orchestrator`
+  even when no new commit was pushed yet; note that `--kickback` also marks any
+  existing `plan_review` invalidated in the ledger, so `todo-orchestrator`
+  inspects the recorded reason and routes directly to `builder`/`fixer` for
+  code-only or CI failures rather than re-planning unless the contract or plan
+  itself is defective), make a trivial fix within integration scope, or isolate
+  the culprit among a batch. A change to intent or the prepared contract returns
+  through `todo-orchestrator`; a trivial integration correction is no substitute
+  for it. Any changed candidate is pushed to `integrate` and verified again.
 
-Reviewed preparation, work and one-off heads receive the same candidate verification.
+Work branches and one-off heads receive the same candidate verification.
 A change to the candidate after a green
 result invalidates promotion evidence for the resulting commit.
 
@@ -188,36 +197,31 @@ may deliver only a reference to the session, never its failure content.
 
 ### 6. Complete the handoff and park
 
-The preparation occurrence is emitted by the preparer's claim release, after approving review. Confirm that release before touching its resources; never remove a claimed preparation workspace. After preparation promotion, confirm the reviewed head is integrated on canonical
-main and publication completed. Remove its clean worktree and delete `<slug>/prepare`
-locally and on origin; keep failed cleanup owed. This delivers documentation,
-not the implementation: do not mark the todo delivered. Work begins later from
-that updated main in `<slug>/work`.
-
 After work promotion, confirm the exact remote commit and record delivery evidence
 with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed delivered
-commit under the work-record contract. Preserve working resources until their
-delivery and cleanup obligations are established.
+commit under the work-record contract. Remove the clean `<slug>/work` worktree and
+delete `<slug>/work` locally and on `origin`; keep any failed cleanup owed.
 
-Re-run `instrukt todo work <slug>` after delivery: the flavor owes
-`worktree.remove`, running `git worktree remove {worktree.path}` until
-`worktree.exists` is absent. Select only the todo's one shared worktree; retained
-role-attempt rows refer to that same path. A dirty or in-use worktree or failed
-removal remains owed. Then execute `branch.remove` and `remote_branch.remove`
-for the captured `<slug>/work` branch; failed local or origin deletion remains
-owed until the corresponding head is absent. Preserve the runtime thread record and retained attempt evidence;
-todo cleanup is separate from the persistent integration workspace.
+Inspect `instrukt todo show <slug> --json` after delivery: while the ledger's
+`workspace.worktree_exists` is true, remove the clean `<slug>/work` worktree
+(`git worktree remove <workspace.worktree_path>`). Select only the todo's one
+shared worktree; retained role-attempt rows refer to that same path. A dirty or
+in-use worktree or failed removal remains owed. Then delete `<slug>/work`
+locally (`git branch -D <workspace.branch>`) and on `origin`
+(`git push origin --delete <workspace.branch>`) until both refs are absent.
+Preserve the runtime thread record and retained attempt evidence; todo cleanup
+is separate from the persistent integration workspace.
 
 When all current work is settled, park as the standing integrator. The next
-`workflow.finalized`, `workflow.preparation_reviewed`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
+`workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
 binding.
 
 ## Outputs
 
-- Exact verified candidates promoted and confirmed on remote main.
-- Reviewed preparation docs published before build, with preparation worktree and
-  local/origin branch cleanup; reviewed one-off work integrated through the same gate.
-- Durable delivery evidence, or findings returned to the responsible todo.
+- Exact verified candidates promoted and confirmed on remote main (with pending
+  docs folded at delivery and `<slug>/work` worktree and local/origin branch
+  cleanup); reviewed one-off work integrated through the same gate.
+- Durable delivery evidence, or findings and `--kickback` returned to the responsible todo.
 - A failing main restored by a verified revert before separate repair work.
 
 ## Recovery
@@ -229,7 +233,7 @@ binding.
 - An unresolved conflict stays with the integrator and its governing contracts.
   Only missing human intent or a human-owned exposure is asked in the thread.
 - A candidate already promoted needs delivery-record reconciliation, not
-  another merge. Execute delivery and cleanup through the shipped flavor's
-  workflow bindings. Release an owed claim with `instrukt todo update <slug> --unclaim`
+  another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`)
+  and `<slug>/work` worktree/branch cleanup directly. Release an owed claim with `instrukt todo update <slug> --unclaim`
   and confirm the released claim. Record the handoff and remaining cleanup;
   the runtime owns session ending. A failed cleanup remains unresolved.

@@ -390,15 +390,17 @@ instrukt todo artifacts write {slug} prd <content>
 The artifact follows the shaping structure above at the depth the work earns.
 It makes the horizon and consequential scope reasons easy to inspect, preserves
 assumptions, and states observable outcomes without selecting concrete proof.
-After every write, advance the state machine; a new PRD digest requires a new
-independent review before human approval, except for an owner-directed literal
-correction satisfying
+After every write, stamp `instrukt todo stamp {slug} --role-complete` and stop
+so `todo-orchestrator` can read the factual ledger; a new PRD digest requires a
+new independent review before human approval, except for an owner-directed
+literal correction satisfying
 `sdlc/policy/preparation-artifact-quality#owner-directed-literal-prd-corrections`.
 
 ### 6. PRD review and approval
 
-After writing the PRD, call `instrukt todo prepare {slug}`. The state machine
-routes to a dispatched `sdlc/procedure/lifecycle/prepare/review-prd` worker before human approval.
+After `intaker` completes, `todo-orchestrator` inspects `instrukt todo show {slug}`
+and dispatches an independent `sdlc/procedure/lifecycle/prepare/review-prd` worker
+before human approval.
 
 The reviewer reads the input and PRD. It checks that the PRD's product and
 business scope stays within what the input carries rather than inflating beyond
@@ -418,7 +420,7 @@ and the reviewer stamps the digest-bound `prd_review` verdict.
   and genuine human-owned decisions. The human approves or refines product
   intent. A human refinement rewrites the PRD and therefore re-runs review.
   When the current review report concludes that an earlier human approval
-  carries (`sdlc/procedure/lifecycle/prepare/overview`), nothing is presented:
+  carries (`sdlc/procedure/lifecycle/overview`), nothing is presented:
   the claimant records the carry and stamps `prd_approved`.
 
 An agent may shape a draft but never reviews or approves its own output. The
@@ -431,19 +433,15 @@ only that replacement and stamps `prd_review=approve` against the corrected
 digest. It does not dispatch `sdlc/procedure/lifecycle/prepare/review-prd`. If the human also approves the
 corrected PRD, the claimant records `prd_approved` and advances normally.
 
-### 7. Final step — advance
+### 7. Final step — complete and return to `todo-orchestrator`
 
-When `prd_approved` is current — given by the human, or carried from their
-earlier approval — along with any size-based
-skip stamp (`architecture_skipped`), call:
-
-```
-instrukt todo prepare {slug}
-```
-
-The state machine routes the next action — typically loading the next phase's
-procedure. When HITL: false, the state machine will route here when the human
-re-engages and stamps approval.
+When the PRD (and any size-based `architecture_skipped` stamp) is written,
+stamp `instrukt todo stamp {slug} --role-complete` and return to
+`todo-orchestrator`. `todo-orchestrator` reads `instrukt todo show {slug} --json`,
+routes `prd-reviewer`, presents the reviewed PRD for configured `approvals.prd`
+(unclaiming while waiting on human approval so the runner wakes it when the
+approval arrives), and advances to architecture, planning, or build once
+approved.
 
 ## Outputs
 

@@ -125,15 +125,14 @@ never blesses a diff its own change produced.
    behavior it claims to add. A binding to a non-existent scenario is an orphan; it too
    fails the check.
 
-   Every scenario a plan will bind is reserved in its preparation worktree, then integrated
-   to main before build. Pending markers initially carry ownership. Preparation folding
-   activates the contract and preserves unbound ownership as feature-spec frontmatter
-   `binding_reservations: {UC-id: todo-slug}`. `instrukt specs reserve` reads both carriers.
-   Work-delivery folding clears a reservation only when the candidate carries its attached
-   test binding. A concurrent preparer reads published reservations and reuses a scenario
-   by reference without adding a binding, or authors a distinct scenario. Prepare never
-   writes directly to main. Overlapping reservations serialize through prerequisites;
-   markers never nest.
+   Every scenario a plan will bind is reserved in `<slug>/work` using pending
+   markers (`planned:<slug>` or `planned-change:<slug>`), and `instrukt specs reserve`
+   checks proposed bindings against on-main reservations (pending markers and
+   `binding_reservations: {UC-id: todo-slug}` frontmatter). Pending markers reach
+   `main` at work delivery, where delivery folding activates the contract and
+   clears owned reservations once the candidate carries its attached test binding;
+   the integration gate catches any concurrent cross-worktree duplicate.
+   Overlapping reservations serialize through prerequisites; markers never nest.
 
 9. **A changed scenario forces its bound test to be revisited.** When a scenario's Gherkin changes,
    the bound test is re-derived from the new contract before the change is done (rule 10) — the

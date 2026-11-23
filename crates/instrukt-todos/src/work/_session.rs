@@ -145,9 +145,6 @@ pub(crate) struct Session<'w> {
     pub docs_changed: Vec<std::path::PathBuf>,
     /// A group parent's pending documentation owed to its first child.
     pub pending_transfer: Option<(TodoSlug, TodoSlug)>,
-    /// What workflow said of a group parent's preparation, asked before
-    /// the session opened.
-    pub parent_preparation: super::_ops::ParentPreparation,
 }
 
 impl<'w> Session<'w> {
@@ -215,7 +212,6 @@ impl<'w> Session<'w> {
             docs_changed: Vec::new(),
             board_setup_failure: None,
             pending_transfer: None,
-            parent_preparation: super::_ops::ParentPreparation::NotAsked,
         };
         session.purge()?;
         Ok(session)
@@ -1342,7 +1338,7 @@ impl<'w> Session<'w> {
                 Remote::Unavailable(reason) => return Err(WorkError::refused(describe(reason))),
             };
             let account = gh.for_role(None, github::Operation::Board)?;
-            let board = super::_board::setup(&account, known.as_ref())?;
+            let board = super::_board::setup(&account, gh, known.as_ref())?;
             // The reference is the machine's record: reflection never writes
             // the committed project layer.
             if configured.as_ref() != Some(&board)

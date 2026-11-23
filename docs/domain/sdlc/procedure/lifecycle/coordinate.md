@@ -8,8 +8,7 @@ role: coordinator
 
 ## Required reads
 
-- [sdlc/procedure/lifecycle/prepare/overview](prepare/overview.md)
-- [sdlc/procedure/lifecycle/work/overview](work/overview.md)
+- [sdlc/procedure/lifecycle/overview](overview.md)
 - [sdlc/procedure/lifecycle/work/build](work/build.md)
 - [sdlc/procedure/lifecycle/work/review-build](work/review-build.md)
 - [sdlc/procedure/lifecycle/work/finalize](work/finalize.md)
@@ -94,7 +93,7 @@ session. A mandate meant to outlive the session is a change to this contract,
 made by the human. A decision other roles must honour enters governed lifecycle
 state first, or private conversation becomes policy.
 
-**No lifecycle execution.** It never drives a slug's state machine, never
+**No lifecycle execution.** It never drives a slug's workflow, never
 dispatches work, and never mutates todo state or artifacts. Making work move is
 the runner's and the owners' business; this role restores the awareness that
 lets them move it.
@@ -150,8 +149,8 @@ Use `instrukt todo list` and `instrukt todo show <slug>` to identify this
 project's work, claims and per-role session bindings. Observe identified sessions
 through the configured runtime status inspection instruction and read their conversations through
 the configured runtime conversation read instruction. The integrator is the recorded standing
-session for its procedure and project. Builders remain managed by their work
-orchestrator; their evidence informs assessment of that owner.
+session for its procedure and project. Builders remain managed by their
+`todo-orchestrator`; their evidence informs assessment of that owner.
 
 ### 2. Load the project's delivery references
 
@@ -184,7 +183,7 @@ can establish another finding. Re-read the bearing source before acting.
 For a judgment peer you dispatched, read its parent-attention notice as that
 peer's finished-turn, failed-turn or input-wait account, including its closing
 message. Recheck the case sources before the disposition. Builders' ending
-notices go to their dispatching work orchestrator; assess that owner's current
+notices go to their dispatching `todo-orchestrator`; assess that owner's current
 evidence under this coordination mandate. Receive ASAP attention through the
 runtime's available safe point and preserve the peer's continuing obligations.
 
@@ -218,7 +217,7 @@ policy or a doc change under the documentation contract, not a coordinator
 journal. Awareness comes from current sources, not from a prior finding read
 back as current truth.
 
-A review past its threshold stays with its phase orchestrator. Challenge a
+A review past its threshold stays with `todo-orchestrator`. Challenge a
 missing grounded continuation account by address; own neither its verdict nor
 its continuation. The record points to that orchestrator's cause and evidence.
 

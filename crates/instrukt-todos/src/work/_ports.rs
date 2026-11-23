@@ -23,7 +23,6 @@ use super::Work;
 use crate::evidence::{
     Actor, ArtifactHistory, ArtifactVersion, ClaimRecord, HoldRecord, HoldSource, Prerequisite,
     RoleBinding, StampFact, StampRecord, TaskResult, TodoEvidence, TodoStatus, WorkEvidence,
-    artifact_names,
 };
 
 /// The actor automatic holds and runner claims are attributed to: the
@@ -86,16 +85,6 @@ impl Pickup for Work {
                 && r.hold.is_none()
                 && (r.claim.is_none() || pending_here.contains(&r.id))
                 && kinds.contains(&r.kind)
-        });
-        records.retain(|record| {
-            let handed_off = record.claim.is_none()
-                && record.bindings.iter().rev().find(|binding|binding.attempt.assignment==instrukt_runner::interfaces::AssignmentKind::Driver && binding.attempt.lane==Some(instrukt_runner::interfaces::Lane::Prepare)).is_some_and(|binding|binding.attempt.released_at.is_some())
-                && record.stamps.iter().rev().find(|stamp|matches!(stamp.fact,StampFact::PreparationHeadReviewed {..})).is_some_and(|stamp|matches!(&stamp.fact,StampFact::PreparationHeadReviewed {verdict:crate::evidence::ReviewVerdict::Approve,report,..} if record.current_digest("preparation-review-findings")==Some(report)));
-            if handed_off && let Err(error)=super::_attempts::preparation_integrated(record,&project.root) {
-                tracing::info!(event="preparation_handoff_pending",todo=%record.slug,reason=%error);
-                return false;
-            }
-            true
         });
         records.sort_by_key(|r| r.created);
         let mut ordered: Vec<TodoRecord> = Vec::with_capacity(records.len());
@@ -363,6 +352,11 @@ fn checked_replacement(
     Ok(index)
 }
 
+pub(super) fn matches_driver_role(bound: &RoleName, requested: &RoleName) -> bool {
+    bound == requested
+        || (requested.as_str() == "todo-orchestrator" && bound.as_str() == "work-orchestrator")
+}
+
 fn replacement_todo(s: &Session<'_>, key: &str) -> Result<TodoSlug, WorkError> {
     let mut owners = s.items.iter().filter(|item| {
         item.record
@@ -473,7 +467,7 @@ impl SessionBindings for Work {
                 .iter()
                 .rev()
                 .find(|b| {
-                    b.role == *role
+                    matches_driver_role(&b.role, role)
                         && b.attempt.assignment == AssignmentKind::Driver
                         && b.attempt.lane == Some(*lane)
                         && b.session.is_some()
@@ -515,70 +509,57 @@ impl SessionBindings for Work {
                 worktree: retained.worktree,
             }));
         }
-        let placement =
-            (|| -> Result<_, WorkError> {
-                if *lane == instrukt_runner::interfaces::Lane::TaskRun {
-                    return Ok(None);
-                }
-                let branch = format!(
-                    "{}/{}",
-                    record.slug,
-                    if *lane == instrukt_runner::interfaces::Lane::Prepare {
-                        "prepare"
-                    } else {
-                        "work"
-                    }
-                );
-                if let Some(pending) = record
-                    .bindings
-                    .iter()
-                    .rev()
-                    .find(|b| b.role == *role && b.attempt.released_at.is_none())
-                {
-                    return Ok(Some(instrukt_runner::runtime::WorktreeRequest {
-                        branch: pending.attempt.branch.clone().ok_or_else(|| {
-                            WorkError::refused("retained phase branch is missing")
-                        })?,
-                        from: pending
-                            .attempt
-                            .start_from
-                            .clone()
-                            .ok_or_else(|| WorkError::refused("retained start base is missing"))?,
-                        base: pending
-                            .attempt
-                            .base_head
-                            .as_ref()
-                            .ok_or_else(|| WorkError::refused("retained starting head is missing"))?
-                            .to_string(),
-                    }));
-                }
-                if instrukt_core::git::succeeds(
-                    &project.root,
-                    [
-                        "show-ref",
-                        "--verify",
-                        "--quiet",
-                        &format!("refs/heads/{branch}"),
-                    ],
-                )? {
-                    return Err(WorkError::refused(format!(
-                        "phase branch `{branch}` already exists; no replacement worktree is created"
-                    )));
-                }
-                let (from, base) = super::_attempts::phase_base(
-                    &project.root,
-                    &branch,
-                    *lane == instrukt_runner::interfaces::Lane::Prepare,
-                )?;
-                if *lane == instrukt_runner::interfaces::Lane::Work {
-                    super::_attempts::preparation_integrated(record, &project.root)?;
-                }
-                Ok(Some(instrukt_runner::runtime::WorktreeRequest {
-                    branch,
-                    base: base.to_string(),
-                    from,
-                }))
-            })()?;
+        let placement = (|| -> Result<_, WorkError> {
+            if *lane == instrukt_runner::interfaces::Lane::TaskRun || record.kind == TodoKind::Task
+            {
+                return Ok(None);
+            }
+            let branch = format!("{}/work", record.slug);
+            if let Some(pending) = record
+                .bindings
+                .iter()
+                .rev()
+                .find(|b| b.role == *role && b.attempt.released_at.is_none())
+            {
+                return Ok(Some(instrukt_runner::runtime::WorktreeRequest {
+                    branch: pending
+                        .attempt
+                        .branch
+                        .clone()
+                        .ok_or_else(|| WorkError::refused("retained todo branch is missing"))?,
+                    from: pending
+                        .attempt
+                        .start_from
+                        .clone()
+                        .ok_or_else(|| WorkError::refused("retained start base is missing"))?,
+                    base: pending
+                        .attempt
+                        .base_head
+                        .as_ref()
+                        .ok_or_else(|| WorkError::refused("retained starting head is missing"))?
+                        .to_string(),
+                }));
+            }
+            if instrukt_core::git::succeeds(
+                &project.root,
+                [
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{branch}"),
+                ],
+            )? {
+                return Err(WorkError::refused(format!(
+                    "todo branch `{branch}` already exists; no replacement worktree is created"
+                )));
+            }
+            let (from, base) = super::_attempts::phase_base(&project.root, &branch)?;
+            Ok(Some(instrukt_runner::runtime::WorktreeRequest {
+                branch,
+                base: base.to_string(),
+                from,
+            }))
+        })()?;
         let selected_runtime = s.config.runner_runtime().map_err(WorkError::from)?;
         if record.bindings.iter().any(|b| {
             b.role == *role
@@ -592,11 +573,17 @@ impl SessionBindings for Work {
         let task_key = occurrence.map(|at| {
             instrukt_runner::keyed::task_key(project.slug.as_str(), record.id.as_str(), at)
         });
-        if let Some(pending) = record
-            .bindings
-            .iter()
-            .find(|b| b.attempt.released_at.is_none() && b.session.is_none())
-        {
+        let is_legacy_driver_pending = |b: &Binding| -> bool {
+            role.as_str() == "todo-orchestrator"
+                && matches!(
+                    b.role.as_str(),
+                    "prepare-orchestrator" | "work-orchestrator"
+                )
+                && b.attempt.assignment == AssignmentKind::Driver
+        };
+        if let Some(pending) = record.bindings.iter().find(|b| {
+            b.attempt.released_at.is_none() && b.session.is_none() && !is_legacy_driver_pending(b)
+        }) {
             if &pending.role != role || pending.attempt.occurrence != occurrence {
                 return Err(WorkError::refused(format!(
                     "unresolved assignment `{}` must be reconciled first",
@@ -670,13 +657,24 @@ impl SessionBindings for Work {
                 ..Default::default()
             },
         };
+        let now = s.now;
         s.commit("dispatch reserved", |s| {
-            if let Some(placement) = &placement
-                && *lane == instrukt_runner::interfaces::Lane::Work
-            {
-                s.items[index].record.branch = Some(placement.branch.clone());
+            let record = &mut s.items[index].record;
+            // Retire any legacy prepare-orchestrator driver binding (and any
+            // unbound legacy work-orchestrator reservation) when the unified
+            // todo-orchestrator takes over on `<slug>/work`.
+            if role.as_str() == "todo-orchestrator" {
+                for b in &mut record.bindings {
+                    if b.attempt.assignment == AssignmentKind::Driver
+                        && b.attempt.released_at.is_none()
+                        && (b.role.as_str() == "prepare-orchestrator"
+                            || (b.role.as_str() == "work-orchestrator" && b.session.is_none()))
+                    {
+                        b.attempt.released_at = Some(now);
+                    }
+                }
             }
-            s.items[index].record.bindings.push(binding);
+            record.bindings.push(binding);
             Ok(())
         })?;
         s.flush()?;
@@ -705,7 +703,7 @@ impl SessionBindings for Work {
             .bindings
             .into_iter()
             .rev()
-            .find(|b| &b.role == role)
+            .find(|b| matches_driver_role(&b.role, role))
             .map(|b| b.binding))
     }
 
@@ -818,7 +816,7 @@ impl SessionBindings for Work {
                 .iter_mut()
                 .find(|b| b.attempt.semantic_key == dispatch.key)
                 .ok_or_else(|| WorkError::refused("the runtime result has no reserved assignment"))?;
-            if binding.attempt.runtime.is_some_and(|runtime|runtime.name()!=dispatch.binding.session.runtime.as_str()) || binding.role != dispatch.role
+            if binding.attempt.runtime.is_some_and(|runtime|runtime.name()!=dispatch.binding.session.runtime.as_str()) || !matches_driver_role(&binding.role, &dispatch.role)
                 || binding.attempt.occurrence != dispatch.occurrence
                 || binding.attempt.released_at.is_some()
                 || binding.session.as_ref().is_some_and(|id| id != &dispatch.binding.session)
@@ -1180,7 +1178,7 @@ impl TodoExistence for WorkExistence {
 
 /// The record's prerequisites with structural holders expanded to the
 /// todos whose milestones satisfy them.
-fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
+pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
     let mut out = Vec::new();
     let mut seen = Vec::new();
     let mut stack: Vec<_> = record.after.iter().rev().cloned().collect();
@@ -1224,7 +1222,6 @@ fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
 }
 
 pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
-    let implementation_plan_seeded = seeded(&record);
     TodoEvidence {
         branch: record.branch.clone(),
         timing: timing(&record),
@@ -1277,33 +1274,7 @@ pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) 
         prerequisites,
         delivery: record.delivery.map(|d| d.commit),
         agent: record.agent,
-        implementation_plan_seeded,
     }
-}
-
-/// Whether the implementation plan was seeded: its first version was
-/// written by the todo's filer, before any plan review (`preparation`,
-/// "seeded derivation": a plan present at first entry with no prior
-/// review). No spec names how a seed is recorded; this reads it from the
-/// record rather than adding a surface.
-fn seeded(record: &TodoRecord) -> bool {
-    let Some(first) = record
-        .artifact(artifact_names::IMPLEMENTATION_PLAN)
-        .and_then(|a| a.versions.first())
-    else {
-        return false;
-    };
-    let reviewed_before = record.stamps.iter().any(|s| {
-        s.at <= first.created
-            && matches!(
-                s.fact,
-                StampFact::PreparationVerdict {
-                    phase: crate::evidence::PreparationReview::PlanReview,
-                    ..
-                }
-            )
-    });
-    first.writer == record.created_by && !reviewed_before
 }
 
 /// A task's schedule and its last firing.
@@ -1338,104 +1309,4 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
         catch_up: record.catch_up,
         last_fired,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::evidence::{ArtifactName, PreparationReview, ReviewVerdict};
-    use crate::work::_model::{Artifact, TodoId, Version, digest_of};
-    use instrukt_core::ids::ProjectSlug;
-    use instrukt_runner::interfaces::CatchUp;
-
-    fn filer() -> Actor {
-        Actor::Person {
-            name: "filer".into(),
-        }
-    }
-
-    fn at(second: i64) -> Timestamp {
-        Timestamp::from_second(1_800_000_000 + second).unwrap()
-    }
-
-    fn with_plan(writer: Actor, written: i64) -> TodoRecord {
-        TodoRecord {
-            schema: 1,
-            id: TodoId::parse(&"ef".repeat(16)).unwrap(),
-            project: ProjectSlug::parse("demo").unwrap(),
-            slug: TodoSlug::parse("depth").unwrap(),
-            prior_slugs: Vec::new(),
-            kind: TodoKind::Change,
-            status: TodoStatus::Active,
-            created: at(0),
-            created_by: filer(),
-            human_involved: None,
-            revision: 1,
-            sequence: 0,
-            artifacts: vec![Artifact {
-                name: ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN),
-                address: None,
-                versions: vec![Version {
-                    digest: digest_of("plan"),
-                    writer,
-                    created: at(written),
-                    derived_from: Vec::new(),
-                    sequence: 0,
-                    grounding: Default::default(),
-                    remote: None,
-                    content: None,
-                }],
-            }],
-            stamps: Vec::new(),
-            claim: None,
-            bindings: Vec::new(),
-            hold: None,
-            hold_history: Vec::new(),
-            label_actions: Vec::new(),
-            after: Vec::new(),
-            group: None,
-            schedule: None,
-            catch_up: CatchUp::Once,
-            agent: None,
-            branch: None,
-            delivery: None,
-            removal: None,
-        }
-    }
-
-    #[test]
-    fn a_plan_the_filer_supplied_before_any_review_is_seeded() {
-        assert!(seeded(&with_plan(filer(), 1)));
-    }
-
-    #[test]
-    fn a_plan_drafted_by_preparation_is_not_seeded() {
-        let drafter = Actor::Person {
-            name: "planner".into(),
-        };
-        assert!(!seeded(&with_plan(drafter, 1)));
-    }
-
-    #[test]
-    fn a_plan_first_written_after_a_plan_review_is_not_seeded() {
-        let mut record = with_plan(filer(), 5);
-        record.stamps.push(StampRecord {
-            source_comment: None,
-            fact: StampFact::PreparationVerdict {
-                phase: PreparationReview::PlanReview,
-                verdict: ReviewVerdict::NeedsWork,
-                target: digest_of("older"),
-                report: digest_of("report"),
-            },
-            at: at(2),
-            actor: filer(),
-            model: None,
-            eval_fingerprint: None,
-            role: None,
-            human_involved: None,
-            sequence: 0,
-            model_provenance: Default::default(),
-        });
-        assert!(!seeded(&record));
-    }
 }

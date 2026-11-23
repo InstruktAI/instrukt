@@ -1,9 +1,6 @@
 ---
 description: Local-leading work records reflected to required GitHub issues with versioned native artifacts and revision checks; todos need the project's code on GitHub, and GitHub is read only for the todos this computer has an interest in.
 visibility: public
-binding_reservations:
-  UC-GR11: public-repo-board-visibility
-  UC-GR12: public-repo-board-visibility
 ---
 # GitHub Record — Spec
 

@@ -22,9 +22,8 @@ worker; it reads the pending classes per artifact and stamps verdicts.
 
 ## Preconditions
 
-- The current prepare or work obligation identifies artifacts pending drift
-  analysis. The fact provider exposes their effective drift status and the
-  evidence classes requiring judgment.
+- The factual ledger (`instrukt todo show {slug} --json`) identifies artifacts
+  with pending drift and the evidence classes requiring judgment.
 - The slug is active and not delivered.
 
 ## Steps
@@ -33,13 +32,11 @@ Use `instrukt <command> -h` for individual commands.
 
 ### 1. Identify pending artifacts and pending classes
 
-Read the dispatching orchestrator's action and rendered template, obtained
-with `instrukt todo prepare {slug}` or `instrukt todo work {slug}`, and read
-`instrukt todo show {slug}` to
-enumerate which artifacts are pending drift review and, for each, which
-classes are pending. The collapsed per-artifact status is the
-most-blocking class status; the analyzer must consider every pending
-class, not only the one that drove the collapse.
+Read the factual ledger (`instrukt todo show {slug} --json`) and the
+dispatching `todo-orchestrator`'s brief to enumerate which artifacts have
+pending drift and, for each, which classes changed. The collapsed per-artifact
+status is the most-blocking class status; the analyzer must consider every
+pending class, not only the one that drove the collapse.
 
 The drift classes:
 
@@ -148,9 +145,9 @@ clears the drift stamps.
 ### 4. Go idle
 
 After every pending artifact has a stamp, end the worker turn. The turn
-ends at the stamp — do not prescribe the next obligation. The
-dispatching session follows its current workflow obligation, not this worker's
-narration.
+ends at the stamp — do not prescribe the next step. The dispatching
+`todo-orchestrator` reads the updated factual ledger (`instrukt todo show {slug} --json`)
+and routes the next primitive in prose.
 
 ## Outputs
 
@@ -163,7 +160,8 @@ narration.
 Classify drift only. Do not rewrite prepare artifacts, do not approve
 gates, do not start build work. The record must carry the assessed artifact
 and its drift stamp; an ended worker turn alone completes nothing. The
-dispatching orchestrator calls prepare or work for the next obligation.
+dispatching `todo-orchestrator` reads the updated factual ledger to choose
+the next step.
 Substantive drift is re-derived by the owning layer (intake, architecture,
 diagnosis, plan), never on this worker's prompting.
 
@@ -197,4 +195,4 @@ evidence.
 
 ## See Also
 
-- [sdlc/procedure/lifecycle/prepare/overview](overview.md)
+- [sdlc/procedure/lifecycle/overview](../overview.md)

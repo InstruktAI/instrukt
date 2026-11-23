@@ -25,7 +25,9 @@ docs/domain/acme/principle/shape.md: structure-section-unknown: Extra, outside t
 docs/domain/acme/principle/shape.md: structure-see-also-not-last
 docs/domain/acme/procedure/both.md: frontmatter-activation-conflict
 docs/domain/acme/procedure/ghostly.md: frontmatter-dispatch-invalid: obsolete dispatch; use agents.yaml role selection
-docs/domain/acme/workflow/actions.yaml: workflow-schema-invalid: roles: expected a list of role names
+docs/domain/acme/workflow/workflow.yaml: workflow-schema-invalid: orchestrator: required key `orchestrator` is missing
+docs/domain/acme/workflow/workflow.yaml: workflow-schema-invalid: requires: required key `requires` is missing
+docs/domain/acme/workflow/workflow.yaml: workflow-schema-invalid: roles: expected a sequence of role names
 docs/domain/loose.md: identity-missing-domain: loose
 docs/project/adr/0001-choice.md: frontmatter-adr-date-invalid
 docs/project/adr/0001-choice.md: frontmatter-adr-number-invalid

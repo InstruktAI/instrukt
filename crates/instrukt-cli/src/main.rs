@@ -26,8 +26,8 @@ use std::sync::OnceLock;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, bugs, config, discuss, docs, eval, events, history, mcp, repository, runner,
-    secrets, specs, sync, todo, webhooks,
+    agents, blueprint, bugs, company, config, discuss, docs, eval, events, history, mcp,
+    repository, runner, secrets, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -54,6 +54,8 @@ enum Command {
     /// Reach the MCP servers declared for this caller: list them, list one's
     /// tools, call a tool.
     Mcp(mcp::McpArgs),
+    /// Queue explicit replies to company conversations.
+    Company(company::CompanyArgs),
     /// Store or generate protected machine-local secrets.
     Secrets(secrets::SecretsArgs),
     /// Read, edit, initialize and validate `instrukt.yaml`.
@@ -271,6 +273,7 @@ fn run() -> ExitCode {
         Command::Status(args) => commands::status::run(&args, &mut ctx, None),
         Command::DevSeed => seed_development(&mut ctx),
         Command::Discuss(args) => discuss::run(args, &mut ctx),
+        Command::Company(args) => company::run(args, &mut ctx),
         Command::Mcp(args) => mcp::run(args, &mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),
         Command::Secrets(args) => secrets::run(args, &mut ctx),
@@ -401,6 +404,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Status(_) => "status",
         Command::Bugs(_) => "bugs",
         Command::Discuss(_) => "discuss",
+        Command::Company(_) => "company",
         Command::Mcp(_) => "mcp",
         Command::Agents(_) => "agents",
         Command::Secrets(_) => "secrets",

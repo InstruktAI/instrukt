@@ -509,3 +509,82 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         ))
     );
 }
+
+#[test]
+fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refusals() {
+    let env = common::TestEnv::new();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf()).for_writing();
+    let state = env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let file = state.join("instrukt.db");
+    {
+        let db = Connection::open(&file).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v33.sql"))
+            .unwrap();
+        db.execute_batch(
+            "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,opening,session,source_identity,display_title)
+             VALUES ('acme','slack','C1/1700.1','instrukt:conversation:acme:slack:C1%2F1700.1','1700.1','t3:legacy-conv','src-legacy','acme — #general');
+             INSERT INTO conversation_messages(company,connector,conversation,message,sender,sender_name,sender_email,written_us,written_at,arrived_at,state,text,admission_position)
+             VALUES ('acme','slack','C1/1700.1','1700.1','U1','Steven','steven@example.com',1,'2026-11-20T10:00:00Z','2026-11-20T10:00:01Z','answered','Ship date?',1);
+             INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at,admission_position)
+             VALUES ('acme','slack','C1/1700.1','turn-1',0,'Friday.','2026-11-20T10:00:02Z',1);
+             INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,replied_at)
+             VALUES ('acme','slack','C1/1700.1','UGUEST','not_own','2026-11-20T10:00:00Z','2026-11-20T10:00:01Z'),
+                    ('acme','slack','C1/1700.1','U1','unavailable','2026-11-20T10:00:30Z',NULL);",
+        )
+        .unwrap();
+        let version: u32 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 33);
+    }
+
+    // Opening the database through StateDb applies v34 forward migration cleanly.
+    let db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+    drop(db);
+
+    let session = instrukt_core::ids::SessionRef::parse("t3:legacy-conv").unwrap();
+    let assignment = instrukt_company::conversations::conversation_assignment(&home, &session)
+        .unwrap()
+        .unwrap();
+    assert_eq!(assignment.role.as_str(), "company-agent");
+    assert_eq!(
+        assignment.company.as_ref().map(|slug| slug.as_str()),
+        Some("acme")
+    );
+    let binding = instrukt_company::conversations::conversation_binding(&home, &session)
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.connector, "slack");
+    assert_eq!(binding.conversation, "C1/1700.1");
+    assert_eq!(binding.role.as_str(), "company-agent");
+    assert_eq!(
+        binding.session_scope,
+        instrukt_core::config::SessionScope::Conversation
+    );
+    assert_eq!(
+        binding.reply_mode,
+        instrukt_core::config::ReplyMode::TurnOutput
+    );
+
+    // Existing refusals survive verbatim and `not_admin` is now accepted.
+    let raw = Connection::open(&file).unwrap();
+    let version: u32 = raw
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, instrukt_core::state_db::schema_version());
+    raw.execute(
+        "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at)
+         VALUES ('acme','slack','C1/1700.1','U2','not_admin','2026-11-20T10:05:00Z')",
+        [],
+    )
+    .unwrap();
+    let reasons: Vec<String> = raw
+        .prepare("SELECT reason FROM conversation_refusals ORDER BY reason")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(reasons, vec!["not_admin", "not_own", "unavailable"]);
+}

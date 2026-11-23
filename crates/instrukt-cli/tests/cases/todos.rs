@@ -270,7 +270,6 @@ fn filing_changing_preparing_and_working_on_a_todo_name_the_switch_while_trackin
             "--approved",
         ],
         vec!["update", "nested-lists", "--hold", "--reason", "waiting"],
-        vec!["prepare", "nested-lists"],
         vec!["work", "nested-lists"],
     ]
     .into_iter()

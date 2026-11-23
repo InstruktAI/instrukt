@@ -46,7 +46,7 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 **Execution claim**
 : The item-level claim recorded and reflected before work starts — by the
-  runner on automatic dispatch, or by `instrukt todo prepare|work` on
+  runner on automatic dispatch, or by `instrukt todo work` on
   deliberate pickup — exposed as `claim.held`; distinct from per-todo, per-role session bindings.
 
 **Session binding**
@@ -97,7 +97,7 @@ runner owns dispatch, and the configured runtime owns conversations.
   is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
 
-Preparation head reviews belong to the todo record: exact clean head, complete findings digest, independent reviewer and immediate integration event. One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
+One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
 ## Canonical fields
 
@@ -123,8 +123,8 @@ and issues installation credentials under
 - **Contains:** recorded intent and version, kind, retained artifact versions,
   evidence-bound stamps, approval and intent-check attribution, hold audit,
   completion evidence, per-role attempt bindings (runtime, native id, semantic key, captured and completed
-  heads) and separate preparation/work orchestrator workspace paths retained
-  through their corresponding integration and cleanup, task
+  heads) and the todo's single `<slug>/work` workspace path retained
+  through integration and cleanup, task
   schedule (`at`/`cron`, `catch_up`), optional agent/model preference consulted
   before the role mapping in `~/.instrukt/agents.yaml`, and reflected revision.
 - **Invariants:** every change, creation included, commits in one
@@ -154,11 +154,10 @@ and issues installation credentials under
 ### Domain events emitted
 
 Stamp history is durable work evidence, not an event bus. Workflow derives
-state from the record and owns lifecycle signals such as finalize readiness.
-The work finalize-ready stamp appends workflow’s `workflow.finalized`, and
-independent preparation-head approval appends `workflow.preparation_reviewed`,
-through the runner’s event-log interface. These atomic work mutations retain
-the corresponding reviewed head; workflow owns the lifecycle vocabulary.
+facts from the record and owns lifecycle signals such as finalize readiness.
+The work finalize-ready stamp appends workflow’s `workflow.finalized`
+through the runner’s event-log interface. This atomic work mutation retains
+the reviewed head; workflow owns the lifecycle vocabulary.
 
 ### Domain events consumed
 
@@ -167,9 +166,8 @@ local records and workflow results enter as evidence-bound mutations.
 
 ## Event subjects and origins
 
-Work owns no event vocabulary. Its readiness and preparation-head review stamps
-append workflow's `workflow.finalized` and `workflow.preparation_reviewed`,
-concerning the todo in its project origin
+Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
+`workflow.finalized`, concerning the todo in its project origin
 (`project/instrukt/spec/domain/workflow`).
 
 ## Use cases

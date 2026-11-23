@@ -1,18 +1,29 @@
 ---
 source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
-assertion_line: 332
 expression: cleanup()
 ---
-todo: add-depth (demo)
-flow: work
-claim: none; the todo is delivered (read-only)
-state: delivered_cleanup
-transition: start -> delivered_cleanup (#0)
-action: cleanup-delivered
-responsible: work-lead (orchestrator step)
-command: instrukt todo show add-depth
-effects:
-  branch.remove: git branch -d add-depth/work
-  remote_branch.remove: git push origin --delete add-depth/work
-instructions:
-Remove the delivered worktree and captured local/origin branch of add-depth.
+pickup: none; the todo is delivered (read-only)
+todo: add-depth (demo) [change · delivered]
+claim: held by t3:lead-1
+delivered: <commit 1>
+workspace:
+  branch: add-depth/work
+  worktree: none
+  branch head: <commit 1>
+  remote head: <commit 1> (in sync)
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  implementation-plan (v1): <digest 2> [drift: fresh]
+  plan-review-findings (v1): <digest 3>
+  quality-checklist (v1): <digest 4>
+  review-findings (v1): <digest 5>
+reviews:
+  plan_review: approve (current; target <digest 2>, report <digest 3>)
+  build_review: approve (exact_target, independent, commit <commit 1>, report <digest 5>, by t3:build-reviewer-1)
+finalize_ready: <commit 1>
+gates:
+  interference lock: free
+  prd approval: not required
+  review gate: blocked (worktree not present)

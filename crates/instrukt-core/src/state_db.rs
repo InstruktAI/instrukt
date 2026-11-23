@@ -1336,6 +1336,115 @@ mod tests {
     }
 
     #[test]
+    fn version_34_upgrades_v33_conversations_and_refusals_without_loss() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(33) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 33).unwrap();
+        conn.execute_batch(
+            "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,opening,session,source_identity,display_title)
+             VALUES ('acme','slack','C1/1.1','instrukt:conversation:acme:slack:C1/1.1','1.1','t3:sess-1','src-1','acme — #general');
+             INSERT INTO conversation_messages(company,connector,conversation,message,sender,sender_name,sender_email,written_us,written_at,arrived_at,state,text,admission_position)
+             VALUES ('acme','slack','C1/1.1','1.1','U1','Alex','alex@example.com',1,'2026-11-20T10:00:00Z','2026-11-20T10:00:01Z','answered','Hello',1);
+             INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at,admission_position)
+             VALUES ('acme','slack','C1/1.1','t1',0,'Hi there','2026-11-20T10:00:02Z',1);
+             INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,replied_at)
+             VALUES ('acme','slack','C1/1.1','UGUEST','not_own','2026-11-20T10:00:00Z','2026-11-20T10:00:01Z'),
+                    ('acme','slack','C1/1.1','U1','unavailable','2026-11-20T10:01:00Z',NULL);",
+        )
+        .unwrap();
+
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, schema_version());
+
+        let conv: (String, String, String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT role, session_scope, reply_mode, opening_conversation, display_title FROM connected_conversations WHERE conversation='C1/1.1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            conv,
+            (
+                "company-agent".to_owned(),
+                "conversation".to_owned(),
+                "turn_output".to_owned(),
+                None,
+                Some("acme — #general".to_owned()),
+            )
+        );
+
+        let display_and_thread: (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT conversation_display, thread FROM conversation_messages WHERE message='1.1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(display_and_thread, (None, None));
+
+        let refusals: Vec<(String, String, Option<String>)> = conn
+            .prepare("SELECT sender, reason, replied_at FROM conversation_refusals ORDER BY sender, reason")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            refusals,
+            vec![
+                ("U1".into(), "unavailable".into(), None),
+                (
+                    "UGUEST".into(),
+                    "not_own".into(),
+                    Some("2026-11-20T10:00:01Z".into())
+                ),
+            ]
+        );
+
+        // `not_admin` is now admitted by the CHECK constraint; invalid reasons are rejected.
+        conn.execute(
+            "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1.1','UNONADMIN','not_admin','2026-11-20T10:02:00Z')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1.1','UBAD','bogus','2026-11-20T10:02:00Z')",
+                [],
+            )
+            .is_err()
+        );
+
+        // Re-running v34 and v35 is idempotent and preserves every row.
+        let tx = conn.transaction().unwrap();
+        if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(33) {
+            step(&tx).unwrap();
+        }
+        if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(34) {
+            step(&tx).unwrap();
+        }
+        tx.commit().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM conversation_refusals", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
     fn a_database_newer_than_this_build_is_refused() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "user_version", schema_version() + 1)

@@ -18,14 +18,22 @@ pub(crate) enum Mode<'a> {
 /// signing material, App keys, and a company home's member logins and
 /// connector tokens resolve only through their typed accessors.
 fn stored_reference(path: &str) -> bool {
-    ["webhooks", "github.apps", "members", "connectors"]
-        .iter()
-        .any(|root| {
-            path == *root
-                || path
-                    .strip_prefix(root)
-                    .is_some_and(|rest| rest.starts_with('.'))
-        })
+    [
+        "webhooks",
+        "github.apps",
+        "members",
+        "connectors",
+        "mcp",
+        "mcp_clients",
+        "issuer",
+    ]
+    .iter()
+    .any(|root| {
+        path == *root
+            || path
+                .strip_prefix(root)
+                .is_some_and(|rest| rest.starts_with('.'))
+    })
 }
 
 /// Resolves paths and expands references over one configuration value.
