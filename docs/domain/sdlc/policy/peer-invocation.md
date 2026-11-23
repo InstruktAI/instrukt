@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'How the prepare orchestrator takes a design judgment still uncertain after grounding to one adversarial peer, and why no dispatched session invokes one.'
+description: 'How the todo orchestrator takes a design judgment still uncertain after grounding to one adversarial peer, and why no dispatched session invokes one.'
 visibility: 'public'
 ---
 
@@ -8,10 +8,11 @@ visibility: 'public'
 
 ## Rules
 
-- **Only the prepare orchestrator invokes a peer.** When a material design
-  judgment in preparation is still uncertain after grounding, the prepare
-  orchestrator takes it to one adversarial peer before acting on it. An existing
-  independent challenger on that exact decision counts as that peer.
+- **Only the todo orchestrator invokes a peer.** When a material design
+  judgment during preparation is still uncertain after grounding, the todo
+  orchestrator (`todo-orchestrator`) takes it to one adversarial peer before
+  acting on it. An existing independent challenger on that exact decision
+  counts as that peer.
 - **Dispatched sessions invoke none.** A reviewer, diagnoser, builder or other
   dispatched session puts what it cannot resolve into its own output and
   artifacts, where the session that dispatched it reads it and routes the next
@@ -40,7 +41,7 @@ visibility: 'public'
 
 ## Scope
 
-- The prepare orchestrator, through its brief.
+- The todo orchestrator (`todo-orchestrator`), through its brief.
 
 ## Enforcement
 

@@ -197,9 +197,9 @@ validate`, `docs validate`, `docs render --check`, `install --check` and
 `specs coverage --check` exit 1 with findings; `status` exits 0 whatever its
 report says once every part was read, and 1 when a part could not be read
 (`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
-exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo prepare`
-and `todo work` exit 1 when the next obligation cannot be rendered, and
-their output says why.
+exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
+exits 1 when the todo cannot be claimed or its factual ledger cannot be
+rendered, and its output says why.
 Nothing on the terminal is a program's debug rendering of a value: durations
 are whole seconds, kinds and verdicts their plain names. Usage errors keep
 the command-line parser's own text and exit status 2.
@@ -351,14 +351,17 @@ each generation captures its native command/thread IDs and launch request before
 creation. Lost replies replay that fixed native identity; unknown observations
 and sends leave work pending. Outstanding work after confirmed native archive or
 deletion starts a successor generation through the same owner.
-instrukt derives `<slug>/prepare` or `<slug>/work`; T3 creates the corresponding
-worktree from main and refuses an existing local phase branch. Work on another
-computer creates its local `<slug>/work` branch from `origin/<slug>/work`. Native shared children use that recorded
-workspace serially and commit directly on the todo branch; completion stamps
-release attempts atomically. Preparation uses `<slug>/prepare`, reviewed and integrated immediately before a
-separate `<slug>/work` starts from updated main. The integrator removes the
-preparation worktree and deletes its branch locally and on origin. Ad hoc work
-uses its own reviewed one-off worktree; main is integrator-only.
+instrukt derives the single repository todo branch `<slug>/work`; T3 creates the
+corresponding worktree from `origin/main` (or from an un-integrated legacy
+prepare branch during upgrade) and refuses an existing local `<slug>/work`
+branch. Work on another computer creates its local `<slug>/work` branch from
+`origin/<slug>/work`. Native shared children (both preparation and build roles)
+use that recorded workspace serially and commit directly on `<slug>/work`;
+completion stamps release attempts atomically. `kind: task` creates no git
+worktree. Pending docs fold at work delivery, and after confirmed delivery
+the integrator removes the clean `<slug>/work` worktree and deletes `<slug>/work`
+locally and on origin. Ad hoc work uses its own reviewed one-off worktree; main
+is integrator-only.
 Before dispatch each tick, the runner fetches canonical remote main and
 fast-forwards a clean canonical checkout when it lags. Post-merge publication
 and blueprint maintenance run on each computer; dirty or diverged checkouts

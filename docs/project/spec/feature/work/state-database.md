@@ -259,7 +259,7 @@ is the row with `released_at IS NULL`; at most one per todo.
 | `todo_id`, `role`, `attempt` | Assignment and monotonic positive attempt, reserved before native delegation and reused on retry. |
 | `runtime`, `semantic_key`, `display_title` | Selected runtime, stable assignment identity and independently mutable display title. Native child keys are assignment facts, not adapter lookup entries. |
 | `session` | Scoped native identity from `todo bind`, or `NULL` while unresolved. |
-| `worktree`, `branch`, `base_head` | The work phase's one shared `<slug>/work` worktree and branch and captured starting head; preparation instead records its separate `<slug>/prepare` worktree and branch. Retained after release. |
+| `worktree`, `branch`, `base_head` | The todo's single shared `<slug>/work` worktree, branch, and captured starting head (`NULL` for worktree-less `kind: task` assignments; legacy prepare rows remain readable for history). Retained after release. |
 | `completion_sequence`, `completed_head` | Releasing stamp and its exact shared head; read-only roles retain their captured head. `NULL` until completion. |
 | `failure_reason`, `failure_head`, `failure_workspace`, `failed_at` | Failure evidence and current shared head, not a recovery source branch. |
 | `released_at` | Completion, verdict, disposition or confirmed failure release time; `NULL` while outstanding. |

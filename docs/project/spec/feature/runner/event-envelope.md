@@ -104,8 +104,8 @@ deduplication remains independent. Polling producers emit only when the observed
 state changes. Upstream and canonical-main state subjects name their stable ref;
 revision evidence remains in data. Candidate CI state names the candidate commit.
 
-The shipped `runner.upstream_changed`, `runner.ci_completed`,
-`runner.main_failing` is state. `workflow.preparation_reviewed` is an occurrence bound to the exact approved preparation head.
+The shipped `runner.upstream_changed`, `runner.ci_completed`, and
+`runner.main_failing` are state.
 `runner.dependency_failing`, `workflow.finalized` and `instrukt.system.event.dead_lettered` are occurrence. Dependency failures identify the exact check run and retain its branch and commit evidence.
 External names default to occurrence. A webhook source may explicitly declare
 state names and a payload field supplying the subject under inbound-webhook-endpoint-framework.

@@ -147,7 +147,7 @@ pub fn company() -> std::sync::Arc<dyn instrukt_runner::interfaces::CompanyPorts
     ))
 }
 
-/// Work's command contract, for `instrukt todo prepare|work`'s deliberate
+/// Work's command contract, for `instrukt todo work`'s deliberate
 /// pickup claim (workflow) and for work's own commands.
 #[allow(dead_code, reason = "consumed by the todo commands in wave 3")]
 pub fn work_ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {

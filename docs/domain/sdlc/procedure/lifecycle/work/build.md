@@ -20,19 +20,24 @@ parameters:
 
 ## Goal
 
-Execute the implementation plan for a todo and produce review-ready changes.
-Candidate verification belongs to the integration gate.
+Deliver the approved intent for a todo (executing `implementation-plan` tasks when
+planning was run, or implementing directly from checked `input` and `diagnosis` on
+the fast track) and produce review-ready changes. Candidate verification belongs
+to the integration gate.
 
 ## Preconditions
 
-- `instrukt todo artifacts read {slug} implementation-plan` exists and is readable.
 - The checked `input` artifact is readable for every kind. For feature work,
   the approved `prd` derives its requirements; for bug work, `diagnosis`
-  sharpens the reported symptom without replacing `input` as intent.
+  (when settled) sharpens the reported symptom without replacing `input` as intent.
+- When the orchestrator dispatched planning, `instrukt todo artifacts read {slug} implementation-plan`
+  is readable and guides task execution. On the fast track for bounded bugs or small
+  localized changes, `input` (plus `diagnosis` when present) is the requirement source
+  and no `implementation-plan` is required.
 - `architecture` (thin doc-edit log) is readable when present and not skipped; consult the domain/design snippets it points to for technical context.
-- Before implementation, `instrukt todo artifacts read {slug} quality-checklist`
-  exists and includes `## Build Gates (Builder)`. Setup synchronization may precede implementation; the bound setup child
-  records build-start and checklist evidence before implementation starts.
+- When `quality-checklist` is present, record builder gate evidence under
+  `## Build Gates (Builder)`. On the fast track, neither `quality-checklist` nor a
+  separate `setup` child is required before implementation starts.
 - The todo scope is implementable in one build phase.
 
 ## Steps
@@ -50,17 +55,22 @@ the integration gate; project-owned hooks and CI retain their own checks. When n
 with the governing contract.
 
 1. Read `input` to confirm the checked intent and scope constraints. For a
-   feature, also read `prd`; for a bug, read `diagnosis`. Derived artifacts
+   feature, also read `prd`; for a bug, read `diagnosis` when present. Derived artifacts
    carry no authority to widen the recorded intent.
 2. Read `architecture` when present and not skipped — it is the thin
    doc-edit log; consult the domain/design snippets it points to for
    technical context and intended invariants. The prepared success criteria are
    the verification contract.
-3. Read the implementation-plan artifact via
+3. When `implementation-plan` is present, read it via
    `instrukt todo artifacts read {slug} implementation-plan` and identify the tasks
-   not yet delivered by commits in the worktree.
-4. Work from the scenario delta. The prepared artifacts identify the feature-spec scenarios this
-   todo delivers — added, changed, and removed. For each:
+   not yet delivered by commits in the worktree. When no `implementation-plan` is
+   present (fast track), derive the minimal bounded implementation directly from
+   `input` (plus `diagnosis` when settled) and stop to escalate to `todo-orchestrator`
+   if blast radius exceeds a small localized change.
+4. When prepared artifacts or feature-spec deltas are present, work from the
+   scenario delta they identify — added, changed, and removed. (On the fast track
+   with no feature-spec delta, bind or update tests covering the `input` intent
+   under `policy/testing`.) For each spec scenario:
    - **Added scenario** — bind it: write the test at the spec-mirrored path
      and confirm it fails, implement the required behavior, then confirm it passes.
    - **Changed scenario** — update the bound test to the new contract
@@ -118,7 +128,7 @@ with the governing contract.
    decomposition, which a plan anticipates rather than binds
    (`sdlc/policy/preparation-artifact-quality`). Record a departure from what
    the plan names, with its reason, in the todo `log`,
-   where the build reviewer reads it. Kick back to prepare when code reality invalidates
+   where the build reviewer reads it. Kick back to `todo-orchestrator` when code reality invalidates
    the contract or a reviewed decision — not whenever implementation differs
    from prose. Never revise the plan to fit what you built. A material decision
    discovered during build — one
@@ -127,7 +137,7 @@ with the governing contract.
    authorize the decision. When your own earlier action created the problem, the
    first remedy is to remove or undo that cause; no mechanism is added to
    accommodate a state, premise, or branch you introduced. Technical uncertainty
-   goes to the reviewer through evidence or to prepare through kickback; a
+   goes to the reviewer through evidence or to `todo-orchestrator` through kickback; a
    question to the human about anything outside their lane
    (`general/policy/human-contract`) is itself a defect.
 9. **Honor the structural ratchet on the change path.** Execute a planned
@@ -144,28 +154,28 @@ with the governing contract.
 ### Test-quality self-review
 
 Before declaring the build complete, apply every `TQ-*` predicate in the
-quality-predicate registry. Under `Build Gates (Builder)` in the
-`quality-checklist` artifact, record one line per ID: concrete evidence for a
-triggered predicate or `N/A` with a reason. Name the production mutation each
-behavioral or smoke test kills. A green suite is execution evidence, not this
-self-review.
+quality-predicate registry. When `quality-checklist` is present, record one line
+per ID under `Build Gates (Builder)`: concrete evidence for a triggered predicate
+or `N/A` with a reason (otherwise include the summary in your build report). Name
+the production mutation each behavioral or smoke test kills. A green suite is
+execution evidence, not this self-review.
 
 ### Pre-completion checklist
 
-1. Every implementation-plan task is delivered by a commit or explicitly recorded in `deferrals`.
+1. When `implementation-plan` is present, every planned task is delivered by a commit or explicitly recorded in `deferrals`; otherwise, the checked `input` intent is completely delivered.
 2. Confirm each added or changed bound test failed before implementation and
    passes afterward under the project's testing contract (`sdlc/policy/testing`).
    Record that evidence for integration; do not add a full-suite gate here.
 3. Where the project permits test authorship, every in-scope added or changed scenario is bound; removed scenarios' tests are deleted.
 4. No spec-bound assertion weakened or deleted; no in-scope spec has orphan bindings (run
    `instrukt specs coverage --check` on demand to check).
-5. Every `TQ-*` predicate has builder evidence or a reasoned `N/A` in
-   `quality-checklist`.
+5. Every `TQ-*` predicate has builder evidence or a reasoned `N/A` (in
+   `quality-checklist` when present, or in the build report on the fast track).
 6. Record applicable project quality obligations; hooks and CI own their checks.
 7. User-facing verification:
-   - For browser-based frontend or web UI changes, run a browser-automation smoke check in a real browser that exercises the changed path. Record the path exercised and the observed result in `quality-checklist.md` under the Build section.
-   - For other user-facing changes (CLI output, TUI, interactive behavior), verify the change is observable and record what was checked and the result in `quality-checklist.md`.
-   - If verification is not possible in the build environment, note the gap explicitly in `quality-checklist.md`.
+   - For browser-based frontend or web UI changes, run a browser-automation smoke check in a real browser that exercises the changed path. Record the path exercised and the observed result in `quality-checklist` when present, or in your build report on the fast track.
+   - For other user-facing changes (CLI output, TUI, interactive behavior), verify the change is observable and record what was checked and the result in `quality-checklist` when present, or in your build report on the fast track.
+   - If verification is not possible in the build environment, note the gap explicitly in `quality-checklist` (or in your build report on the fast track).
 8. Working tree is clean: `git status`.
    - If not clean, commit all remaining files in the worktree. Everything in the worktree belongs to the task.
 9. Verify commits exist: `git log --oneline -10`.
@@ -200,7 +210,7 @@ Ready for review.
     reapply approved intent. Run checks bound to affected use cases, commit the
     resolution and re-stamp completion. A successor after confirmed failed
     release continues at this same tree's current head, with the original build
-    base preserved; missing setup and admission evidence precedes implementation.
+    base preserved.
   - **Failed project checks, a dirty worktree, a missing stamp, or stale branch
     publication:** recover within the worktree and record the result; the
     orchestrator never edits code or tests. Candidate verification remains

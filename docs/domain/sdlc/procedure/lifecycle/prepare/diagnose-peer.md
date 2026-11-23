@@ -24,13 +24,13 @@ another session, prescribe a fix, stamp the diagnosis, or drive preparation.
 
 ## Preconditions
 
-- The prepare-driving session dispatched this session for a todo whose kind is `bug` and
-  whose current derived obligation is diagnosis.
+- The dispatching `todo-orchestrator` (or `diagnosis-driver`) dispatched this
+  session for a todo whose kind is `bug` needing root-cause diagnosis.
 - `instrukt todo artifacts read {slug} input` contains the reported symptom and discovery
   context.
-- This session is recorded as the diagnosis peer for the todo. The
-  prepare-driving session retains the execution claim; the peer owns
-  investigation and revisions of `diagnosis`.
+- This session is recorded as the `diagnoser` for the todo. The dispatching
+  orchestrator retains the execution claim; the peer owns investigation and
+  revisions of `diagnosis`.
 
 ## Steps
 
@@ -90,14 +90,15 @@ another session, prescribe a fix, stamp the diagnosis, or drive preparation.
 
 ## Discipline
 
-You are the dispatched diagnosis peer, not the prepare-driving session. Do not triage,
-dispatch another worker, interrogate your own artifact, stamp the diagnosis, or advance the
-prepare state machine. Investigate independently, write `diagnosis`, prescribe no fix, and
-wait for the driver to challenge or accept the evidence.
+You are the dispatched diagnosis peer, not the dispatching `todo-orchestrator`.
+Do not triage, dispatch another worker, interrogate your own artifact, stamp
+the diagnosis, or drive todo orchestration. Investigate independently, write
+`diagnosis`, prescribe no fix, and wait for the driver to challenge or accept
+the evidence.
 
-This session is the dispatched diagnosis peer, never the prepare driver. Do not perform
+This session is the dispatched diagnosis peer, never the driving orchestrator. Do not perform
 triage, dispatch another diagnoser, interrogate your own artifact, stamp a verdict, or call
-`instrukt todo prepare`; those acts belong to the driving session. Follow evidence backward to
+`instrukt todo work`; those acts belong to the driving session. Follow evidence backward to
 the earliest violated contract, write only what the observations carry, and stop before a
 fix or verification approach.
 

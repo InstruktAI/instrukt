@@ -3,6 +3,7 @@ description: Unattended runtime adapter operations, native agent delegation and 
 visibility: public
 binding_reservations:
   UC-SS26: fix-antigravity-thought-level
+  UC-SS27: fix-false-recovery-on-released-executions
 ---
 # Session Continuity — Spec
 
@@ -457,7 +458,7 @@ instruction prose is a separate configuration surface.
 | Operation | Native translation and evidence |
 | --- | --- |
 | Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
-| Todo phase orchestrator start | Native `worktree` carries the captured remote base and phase branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
+| Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |
@@ -479,15 +480,10 @@ exposes.
 
 ### One worktree per todo team
 
-Preparation and work use separate T3-managed worktrees. instrukt derives `<slug>/prepare` and `<slug>/work`; agents never choose a bare slug or a role branch. Preparation starts from canonical remote main through native keyed launch
-with `worktree` placement on `<slug>/prepare`. Its orchestrator and native shared children all use that preparation worktree. New phases create their derived branch; a terminal successor uses native
-`existing_worktree` with its retained registered path and branch. A native follow-up never starts
-a replacement in the project root when it needs a retained phase worktree.
-Retry or wake uses the retained native assignment and its phase worktree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo prepare|work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
+Each repository todo uses one T3-managed `<slug>/work` worktree and branch (agents never choose a bare slug or a role branch; `kind: task` creates no git worktree). The unified `todo-orchestrator` starts from canonical remote main through native keyed launch with `worktree` placement on `<slug>/work` (continuing from `origin/<slug>/work` on another computer, or from a legacy un-integrated `<slug>/prepare` branch during upgrade). Its orchestrator and native shared children — `intaker`, `architect`, `planner`, `builder`, `fixer`, reviewers, `deferrer`, and `finalizer` — all share that one worktree. A terminal successor uses native `existing_worktree` with its retained registered path and branch. A native follow-up never starts a replacement in the project root when it needs a retained worktree.
+Retry or wake uses the retained native assignment and its worktree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
-Review binds the committed preparation-worktree head. An approving `instrukt todo stamp <slug> --verdict approve --phase preparation_head`, bound to `preparation-review-findings`, releases the independent reviewer. The preparer releases its claim before cleanup; that record operation appends `workflow.preparation_reviewed` atomically. The integrator merges those reviewed docs as soon as possible, before build, folds their pending markers in its integration worktree and publishes through the ordinary gate. Once integrated the docs are current on main; they do not wait for build delivery. Other todos that depend on them wait for that integration.
-
-After confirmed preparation integration, the integrator removes the clean preparation worktree and deletes `<slug>/prepare` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Work starts later from the new main with `--worktree origin/main --branch <slug>/work`; on another computer its retained published work starts with `--worktree origin/<slug>/work --branch <slug>/work`. The work orchestrator and setup, builder, reviewer, fixer, deferrer and finalizer share that one work worktree through native shared delegation. Only the integrator writes main. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
+Only the integrator writes main. Pending documentation authored in `<slug>/work` is folded into current contracts at work delivery, and after confirmed delivery the integrator removes the clean `<slug>/work` worktree and deletes `<slug>/work` locally and on `origin`. Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
 
 ### Approval attention
 
@@ -523,7 +519,28 @@ a native follow-up to it. An ended turn can leave a reusable
 conversation within that active attempt. A released finalizer's record-only
 readiness write uses its retained binding after confirmed completion and release; further
 workspace work requires a new attempt. Artifact writers and stamps retain `<runtime>:<id>` identity. A
-step is complete only with its required artifact and stamp. For a runner-owned
+step is complete only with its required artifact and stamp.
+
+A runner-owned execution lasts while its session holds the todo's execution claim
+(`project/instrukt/spec/feature/work/dependencies-and-holds`). Release of that
+claim, or its transfer to another session, ends the execution. The runner acts on
+that at the first observation that finds the claim released or held by another
+session: from that observation on it sends the former session no recovery and
+raises no anomaly for it, whether its thread is present, settled or gone
+(`general/principle/session-lifecycle`: release of a claim, end of an execution
+and loss of a session are separate facts). While the todo waits on a person, as
+work decides for its `Needs you` marker
+(`project/instrukt/spec/feature/work/github-record`), the session owes no evidence:
+an ended turn receives no recovery send and raises no anomaly, whichever state its
+thread reports (`general/principle/session-lifecycle`: runtime silence alone
+establishes no missing work). For a todo that work offers for pickup, the offer
+itself shows that no session holds the claim: that observation treats the
+execution as ended without reading workflow's assignment. An observation that
+reads workflow's current assignment for the todo
+(`project/instrukt/spec/domain/workflow`) takes the claim holder and the person
+wait from that one assignment and acts on what it read.
+
+For every other runner-owned
 execution, a present thread ending without evidence receives one recovery send;
 a repeated ending raises an anomaly. Confirmed native archive/deletion with an
 eligible active assignment uses the common successor and work-claim transaction.
@@ -535,12 +552,13 @@ conversations remains the runtime's responsibility.
 
 ### Fresh canonical base
 
-Before creating either `<slug>/prepare` or `<slug>/work`, fetch origin and use
-`t3 thread start <project> - --worktree origin/main --branch <slug>/<phase> --title <display-title>`.
+Before creating `<slug>/work`, fetch origin and use
+`t3 thread start <project> - --worktree origin/main --branch <slug>/work --title <display-title>`
+(or carry forward an un-integrated legacy prepare branch when present).
 Only the integrator writes and pushes gate-green exact commits to main; local
-main can lag and supplies no new-phase base. A fetch failure leaves startup
+main can lag and supplies no new-worktree base. A fetch failure leaves startup
 unperformed, with its cause visible. A retained published `<slug>/work` on
-another computer is continuation of the existing phase, using freshly fetched
+another computer is continuation of the existing branch, using freshly fetched
 `origin/<slug>/work` with the same local branch name; it is never reset to main.
 For repositories whose canonical branch has another name, use that remote ref.
 
@@ -746,6 +764,16 @@ Then the runtime binding, work binding and claim move to one successor atomicall
 And a lost acknowledgement replays that successor with the same IDs
 ```
 
+### UC-SS27: A handed-off orchestrator's conversation stays settled
+
+```gherkin
+Given a developer's orchestrator released its todo at the approved preparation handoff and settled its conversation
+And the todo still awaits integration of its preparation
+When the runner next considers the project's work
+Then that conversation receives no recovery message and stays settled
+And no stopped execution is reported for it
+```
+
 ### UC-SS25: Keyed recovery commands (retired)
 
 Retired: the former operator/title-discovery goal is removed.
@@ -801,6 +829,33 @@ And those options carry no other effort option
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
   a visible gap; the operational session surface is independent of extracted
   history under `project/instrukt/spec/feature/runner/history`.
+
+- T3 reports a turn that ended on a plain message, with no pending request, as
+  `input-ready`; nothing in the thread tells a session that paused there from
+  one that stopped. This bears only on an execution that still lasts: a session
+  that an observation finds without the todo's execution claim is not weighed,
+  whatever its thread shows. For a session that holds the claim, such an ending
+  is left alone while the work record shows the todo waiting on a person. Outside that
+  wait, when the workflow state has not advanced, it receives the one recovery
+  send and a repeated ending raises the anomaly. A thread reported as `running`
+  or `needs-input` is sent no recovery, and that state alone raises no anomaly.
+  An earlier recovery input that ended unconfirmed is a separate ground
+  (`project/instrukt/spec/feature/runner/anomaly-notification`): with the
+  workflow state unmoved and outside a person wait, it raises the anomaly where
+  the execution reaches the recovery decision, a thread reported as `running`
+  or `needs-input` included. Confirmed native archive or deletion with an
+  eligible active assignment does not reach that decision: the successor
+  transaction comes first, and that input raises no anomaly there.
+- An observation that reads the claim holder and the person wait acts on what
+  it read. A release, a transfer or the start of a person wait that lands after
+  that reading is taken up by the next observation; the observation under way
+  can still send the recovery it decided on. The decision to send a recovery is
+  taken at observation and is not taken again at delivery, so a recovery input
+  already recorded can still reach a session whose claim was released, or whose
+  todo began waiting on a person, after it was recorded.
+  Whether and when it is delivered follows the ordinary delivery rules of
+  `project/instrukt/spec/feature/runner/procedure-event-delivery`, those for a
+  batch it shares with other entries included.
 
 ## See Also
 

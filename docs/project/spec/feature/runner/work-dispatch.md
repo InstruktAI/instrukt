@@ -92,7 +92,7 @@ A claim is held by a computer, identified by the id created once in
 `~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
 deleting it orphans this computer's live claims until they are released. On that
 computer the holder is a session bound to the todo, or the session that claimed
-it through `instrukt todo prepare|work`; any other caller is refused as "claimed
+it through `instrukt todo work`; any other caller is refused as "claimed
 elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
 it. The dispatcher records the handoff and retains conversations needed for
 later rounds or human questions. The runtime owns session ending and cleanup.
@@ -141,13 +141,15 @@ runner admission predicate or todo hold.
 do not enable or disable standing-agent event activation.
 
 In automatic mode the runner dispatches eligible work: for a todo's lane it
-starts the procedure that declares the orchestrator role of the lane's flow
-(`project/instrukt/spec/feature/workflow/workflow-definition`), and that
-session holds the claim and executes the flow's own steps. In manual mode a todo
-awaits deliberate dispatch. A released approved preparation handoff awaits integration and preparation-resource cleanup without reclaiming its preparer. After those obligations are confirmed, ordinary work pickup resumes. The workflow supplies eligibility and the next
-assignment; the runner does not replace derived workflow state with a second
-state machine. A project executes through either instrukt's workflow engine
-or another engine, never both.
+starts the procedure that declares the flavor's `orchestrator` role (`todo-orchestrator`,
+`project/instrukt/spec/feature/workflow/workflow-definition`), and that
+session holds the claim and routes primitives in prose from the factual ledger.
+In manual mode a todo awaits deliberate dispatch. Unclaimed active todos waiting
+on configured human approval or a standing `--finalize-ready` handoff are
+suppressed from re-dispatch until approval arrives or a kickback/new build resets
+the handoff. The workflow supplies eligibility and assignment facts; the runner
+does not replace workflow facts with a second state machine. A project executes
+through either instrukt's workflow engine or another engine, never both.
 
 Time determines whether an authorized task is due; due status does not replace
 the todo pickup policy. Task timing belongs to
@@ -182,21 +184,22 @@ The runner starts or reuses lane orchestrators and due tasks through the adapter
 selected by `runner.runtime`. Event activation, keyed singleton discovery and
 instrukt event/approval delivery use that same selection.
 
-instrukt derives the separate phase branches; T3 creates and owns their worktrees.
-Preparation starts with `t3 thread start <project> - --worktree origin/main
---branch <slug>/prepare --title <key>`. After reviewed preparation integrates and
-its local and origin branch are deleted, work starts from updated main with
-`--worktree origin/main --branch <slug>/work`. Another computer uses
-`--worktree origin/<slug>/work --branch <slug>/work`. Creation refuses an existing
-local phase branch. Recorded native placement is verified before binding.
+instrukt derives the single todo branch `<slug>/work`; T3 creates and owns its
+worktree. A repository todo starts with `t3 thread start <project> - --worktree
+origin/main --branch <slug>/work --title <key>` (continuing from
+`origin/<slug>/work` on another computer, or from a legacy `<slug>/prepare`
+branch during upgrade). Creation refuses an existing local `<slug>/work` branch.
+Recorded native placement is verified before binding. `kind: task` creates no
+git worktree.
 
 The orchestrator delegates workers through `runtime.dispatch` with shared
-isolation. Work children inherit the work orchestrator's `<slug>/work` worktree; preparation
-children inherit the preparation orchestrator's `<slug>/prepare` worktree. Reserve before native dispatch and bind
-the native id and matching placement before work. One outstanding workspace-role
-attempt is the work workflow's single admission. Completion and release commit
-together; the next role reviews or writes the current shared todo head. The
-orchestrator coordinates only and keeps that worktree clean between roles.
+isolation. Repository workers inherit `todo-orchestrator`'s `<slug>/work`
+worktree (`task-preparer` runs as a worktree-less child attempt on `kind: task`).
+Reserve before native dispatch and bind the native id and matching placement
+before work. One outstanding workspace/child attempt is the interference lock.
+Completion and release commit together; the next role reviews or writes the
+current shared todo head. The orchestrator coordinates only and keeps that
+worktree clean between roles.
 
 The runtime owns native parent linkage and results. Ambiguous child starts stay
 outstanding for recovery from native task evidence. Tick and run never observe
@@ -205,12 +208,12 @@ children, compose their ending notices or turn stamps/verdicts into dispatch eve
 ### Deliberate pickup and switched-off modules
 
 With `runner.autostart` false, a session picks up work deliberately with
-`instrukt todo prepare <slug>` or `instrukt todo work <slug>`, which records the claim as automatic dispatch does. Preparation retains the
-project-folder orchestrator. Deliberate work entry ensures the todo branch and
-uses configured `runtime.start_thread` to place its orchestrator in the todo's
-one managed worktree, or wakes its existing bound orchestrator; invoking the
-record command from an unrelated checkout does not place a workspace. A due task
-keeps its own task execution placement.
+`instrukt todo work <slug>`, which records the claim as automatic dispatch does.
+Deliberate work entry ensures the `<slug>/work` branch and uses configured
+`runtime.start_thread` to place its orchestrator in the todo's one managed
+worktree, or wakes its existing bound orchestrator; invoking the record command
+from an unrelated checkout does not place a workspace. A due task keeps its own
+task execution placement.
 
 A command of a switched-off module refuses and names the door: `todo` names
 `modules.todos`; `sessions` and `tick` refuse only

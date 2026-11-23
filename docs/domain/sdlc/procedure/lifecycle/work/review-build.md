@@ -22,12 +22,14 @@ shared review procedure supplies the review judgment.
 
 ## Preconditions
 
-- The slug was supplied by the dispatching work orchestrator.
+- The slug was supplied by the dispatching `todo-orchestrator`.
 - The checked `input` resolves for every kind; a feature also has its approved
-  `prd`, and a bug has its settled `diagnosis`.
-- `implementation-plan` exists for every kind.
+  `prd`, and a bug has its `diagnosis` when diagnosis was dispatched.
+- `implementation-plan` and `plan-review-findings` are readable when planning
+  was dispatched (fast-track bounded bugs and small localized changes review
+  directly against `input` and any settled `diagnosis`).
 - `architecture` is readable when present and not skipped.
-- `quality-checklist` exists with Build and Review sections.
+- `quality-checklist` is readable when present.
 - The build phase completed for the slug.
 
 ## Steps
@@ -48,15 +50,14 @@ Apply the artifact-discovery rule from
 artifacts, read `log` when present, and read every artifact relevant to the
 review.
 
-Read in full:
+Read in full (for every artifact present on the slug):
 
-- `input` and, for a feature, `prd`. For a bug, also read `diagnosis`.
+- `input` and, for a feature, `prd`. For a bug, also read `diagnosis` when present.
   Derived artifacts do not replace the checked input.
 
 - `architecture` when present, plus the domain or design snippets it indexes.
-- `implementation-plan`.
-- `plan-review-findings`.
-- `quality-checklist`.
+- `implementation-plan` and `plan-review-findings` when present.
+- `quality-checklist` when present.
 - The relevant project README, generated agent instructions, and current
   project documentation through `instrukt docs`.
 
@@ -101,8 +102,10 @@ them unless the review scope explicitly includes planning or state edits.
 
 ### 2. Check build completeness
 
-- Every implementation-plan task is delivered by a commit or explicitly
-  deferred under the plan.
+- When `implementation-plan` is present, every planned task is delivered by a
+  commit or explicitly deferred under the plan; when no plan was dispatched
+  (fast track), the checked `input` intent (sharpened by `diagnosis` when
+  present) is completely delivered.
 - Every deferred task is justified. A deferred task whose subject is a defect
   in the delivered change is not justified: the delivery is incomplete.
 - Every ratchet candidate names the structural-ratchet condition that failed

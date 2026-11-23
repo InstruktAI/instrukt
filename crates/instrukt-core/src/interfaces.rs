@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::ids::{CommitSha, ProjectSlug, ProviderInstanceId, RoleName, SnippetId, TodoSlug};
+use crate::ids::{CommitSha, ProjectSlug, ProviderInstanceId, RoleName, TodoSlug};
 
 /// Caller identity supplied by the explicitly selected runtime adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,22 +52,19 @@ pub trait TodoExistence: Send + Sync {
     fn todo_exists(&self, project: &ProjectSlug, slug: &TodoSlug) -> Result<bool, InterfaceError>;
 }
 
-/// The roles and dispatched procedures of the selected workflow flavor
-/// (workflow, through the `todos` module).
+/// The roles of the selected workflow flavor (workflow, through the `todos`
+/// module).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FlavorMembership {
-    /// `roles:` declared by the selected workflow's `actions.yaml`.
+    /// `roles:` declared by the selected workflow's `workflow.yaml`.
     pub roles: Vec<RoleName>,
-    /// Procedures dispatched by the selected workflow's actions.
-    pub dispatched_procedures: Vec<SnippetId>,
 }
 
-/// The roles and dispatched procedures of the selected workflow flavor
-/// (workflow, through the `todos` module). Used by docs to validate
-/// procedure roles.
+/// The roles of the selected workflow flavor (workflow, through the `todos`
+/// module). Used by docs to validate procedure roles.
 pub trait FlavorRoles: Send + Sync {
-    /// The declared roles and dispatched procedures for the project at
-    /// `project_root`, read from the flavor its configuration selects.
+    /// The declared roles for the project at `project_root`, read from the
+    /// flavor its configuration selects.
     fn declared(&self, project_root: &Path) -> Result<FlavorMembership, InterfaceError>;
 }
 
@@ -87,10 +84,8 @@ pub struct FlavorFinding {
 pub struct FlavorDeclarations {
     /// `roles:` in declaration order.
     pub roles: Vec<RoleName>,
-    /// Each flow's declared `orchestrator` role, by flow name.
+    /// The flavor's declared `orchestrator` role, by manifest name.
     pub orchestrators: Vec<(String, RoleName)>,
-    /// Each action whose command names a procedure, with that procedure.
-    pub action_procedures: Vec<(String, SnippetId)>,
 }
 
 /// The outcome of checking one authored flavor.

@@ -343,7 +343,7 @@ Before crediting any test as meaningful coverage, name the concrete production-c
      A test paying per-cycle cost for a static property — or a custom lint guard duplicating what a type would enforce — is the anti-pattern, not the fix.
 - Reject **placeholder or xfail "spec" tests** that document intended-but-not-yet-implemented behavior. The spec-anchored model has no waiting-to-flip tests: an unbound scenario is tracked as coverage backlog by the coverage tool, not as a test sitting in `tests/`. A test exists only to bind a scenario it currently satisfies. Also verify each binding is honest — it drives the real system for its scenario without mocking the thing under test — and that no in-scope spec has orphan or duplicate bindings (`instrukt specs coverage` can be run on demand to surface these).
 
-- Reject **an unreserved scenario binding** at plan-review anticipation. Every scenario a plan declares it will bind is reserved in the preparation worktree and integrated to main before build — enclosed by this todo's pending `planned` or `planned-change` marker. A plan that declares a binding for a scenario enclosed by a different in-flight todo's pending marker is a **Requirement-Violation**: the scenario is already reserved, and a second binding is the cross-worktree duplicate the integration gate would otherwise catch. The check is structural — scenario id to owning slug — and `instrukt specs reserve` surfaces the collisions on demand.
+- Reject **an unreserved scenario binding** at plan-review anticipation. Every scenario a plan declares it will bind is reserved in `<slug>/work` — enclosed by this todo's pending `planned` or `planned-change` marker (reaching `main` when the todo delivers). A plan that declares a binding for a scenario already reserved on `main` or enclosed by a different in-flight todo's pending marker is a **Requirement-Violation**: the scenario is already reserved, and a second binding is the cross-worktree duplicate the integration gate catches. The check is structural — scenario id to owning slug — and `instrukt specs reserve` surfaces on-main collisions on demand.
 
 - Reject **refactor-leftover existence checks** that assert a removed source path remains absent. Git history records what was removed; the test adds nothing.
 - Reject **filesystem-inventory snapshots** whose captured value is a collection of paths produced by walking a directory tree. The snapshot pins the implementation's output layout, not behavior. If the behavior is "no files written to this root," assert that condition directly without snapshotting an inventory.
@@ -504,14 +504,15 @@ environment. Such a literal in a committed configuration file is **Critical**,
 whoever wrote it and whatever the delivery's subject: a fork or another
 installation inherits it as if it were its own.
 
-**Work-phase doc freeze (build reviews only):** the doc layer is authored at
-preparation worktrees and folded at immediate preparation integration; the work phase executes a frozen
-contract. A lifecycle work-phase diff (slug worktree) that touches `docs/**` is
-**Critical** — out of jurisdiction regardless of the edit's quality or size. The
-correct route for a doc need discovered mid-build is the kickback path back to
-prepare, never an in-worktree doc edit. This rule does not apply to commit
-reviews of `main`-branch doc commits, which are prepare-side or in-context doc
-work by design.
+**Worktree doc boundary (build reviews):** pending documentation and code share
+the todo's single `<slug>/work` worktree, so pending snippet edits under
+`docs/**` in `<slug>/work` are in jurisdiction and reviewed under the doc lanes
+below (including `Doc-snippet hygiene`). Folding pending markers
+(`instrukt docs fold`) or committing directly on `main` remains strictly out of
+jurisdiction (**Critical**) — both belong exclusively to `integrate` at delivery.
+A builder discovering an unexpected contract or doc need mid-build surfaces it to
+`todo-orchestrator` so the owning doc/planning update happens cleanly in
+`<slug>/work` rather than silently altering approved scope.
 
 Missing documentation updates are **Important** findings. Missing config surface updates are **Critical** (agents depend on accurate config specs).
 
@@ -762,7 +763,7 @@ Severity guidance:
 
 **Authority:** `sdlc/policy/todo-creation-discipline` and `general/policy/documentation-discipline`.
 
-Conditional lane. Triggers only for an ad-hoc commit review with no prepare artifacts; in a lifecycle work review the prepare phase owns doc reflection and this lane is a no-op.
+Conditional lane. Triggers for an ad-hoc commit review with no prepare artifacts, or for a fast-track lifecycle review where no separate preparation pass authored pending docs; when a todo's preparation pass already authored pending docs on `<slug>/work`, the Documentation and Doc-hygiene lanes assess them directly and this lane verifies no contract delta was missed.
 
 For an ad-hoc commit review, establish whether the work qualified for its execution route under the intake contract. Commit size, file count and absence of prepare artifacts do not establish a violation.
 

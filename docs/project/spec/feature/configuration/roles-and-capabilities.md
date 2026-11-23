@@ -62,7 +62,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
 | Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`, Bug reports); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
-| Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo prepare|work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
+| Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
 | Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
 | Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
 | Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate|schema`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
@@ -158,7 +158,7 @@ column names the identity reference, not another model/provider choice.
 | `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer` | `focused` | `read`, `review` | reviewer |
 | `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
 | `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
-| `prepare-orchestrator`, `work-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
+| `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
 | `integrator` | `standing` | `read`, `record`, `orchestrate`, `integrate` | project |
 | `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |

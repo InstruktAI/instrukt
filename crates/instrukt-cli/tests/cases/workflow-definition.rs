@@ -1,7 +1,8 @@
 //! A project's workflow as its flavor configures it
-//! (`docs/project/spec/feature/workflow/workflow-definition.md`): the next
-//! obligation follows the published definition, actions and instructions,
-//! and changing them changes the obligation with the same engine.
+//! (`docs/project/spec/feature/workflow/workflow-definition.md`): the flavor's
+//! `workflow.yaml` declares the unified orchestrator, capabilities, and roles,
+//! while code serves a facts-only ledger (`instrukt todo work` / `todo show`)
+//! without any YAML state machine.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -20,36 +21,31 @@ fn the_next_obligation_follows_the_configured_order_actions_and_instructions() {
     let slug = "tidy-config";
     crew.project
         .create(slug, "change", "Sort the configuration keys.");
-    let before = crew.next("prepare", slug);
+    let before = crew.next("work", slug);
 
-    // The developer reconfigures the flavor: a change now starts with a
-    // PRD, drafted by another command, with other instructions.
+    // Reconfiguring the flavor's prose orchestrator role updates dispatch and
+    // deliberate placement with zero engine changes.
     let flavor = &crew.flavor.repo;
-    let prepare = flavor
-        .read("docs/domain/crew/workflow/prepare.yaml")
-        .replace(
-            "  to: plan_drafting\n  when: {equals: [kind, change]}\n  action: draft-plan",
-            "  to: prd_drafting\n  when: {equals: [kind, change]}\n  action: draft-prd",
-        );
-    let actions = flavor
-        .read("docs/domain/crew/workflow/actions.yaml")
-        .replace(
-            "draft-prd:\n  command: instrukt docs get crew/procedure/intake",
-            "draft-prd:\n  command: instrukt docs get crew/procedure/prepare-lead --closure",
-        );
+    let workflow_yaml = flavor
+        .read("docs/domain/crew/workflow/workflow.yaml")
+        .replace("orchestrator: todo-lead", "orchestrator: delivery-lead")
+        .replace("- todo-lead", "- delivery-lead");
     flavor
-        .write("docs/domain/crew/workflow/prepare.yaml", &prepare)
-        .write("docs/domain/crew/workflow/actions.yaml", &actions)
+        .write("docs/domain/crew/workflow/workflow.yaml", &workflow_yaml)
         .write(
-            "docs/domain/crew/workflow/templates/draft-prd.md",
-            "Write down what {slug} must achieve before planning it.\n",
+            "docs/domain/crew/procedure/todo-lead.md",
+            "---\ndescription: The delivery-lead procedure.\nrole: delivery-lead\nactivation_trigger: When delivery is led.\nparameters:\n  - name: slug\n    required: true\n---\n\n# delivery-lead — Procedure\n\n## Goal\n\nRoute in prose.\n\n## Preconditions\n\nNone.\n\n## Steps\n\n1. Inspect ledger.\n\n## Outputs\n\nDone.\n\n## Recovery\n\nRetry.\n",
         );
     crew.flavor
-        .republish(&crew.project.env, "start changes with a PRD");
-    let after = crew.next("prepare", slug);
+        .republish(&crew.project.env, "rename unified orchestrator role");
 
-    insta::assert_snapshot!(
-        "reconfigured-obligation",
-        redact(&format!("{before}=====\n{after}"))
+    let shown = crew.todo(["show", slug, "--json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert_eq!(parsed["ledger"]["slug"], slug);
+    assert_eq!(
+        parsed["ledger"]["gates"]["prd_approval"]["status"],
+        "not_required"
     );
+
+    insta::assert_snapshot!("reconfigured-obligation", redact(&before));
 }

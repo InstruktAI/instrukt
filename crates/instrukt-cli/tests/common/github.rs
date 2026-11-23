@@ -37,15 +37,25 @@
 //! so there is no `412`; a test simulates the other computer with
 //! [`FakeGitHub::edit_issue`] or [`FakeGitHub::edit_comment`], and the
 //! client meets the newer revision when it reads. Unreachability is
-//! [`FakeGitHub::stop`] (connections refused) until [`FakeGitHub::resume`]
-//! on the same address. Rate limiting and other failures are one-shot
-//! answers queued with [`FakeGitHub::respond_once`] or
+//! [`FakeGitHub::stop`] until [`FakeGitHub::resume`]: the address stays the
+//! fake's own, an exchange still open when `stop` returns ends without the
+//! rest of its response, and an exchange on a connection made while
+//! stopped ends without any byte of one, so the client meets a failed
+//! exchange without waiting. Response bytes the client already received
+//! stay received. The fake listens on its address for its whole life and
+//! relays each connection to its HTTP server on a private address while it
+//! answers; a failure of that transport fails the test when the fake is
+//! dropped, and a [`FakeGitHub::resume`] once nothing accepts on the
+//! address fails at once with it. Rate limiting and other failures are
+//! one-shot answers queued with [`FakeGitHub::respond_once`] or
 //! [`FakeGitHub::rate_limit_next`].
 
 use std::collections::{BTreeMap, VecDeque};
-use std::net::SocketAddr;
+use std::io;
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::panic::AssertUnwindSafe;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -182,33 +192,150 @@ impl StatusState {
     }
 }
 
-/// The running fake. Dropping it stops the server.
+/// The running fake. Dropping it stops the server and releases its
+/// address. A failure inside the fake is recorded with its operation and
+/// cause: a socket operation of one of the fake's threads that failed, a
+/// relay or request-copy thread that could not be started, a panic in one
+/// of the fake's threads, or a drop that could not end the accept thread
+/// and so leaves the address held. Dropping the fake then fails the test,
+/// or, when the test is already failing, adds the report to its output.
+/// A socket `resume` opens itself is not recorded: when it fails, `resume`
+/// fails the test at once with the operation and cause.
 pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
-    running: Option<Running>,
+    /// The listener on `addr`, held from `start` to drop.
+    _listener: Arc<TcpListener>,
+    front: Arc<Mutex<Front>>,
+    accepting: Option<JoinHandle<()>>,
+    server: Arc<tiny_http::Server>,
+    serving: Option<JoinHandle<()>>,
     auth_clock: tempfile::TempDir,
 }
 
-struct Running {
-    server: Arc<tiny_http::Server>,
-    thread: JoinHandle<()>,
+/// What the fake's public address does with a connection.
+#[derive(Debug)]
+enum Reach {
+    /// Relays it to the HTTP server.
+    Answering,
+    /// Ends it before any byte of a response.
+    Stopped,
+    /// Still ends it, until the accept thread takes `marker`, the
+    /// connection `resume` made, from the listen queue. The queue hands
+    /// connections over in the order they were made (first in, first out
+    /// on Linux and macOS), so every one taken before `marker` was made
+    /// while the fake was stopped. Taking `marker` answers again and tells
+    /// `resumed`.
+    Resuming {
+        marker: SocketAddr,
+        resumed: Sender<()>,
+    },
+    /// The fake is being dropped: accepting ends.
+    Ending,
+    /// No thread accepts on it any more: accepting ended on a failure the
+    /// fake recorded, and connections wait unanswered in the listen queue.
+    Unattended,
+}
+
+/// The public address's transport state: its reach and both sides of every
+/// connection it is relaying.
+struct Front {
+    reach: Reach,
+    next_connection: u64,
+    relayed: BTreeMap<u64, Relayed>,
+    /// Failures of the fake's own transport, each with its operation and
+    /// cause, reported to the test when the fake ends.
+    failures: Vec<String>,
+}
+
+/// One connection the fake is relaying.
+struct Relayed {
+    client: TcpStream,
+    /// The relay's connection to the HTTP server once it is made, with the
+    /// address the HTTP server sees its requests come from.
+    server: Option<(SocketAddr, TcpStream)>,
+}
+
+impl Relayed {
+    /// Ends the connection on both sides, whatever exchange it is in.
+    fn close(self) {
+        // A side its peer already closed leaves nothing to end.
+        let _client_closed = self.client.shutdown(Shutdown::Both);
+        if let Some((_, server)) = self.server {
+            let _server_closed = server.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+impl Front {
+    /// Ends every relayed connection on both sides, whatever exchange it is
+    /// in, and forgets it.
+    fn close_relayed(&mut self) {
+        for relayed in std::mem::take(&mut self.relayed).into_values() {
+            relayed.close();
+        }
+    }
+
+    /// Ends relayed connection `id` on both sides and forgets it.
+    fn close(&mut self, id: u64) {
+        if let Some(relayed) = self.relayed.remove(&id) {
+            relayed.close();
+        }
+    }
+
+    /// Whether the HTTP server's request from `peer` came over a connection
+    /// the fake is still relaying.
+    fn relays_from(&self, peer: SocketAddr) -> bool {
+        self.relayed.values().any(|relayed| {
+            relayed
+                .server
+                .as_ref()
+                .is_some_and(|(from, _)| *from == peer)
+        })
+    }
+
+    /// Answers again and tells the waiting `resume`.
+    fn answer_again(&mut self) {
+        if let Reach::Resuming { resumed, .. } =
+            std::mem::replace(&mut self.reach, Reach::Answering)
+        {
+            // A `resume` that is no longer waiting has nothing to learn.
+            let _told = resumed.send(());
+        }
+    }
+
+    fn fail(&mut self, operation: &str, cause: &dyn std::fmt::Display) {
+        self.failures.push(format!("{operation}: {cause}"));
+    }
 }
 
 impl FakeGitHub {
     /// Starts the fake on 127.0.0.1 with an ephemeral port.
     pub fn start() -> Self {
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-        let addr = server.server_addr().to_ip().unwrap();
+        let listener = Arc::new(TcpListener::bind("127.0.0.1:0").unwrap());
+        let addr = listener.local_addr().unwrap();
+        let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let backend = server.server_addr().to_ip().unwrap();
         let auth_clock = tempfile::tempdir().unwrap();
         let clock_file = auth_clock.path().join("clock");
         std::fs::write(&clock_file, "system").unwrap();
         let state = Arc::new(Mutex::new(State::new(format!("http://{addr}"), clock_file)));
-        let running = Running::spawn(server, Arc::clone(&state));
+        let front = Arc::new(Mutex::new(Front {
+            reach: Reach::Answering,
+            next_connection: 0,
+            relayed: BTreeMap::new(),
+            failures: Vec::new(),
+        }));
+        let accepting = accept(Arc::clone(&listener), backend, Arc::clone(&front));
+        let serving = serve_requests(Arc::clone(&server), Arc::clone(&front), Arc::clone(&state));
         Self {
             state,
             addr,
-            running: Some(running),
+            _listener: listener,
+            front,
+            accepting: Some(accepting),
+            server,
+            serving: Some(serving),
             auth_clock,
         }
     }
@@ -239,20 +366,73 @@ impl FakeGitHub {
         configure_apps(env, &self.url(), &self.auth_clock.path().join("clock"));
     }
 
-    /// Stops answering: connections to the address are refused.
+    /// Stops answering. When this returns, every connection the fake was
+    /// relaying is closed, whatever exchange it was in: bytes of a response
+    /// already sent stay with the client and the rest never come. A request
+    /// the fake had already taken up has finished its model work; no later
+    /// request reaches the fake's state or its request record. A connection
+    /// made from now on ends before any byte of a response. The address
+    /// stays the fake's.
     pub fn stop(&mut self) {
-        if let Some(running) = self.running.take() {
-            running.server.unblock();
-            running.thread.join().unwrap();
+        {
+            let mut front = lock_front(&self.front);
+            // An address no thread accepts on stays so; `resume` says why.
+            if !matches!(front.reach, Reach::Unattended) {
+                front.reach = Reach::Stopped;
+            }
+            front.close_relayed();
         }
+        // A request admitted before the switch does its model work under
+        // the state lock; taking that lock once lets it finish before this
+        // returns, and every later request finds its connection closed.
+        drop(self.state.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
-    /// Answers again on the same address, with the state it had.
+    /// Answers again on the same address, with the state it had. A
+    /// connection made while the fake was stopped stays unanswered even when
+    /// it is accepted only now; from the moment this returns, every new
+    /// connection is answered. When no thread accepts on the address any
+    /// more, whether before this call or while it waits, it fails the test
+    /// with the failure that ended accepting.
     pub fn resume(&mut self) {
-        if self.running.is_none() {
-            let server = tiny_http::Server::http(self.addr).unwrap();
-            self.running = Some(Running::spawn(server, Arc::clone(&self.state)));
+        let (resumed, answering) = mpsc::channel();
+        let marker = {
+            let mut front = lock_front(&self.front);
+            if matches!(front.reach, Reach::Unattended) {
+                drop(front);
+                self.cannot_resume();
+            }
+            if !matches!(front.reach, Reach::Stopped) {
+                return;
+            }
+            // Made under the lock, so the accept thread can only classify
+            // this connection once it knows it is the marker.
+            let marker = TcpStream::connect(self.addr).unwrap_or_else(|cause| {
+                panic!("the fake GitHub could not resume: connect to its address: {cause}")
+            });
+            let from = marker.local_addr().unwrap_or_else(|cause| {
+                panic!("the fake GitHub could not resume: read its marker's address: {cause}")
+            });
+            front.reach = Reach::Resuming {
+                marker: from,
+                resumed,
+            };
+            marker
+        };
+        // The accept thread tells this wait once it takes the marker. If
+        // accepting ends first, by any route, the thread replaces this reach
+        // and so drops `resumed`, which ends the wait.
+        if answering.recv().is_err() {
+            self.cannot_resume();
         }
+        drop(marker);
+    }
+
+    /// Fails a `resume` no thread can answer, with the recorded failure
+    /// that ended accepting.
+    fn cannot_resume(&self) -> ! {
+        let failures = lock_front(&self.front).failures.join("\n");
+        panic!("the fake GitHub stopped accepting before it answered again:\n{failures}");
     }
 
     // --- seeding -----------------------------------------------------
@@ -266,6 +446,16 @@ impl FakeGitHub {
         state
             .repos
             .insert(full_name.to_owned(), Repo::new(id, owner, name));
+        self
+    }
+
+    /// Makes the repository `owner/name` public.
+    pub fn set_repo_public(&self, full_name: &str) -> &Self {
+        self.lock()
+            .repos
+            .get_mut(full_name)
+            .expect("repository was added")
+            .public = true;
         self
     }
 
@@ -522,11 +712,49 @@ impl FakeGitHub {
 
 impl Drop for FakeGitHub {
     fn drop(&mut self) {
-        if let Some(running) = self.running.take() {
-            running.server.unblock();
-            // A panic in the server thread already failed a request; the
-            // test reports its own failure.
-            let _joined = running.thread.join();
+        {
+            let mut front = lock_front(&self.front);
+            front.reach = Reach::Ending;
+            front.close_relayed();
+        }
+        if let Some(accepting) = self.accepting.take() {
+            // A blocking accept ends only on a connection, which then meets
+            // `Ending`. An accept thread that already ended needs none.
+            let woken = if accepting.is_finished() {
+                Ok(None)
+            } else {
+                TcpStream::connect(self.addr).map(Some)
+            };
+            match woken {
+                // The thread records its own panic.
+                Ok(_wake) => {
+                    let _ended = accepting.join();
+                }
+                // Joining a thread nothing can wake would wait for a client
+                // that may never come. The thread is left blocked, holding
+                // the address until the test process exits, and the test
+                // fails below.
+                Err(cause) => {
+                    lock_front(&self.front).fail("wake the accept thread to end it", &cause)
+                }
+            }
+        }
+        self.server.unblock();
+        if let Some(serving) = self.serving.take() {
+            // The thread records its own panic.
+            let _ended = serving.join();
+        }
+        let failures = std::mem::take(&mut lock_front(&self.front).failures);
+        if failures.is_empty() {
+            return;
+        }
+        let report = format!("the fake GitHub failed:\n{}", failures.join("\n"));
+        if std::thread::panicking() {
+            // A second panic would abort the test; its captured output
+            // carries the fake's failure beside the test's own.
+            eprintln!("{report}");
+        } else {
+            panic!("{report}");
         }
     }
 }
@@ -550,17 +778,225 @@ pub struct IssueView {
     pub closed: bool,
 }
 
-impl Running {
-    fn spawn(server: tiny_http::Server, state: Arc<Mutex<State>>) -> Self {
-        let server = Arc::new(server);
-        let serving = Arc::clone(&server);
-        let thread = std::thread::spawn(move || {
-            for request in serving.incoming_requests() {
-                serve(request, &state);
+/// The transport state, also after a fake thread panicked while holding
+/// it: the address keeps its reach whatever failed a request.
+fn lock_front(front: &Mutex<Front>) -> MutexGuard<'_, Front> {
+    front.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Accepts on the fake's public address until the fake is dropped, relaying
+/// each connection to `backend` while the fake answers. However accepting
+/// ends, the address is left `Unattended` unless the fake is being dropped.
+fn accept(
+    listener: Arc<TcpListener>,
+    backend: SocketAddr,
+    front: Arc<Mutex<Front>>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut relays: Vec<JoinHandle<()>> = Vec::new();
+        run_part(&front, "accept on the public address", || {
+            accept_connections(&listener, backend, &front, &mut relays);
+        });
+        let mut transport = lock_front(&front);
+        if !matches!(transport.reach, Reach::Ending) {
+            // Replacing a `Resuming` reach drops its `resumed`: the waiting
+            // `resume` learns that accepting ended.
+            transport.reach = Reach::Unattended;
+        }
+        drop(transport);
+        // Each relay records its own panic.
+        for relay in relays {
+            let _ended = relay.join();
+        }
+    })
+}
+
+/// Takes connections from the public address until the fake is dropped or
+/// accepting fails, which it records.
+fn accept_connections(
+    listener: &TcpListener,
+    backend: SocketAddr,
+    front: &Arc<Mutex<Front>>,
+    relays: &mut Vec<JoinHandle<()>>,
+) {
+    for connection in listener.incoming() {
+        let client = match connection {
+            Ok(client) => client,
+            // A connection its client ended before it was accepted
+            // leaves no one to answer.
+            Err(cause) if peer_left_or_interrupted(&cause) => continue,
+            Err(cause) => {
+                lock_front(front).fail("accept on the public address", &cause);
+                return;
+            }
+        };
+        let mut transport = lock_front(front);
+        match &transport.reach {
+            // Only this thread leaves the address unattended, once it ends.
+            Reach::Ending | Reach::Unattended => return,
+            // Dropping the connection ends it before any response.
+            Reach::Stopped => continue,
+            Reach::Resuming { marker, .. } => {
+                let marker = *marker;
+                if client.peer_addr().ok() == Some(marker) {
+                    transport.answer_again();
+                }
+                continue;
+            }
+            Reach::Answering => {}
+        }
+        let registered = match client.try_clone() {
+            Ok(registered) => registered,
+            Err(cause) => {
+                transport.fail("hold a relayed connection", &cause);
+                continue;
+            }
+        };
+        let id = transport.next_connection;
+        transport.next_connection += 1;
+        transport.relayed.insert(
+            id,
+            Relayed {
+                client: registered,
+                server: None,
+            },
+        );
+        drop(transport);
+        // A finished relay recorded its own panic; its handle has nothing
+        // left to tell.
+        relays.retain(|relay| !relay.is_finished());
+        match relay(client, backend, id, Arc::clone(front)) {
+            Ok(relay) => relays.push(relay),
+            Err(cause) => {
+                let mut transport = lock_front(front);
+                transport.fail("start a relay for a connection", &cause);
+                transport.close(id);
+            }
+        }
+    }
+}
+
+/// Runs `part` of one of the fake's threads. A panic in it is recorded as a
+/// failure of `operation`, with its message, instead of ending the thread
+/// unseen.
+fn run_part(front: &Mutex<Front>, operation: &str, part: impl FnOnce()) {
+    if let Err(panic) = std::panic::catch_unwind(AssertUnwindSafe(part)) {
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(|message| (*message).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic without a message".to_owned());
+        lock_front(front).fail(operation, &format!("the thread panicked: {message}"));
+    }
+}
+
+/// Relays one client connection to the HTTP server until either side ends
+/// it, then ends and forgets it, also after a panic in the relay.
+fn relay(
+    client: TcpStream,
+    backend: SocketAddr,
+    id: u64,
+    front: Arc<Mutex<Front>>,
+) -> io::Result<JoinHandle<()>> {
+    std::thread::Builder::new().spawn(move || {
+        run_part(&front, "relay a connection", || {
+            match TcpStream::connect(backend) {
+                Ok(server) => {
+                    if hold_server_side(&front, id, &server) {
+                        pipe(client, server, &front);
+                    }
+                }
+                Err(cause) => lock_front(&front).fail("connect to the HTTP server", &cause),
             }
         });
-        Self { server, thread }
+        lock_front(&front).close(id);
+    })
+}
+
+/// Registers the relay's connection to the HTTP server with relayed
+/// connection `id`, before any request crosses it. False when the fake
+/// stopped since it accepted the connection, which closed it, or when the
+/// server side cannot be held.
+fn hold_server_side(front: &Mutex<Front>, id: u64, server: &TcpStream) -> bool {
+    let held = server
+        .local_addr()
+        .and_then(|from| Ok((from, server.try_clone()?)));
+    let mut transport = lock_front(front);
+    match held {
+        Ok(held) => match transport.relayed.get_mut(&id) {
+            Some(relayed) => {
+                relayed.server = Some(held);
+                true
+            }
+            None => false,
+        },
+        Err(cause) => {
+            transport.fail("hold a relayed connection", &cause);
+            false
+        }
     }
+}
+
+/// Whether an accept failed only because the connection's client left
+/// first or a signal interrupted the call.
+fn peer_left_or_interrupted(cause: &io::Error) -> bool {
+    matches!(
+        cause.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted
+    )
+}
+
+/// Copies bytes both ways between `client` and `server`; when the server
+/// side ends, both connections end.
+fn pipe(mut client: TcpStream, mut server: TcpStream, front: &Arc<Mutex<Front>>) {
+    let (mut request_from, mut request_to) = match (client.try_clone(), server.try_clone()) {
+        (Ok(from), Ok(to)) => (from, to),
+        (Err(cause), _) | (_, Err(cause)) => {
+            lock_front(front).fail("relay a connection", &cause);
+            return;
+        }
+    };
+    let copying = Arc::clone(front);
+    let upstream = std::thread::Builder::new().spawn(move || {
+        run_part(&copying, "copy a relayed request", || {
+            // Either side closing ends the copy; the half-close tells the
+            // server no further request follows.
+            let _copied = io::copy(&mut request_from, &mut request_to);
+            let _closed = request_to.shutdown(Shutdown::Write);
+        });
+    });
+    let upstream = match upstream {
+        Ok(upstream) => upstream,
+        // The relay ends both sides of the connection when this returns.
+        Err(cause) => {
+            lock_front(front).fail("start a relay's request copy", &cause);
+            return;
+        }
+    };
+    // Either side closing ends the copy, and ending both connections
+    // releases the upstream copy.
+    let _copied = io::copy(&mut server, &mut client);
+    let _client_closed = client.shutdown(Shutdown::Both);
+    let _server_closed = server.shutdown(Shutdown::Both);
+    // The copy records its own panic.
+    let _ended = upstream.join();
+}
+
+/// Serves the HTTP server's requests until it is unblocked.
+fn serve_requests(
+    server: Arc<tiny_http::Server>,
+    front: Arc<Mutex<Front>>,
+    state: Arc<Mutex<State>>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        run_part(&front, "serve the HTTP server's requests", || {
+            for request in server.incoming_requests() {
+                serve(request, &state, &front);
+            }
+        });
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -593,6 +1029,8 @@ struct State {
     /// GitHub projects (Projects v2), served through `/graphql`.
     projects: Vec<Project>,
     project_discovery_available: bool,
+    /// Whether GitHub refuses this viewer's project visibility changes.
+    project_visibility_refused: bool,
     auth_clock: std::path::PathBuf,
     tokens: BTreeMap<String, (u64, jiff::Timestamp, bool)>,
     active_token: Option<String>,
@@ -612,6 +1050,7 @@ impl State {
             poll_interval: None,
             projects: Vec::new(),
             project_discovery_available: true,
+            project_visibility_refused: false,
             auth_clock,
             tokens: BTreeMap::new(),
             active_token: None,
@@ -714,6 +1153,8 @@ struct Repo {
     id: u64,
     owner: String,
     name: String,
+    /// Whether the repository is public; private by default.
+    public: bool,
     next_number: u64,
     issues: BTreeMap<u64, Issue>,
     comments: BTreeMap<u64, Comment>,
@@ -806,6 +1247,7 @@ impl Repo {
             id,
             owner: owner.to_owned(),
             name: name.to_owned(),
+            public: false,
             next_number: 0,
             issues: BTreeMap::new(),
             comments: BTreeMap::new(),
@@ -824,7 +1266,8 @@ impl Repo {
             "node_id":format!("R_{}",self.id),
             "owner": actor(&self.owner),
             "default_branch": "main",
-            "private": true,
+            "private": !self.public,
+            "visibility": if self.public { "public" } else { "private" },
         })
     }
 
@@ -1082,7 +1525,7 @@ impl Reply {
     }
 }
 
-fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
+fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front: &Mutex<Front>) {
     let method = request.method().as_str().to_owned();
     let url = request.url().to_owned();
     let (path, query) = match url.split_once('?') {
@@ -1101,8 +1544,15 @@ fn serve(mut request: tiny_http::Request, state: &Mutex<State>) {
         .collect();
     let mut body = String::new();
     let _read = request.as_reader().read_to_string(&mut body);
+    let peer = request.remote_addr().copied();
 
     let mut guard = state.lock().unwrap();
+    // Only a request on a connection the fake still relays reaches its
+    // state. One whose connection `stop` closed is dropped unanswered; the
+    // answer the HTTP server then writes meets a closed connection.
+    if !peer.is_some_and(|peer| lock_front(front).relays_from(peer)) {
+        return;
+    }
     let canned = guard
         .canned
         .iter()
@@ -2142,10 +2592,29 @@ struct Project {
     owner: String,
     number: u64,
     title: String,
+    /// Whether the project is public; GitHub creates projects private.
+    public: bool,
     fields: Vec<ProjectField>,
     items: Vec<ProjectItem>,
     views: Vec<Value>,
     workflows: Vec<Value>,
+}
+
+impl Project {
+    /// A new project as GitHub creates it: private, empty.
+    fn new(id: String, owner: String, number: u64, title: String) -> Self {
+        Self {
+            id,
+            owner,
+            number,
+            title,
+            public: false,
+            fields: Vec::new(),
+            items: Vec::new(),
+            views: Vec::new(),
+            workflows: Vec::new(),
+        }
+    }
 }
 
 /// A single-select field (other field types are seeded as fields without
@@ -2209,17 +2678,37 @@ impl FakeGitHub {
     pub fn add_project(&self, owner: &str, number: u64) -> &Self {
         let mut state = self.lock();
         let id = format!("PVT_{}", state.next_id());
-        state.projects.push(Project {
-            id,
-            owner: owner.to_owned(),
-            number,
-            title: String::new(),
-            fields: Vec::new(),
-            items: Vec::new(),
-            views: Vec::new(),
-            workflows: Vec::new(),
-        });
+        state
+            .projects
+            .push(Project::new(id, owner.to_owned(), number, String::new()));
         self
+    }
+
+    /// Whether project `<owner>/<number>` is public.
+    pub fn project_public(&self, owner: &str, number: u64) -> bool {
+        self.lock()
+            .projects
+            .iter()
+            .find(|p| p.owner == owner && p.number == number)
+            .expect("project exists")
+            .public
+    }
+
+    /// Changes project `<owner>/<number>`'s visibility, as a maintainer
+    /// does in the project's settings.
+    pub fn set_project_public(&self, owner: &str, number: u64, public: bool) {
+        self.lock()
+            .projects
+            .iter_mut()
+            .find(|p| p.owner == owner && p.number == number)
+            .expect("project exists")
+            .public = public;
+    }
+
+    /// Makes GitHub refuse this viewer's project visibility changes, as an
+    /// organization that reserves them for its owners does.
+    pub fn set_project_visibility_refused(&self, refused: bool) {
+        self.lock().project_visibility_refused = refused;
     }
 
     /// Adds a field to project `<owner>/<number>`: a single-select field
@@ -2448,6 +2937,26 @@ fn field_payload(field: &ProjectField) -> Value {
     field.json()
 }
 
+/// The value `query` gives `field` in the `input` object of its
+/// `mutation(input:{...})` call, as GitHub reads it: a `$variable` resolved
+/// from `vars`, or a literal. `None` when that input does not set the field.
+fn input_field(query: &str, mutation: &str, field: &str, vars: &Value) -> Option<Value> {
+    let call = &query[query.find(&format!("{mutation}("))?..];
+    let input = &call[call.find('{')? + 1..];
+    let input = &input[..input.find('}')?];
+    input.split(',').find_map(|entry| {
+        let (name, value) = entry.split_once(':')?;
+        if name.trim() != field {
+            return None;
+        }
+        let value = value.trim();
+        match value.strip_prefix('$') {
+            Some(variable) => Some(vars[variable].clone()),
+            None => serde_json::from_str(value).ok(),
+        }
+    })
+}
+
 /// Serves the GraphQL documents the work record sends; any other document
 /// is an error.
 fn graphql(state: &mut State, input: &Value) -> Reply {
@@ -2497,19 +3006,38 @@ fn graphql(state: &mut State, input: &Value) -> Reply {
             .unwrap_or(0)
             + 1;
         let id = format!("PVT_{}", state.next_id());
-        state.projects.push(Project {
-            id: id.clone(),
+        state.projects.push(Project::new(
+            id.clone(),
             owner,
             number,
-            title: vars["title"].as_str().unwrap().into(),
-            fields: Vec::new(),
-            items: Vec::new(),
-            views: Vec::new(),
-            workflows: Vec::new(),
-        });
+            vars["title"].as_str().unwrap().into(),
+        ));
         return Reply::ok(
             json!({"data":{"createProjectV2":{"projectV2":{"id":id,"number":number}}}}),
         );
+    }
+    if query.contains("updateProjectV2(input:") {
+        let public = input_field(query, "updateProjectV2", "public", vars);
+        if public.is_some() && state.project_visibility_refused {
+            // What GitHub was observed to answer an App the organization's
+            // visibility policy does not admit.
+            return Reply::ok(json!({"data": {"updateProjectV2": null}, "errors": [{
+                "type": "FORBIDDEN",
+                "path": ["updateProjectV2"],
+                "message": "Viewer not authorized to change project visibility",
+            }]}));
+        }
+        let Some(project) = state
+            .projects
+            .iter_mut()
+            .find(|p| vars["project"] == p.id.as_str())
+        else {
+            return graphql_error("no such project");
+        };
+        if let Some(public) = public.as_ref().and_then(Value::as_bool) {
+            project.public = public;
+        }
+        return Reply::ok(json!({"data": {"updateProjectV2": {"projectV2": {"id": project.id}}}}));
     }
     if query.contains("views(first:") {
         let project = state

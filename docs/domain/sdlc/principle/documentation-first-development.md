@@ -11,7 +11,7 @@ Documentation is the source of truth for what the system is AND what it is becom
 
 “First” orders the documentation before implementation; it does not put a tracked document before the design has formed. Conversation and scratchpad work may shape an outcome, but they are not the contract. The document becomes that contract only after the active participants converge and the authoring context releases the agreed outcome for materialization.
 
-For this to work without becoming a fiction, pending documentation distinguishes intended behavior from the current contract and identifies the delivery that makes it current. Its representation and authoring mechanics are owned by `general/spec/snippet-authoring-schema` and `general/procedure/doc-snippet-authoring`. Preparation integration activates the pending material while preserving unbound scenario ownership as `binding_reservations` until work delivers the tests. It resolves the pending material without erasing unrelated current or pending contracts. Preparation authors in `<slug>/prepare`; independent review approves that worktree's committed head, and the integrator folds and merges it as soon as possible, before any build. Its documentation is then the published contract on main. A later `<slug>/work` starts from that main. Documentation publication never waits for build delivery. The reconciliation is enforced by the system, not left to memory.
+For this to work without becoming a fiction, pending documentation distinguishes intended behavior from the current contract and identifies the delivery that makes it current. Its representation and authoring mechanics are owned by `general/spec/snippet-authoring-schema` and `general/procedure/doc-snippet-authoring`. A todo authors pending documentation and implementation in its single `<slug>/work` worktree; target retrieval (`--target <slug>`) reads that worktree so workers see the pending contract before delivery. When the todo delivers, the integrator folds the pending markers into the current contract on `main` (clearing `binding_reservations` once the attached tests are present) without erasing unrelated current or pending contracts. The reconciliation is enforced by the system, not left to memory.
 
 ## Rationale
 
@@ -44,11 +44,11 @@ consequences that shape how documentation is organized.
 
 `instrukt docs index` renders the owning slugs inline for every pending snippet — current snippets render with no suffix, a brand-new pending snippet renders with a `(delivered by: <slugs>)` suffix, and a live snippet with an incoming change renders with a `(superseded by: <slugs>)` suffix. The same listing answers "what is the state of this snippet?" and "who is on the hook to close the gap?" without a second lookup.
 
-A worker preparing a slug runs `instrukt docs index --target <slug>` to see exactly which pending snippets it owns in the preparation worktree. Before integration, target retrieval reads that worktree; after integration, the documentation is current on main and work reads the ordinary published contract. This is the canonical query that makes the doc-first discipline operational rather than aspirational: the worker asks the system what it has been put on the hook for, and the system answers.
+A worker operating on a slug runs `instrukt docs index --target <slug>` to see exactly which pending snippets it owns in `<slug>/work` (falling back to any legacy prepare branch during upgrade). Before delivery, target retrieval reads that worktree; after delivery, the documentation is folded and current on main. This is the canonical query that makes the doc-first discipline operational rather than aspirational: the worker asks the system what it has been put on the hook for, and the system answers.
 
 ### 2. A context rewrite is pending material on its domain spec
 
-A context rewrite is expressed as pending changes to its domain contract (see `sdlc/spec/domain-spec`). The previous contract remains available until reviewed preparation integrates; the authoring procedure owns its pending representation. Preparation integration makes the agreed new design the published contract before implementation. Workers and build reviewers use that published contract. Publication records the agreed design; runtime evidence still establishes which implementation is running.
+A context rewrite is expressed as pending changes to its domain contract (see `sdlc/spec/domain-spec`). The previous contract remains available on main until delivery folds the pending material; target retrieval (`--target <slug>`) surfaces the agreed new design in `<slug>/work` for planners, builders, and build reviewers. Publication records the agreed design; runtime evidence still establishes which implementation is running.
 
 This is the structural reason a service rewrite is safe under this discipline: the domain spec is the shared design anchor; both the old implementation (in its declining role) and the new one (in its ascending role) must satisfy it; the cutover happens when the new implementation satisfies the same spec the old one satisfies.
 
@@ -138,7 +138,7 @@ The intake and architecture phases of the prepare lifecycle write DIRECTLY to do
 
 Ephemeral workflow.artifacts (PRD, implementation plan, review findings, drift analysis, deferrals) remain in `workflow.artifacts` because they're process scaffolding, not behavioral contract.
 
-The prepare state machine still has phases; each phase's output shifts to docs (or stays workflow.artifact for the scaffolding). A phase with nothing to author (e.g., architecture phase on a Gherkin-only feature enrichment) produces no doc change and advances naturally.
+`todo-orchestrator` routes preparation primitives in prose inside `<slug>/work`; each primitive's output lands in pending docs (or `workflow.artifacts` for scaffolding). A primitive with nothing to author (e.g., architecture on a Gherkin-only feature enrichment) is skipped or produces no doc change cleanly.
 
 ### 5. Multi-pillar features group at intake
 
@@ -146,7 +146,7 @@ A feature whose acceptance scenarios cross multiple bounded contexts (pillars) g
 
 1. Intake identifies which contexts the feature touches (the pillars).
 2. If the per-pillar slices deliver independently (the typical case), intake creates a container todo and per-pillar children via `instrukt todo create <child> "<content>" --kind <k> --group <container>`. Each child owns its own feature spec(s) 1:1 — there is no shared feature spec across children. Each child carries its own PRD workflow.artifact scoped to its slice.
-3. Children prepare and deliver independently. Each child's pending material on its own spec resolves when its reviewed preparation integrates, before that child's build.
+3. Children prepare and deliver independently in their own `<slug>/work` worktrees. Each child's pending material on its own spec folds to `main` when that child delivers through `integrate`.
 4. If the slices MUST land together (e.g., a new event taxonomy where every consumer needs the coordinated update on the same day), intake keeps a single todo with multiple owner-local feature specs and per-context commits. Atomic delivery coordinates the owners; it never collapses them into one shared contract. Independence is the discriminator.
 
 Grouping is an agent intelligence decision derived from the work's shape — there is no human approval gate. The agent partitions the parent's EXISTING scope into children; a child that needs scope absent from the parent is a NEW todo, not a grouped child.

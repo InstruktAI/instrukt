@@ -4,9 +4,9 @@ expression: "serde_json::json!({\"author\":remote.iter().find(|i|i.get(\"pull_re
 ---
 {
   "author": {
-    "login": "instruktai-author[bot]",
-    "id": 2315,
-    "node_id": "BOT_2315",
+    "login": "instruktai[bot]",
+    "id": 1611,
+    "node_id": "BOT_1611",
     "type": "Bot"
   },
   "reviewer": {

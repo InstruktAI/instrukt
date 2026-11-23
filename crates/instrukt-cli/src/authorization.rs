@@ -49,7 +49,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
         ["todo", "artifacts", "write"] => ArtifactWrite,
         ["todo", "stamp"] => Stamp,
-        ["todo", "prepare" | "work"] => TodoOrchestration,
+        ["todo", "work"] => TodoOrchestration,
         ["todo", "attempt" | "bind"] => AssignmentWrite,
         ["todo", "deliver"] => Integration,
         [

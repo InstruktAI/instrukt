@@ -2,182 +2,317 @@
 source: crates/instrukt-cli/tests/cases/preparation.rs
 expression: "redact(&steps.join(\"=====\\n\"))"
 ---
-todo: nested-lists (demo)
-flow: prepare
-claim: claimed by this session
-state: prd_drafting
-transition: start -> prd_drafting (#0)
-action: draft-prd
-responsible: intaker (crew/procedure/intake)
-command: instrukt docs get crew/procedure/intake
-effects: none
-instructions:
-Draft the PRD of nested-lists from its input.
+pickup: claimed by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+reviews:
+  none
+gates:
+  interference lock: free
+  prd approval: pending human approval (no artifact yet)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prd_review
-transition: prd_drafting -> prd_review (#2)
-action: review-prd
-responsible: prd-reviewer (crew/procedure/review-prd)
-command: instrukt todo attempt nested-lists --role prd-reviewer --procedure crew/procedure/review-prd --args nested-lists --brief -
-native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
-
-effects: none
-instructions:
-Review the PRD of nested-lists (version <digest 1>).
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v1): <digest 2> [drift: fresh]
+reviews:
+  none
+gates:
+  interference lock: free
+  prd approval: pending human approval (target <digest 2>)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prd_revision
-transition: prd_review -> prd_revision (#3)
-action: revise-prd
-responsible: intaker (crew/procedure/intake)
-command: instrukt docs get crew/procedure/intake
-effects: none
-instructions:
-Revise the PRD of nested-lists against findings <digest 2>.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v1): <digest 2> [drift: fresh]
+  prd-review-findings (v1): <digest 3>
+reviews:
+  prd_review: needs_work (current; target <digest 2>, report <digest 3>) [open findings]
+gates:
+  interference lock: free
+  prd approval: pending human approval (target <digest 2>)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prd_review
-transition: prd_drafting -> prd_review (#2)
-action: review-prd
-responsible: prd-reviewer (crew/procedure/review-prd)
-command: instrukt todo attempt nested-lists --role prd-reviewer --procedure crew/procedure/review-prd --args nested-lists --brief -
-native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
-
-effects: none
-instructions:
-Review the PRD of nested-lists (version <digest 3>).
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v1): <digest 3>
+reviews:
+  prd_review: needs_work (stale; target <digest 2>, report <digest 3>)
+gates:
+  interference lock: free
+  prd approval: pending human approval (target <digest 4>)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prd_approval
-transition: prd_review -> prd_approval (#4)
-action: await-prd-approval
-responsible: prepare-lead (orchestrator step)
-command: instrukt todo show nested-lists
-effects: none
-instructions:
-Ask the developer to approve PRD <digest 3> of nested-lists.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: pending human approval (target <digest 4>)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: plan_drafting
-transition: prd_approval -> plan_drafting (#5)
-action: draft-plan
-responsible: planner (crew/procedure/plan)
-command: instrukt docs get crew/procedure/plan
-effects: none
-instructions:
-Draft the implementation plan of nested-lists.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prepared
-transition: plan_review -> prepared (#9)
-action: release-prepared
-responsible: prepare-lead (orchestrator step)
-command: instrukt todo update nested-lists --unclaim
-effects: none
-instructions:
-nested-lists is prepared: release the claim.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: fresh]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: drift_analysis
-transition: plan_review -> drift_analysis (#8)
-action: analyze-drift
-responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt todo attempt nested-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args nested-lists --brief -
-native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
-
-effects: none
-instructions:
-Judge the drift of nested-lists: PRD fresh, plan pending.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: pending]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prepared
-transition: plan_review -> prepared (#9)
-action: release-prepared
-responsible: prepare-lead (orchestrator step)
-command: instrukt todo update nested-lists --unclaim
-effects: none
-instructions:
-nested-lists is prepared: release the claim.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: cosmetic]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: drift_analysis
-transition: plan_review -> drift_analysis (#8)
-action: analyze-drift
-responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt todo attempt nested-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args nested-lists --brief -
-native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
-
-effects: none
-instructions:
-Judge the drift of nested-lists: PRD fresh, plan pending.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: pending]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prepared
-transition: plan_review -> prepared (#9)
-action: release-prepared
-responsible: prepare-lead (orchestrator step)
-command: instrukt todo update nested-lists --unclaim
-effects: none
-instructions:
-nested-lists is prepared: release the claim.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v1): <digest 1>
+  prd (v2): <digest 4> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: cosmetic]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: drift_analysis
-transition: plan_review -> drift_analysis (#8)
-action: analyze-drift
-responsible: drift-analyzer (crew/procedure/drift-analyze)
-command: instrukt todo attempt nested-lists --role drift-analyzer --procedure crew/procedure/drift-analyze --args nested-lists --brief -
-native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
-
-effects: none
-instructions:
-Judge the drift of nested-lists: PRD pending, plan pending.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v2): <digest 7>
+  prd (v2): <digest 4> [drift: pending]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: cosmetic]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prepared
-transition: plan_review -> prepared (#9)
-action: release-prepared
-responsible: prepare-lead (orchestrator step)
-command: instrukt todo update nested-lists --unclaim
-effects: none
-instructions:
-nested-lists is prepared: release the claim.
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v2): <digest 7>
+  prd (v2): <digest 4> [drift: cosmetic]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: cosmetic]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (current; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: approved by human (<digest 4>)
+  review gate: blocked (branch head not pushed to origin; no independent build_review approve stamp)
 =====
-todo: nested-lists (demo)
-flow: prepare
-claim: held by this session
-state: prd_review
-transition: prd_drafting -> prd_review (#2)
-action: review-prd
-responsible: prd-reviewer (crew/procedure/review-prd)
-command: instrukt todo attempt nested-lists --role prd-reviewer --procedure crew/procedure/review-prd --args nested-lists --brief -
-native dispatch (orchestrator): Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. Each phase has its own recorded worktree: preparation shares <slug>/prepare, while the later work phase shares <slug>/work. All children inherit their orchestrator's phase workspace. Use the supplied brief, semantic key, title, role-attempt facts and resolved selection.profile, selection.kind, selection.instance, selection.model, selection.effort and selection.options. Pass the resolved provider/model and provider-native effort/options to native delegation; do not substitute project defaults. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery.
-
-effects: none
-instructions:
-Review the PRD of nested-lists (version <digest 4>).
+pickup: held by this session
+todo: nested-lists (demo) [feature · active]
+claim: held by t3:lead-1
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  worktree head: <commit 1>
+  branch head: <commit 1>
+active attempts:
+  todo-lead/1 (Driver): t3:lead-1
+artifacts:
+  input (v2): <digest 7>
+  prd (v3): <digest 8> [drift: fresh]
+  prd-review-findings (v2): <digest 5>
+  implementation-plan (v1): <digest 6> [drift: cosmetic]
+  plan-review-findings (v1): <digest 5>
+reviews:
+  prd_review: approve (stale; target <digest 4>, report <digest 5>)
+  plan_review: approve (current; target <digest 6>, report <digest 5>)
+gates:
+  interference lock: free
+  prd approval: pending human approval (target <digest 8>)
+  review gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp)
