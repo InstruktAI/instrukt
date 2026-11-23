@@ -22,10 +22,24 @@ pub(super) struct Targets {
 
 struct LinkWork {
     active: bool,
+    /// The source changed since this link's last pass started.
     changed: bool,
+    /// The source asked for another read since this link's last pass started.
+    requested: bool,
     job: Option<JoinHandle<Result<bool, LinkError>>>,
     retry: Option<Instant>,
     delay: Duration,
+}
+
+/// Why a link starts a pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cause {
+    /// The source changed.
+    Change,
+    /// The retry of a failed pass is due.
+    Retry,
+    /// The source asked for another read.
+    Request,
 }
 
 impl Targets {
@@ -44,15 +58,18 @@ impl Targets {
             work.active = false;
         }
         for link in active {
-            let work = self.links.entry(link).or_insert(LinkWork {
-                active: true,
-                changed: false,
-                job: None,
-                retry: None,
-                delay: FIRST_RETRY,
-            });
+            let work = self.links.entry(link).or_insert_with(LinkWork::new);
             work.active = true;
             work.changed = true;
+        }
+    }
+
+    /// The source asks for another read: an earlier read may have come
+    /// before a commit was readable. Each link reads again, except one that
+    /// awaits the retry of a failed pass, which keeps to that retry.
+    pub(super) fn read_again(&mut self) {
+        for work in self.links.values_mut().filter(|work| work.active) {
+            work.request();
         }
     }
 
@@ -61,7 +78,7 @@ impl Targets {
         self.next_scan.is_some_and(|(at, _)| at <= now)
             || self.links.values().any(|work| match &work.job {
                 Some(job) => job.is_finished(),
-                None => work.active && (work.changed || work.retry.is_some_and(|at| at <= now)),
+                None => work.due(now).is_some(),
             })
     }
 
@@ -89,13 +106,9 @@ impl Targets {
                 };
                 work.completed(now, failed);
             }
-            if work.job.is_none()
-                && work.active
-                && (work.changed || work.retry.is_some_and(|at| at <= now))
-            {
-                retried |= work.retry.is_some_and(|at| at <= now);
-                work.changed = false;
-                work.retry = None;
+            if let Some(cause) = work.due(now) {
+                retried |= cause == Cause::Retry;
+                work.started();
                 let job = {
                     let home = home.clone();
                     let env = env.clone();
@@ -126,6 +139,48 @@ impl Targets {
 }
 
 impl LinkWork {
+    fn new() -> Self {
+        Self {
+            active: true,
+            changed: false,
+            requested: false,
+            job: None,
+            retry: None,
+            delay: FIRST_RETRY,
+        }
+    }
+    /// Why this link starts a pass at `now`, if it does. A source change
+    /// starts one whatever the link awaits; a request starts none while the
+    /// link awaits the retry of a failed pass.
+    fn due(&self, now: Instant) -> Option<Cause> {
+        if self.job.is_some() || !self.active {
+            None
+        } else if self.changed {
+            Some(Cause::Change)
+        } else if self.retry.is_some_and(|at| at <= now) {
+            Some(Cause::Retry)
+        } else if self.requested {
+            Some(Cause::Request)
+        } else {
+            None
+        }
+    }
+    /// A request to read again. A link awaiting a failed pass's retry keeps
+    /// its deadline and takes no mark; a running pass keeps the mark for
+    /// when it ends.
+    fn request(&mut self) {
+        if self.retry.is_none() {
+            self.requested = true;
+        }
+    }
+    /// A pass starts: it reads everything the marks asked for.
+    fn started(&mut self) {
+        self.changed = false;
+        self.requested = false;
+        self.retry = None;
+    }
+    /// A pass ended. A failed or uncertain one drops a request received
+    /// while it ran: its retry deadline governs.
     fn completed(&mut self, now: Instant, failed: bool) {
         self.retry = failed.then(|| now + self.delay);
         self.delay = if failed {
@@ -133,5 +188,68 @@ impl LinkWork {
         } else {
             FIRST_RETRY
         };
+        if failed {
+            self.requested = false;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_starts_a_pass_for_an_idle_link() {
+        let now = Instant::now();
+        let mut work = LinkWork::new();
+        assert_eq!(work.due(now), None);
+        work.request();
+        assert_eq!(work.due(now), Some(Cause::Request));
+    }
+
+    #[test]
+    fn a_request_starts_none_for_a_link_awaiting_its_retry_and_keeps_the_deadline() {
+        let now = Instant::now();
+        let mut work = LinkWork::new();
+        work.started();
+        work.completed(now, true);
+        let deadline = work.retry;
+        work.request();
+        assert_eq!(work.due(now), None);
+        assert_eq!(work.retry, deadline);
+        assert_eq!(work.due(now + FIRST_RETRY), Some(Cause::Retry));
+    }
+
+    #[test]
+    fn a_request_received_during_a_pass_is_kept_when_that_pass_succeeds() {
+        let now = Instant::now();
+        let mut work = LinkWork::new();
+        work.request();
+        work.started();
+        work.request();
+        work.completed(now, false);
+        assert_eq!(work.due(now), Some(Cause::Request));
+    }
+
+    #[test]
+    fn a_request_received_during_a_pass_is_dropped_when_that_pass_fails() {
+        let now = Instant::now();
+        let mut work = LinkWork::new();
+        work.request();
+        work.started();
+        work.request();
+        work.completed(now, true);
+        assert_eq!(work.due(now), None);
+        assert_eq!(work.due(now + FIRST_RETRY), Some(Cause::Retry));
+    }
+
+    #[test]
+    fn a_due_retry_starts_a_pass_with_no_mark_set() {
+        let now = Instant::now();
+        let mut work = LinkWork::new();
+        work.started();
+        work.completed(now, true);
+        assert!(!work.changed && !work.requested);
+        assert_eq!(work.due(now + FIRST_RETRY), Some(Cause::Retry));
     }
 }

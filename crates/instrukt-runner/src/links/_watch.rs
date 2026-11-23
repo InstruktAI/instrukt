@@ -196,7 +196,11 @@ fn serve(
                     links_due = true;
                     break CompanyRelayPass::CatchUp;
                 }
-                Ok(SourceWake::Timeout | SourceWake::ReadAgain) => {}
+                Ok(SourceWake::ReadAgain) => {
+                    state.targets.read_again();
+                    break CompanyRelayPass::Retry;
+                }
+                Ok(SourceWake::Timeout) => {}
                 Err(error) => return Err(LinkError::Source(error)),
             }
         };
