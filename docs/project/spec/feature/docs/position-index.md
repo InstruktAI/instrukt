@@ -58,7 +58,7 @@ entrypoint) and are not stated here. `instrukt docs validate` reads it in no
 repository. In a company home or a clone of one — a repository whose root
 holds a company's settings document, or no `instrukt.yaml` — validation
 reports nothing about that file. In a project, a `docs/index.yaml` sits at
-no position's root and is the finding below.
+no position's root and is the finding below, reported from its path.
 <!-- /planned:unify-index-yaml-entrypoints -->
 
 ### Findings
@@ -116,7 +116,7 @@ And the run does not fail on that alone
 ```gherkin
 Given an operator's clone of a company's repository, whose documents are selected by its index
 When they validate the repository's documentation
-Then nothing is reported about the company's index
+Then nothing is reported about the company's index, whatever that file holds
 Given a developer's project that holds an index at that same place
 When they validate the project's documentation
 Then that index is reported as sitting at no position's root

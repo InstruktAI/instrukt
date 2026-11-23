@@ -206,10 +206,15 @@ same content with the same instrukt release write the same bytes.
   naming the index, and the root file is left as it is. The pre-commit
   section, `instrukt docs render` and `instrukt docs render --check` decide
   these the same way.
-- **No master.** instrukt reads no `AGENTS.master.md`. One in a repository
-  is an ordinary file of that repository: no rendering, validation or
-  initialization reads, reports, writes or removes it, and its presence
-  changes no rendering. What it holds reaches agents once it is moved into
+- **No master.** `AGENTS.master.md` has no meaning as the source of an
+  entrypoint: no rendering is made from a file of that name, its presence
+  changes what no rendering holds, no check looks for it as a master, and
+  instrukt never writes or removes one. A file of that name is whatever
+  file it is where it lies. Below `docs/` it is a Markdown file like any
+  other there: in a project the ordinary snippet rules read it and report
+  what they find, and in a company home an index entry or a required read
+  may name it as a company document. Anywhere else in a repository nothing
+  reads it. What a master held reaches agents once it is moved into
   documentation the entry index selects.
 <!-- /planned-change:unify-index-yaml-entrypoints -->
 
@@ -861,6 +866,10 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 
 ### UC-AE14: A developer whose agent runtimes could not be asked is told, and the next publication catches up (retired)
 
+<!-- planned:unify-index-yaml-entrypoints -->
+### UC-AE15: A developer whose repository still carries a master keeps its instructions until they move them (retired)
+<!-- /planned:unify-index-yaml-entrypoints -->
+
 ## Known caveats
 
 <!-- planned-change:unify-index-yaml-entrypoints -->
@@ -983,9 +992,10 @@ Then the rendering reports the snippet and says to list it instead, and the inst
   `docs/index.yaml` carries no modeline
   (`project/instrukt/spec/feature/publication/editor-schemas`): an editor
   there is pointed at the schema by hand.
-- instrukt reads no `AGENTS.master.md`. A project whose purpose is still in
-  a master commits a root `AGENTS.md` without it at its next commit through
-  the hook, until the purpose is a snippet its index selects.
+- No entrypoint is rendered from an `AGENTS.master.md`. A project whose
+  purpose is still in a master commits a root `AGENTS.md` without it at its
+  next commit through the hook, until the purpose is a snippet its index
+  selects.
 - A `listed` company document is named, not held: an agent reads it from the
   checkout it works in. Where a runtime reads a company's knowledge from a
   copy of `AGENTS.md` alone, without the repository, a listed document is out

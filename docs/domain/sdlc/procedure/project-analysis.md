@@ -312,7 +312,7 @@ and select the other project snippets through `docs/project/index.yaml` so the
 commit renders `AGENTS.md`.
 
 **Case 5 — an `AGENTS.master.md` exists.**
-instrukt reads no master, so what the file holds reaches no agent.
+No entrypoint is rendered from a master, so what the file holds reaches no agent.
 Move its `## Purpose` into the project's purpose snippet and anything else it
 holds into snippets the index selects, then delete the file.
 
