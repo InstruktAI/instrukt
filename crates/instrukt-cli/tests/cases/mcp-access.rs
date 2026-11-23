@@ -1858,3 +1858,415 @@ fn zero_click_employee_sign_in_through_built_in_company_oidc_issuer() {
     c.kill_runner();
     drop(receiver);
 }
+
+// spec: project/instrukt/spec/feature/runner/mcp-access UC-MA8
+#[test]
+fn a_signed_in_login_renews_recovers_from_expired_unchecked_and_restarts_on_invalid_grant_or_mismatch()
+ {
+    const DECL_ID: &str = "acme-decl-client-id-1122";
+    const DECL_SECRET: &str = "acme-decl-client-secret-3344";
+
+    let env = TestEnv::new();
+    let redis = RedisServer::new(&env);
+    let mut c = Company::on(
+        env,
+        ", events: true",
+        &format!("redis:\n  cluster:\n    url: '{}'\n", redis.url),
+        "",
+    );
+    let machine = machine_id(&c.env);
+    let receiver = Receiver::start_for_env(&c.env, &machine, true);
+
+    let oauth = FakeOAuthMcp::start(OAuthMcpOptions {
+        name: "decl-srv".into(),
+        registration_supported: false,
+        pkce_s256_supported: true,
+        iss_parameter_supported: true,
+        openid_provider: true,
+        ema_jwt_bearer_supported: false,
+        expected_client: Some((DECL_ID.into(), DECL_SECRET.into())),
+    });
+
+    secret(&c.env, COMPANY, "DECL_ID", DECL_ID);
+    secret(&c.env, COMPANY, "DECL_SECRET", DECL_SECRET);
+    patch_company(
+        &c.env,
+        COMPANY,
+        &format!(
+            "mcp:\n  decl_srv:\n    url: '{}'\n    description: Declared-client MCP\n    speaker_login: sign-in\n    sign_in:\n      client:\n        id: '${{DECL_ID}}'\n        secret: '${{DECL_SECRET}}'\n      scopes: [openid, email, 'mcp:read']\n",
+            oauth.mcp_url
+        ),
+    );
+    // Operator materializes the declared client return address before first sign-in.
+    c.env
+        .run(
+            &c.env.path(""),
+            ["mcp", "clients", "--company", COMPANY, "--json"],
+        )
+        .success();
+
+    let home = c.env.instrukt_home().join("companies").join(COMPANY);
+    c.runtime.flag("lifecycle", true);
+    c.run();
+    c.slack.direct("D1", "USTEVEN", "Use decl_srv");
+    let session = c.session();
+    wait_for_binding(&c.env, &session);
+
+    // 1. Initial sign-in pins the declared client to oauth.base_url.
+    let dm_skip = c.slack.posts().len();
+    let oauth_ref = &oauth;
+    let first = {
+        let env_ref = &c.env;
+        let slack_ref = &c.slack;
+        std::thread::scope(|s| {
+            let approver = s.spawn(|| {
+                let link = wait_for_slack_sign_in_link(slack_ref, "D1", dm_skip);
+                assert_eq!(
+                    oauth_ref.approve_browser_link(&link, "steven@example.com"),
+                    200
+                );
+            });
+            let out = mcp_in(
+                env_ref,
+                &home,
+                &session,
+                &["call", "decl_srv", "whoami", "--json", "{}"],
+            )
+            .success();
+            approver.join().unwrap();
+            stdout(&out)
+        })
+    };
+    assert!(first.contains("decl-srv verified steven@example.com"));
+    assert_eq!(oauth.auth_code_exchanges(), 1);
+
+    // 2. "Fails otherwise": `invalid_client` and HTTP 503 fail naming the server while keeping
+    //    the login (so clearing the error lets the very next call renew without interactive sign-in).
+    oauth.expire_all_tokens();
+    oauth.set_refresh_error(Some((400, "invalid_client".into())));
+    let err_ic = stderr(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "decl_srv", "whoami", "--json", "{}"],
+        )
+        .failure(),
+    );
+    assert!(err_ic.contains("decl_srv") && err_ic.contains("invalid_client"));
+
+    oauth.set_refresh_error(Some((503, "temporarily_unavailable".into())));
+    let err_503 = stderr(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "decl_srv", "whoami", "--json", "{}"],
+        )
+        .failure(),
+    );
+    assert!(err_503.contains("decl_srv") && err_503.contains("temporarily_unavailable"));
+
+    oauth.set_refresh_error(None);
+    let recovered = stdout(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "decl_srv", "whoami", "--json", "{}"],
+        )
+        .success(),
+    );
+    assert!(recovered.contains("decl-srv verified steven@example.com"));
+    assert_eq!(oauth.auth_code_exchanges(), 1);
+    assert_eq!(oauth.refresh_exchanges(), 1);
+
+    // 3. F1 regression: refresh succeeds with a short-lived token (30s < 60s freshness window),
+    //    then UserInfo fails transiently (503) leaving `checked = 0`. Once that unchecked token is
+    //    expired/rejected, the next call MUST refresh again (not re-check the dead token forever!).
+    oauth.expire_all_tokens();
+    oauth.set_expires_in(30);
+    oauth.set_userinfo_status(Some(503));
+    let err_ui = stderr(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "decl_srv", "whoami", "--json", "{}"],
+        )
+        .failure(),
+    );
+    assert!(err_ui.contains("UserInfo") && err_ui.contains("503"));
+    assert_eq!(oauth.refresh_exchanges(), 2);
+
+    // Now simulate that unchecked token expiring before the user calls again (UserInfo would 401 it).
+    oauth.set_userinfo_status(None);
+    oauth.set_expires_in(3600);
+    oauth.expire_all_tokens();
+    let after_unchecked_expiry = stdout(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "decl_srv", "whoami", "--json", "{}"],
+        )
+        .success(),
+    );
+    assert!(after_unchecked_expiry.contains("decl-srv verified steven@example.com"));
+    assert_eq!(
+        oauth.refresh_exchanges(),
+        3,
+        "expired unchecked token must trigger a fresh refresh_token grant instead of looping on UserInfo"
+    );
+    assert_eq!(oauth.auth_code_exchanges(), 1);
+
+    // 4. `invalid_grant`: removes login and starts a new interactive sign-in DM.
+    oauth.expire_all_tokens();
+    oauth.set_refresh_error(Some((400, "invalid_grant".into())));
+    let dm_skip_ig = c.slack.posts().len();
+    let after_ig = {
+        let env_ref = &c.env;
+        let slack_ref = &c.slack;
+        std::thread::scope(|s| {
+            let approver = s.spawn(|| {
+                let link = wait_for_slack_sign_in_link(slack_ref, "D1", dm_skip_ig);
+                oauth_ref.set_refresh_error(None);
+                assert_eq!(
+                    oauth_ref.approve_browser_link(&link, "steven@example.com"),
+                    200
+                );
+            });
+            let out = mcp_in(
+                env_ref,
+                &home,
+                &session,
+                &["call", "decl_srv", "whoami", "--json", "{}"],
+            )
+            .success();
+            approver.join().unwrap();
+            stdout(&out)
+        })
+    };
+    assert!(after_ig.contains("decl-srv verified steven@example.com"));
+    assert_eq!(oauth.auth_code_exchanges(), 2);
+
+    // 5. Identity mismatch at renewal: removes and revokes the login, then starts a new sign-in.
+    let revocations_before = oauth.revocations().len();
+    oauth.expire_all_tokens();
+    oauth.set_userinfo_email_override(Some("other@example.com".into()));
+    let dm_skip_mm = c.slack.posts().len();
+    let after_mismatch = {
+        let env_ref = &c.env;
+        let slack_ref = &c.slack;
+        std::thread::scope(|s| {
+            let approver = s.spawn(|| {
+                let link = wait_for_slack_sign_in_link(slack_ref, "D1", dm_skip_mm);
+                oauth_ref.set_userinfo_email_override(None);
+                assert_eq!(
+                    oauth_ref.approve_browser_link(&link, "steven@example.com"),
+                    200
+                );
+            });
+            let out = mcp_in(
+                env_ref,
+                &home,
+                &session,
+                &["call", "decl_srv", "whoami", "--json", "{}"],
+            )
+            .success();
+            approver.join().unwrap();
+            stdout(&out)
+        })
+    };
+    assert!(after_mismatch.contains("decl-srv verified steven@example.com"));
+    assert!(
+        oauth.revocations().len() > revocations_before,
+        "identity mismatch at renewal must revoke the renewed token"
+    );
+    assert_eq!(oauth.auth_code_exchanges(), 3);
+
+    // 6. N-e check: declared `sign_in.client` TOFU issuer pin refuses redirecting `url` to a
+    //    different authorization server, names the operator rebind door, and sends zero requests to rogue /token.
+    let rogue = FakeOAuthMcp::start(OAuthMcpOptions {
+        name: "rogue-decl".into(),
+        registration_supported: false,
+        pkce_s256_supported: true,
+        iss_parameter_supported: true,
+        openid_provider: true,
+        ema_jwt_bearer_supported: false,
+        expected_client: None,
+    });
+    patch_company(
+        &c.env,
+        COMPANY,
+        &format!("mcp:\n  decl_srv:\n    url: '{}'\n", rogue.mcp_url),
+    );
+    let tofu_err = stderr(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "decl_srv", "whoami", "--json", "{}"],
+        )
+        .failure(),
+    );
+    assert!(
+        tofu_err.contains("pinned issuer") && tofu_err.contains("rotate `sign_in.client`"),
+        "expected declared-client TOFU issuer refusal with door, got: {tofu_err}"
+    );
+    assert_eq!(rogue.total_token_requests(), 0);
+
+    c.kill_runner();
+    drop(receiver);
+}
+
+// spec: project/instrukt/spec/feature/runner/mcp-access UC-MA9
+#[test]
+fn signing_out_revokes_access_token_without_refresh_and_dm_delivery_handles_retry_final_and_refusal()
+ {
+    const CLIENT_ID: &str = "acme-norefresh-client-5566";
+    const CLIENT_SECRET: &str = "acme-norefresh-secret-7788";
+
+    let env = TestEnv::new();
+    let redis = RedisServer::new(&env);
+    let mut c = Company::on(
+        env,
+        ", events: true",
+        &format!("redis:\n  cluster:\n    url: '{}'\n", redis.url),
+        "",
+    );
+    let machine = machine_id(&c.env);
+    let receiver = Receiver::start_for_env(&c.env, &machine, true);
+
+    let oauth = FakeOAuthMcp::start(OAuthMcpOptions {
+        name: "no-refresh".into(),
+        registration_supported: false,
+        pkce_s256_supported: true,
+        iss_parameter_supported: true,
+        openid_provider: true,
+        ema_jwt_bearer_supported: false,
+        expected_client: Some((CLIENT_ID.into(), CLIENT_SECRET.into())),
+    });
+    oauth.set_omit_refresh_token(true);
+
+    secret(&c.env, COMPANY, "NR_ID", CLIENT_ID);
+    secret(&c.env, COMPANY, "NR_SECRET", CLIENT_SECRET);
+    patch_company(
+        &c.env,
+        COMPANY,
+        &format!(
+            "mcp:\n  no_refresh:\n    url: '{}'\n    description: No-refresh-token MCP\n    speaker_login: sign-in\n    sign_in:\n      client:\n        id: '${{NR_ID}}'\n        secret: '${{NR_SECRET}}'\n      scopes: [openid, email]\n",
+            oauth.mcp_url
+        ),
+    );
+    c.env
+        .run(
+            &c.env.path(""),
+            ["mcp", "clients", "--company", COMPANY, "--json"],
+        )
+        .success();
+
+    let home = c.env.instrukt_home().join("companies").join(COMPANY);
+    c.runtime.flag("lifecycle", true);
+    c.run();
+    c.slack.direct("D1", "USTEVEN", "Connect no_refresh");
+    let session = c.session();
+    wait_for_binding(&c.env, &session);
+
+    // 1. Retryable Slack error (`ratelimited`): delivery worker retries and delivers the link cleanly.
+    c.slack.fail_next_post("ratelimited");
+    let dm_skip = c.slack.posts().len();
+    let oauth_ref = &oauth;
+    let first = {
+        let env_ref = &c.env;
+        let slack_ref = &c.slack;
+        std::thread::scope(|s| {
+            let approver = s.spawn(|| {
+                let link = wait_for_slack_sign_in_link(slack_ref, "D1", dm_skip);
+                assert_eq!(
+                    oauth_ref.approve_browser_link(&link, "steven@example.com"),
+                    200
+                );
+            });
+            let out = mcp_in(
+                env_ref,
+                &home,
+                &session,
+                &["call", "no_refresh", "whoami", "--json", "{}"],
+            )
+            .success();
+            approver.join().unwrap();
+            stdout(&out)
+        })
+    };
+    assert!(first.contains("no-refresh verified steven@example.com"));
+
+    // 2. Speaker signs out inside the session: with no refresh_token, instrukt revokes access_token
+    //    with `token_type_hint=access_token` and removes the login.
+    mcp_in(&c.env, &home, &session, &["sign-out", "no_refresh"]).success();
+    let revs = oauth.revocations();
+    assert_eq!(revs.len(), 1);
+    assert_eq!(
+        revs[0].1, "access_token",
+        "sign-out without a refresh token must revoke the access token with token_type_hint=access_token"
+    );
+
+    // 3. Next call starts a fresh sign-in; approving with the WRONG email refuses the login,
+    //    revokes the token at the AS, and sends the contracted refused DM to the speaker.
+    let dm_skip_refuse = c.slack.posts().len();
+    let refused_err = {
+        let env_ref = &c.env;
+        let slack_ref = &c.slack;
+        std::thread::scope(|s| {
+            let approver = s.spawn(|| {
+                let link = wait_for_slack_sign_in_link(slack_ref, "D1", dm_skip_refuse);
+                assert_eq!(
+                    oauth_ref.approve_browser_link(&link, "wrong@example.com"),
+                    200
+                );
+            });
+            let fail = mcp_in(
+                env_ref,
+                &home,
+                &session,
+                &["call", "no_refresh", "whoami", "--json", "{}"],
+            )
+            .failure();
+            approver.join().unwrap();
+            stderr(&fail)
+        })
+    };
+    assert!(refused_err.contains("did not match the speaker's email address"));
+    assert_eq!(
+        oauth.revocations().len(),
+        2,
+        "refused sign-in must revoke the received token"
+    );
+    wait("contracted refused DM delivered to speaker", || {
+        c.slack.posts().iter().skip(dm_skip_refuse).any(|p| {
+            p.channel == "D1"
+                && p.text.as_deref()
+                    == Some("That sign-in to no_refresh was not for your address and was not kept.")
+        })
+    });
+
+    // 4. Final Slack error (`user_not_found`): delivery worker immediately closes sign-in as
+    //    `undelivered` instead of hanging for 90 s.
+    c.slack.fail_next_post("user_not_found");
+    let undelivered = stderr(
+        &mcp_in(
+            &c.env,
+            &home,
+            &session,
+            &["call", "no_refresh", "whoami", "--json", "{}"],
+        )
+        .failure(),
+    );
+    assert!(
+        undelivered.contains("user_not_found"),
+        "expected undelivered failure naming user_not_found, got: {undelivered}"
+    );
+
+    c.kill_runner();
+    drop(receiver);
+}

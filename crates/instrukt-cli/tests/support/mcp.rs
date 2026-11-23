@@ -291,12 +291,18 @@ struct OAuthState {
     refresh_tokens: std::collections::BTreeMap<String, String>,
     revoked_tokens: std::collections::BTreeSet<String>,
     revoked_refresh_tokens: Vec<String>,
+    revocations: Vec<(String, String)>,
     jwt_bearers: Vec<ObservedJwtBearer>,
     auth_code_exchanges: usize,
     refresh_exchanges: usize,
     userinfo_calls: usize,
     total_token_requests: usize,
     refresh_delay_ms: u64,
+    expires_in: i64,
+    omit_refresh_token: bool,
+    userinfo_status: Option<u16>,
+    userinfo_email_override: Option<String>,
+    refresh_error: Option<(u16, String)>,
     next_token_id: usize,
 }
 
@@ -353,12 +359,18 @@ impl FakeOAuthMcp {
             refresh_tokens: std::collections::BTreeMap::new(),
             revoked_tokens: std::collections::BTreeSet::new(),
             revoked_refresh_tokens: Vec::new(),
+            revocations: Vec::new(),
             jwt_bearers: Vec::new(),
             auth_code_exchanges: 0,
             refresh_exchanges: 0,
             userinfo_calls: 0,
             total_token_requests: 0,
             refresh_delay_ms: 0,
+            expires_in: 3600,
+            omit_refresh_token: false,
+            userinfo_status: None,
+            userinfo_email_override: None,
+            refresh_error: None,
             next_token_id: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -455,15 +467,29 @@ impl FakeOAuthMcp {
                             .as_deref()
                             .and_then(|v| v.strip_prefix("Bearer "))
                             .unwrap_or_default();
-                        let email = {
+                        let (forced_status, email_override, email) = {
                             let mut s = state.lock().unwrap();
                             s.userinfo_calls += 1;
-                            s.tokens.get(token).cloned()
+                            let active_email = if s.revoked_tokens.contains(token) {
+                                None
+                            } else {
+                                s.tokens.get(token).cloned()
+                            };
+                            (
+                                s.userinfo_status,
+                                s.userinfo_email_override.clone(),
+                                active_email,
+                            )
                         };
+                        if let Some(code) = forced_status {
+                            request.respond(tiny_http::Response::empty(code)).unwrap();
+                            continue;
+                        }
                         if let Some(email) = email {
+                            let reported_email = email_override.unwrap_or_else(|| email.clone());
                             let body = json!({
                                 "sub": format!("sub:{email}"),
-                                "email": email,
+                                "email": reported_email,
                                 "email_verified": true,
                             })
                             .to_string();
@@ -487,9 +513,11 @@ impl FakeOAuthMcp {
                                 .map(|(k, v)| (k.into_owned(), v.into_owned()))
                                 .collect();
                         if let Some(tok) = params.get("token") {
+                            let hint = params.get("token_type_hint").cloned().unwrap_or_default();
                             let mut s = state.lock().unwrap();
                             s.refresh_tokens.remove(tok);
                             s.revoked_refresh_tokens.push(tok.clone());
+                            s.revocations.push((tok.clone(), hint));
                         }
                         request.respond(tiny_http::Response::empty(200)).unwrap();
                         continue;
@@ -523,9 +551,23 @@ impl FakeOAuthMcp {
                                     continue;
                                 }
                             }
-                            let delay_ms = state.lock().unwrap().refresh_delay_ms;
+                            let (delay_ms, forced_err, expires_in) = {
+                                let s = state.lock().unwrap();
+                                (s.refresh_delay_ms, s.refresh_error.clone(), s.expires_in)
+                            };
                             if delay_ms > 0 {
                                 std::thread::sleep(Duration::from_millis(delay_ms));
+                            }
+                            if let Some((status_code, err_code)) = forced_err {
+                                let resp = json!({"error": err_code}).to_string();
+                                request
+                                    .respond(
+                                        tiny_http::Response::from_string(resp)
+                                            .with_status_code(status_code)
+                                            .with_header(hdr("Content-Type", "application/json")),
+                                    )
+                                    .unwrap();
+                                continue;
                             }
                             let refresh_tok =
                                 params.get("refresh_token").cloned().unwrap_or_default();
@@ -558,7 +600,7 @@ impl FakeOAuthMcp {
                                 "token_type": "Bearer",
                                 "access_token": access_token,
                                 "refresh_token": next_refresh,
-                                "expires_in": 3600,
+                                "expires_in": expires_in,
                                 "scope": "openid email mcp:read",
                             })
                             .to_string();
@@ -620,17 +662,24 @@ impl FakeOAuthMcp {
                                     .unwrap();
                                 continue;
                             }
-                            let (access_token, refresh_token) = {
+                            let (access_token, refresh_token, expires_in) = {
                                 let mut s = state.lock().unwrap();
                                 s.next_token_id += 1;
                                 s.auth_code_exchanges += 1;
                                 let tok =
                                     format!("oauth-token-{}-{}", s.next_token_id, issued.email);
-                                let rtok =
-                                    format!("refresh-token-{}-{}", s.next_token_id, issued.email);
                                 s.tokens.insert(tok.clone(), issued.email.clone());
-                                s.refresh_tokens.insert(rtok.clone(), issued.email.clone());
-                                (tok, rtok)
+                                let rtok = if s.omit_refresh_token {
+                                    None
+                                } else {
+                                    let rt = format!(
+                                        "refresh-token-{}-{}",
+                                        s.next_token_id, issued.email
+                                    );
+                                    s.refresh_tokens.insert(rt.clone(), issued.email.clone());
+                                    Some(rt)
+                                };
+                                (tok, rtok, s.expires_in)
                             };
                             let now_s = jiff::Timestamp::now().as_second();
                             let mut id_claims = json!({
@@ -651,15 +700,17 @@ impl FakeOAuthMcp {
                                 jsonwebtoken::EncodingKey::from_ec_pem(as_private_pem.as_bytes())
                                     .unwrap();
                             let id_token = jsonwebtoken::encode(&h, &id_claims, &enc).unwrap();
-                            let resp = json!({
+                            let mut resp_obj = json!({
                                 "token_type": "Bearer",
                                 "access_token": access_token,
-                                "refresh_token": refresh_token,
                                 "id_token": id_token,
-                                "expires_in": 3600,
+                                "expires_in": expires_in,
                                 "scope": "openid email mcp:read",
-                            })
-                            .to_string();
+                            });
+                            if let Some(rt) = refresh_token {
+                                resp_obj["refresh_token"] = json!(rt);
+                            }
+                            let resp = resp_obj.to_string();
                             request
                                 .respond(
                                     tiny_http::Response::from_string(resp)
@@ -879,6 +930,30 @@ impl FakeOAuthMcp {
 
     pub fn set_refresh_delay_ms(&self, ms: u64) {
         self.state.lock().unwrap().refresh_delay_ms = ms;
+    }
+
+    pub fn set_expires_in(&self, secs: i64) {
+        self.state.lock().unwrap().expires_in = secs;
+    }
+
+    pub fn set_omit_refresh_token(&self, omit: bool) {
+        self.state.lock().unwrap().omit_refresh_token = omit;
+    }
+
+    pub fn set_userinfo_status(&self, status: Option<u16>) {
+        self.state.lock().unwrap().userinfo_status = status;
+    }
+
+    pub fn set_userinfo_email_override(&self, email: Option<String>) {
+        self.state.lock().unwrap().userinfo_email_override = email;
+    }
+
+    pub fn set_refresh_error(&self, err: Option<(u16, String)>) {
+        self.state.lock().unwrap().refresh_error = err;
+    }
+
+    pub fn revocations(&self) -> Vec<(String, String)> {
+        self.state.lock().unwrap().revocations.clone()
     }
 
     pub fn total_token_requests(&self) -> usize {

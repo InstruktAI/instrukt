@@ -632,9 +632,7 @@ fn obtain_authorization_code_login(
     //    - If the server's declared URL changed from the login's resource, remove + revoke it.
     //    - If it belongs to the active registration, attempt single-flight refresh-token renewal
     //      (or repeat identity re-check for an unchecked token) before falling back to sign-in.
-    if let Some((ref resource, _, ref ret_id, ref access_token, _, checked, ref refresh_token)) =
-        cached
-    {
+    if let Some((ref resource, _, ref ret_id, ref access_token, _, _, ref refresh_token)) = cached {
         if resource != &server.url {
             let mut db = StateDb::open(home)?;
             let path = db.path().to_path_buf();
@@ -652,20 +650,8 @@ fn obtain_authorization_code_login(
                 None => (access_token.as_str(), "access_token"),
             };
             best_effort_revoke_token(home, company, resource, ret_id, tok, hint);
-        } else if ret_id == &registration.return_id {
-            if checked != 0 && refresh_token.is_none() {
-                // Unusable login with no refresh token: delete and fall through to sign-in.
-                let mut db = StateDb::open(home)?;
-                let path = db.path().to_path_buf();
-                db.write::<_, StateDbError>(|tx| {
-                    tx.execute(
-                        "DELETE FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?4",
-                        params![company.as_str(), person, server.name.as_str(), registration.return_id],
-                    )
-                    .map_err(StateDbError::sqlite(&path))?;
-                    Ok(())
-                })?;
-            } else if let Some(renewed) = try_refresh_login(
+        } else if ret_id == &registration.return_id
+            && let Some(renewed) = try_refresh_login(
                 home,
                 company,
                 server,
@@ -675,9 +661,9 @@ fn obtain_authorization_code_login(
                 client_secret.as_deref(),
                 sign_in_cfg.identity.as_ref(),
                 force_refresh.then_some(access_token.as_str()),
-            )? {
-                return Ok(renewed);
-            }
+            )?
+        {
+            return Ok(renewed);
         }
     }
 
@@ -1796,22 +1782,84 @@ fn try_refresh_login(
         StartSignIn,
         /// Another renewal holds an unexpired lease; wait and poll again.
         Wait,
-        /// We acquired the renewal lease and must either refresh or re-check an unchecked token.
+        /// We acquired the renewal lease and must either refresh or re-check a fresh unchecked token.
         Acquired {
             generation: i64,
             subject: Option<String>,
             access_token: String,
             refresh_token: Option<String>,
-            checked: bool,
+            needs_refresh: bool,
         },
     }
 
+    const RENEWAL_LEASE_SECS: i64 = 90;
     let deadline = Instant::now() + Duration::from_secs(SIGN_IN_WAIT_SECS);
-    let (generation, subject, existing_access, existing_refresh, already_checked) = loop {
+    let inspection = home.for_inspection();
+    let (generation, subject, existing_access, existing_refresh, needs_refresh) = loop {
         let now = Timestamp::now();
         let now_str = now.to_string();
+
+        // N2: Poll under read-only StateRead first so waiting callers never contend on writer.lock.
+        if let Some(read) = StateRead::open(&inspection)? {
+            struct PeekRow {
+                resource: String,
+                return_id: String,
+                access_token: String,
+                expires_at: Option<String>,
+                checked: i32,
+                renewing_until: Option<String>,
+            }
+            let peek = read
+                .conn()
+                .query_row(
+                    "SELECT resource, return_id, access_token, expires_at, checked, renewing_until
+                     FROM mcp_logins
+                     WHERE company = ?1 AND person = ?2 AND server = ?3",
+                    params![company.as_str(), person, server.name.as_str()],
+                    |r| {
+                        Ok(PeekRow {
+                            resource: r.get(0)?,
+                            return_id: r.get(1)?,
+                            access_token: r.get(2)?,
+                            expires_at: r.get(3)?,
+                            checked: r.get(4)?,
+                            renewing_until: r.get(5)?,
+                        })
+                    },
+                )
+                .optional()
+                .map_err(StateDbError::sqlite(read.path()))?;
+            drop(read);
+            let Some(peek) = peek else {
+                return Ok(None);
+            };
+            if peek.resource != server.url || peek.return_id != registration.return_id {
+                return Ok(None);
+            }
+            let still_bad = failed_access_token.is_some_and(|bad| bad == peek.access_token);
+            if peek.checked != 0 && !still_bad && is_token_fresh(peek.expires_at.as_deref(), now) {
+                return Ok(Some(bearer_logins(&server.name, peek.access_token)));
+            }
+            let lease_held = peek
+                .renewing_until
+                .as_deref()
+                .and_then(|s| s.parse::<Timestamp>().ok())
+                .is_some_and(|until| until > now);
+            if lease_held {
+                if Instant::now() >= deadline {
+                    return Err(McpError::Server {
+                        server: server.name.to_string(),
+                        cause: "timed out waiting for an in-flight token renewal".into(),
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+        }
+
+        // N1: 90 s lease outlasts refresh POST (30 s) + identity re-check (20 s) + margin.
         let lease_until = now
-            .checked_add(jiff::SignedDuration::from_secs(30))
+            .checked_add(jiff::SignedDuration::from_secs(RENEWAL_LEASE_SECS))
             .unwrap_or(now)
             .to_string();
 
@@ -1857,8 +1905,9 @@ fn try_refresh_login(
                 if row.resource != server.url || row.return_id != registration.return_id {
                     return Ok(LeaseStep::StartSignIn);
                 }
+                let fresh = is_token_fresh(row.expires_at.as_deref(), now);
                 let still_bad = failed_access_token.is_some_and(|bad| bad == row.access_token);
-                if row.checked != 0 && !still_bad && is_token_fresh(row.expires_at.as_deref(), now) {
+                if row.checked != 0 && !still_bad && fresh {
                     return Ok(LeaseStep::AlreadyFresh(row.access_token));
                 }
                 let lease_held = row
@@ -1869,10 +1918,20 @@ fn try_refresh_login(
                 if lease_held {
                     return Ok(LeaseStep::Wait);
                 }
-                if row.checked != 0 && row.refresh_token.is_none() {
+                // F1: An unchecked token is only re-checked directly while it is still fresh
+                // and was not rejected with 401; once expired it must be refreshed again.
+                let needs_refresh = row.checked != 0 || !fresh || still_bad;
+                if needs_refresh && row.refresh_token.is_none() {
                     tx.execute(
-                        "DELETE FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?4",
-                        params![company.as_str(), person, server.name.as_str(), registration.return_id],
+                        "DELETE FROM mcp_logins
+                         WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?4 AND access_token = ?5",
+                        params![
+                            company.as_str(),
+                            person,
+                            server.name.as_str(),
+                            registration.return_id,
+                            row.access_token,
+                        ],
                     )
                     .map_err(StateDbError::sqlite(&path))?;
                     return Ok(LeaseStep::StartSignIn);
@@ -1910,7 +1969,7 @@ fn try_refresh_login(
                     subject: row.subject,
                     access_token: row.access_token,
                     refresh_token: row.refresh_token,
-                    checked: row.checked != 0,
+                    needs_refresh,
                 })
             })?
         };
@@ -1932,14 +1991,23 @@ fn try_refresh_login(
                 subject,
                 access_token,
                 refresh_token,
-                checked,
-            } => break (generation, subject, access_token, refresh_token, checked),
+                needs_refresh,
+            } => {
+                break (
+                    generation,
+                    subject,
+                    access_token,
+                    refresh_token,
+                    needs_refresh,
+                );
+            }
         }
     };
 
-    // If the stored access token is already unchecked (e.g. an earlier identity check failed),
+    // If the stored access token is unchecked AND still fresh (and not rejected),
     // skip the refresh POST and proceed directly to re-checking that token's identity.
-    let (candidate_access, candidate_refresh) = if !already_checked {
+    // Once expired, refresh it first (F1) so an expired unchecked token never locks out a speaker.
+    let (candidate_access, candidate_refresh) = if !needs_refresh {
         (existing_access, existing_refresh)
     } else {
         let Some(refresh_token) = existing_refresh else {
@@ -2010,21 +2078,31 @@ fn try_refresh_login(
                 .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned));
             if matches!(status, 400 | 401) && err_code.as_deref() == Some("invalid_grant") {
                 // Only `invalid_grant` removes the login and falls back to interactive sign-in.
+                // N4: clear lease if row wasn't deleted (e.g. refresh_token mismatch).
                 let mut db = StateDb::open(home)?;
                 let path = db.path().to_path_buf();
                 db.write::<_, StateDbError>(|tx| {
-                    tx.execute(
-                        "DELETE FROM mcp_logins
-                         WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?4 AND refresh_token = ?5",
-                        params![
-                            company.as_str(),
-                            person,
-                            server.name.as_str(),
-                            registration.return_id,
-                            refresh_token,
-                        ],
-                    )
-                    .map_err(StateDbError::sqlite(&path))?;
+                    let deleted = tx
+                        .execute(
+                            "DELETE FROM mcp_logins
+                             WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?4 AND refresh_token = ?5",
+                            params![
+                                company.as_str(),
+                                person,
+                                server.name.as_str(),
+                                registration.return_id,
+                                refresh_token,
+                            ],
+                        )
+                        .map_err(StateDbError::sqlite(&path))?;
+                    if deleted == 0 {
+                        tx.execute(
+                            "UPDATE mcp_logins SET renewing_until = NULL
+                             WHERE company = ?1 AND person = ?2 AND server = ?3",
+                            params![company.as_str(), person, server.name.as_str()],
+                        )
+                        .map_err(StateDbError::sqlite(&path))?;
+                    }
                     Ok(())
                 })?;
                 return Ok(None);
@@ -2132,6 +2210,7 @@ fn try_refresh_login(
             })?
         };
         if !saved {
+            clear_renewal_lease(home, company, person, server.name.as_str());
             revoke_direct(
                 auth,
                 &registration.client_id,
@@ -2190,6 +2269,7 @@ fn try_refresh_login(
                 })?
             };
             if !promoted {
+                clear_renewal_lease(home, company, person, server.name.as_str());
                 revoke_direct(
                     auth,
                     &registration.client_id,

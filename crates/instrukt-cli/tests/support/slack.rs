@@ -205,6 +205,8 @@ struct Workspace {
     /// Mapping from user id to DM channel id (e.g. USTEVEN -> D1), matching real Slack's
     /// `chat.postMessage(channel=<user_id>)` delivery into that user's DM channel.
     dm_channels: std::collections::BTreeMap<String, String>,
+    /// One-shot error code returned by the next `chat.postMessage` call (e.g. `ratelimited` or `user_not_found`).
+    next_post_error: Option<String>,
 }
 
 pub struct FakeSlack {
@@ -648,6 +650,10 @@ impl FakeSlack {
             }
             "chat.postMessage" if arg("markdown_text").is_none() && arg("text").is_none() => {
                 json!({"ok": false, "error": "no_text"})
+            }
+            "chat.postMessage" if w.next_post_error.is_some() => {
+                let err = w.next_post_error.take().unwrap();
+                json!({"ok": false, "error": err})
             }
             "chat.postMessage" if w.fail_posts => {
                 json!({"ok": false, "error": "not_in_channel"})
@@ -1236,6 +1242,10 @@ impl FakeSlack {
 
     pub fn stored_messages(&self) -> Vec<Value> {
         self.workspace.lock().unwrap().messages.clone()
+    }
+
+    pub fn fail_next_post(&self, error: &str) {
+        self.workspace.lock().unwrap().next_post_error = Some(error.to_owned());
     }
 
     /// What Slack returns as text for the submitted Markdown.
