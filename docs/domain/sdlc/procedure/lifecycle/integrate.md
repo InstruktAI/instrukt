@@ -204,8 +204,7 @@ with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed deli
 commit under the work-record contract. Remove the clean `<slug>/work` worktree and
 delete `<slug>/work` locally and on `origin`; keep any failed cleanup owed.
 
-Inspect `instrukt todo show <slug> --json` (or `instrukt todo show <slug>@<id-prefix> --json`
-once delivered) after delivery:
+After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json`:
 
 1. **Retire terminal orchestrator threads.** Read the delivered todo's recorded
    phase orchestrator bindings (`todo-orchestrator`, plus any legacy

@@ -63,18 +63,19 @@ conversation still has an open question.
   Starting a peer confers no authority over that peer's other obligations.
 - **A lane releases its claim before handoff.** Confirm `claim.held` is false
   after `instrukt todo update <slug> --unclaim`, then record the assignment's
-  outcome and next owner. Session ending and cleanup belong to the runtime.
+  outcome and next owner. Apart from terminal orchestrator retirement, session
+  ending and cleanup belong to the runtime.
 - **Standing roles persist under their mandate.** The standing integrator
   parks after current work settles and is woken by its subscribed events.
   Task recurrence is governed by its record and runner, not an improvised timer.
-- **Dormant settling and terminal retirement are distinct.** Active, held,
-  between-phase, and standing sessions stay wakeable (using dormant settling
-  where the runtime supports it; automation never settles or retires standing
-  agents). Once a todo reaches a terminal state (`delivered` or `withdrawn`),
-  its phase orchestrator threads retire through the configured terminal
-  retirement action after all record writes and handoffs are confirmed,
-  removing them from active and settled thread lists while retaining
-  transcripts for audit and history extraction.
+- **Dormant settling and terminal retirement are distinct.** Active, held, and
+  between-phase sessions stay wakeable, using dormant settling where the
+  runtime supports it. Automation neither settles nor retires a standing agent.
+  Once a todo reaches a terminal state (`delivered` or `withdrawn`), its phase
+  orchestrator threads retire through the configured terminal retirement action
+  after all record writes and handoffs are confirmed, removing them from active
+  and settled thread lists while retaining transcripts for audit and history
+  extraction.
 - **Human questions stay in their thread.** Ask for approval or missing intent
   there and leave it waiting as `needs-input`. Resolve agent-owned technical
   work with its owner; disagreement alone does not transfer it to the human.

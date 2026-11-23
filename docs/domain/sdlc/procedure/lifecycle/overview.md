@@ -163,12 +163,14 @@ so the runner does not re-dispatch a fresh turn on every tick.
    `workflow.finalized`) and release the claim with
    `instrukt todo update {slug} --unclaim`. Keep this orchestrator thread
    wakeable (never retire it before delivery — `integrate` retires it once the
-   todo is delivered). If this orchestrator instead withdraws or removes a todo
-   directly, finish all record writes (`log`, `instrukt todo remove {slug}`)
-   first, preserve any unfinished human or worker obligations, and then retire
-   this terminal orchestrator thread via the configured `runtime.retire_thread`
-   action (converging idempotently on replay and never retiring standing
-   agents).
+   todo is delivered).
+6. **Retire on direct withdrawal.** When this orchestrator withdraws or removes
+   a todo directly (for example under triage, retraction, or a no-fix exit),
+   finish all record writes (`log`, `instrukt todo remove {slug}`) and confirm
+   the removal outcome first, preserve any unfinished human or worker
+   obligations, and then retire this terminal orchestrator thread via the
+   configured `runtime.retire_thread` action (converging idempotently on replay
+   and never retiring standing agents).
 
 ## Outputs
 

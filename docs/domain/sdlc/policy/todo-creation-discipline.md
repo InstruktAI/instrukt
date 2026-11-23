@@ -357,9 +357,14 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     evidence during the work record's recovery window and releases working
     resources. The withdrawing agent removes that slug's pending markers in a doc commit;
     nothing removes them automatically. Record unresolved cleanup rather than
-    claiming it complete. Record the lane's handoff; the runtime owns session
-    ending and cleanup. Removal changes the work record, not a conversation's
-    lifecycle.
+    claiming it complete. Once removal and all record writes are confirmed,
+    retire the withdrawn todo's recorded phase orchestrator thread(s) through
+    the configured `runtime.retire_thread` action under the retirement rule
+    above (converging idempotently on replay, preserving unfinished human or
+    worker obligations, never gating retirement on unrelated resource cleanup,
+    and never retiring standing agents). Record the lane's handoff; apart from
+    terminal orchestrator retirement, session ending and cleanup belong to the
+    runtime.
 
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
   failure or other authoritative evidence that the claimant cannot answer —

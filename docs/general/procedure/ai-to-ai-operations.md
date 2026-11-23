@@ -96,9 +96,9 @@ lifecycle contract.
    <!-- @config: runtime.finish_thread -->
 
    Once a todo reaches a terminal state (`delivered` or `withdrawn`), retire
-   its phase orchestrator thread(s) — never standing agents — after confirming
-   all record writes and handoffs (converging idempotently on already-retired
-   threads, and completing remaining writes first before self-retiring):
+   its phase orchestrator thread(s) — never standing agents — through the
+   configured terminal retirement action, completing all record writes and
+   handoffs first and converging idempotently on already-retired threads:
 
    <!-- @config: runtime.retire_thread -->
 

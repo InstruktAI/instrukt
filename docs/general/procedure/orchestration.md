@@ -103,8 +103,8 @@ on unrelated resource cleanup, and never retiring standing agents:
 
 <!-- @config: runtime.retire_thread -->
 
-Session ending and cleanup belong to the runtime. Preserve any unresolved
-cleanup with its responsible owner.
+Apart from terminal orchestrator retirement, session ending and cleanup belong
+to the runtime. Preserve any unresolved cleanup with its responsible owner.
 
 ### Container Slug Handling
 
