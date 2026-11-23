@@ -50,8 +50,8 @@ Guide the human's request from the observed state:
 - **Other requests:** use `instrukt -h` and `instrukt docs` to find the owning
   command or contract. This cockpit covers platform setup on the computer
   (binary, adopted repositories, runtime, models, GitHub Apps, modules); to
-  onboard a company (company home, members, connectors, business services, and
-  optional technical coordination), load
+  onboard a company (company home, members, connectors, and business services),
+  load
   `instrukt docs get general/procedure/company-onboarding/overview --closure`
   once platform setup stands.
 

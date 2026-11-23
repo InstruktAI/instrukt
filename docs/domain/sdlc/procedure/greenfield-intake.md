@@ -21,16 +21,14 @@ every production default ships silently from the applicable baseline.
 ## Steps
 
 0. **Adopt before build.** Before harvesting or scaffolding a new repository,
-   check whether custom software is needed at all
-   (`general/procedure/technical-coordinator`):
-   - Check whether an existing SaaS or tool already available to the team
-     solves the need over MCP.
-   - Otherwise check whether a proven open-source application can be
-     self-hosted on the target container host (using any adopted deployment
-     domain when present) and connected over MCP.
-   - Continue to Step 1 only when neither lane fits the need, or when the human
-     directs a bespoke build after reviewing the adopt/self-host trade-off
-     (`general/principle/grounding`, `general/policy/leadership`).
+   apply the adopt-before-build triage ladder in
+   `general/procedure/technical-coordinator` — check whether adopting an
+   existing SaaS/tool over MCP or self-hosting proven OSS over MCP already
+   meets the need before proposing custom software
+   (`general/principle/grounding`). When a bespoke build is not already settled
+   by the human's request, surface any viable adopt or self-host option before
+   moving to Step 1 (`general/policy/leadership`,
+   `general/policy/human-contract`).
 
 1. **Harvest before asking.** Read the design handoff, reference repo, and any
    provided content. Everything derivable from those is pre-answered and
