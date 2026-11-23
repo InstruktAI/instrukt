@@ -161,6 +161,13 @@ Existing patterns and platform defaults are the starting position because they
 carry proven value, not because current code has veto authority. Tie every
 deliberate divergence to an approved outcome and an evidenced trade-off.
 
+When a global policy or default (rather than an explicit criterion in the
+approved intent) calls for a supporting mechanism, choose the minimal boundary
+that satisfies the policy — such as refusing with an explicit door — rather
+than generalized protocols, extra state, or added coordination. Additional
+machinery is justified only when an approved criterion explicitly demands the
+behavior it protects.
+
 Keep four views distinguishable while reasoning: current product contract,
 current implementation, credible intended state, and relevant solution truth.
 Record conflicts and assumptions rather than merging them into one “grounded”

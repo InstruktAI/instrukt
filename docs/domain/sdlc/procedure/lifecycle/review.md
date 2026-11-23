@@ -285,7 +285,12 @@ points converges one leftover per pass
 (`sdlc/policy/preparation-artifact-quality`). The re-derivation begins at the
 criterion the failing invariant serves: it is traced to the authorized intent
 before the mechanism is rebuilt, and a criterion the intent does not carry is
-taken out rather than defended by further mechanism. A second edit to the same
+taken out rather than defended by further mechanism. On a second failure in the
+same mechanism or invariant, pruning precedes patching: before requesting
+another pass that adds rules, state, or coordination, establish whether a
+simpler policy-compliant boundary satisfies every approved criterion and
+eliminates the failing interaction; if so, cut the mechanism back to that
+boundary instead of adding machinery to defend it. A second edit to the same
 region establishes neither by itself.
 
 Review passes are counted within a review cycle. A valid substantive-drift stamp

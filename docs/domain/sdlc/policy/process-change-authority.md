@@ -35,7 +35,11 @@ Neither its pending contracts nor its code alter a lifecycle state machine, a
 review lane, a lifecycle procedure, or todo and state semantics; a storage,
 transport or integration delivery adapts to the existing process. A reviewer
 raises such an alteration as significant unrequested behavior, whatever its
-quality.
+quality. When the human explicitly directs an ad-hoc process change inside a
+session that is orchestrating other work, that session may author it in a
+separate clean worktree and branch from the canonical branch — leaving the
+orchestrated delivery's own worktree and branch untouched — recorded with
+`Human-Involved: true` and judged by an independent commit reviewer.
 
 The process artifact creates no human decision. Apply
 `general/policy/human-contract` to the underlying consequence. Only a material
@@ -78,16 +82,24 @@ with intent supplies no justification.
 
 ### The judged never rewrite their judge
 
-A session whose artifact is in an open review loop does not change, in either
-direction, a contract that review applies to it: the review procedures, the
-artifact-quality policy, or any other contract a finding
-against it cites. A defect it finds in such a contract is corrected by a
-session with no artifact under that review, on the path its kind takes: a
-documentation repair when the text contradicts a higher-authority contract or
-binds an impossible act (**Repairs are agent-owned** below), a process change
-under this policy otherwise. Until that change lands, the
-artifact is judged under the contract as it stands. The pending contract a todo delivers under its own
-slug is the work under review, not a judging contract, and stays its author's.
+An autonomous session whose artifact is in an open review loop does not change,
+in either direction, a contract that review applies to it: the review
+procedures, the artifact-quality policy, or any other contract a finding
+against it cites. A defect an autonomous session finds in such a contract is
+corrected by a session with no artifact under that review, on the path its kind
+takes: a documentation repair when the text contradicts a higher-authority
+contract or binds an impossible act (**Repairs are agent-owned** below), a
+process change under this policy otherwise. Until that change lands, the
+artifact is judged under the contract as it stands. The pending contract a todo
+delivers under its own slug is the work under review, not a judging contract,
+and stays its author's.
+
+When the human is present in an orchestrator session and explicitly directs a
+process adjustment, that session is carrying human intent rather than rewriting
+its own judge autonomously. It authors the adjustment in a separate clean
+ad-hoc worktree and branch off the canonical branch, leaves the active
+delivery's worktree and branch untouched, commits with `Human-Involved: true`,
+and submits the commit to an independent no-stake commit reviewer.
 
 ### Operation and recovery remain with intelligence
 
@@ -155,8 +167,8 @@ expansion and is rejected normally.
   process contract is a Requirement-Violation.
 - A control relaxation without explicit approval from an independent no-stake
   reviewer is Critical.
-- An edit to a judging contract by a session with an artifact in that review
-  loop is Critical.
+- An autonomous edit to a judging contract by a session with an artifact in that
+  review loop is Critical.
 - An author approving its own process change or review finding is a violation of
   reviewer separation.
 - Asking the human to decide process mechanics is a human-contract finding.
