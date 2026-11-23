@@ -35,10 +35,13 @@ is_count "$total" || usage "the job total '$total' is not a number"
 [ -s "$archive" ] || usage "the test archive '$archive' is missing or empty"
 
 partition=$((index + 1))
-# The shard runner has no Rust toolchain. Without INSTA_WORKSPACE_ROOT, insta
-# finds the workspace by spawning `cargo metadata`, which fails here, and then
-# looks for snapshots under the crate directory instead. The archive was
-# extracted into this checkout, so the current directory is the workspace root.
+# Without INSTA_WORKSPACE_ROOT, insta finds the workspace by spawning
+# `cargo metadata`. The shard job never provisions the project's toolchain and
+# the image ships a newer Rust, so that call makes rustup install the version
+# pinned in rust-toolchain.toml, which fails or races between test processes;
+# insta then looks for snapshots under the crate directory instead. The archive
+# was extracted into this checkout, so the current directory is the workspace
+# root.
 INSTA_WORKSPACE_ROOT="$PWD" cargo-nextest nextest run --archive-file "$archive" --extract-to . --extract-overwrite \
     --profile ci --partition "count:$partition/$total" >&2
 printf 'shard_%s=%s/%s\n' "$partition" "$partition" "$total"
