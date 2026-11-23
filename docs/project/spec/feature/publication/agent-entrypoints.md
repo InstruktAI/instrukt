@@ -569,8 +569,10 @@ Then the rendering reports the snippet and says to list it instead, and the inst
   file, and `instrukt docs render --check` compares the working file with
   it. In a checkout whose working file is the one the publisher committed,
   the check names `AGENTS.md` as differing wherever the two renderings
-  differ, although no document changed. After `instrukt docs render` there,
-  the check passes while the commit still holds the publisher's file.
+  differ, although no document changed. After `instrukt docs render` writes
+  the file there, the check reports no difference for `AGENTS.md` while the
+  commit still holds the publisher's file; it exits zero only where it also
+  names no other entrypoint and no finding.
 - Between a commit made without the hook and the commit that repairs it,
   every checkout carries the stale rendering, and a company home started from
   it reads the previous knowledge.
