@@ -203,8 +203,22 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           sparse-checkout: scripts
+      # The upstream results and outputs reach the script through the
+      # environment, as data: an expression inside `run:` would be substituted
+      # into the command before the shell parses it.
       - name: require each selected job's record and success
-        run: scripts/ci-verify-jobs.sh "${{ needs.changes.result }}" "${{ needs.changes.outputs.validate }}" "${{ needs.changes.outputs.rust }}" "${{ needs.ubuntu-build.result }}" "${{ needs.ubuntu-build.outputs.record }}" "${{ needs.ubuntu-test.result }}" "${{ needs.ubuntu-test.outputs.shard_1 }}" "${{ needs.ubuntu-test.outputs.shard_2 }}" "${{ needs.ubuntu-test.outputs.shard_3 }}" "${{ needs.ubuntu-test.outputs.shard_4 }}"
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CHANGES_VALIDATE: ${{ needs.changes.outputs.validate }}
+          CHANGES_RUST: ${{ needs.changes.outputs.rust }}
+          BUILD_RESULT: ${{ needs.ubuntu-build.result }}
+          BUILD_RECORD: ${{ needs.ubuntu-build.outputs.record }}
+          TEST_RESULT: ${{ needs.ubuntu-test.result }}
+          SHARD_1: ${{ needs.ubuntu-test.outputs.shard_1 }}
+          SHARD_2: ${{ needs.ubuntu-test.outputs.shard_2 }}
+          SHARD_3: ${{ needs.ubuntu-test.outputs.shard_3 }}
+          SHARD_4: ${{ needs.ubuntu-test.outputs.shard_4 }}
+        run: scripts/ci-verify-jobs.sh "$CHANGES_RESULT" "$CHANGES_VALIDATE" "$CHANGES_RUST" "$BUILD_RESULT" "$BUILD_RECORD" "$TEST_RESULT" "$SHARD_1" "$SHARD_2" "$SHARD_3" "$SHARD_4"
 
   # Clippy and, on a pull request, the macOS selection; on every other event
   # the full suite and the doctests (scripts/ci-macos.sh). Formatting and the
