@@ -1142,6 +1142,13 @@ mod tests {
     const BOTH: &str = "schema_version: 1\nmodules: {blueprint: true, todos: false, events: true}\n\
         blueprint: {engine: graphify}\n";
 
+    /// A JSON Schema `pattern`, compiled as Draft 2020-12 reads it: an
+    /// unanchored ECMA-262 regular expression, here in Unicode mode as
+    /// editors' validators compile it.
+    fn ecma_pattern(pattern: &str) -> regress::Regex {
+        regress::Regex::with_flags(pattern, "u").unwrap()
+    }
+
     /// Whether `value` fits `schema`, for the JSON Schema keywords
     /// [`editor_schema`] writes.
     fn fits(schema: &serde_json::Value, value: &serde_json::Value) -> bool {
@@ -1160,7 +1167,7 @@ mod tests {
             Some("string") => {
                 let pattern = object.get("pattern").and_then(J::as_str);
                 value.as_str().is_some_and(|text| {
-                    pattern.is_none_or(|p| regex::Regex::new(p).unwrap().is_match(text))
+                    pattern.is_none_or(|p| ecma_pattern(p).find(text).is_some())
                 })
             }
             Some("boolean") => value.is_boolean(),
@@ -1287,48 +1294,42 @@ mod tests {
         }
     }
 
-    /// Each published action pattern is read only as code points, so a
-    /// consumer's regex dialect cannot change which strings it admits: a
-    /// complemented class of `\uXXXX` escapes and ranges, nothing else.
+    /// Read as ECMA-262, each published action pattern admits a value exactly
+    /// when `str::trim` leaves something of it, on every Unicode scalar,
+    /// including those whose whitespace status ECMA-262 and Rust disagree on.
     #[test]
-    fn the_runtime_action_pattern_excludes_exactly_what_trim_removes() {
+    fn the_runtime_action_pattern_admits_exactly_what_trim_keeps() {
         let schema = layer_json_schema(LayerKind::Global);
         let actions = &schema["properties"]["runtimes"]["additionalProperties"]["properties"];
         let patterns: std::collections::BTreeSet<&str> = super::super::_runtime::ACTIONS
             .iter()
             .map(|(name, _)| actions[*name]["pattern"].as_str().unwrap())
             .collect();
-        let [pattern] = patterns.into_iter().collect::<Vec<_>>()[..] else {
-            panic!("the actions do not share one pattern");
-        };
-        let class = pattern
-            .strip_prefix("[^")
-            .and_then(|rest| rest.strip_suffix(']'))
-            .unwrap_or_else(|| panic!("not a complemented class: {pattern}"));
-        let escape = |text: &str| -> u32 {
-            let hex = text.strip_prefix("\\u").filter(|hex| hex.len() == 4);
-            let hex = hex.unwrap_or_else(|| panic!("not a \\uXXXX escape: {text}"));
-            u32::from_str_radix(hex, 16).unwrap()
-        };
-        let mut excluded = std::collections::BTreeSet::new();
-        let mut rest = class;
-        while !rest.is_empty() {
-            let start = escape(&rest[..6]);
-            rest = &rest[6..];
-            let end = match rest.strip_prefix('-') {
-                Some(range) => {
-                    rest = &range[6..];
-                    escape(&range[..6])
-                }
-                None => start,
-            };
-            excluded.extend(start..=end);
-        }
-        let whitespace: std::collections::BTreeSet<u32> = (0..=u32::from(char::MAX))
-            .filter(|&code| char::from_u32(code).is_some_and(char::is_whitespace))
+        let whitespace: String = (0..=u32::from(char::MAX))
+            .filter_map(char::from_u32)
+            .filter(|c| c.is_whitespace())
             .collect();
-        assert_eq!(excluded, whitespace);
-        assert!(excluded.contains(&0x85) && !excluded.contains(&0xFEFF));
+        for pattern in patterns {
+            let compiled = ecma_pattern(pattern);
+            let admits = |text: &str| compiled.find(text).is_some();
+            let mut one = [0; 4];
+            let wrong: Vec<char> = (0..=u32::from(char::MAX))
+                .filter_map(char::from_u32)
+                .filter(|&c| {
+                    let text = c.encode_utf8(&mut one);
+                    admits(text) == text.trim().is_empty()
+                })
+                .collect();
+            assert!(wrong.is_empty(), "{pattern} misreads {wrong:?}");
+            for text in [
+                String::new(),
+                whitespace.clone(),
+                format!("{whitespace}\u{FEFF}{whitespace}"),
+                format!("{whitespace}archive{whitespace}"),
+            ] {
+                assert_eq!(admits(&text), !text.trim().is_empty(), "{text:?}");
+            }
+        }
     }
 
     #[test]
