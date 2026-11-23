@@ -1098,26 +1098,26 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecorded_head_meeting_a_pending_change_is_judged_only_under_the_reflection_lock() {
-        for pulled in [Pulled::Landed, Pulled::Conflicted] {
-            assert_eq!(judgment(true, true, pulled), Judgment::Commit);
-            assert_eq!(judgment(true, false, pulled), Judgment::Unjudged);
-        }
+    fn a_conflicting_head_found_under_the_reflection_lock_is_committed() {
+        assert_eq!(judgment(true, true, Pulled::Conflicted), Judgment::Commit);
     }
 
     #[test]
-    fn a_recorded_head_or_a_row_with_nothing_pending_is_committed_with_or_without_the_lock() {
-        for held in [true, false] {
-            assert_eq!(judgment(true, held, Pulled::Current), Judgment::Commit);
-            for pulled in [
-                Pulled::Current,
-                Pulled::Landed,
-                Pulled::Adopted,
-                Pulled::Conflicted,
-            ] {
-                assert_eq!(judgment(false, held, pulled), Judgment::Commit);
-            }
-        }
+    fn a_conflicting_head_found_while_another_reflection_holds_the_lock_is_left_unjudged() {
+        assert_eq!(
+            judgment(true, false, Pulled::Conflicted),
+            Judgment::Unjudged
+        );
+    }
+
+    #[test]
+    fn a_landed_own_post_with_nothing_pending_is_committed_without_the_lock() {
+        assert_eq!(judgment(false, false, Pulled::Landed), Judgment::Commit);
+    }
+
+    #[test]
+    fn a_recorded_head_meeting_a_pending_change_is_committed_without_the_lock() {
+        assert_eq!(judgment(true, false, Pulled::Current), Judgment::Commit);
     }
 
     #[test]

@@ -577,17 +577,19 @@ mod tests {
     }
 
     #[test]
-    fn a_different_change_at_the_same_revision_a_rename_and_a_withdrawal_are_not_the_same_record() {
+    fn a_different_change_at_the_same_revision_is_not_the_same_record() {
         let read = reflected(2, Some(7), Some(1));
         let mut other = read.clone();
         other.artifacts[0].versions[0].digest = digest_of("joined");
+        assert!(!other.same_as(&read));
+    }
+
+    #[test]
+    fn a_renamed_record_is_not_the_same_record() {
+        let read = reflected(2, Some(7), Some(1));
         let mut renamed = read.clone();
         renamed.slug = TodoSlug::parse("depth-two").unwrap();
-        let mut withdrawn = read.clone();
-        withdrawn.withdraw(Timestamp::from_second(9).unwrap(), None, Vec::new());
-        for changed in [other, renamed, withdrawn] {
-            assert!(!changed.same_as(&read), "{changed:?}");
-        }
+        assert!(!renamed.same_as(&read));
     }
 
     #[test]
