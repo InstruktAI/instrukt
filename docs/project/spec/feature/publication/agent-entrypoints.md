@@ -162,9 +162,11 @@ section is not installed leaves its entrypoints as they were. The
 repository's own CI runs `instrukt docs render --check`, which fails such a
 commit naming each stale entrypoint; the repair is `instrukt docs render` and
 a commit, or a commit through the hook. In a company's repository, the
-workflow that renders the company's skills on main also runs `instrukt docs
-render` and commits to main only when the rendering changed; that workflow
-belongs to the shared workflows repository.
+workflow that publishes the company's skill on main also writes the
+repository's `AGENTS.md`, with the shared workflows repository's own renderer,
+and commits to main only when what it rendered changed; that workflow and its
+renderer belong to the shared workflows repository
+(`project/instrukt/policy/shared-workflows`).
 
 ### Company home entrypoint
 
@@ -172,8 +174,9 @@ A company home (`project/instrukt/spec/feature/configuration/company-homes`)
 is the checkout of the company's repository, on a computer and in a container
 alike. It holds the company's own knowledge: `AGENTS.master.md` at its root and the
 company's documents in its `docs/` folder. Its committed `AGENTS.md` is that
-master rendered: the generated line, the company passage, the master's own
-content, and each of its required reads in full. A supported runtime that the global agent files'
+master rendered. As instrukt renders it, it holds the generated line, the
+company passage, the master's own content, and each of its required reads in
+full. A supported runtime that the global agent files'
 preparation sets to load project instruction files (Global agent files,
 below) loads it from the home it starts in, so a session of such a runtime in
 the home starts with it: conversation sessions and event-started work alike,
@@ -209,16 +212,15 @@ the home and leaves any other there as it is.
   working in this home may change the company's documents here and commit
   them, and the change reaches the company's agents through the
   repository. The passage names the home and no repository host or
-  organization. It is the same for every company and is owned by this spec;
-  the company's skill rendering carries the same passage.
+  organization. It is the same for every company and is owned by this spec.
   <!-- change:update-company-passage -->
 - **The company passage.** Between the generated line and the master's
-  content, every company rendering carries one fixed passage. It says where
-  the knowledge comes from: the company's repository, its master and the
-  Markdown documents under `docs/`; and that the checkout of that repository
-  at `~/.instrukt/companies/<slug>/`, `<slug>` being the company's key, is
-  the company's home, which serves the company's agents and stays on the
-  repository's default branch. It directs an agent with access to the
+  content, every company rendering instrukt writes carries one fixed passage.
+  It says where the knowledge comes from: the company's repository, its
+  master and the Markdown documents under `docs/`; and that the checkout of
+  that repository at `~/.instrukt/companies/<slug>/`, `<slug>` being the
+  company's key, is the company's home, which serves the company's agents and
+  stays on the repository's default branch. It directs an agent with access to the
   repository to improve the knowledge by editing the Markdown documents
   (`*.md`) under `docs/`, subfolders included, on a branch, in a separate
   worktree of the home or in a clone of the repository, and to open a pull
@@ -236,11 +238,10 @@ the home and leaves any other there as it is.
   history (`general/procedure/doc-snippet-authoring`). The path and the
   repository name carry `<slug>` as literal text: the passage takes no
   company's key, names the home and no repository host or organization, and
-  is the same for every company, in a home and in a clone of the repository.
-  It is owned by this spec and is the text instrukt's rendering writes; what
-  the shared workflows repository's publisher writes into a company's
-  repository is that repository's own text
-  (`project/instrukt/policy/shared-workflows`).
+  is the same for every company, in a home and in a clone of the repository,
+  wherever instrukt renders it. It is owned by this spec; a file the shared
+  workflows repository's publisher writes carries that publisher's own
+  passage (Who renders it, below).
   <!-- /planned-change:update-company-passage -->
 - **The company's documents.** A company document is a Markdown file in the
   home's `docs/` folder. The master and the company's documents name a
@@ -264,10 +265,16 @@ the home and leaves any other there as it is.
   they stand, the required reads included.
   `instrukt config validate --company <name>` and `instrukt docs render` in
   the home report them, and a home with a finding is not rendered.
-- **Who renders it.** The `pre-commit` section where it is installed in the
-  home, `instrukt docs render` run in the home, and the company repository's
-  workflow on main. The runner starts sessions in the home as it stands and
-  renders nothing there.
+- **Who renders it.** instrukt renders it in two places: the `pre-commit`
+  section where it is installed in the home, and `instrukt docs render` run
+  in the home or in a clone of the repository. The block order above and the
+  same bytes in a home and in a clone hold for instrukt's rendering, and
+  `instrukt docs render --check` compares the committed file with that
+  rendering. The company repository's workflow on main commits an `AGENTS.md`
+  as well, rendered by the shared workflows repository's publisher with its
+  own renderer; what that file holds is that repository's contract
+  (`project/instrukt/policy/shared-workflows`). The runner starts sessions in
+  the home as it stands and renders nothing there.
 - **Without a master**, the home has no rendering, and a rendering left
   there is removed.
 
@@ -554,6 +561,14 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 - The rendering depends on the instrukt release that renders it. A CI check
   running another release than the developer's hook may report a difference
   the developer's commit did not cause; CI pins the release it installs.
+- instrukt and the shared workflows repository's publisher each write a
+  company repository's `AGENTS.md` whole, from the same master and documents,
+  and no contract makes the two files the same bytes.
+  `instrukt docs render --check` compares the committed file with instrukt's
+  rendering alone: in a repository whose workflow committed the file, it can
+  name `AGENTS.md` as differing although no document changed, and the hook
+  section and `instrukt docs render` write instrukt's rendering over it. The
+  committed file is that of whichever wrote last.
 - Between a commit made without the hook and the commit that repairs it,
   every checkout carries the stale rendering, and a company home started from
   it reads the previous knowledge.
