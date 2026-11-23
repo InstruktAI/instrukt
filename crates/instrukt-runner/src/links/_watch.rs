@@ -197,7 +197,7 @@ fn serve(
                     break CompanyRelayPass::CatchUp;
                 }
                 Ok(SourceWake::ReadAgain) => {
-                    state.targets.read_again();
+                    state.targets.read_again(home);
                     break CompanyRelayPass::Retry;
                 }
                 Ok(SourceWake::Timeout) => {}

@@ -44,32 +44,43 @@ enum Cause {
 
 impl Targets {
     pub(super) fn source_changed(&mut self, home: &Home) {
-        let active = match active_link_ids(home) {
-            Ok(active) => active,
+        self.reconcile(home, LinkWork::change);
+    }
+
+    /// The source asks for another read: an earlier read may have come
+    /// before a commit was readable. Each active link reads again, including
+    /// one opened since the source last changed, except one that awaits the
+    /// retry of a failed pass, which keeps to that retry.
+    pub(super) fn read_again(&mut self, home: &Home) {
+        self.reconcile(home, LinkWork::request);
+    }
+
+    /// Reads which links are active and marks each one. A failed read is
+    /// recorded and the scan is tried again after a growing delay.
+    fn reconcile(&mut self, home: &Home, mark: fn(&mut LinkWork)) {
+        match active_link_ids(home) {
+            Ok(active) => {
+                self.next_scan = None;
+                self.admit(active, mark);
+            }
             Err(error) => {
                 super::_watch::record(home, &error);
                 let delay = self.next_scan.map_or(FIRST_RETRY, |(_, delay)| delay);
                 self.next_scan = Some((Instant::now() + delay, (delay * 2).min(MOST_RETRY)));
-                return;
             }
-        };
-        self.next_scan = None;
+        }
+    }
+
+    /// Makes `active` the links served, marking each: a link not yet known is
+    /// admitted, and one no longer active is retired once its pass ends.
+    fn admit(&mut self, active: Vec<String>, mark: fn(&mut LinkWork)) {
         for work in self.links.values_mut() {
             work.active = false;
         }
         for link in active {
             let work = self.links.entry(link).or_insert_with(LinkWork::new);
             work.active = true;
-            work.changed = true;
-        }
-    }
-
-    /// The source asks for another read: an earlier read may have come
-    /// before a commit was readable. Each link reads again, except one that
-    /// awaits the retry of a failed pass, which keeps to that retry.
-    pub(super) fn read_again(&mut self) {
-        for work in self.links.values_mut().filter(|work| work.active) {
-            work.request();
+            mark(work);
         }
     }
 
@@ -165,6 +176,10 @@ impl LinkWork {
             None
         }
     }
+    /// A source change: a pass starts whatever the link awaits.
+    fn change(&mut self) {
+        self.changed = true;
+    }
     /// A request to read again. A link awaiting a failed pass's retry keeps
     /// its deadline and takes no mark; a running pass keeps the mark for
     /// when it ends.
@@ -241,6 +256,42 @@ mod tests {
         work.completed(now, true);
         assert_eq!(work.due(now), None);
         assert_eq!(work.due(now + FIRST_RETRY), Some(Cause::Retry));
+    }
+
+    #[test]
+    fn a_request_admits_a_link_opened_since_the_source_last_changed() {
+        let now = Instant::now();
+        let mut targets = Targets::default();
+        targets.admit(vec!["known".into()], LinkWork::change);
+        targets.links.get_mut("known").unwrap().started();
+        targets.admit(vec!["known".into(), "opened".into()], LinkWork::request);
+        assert_eq!(targets.links["opened"].due(now), Some(Cause::Request));
+        assert_eq!(targets.links["known"].due(now), Some(Cause::Request));
+    }
+
+    #[test]
+    fn a_request_retires_a_closed_link_and_keeps_a_failed_links_deadline() {
+        let now = Instant::now();
+        let mut targets = Targets::default();
+        targets.admit(vec!["failed".into(), "closed".into()], LinkWork::change);
+        for work in targets.links.values_mut() {
+            work.started();
+        }
+        targets
+            .links
+            .get_mut("failed")
+            .unwrap()
+            .completed(now, true);
+        let deadline = targets.links["failed"].retry;
+        targets.admit(vec!["failed".into()], LinkWork::request);
+        assert_eq!(targets.links["closed"].due(now), None);
+        assert!(!targets.links["closed"].active);
+        assert_eq!(targets.links["failed"].due(now), None);
+        assert_eq!(targets.links["failed"].retry, deadline);
+        assert_eq!(
+            targets.links["failed"].due(now + FIRST_RETRY),
+            Some(Cause::Retry)
+        );
     }
 
     #[test]
