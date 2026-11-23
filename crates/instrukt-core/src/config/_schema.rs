@@ -954,6 +954,36 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
     }
 }
 
+/// A JSON Schema `pattern` admitting exactly the strings
+/// [`Field::NonEmptyStr`] accepts: those holding a character outside Rust's
+/// `char::is_whitespace`, the set `str::trim` removes. A regex class escape
+/// such as `\S` would not do, because JSON Schema reads patterns as ECMA-262,
+/// whose whitespace differs (it adds U+FEFF and omits U+0085). The pattern is
+/// a complemented class of `\uXXXX` escapes, which every JSON Schema regex
+/// dialect reads as the same code points.
+fn non_blank_pattern() -> String {
+    let mut runs: Vec<(u32, u32)> = Vec::new();
+    for code in (0..=u32::from(char::MAX))
+        .filter(|&code| char::from_u32(code).is_some_and(char::is_whitespace))
+    {
+        match runs.last_mut() {
+            Some((_, end)) if *end + 1 == code => *end = code,
+            _ => runs.push((code, code)),
+        }
+    }
+    let class: String = runs
+        .iter()
+        .map(|&(start, end)| {
+            if start == end {
+                format!("\\u{start:04X}")
+            } else {
+                format!("\\u{start:04X}-\\u{end:04X}")
+            }
+        })
+        .collect();
+    format!("[^{class}]")
+}
+
 fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
     let strings = |names: &[&str]| json!({ "type": "array", "items": { "enum": names } });
     let record = |required: &[&str], optional: &[(&str, serde_json::Value)]| {
@@ -980,8 +1010,11 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
             let actions: Vec<_> = super::_runtime::ACTIONS
                 .iter()
                 .map(|(name, contract)| {
-                    let action =
-                        json!({"type": "string", "pattern": "\\S", "description": contract});
+                    let action = json!({
+                        "type": "string",
+                        "pattern": non_blank_pattern(),
+                        "description": contract,
+                    });
                     (*name, action)
                 })
                 .collect();
@@ -1220,6 +1253,81 @@ mod tests {
             );
             assert_eq!(fits(&schema, &as_json(&doc)), valid, "{doc}");
         }
+    }
+
+    #[test]
+    fn the_global_schema_reads_blank_runtime_actions_as_validation_does() {
+        let schema = layer_json_schema(LayerKind::Global);
+        for (action, valid) in [
+            ("\u{85}", false),
+            ("\u{FEFF}", true),
+            ("", false),
+            (" \t\n\r\u{B}\u{C}", false),
+            (
+                "\u{A0}\u{1680}\u{2000}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}",
+                false,
+            ),
+            ("archive", true),
+            ("\u{85} archive\u{3000}", true),
+            ("\u{1F5C4}", true),
+        ] {
+            let mut doc = yaml("schema_version: 1\nruntimes: {t3: {}}\n");
+            doc["runtimes"]["t3"]
+                .as_mapping_mut()
+                .unwrap()
+                .insert(Value::from("retire_thread"), Value::from(action));
+            let json = serde_json::to_value(&doc).unwrap();
+            assert_eq!(
+                check(&doc, LayerKind::Global).is_empty(),
+                valid,
+                "{action:?}"
+            );
+            assert_eq!(fits(&schema, &json), valid, "{action:?}");
+        }
+    }
+
+    /// Each published action pattern is read only as code points, so a
+    /// consumer's regex dialect cannot change which strings it admits: a
+    /// complemented class of `\uXXXX` escapes and ranges, nothing else.
+    #[test]
+    fn the_runtime_action_pattern_excludes_exactly_what_trim_removes() {
+        let schema = layer_json_schema(LayerKind::Global);
+        let actions = &schema["properties"]["runtimes"]["additionalProperties"]["properties"];
+        let patterns: std::collections::BTreeSet<&str> = super::super::_runtime::ACTIONS
+            .iter()
+            .map(|(name, _)| actions[*name]["pattern"].as_str().unwrap())
+            .collect();
+        let [pattern] = patterns.into_iter().collect::<Vec<_>>()[..] else {
+            panic!("the actions do not share one pattern");
+        };
+        let class = pattern
+            .strip_prefix("[^")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or_else(|| panic!("not a complemented class: {pattern}"));
+        let escape = |text: &str| -> u32 {
+            let hex = text.strip_prefix("\\u").filter(|hex| hex.len() == 4);
+            let hex = hex.unwrap_or_else(|| panic!("not a \\uXXXX escape: {text}"));
+            u32::from_str_radix(hex, 16).unwrap()
+        };
+        let mut excluded = std::collections::BTreeSet::new();
+        let mut rest = class;
+        while !rest.is_empty() {
+            let start = escape(&rest[..6]);
+            rest = &rest[6..];
+            let end = match rest.strip_prefix('-') {
+                Some(range) => {
+                    rest = &range[6..];
+                    escape(&range[..6])
+                }
+                None => start,
+            };
+            excluded.extend(start..=end);
+        }
+        let whitespace: std::collections::BTreeSet<u32> = (0..=u32::from(char::MAX))
+            .filter(|&code| char::from_u32(code).is_some_and(char::is_whitespace))
+            .collect();
+        assert_eq!(excluded, whitespace);
+        assert!(excluded.contains(&0x85) && !excluded.contains(&0xFEFF));
     }
 
     #[test]
