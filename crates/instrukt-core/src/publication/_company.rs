@@ -23,11 +23,6 @@ use super::_source::{Committed, MASTER_FILE_NAME};
 use crate::docs::{self, CompanyDocument, CompanyReference, Directive};
 use crate::ids::{DomainName, SnippetId};
 
-/// The passage every company rendering carries between the generated line
-/// and the master's content: the same for every company, naming the home
-/// and no repository host or organization.
-pub(super) const COMPANY_PASSAGE: &str = "This folder is the company's home. An agent working here may change the company's documents — `AGENTS.master.md` and the files in `docs/` — and commit them; the change reaches the company's agents through the company's repository.";
-
 /// The home's documents are below this folder.
 const DOCS: &str = "docs/";
 
@@ -98,7 +93,18 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         plan.findings.extend(walk.findings);
         return;
     }
-    let mut blocks = vec![COMPANY_PASSAGE.to_owned(), document.body.trim().to_owned()];
+    // The passage every company rendering carries between the generated line
+    // and the master's content: one fixed text, the same for every company and
+    // taking no input, naming the home and no repository host or organization.
+    // `<slug>` is literal placeholder text, never substituted.
+    let passage = concat!(
+        "This is the company's knowledge, rendered from the company's repository: `AGENTS.master.md` at its root and the Markdown documents under `docs/`. The checkout of that repository at `~/.instrukt/companies/<slug>/`, where `<slug>` is the company's key, is the company's home: it serves the company's agents and stays on the repository's default branch.",
+        "\n\n",
+        "An agent with access to the repository improves this knowledge by editing the Markdown documents (`*.md`) under `docs/`, subfolders included. It edits on a branch, in a separate worktree of the company's home or in a clone of the repository (by convention named `company-<slug>`), and opens a pull request. Someone other than the pull request's author reviews it before it merges to the default branch, and through that branch the change reaches the company's agents. The change is made in those documents alone: `AGENTS.md` and any skill published from them are generated output and are left as rendered.",
+        "\n\n",
+        "Each of those documents carries a non-empty `description` in its frontmatter and states what is true of the company now, in the present tense; what was true before stays in the repository's history.",
+    );
+    let mut blocks = vec![passage.to_owned(), document.body.trim().to_owned()];
     blocks.extend(walk.order.into_iter().map(|body| body.trim().to_owned()));
     let text = finish(&blocks.join("\n\n"));
     plan.writes.push(PlannedFile {
