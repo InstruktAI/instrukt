@@ -191,7 +191,7 @@ visibility: 'public'
 <!-- planned:reduce-worktree-disk-usage -->
 ### Build output
 
-51. **Dev and test builds keep line tables for workspace crates and no debug
+51. **Dev and test builds keep line tables for workspace code and no debug
     info for dependencies.** The workspace root `Cargo.toml` declares:
 
     ```toml
@@ -203,8 +203,11 @@ visibility: 'public'
     ```
 
     The manifest declares no `debug` setting for the test profile, so tests
-    build with these. Panic locations and backtrace frames in workspace
-    crates keep their file and line.
+    build with these. Workspace code compiled into the program or its tests
+    is built with line tables, the debug info that gives a backtrace frame
+    its file and line. A unit Cargo compiles only for build time (a build
+    script, a procedural macro, or a crate only those depend on) may be built
+    with no debug info, workspace member or not.
 52. **Each live worktree builds into its own target directory.**
     `CARGO_TARGET_DIR` never points at a directory another live worktree
     builds into.
@@ -232,15 +235,15 @@ bound, not CPU bound) — dynamic dispatch cost is negligible compared to the
 I/O it wraps, and `dyn` is simpler.
 
 <!-- planned:reduce-worktree-disk-usage -->
-The dev profile settings keep the debug info a failure report reads, the file
-and line of a panic or a backtrace frame in workspace crates. They leave out
-the rest: for workspace crates everything beyond those line tables, such as
-variable and parameter information, and for dependencies all debug info. A
-crate loses only what its build carried before, and one compiled only for
-build time, such as a procedural macro or what a build script depends on, may
-already carry none. Each worktree's build is smaller by what the omitted part
-weighs. That weight depends on the workspace and the dependencies it compiles,
-so a size figure holds only for the build it was measured on.
+The dev profile settings keep the debug info a backtrace reads for the file
+and line of a frame in workspace code that runs in the program or its tests.
+They leave out the rest: for workspace crates everything beyond those line
+tables, such as variable and parameter information, and for dependencies all
+debug info. A crate loses only what its build carried before, and one compiled
+only for build time, such as a procedural macro or what a build script depends
+on, may already carry none. Each worktree's build is smaller by what the
+omitted part weighs. That weight depends on the workspace and the dependencies
+it compiles, so a size figure holds only for the build it was measured on.
 
 A target directory holds one build at a time. Builds that share one take
 turns on its lock, and its executables are whichever worktree built last, so
@@ -283,7 +286,7 @@ infrastructure crates, test code, build scripts.
 <!-- planned:reduce-worktree-disk-usage -->
 ## See Also
 
-- https://doc.rust-lang.org/cargo/reference/profiles.html — Cargo profiles: the `debug` levels, per-package overrides and profile inheritance.
+- https://doc.rust-lang.org/cargo/reference/profiles.html — Cargo profiles: the `debug` levels, per-package overrides, build-dependency defaults and profile inheritance.
 - https://doc.rust-lang.org/cargo/reference/build-cache.html — Cargo build cache: the target directory and the shared-cache route through `sccache`.
 - https://github.com/mozilla/sccache — `sccache`: the Rust wrapper setup, what it caches, and the local disk cache settings.
 <!-- /planned:reduce-worktree-disk-usage -->
