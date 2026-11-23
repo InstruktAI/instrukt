@@ -98,29 +98,41 @@ pub struct RecordedStart {
     pub worktree: Option<String>,
 }
 
-/// Every start this runner recorded for the caller's native session. Which
-/// of them carries the caller's assignment is the owning lookup's decision.
-fn recorded_starts(home: &Home, caller: &SessionRef) -> Result<Vec<RecordedStart>, StateDbError> {
+/// Every start this runner recorded for the caller's native session, and
+/// whether one of them is a work or standing start that must yield an
+/// assignment. Which start carries the assignment is the owning lookup's
+/// decision; both facts come from one read, so the check that an
+/// assignment exists covers exactly the starts the lookups were given.
+fn recorded_starts(
+    home: &Home,
+    caller: &SessionRef,
+) -> Result<(Vec<RecordedStart>, bool), StateDbError> {
     let Some(db) = StateRead::open(home)? else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
     let mut stmt = db
         .conn()
-        .prepare("SELECT semantic_key,replaced_session,worktree FROM runtime_bindings WHERE runtime=?1 AND session=?2")
+        .prepare("SELECT semantic_key,replaced_session,worktree,kind IN ('todo','work','task','standing') FROM runtime_bindings WHERE runtime=?1 AND session=?2")
         .map_err(StateDbError::sqlite(db.path()))?;
-    stmt.query_map(
-        instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(), caller.to_string()],
-        |r| {
-            Ok(RecordedStart {
-                semantic_key: r.get(0)?,
-                replaced_session: r.get(1)?,
-                worktree: r.get(2)?,
-            })
-        },
-    )
-    .map_err(StateDbError::sqlite(db.path()))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(StateDbError::sqlite(db.path()))
+    let rows = stmt
+        .query_map(
+            instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(), caller.to_string()],
+            |r| {
+                Ok((
+                    RecordedStart {
+                        semantic_key: r.get(0)?,
+                        replaced_session: r.get(1)?,
+                        worktree: r.get(2)?,
+                    },
+                    r.get::<_, bool>(3)?,
+                ))
+            },
+        )
+        .map_err(StateDbError::sqlite(db.path()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(StateDbError::sqlite(db.path()))?;
+    let known = rows.iter().any(|(_, known)| *known);
+    Ok((rows.into_iter().map(|(start, _)| start).collect(), known))
 }
 
 /// Work owns its bindings and the precedence among their attempts; runner
@@ -137,7 +149,7 @@ pub fn resolve(
     work: WorkLookup,
     company: CompanyLookup,
 ) -> Result<Option<Assignment>, StateDbError> {
-    let starts = recorded_starts(home, caller)?;
+    let (starts, known) = recorded_starts(home, caller)?;
     let work = work(home, caller, &starts)?;
     let standing = match standing_assignment(home, caller)? {
         Some(standing) => Some(standing),
@@ -152,18 +164,13 @@ pub fn resolve(
         ));
     }
     let assignment = work.or(standing);
-    if assignment.is_none()
-        && let Some(db) = StateRead::open(home)?
-    {
-        let known:bool=db.conn().query_row("SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE runtime=?1 AND session=?2 AND kind IN ('todo','work','task','standing'))",instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(),caller.to_string()],|r|r.get(0)).map_err(StateDbError::sqlite(db.path()))?;
-        if known {
-            return Err(StateDbError::invalid(
-                db.path(),
-                format!(
-                    "{caller} has a known start but lost its assignment; recover the affected binding/attempt or standing key"
-                ),
-            ));
-        }
+    if assignment.is_none() && known {
+        return Err(StateDbError::invalid(
+            &home.state_db_file(),
+            format!(
+                "{caller} has a known start but lost its assignment; recover the affected binding/attempt or standing key"
+            ),
+        ));
     }
     Ok(assignment)
 }
