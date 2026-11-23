@@ -232,11 +232,13 @@ bound, not CPU bound) — dynamic dispatch cost is negligible compared to the
 I/O it wraps, and `dyn` is simpler.
 
 <!-- planned:reduce-worktree-disk-usage -->
-Debug info is most of a dev build's size, and nearly all of it describes
-dependency code nobody steps through. Line tables for workspace crates keep
-what a failure report needs, the file and line of a panic or a backtrace
-frame, at a fraction of that size, and the saving is paid once per worktree
-that builds.
+The dev profile settings keep the debug info a failure report reads, the file
+and line of a panic or a backtrace frame in workspace crates. They leave out
+the rest, which a profile without them compiles in full for every crate:
+variable and parameter information for workspace crates, and all debug info
+for dependencies. Each worktree's build is smaller by what the omitted part
+weighs. That weight depends on the workspace and the dependencies it compiles,
+so a size figure holds only for the build it was measured on.
 
 A target directory holds one build at a time. Builds that share one take
 turns on its lock, and its executables are whichever worktree built last, so
