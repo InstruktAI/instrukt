@@ -196,6 +196,10 @@ pub(crate) enum Swapped {
     Applied(Box<LocalItem>),
     /// The row changed; the live row, `None` when it is gone.
     Changed(Option<Box<LocalItem>>),
+    /// The todo's withdrawal intent is open: its record is the one the
+    /// withdrawal was admitted on, and stays so until it commits; the live
+    /// row, left as it was.
+    Withdrawing(Box<LocalItem>),
 }
 
 /// One project's local items in the state database. It holds no lock:
@@ -391,15 +395,22 @@ impl Store {
     }
 
     /// Writes `next`, a pull result, a listing acceptance or a refresh
-    /// judged against `base`, only while the live row still equals `base`.
-    /// A row of the identity that belongs to another project is reported
-    /// gone.
+    /// judged against `base`, only while the live row still equals `base`
+    /// and no withdrawal of the todo is open (`withdrawal_intents`): a
+    /// withdrawal finishes on the record it was admitted on, so nothing
+    /// read from GitHub replaces it meanwhile. A row of the identity that
+    /// belongs to another project is reported gone.
     pub fn swap(&self, base: &LocalItem, next: &LocalItem) -> Result<Swapped, WorkError> {
         let id = &base.record.id;
         self.write(|tx, path, project| {
             let live = load_own(tx, path, project, id)?;
             if live.as_ref().map(stored) != Some(stored(base)) {
                 return Ok(Swapped::Changed(live.map(Box::new)));
+            }
+            if let Some(live) = live
+                && load_intent(tx, path, project, id)?.is_some()
+            {
+                return Ok(Swapped::Withdrawing(Box::new(live)));
             }
             save_in(tx, path, next)?;
             Ok(Swapped::Applied(Box::new(written(tx, path, id)?)))

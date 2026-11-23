@@ -474,6 +474,14 @@ impl<'w> Session<'w> {
                     }
                 }
                 Swapped::Changed(None) => break,
+                Swapped::Withdrawing(live) => {
+                    // The withdrawal finishes on the record it was admitted
+                    // on; the command acts on that record.
+                    self.take_row(index, *live);
+                    self.items[index].reflection.inbound = inbound;
+                    self.judging = held;
+                    break;
+                }
             }
         }
         let answered = if self.items[index].reflection.conflicted {
@@ -1666,7 +1674,9 @@ impl<'w> Session<'w> {
                 continue;
             }
             match self.store.swap(&base, &accepted) {
-                Ok(Swapped::Applied(row) | Swapped::Changed(Some(row))) => {
+                Ok(
+                    Swapped::Applied(row) | Swapped::Changed(Some(row)) | Swapped::Withdrawing(row),
+                ) => {
                     self.take_row(index, *row);
                 }
                 Ok(Swapped::Changed(None)) => {}
@@ -2129,10 +2139,14 @@ impl<'w> Session<'w> {
     /// record compared with the one resolved ([`TodoRecord::same_as`]);
     /// another command's change meanwhile — a rename, a withdrawal, any
     /// other — refuses with nothing replaced, while what reflection learned
-    /// meanwhile, a receipt or a conflict mark, does not.
+    /// meanwhile, a receipt or a conflict mark, does not. A todo whose
+    /// withdrawal is open (`withdrawal_intents`) refuses, naming
+    /// `instrukt todo remove <slug>`: the withdrawal finishes on the record
+    /// it was admitted on.
     pub fn refresh(&mut self, index: usize) -> Result<(), WorkError> {
         let resolved = self.items[index].record.clone();
         let _reflecting = ReflectionLock::acquire(self.work.home())?;
+        self.refuse_withdrawing(index)?;
         let id = resolved.id.clone();
         match self.store.item(&id)? {
             Some(live) if live.record.same_as(&resolved) => self.take_row(index, live),
@@ -2160,6 +2174,7 @@ impl<'w> Session<'w> {
         result.map_err(|err| self.github_failure(err))?;
         match self.store.swap(&base, &refreshed)? {
             Swapped::Applied(row) => self.take_row(index, *row),
+            Swapped::Withdrawing(_) => return Err(withdrawing_refusal(&base.record.slug)),
             Swapped::Changed(_) => {
                 return Err(WorkError::refused(format!(
                     "`{}` changed while it was refreshed; nothing was replaced. Run the command again: it reads the todo's current record",
