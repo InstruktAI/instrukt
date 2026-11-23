@@ -25,11 +25,11 @@ dominate iteration speed.
 
 <!-- planned-change:reduce-worktree-disk-usage -->
 2. Apply the platform's Rust policies (`sdlc/policy/rust/core`
-   and `rust/testing`) — they own idiom, DI, and test shape.
+   and `sdlc/policy/rust/testing`) — they own idiom, DI, and test shape.
 <!-- change:reduce-worktree-disk-usage -->
 2. Apply the platform's Rust policies (`sdlc/policy/rust/core`
-   and `rust/testing`) — they own idiom, DI, test shape, and the build
-   profiles the workspace `Cargo.toml` declares.
+   and `sdlc/policy/rust/testing`) — they own idiom, DI, test shape, and the
+   build profiles the workspace `Cargo.toml` declares.
 <!-- /planned-change:reduce-worktree-disk-usage -->
 3. Clippy + rustfmt are the lint/format lane; the compiler is the built-in
    reviewer — treat warnings as errors in CI.

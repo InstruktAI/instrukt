@@ -107,8 +107,8 @@ visibility: 'public'
 ### Traits
 
 23. **Add a trait only when you need a test double or you have two real
-    implementations.** Don't pre-abstract. See `rust/testing.md` for the
-    detailed rule.
+    implementations.** Don't pre-abstract. See `sdlc/policy/rust/testing` for
+    the detailed rule.
 24. **Prefer `Arc<dyn Trait>` for swappable I/O.** Generics
     (`<T: Trait>`) only when (a) benchmarks show dyn is too slow, or (b)
     the type is part of a compile-time contract you want enforced.
