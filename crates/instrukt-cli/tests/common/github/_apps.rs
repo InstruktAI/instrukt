@@ -1,5 +1,7 @@
-//! GitHub App authentication: the test Apps' keys, JWT and installation
-//! token checks, and the clock GitHub judges tokens by.
+//! GitHub App authentication: the test Apps' keys, App JWT validation, and
+//! the clock GitHub judges tokens by. Installation tokens are looked up,
+//! checked for expiry and authorized per endpoint where requests are served
+//! (`_serve`).
 
 use serde_json::{Value, json};
 
