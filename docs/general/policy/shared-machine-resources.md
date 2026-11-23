@@ -70,9 +70,9 @@ All agents, all sessions, all projects, on every machine they run on.
 Reviewers treat a finished checkout left with its build output as a
 process miss.
 <!-- change:reduce-worktree-disk-usage -->
-Reviewers treat a finished checkout — or a todo work checkout left with its
-regenerable build output after integration handoff or kickback to preparation —
-as a process miss.
+Reviewers treat a finished checkout left with its build output as a process
+miss, and likewise a todo work checkout left with its regenerable build output
+after integration handoff or kickback to preparation.
 <!-- /planned-change:reduce-worktree-disk-usage -->
 
 ## Exceptions
