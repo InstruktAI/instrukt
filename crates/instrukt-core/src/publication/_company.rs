@@ -23,11 +23,6 @@ use super::_source::{Committed, MASTER_FILE_NAME};
 use crate::docs::{self, CompanyDocument, CompanyReference, Directive};
 use crate::ids::{DomainName, SnippetId};
 
-/// The passage every company rendering carries between the generated line
-/// and the master's content: the same for every company, naming the home
-/// and no repository host or organization.
-pub(super) const COMPANY_PASSAGE: &str = "This folder is the company's home. An agent working here may change the company's documents — `AGENTS.master.md` and the files in `docs/` — and commit them; the change reaches the company's agents through the company's repository.";
-
 /// The home's documents are below this folder.
 const DOCS: &str = "docs/";
 
@@ -98,7 +93,11 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         plan.findings.extend(walk.findings);
         return;
     }
-    let mut blocks = vec![COMPANY_PASSAGE.to_owned(), document.body.trim().to_owned()];
+    // The passage every company rendering carries between the generated line
+    // and the master's content: the same for every company, naming the home
+    // and no repository host or organization.
+    let passage = "This folder is the company's home. An agent working here may change the company's documents — `AGENTS.master.md` and the files in `docs/` — and commit them; the change reaches the company's agents through the company's repository.";
+    let mut blocks = vec![passage.to_owned(), document.body.trim().to_owned()];
     blocks.extend(walk.order.into_iter().map(|body| body.trim().to_owned()));
     let text = finish(&blocks.join("\n\n"));
     plan.writes.push(PlannedFile {
