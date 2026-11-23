@@ -1205,6 +1205,7 @@ fn receive(connector: &str, me: &Me, envelope: &Value) -> Result<Option<Incoming
         written_at: ts_time(ts).ok_or("message without a valid time")?,
         text: text("text").unwrap_or_default().to_owned(),
         is_direct,
+        thread: thread.map(str::to_owned),
     };
     Ok(Some(incoming))
 }

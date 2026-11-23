@@ -429,6 +429,10 @@ fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refu
         binding.session_scope,
         instrukt_core::config::SessionScope::Conversation
     );
+    assert_eq!(
+        binding.reply_mode,
+        instrukt_core::config::ReplyMode::TurnOutput
+    );
 
     // Existing refusals survive verbatim and `not_admin` is now accepted.
     let raw = Connection::open(&file).unwrap();

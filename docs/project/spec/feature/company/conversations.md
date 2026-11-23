@@ -120,12 +120,25 @@ path is the same for every connector, whichever channel it speaks to
   `session_scope: company`, one shared standing session keyed by
   `instrukt:conversation:<company>:<connector>` serves all admitted direct
   messages and channel threads of that `(company, connector)` serially. Every
-  incoming turn delivered to a company-scoped session is preceded by a control
-  notification header naming the connector, conversation ID, channel or DM
-  context, thread timestamp (when threaded), and speaker identity (name,
-  provider ID, email when available, and administrator status), alongside the
-  conversation-context and member envelopes so the shared agent maintains
-  cross-user awareness and knows which conversation ID to address when replying.
+  incoming turn delivered to a company-scoped session is preceded by a sanitized
+  control notification header naming the connector, opaque conversation ID,
+  direct-message flag, connector-supplied thread identifier (when threaded) and
+  display label (when available), and authoritative speaker metadata (provider
+  ID, email, administrator flag, and sanitized display name on separate fields),
+  alongside the conversation-context and member envelopes so the shared agent
+  maintains cross-user awareness and knows which conversation ID to address when
+  replying.
+- **Binding-pinned policy and scope transitions:** a connector's declared
+  `role`, `session_scope`, and `reply_mode` are recorded on
+  `connected_conversations` when a binding is created and remain fixed for that
+  binding's lifetime (so an already-running session never disagrees with its
+  opening assignment). Each binding owns a disjoint set of conversations for
+  `(company, connector)`: a `conversation`-scoped binding owns only its own
+  conversation ID, and a `company`-scoped binding owns only conversations that
+  have no `conversation`-scoped binding. If an operator changes `session_scope`
+  on a connector that already has live bindings, previously bound conversations
+  stay exclusively with their existing bindings and new conversations bind under
+  the newly declared scope, with no overlap or double delivery.
 - The conversation's agent works through the company's declared MCP servers
   (`project/instrukt/spec/feature/runner/mcp-access`) and on the company's
   own documents in its home, which it may change and commit
@@ -140,8 +153,10 @@ path is the same for every connector, whichever channel it speaks to
   grants that role's class, capabilities, and model selection from `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`,
   `project/instrukt/spec/feature/configuration/roles-and-capabilities`).
-- Resolution is serialized per conversation. A delivery pass that cannot take
-  one conversation's lock within its wait skips that conversation, whose messages
+- Resolution is serialized per conversation binding (per conversation under
+  `session_scope: conversation`, or per `(company, connector)` under
+  `session_scope: company`). A delivery pass that cannot take
+  one binding's lock within its wait skips that binding, whose messages
   stay pending for the next pass, and goes on with the others; this is apart from
   the runtime-dispatch lock, whose timeout skips a whole wake
   (`project/instrukt/spec/feature/runner/work-dispatch`). The company context keeps the
@@ -238,18 +253,24 @@ gives.
   line, showing only the generic working or unavailable state) so internal
   monologue and status lines never leak to the channel. Replies are posted only
   when the agent explicitly queues them via
-  `instrukt company reply [--conversation <id>] [--text <text> | -]`.
+  `instrukt company reply [--conversation <id>] --text <text>` (with `--text -`
+  reading the reply body from stdin).
 - `instrukt company reply` is admitted through caller assignment lookup: the
   caller must be an active company conversation session bound in
   `connected_conversations` (and pass its role's `company-reply` capability
-  check). Under `session_scope: conversation`, `--conversation` defaults to the
-  session's own bound conversation and refuses any other target; under
-  `session_scope: company`, `--conversation <id>` is required and must name an
-  admitted conversation of that `(company, connector)`. The command scrubs
-  resolved company/machine secrets and stored MCP credentials from the reply
-  text and its own CLI output, splits the reply to the connector kind's message
-  limit, and writes ordered pieces into `conversation_answers`, so the runner's
-  existing answer-posting relay delivers them with full retry and recovery.
+  check). Under `reply_mode: explicit`, it is the sole reply path; under
+  `reply_mode: turn_output`, an active conversation session may also invoke it
+  to queue an explicit reply through the same durable outbox in addition to
+  final turn output. Under `session_scope: conversation`, `--conversation`
+  defaults to the session's own bound conversation and refuses any other target;
+  under `session_scope: company`, `--conversation <id>` is required and must
+  name an admitted conversation (one with an admitted, non-refused message and
+  no conflicting conversation-scoped binding) of that `(company, connector)`.
+  The command scrubs resolved company/machine secrets and stored MCP credentials
+  (at least 8 characters long) from the reply text and its own CLI output,
+  splits the reply to the connector kind's declared message limit, and writes
+  ordered pieces into `conversation_answers`, so the runner's existing
+  answer-posting relay delivers them with full retry and recovery.
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
   conversation links. The relay advances its position in the transaction

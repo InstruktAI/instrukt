@@ -1365,11 +1365,11 @@ mod tests {
             .unwrap();
         assert_eq!(version, schema_version());
 
-        let conv: (String, String, Option<String>, Option<String>) = conn
+        let conv: (String, String, String, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT role, session_scope, opening_conversation, display_title FROM connected_conversations WHERE conversation='C1/1.1'",
+                "SELECT role, session_scope, reply_mode, opening_conversation, display_title FROM connected_conversations WHERE conversation='C1/1.1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .unwrap();
         assert_eq!(
@@ -1377,19 +1377,20 @@ mod tests {
             (
                 "company-agent".to_owned(),
                 "conversation".to_owned(),
+                "turn_output".to_owned(),
                 None,
                 Some("acme — #general".to_owned()),
             )
         );
 
-        let display: Option<String> = conn
+        let display_and_thread: (Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT conversation_display FROM conversation_messages WHERE message='1.1'",
+                "SELECT conversation_display, thread FROM conversation_messages WHERE message='1.1'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(display, None);
+        assert_eq!(display_and_thread, (None, None));
 
         let refusals: Vec<(String, String, Option<String>)> = conn
             .prepare("SELECT sender, reason, replied_at FROM conversation_refusals ORDER BY sender, reason")
@@ -1424,9 +1425,12 @@ mod tests {
             .is_err()
         );
 
-        // Re-running v34 is idempotent and preserves every row.
+        // Re-running v34 and v35 is idempotent and preserves every row.
         let tx = conn.transaction().unwrap();
         if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(33) {
+            step(&tx).unwrap();
+        }
+        if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(34) {
             step(&tx).unwrap();
         }
         tx.commit().unwrap();

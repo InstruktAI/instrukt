@@ -18,7 +18,7 @@ use instrukt_connector::{
     Incoming, Kind, Place, RefusalReason, SecretResolver, Sender, Status,
 };
 use instrukt_core::config::{
-    Admitted, AdmittedSecrets, COMPANY_AGENT_ROLE, ConnectorAdmit, Current, SessionScope,
+    Admitted, AdmittedSecrets, ConnectorAdmit, Current, ReplyMode, SessionScope,
 };
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName};
@@ -454,29 +454,32 @@ fn connector_policy(
     admitted: &Admitted,
     company: &ProjectSlug,
     key: &str,
-) -> Result<(RoleName, ConnectorAdmit, SessionScope), ConnectorError> {
-    if let Some(declared) = admitted
+) -> Result<(RoleName, ConnectorAdmit, SessionScope, ReplyMode), ConnectorError> {
+    admitted
         .company(company)
         .and_then(|company| company.connectors.iter().find(|c| c.key == key))
-    {
-        return Ok((
-            declared.role.clone(),
-            declared.admit,
-            declared.session_scope,
-        ));
-    }
-    let role = RoleName::parse(COMPANY_AGENT_ROLE).map_err(|error| ConnectorError {
-        cause: error.to_string(),
-    })?;
-    Ok((role, ConnectorAdmit::default(), SessionScope::default()))
+        .map(|declared| {
+            (
+                declared.role.clone(),
+                declared.admit,
+                declared.session_scope,
+                declared.reply_mode,
+            )
+        })
+        .ok_or_else(|| ConnectorError {
+            cause: format!("connector `{key}` is not admitted for company `{company}`"),
+        })
 }
 
-fn connector_admit(admitted: &Admitted, company: &ProjectSlug, key: &str) -> ConnectorAdmit {
+fn connector_admit(
+    admitted: &Admitted,
+    company: &ProjectSlug,
+    key: &str,
+) -> Option<ConnectorAdmit> {
     admitted
         .company(company)
         .and_then(|company| company.connectors.iter().find(|c| c.key == key))
         .map(|declared| declared.admit)
-        .unwrap_or_default()
 }
 
 /// The host's side of one connection: what it retains is recorded and the
@@ -493,7 +496,7 @@ struct HostInbox<'a> {
 
 impl Inbox for HostInbox<'_> {
     fn retain(&self, incoming: Incoming) -> Result<(), ConnectorError> {
-        let (role, _, session_scope) =
+        let (role, _, session_scope, reply_mode) =
             connector_policy(&self.current.get(), self.company, self.key)?;
         conversations::retain_with_policy(
             self.home,
@@ -501,6 +504,7 @@ impl Inbox for HostInbox<'_> {
             &incoming,
             &role,
             session_scope,
+            reply_mode,
             self.clock.now(),
         )
         .map_err(|error| ConnectorError {
@@ -565,7 +569,9 @@ fn connection(
         scope.spawn(move || {
             let _ended = Ended(ended);
             intake_worker(&quit, &nudges, || {
-                let admit = connector_admit(&reach.current.get(), company, key);
+                let Some(admit) = connector_admit(&reach.current.get(), company, key) else {
+                    return IntakeProgress::default();
+                };
                 intake_pass(home, reach, company, key, |connector| {
                     admit_messages(
                         home,
@@ -627,7 +633,7 @@ fn connection(
                 }
                 let admitted_gen = reach.current.get();
                 let result = connector_policy(&admitted_gen, company, key).and_then(
-                    |(role, _, session_scope)| {
+                    |(role, _, session_scope, reply_mode)| {
                         reach
                             .connectors
                             .open(&admitted_gen, company, key)
@@ -638,6 +644,7 @@ fn connection(
                                     key,
                                     &role,
                                     session_scope,
+                                    reply_mode,
                                     connector.as_ref(),
                                     &|| reach.connectors.now(),
                                     &quit,

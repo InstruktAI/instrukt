@@ -228,6 +228,16 @@ pub fn context_body(body: &str) -> Option<ContextBody<'_>> {
 fn field(text: &str) -> String {
     text.replace(['\n', '\r'], " ").replace(" · ", " ")
 }
+
+/// Sanitize a provider-authored value placed inside a single-line field of a
+/// control envelope: strips line breaks, NUL bytes, bracket characters (so it
+/// can never close or open any `[...]` envelope tag), and field separators.
+pub fn control_field(text: &str) -> String {
+    text.replace(['\n', '\r', '\0', '[', ']'], " ")
+        .replace(" · ", " ")
+        .trim()
+        .to_owned()
+}
 enum Opened<'a> {
     Control,
     Context(&'a str),

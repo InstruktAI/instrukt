@@ -54,6 +54,11 @@ pub struct Incoming {
     /// Whether the conversation is a direct message rather than a channel or group.
     #[serde(default)]
     pub is_direct: bool,
+    /// Optional connector-supplied thread identifier when the conversation is
+    /// threaded (`None` for direct messages or unthreaded places). Keeps
+    /// `conversation` opaque to generic company logic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
 }
 
 /// A provider page and the continuation for the next request.

@@ -352,6 +352,7 @@ fn recover(
             written_at,
             text: text.to_owned(),
             is_direct: direct,
+            thread: (!direct).then(|| thread.to_owned()),
         },
         format!("https://app.slack.com/archives/{channel}/p{timestamp}"),
     )))

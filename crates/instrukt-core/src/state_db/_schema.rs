@@ -45,7 +45,36 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v32),
     Step(v33),
     Step(v34),
+    Step(v35),
 ];
+
+/// Version 35: pin `reply_mode` on `connected_conversations` at binding
+/// creation and record connector-supplied `thread` on `conversation_messages`
+/// so opaque conversation IDs are never parsed in generic company logic.
+fn v35(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    for (table, column, ddl) in [
+        (
+            "connected_conversations",
+            "reply_mode",
+            "ALTER TABLE connected_conversations ADD COLUMN reply_mode TEXT NOT NULL DEFAULT 'turn_output';",
+        ),
+        (
+            "conversation_messages",
+            "thread",
+            "ALTER TABLE conversation_messages ADD COLUMN thread TEXT;",
+        ),
+    ] {
+        let present: bool = tx.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+            [column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(ddl)?;
+        }
+    }
+    Ok(())
+}
 
 /// Version 34: named company connectors (`role`, `session_scope`,
 /// `opening_conversation` on `connected_conversations`; `conversation_display`

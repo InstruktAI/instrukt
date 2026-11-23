@@ -180,40 +180,21 @@ fn micros(at: Timestamp) -> i64 {
     at.as_microsecond()
 }
 
-/// Retain one incoming addressed message, with its sender's connector
-/// identity, before the connector acknowledges it, using default `company-agent`
-/// role and `conversation` session scope. Nothing here waits on the network and
+/// Retain one incoming addressed message with the connector's declared `role`,
+/// `session_scope`, and `reply_mode`. Nothing here waits on the network and
 /// nothing here decides who is answered.
-pub fn retain(
-    home: &Home,
-    company: &ProjectSlug,
-    incoming: &Incoming,
-    now: Timestamp,
-) -> Result<Intake, ConversationError> {
-    let role = RoleName::parse(COMPANY_AGENT_ROLE)
-        .map_err(|e| ConversationError::Refused(e.to_string()))?;
-    retain_with_policy(
-        home,
-        company,
-        incoming,
-        &role,
-        SessionScope::Conversation,
-        now,
-    )
-}
-
-/// Retain one incoming addressed message with the connector's declared `role`
-/// and `session_scope`.
 pub fn retain_with_policy(
     home: &Home,
     company: &ProjectSlug,
     incoming: &Incoming,
     role: &RoleName,
     session_scope: SessionScope,
+    reply_mode: ReplyMode,
     now: Timestamp,
 ) -> Result<Intake, ConversationError> {
     let state = RunnerState::new(home);
-    let inserted = state.write(|tx| retain_in(tx, company, incoming, role, session_scope, now))?;
+    let inserted =
+        state.write(|tx| retain_in(tx, company, incoming, role, session_scope, reply_mode, now))?;
     if inserted == 0 {
         return Ok(Intake::Repeated);
     }
@@ -229,18 +210,9 @@ fn retain_in(
     incoming: &Incoming,
     role: &RoleName,
     session_scope: SessionScope,
+    reply_mode: ReplyMode,
     now: Timestamp,
 ) -> Result<usize, StateError> {
-    let (binding_conversation, semantic) = match session_scope {
-        SessionScope::Conversation => (
-            incoming.conversation.as_str(),
-            key(company, &incoming.connector, &incoming.conversation),
-        ),
-        SessionScope::Company => (
-            COMPANY_SCOPE_CONVERSATION,
-            company_key(company, &incoming.connector),
-        ),
-    };
     let path = state::db_path(tx);
     let settled: bool = tx.query_row(
         "SELECT EXISTS(
@@ -255,36 +227,90 @@ fn retain_in(
     if settled {
         return Ok(0);
     }
+    // Preserve disjoint binding ownership across `session_scope` transitions:
+    // - If a conversation-scoped binding already owns `incoming.conversation`,
+    //   do not create a conflicting company binding for it.
+    // - If a company-scoped binding already owns prior messages for
+    //   `incoming.conversation`, do not create a conflicting conversation
+    //   binding for it.
+    match session_scope {
+        SessionScope::Company => {
+            let owned_by_conversation: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?3 AND session_scope='conversation')",
+                    params![company.as_str(), incoming.connector, incoming.conversation],
+                    |row| row.get(0),
+                )
+                .map_err(state::sql(&path))?;
+            if !owned_by_conversation {
+                let semantic = company_key(company, &incoming.connector);
+                tx.execute(
+                    "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope,reply_mode) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO NOTHING",
+                    params![
+                        company.as_str(),
+                        incoming.connector,
+                        COMPANY_SCOPE_CONVERSATION,
+                        semantic,
+                        role.as_str(),
+                        SessionScope::Company.as_str(),
+                        reply_mode.as_str()
+                    ],
+                )
+                .map_err(state::sql(&path))?;
+            }
+        }
+        SessionScope::Conversation => {
+            let owned_by_company: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?3 AND session_scope='company')
+                        AND EXISTS(SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?4)
+                        AND NOT EXISTS(SELECT 1 FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?4 AND session_scope='conversation')",
+                    params![
+                        company.as_str(),
+                        incoming.connector,
+                        COMPANY_SCOPE_CONVERSATION,
+                        incoming.conversation
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(state::sql(&path))?;
+            if !owned_by_company {
+                let semantic = key(company, &incoming.connector, &incoming.conversation);
+                tx.execute(
+                    "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope,reply_mode) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO NOTHING",
+                    params![
+                        company.as_str(),
+                        incoming.connector,
+                        incoming.conversation,
+                        semantic,
+                        role.as_str(),
+                        SessionScope::Conversation.as_str(),
+                        reply_mode.as_str()
+                    ],
+                )
+                .map_err(state::sql(&path))?;
+            }
+        }
+    }
     tx.execute(
-            "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",
-            params![
-                company.as_str(),
-                incoming.connector,
-                binding_conversation,
-                semantic,
-                role.as_str(),
-                session_scope.as_str()
-            ],
-        )
-        .map_err(state::sql(&path))?;
-    tx.execute(
-            "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text,is_direct)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT DO NOTHING",
-            params![
-                company.as_str(),
-                incoming.connector,
-                incoming.conversation,
-                incoming.message,
-                incoming.sender,
-                micros(incoming.written_at),
-                incoming.written_at.to_string(),
-                now.to_string(),
-                Stage::Received.as_str(),
-                incoming.text,
-                i32::from(incoming.is_direct)
-            ],
-        )
-        .map_err(state::sql(&path))
+        "INSERT INTO conversation_messages(company,connector,conversation,message,sender,written_us,written_at,arrived_at,state,text,is_direct,thread)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT DO NOTHING",
+        params![
+            company.as_str(),
+            incoming.connector,
+            incoming.conversation,
+            incoming.message,
+            incoming.sender,
+            micros(incoming.written_at),
+            incoming.written_at.to_string(),
+            now.to_string(),
+            Stage::Received.as_str(),
+            incoming.text,
+            i32::from(incoming.is_direct),
+            incoming.thread
+        ],
+    )
+    .map_err(state::sql(&path))
 }
 
 /// A received message: its sender still to be admitted, or what
@@ -934,6 +960,7 @@ struct Conversation {
     position: Option<SourcePosition>,
     role: RoleName,
     session_scope: SessionScope,
+    reply_mode: ReplyMode,
 }
 
 #[derive(Clone)]
@@ -956,14 +983,19 @@ struct Message {
     dispatch_write_at: Option<Timestamp>,
 }
 
-const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,opening_conversation,request,session,source_identity,position_json,role,session_scope";
+const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,opening_conversation,request,session,source_identity,position_json,role,session_scope,reply_mode";
 
 const RELAY_WORK: &str = "SELECT company,connector,conversation FROM conversation_messages WHERE state IN (?1,?2,?3) OR (state='failed' AND superseded_at IS NULL AND boundary IS NOT NULL)
     UNION ALL SELECT company,connector,conversation FROM conversation_answers WHERE posted_at IS NULL";
 
+/// SQL predicate restricting a company-scoped binding to conversations that
+/// do NOT have their own `session_scope = 'conversation'` binding.
+const COMPANY_OWNED_MESSAGES: &str = "NOT EXISTS (SELECT 1 FROM connected_conversations cc WHERE cc.company=conversation_messages.company AND cc.connector=conversation_messages.connector AND cc.conversation=conversation_messages.conversation AND cc.session_scope='conversation')";
+const COMPANY_OWNED_ANSWERS: &str = "NOT EXISTS (SELECT 1 FROM connected_conversations cc WHERE cc.company=conversation_answers.company AND cc.connector=conversation_answers.connector AND cc.conversation=conversation_answers.conversation AND cc.session_scope='conversation')";
+
 fn relay_work_filter() -> String {
     format!(
-        "((session_scope='conversation' AND (company,connector,conversation) IN ({RELAY_WORK})) OR (session_scope='company' AND (company,connector) IN (SELECT company,connector FROM ({RELAY_WORK}))))"
+        "((session_scope='conversation' AND (company,connector,conversation) IN ({RELAY_WORK})) OR (session_scope='company' AND (company,connector) IN (SELECT w.company,w.connector FROM ({RELAY_WORK}) w WHERE NOT EXISTS (SELECT 1 FROM connected_conversations cc WHERE cc.company=w.company AND cc.connector=w.connector AND cc.conversation=w.conversation AND cc.session_scope='conversation'))))"
     )
 }
 
@@ -973,14 +1005,6 @@ fn relay_stages() -> [&'static str; 3] {
         Stage::Pending.as_str(),
         Stage::Sent.as_str(),
     ]
-}
-
-fn connector_reply_mode(admitted: &Admitted, company: &ProjectSlug, connector: &str) -> ReplyMode {
-    admitted
-        .company(company)
-        .and_then(|c| c.connectors.iter().find(|entry| entry.key == connector))
-        .map(|entry| entry.reply_mode)
-        .unwrap_or_default()
 }
 
 fn conversations(
@@ -1008,6 +1032,7 @@ fn conversations(
                     r.get::<_, Option<String>>(9)?,
                     r.get::<_, String>(10)?,
                     r.get::<_, String>(11)?,
+                    r.get::<_, String>(12)?,
                 ))
             })
             .map_err(state::sql(path))?
@@ -1030,6 +1055,7 @@ fn conversations(
                 position,
                 role,
                 session_scope,
+                reply_mode,
             )| {
                 Ok(Conversation {
                     company: ProjectSlug::parse(&company)
@@ -1052,6 +1078,9 @@ fn conversations(
                         ConversationError::Refused(format!(
                             "unknown session_scope `{session_scope}`"
                         ))
+                    })?,
+                    reply_mode: ReplyMode::parse(&reply_mode).ok_or_else(|| {
+                        ConversationError::Refused(format!("unknown reply_mode `{reply_mode}`"))
                     })?,
                 })
             },
@@ -1080,17 +1109,20 @@ fn open_messages(state: &RunnerState, c: &Conversation) -> Result<Vec<Message>, 
                 SessionScope::Conversation => (
                     "SELECT conversation,message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at
                      FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) AND superseded_at IS NULL
-                     ORDER BY state='failed', retry_at, written_us, message",
+                     ORDER BY state='failed', retry_at, written_us, message"
+                        .to_owned(),
                     false,
                 ),
                 SessionScope::Company => (
-                    "SELECT conversation,message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at
-                     FROM conversation_messages WHERE company=?1 AND connector=?2 AND state NOT IN (?3,?4) AND superseded_at IS NULL
-                     ORDER BY state='failed', retry_at, written_us, conversation, message",
+                    format!(
+                        "SELECT conversation,message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at
+                         FROM conversation_messages WHERE company=?1 AND connector=?2 AND state NOT IN (?3,?4) AND superseded_at IS NULL AND {COMPANY_OWNED_MESSAGES}
+                         ORDER BY state='failed', retry_at, written_us, conversation, message"
+                    ),
                     true,
                 ),
             };
-            let mut q = conn.prepare(sql).map_err(state::sql(path))?;
+            let mut q = conn.prepare(&sql).map_err(state::sql(path))?;
             let map_row = |r: &instrukt_core::state_db::rusqlite::Row<'_>| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -1347,7 +1379,6 @@ fn assignment(
     admitted: &Admitted,
     c: &Conversation,
     procedure: &SnippetId,
-    reply_mode: ReplyMode,
 ) -> Result<String, ConversationError> {
     let role = c.role.as_str();
     let capabilities = admitted.agents().capabilities(role)?.describe();
@@ -1358,9 +1389,10 @@ fn assignment(
                 .to_owned()
         }
     };
-    let reply_line = match reply_mode {
-        ReplyMode::TurnOutput => String::new(),
-        ReplyMode::Explicit => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --conversation <id> --text <text>`)".to_owned(),
+    let reply_line = match (c.reply_mode, c.session_scope) {
+        (ReplyMode::TurnOutput, _) => String::new(),
+        (ReplyMode::Explicit, SessionScope::Conversation) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --text <text>`)".to_owned(),
+        (ReplyMode::Explicit, SessionScope::Company) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --conversation <id> --text <text>`)".to_owned(),
     };
     Ok(Control::Assignment.frame(&format!(
         "instrukt conversation assignment\nProcedure: {procedure}\nRole: {role}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\n{scope_line}{reply_line}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.\n",
@@ -1500,7 +1532,6 @@ fn prepare_delivery(
     state: &RunnerState,
     c: &Conversation,
     next: &Message,
-    reply_mode: ReplyMode,
 ) -> Result<Option<Message>, ConversationError> {
     if next.attempted.is_some() || (c.session.is_none() && c.request.is_some()) {
         return Ok(Some(next.clone()));
@@ -1510,7 +1541,7 @@ fn prepare_delivery(
     };
     let row = state.read(|conn, path| {
         conn.query_row(
-            "SELECT context_json,sender_name,written_at,coalesce(json_extract(context_json,'$.unread'),0)=1,sender_is_admin,is_direct,sender,sender_email,conversation_display FROM conversation_messages
+            "SELECT context_json,sender_name,written_at,coalesce(json_extract(context_json,'$.unread'),0)=1,sender_is_admin,is_direct,sender,sender_email,conversation_display,thread FROM conversation_messages
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4",
             params![
                 c.company.as_str(),
@@ -1529,6 +1560,7 @@ fn prepare_delivery(
                     row.get::<_, Option<String>>(6)?,
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             },
         )
@@ -1544,6 +1576,7 @@ fn prepare_delivery(
         sender_id,
         sender_email,
         conversation_display,
+        thread,
     )) = row
     else {
         return Ok(Some(next.clone()));
@@ -1615,41 +1648,48 @@ fn prepare_delivery(
     let content = match c.session_scope {
         SessionScope::Conversation => base_content,
         SessionScope::Company => {
-            let place = conversation_display.unwrap_or_else(|| {
-                if is_direct {
-                    format!("DM ({})", next.conversation)
-                } else {
-                    let channel = next
-                        .conversation
-                        .split_once('/')
-                        .map_or(next.conversation.as_str(), |(ch, _)| ch);
-                    format!("channel {channel}")
+            let safe_conversation = envelopes::control_field(&next.conversation);
+            let mut body = format!(
+                "Company conversation turn\nConnector: {}\nConversation: {safe_conversation}\nDirect: {is_direct}\n",
+                envelopes::control_field(&c.connector)
+            );
+            if let Some(display) = conversation_display.as_deref() {
+                let place = envelopes::control_field(display);
+                if !place.is_empty() {
+                    body.push_str(&format!("Context: {place}\n"));
                 }
-            });
-            let thread_line = match next.conversation.split_once('/') {
-                Some((_, thread_ts)) => format!("Thread: {thread_ts}\n"),
-                None => "Thread: direct-message\n".to_owned(),
-            };
-            let speaker_meta = match (sender_id.as_deref(), sender_email.as_deref()) {
-                (Some(id), Some(email)) => {
-                    format!("{sender} (id={id}, email={email}, admin={is_admin})")
+            }
+            if let Some(thread) = thread.as_deref() {
+                let thread = envelopes::control_field(thread);
+                if !thread.is_empty() {
+                    body.push_str(&format!("Thread: {thread}\n"));
                 }
-                (Some(id), None) => format!("{sender} (id={id}, admin={is_admin})"),
-                (None, Some(email)) => format!("{sender} (email={email}, admin={is_admin})"),
-                (None, None) => format!("{sender} (admin={is_admin})"),
-            };
-            let reply_hint = if reply_mode == ReplyMode::Explicit {
-                format!(
-                    "Reply command: instrukt company reply --conversation {} --text <text>\n",
-                    next.conversation
-                )
-            } else {
-                String::new()
-            };
-            let header = Control::Notification.frame(&format!(
-                "Company conversation turn\nConnector: {}\nConversation: {}\nContext: {place}\n{thread_line}Speaker: {speaker_meta}\n{reply_hint}",
-                c.connector, next.conversation
+            } else if is_direct {
+                body.push_str("Thread: direct-message\n");
+            }
+            if let Some(id) = sender_id.as_deref() {
+                body.push_str(&format!("Speaker ID: {}\n", envelopes::control_field(id)));
+            }
+            if let Some(email) = sender_email
+                .as_deref()
+                .filter(|email| !email.trim().is_empty())
+            {
+                body.push_str(&format!(
+                    "Speaker Email: {}\n",
+                    envelopes::control_field(email)
+                ));
+            }
+            body.push_str(&format!("Speaker Admin: {is_admin}\n"));
+            body.push_str(&format!(
+                "Speaker Name: {}\n",
+                envelopes::control_field(&sender)
             ));
+            if c.reply_mode == ReplyMode::Explicit {
+                body.push_str(&format!(
+                    "Reply command: instrukt company reply --conversation {safe_conversation} --text <text>\n"
+                ));
+            }
+            let header = Control::Notification.frame(&body);
             format!("{header}\n{base_content}")
         }
     };
@@ -1791,9 +1831,12 @@ fn schedule_earlier_failures(
                 params![c.company.as_str(), c.connector, c.conversation, retry],
             ),
             SessionScope::Company => tx.execute(
-                "UPDATE conversation_messages SET retry_at=?3,failed_turns=1
-                 WHERE company=?1 AND connector=?2 AND state='failed'
-                   AND superseded_at IS NULL AND send_unknown_at IS NULL AND retry_at IS NULL AND boundary IS NOT NULL",
+                &format!(
+                    "UPDATE conversation_messages SET retry_at=?3,failed_turns=1
+                     WHERE company=?1 AND connector=?2 AND state='failed'
+                       AND superseded_at IS NULL AND send_unknown_at IS NULL AND retry_at IS NULL AND boundary IS NOT NULL
+                       AND {COMPANY_OWNED_MESSAGES}"
+                ),
                 params![c.company.as_str(), c.connector, retry],
             ),
         }
@@ -1820,14 +1863,13 @@ fn deliver_one(
         set_failure(state, c, Some(&error.to_string()))?;
         return Err(error);
     }
-    let reply_mode = connector_reply_mode(admitted, &c.company, &c.connector);
-    let result = match prepare_delivery(state, c, next, reply_mode) {
+    let result = match prepare_delivery(state, c, next) {
         Ok(None) => return Ok(()),
         Err(error) => Err(error),
         Ok(Some(prepared)) => match &c.session {
             None => opening_source.and_then(|source| {
                 start(
-                    invocation, admitted, adapter, source, c, &prepared, reply_mode, delivery,
+                    invocation, admitted, adapter, source, c, &prepared, delivery,
                 )
             }),
             Some(session) => send(adapter, state, c, session, &prepared, delivery),
@@ -1902,7 +1944,6 @@ fn start(
     opening_source: Option<OpeningSource>,
     c: &Conversation,
     next: &Message,
-    reply_mode: ReplyMode,
     delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
     let home = invocation.home();
@@ -1951,7 +1992,7 @@ fn start(
                 checkout,
                 title: state.read(|conn,path|conn.query_row("SELECT display_title FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?3",params![c.company.as_str(),c.connector,c.conversation],|row|row.get::<_,Option<String>>(0)).map_err(state::sql(path)))?.flatten().unwrap_or(default_title),
                 key: c.semantic_key.clone(),
-                brief: format!("{}\n{input}", assignment(admitted, c, &procedure, reply_mode)?),
+                brief: format!("{}\n{input}", assignment(admitted, c, &procedure)?),
                 worktree: None,
                 launch_modes: None, native_launch: None, profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
             };
@@ -2575,14 +2616,16 @@ impl RelayWorkers {
                 |row| row.get::<_, bool>(0),
             ),
             SessionScope::Company => conn.query_row(
-                "SELECT EXISTS(
-                    SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2
-                    AND superseded_at IS NULL AND (
-                        (state='failed' AND failed_turns>=2)
-                        OR ((state='sent' AND ?3)
-                            AND julianday(unavailable_since)<=julianday(?4))
-                    )
-                )",
+                &format!(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2
+                        AND superseded_at IS NULL AND {COMPANY_OWNED_MESSAGES} AND (
+                            (state='failed' AND failed_turns>=2)
+                            OR ((state='sent' AND ?3)
+                                AND julianday(unavailable_since)<=julianday(?4))
+                        )
+                    )"
+                ),
                 params![c.company.as_str(), c.connector, unread, cutoff],
                 |row| row.get::<_, bool>(0),
             ),
@@ -3104,7 +3147,10 @@ fn post(
             })).map_err(state::sql(path))?.collect::<Result<Vec<_>, _>>().map_err(state::sql(path))
         }
         SessionScope::Company => {
-            let mut query = conn.prepare("SELECT conversation,turn,piece,text FROM conversation_answers WHERE company=?1 AND connector=?2 AND posted_at IS NULL ORDER BY rowid")
+            let mut query = conn
+                .prepare(&format!(
+                    "SELECT conversation,turn,piece,text FROM conversation_answers WHERE company=?1 AND connector=?2 AND posted_at IS NULL AND {COMPANY_OWNED_ANSWERS} ORDER BY rowid"
+                ))
                 .map_err(state::sql(path))?;
             query.query_map(params![c.company.as_str(), c.connector], |row| Ok(Pending {
                 conversation: row.get(0)?, turn: row.get(1)?, piece: row.get(2)?, text: row.get(3)?,
@@ -3350,11 +3396,11 @@ fn adopt_replacement(
                 }
                 SessionScope::Company => {
                     tx.execute(
-                        "UPDATE conversation_messages SET state=?3,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND state IN (?3,?4) AND send_unknown_at IS NULL",
+                        &format!("UPDATE conversation_messages SET state=?3,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND state IN (?3,?4) AND send_unknown_at IS NULL AND {COMPANY_OWNED_MESSAGES}"),
                         params![c.company.as_str(), c.connector, Stage::Pending.as_str(), Stage::Sent.as_str()],
                     ).map_err(state::sql(&path))?;
                     tx.execute(
-                        "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL WHERE company=?1 AND connector=?2 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL",
+                        &format!("UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL WHERE company=?1 AND connector=?2 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL AND {COMPANY_OWNED_MESSAGES}"),
                         params![c.company.as_str(), c.connector],
                     ).map_err(state::sql(&path))?;
                 }
@@ -3463,7 +3509,6 @@ fn relay(
         let Some(mut c) = reread(&state, &initial)? else {
             continue;
         };
-        let reply_mode = connector_reply_mode(admitted, &c.company, &c.connector);
         // Intake runs alongside source reads. Only work already captured
         // when the read began may use the presence it observed.
         let before_read = open_messages(&state, &c)?;
@@ -3770,7 +3815,7 @@ fn relay(
                 }
             }
         }
-        observe(adapter, source, &state, &c, reply_mode, &clock)?;
+        observe(adapter, source, &state, &c, &clock)?;
         let open = open_messages(&state, &c)?;
         let before_read = |candidate: &Message| {
             before_read.iter().any(|message| {
@@ -3911,7 +3956,6 @@ fn observe(
     source: &dyn ConversationSource,
     state: &RunnerState,
     c: &Conversation,
-    reply_mode: ReplyMode,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ConversationError> {
     let Some(session) = &c.session else {
@@ -3951,7 +3995,7 @@ fn observe(
     };
     let own_key = [(own.conversation.clone(), own.message.clone())];
     available(state, c, &own_key)?;
-    if reply_mode == ReplyMode::Explicit {
+    if c.reply_mode == ReplyMode::Explicit {
         return Ok(());
     }
     match source.latest_update(&session.id) {
@@ -3982,7 +4026,6 @@ fn answers(
     // whatever this pass manages: its interval opens before anything here
     // can fail.
     unconfirmed(state, c, connectors.now())?;
-    let reply_mode = connector_reply_mode(admitted, &c.company, &c.connector);
     // Answers are split to the connector's own limit, so reading them waits
     // until the connector can be opened.
     let read = connectors
@@ -3995,7 +4038,7 @@ fn answers(
                 source,
                 c,
                 connector.limits().message_chars,
-                reply_mode,
+                c.reply_mode,
                 &|| connectors.now(),
             )
         });
@@ -4046,7 +4089,7 @@ fn unconfirmed(state: &RunnerState, c: &Conversation, now: Timestamp) -> Result<
             }
             SessionScope::Company => {
                 tx.execute(
-                    &format!("UPDATE conversation_messages SET unavailable_since=coalesce(turn_ended_at,?4) WHERE company=?1 AND connector=?2 AND state=?3 AND unavailable_since IS NULL AND EXISTS({UNPOSTED} AND (x.attempted_at IS NOT NULL OR x.failure IS NOT NULL))"),
+                    &format!("UPDATE conversation_messages SET unavailable_since=coalesce(turn_ended_at,?4) WHERE company=?1 AND connector=?2 AND state=?3 AND unavailable_since IS NULL AND {COMPANY_OWNED_MESSAGES} AND EXISTS({UNPOSTED} AND (x.attempted_at IS NOT NULL OR x.failure IS NOT NULL))"),
                     params![c.company.as_str(), c.connector, Stage::Answered.as_str(), now.to_string()],
                 )
             }
@@ -4349,6 +4392,7 @@ pub struct ConversationBinding {
     pub conversation: String,
     pub role: RoleName,
     pub session_scope: SessionScope,
+    pub reply_mode: ReplyMode,
 }
 
 /// Look up the active conversation binding for `caller`.
@@ -4362,7 +4406,7 @@ pub fn conversation_binding(
     let row = db
         .conn()
         .query_row(
-            "SELECT company,connector,conversation,role,session_scope FROM connected_conversations WHERE session=?1",
+            "SELECT company,connector,conversation,role,session_scope,reply_mode FROM connected_conversations WHERE session=?1",
             [caller.to_string()],
             |r| {
                 Ok((
@@ -4371,12 +4415,13 @@ pub fn conversation_binding(
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
                 ))
             },
         )
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let Some((company, connector, conversation, role, session_scope)) = row else {
+    let Some((company, connector, conversation, role, session_scope, reply_mode)) = row else {
         return Ok(None);
     };
     let company = ProjectSlug::parse(&company)
@@ -4389,31 +4434,43 @@ pub fn conversation_binding(
             format!("unknown session_scope `{session_scope}`"),
         )
     })?;
+    let reply_mode = ReplyMode::parse(&reply_mode).ok_or_else(|| {
+        instrukt_core::state_db::StateDbError::invalid(
+            db.path(),
+            format!("unknown reply_mode `{reply_mode}`"),
+        )
+    })?;
     Ok(Some(ConversationBinding {
         company,
         connector,
         conversation,
         role,
         session_scope,
+        reply_mode,
     }))
 }
 
+/// Minimum trimmed length for a secret value to be scrubbed from outbound
+/// text, preventing short configuration values (such as `"1"`, `"true"`, or a
+/// port) from corrupting ordinary prose or leaking secret names.
+const MIN_SCRUB_SECRET_LEN: usize = 8;
+
 /// Build a credential scrubber covering every readable secret of `company`
 /// and the machine, plus stored MCP logins and OAuth client secrets visible
-/// to `company`, sorted longest-value-first.
+/// to `company` (at least [`MIN_SCRUB_SECRET_LEN`] characters long), sorted
+/// longest-value-first.
 pub fn company_scrub(home: &Home, company: &ProjectSlug) -> instrukt_runner::mcp::Scrub {
     let mut items: Vec<instrukt_runner::mcp::Login> = Vec::new();
+    let mut push = |value: String, label: String| {
+        if value.trim().len() >= MIN_SCRUB_SECRET_LEN {
+            items.push(instrukt_runner::mcp::Login { value, label });
+        }
+    };
     for (name, value) in readable_secret_values(home, &SecretSource::Company(company.clone())) {
-        items.push(instrukt_runner::mcp::Login {
-            value,
-            label: format!("[redacted secret:{name}]"),
-        });
+        push(value, format!("[redacted secret:{name}]"));
     }
     for (name, value) in readable_secret_values(home, &SecretSource::Machine) {
-        items.push(instrukt_runner::mcp::Login {
-            value,
-            label: format!("[redacted secret:{name}]"),
-        });
+        push(value, format!("[redacted secret:{name}]"));
     }
     if let Ok(Some(db)) = instrukt_core::state_db::StateRead::open(home) {
         if let Ok(mut stmt) = db
@@ -4428,19 +4485,9 @@ pub fn company_scrub(home: &Home, company: &ProjectSlug) -> instrukt_runner::mcp
             })
         {
             for (server, access_token, refresh_token) in rows.flatten() {
-                if !access_token.trim().is_empty() {
-                    items.push(instrukt_runner::mcp::Login {
-                        value: access_token,
-                        label: format!("[redacted mcp-login:{server}]"),
-                    });
-                }
-                if let Some(refresh) = refresh_token
-                    && !refresh.trim().is_empty()
-                {
-                    items.push(instrukt_runner::mcp::Login {
-                        value: refresh,
-                        label: format!("[redacted mcp-login:{server}]"),
-                    });
+                push(access_token, format!("[redacted mcp-login:{server}]"));
+                if let Some(refresh) = refresh_token {
+                    push(refresh, format!("[redacted mcp-login:{server}]"));
                 }
             }
         }
@@ -4450,12 +4497,7 @@ pub fn company_scrub(home: &Home, company: &ProjectSlug) -> instrukt_runner::mcp
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         }) {
             for (name, secret) in rows.flatten() {
-                if !secret.trim().is_empty() {
-                    items.push(instrukt_runner::mcp::Login {
-                        value: secret,
-                        label: format!("[redacted mcp-client:{name}]"),
-                    });
-                }
+                push(secret, format!("[redacted mcp-client:{name}]"));
             }
         }
     }
@@ -4525,7 +4567,16 @@ pub fn queue_reply(
             let admitted = state
                 .read(|conn, path| {
                     conn.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state != 'refused')",
+                        "SELECT EXISTS(
+                            SELECT 1 FROM conversation_messages m
+                            WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3
+                              AND m.admitted_at IS NOT NULL AND m.state <> 'refused'
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM connected_conversations cc
+                                  WHERE cc.company=m.company AND cc.connector=m.connector
+                                    AND cc.conversation=m.conversation AND cc.session_scope='conversation'
+                              )
+                        )",
                         params![binding.company.as_str(), binding.connector, requested],
                         |row| row.get::<_, bool>(0),
                     )
@@ -4541,17 +4592,23 @@ pub fn queue_reply(
             requested.to_owned()
         }
     };
-    let message_chars = Configuration::load_company(&home.for_inspection(), &binding.company)
-        .ok()
-        .and_then(|config| config.connectors().ok())
-        .and_then(|connectors| {
-            connectors
-                .into_iter()
-                .find(|declared| declared.key == binding.connector)
-        })
-        .and_then(|declared| connector_declaration(&declared.kind))
-        .map(|declaration| declaration.message_chars)
-        .unwrap_or(12_000);
+    let declared = Configuration::load_company(&home.for_inspection(), &binding.company)?
+        .connectors()?
+        .into_iter()
+        .find(|declared| declared.key == binding.connector)
+        .ok_or_else(|| {
+            ConversationError::Refused(format!(
+                "connector `{}` is no longer declared for company `{}`",
+                binding.connector, binding.company
+            ))
+        })?;
+    let declaration = connector_declaration(&declared.kind).ok_or_else(|| {
+        ConversationError::Refused(format!(
+            "connector kind `{}` is not registered in this build",
+            declared.kind
+        ))
+    })?;
+    let message_chars = declaration.message_chars;
     let scrubbed = scrub.text(text);
     let parts = split(&scrubbed, message_chars);
     if parts.is_empty() {

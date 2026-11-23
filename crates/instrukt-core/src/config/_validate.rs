@@ -314,10 +314,10 @@ fn connector_roles(
         if crate::ids::RoleName::parse(role_str).is_err() {
             continue;
         }
-        let configured = matches!(
-            role_str,
-            "default" | "event-handler" | super::COMPANY_AGENT_ROLE
-        ) || agents.is_some_and(|agents| agents.roles.contains_key(role_str));
+        let configured = agents.map_or_else(
+            || role_str == super::COMPANY_AGENT_ROLE,
+            |agents| agents.roles.contains_key(role_str),
+        );
         if !configured && !role_procedure_available(home, role_str) {
             found.push(KeyFinding::new(
                 &join("connectors", &join(connector_name, "role")),

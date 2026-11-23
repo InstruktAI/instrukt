@@ -23,9 +23,9 @@ enum Command {
         /// conversation); required under `session_scope: company`.
         #[arg(long, value_name = "CONVERSATION")]
         conversation: Option<String>,
-        /// Reply body. Pass `-` or omit `--text` to read the reply from stdin.
+        /// Reply body. Pass `-` to read the reply from stdin.
         #[arg(long, value_name = "TEXT", allow_hyphen_values = true)]
-        text: Option<String>,
+        text: String,
         /// Emit the queued reply summary as JSON.
         #[arg(long)]
         json: bool,
@@ -48,13 +48,12 @@ pub fn run(args: CompanyArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             };
             let scrub = conversation_binding(&ctx.home, &session)?
                 .map(|binding| company_scrub(&ctx.home, &binding.company));
-            let body = match text.as_deref() {
-                Some("-") | None => {
-                    let mut buf = String::new();
-                    std::io::stdin().read_to_string(&mut buf)?;
-                    buf
-                }
-                Some(literal) => literal.to_owned(),
+            let body = if text == "-" {
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf)?;
+                buf
+            } else {
+                text
             };
             let (queued, scrub) =
                 match queue_reply(&ctx.home, &session, conversation.as_deref(), &body) {
