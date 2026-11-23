@@ -58,16 +58,18 @@ mod _projects;
 mod _routes;
 mod _serve;
 
+pub use _apps::sync_auth_clock;
+pub use _fake::{CannedResponse, CheckRun, Conclusion, FakeGitHub, IssueSeed, StatusState};
+
+// Public names of the fake before it was split into modules; no current test
+// names them, and they keep the test-support interface's paths unchanged.
 #[allow(
     unused_imports,
-    reason = "each test uses the part of the fake it needs"
+    reason = "kept as the fake's pre-split public paths; no current test names them"
 )]
-pub use _apps::{configure_apps, sync_auth_clock};
+pub use _apps::configure_apps;
 #[allow(
     unused_imports,
-    reason = "each test uses the part of the fake it needs"
+    reason = "kept as the fake's pre-split public paths; no current test names them"
 )]
-pub use _fake::{
-    CannedResponse, CheckRun, Conclusion, FakeGitHub, IssueSeed, IssueView, RecordedRequest,
-    RequestPause, StatusState,
-};
+pub use _fake::{IssueView, RecordedRequest, RequestPause};
