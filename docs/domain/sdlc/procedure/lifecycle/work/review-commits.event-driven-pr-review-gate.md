@@ -61,7 +61,7 @@ Record the verdict in Work's review evidence store for **both** requested review
 instrukt review record --head <head> --base <base> --verdict approve|needs_work --report <file|->
 ```
 
-- Name no pull request and no request number on the command — Work binds the verdict to the exact `<head>` commit, verifies independence and range currency, reflects the evidence record to GitHub, and publishes the commit status and per-PR reviews for every eligible pull request at `<head>`.
+- Name no pull request and no request number on the command — Work binds the verdict to the exact `<head>` commit, verifies independence and range currency, and publishes the commit status and per-PR reviews for every eligible pull request at `<head>`.
 - Never post GitHub pull-request reviews or commit statuses directly; `instrukt review record` is the single verdict-recording surface.
 - If a pull request moved to a newer head while this review was in flight, the verdict still belongs to the exact `<head>` reviewed and may be recorded for `<head>` alone.
 - **For one-off worktree reviews:** also retain the worktree path, branch, reviewed base, exact head, report path, report digest and verdict, and return them to the authoring session and integrator through the configured native route. Recording through `instrukt review record` feeds Work's evidence store so candidate coverage recognizes the already-approved one-off head without triggering a duplicate review.
