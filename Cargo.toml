@@ -79,3 +79,10 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+# Third-party dependencies of the dev profile (and the test profile, which
+# inherits it) compile optimized: the CLI's integration tests start the debug
+# program as a subprocess, and its time goes largely to unoptimized
+# dependencies. Workspace crates keep the fast-compiling default.
+[profile.dev.package."*"]
+opt-level = 2
