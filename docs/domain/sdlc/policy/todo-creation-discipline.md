@@ -54,10 +54,9 @@ Apply these configured action values to the identified assignment and session.
   that authority on the agent.
 - **Retire terminal orchestrator threads after recording terminal state.** Once
   a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
-  recorded phase orchestrator thread(s) (`todo-orchestrator`, plus legacy
-  `prepare-orchestrator` and `work-orchestrator` bindings) through the
-  configured `runtime.retire_thread` action. Complete all record writes and
-  handoffs first when self-retiring, converge idempotently on already-retired
+  recorded orchestrator thread(s) (`todo-orchestrator`, plus any legacy
+  phase-orchestrator bindings) through the configured `runtime.retire_thread`
+  action. Complete all record writes and handoffs first when self-retiring, converge idempotently on already-retired
   threads, preserve unfinished human or worker obligations, never gate
   retirement on unrelated resource cleanup, and never retire standing agents.
 - **Reassess a hold when its basis changes.** Resume when its condition is

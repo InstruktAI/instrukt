@@ -95,11 +95,11 @@ conversation needs the child, record the contribution and handoff. Close
 discussion through the configured runtime discussion instruction. Keep active,
 held, and between-phase orchestrators wakeable (using dormant settling only);
 once a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
-phase orchestrator threads (`todo-orchestrator`, plus legacy
-`prepare-orchestrator` and `work-orchestrator` bindings) through the
-configured terminal retirement instruction, completing all record writes first
-when self-retiring, converging idempotently on replay, never gating retirement
-on unrelated resource cleanup, and never retiring standing agents:
+recorded orchestrator threads (`todo-orchestrator`, plus any legacy
+phase-orchestrator bindings) through the configured terminal retirement
+instruction, completing all record writes first when self-retiring, converging
+idempotently on replay, never gating retirement on unrelated resource cleanup,
+and never retiring standing agents:
 
 <!-- @config: runtime.retire_thread -->
 
