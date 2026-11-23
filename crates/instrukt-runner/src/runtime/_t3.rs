@@ -279,7 +279,7 @@ impl RuntimeAdapter for T3 {
                 | instrukt_core::config::HarnessKind::Grok
                 | instrukt_core::config::HarnessKind::Kiro
                 | instrukt_core::config::HarnessKind::Muse => "reasoningEffort",
-                instrukt_core::config::HarnessKind::Antigravity => "thinking_level",
+                instrukt_core::config::HarnessKind::Antigravity => "thought_level",
                 instrukt_core::config::HarnessKind::Pi => "thinking",
                 instrukt_core::config::HarnessKind::OpenCode => "variant",
                 instrukt_core::config::HarnessKind::Claude
