@@ -117,20 +117,33 @@ revision and retry-convergence rules remain in force.
 
 Absent keys, an unavailable installation, identity/scope mismatch or failed
 issuance leaves the GitHub operation visibly pending/refused with a secret-safe
-cause. During one todo's reflection, when the credential of the App its pull
-request, review or board update selects cannot be issued because of a setup or
-identity mismatch, or because GitHub refuses that App's request, the todo's
-remaining reflection in that pass stays pending with the cause and the pass
-continues with the next todo. A failed issuance of the project credential every
-reflection request shares, an issuance GitHub throttles, may be throttling or
-cannot serve, and GitHub refusing an issued credential stop the command's
-remaining GitHub requests. When board setup at the start of reflection cannot
-obtain the board account's credential, board updates stay pending with the
-cause; a rate limit there stops the command's remaining GitHub requests, and
-any other cause leaves the rest of reflection running. Rate limits retain their
-retry boundary. Locally accepted work and its
-pending reflection survive; no credential failure is reported as remote success
-or as proof that an ambiguous write had no effect. The record's existing
+cause. During one todo's reflection, a failure of the App its pull request,
+review or board update selects is local to that todo when that App's credential
+cannot be issued because of a setup or identity mismatch or GitHub refuses that
+App's request, or when the reviewer App's verified bot is the pull request's
+author. A failed issuance of the project credential every reflection request
+shares, an issuance GitHub throttles, may be throttling or cannot serve, a rate
+limit, an unreachable GitHub and GitHub refusing an issued credential are
+command-wide. What a failure stops depends on the operation it interrupts:
+
+- Record, issue, pull request and review reflection: a command-wide failure
+  stops the command's remaining GitHub requests; a local failure keeps the
+  todo's remaining reflection in that pass pending with the cause, and the pass
+  continues with the next todo.
+- Board setup at the start of reflection: when it cannot obtain the board
+  account's credential or the board, board updates stay pending with the cause;
+  a rate limit stops the command's remaining GitHub requests, and any other
+  cause leaves the rest of reflection running.
+- A todo's board update: its failure is kept for that update's own retry; a
+  rate limit or an unreachable GitHub stops the command's remaining GitHub
+  requests, and any other failure, an App setup mismatch or refusal and a
+  refused credential included, lets the pass continue.
+
+Rate limits, including a secondary limit GitHub reports in a successful GraphQL
+answer, retain their retry boundary: GitHub's `Retry-After` delay, or its reset
+without one, and the later of the two when no requests remain. Locally accepted
+work and its pending reflection survive; no credential failure is reported as
+remote success or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.
 
 <!-- /planned-change:fix-reflection-legacy-orchestrator-role-app-fallback -->

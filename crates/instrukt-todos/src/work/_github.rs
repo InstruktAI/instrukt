@@ -24,10 +24,12 @@ pub enum GitHubError {
     RecordSchema { message: String },
     #[error(transparent)]
     App(#[from] instrukt_core::github::AppError),
-    /// The installation credential of the App one todo's operation selected
-    /// (a role's pull request or review App, or the board account) could not
-    /// be issued for it: that todo's reflection stays pending and the pass
-    /// continues with the next todo.
+    /// The App one todo's operation selected (a role's pull request or
+    /// review App, or the board account) cannot serve it: its credential
+    /// could not be issued because of a setup or identity mismatch or a
+    /// refusal of that App's request, or the reviewer App's verified bot is
+    /// the pull request's author. Not a reach failure; the call site
+    /// decides what it stops ([`GitHubError::is_reach`]).
     #[error(transparent)]
     OperationApp(OperationAppError),
     #[error("GitHub is unreachable ({0})")]
@@ -55,10 +57,11 @@ pub enum GitHubError {
     Decode { path: String, message: String },
 }
 
-/// Why one todo's operation-selected App could not be issued a credential:
-/// a setup or identity mismatch, or a refusal naming that App's request.
-/// Only [`GitHub::app_failure`] makes one, so it never holds an unreachable,
-/// throttled or unavailable App API, which stop the command.
+/// Why one todo's operation-selected App cannot serve its operation: a
+/// setup or identity mismatch or a refusal of that App's issuance request,
+/// or a verified reviewer bot that is also the pull request's author. Only
+/// [`GitHub::app_failure`] makes one, so it never holds an unreachable,
+/// throttled or unavailable App API.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(transparent)]
 pub struct OperationAppError(instrukt_core::github::AppError);
@@ -70,10 +73,15 @@ impl From<OperationAppError> for instrukt_core::github::AppError {
 }
 
 impl GitHubError {
-    /// Whether the failure stops every further request of this command:
-    /// GitHub cannot be reached, deferred us, or refused the token, or an
-    /// installation credential could not be issued for a reason other than
-    /// one todo's operation-selected App ([`GitHubError::OperationApp`]).
+    /// Whether the failure concerns GitHub's reach rather than one
+    /// request: GitHub cannot be reached, deferred us, or refused the token,
+    /// or an installation credential could not be issued for a reason other
+    /// than one todo's operation-selected App ([`GitHubError::OperationApp`]).
+    /// This classifies; each caller decides the effect. A reach failure of a
+    /// todo's record, issue, pull request or review reflection stops the
+    /// command's remaining GitHub requests. Board setup stops them only on a
+    /// rate limit, and a todo's board update only on a rate limit or an
+    /// unreachable GitHub; any other board failure stays with the board.
     pub(crate) fn is_reach(&self) -> bool {
         matches!(
             self,
@@ -219,11 +227,13 @@ impl GitHub {
         Ok(())
     }
 
-    /// An issuance failure as this client's scope makes it. For a credential
-    /// one operation selected, a setup mismatch or a refusal of that App's
-    /// request (a 4xx other than 403, which may be a secondary rate limit)
-    /// is local to the todo. Everything else, and any failure of the shared
-    /// project credential, stops the command.
+    /// An App failure as this client's scope makes it: an issuance failure,
+    /// or the reviewer App's verified bot authoring the pull request. For an
+    /// App one operation selected, a setup mismatch or a refusal of that
+    /// App's request (a 4xx other than 403, which may be a secondary rate
+    /// limit) is [`GitHubError::OperationApp`]. Everything else, and any
+    /// failure of the shared project credential, is [`GitHubError::App`], a
+    /// reach failure.
     pub(crate) fn app_failure(&self, error: instrukt_core::github::AppError) -> GitHubError {
         use instrukt_core::github::AppError;
         let local = match &error {
