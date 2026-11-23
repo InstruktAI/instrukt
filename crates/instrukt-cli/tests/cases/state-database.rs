@@ -606,6 +606,7 @@ fn work_rows(db: &Connection) -> Vec<Vec<Option<String>>> {
         "SELECT * FROM artifacts ORDER BY todo_id, name",
         "SELECT * FROM artifact_versions ORDER BY todo_id, sequence",
         "SELECT * FROM stamps ORDER BY todo_id, sequence",
+        "SELECT * FROM holds ORDER BY todo_id, set_at",
     ] {
         let mut statement = db.prepare(query).unwrap();
         let columns = statement.column_count();
@@ -629,29 +630,36 @@ fn work_rows(db: &Connection) -> Vec<Vec<Option<String>>> {
     rows
 }
 
+/// Work as the shipped v35 writer (main 8bf7d63) stored it: a todo held for
+/// review with its input and plan, a build-started stamp, the hold, and its
+/// reflection to issue #1 and the project board. The claim columns, which
+/// only a dispatch fills, carry a claim in the form that writer stores.
+const V35_WORK: &str = r#"
+INSERT INTO todos VALUES('d34b9b4b157da44424c3630d9592445e','demo','list-depth','change','active','2026-11-23T08:04:23.212917Z','{"session":"t3:lead-1"}',NULL,4,NULL,NULL,NULL,'once',NULL,NULL,'a1b2c3d4e5f60718293a4b5c6d7e8f90','t3:lead-1','2026-11-23T08:04:23.9Z','list-depth',NULL,NULL,NULL,NULL,NULL,NULL,3,'2026-11-23T08:04:24.979941Z');
+INSERT INTO reflections VALUES('d34b9b4b157da44424c3630d9592445e',1,4,0,0,NULL,NULL,1013,1023,'W/"276c6835aac1d463"','the pull request waits for branch `list-depth` on GitHub',0,0,'acme/1','PVTI_1016','held',NULL);
+INSERT INTO artifacts VALUES('d34b9b4b157da44424c3630d9592445e','input',1);
+INSERT INTO artifacts VALUES('d34b9b4b157da44424c3630d9592445e','implementation-plan',2);
+INSERT INTO artifact_versions VALUES('d34b9b4b157da44424c3630d9592445e','input',1,'sha256:c5c8a5c4312ab4a773f36943b2b451017b19e6f97e3cfd2b59ce2b5c38345ab4','{"session":"t3:lead-1"}','2026-11-23T08:04:23.212917Z','Lists keep their depth everywhere.','[]','{}',1);
+INSERT INTO artifact_versions VALUES('d34b9b4b157da44424c3630d9592445e','implementation-plan',2,'sha256:ccbc8c07e0bbd0e6186a4c2778e51b3c0c90d989235ff97db55f5d6636548965','{"session":"t3:lead-1"}','2026-11-23T08:04:23.49263Z','1. Track depth in the parser.','[{"artifact":"input","digest":"sha256:c5c8a5c4312ab4a773f36943b2b451017b19e6f97e3cfd2b59ce2b5c38345ab4"},{"artifact":"prd","digest":null},{"artifact":"architecture","digest":null},{"artifact":"diagnosis","digest":null}]','{"head":"0bd0da14f58b73097505de14cf7e2ada3f78e478"}',1);
+INSERT INTO stamps VALUES('d34b9b4b157da44424c3630d9592445e',3,'build_started','2026-11-23T08:04:24.347203Z','{"session":"t3:lead-1"}',NULL,NULL,NULL,'unknown','sha256:62343d00ad6e9b8485b7e99c926c0979d2198f38e7ad6659ad97065fee998299',NULL,'{"plan":"sha256:ccbc8c07e0bbd0e6186a4c2778e51b3c0c90d989235ff97db55f5d6636548965","base":"0bd0da14f58b73097505de14cf7e2ada3f78e478"}',NULL);
+INSERT INTO holds VALUES('d34b9b4b157da44424c3630d9592445e','manual','Waits for the parser review.','{"session":"t3:lead-1"}','2026-11-23T08:04:24.097141Z',NULL,NULL);
+"#;
+
 #[test]
 fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdrawal_intents() {
-    let env = common::TestEnv::new();
-    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf()).for_writing();
-    let state = env.instrukt_home().join("state");
+    let mut project = support::Project::new();
+    // One application clock, so the listing's age of the record is fixed.
+    project.env.set_env("INSTRUKT_NOW", "2026-11-23T09:00:00Z");
+    // GitHub cannot be read: the commands answer from the migrated database.
+    project.github.stop();
+    let state = project.env.instrukt_home().join("state");
     std::fs::create_dir_all(&state).unwrap();
     let file = state.join("instrukt.db");
     let before = {
         let db = Connection::open(&file).unwrap();
         db.execute_batch(include_str!("../fixtures/state-v35.sql"))
             .unwrap();
-        db.execute_batch(
-            "INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,human_involved,revision,catch_up,claim_machine,claim_session,claim_at,branch,sequence)
-             VALUES ('0123456789abcdef0123456789abcdef','demo','depth','feature','active','2026-11-20T10:00:00Z','session:t3:one',1,3,'skip','machine-1','t3:one','2026-11-20T10:01:00Z','depth/work',2);
-             INSERT INTO reflections(todo_id,issue_number,remote_revision,pending,conflicted,record_comment,reviews_reflected,pull_closed)
-             VALUES ('0123456789abcdef0123456789abcdef',7,2,1,0,70,0,0);
-             INSERT INTO artifacts(todo_id,name,address) VALUES ('0123456789abcdef0123456789abcdef','prd',4);
-             INSERT INTO artifact_versions(todo_id,name,sequence,digest,writer,created_at,content,derived_from,grounding,remote)
-             VALUES ('0123456789abcdef0123456789abcdef','prd',1,'sha256:00','session:t3:one','2026-11-20T10:02:00Z','Lists have depth.','[]','{}',1);
-             INSERT INTO stamps(todo_id,sequence,fact,at,actor,model_provenance,evidence)
-             VALUES ('0123456789abcdef0123456789abcdef',2,'{\"kind\":\"build_complete\"}','2026-11-20T10:03:00Z','session:t3:one','outside_session','{}');",
-        )
-        .unwrap();
+        db.execute_batch(V35_WORK).unwrap();
         let version: u32 = db
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
@@ -659,9 +667,10 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
         work_rows(&db)
     };
 
-    // Opening the database through StateDb applies the v36 migration.
-    drop(instrukt_core::state_db::StateDb::open(&home).unwrap());
-
+    // The real CLI migrates the database to v36 and reads the work through
+    // the current work model: the todo, its claim and hold, its artifacts and
+    // their versions, its stamp and its reflection.
+    let listed = project.ok(["list"]);
     let raw = Connection::open(&file).unwrap();
     let version: u32 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -672,19 +681,26 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
         .query_row("SELECT COUNT(*) FROM withdrawal_intents", [], |r| r.get(0))
         .unwrap();
     assert_eq!(intents, 0);
+    let shown = project.ok(["show", "list-depth"]);
+    let artifacts = project.ok(["artifacts", "list", "list-depth"]);
+    let plan = project.ok(["artifacts", "read", "list-depth", "implementation-plan"]);
+    insta::assert_snapshot!(
+        "golden-v35-work",
+        support::redact(&format!("{listed}---\n{shown}---\n{artifacts}---\n{plan}"))
+    );
 
     // The new table holds an intent of an existing todo, refuses one of a
     // todo that does not exist, and goes with its todo.
     raw.execute_batch("PRAGMA foreign_keys = ON").unwrap();
     raw.execute(
         "INSERT INTO withdrawal_intents(todo_id,branch,branch_head,worktrees,workspace,branch_deleted,started_at)
-         VALUES ('0123456789abcdef0123456789abcdef','depth/work',?1,'[]','released',0,'2026-11-21T09:00:00Z')",
+         VALUES ('d34b9b4b157da44424c3630d9592445e','list-depth',?1,'[]','released',0,'2026-11-21T09:00:00Z')",
         [&"e".repeat(40)],
     )
     .unwrap();
     let read: (String, String, String, bool) = raw
         .query_row(
-            "SELECT branch, branch_head, workspace, branch_deleted FROM withdrawal_intents WHERE todo_id = '0123456789abcdef0123456789abcdef'",
+            "SELECT branch, branch_head, workspace, branch_deleted FROM withdrawal_intents WHERE todo_id = 'd34b9b4b157da44424c3630d9592445e'",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
@@ -692,7 +708,7 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
     assert_eq!(
         read,
         (
-            "depth/work".to_owned(),
+            "list-depth".to_owned(),
             "e".repeat(40),
             "released".to_owned(),
             false
@@ -713,7 +729,7 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
         ))
     ));
     raw.execute(
-        "DELETE FROM todos WHERE id = '0123456789abcdef0123456789abcdef'",
+        "DELETE FROM todos WHERE id = 'd34b9b4b157da44424c3630d9592445e'",
         [],
     )
     .unwrap();
