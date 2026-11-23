@@ -109,13 +109,14 @@ pub(crate) struct GitHub {
     credential: std::cell::RefCell<Option<std::sync::Arc<instrukt_core::github::Credential>>>,
     role: Option<String>,
     operation: instrukt_core::github::Operation,
-    started: Instant,
+    /// The pass's clock: requests, derived clients and issuance read the
+    /// present from its one origin.
+    clock: super::_apps::Clock,
     apps: Option<std::sync::Arc<super::GitHubAccess>>,
     /// Whether this client's credential serves one operation rather than
     /// every request of the command ([`GitHub::for_role`]).
     scoped: bool,
     bots: std::cell::RefCell<Vec<instrukt_core::github::Bot>>,
-    now: Timestamp,
 }
 
 impl GitHub {
@@ -138,27 +139,28 @@ impl GitHub {
             credential: Default::default(),
             role: None,
             operation: instrukt_core::github::Operation::Record,
-            started: Instant::now(),
+            clock: super::_apps::Clock::starting(Timestamp::now()),
             apps: None,
             scoped: false,
             bots: Default::default(),
-            now: Timestamp::now(),
         }
     }
 
+    /// A client of `access` on `clock`, anchored where the caller sampled its
+    /// `now`, so the wait for the capability lock here counts as elapsed.
     pub fn for_app(
         access: std::sync::Arc<super::GitHubAccess>,
         api: &str,
         repository: &str,
         role: Option<&str>,
         operation: instrukt_core::github::Operation,
-        now: Timestamp,
+        clock: super::_apps::Clock,
     ) -> Result<Self, GitHubError> {
         access.validate()?;
         let apps = access;
         let mut gh = Self::new(api, repository, String::new());
         gh.apps = Some(apps);
-        gh.now = now;
+        gh.clock = clock;
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
         Ok(gh)
@@ -171,7 +173,7 @@ impl GitHub {
         let mut gh = Self::new(&self.api, &self.repository, String::new());
         gh.apps = self.apps.clone();
         gh.scoped = true;
-        gh.now = self.current_time()?;
+        gh.clock = self.clock;
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
         Ok(gh)
@@ -196,10 +198,9 @@ impl GitHub {
                 message: "verified bot unavailable".into(),
             })
     }
-    /// The exact present moment: this client's `now` carried forward by the
-    /// time elapsed since it was constructed.
+    /// The exact present moment on this client's clock.
     fn current_time(&self) -> Result<Timestamp, GitHubError> {
-        super::_apps::carried(self.now, self.started.elapsed()).ok_or_else(|| GitHubError::Decode {
+        self.clock.checked_now().ok_or_else(|| GitHubError::Decode {
             path: "App".into(),
             message: "credential clock is out of range".into(),
         })
@@ -216,9 +217,14 @@ impl GitHub {
             .is_none_or(|c| c.expires.as_second() <= now.as_second() + 30)
         {
             let credential = apps
-                .issue(&self.repository, self.role.as_deref(), self.operation, now)
+                .issue(
+                    &self.repository,
+                    self.role.as_deref(),
+                    self.operation,
+                    self.clock,
+                )
                 .map_err(|error| self.app_failure(error))?;
-            let bots = apps.verified_bots(&self.repository, self.current_time()?)?;
+            let bots = apps.verified_bots(&self.repository, self.clock)?;
             *self.token.borrow_mut() = credential.token().to_owned();
             *self.credential.borrow_mut() = Some(credential);
             *self.bots.borrow_mut() = bots;

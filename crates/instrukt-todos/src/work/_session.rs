@@ -137,6 +137,9 @@ impl<'w> Session<'w> {
         let items = store.items()?;
         let copies = store.copies()?;
         let now = work.now();
+        // Anchored here, before the capability lock is taken, so a wait for
+        // it is part of every GitHub answer's elapsed time.
+        let clock = super::_apps::Clock::starting(now);
         let remote = match store.provider()?.deferred_until {
             Some(until) if until > now => {
                 Remote::Unavailable(PendingReason::RateLimited { until: Some(until) })
@@ -150,7 +153,7 @@ impl<'w> Session<'w> {
                 &repository,
                 None,
                 github::Operation::Record,
-                now,
+                clock,
             ) {
                 Ok(gh) => Remote::Client {
                     gh: Box::new(gh),

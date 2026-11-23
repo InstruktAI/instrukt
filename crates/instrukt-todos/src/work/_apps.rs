@@ -17,14 +17,17 @@ fn setup(cause: &str) -> AppError {
 
 /// A caller's `now` carried forward on the monotonic clock, so each GitHub
 /// answer is dated when it is received, not when the work that awaited it
-/// began.
+/// began. Its wall time and monotonic origin are taken together, once, where
+/// the caller samples `now`; every client and issuance of that pass carries
+/// this one value, so waiting on the capability lock is never left out.
 #[derive(Clone, Copy)]
-struct Clock {
+pub(crate) struct Clock {
     start: Timestamp,
     started: Instant,
 }
 impl Clock {
-    fn starting(start: Timestamp) -> Self {
+    /// Anchors `start`, just sampled, to this instant.
+    pub(crate) fn starting(start: Timestamp) -> Self {
         Self {
             start,
             started: Instant::now(),
@@ -34,7 +37,11 @@ impl Clock {
     /// arrived only once this reaches it. Rounding a relative wait into a
     /// deadline is [`super::_github::Limits`]'s, never the clock's.
     fn now(&self) -> Timestamp {
-        carried(self.start, self.started.elapsed()).unwrap_or(Timestamp::MAX)
+        self.checked_now().unwrap_or(Timestamp::MAX)
+    }
+    /// [`Clock::now`], or `None` past the representable range.
+    pub(super) fn checked_now(&self) -> Option<Timestamp> {
+        carried(self.start, self.started.elapsed())
     }
 }
 
@@ -125,17 +132,15 @@ impl GitHubAccess {
         repository: &str,
         role: Option<&str>,
         operation: Operation,
-        now: Timestamp,
+        clock: Clock,
     ) -> Result<Arc<Credential>, AppError> {
-        let clock = Clock::starting(now);
         self.with_apps(|apps| apps.issue(repository, role, operation, clock))
     }
     pub(crate) fn verified_bots(
         &self,
         repository: &str,
-        now: Timestamp,
+        clock: Clock,
     ) -> Result<Vec<Bot>, AppError> {
-        let clock = Clock::starting(now);
         self.with_apps(|apps| apps.verified_bots(repository, clock))
     }
 }
