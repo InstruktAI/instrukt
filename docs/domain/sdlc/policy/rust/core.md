@@ -216,17 +216,13 @@ visibility: 'public'
     wanted, `sccache` runs as the compiler wrapper (`RUSTC_WRAPPER`) with its
     local disk cache capped (`SCCACHE_CACHE_SIZE`), while each worktree keeps
     its own target directory. It reuses a compilation only when it can cache
-    that compilation and the cache key matches. By default a hit requires the
-    absolute paths in the key to match, so a compilation keyed on a path
-    inside the checkout gets no hit from a worktree at another path.
-    `SCCACHE_BASEDIRS` strips the named base directories before hashing; a
-    hit then returns a crate compiled in another directory, which keeps that
-    directory's paths in its debug info and panic messages unless
-    `--remap-path-prefix` maps them away, and in any checkout path the crate
-    embeds through `env!`. Crates that invoke the system linker, such as
-    binaries and procedural macros, are not cached, and by default neither
-    are incrementally compiled crates, which in the dev profile are the
-    workspace members and path dependencies.
+    that compilation and the cache key matches. The key can include absolute
+    paths, so a compilation in a worktree at another path may miss; how an
+    installed `sccache` version normalizes those paths is its vendor's to
+    document. Crates that invoke the system linker, such as binaries and
+    procedural macros, are not cached, and by default neither are
+    incrementally compiled crates, which in the dev profile are the workspace
+    members and path dependencies.
 <!-- /planned:reduce-worktree-disk-usage -->
 
 ## Rationale
