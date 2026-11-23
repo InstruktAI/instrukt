@@ -18,10 +18,13 @@
 #   python    the Python lint and type check among the commit checks
 #   validate  the Linux build job builds instrukt and validates (rust or docs):
 #             with validate true and rust false it validates and no test runs;
-#             with both false neither the build job nor a test job starts
-# and precommit_skip, the commit checks (.pre-commit-config.yaml hook ids) the
-# Linux job leaves out: the Rust ones unless rust, shellcheck unless shell,
-# the Python ones unless python; none when every check runs.
+#             with both false neither the Linux build job nor the shard job
+#             starts, while the required platform jobs still start and report
+# and precommit_skip, the commit checks (.pre-commit-config.yaml hook ids) this
+# classification leaves out: the Rust ones unless rust, shellcheck unless
+# shell, the Python ones unless python; empty when every check runs. The
+# workflow applies it only when this job succeeded, and adds to it, always,
+# the hooks whose checks run in other steps and jobs (.github/workflows/ci.yml).
 set -eu
 
 shell=false rust=false docs=false deps=false graphify=false t3=false python=false

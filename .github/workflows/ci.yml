@@ -27,8 +27,11 @@ concurrency:
 
 # A deselection is the literal `false` from a `changes` job that succeeded, and
 # nothing else: a `changes` job that fails, even after writing some outputs,
-# selects every check, and nothing is left out of the commit checks unless that
-# job succeeded. Three kinds of job rest on that rule:
+# selects every check, and the commit checks then leave out none of the hooks
+# the classifier names (precommit_skip). Independently of the classifier, the
+# Linux build job always leaves three hooks out of its every-file run because
+# other steps and jobs run their checks: shellcheck, cargo-clippy-and-unit-tests
+# and config-validate. Three kinds of job rest on the deselection rule:
 # - `shellcheck`, `dependency audit`, `pinned Graphify contract`,
 #   `pinned T3 contract` and `fmt, clippy, test (macos-latest)` carry required
 #   names. Each depends on `changes`, runs unless cancelled and gates its
@@ -38,7 +41,8 @@ concurrency:
 #   on a cancelled run, and none of its steps carries a condition.
 # - The Linux build job and the shard job carry no required name and skip
 #   themselves, as jobs, when the classifier deselected them, so they start no
-#   runner.
+#   runner. The required platform jobs, the aggregate and
+#   `fmt, clippy, test (macos-latest)`, still start then, as the rows above say.
 jobs:
   changes:
     name: changed inputs
