@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use instrukt_connector::{
     Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Clock, Connector,
-    ConnectorError, Declaration, Declared, Earlier, Field, Inbox, Incoming, Kind, Place, Rule,
-    SecretResolver, Sender, Status,
+    ConnectorError, Declaration, Declared, DirectMessageError, DirectMessageReceipt, Earlier,
+    Field, Inbox, Incoming, Kind, Place, Rule, SecretResolver, Sender, Status,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -171,6 +171,9 @@ pub enum SlackError {
     /// token.
     #[error("Slack {method}: {cause}")]
     Api { method: String, cause: String },
+    /// A transport failure or HTTP 5xx response from Slack (retryable).
+    #[error("Slack {method}: {cause}")]
+    Transient { method: String, cause: String },
     /// A Slack response confirms the post was rejected.
     #[error("Slack {method}: {cause}")]
     RejectedPost { method: String, cause: String },
@@ -344,9 +347,13 @@ impl SlackApi {
         if let Some(timeout) = timeout {
             request = request.config().timeout_global(Some(timeout)).build();
         }
-        let mut response = request
-            .send_form(form.iter().copied())
-            .map_err(|e| fail(e.to_string()))?;
+        let mut response =
+            request
+                .send_form(form.iter().copied())
+                .map_err(|e| SlackError::Transient {
+                    method: method.into(),
+                    cause: e.to_string(),
+                })?;
         let status = response.status();
         if status.as_u16() == 429 {
             let seconds = response
@@ -362,10 +369,19 @@ impl SlackApi {
                 seconds,
             });
         }
+        if status.as_u16() >= 500 {
+            return Err(SlackError::Transient {
+                method: method.into(),
+                cause: format!("HTTP {status}"),
+            });
+        }
         let text = response
             .body_mut()
             .read_to_string()
-            .map_err(|_| fail(format!("HTTP {status} without an answer")))?;
+            .map_err(|_| SlackError::Transient {
+                method: method.into(),
+                cause: format!("HTTP {status} without an answer"),
+            })?;
         let body: Value = serde_json::from_str(&text)
             .map_err(|_| fail(format!("HTTP {status} without a JSON answer")))?;
         if body.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -499,6 +515,39 @@ impl SlackApi {
         }
         self.call("chat.postMessage", false, &form).map(drop)
     }
+
+    /// Post a private direct message directly to a user's Slack ID using `chat.postMessage`
+    /// (`chat:write` scope only, never `conversations.open`), tagged with `instrukt_private`
+    /// metadata so it is excluded from every context read.
+    pub fn post_private_dm(
+        &self,
+        recipient: &str,
+        text: &str,
+    ) -> Result<DirectMessageReceipt, SlackError> {
+        const PRIVATE_METADATA: &str = r#"{"event_type":"instrukt_private","event_payload":{}}"#;
+        let form = [
+            ("channel", recipient),
+            ("text", text),
+            ("metadata", PRIVATE_METADATA),
+        ];
+        self.call("chat.postMessage", false, &form)
+            .map(|post| DirectMessageReceipt {
+                channel: post
+                    .get("channel")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                message_id: post.get("ts").and_then(Value::as_str).map(str::to_owned),
+            })
+    }
+}
+
+/// Whether `message` carries Slack metadata `event_type: "instrukt_private"`,
+/// marking a private platform DM that must never accompany any turn to the agent.
+fn is_instrukt_private(message: &Value) -> bool {
+    message
+        .pointer("/metadata/event_type")
+        .and_then(Value::as_str)
+        == Some("instrukt_private")
 }
 
 /// The connector's own identity in its workspace.
@@ -557,6 +606,9 @@ fn admission(record: &Value, me: &Me) -> Option<Sender> {
         && flag("is_restricted") == Some(false)
         && flag("is_ultra_restricted") == Some(false)
         && in_workspace;
+    let is_admin = flag("is_admin") == Some(true)
+        || flag("is_owner") == Some(true)
+        || flag("is_primary_owner") == Some(true);
     own.then(|| Sender {
         name: name(record).unwrap_or_else(|| id.to_owned()),
         email: record
@@ -565,6 +617,7 @@ fn admission(record: &Value, me: &Me) -> Option<Sender> {
             .and_then(Value::as_str)
             .filter(|email| !email.is_empty())
             .map(str::to_owned),
+        is_admin,
     })
 }
 
@@ -943,6 +996,33 @@ impl Connector for Slack {
             .map_err(failed)
     }
 
+    fn direct_message(
+        &self,
+        recipient: &str,
+        text: &str,
+    ) -> Result<DirectMessageReceipt, DirectMessageError> {
+        self.api
+            .post_private_dm(recipient, text)
+            .map_err(|error| match error {
+                SlackError::Limited { .. } | SlackError::Transient { .. } => {
+                    DirectMessageError::Retryable(error.to_string())
+                }
+                SlackError::Api { ref cause, .. }
+                    if matches!(
+                        cause.as_str(),
+                        "ratelimited"
+                            | "request_timeout"
+                            | "internal_error"
+                            | "service_unavailable"
+                            | "fatal_error"
+                    ) =>
+                {
+                    DirectMessageError::Retryable(error.to_string())
+                }
+                other => DirectMessageError::Final(other.to_string()),
+            })
+    }
+
     /// A channel conversation's thread; a direct message's addressed message.
     fn place(&self, conversation: &str, message: &str) -> Place {
         let (channel, thread) = split_conversation(conversation);
@@ -1075,6 +1155,7 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
         }
         _ => return Ok(None),
     };
+    let is_direct = thread.is_none();
     let incoming = Incoming {
         connector: SLACK.into(),
         conversation: match thread {
@@ -1085,6 +1166,7 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
         sender: sender.to_owned(),
         written_at: ts_time(ts).ok_or("message without a valid time")?,
         text: text("text").unwrap_or_default().to_owned(),
+        is_direct,
     };
     Ok(Some(incoming))
 }
@@ -1133,6 +1215,7 @@ fn read_context(
             ("channel", channel),
             ("latest", latest.as_str()),
             ("inclusive", "false"),
+            ("include_all_metadata", "true"),
             ("limit", "200"),
         ];
         if let Some(oldest) = &oldest {
@@ -1164,7 +1247,7 @@ fn read_context(
             else {
                 continue;
             };
-            if notice(message) || messages.contains_key(&at) {
+            if notice(message) || is_instrukt_private(message) || messages.contains_key(&at) {
                 continue;
             }
             messages.insert(at, message.clone());
@@ -1376,5 +1459,31 @@ mod tests {
         let local = at("http://127.0.0.1:9/api").unwrap();
         assert!(local.admits_socket("ws://127.0.0.1:10/"));
         assert!(!local.admits_socket("ws://example.com/"));
+    }
+
+    #[test]
+    fn admission_marks_workspace_admin_owner_and_primary_owner_flags() {
+        let me = Me {
+            user: "UAGENT".into(),
+            bot: Some("BAGENT".into()),
+            team: "T1".into(),
+        };
+        let base = |extra: (&str, bool)| {
+            let mut rec = json!({
+                "id": "U1",
+                "team_id": "T1",
+                "deleted": false,
+                "is_bot": false,
+                "is_restricted": false,
+                "is_ultra_restricted": false,
+                "profile": {"display_name": "Steven", "email": "steven@example.com"},
+            });
+            rec[extra.0] = json!(extra.1);
+            admission(&rec, &me).unwrap()
+        };
+        assert!(!base(("is_admin", false)).is_admin);
+        assert!(base(("is_admin", true)).is_admin);
+        assert!(base(("is_owner", true)).is_admin);
+        assert!(base(("is_primary_owner", true)).is_admin);
     }
 }

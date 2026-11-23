@@ -32,7 +32,9 @@ selected runtime with the capabilities
 A connector is the code for one channel provider. For each message addressed
 to the agent it supplies the company home that declares it, a stable
 conversation identity, the sender's identity on that connector, whether its
-provider knows the sender as one of the company's own people, the sender's
+provider knows the sender as one of the company's own people, whether its
+provider knows the sender as a workspace administrator (`is_admin`), whether
+the conversation is a direct message (`is_direct`), the sender's
 name and, where the provider gives one, email address, the time the message
 was written, its text, the conversation's earlier messages its provider
 contract says accompany it, and whether that contract left earlier messages
@@ -99,7 +101,11 @@ path is the same for every connector, whichever channel it speaks to
   (`project/instrukt/spec/feature/runner/mcp-access`) and on the company's
   own documents in its home, which it may change and commit
   (`project/instrukt/spec/feature/publication/agent-entrypoints`), and
-  declines anything else. Its procedure instructs it so.
+  when an authenticated workspace administrator addresses it in a direct
+  message (`is_admin = true` and `is_direct = true`), may inspect, discover
+  and manage that company's `mcp` service declarations under the company-agent
+  scope of `project/instrukt/spec/feature/configuration/configuration-editing`.
+  It declines anything else. Its procedure instructs it so.
 - Its role is `company-agent`; model selection, class and grants follow that
   role's entry in `agents.yaml`
   (`project/instrukt/spec/feature/configuration/agent-selection`).
@@ -153,14 +159,16 @@ the state-database spec.
   with its speaker and time and with the agent's own earlier posts marked as
   its own, and saying so when the connector left earlier messages out,
   followed by a member envelope carrying the addressed message's text as the
-  connector supplies it, with connector, conversation, member and time in its
-  opening.
+  connector supplies it, with connector, conversation, member, `admin`,
+  `direct`, and time in its opening.
   Both carry the delivery's boundary token, so a line inside them that looks
   like an opening or a closing stays content.
 - The speaker of a turn is the person who wrote its addressed message. Their
-  connector identity, name and email address, as the provider gave them when
-  that message was admitted, are stored with the message and do not change
-  afterwards; `project/instrukt/spec/feature/runner/mcp-access` reads them.
+  connector identity, name, email address, administrator status (`is_admin`)
+  and conversation direct-message flag (`is_direct`), as the provider gave
+  them when that message was admitted, are stored with the message and do not
+  change afterwards; `project/instrukt/spec/feature/runner/mcp-access` and
+  `project/instrukt/spec/feature/configuration/configuration-editing` read them.
 
 ### Who is answered
 

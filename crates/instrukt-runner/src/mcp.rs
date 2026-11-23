@@ -7,18 +7,37 @@
 //! from output never depend on where a login comes from.
 
 mod _client;
+mod _discover;
+mod _issuer;
 mod _logins;
+mod _oauth;
+mod _redis_mcp;
+mod _registrations;
 
 use std::collections::BTreeMap;
 
-use instrukt_core::config::{ConfigError, Configuration, LayerKind, McpServer};
+use instrukt_core::config::{ConfigError, Configuration, LayerKind, McpServer, SpeakerLogin};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef};
 use instrukt_core::state_db::StateDbError;
+use jiff::Timestamp;
 use serde_json::Value;
 
 pub use _client::{CALL_TOOL, INITIALIZE, INITIALIZED, LIST_TOOLS, PROTOCOL_VERSIONS, Tool};
+pub use _discover::{DiscoveryReport, JWT_BEARER_GRANT_TYPE, discover};
+pub use _issuer::{
+    IssuerInfo, init_company_issuer, republish_company_issuers, show_company_issuer,
+};
 pub use _logins::StoredLogins;
+pub use _oauth::{IngressCheckReport, check_ingress, sign_out};
+pub use _redis_mcp::{
+    SignInReturnEntry, StoreOutcome, claim_sign_in_return, read_issuer_discovery, read_issuer_jwks,
+    store_sign_in_return,
+};
+pub use _registrations::{
+    HostClientView, ServerRegistrationHint, list_company_clients, list_host_clients,
+    server_registration_hint,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
@@ -64,6 +83,8 @@ pub enum McpError {
     },
     #[error("MCP server `{server}` reports a failure: {cause}")]
     Server { server: String, cause: String },
+    #[error("MCP server `{server}` rejected the login (HTTP 401): {cause}")]
+    Unauthorized { server: String, cause: String },
 }
 
 /// Where a server a caller sees is declared.
@@ -106,6 +127,16 @@ pub struct Speaker {
     pub name: String,
     /// Their email address as the provider gave it.
     pub email: Option<String>,
+    /// Whether the provider reported this speaker as a workspace administrator.
+    pub is_admin: bool,
+    /// Whether this turn's conversation is a direct message.
+    pub is_direct: bool,
+    /// The connector delivering this conversation (e.g., `"slack"`).
+    pub connector: Option<String>,
+    /// The conversation id on that connector.
+    pub conversation: Option<String>,
+    /// The addressed message id that started this turn.
+    pub message: Option<String>,
 }
 
 impl std::fmt::Display for Speaker {
@@ -278,13 +309,21 @@ impl View {
         source: &dyn LoginSource,
     ) -> Result<Option<Login>, McpError> {
         let server = &visible.server;
-        let need = match (&visible.origin, &server.credential, &self.speaker) {
-            (Origin::Company(company), Some(credential), Some(speaker)) => Need::Speaker {
-                company,
-                speaker,
-                credential,
-            },
-            (Origin::Company(company), Some(_), None) => match &server.login {
+        let need = match (
+            &visible.origin,
+            server.speaker_login,
+            &server.credential,
+            &self.speaker,
+        ) {
+            (Origin::Company(company), SpeakerLogin::Stored, Some(credential), Some(speaker)) => {
+                Need::Speaker {
+                    company,
+                    speaker,
+                    credential,
+                }
+            }
+            (Origin::Company(company), SpeakerLogin::Stored, Some(_), None)
+            | (Origin::Company(company), SpeakerLogin::SignIn, _, None) => match &server.login {
                 Some(reference) => Need::Company { company, reference },
                 None => {
                     return Err(McpError::MissingCompanyLogin {
@@ -296,13 +335,40 @@ impl View {
             // A call that has a speaker never carries the machine's login;
             // a speaker is only ever seen in a company's view, which offers
             // no machine-wide server that carries one.
-            (Origin::Machine, None, None) => match &server.login {
+            (Origin::Machine, _, None, None) => match &server.login {
                 Some(reference) => Need::Machine { reference },
                 None => return Ok(None),
             },
             _ => return Ok(None),
         };
         source.login(need).map(Some)
+    }
+
+    /// Resolve a call's login and scrub list, supporting both stored credentials
+    /// and `speaker_login: sign-in` (authorization-code and built-in issuer).
+    pub fn resolve_call_login(
+        &self,
+        home: &Home,
+        visible: &Visible,
+        force_refresh: bool,
+        now: Timestamp,
+    ) -> Result<(Scrub, Option<String>), McpError> {
+        if let (Origin::Company(company), SpeakerLogin::SignIn, Some(speaker)) =
+            (&visible.origin, visible.server.speaker_login, &self.speaker)
+        {
+            let (header, scrub_items) = _oauth::resolve_sign_in_login(
+                home,
+                company,
+                &visible.server,
+                speaker,
+                force_refresh,
+                now,
+            )?;
+            return Ok((Scrub::new(scrub_items), Some(header.value)));
+        }
+        let login = self.login(visible, &StoredLogins::new(home))?;
+        let value = login.as_ref().map(|login| login.value.clone());
+        Ok((Scrub::new(login), value))
     }
 }
 

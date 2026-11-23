@@ -157,7 +157,12 @@ decided and the message waits; Slack is asked again until it answers
 
 The sender's name and email address come from that same record and are kept
 with the message. The name is the person's display name, their real name when
-that is empty, and their Slack id when Slack gives neither. Anyone who is not
+that is empty, and their Slack id when Slack gives neither. The sender's
+administrator flag (`is_admin`) comes from that same freshly read `users.info`
+record — `true` when `is_admin`, `is_owner`, or `is_primary_owner` is `true`,
+and `false` otherwise, never cached across messages. `is_direct` is `true` for
+a direct-message (`im`) conversation and `false` for any channel or group
+conversation. Anyone who is not
 one of the company's own gets the fixed reply
 `I only answer members of this workspace.`, in a channel and in a direct
 message alike.

@@ -542,7 +542,9 @@ pub(crate) fn judge(
             runner_runtime(value, &effective, &mut found);
             event_transport(&effective, &mut found);
         }
-        LayerKind::Company => {}
+        LayerKind::Company => {
+            super::_mcp::check_company_cross_refs(value, global, &mut found);
+        }
     }
     feature_capabilities(value, &effective, this, &mut found);
     references(value, kind, &effective, &mut found);
@@ -745,9 +747,17 @@ fn references(value: &Value, kind: LayerKind, effective: &Value, out: &mut Vec<K
     let mut strings = Vec::new();
     collect_strings(&_schema::permitted(value, kind), "", &mut strings);
     for (path, text) in strings {
-        if ["webhooks", "github.apps", "members", "connectors"]
-            .iter()
-            .any(|root| path == *root || path.starts_with(&format!("{root}.")))
+        if [
+            "webhooks",
+            "github.apps",
+            "members",
+            "connectors",
+            "mcp",
+            "mcp_clients",
+            "issuer",
+        ]
+        .iter()
+        .any(|root| path == *root || path.starts_with(&format!("{root}.")))
         {
             continue;
         }

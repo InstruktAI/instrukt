@@ -43,7 +43,108 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V30),
     Step(v31),
     Step(v32),
+    Step(v33),
 ];
+
+/// Version 33: company-admin DM self-service columns on `conversation_messages`,
+/// MCP sign-in tables (including host-scoped `mcp_registrations`), and built-in
+/// per-company OIDC issuers (`company_issuers`).
+fn v33(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    for column in ["sender_is_admin", "is_direct"] {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages') WHERE name=?1)",
+            [column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(&format!(
+                "ALTER TABLE conversation_messages ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0;"
+            ))?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS mcp_registrations (
+            return_id      TEXT PRIMARY KEY NOT NULL,
+            company        TEXT,
+            server         TEXT,
+            host_client    TEXT,
+            issuer         TEXT NOT NULL,
+            declared       INTEGER NOT NULL,
+            client_id      TEXT NOT NULL,
+            client_secret  TEXT,
+            secret_digest  TEXT,
+            return_address TEXT NOT NULL,
+            registered_at  TEXT NOT NULL,
+            retired_at     TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS mcp_registrations_host_client
+            ON mcp_registrations(host_client)
+            WHERE host_client IS NOT NULL AND retired_at IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS mcp_registrations_company_server
+            ON mcp_registrations(company, server, declared)
+            WHERE company IS NOT NULL AND server IS NOT NULL AND retired_at IS NULL;
+        CREATE TABLE IF NOT EXISTS company_issuers (
+            company          TEXT PRIMARY KEY NOT NULL,
+            issuer_id        TEXT NOT NULL UNIQUE,
+            public_jwks_json TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mcp_generations (
+            company    TEXT NOT NULL,
+            person     TEXT NOT NULL,
+            server     TEXT NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (company, person, server)
+        );
+        CREATE TABLE IF NOT EXISTS mcp_logins (
+            company        TEXT NOT NULL,
+            person         TEXT NOT NULL,
+            server         TEXT NOT NULL,
+            resource       TEXT NOT NULL,
+            subject        TEXT,
+            return_id      TEXT NOT NULL,
+            access_token   TEXT NOT NULL,
+            expires_at     TEXT,
+            checked        INTEGER NOT NULL DEFAULT 1,
+            refresh_token  TEXT,
+            scopes         TEXT,
+            signed_in_at   TEXT NOT NULL,
+            renewed_at     TEXT,
+            renewing_until TEXT,
+            PRIMARY KEY (company, person, server)
+        );
+        CREATE TABLE IF NOT EXISTS mcp_sign_ins (
+            state_digest   TEXT PRIMARY KEY NOT NULL,
+            company        TEXT NOT NULL,
+            person         TEXT NOT NULL,
+            server         TEXT NOT NULL,
+            return_id      TEXT NOT NULL,
+            resource       TEXT NOT NULL,
+            scopes         TEXT,
+            generation     INTEGER NOT NULL,
+            connector      TEXT NOT NULL,
+            conversation   TEXT NOT NULL,
+            message        TEXT NOT NULL,
+            recipient      TEXT NOT NULL,
+            code_verifier  TEXT,
+            nonce          TEXT,
+            link           TEXT,
+            created_at     TEXT NOT NULL,
+            expires_at     TEXT NOT NULL,
+            state          TEXT NOT NULL CHECK (state IN ('open','exchanging','completed','declined','refused','failed','undelivered','expired','cancelled')),
+            link_sent_at   TEXT,
+            told_at        TEXT,
+            closed_at      TEXT,
+            failure        TEXT
+        );
+        CREATE TABLE IF NOT EXISTS mcp_sign_in_waiters (
+            state_digest   TEXT NOT NULL,
+            waiter         TEXT NOT NULL,
+            waiting_until  TEXT NOT NULL,
+            PRIMARY KEY (state_digest, waiter)
+        );",
+    )
+}
 
 /// Drops every history table earlier versions created; the history store
 /// owns retained history (`project/instrukt/spec/feature/runner/history`).

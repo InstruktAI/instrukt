@@ -51,6 +51,9 @@ pub struct Incoming {
     pub sender: String,
     pub written_at: Timestamp,
     pub text: String,
+    /// Whether the conversation is a direct message rather than a channel or group.
+    #[serde(default)]
+    pub is_direct: bool,
 }
 
 /// A provider page and the continuation for the next request.
@@ -97,6 +100,7 @@ pub struct ReadBackError {
 pub struct Sender {
     pub name: String,
     pub email: Option<String>,
+    pub is_admin: bool,
 }
 
 /// The clock a kind keeps its provider's waits by.
@@ -122,6 +126,23 @@ pub struct AnswerReceipt {
 #[error("{cause}")]
 pub struct AnswerError {
     pub cause: String,
+}
+
+/// Receipt returned after posting a private direct message to a user.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DirectMessageReceipt {
+    pub channel: Option<String>,
+    pub message_id: Option<String>,
+}
+
+/// Failure posting a private direct message to a user, classified by whether
+/// the provider failure is retryable (rate limit, server error, transport) or final.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DirectMessageError {
+    #[error("{0}")]
+    Retryable(String),
+    #[error("{0}")]
+    Final(String),
 }
 
 /// What the provider says about the sender of an addressed message.

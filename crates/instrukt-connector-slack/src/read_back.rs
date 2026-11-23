@@ -343,6 +343,7 @@ fn recover(
             sender: sender.to_owned(),
             written_at,
             text: text.to_owned(),
+            is_direct: direct,
         },
         format!("https://app.slack.com/archives/{channel}/p{timestamp}"),
     )))

@@ -65,6 +65,7 @@ pub struct Person {
     pub deleted: bool,
     pub bot: bool,
     pub guest: bool,
+    pub is_admin: bool,
 }
 impl Person {
     /// A full member of the workspace.
@@ -78,6 +79,7 @@ impl Person {
             deleted: false,
             bot: false,
             guest: false,
+            is_admin: false,
         }
     }
     /// The name Slack shows for them: the display name, the real name when
@@ -94,7 +96,7 @@ impl Person {
         if let Some(email) = &self.email {
             profile["email"] = json!(email);
         }
-        json!({"id": self.id, "team_id": self.team, "name": self.id.to_lowercase(), "deleted": self.deleted, "is_bot": self.bot, "is_restricted": self.guest, "is_ultra_restricted": false, "real_name": self.real_name, "profile": profile})
+        json!({"id": self.id, "team_id": self.team, "name": self.id.to_lowercase(), "deleted": self.deleted, "is_bot": self.bot, "is_restricted": self.guest, "is_ultra_restricted": false, "is_admin": self.is_admin, "real_name": self.real_name, "profile": profile})
     }
 }
 
@@ -200,6 +202,11 @@ struct Workspace {
     fates: Vec<(String, Fate, usize)>,
     /// Posts committed late, not yet visible.
     late: Vec<(Value, Post)>,
+    /// Mapping from user id to DM channel id (e.g. USTEVEN -> D1), matching real Slack's
+    /// `chat.postMessage(channel=<user_id>)` delivery into that user's DM channel.
+    dm_channels: std::collections::BTreeMap<String, String>,
+    /// One-shot error code returned by the next `chat.postMessage` call (e.g. `ratelimited` or `user_not_found`).
+    next_post_error: Option<String>,
 }
 
 pub struct FakeSlack {
@@ -644,12 +651,28 @@ impl FakeSlack {
             "chat.postMessage" if arg("markdown_text").is_none() && arg("text").is_none() => {
                 json!({"ok": false, "error": "no_text"})
             }
+            "chat.postMessage" if w.next_post_error.is_some() => {
+                let err = w.next_post_error.take().unwrap();
+                json!({"ok": false, "error": err})
+            }
             "chat.postMessage" if w.fail_posts => {
                 json!({"ok": false, "error": "not_in_channel"})
             }
+            // `conversations.open` requires `im:write` / `channels:manage` / `groups:write` / `mpim:write`,
+            // none of which the documented Slack app manifest grants. Match real Slack by refusing it.
+            "conversations.open" => json!({"ok": false, "error": "missing_scope"}),
             "chat.postMessage" => {
+                let raw_channel = arg("channel").unwrap().to_owned();
+                let resolved_channel = if w.people.contains_key(&raw_channel) {
+                    w.dm_channels
+                        .get(&raw_channel)
+                        .cloned()
+                        .unwrap_or_else(|| format!("DM-{raw_channel}"))
+                } else {
+                    raw_channel
+                };
                 let post = Post {
-                    channel: arg("channel").unwrap().to_owned(),
+                    channel: resolved_channel,
                     thread: arg("thread_ts").map(str::to_owned),
                     text: arg("text").map(str::to_owned),
                     markdown: arg("markdown_text").map(str::to_owned),
@@ -690,6 +713,7 @@ impl FakeSlack {
                     channel != &post.channel
                         || post.thread.as_ref().is_some_and(|posted| posted != thread)
                 });
+                let reply_channel = post.channel.clone();
                 w.posts.push(post);
                 if fate == Some(Fate::Lost) {
                     return json!({"ok": false, "error": "request_timeout"});
@@ -697,7 +721,7 @@ impl FakeSlack {
                 if fate == Some(Fate::MissingTimestamp) {
                     return json!({"ok": true});
                 }
-                json!({"ok": true, "ts": ts})
+                json!({"ok": true, "channel": reply_channel, "ts": ts})
             }
             other => json!({"ok": false, "error": format!("unknown_method {other}")}),
         }
@@ -889,6 +913,11 @@ impl FakeSlack {
         file: bool,
     ) -> String {
         let ts = self.say(channel, user, text, None);
+        self.workspace
+            .lock()
+            .unwrap()
+            .dm_channels
+            .insert(user.to_owned(), channel.to_owned());
         let mut event = json!({"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text, "ts": ts, "event_ts": ts});
         Self::dress(&mut event, subtype, file);
         self.dress_stored(&ts, subtype, file);
@@ -1097,6 +1126,17 @@ impl FakeSlack {
         self.workspace.lock().unwrap().fail_posts = false;
     }
 
+    /// Sets whether Slack reports `user` as a workspace administrator.
+    pub fn set_admin(&self, user: &str, is_admin: bool) {
+        self.workspace
+            .lock()
+            .unwrap()
+            .people
+            .get_mut(user)
+            .unwrap()
+            .is_admin = is_admin;
+    }
+
     /// Lookups of people wait until [`FakeSlack::release_lookups`].
     pub fn hold_lookups(&self) {
         self.workspace.lock().unwrap().hold_lookups = true;
@@ -1198,6 +1238,14 @@ impl FakeSlack {
 
     pub fn posts(&self) -> Vec<Post> {
         self.workspace.lock().unwrap().posts.clone()
+    }
+
+    pub fn stored_messages(&self) -> Vec<Value> {
+        self.workspace.lock().unwrap().messages.clone()
+    }
+
+    pub fn fail_next_post(&self, error: &str) {
+        self.workspace.lock().unwrap().next_post_error = Some(error.to_owned());
     }
 
     /// What Slack returns as text for the submitted Markdown.

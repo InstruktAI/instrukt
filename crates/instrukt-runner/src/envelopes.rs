@@ -43,6 +43,8 @@ pub enum Span<'a> {
         connector: &'a str,
         conversation: &'a str,
         member: &'a str,
+        is_admin: bool,
+        is_direct: bool,
         at: &'a str,
         boundary: &'a str,
         body: &'a str,
@@ -83,29 +85,44 @@ pub fn delivery_boundary(content: &[&str]) -> Result<String, crate::sessions::Se
 }
 
 /// The member envelope of one addressed message; its text unchanged.
+#[allow(clippy::too_many_arguments)]
 pub fn member(
     connector: &str,
     conversation: &str,
     member: &str,
+    is_admin: bool,
+    is_direct: bool,
     at: Option<jiff::Timestamp>,
     token: &str,
     text: &str,
 ) -> String {
-    member_at(connector, conversation, member, &minute(at), token, text)
+    member_at(
+        connector,
+        conversation,
+        member,
+        is_admin,
+        is_direct,
+        &minute(at),
+        token,
+        text,
+    )
 }
 
 /// The member envelope with its occurrence minute already rendered, as a
 /// relayed contribution keeps it.
+#[allow(clippy::too_many_arguments)]
 pub fn member_at(
     connector: &str,
     conversation: &str,
     member: &str,
+    is_admin: bool,
+    is_direct: bool,
     at: &str,
     token: &str,
     text: &str,
 ) -> String {
     let fields = format!(
-        "{} · {} · {} · {} · {token}",
+        "{} · {} · {} · admin={is_admin} · direct={is_direct} · {} · {token}",
         field(connector),
         field(conversation),
         field(member),
@@ -215,7 +232,22 @@ enum Opened<'a> {
     Control,
     Context(&'a str),
     Peer(&'a str, &'a str, &'a str, Option<&'a str>),
-    Member([&'a str; 5]),
+    Member {
+        connector: &'a str,
+        conversation: &'a str,
+        member: &'a str,
+        is_admin: bool,
+        is_direct: bool,
+        at: &'a str,
+        token: &'a str,
+    },
+}
+fn parse_flag(field: &str, prefix: &str) -> Option<bool> {
+    match field.strip_prefix(prefix)? {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 fn opening(line: &str) -> Option<(&str, Opened<'_>)> {
     let tag = line.strip_prefix('[')?.strip_suffix(']')?;
@@ -235,10 +267,43 @@ fn opening(line: &str) -> Option<(&str, Opened<'_>)> {
     {
         let fields = fields.split(" · ").collect::<Vec<_>>();
         return match fields.as_slice() {
+            [
+                connector,
+                conversation,
+                member,
+                admin_kv,
+                direct_kv,
+                at,
+                token,
+            ] if boundary(token) && valid_minute(at) => {
+                let is_admin = parse_flag(admin_kv, "admin=")?;
+                let is_direct = parse_flag(direct_kv, "direct=")?;
+                Some((
+                    tag,
+                    Opened::Member {
+                        connector,
+                        conversation,
+                        member,
+                        is_admin,
+                        is_direct,
+                        at,
+                        token,
+                    },
+                ))
+            }
+            // Legacy 5-field envelopes without admin/direct default to false.
             [connector, conversation, member, at, token] if boundary(token) && valid_minute(at) => {
                 Some((
                     tag,
-                    Opened::Member([connector, conversation, member, at, token]),
+                    Opened::Member {
+                        connector,
+                        conversation,
+                        member,
+                        is_admin: false,
+                        is_direct: false,
+                        at,
+                        token,
+                    },
                 ))
             }
             _ => None,
@@ -316,16 +381,24 @@ pub fn segment(text: &str) -> Vec<Span<'_>> {
                         boundary,
                         body,
                     },
-                    Opened::Member([connector, conversation, member, at, boundary]) => {
-                        Span::Member {
-                            connector,
-                            conversation,
-                            member,
-                            at,
-                            boundary,
-                            body,
-                        }
-                    }
+                    Opened::Member {
+                        connector,
+                        conversation,
+                        member,
+                        is_admin,
+                        is_direct,
+                        at,
+                        token: boundary,
+                    } => Span::Member {
+                        connector,
+                        conversation,
+                        member,
+                        is_admin,
+                        is_direct,
+                        at,
+                        boundary,
+                        body,
+                    },
                     Opened::Context(boundary) => Span::Context { boundary, body },
                     Opened::Control => Span::Control,
                 });
@@ -487,7 +560,9 @@ mod tests {
                 ],
                 true,
             ),
-            member("slack", "C1/1.2", "steven", None, token, quoted)
+            member(
+                "slack", "C1/1.2", "steven", false, false, None, token, quoted
+            )
         );
         let spans = segment(&framed);
         assert_eq!(spans.len(), 2);
@@ -516,5 +591,50 @@ mod tests {
         };
         assert_eq!((*member, *boundary), ("steven", token));
         assert_eq!(body.len(), quoted.len());
+    }
+    #[test]
+    fn member_envelope_emits_and_parses_admin_and_direct_flags_and_accepts_legacy_shape() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let framed = member(
+            "slack",
+            "D1",
+            "Steven",
+            true,
+            true,
+            None,
+            token,
+            "Connect our ERP",
+        );
+        assert!(framed.contains("admin=true · direct=true"));
+        let spans = segment(&framed);
+        assert_eq!(
+            spans,
+            vec![Span::Member {
+                connector: "slack",
+                conversation: "D1",
+                member: "Steven",
+                is_admin: true,
+                is_direct: true,
+                at: "unknown",
+                boundary: token,
+                body: "Connect our ERP",
+            }]
+        );
+        let legacy = format!(
+            "[Member (slack · C1/1.0 · Anna · unknown · {token})]\nhello\n[/Member (slack · C1/1.0 · Anna · unknown · {token})]"
+        );
+        assert_eq!(
+            segment(&legacy),
+            vec![Span::Member {
+                connector: "slack",
+                conversation: "C1/1.0",
+                member: "Anna",
+                is_admin: false,
+                is_direct: false,
+                at: "unknown",
+                boundary: token,
+                body: "hello",
+            }]
+        );
     }
 }
