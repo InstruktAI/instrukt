@@ -624,6 +624,8 @@ fn refuse_link(store: &'static str, path: &Path) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{AgentSelection, Effort, HarnessKind};
+    use crate::ids::{ProfileName, ProviderInstanceId};
 
     #[test]
     fn every_migration_applies_in_order_to_an_empty_database() {
@@ -864,8 +866,6 @@ mod tests {
     #[test]
     fn version_33_carries_a_stored_antigravity_effort_as_thought_level_and_keeps_other_reservations()
      {
-        use crate::config::{AgentSelection, Effort, HarnessKind};
-        use crate::ids::{ProfileName, ProviderInstanceId};
         let path = Path::new(":memory:");
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in _schema::MIGRATIONS.iter().take(32) {
