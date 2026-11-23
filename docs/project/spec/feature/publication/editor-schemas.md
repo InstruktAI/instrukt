@@ -18,6 +18,7 @@ names a home path.
 
 ### Schemas
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 | File | Schema in `.instrukt/schemas/` | Generated from |
 | --- | --- | --- |
 | `docs/general/index.yaml` | `general-index.schema.json` | the `general` position's index type: `expanded`, `listed`, `agents`, where `agents` admits open provider keys constrained to 1–64 ASCII characters, a leading letter and then letters, digits, underscores or hyphens |
@@ -25,6 +26,23 @@ names a home path.
 | `docs/project/index.yaml` | `project-index.schema.json` | the project position's index type: `expanded`, `listed` |
 | `schema.yaml` at the root of any position | `snippet-schema.schema.json` | the snippet-schema type |
 | `instrukt.yaml` (the project layer) | `instrukt.schema.json` | the configuration schema at the current schema version |
+<!-- change:unify-index-yaml-entrypoints -->
+| File | Schema in `.instrukt/schemas/` | Generated from |
+| --- | --- | --- |
+| `docs/general/index.yaml` | `general-index.schema.json` | the `general` position's index type: `expanded`, `listed`, `agents`, where `agents` admits open provider keys constrained to 1–64 ASCII characters, a leading letter and then letters, digits, underscores or hyphens |
+| `docs/domain/<x>/index.yaml` | `domain-index.schema.json` | the domain position's index type: `description`, which the schema requires and admits only as a text, `expanded`, `listed` |
+| `docs/project/index.yaml` | `project-index.schema.json` | the project position's index type: `expanded`, `listed` |
+| `docs/index.yaml` of a company home | `company-index.schema.json` | the company index type of `project/instrukt/spec/feature/publication/agent-entrypoints`: `expanded`, `listed`, each a list of paths ending in `.md`; no other key; a document holding nothing is admitted |
+| `schema.yaml` at the root of any position | `snippet-schema.schema.json` | the snippet-schema type |
+| `instrukt.yaml` (the project layer) | `instrukt.schema.json` | the configuration schema at the current schema version |
+<!-- /planned-change:unify-index-yaml-entrypoints -->
+
+<!-- planned:unify-index-yaml-entrypoints -->
+The company index's schema is generated from the type the rendering reads a
+company's `docs/index.yaml` with, and is written with the others. No modeline
+is written into that file and no schema into a company home: `instrukt init`
+and `instrukt sync`, which write them, run in projects.
+<!-- /planned:unify-index-yaml-entrypoints -->
 
 - Each schema is generated from the same type the validator reads that file
   with — the position index and snippet schema types of the docs context

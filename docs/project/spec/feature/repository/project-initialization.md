@@ -29,11 +29,12 @@ content: what a project's `AGENTS.md` includes comes only from
 `docs/project/index.yaml`.
 <!-- change:unify-index-yaml-entrypoints -->
 Adoption replaces whole instruction files and never injects into existing
-ones. A project's root `AGENTS.md` is taken over by adoption: when a
-hand-written root `AGENTS.md` exists in a repository that has no
-`docs/project/index.yaml` yet, init keeps the file's content, byte for byte,
-at `.instrukt/adopted/AGENTS.md`, so nothing the developer wrote is lost
-while it finds its place. What a project's `AGENTS.md` includes comes only
+ones. A project's root `AGENTS.md` is taken over by adoption: when a root
+`AGENTS.md` exists that is not instrukt's rendering and no copy of it has
+been kept yet, init keeps the file's content, byte for byte, at
+`.instrukt/adopted/AGENTS.md`, whether or not the repository already holds a
+project index, so nothing the developer wrote is lost while it finds its
+place. What a project's `AGENTS.md` includes comes only
 from `docs/project/index.yaml`.
 <!-- /planned-change:unify-index-yaml-entrypoints -->
 
@@ -83,7 +84,7 @@ the sync of the project that owns `docs/general/` writes them whole
 | Project docs | `docs/project/` | absent |
 | Project index | `docs/project/index.yaml`, with empty `expanded` and `listed` | absent |
 | Project schema | `docs/project/schema.yaml`, a copy of the published `sdlc` domain's `schema.yaml` | absent and `sdlc` is published on the computer with a `schema.yaml` |
-| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists that is not instrukt's rendering, and the repository had no `docs/project/index.yaml` before this run |
+| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists that is not instrukt's rendering, and no kept copy exists |
 | Editor schemas and modelines | `.instrukt/schemas/` and the first line of each file they describe | as `project/instrukt/spec/feature/publication/editor-schemas` |
 | Ignores | `.gitignore`: `.instrukt/` | the line is missing; it is appended, every other line kept |
 | Hook sections | the hooks directory | as `instrukt hooks install` (`project/instrukt/spec/feature/repository/hook-sections`) |
@@ -177,6 +178,9 @@ When the developer commits
 Then the commit carries the rendered instruction file in its place, and the kept copy still holds what they wrote
 When their agent goes through the kept instructions with them
 Then each lands in the project's documentation and index, and the published instruction file carries them
+Given another repository that already holds its own project index beside a hand-written root agent instruction file never kept aside
+When the developer initializes instrukt in it
+Then everything that file said is kept aside for them as well
 ```
 <!-- /planned-change:unify-index-yaml-entrypoints -->
 

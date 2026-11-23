@@ -51,15 +51,14 @@ listed overview's closure — never from nested indexes.
 <!-- planned:unify-index-yaml-entrypoints -->
 ### The company index
 
-A company home's `docs/index.yaml` is no position's index: a company's
-documents have no snippet id and are never published. It carries the two
-selection keys, `expanded` and `listed`, and no other; its entries are the
-paths of company documents relative to `docs/`, not ids. What it may say,
-its findings and what is rendered from it are publication's contract
+A company home's `docs/index.yaml` is no position's index. Its shape, its
+findings and what is rendered from it are publication's
 (`project/instrukt/spec/feature/publication/agent-entrypoints`, Company home
-entrypoint), and `instrukt docs validate` reads no company index. In a
-project, a `docs/index.yaml` sits at no position's root and is the finding
-below.
+entrypoint) and are not stated here. `instrukt docs validate` reads it in no
+repository. In a company home or a clone of one — a repository whose root
+holds a company's settings document, or no `instrukt.yaml` — validation
+reports nothing about that file. In a project, a `docs/index.yaml` sits at
+no position's root and is the finding below.
 <!-- /planned:unify-index-yaml-entrypoints -->
 
 ### Findings
