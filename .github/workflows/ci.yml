@@ -87,8 +87,8 @@ jobs:
         run: pre-commit run shellcheck --all-files
 
   # Builds once on Linux and runs the OS-independent checks once: every check
-  # of .pre-commit-config.yaml over every file, use-case coverage and the
-  # instruction files; where Rust is selected, also clippy, the test archive
+  # of .pre-commit-config.yaml over every file, use-case coverage, the
+  # committed configuration and the instruction files; where Rust is selected, also clippy, the test archive
   # the shards run, and the doctests (scripts/ci-ubuntu-build.sh). Its last
   # step writes the completion record the aggregate requires.
   ubuntu-build:
@@ -116,16 +116,19 @@ jobs:
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
         with:
           tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
-      # Every check of .pre-commit-config.yaml over every file, document and
-      # configuration validation with an instrukt built from this revision.
-      # Two hooks always run elsewhere: shellcheck in its own job, and clippy
-      # with the unit tests in the build script, the shards and the macOS job.
-      # On a pull request it also leaves out the Rust, shell or Python checks
-      # whose inputs did not change (precommit_skip). It runs before the Rust
-      # build: its build lock clears the workspace's artifacts the first time.
+      # Every check of .pre-commit-config.yaml over every file, document
+      # validation with an instrukt built from this revision among them.
+      # Three hooks always run elsewhere, whatever the classifier reported:
+      # shellcheck in its own job, clippy with the unit tests in the build
+      # script, the shards and the macOS job, and configuration validation in
+      # the `committed configuration` step below, which also fails when the
+      # committed project layer is missing. On a pull request whose `changes`
+      # job succeeded it also leaves out the Rust, shell or Python checks whose
+      # inputs did not change (precommit_skip). It runs before the Rust build:
+      # its build lock clears the workspace's artifacts the first time.
       - name: commit checks over every file
         env:
-          SKIP: shellcheck,cargo-clippy-and-unit-tests,${{ needs.changes.result == 'success' && needs.changes.outputs.precommit_skip || '' }}
+          SKIP: shellcheck,cargo-clippy-and-unit-tests,config-validate,${{ needs.changes.result == 'success' && needs.changes.outputs.precommit_skip || '' }}
         run: scripts/commit-checks.sh --all-files
       - name: clippy, test archive and doctests
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
@@ -141,6 +144,8 @@ jobs:
           if-no-files-found: error
       - name: use-case coverage
         run: scripts/check-coverage.sh
+      - name: committed configuration
+        run: scripts/check-committed-config.sh
       - name: committed instruction files
         run: scripts/check-entrypoints.sh
       - name: Record completion
