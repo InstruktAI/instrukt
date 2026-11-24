@@ -106,8 +106,14 @@ or promote whatever commit now occupies the integration branch.
 4. Fold pending documentation at delivery: run `instrukt docs fold <slug>` to
    reconcile the todo's pending documentation (clearing `binding_reservations`
    once their attached tests are present) under the owning documentation
-   contract before freezing the candidate. Include the resulting content in the
-   commit verified.
+   contract before freezing the candidate. Where the reviewed delivery
+   introduces new project extension-point fills whose `delivered_by` markers
+   this fold clears, add those newly delivered fill IDs under `listed` in
+   `docs/project/index.yaml` when not yet listed, regenerate entrypoints with
+   `instrukt docs render`, and verify with `instrukt docs validate` and
+   `instrukt docs render --check`. Include the folded snippets, updated
+   `docs/project/index.yaml`, and regenerated entrypoints in the exact commit
+   verified.
 5. The integrator may batch finalized candidates according to its judgment.
    Retain the work and commits represented by the batch so a failure can be
    attributed to its responsible todo.
