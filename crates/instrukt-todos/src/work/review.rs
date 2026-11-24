@@ -213,8 +213,13 @@ impl ReviewProject {
             ))
         };
         let sha = CommitSha::parse(text).map_err(|_| not_here())?;
+        // `rev-parse --verify --quiet` exits 1 for an id the repository does
+        // not hold or that names no commit; `cat-file -e` exits 128 there.
         let object = format!("{sha}^{{commit}}");
-        if !git::succeeds(&self.root, ["cat-file", "-e", object.as_str()])? {
+        if !git::succeeds(
+            &self.root,
+            ["rev-parse", "--verify", "--quiet", object.as_str()],
+        )? {
             return Err(not_here());
         }
         Ok(sha)
@@ -1731,6 +1736,49 @@ mod tests {
             held.current().map(|v| v.name.clone()),
             Some(ContentDigest::of("report")),
             "evidence of a commit this repository does not hold is kept"
+        );
+    }
+
+    #[test]
+    fn exempting_a_commit_the_repository_does_not_hold_is_the_repository_refusal() {
+        let fixture = fixture();
+        let exempted = exempt(
+            &fixture.home,
+            &fixture.project,
+            &ExemptRequest {
+                commit: sha('1').to_string(),
+                basis: "a typo fix".into(),
+                caller: None,
+            },
+            &|| at("2026-11-24T00:00:00Z"),
+        );
+        assert!(
+            matches!(exempted, Err(ReviewError::Refused(_))),
+            "{exempted:?}"
+        );
+    }
+
+    #[test]
+    fn recording_a_head_that_names_no_commit_is_the_repository_refusal() {
+        let fixture = fixture();
+        let tree = git(&fixture.project.root, &["rev-parse", "HEAD^{tree}"]);
+        let recorded = record(
+            &fixture.home,
+            &instrukt_core::config::Env::default(),
+            &fixture.project,
+            &RecordRequest {
+                head: tree,
+                base: fixture.side.to_string(),
+                verdict: Verdict::Approve,
+                report: "report".into(),
+                caller: Some(SessionRef::parse("t3:reviewer").unwrap()),
+                reviewer: None,
+            },
+            &|| at("2026-11-24T00:00:00Z"),
+        );
+        assert!(
+            matches!(recorded, Err(ReviewError::Refused(_))),
+            "{recorded:?}"
         );
     }
 
