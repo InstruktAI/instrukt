@@ -45,8 +45,7 @@ with (`project/instrukt/spec/feature/publication/agent-entrypoints`:
 and a document holding nothing admitted). It is written wherever the others
 are, and no file carries a modeline naming it: in a project a file at
 `docs/index.yaml` is a misplaced index, and in a company home nothing writes
-`.instrukt/schemas/`, since `instrukt init` and `instrukt sync` run in
-projects.
+`.instrukt/schemas/`.
 <!-- /planned:unify-index-yaml-entrypoints -->
 
 - Each schema is generated from the same type the validator reads that file
