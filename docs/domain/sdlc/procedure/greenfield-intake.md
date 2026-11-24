@@ -91,17 +91,6 @@ every production default ships silently from the applicable baseline.
    folder via the flavor's own generator, aimed at the existing folder, then
    wire the quality gates and CI _before_ feature work. The flavor selects its
    scaffolding procedure:
-<!-- change:unify-index-yaml-entrypoints -->
-6. **Create the project, then scaffold inside it.** Create the project's
-   folder and its git repository, then run `instrukt init` in it. It writes
-   `instrukt.yaml` with the `project` slug taken from the folder name,
-   `docs/project/` with its `index.yaml`, the hook sections and — when
-   the sdlc domain is published on the computer — `docs/project/schema.yaml`
-   copied from sdlc's schema, and never overwrites. Scaffold inside that
-   folder via the flavor's own generator, aimed at the existing folder, then
-   wire the quality gates and CI _before_ feature work. The flavor selects its
-   scaffolding procedure:
-<!-- /planned-change:unify-index-yaml-entrypoints -->
 
    - Python → `sdlc/procedure/scaffolding/python`
    - Rust → `sdlc/procedure/scaffolding/rust`
@@ -117,6 +106,32 @@ every production default ships silently from the applicable baseline.
 
    Whatever the flavor, end by documenting the project's own quality commands
    in its project documentation so procedures can run those checks.
+<!-- change:unify-index-yaml-entrypoints -->
+6. **Create the project, then scaffold inside it.** Create the project's
+   folder and its git repository, then run `instrukt init` in it. It writes
+   `instrukt.yaml` with the `project` slug taken from the folder name,
+   `docs/project/` with its `index.yaml`, the hook sections and — when
+   the sdlc domain is published on the computer — `docs/project/schema.yaml`
+   copied from sdlc's schema, and never overwrites. Scaffold inside that
+   folder via the flavor's own generator, aimed at the existing folder, then
+   wire the quality gates and CI _before_ feature work. The flavor selects its
+   scaffolding procedure:
+
+   - Python → `sdlc/procedure/scaffolding/python`
+   - Rust → `sdlc/procedure/scaffolding/rust`
+   - TypeScript → `sdlc/procedure/scaffolding/typescript`, plus
+     the platform's own snippet:
+     `sdlc/procedure/scaffolding/typescript-platforms/astro`,
+     `sdlc/procedure/scaffolding/typescript-platforms/next-js`,
+     `sdlc/procedure/scaffolding/typescript-platforms/node-js`,
+     `sdlc/procedure/scaffolding/typescript-platforms/vite`, or
+     `sdlc/procedure/scaffolding/typescript-platforms/hono`.
+
+   For sites, follow `sdlc/procedure/setup-visual-regression`.
+
+   Whatever the flavor, end by documenting the project's own quality commands
+   in its project documentation so procedures can run those checks.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ## Outputs
 

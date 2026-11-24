@@ -61,6 +61,7 @@ Customer / Supplier rows name the supplier first and the customer second.
 The labels follow `sdlc/spec/domain-spec`; direction describes contract use,
 not permission for an upstream module to depend on its consumer.
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
@@ -77,11 +78,7 @@ not permission for an upstream module to depend on its consumer.
 | work, runner, company → CLI admission | Published language | Owner-supplied todo attempts, standing/scheduled assignment facts and conversation assignments for the recognized caller; core-declared lookup wired by the CLI |
 | work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
 | docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
-<!-- planned-change:unify-index-yaml-entrypoints -->
 | publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval |
-<!-- change:unify-index-yaml-entrypoints -->
-| publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval; whether a repository's `docs/index.yaml` is its company index, consumed by validation |
-<!-- /planned-change:unify-index-yaml-entrypoints -->
 | publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
 | publication → repository | Customer / Supplier | Sync and committed-entrypoint rendering invoked by repository hook sections |
 | runner → publication | Customer / Supplier | Configured agent runtimes and their homes from the selected runtime's adapter, for the global agent files; core-declared interface wired by the CLI |
@@ -104,6 +101,47 @@ not permission for an upstream module to depend on its consumer.
 | repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
+<!-- change:unify-index-yaml-entrypoints -->
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
+| configuration → publication | Customer / Supplier | Project slug, runtime choice and configuration migration operation |
+| configuration → repository | Customer / Supplier | Project slug, runtime choice, role/App references and non-bot author settings |
+| blueprint → runner | Customer / Supplier | Blueprint-owned release pin and tool lifecycle consumed by module installation |
+| configuration → blueprint | Customer / Supplier | Module switch and engine selection |
+| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration, runner settings and company homes |
+| configuration → company | Customer / Supplier | Company homes with their settings, members, resolved secrets and declared connectors |
+| company → configuration | Published language | Each connector kind's declaration, which configuration validates a company home's `connectors:` against (`project/instrukt/spec/domain/configuration`) |
+| runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
+| company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner, implemented by company and wired by the CLI; a connector's direct message to one person, which MCP sign-in sends its links through |
+| work → company | Customer / Supplier | The state database's file, writer lock and migrations, holding the conversation tables |
+| work, runner, company → CLI admission | Published language | Owner-supplied todo attempts, standing/scheduled assignment facts and conversation assignments for the recognized caller; core-declared lookup wired by the CLI |
+| work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
+| docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
+| publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval; whether a repository's `docs/index.yaml` is its company index, consumed by validation |
+| publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
+| publication → repository | Customer / Supplier | Sync and committed-entrypoint rendering invoked by repository hook sections |
+| runner → publication | Customer / Supplier | Configured agent runtimes and their homes from the selected runtime's adapter, for the global agent files; core-declared interface wired by the CLI |
+| blueprint → repository | Customer / Supplier | Graph generation invoked by hooks for a push or pull advancing main; CLI wires the core-declared interface |
+| docs → specs | Customer / Supplier | Feature-spec use-case inventory and pending markers |
+| specs → blueprint | Customer / Supplier | Use-case inventory and test bindings joined to the graph for traces (trace is blueprint's) |
+| configuration → specs | Customer / Supplier | Project slug identifying the repository inventory |
+| workflow → docs | Customer / Supplier | Declared flavor roles validated through a core interface when todos is enabled |
+| work → docs | Customer / Supplier | Existence of todo slugs named by pending docs, only with todos enabled |
+| work → repository | Customer / Supplier | Todo existence through a core-declared interface wired by the CLI when todos is enabled |
+| work → workflow | Customer / Supplier | Artifacts, stamps and facts from which state is derived |
+| workflow → runner | Customer / Supplier; Published language | Computed state, transitions and finalize-ready event used for dispatch |
+| work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
+| runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
+| docs → runner | Customer / Supplier | Procedures and their event subscriptions |
+| publication → workflow | Customer / Supplier | Published flavor manifest (`workflow.yaml`: orchestrator, requires, roles) from the selected domain's `docs/domain/<x>/workflow/` |
+| publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
+| repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
+| runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` and `runner.dependency_failing` supply their respective failed-check evidence |
+| repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
+| publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
+| configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
