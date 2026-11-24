@@ -805,28 +805,63 @@ fn github_pass(
             return;
         }
     }
+    // An opted-in project's admission is asked once, before CI is read: a
+    // project not admitted here has its CI read as one that did not opt in
+    // (`layered-configuration`, Automatic review enablement).
+    let readiness = match (considered.review, &cx.wiring.review) {
+        (true, Some(port)) => Some(port.readiness(&repository, now)),
+        (true, None) => {
+            tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
+            None
+        }
+        (false, _) => None,
+    };
     ci_read(
         cx,
         state,
         log,
         considered,
         observed,
+        readiness.as_ref().is_some_and(gates_ci),
         &api_url,
         &repository,
         now,
     );
-    if considered.review {
-        review_pass(
+    match readiness {
+        Some(instrukt_core::interfaces::ReviewReadiness::Met { observation }) => review_pass(
             cx,
             state,
             log,
             considered,
             observed.candidate.as_ref(),
+            observation.token(),
             &api_url,
             &repository,
             now,
-        );
+        ),
+        Some(instrukt_core::interfaces::ReviewReadiness::Unmet(finding)) => {
+            tracing::warn!(event = "review_readiness_unmet", project = %project.slug, finding = %finding);
+        }
+        Some(instrukt_core::interfaces::ReviewReadiness::CannotAsk(cause)) => {
+            // Recorded after the CI read, which would otherwise clear it.
+            if let Err(error) = ci::record_source_cause(state, &project.slug, &cause, now) {
+                tracing::warn!(event = "ci_observation_state_failed", error = %error);
+            }
+            tracing::warn!(event = "review_readiness_unavailable", project = %project.slug, cause = %cause);
+        }
+        None => {}
     }
+}
+
+/// Whether the CI read sets the review status apart and holds the candidate
+/// for its review: on a project admitted for automatic review, and while
+/// GitHub cannot be asked, since admission then waits and nothing completes
+/// unreviewed. A project not admitted here has its CI read as before.
+fn gates_ci(readiness: &instrukt_core::interfaces::ReviewReadiness) -> bool {
+    !matches!(
+        readiness,
+        instrukt_core::interfaces::ReviewReadiness::Unmet(_)
+    )
 }
 
 /// The CI read of the GitHub pass: canonical, candidate and selected
@@ -841,6 +876,7 @@ fn ci_read(
     log: &DbEventLog,
     considered: &Considered,
     observed: &sources::MainObservation,
+    review_gate: bool,
     api_url: &str,
     repository: &str,
     now: Timestamp,
@@ -893,9 +929,10 @@ fn ci_read(
         state,
         &project.slug,
     );
-    // On a project that opted in, the reviewer bot's review status is no CI
-    // result: classification must tell it apart, or the read waits.
-    let review = if considered.review {
+    // On a project admitted for automatic review, the reviewer bot's review
+    // status is no CI result: classification must tell it apart, or the
+    // read waits.
+    let review = if review_gate {
         let Some(port) = &cx.wiring.review else {
             tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
             return;
@@ -972,9 +1009,9 @@ fn ci_read(
     }
 }
 
-/// Automatic review's part of the GitHub pass, on a project admitted for it
-/// as far as nothing but GitHub decides: the two identities' readiness is
-/// asked once, and a met answer admits the project for this pass.
+/// Automatic review's part of the GitHub pass, on a project this pass
+/// admitted: its pull requests are observed with the observation
+/// credential readiness issued.
 #[allow(
     clippy::too_many_arguments,
     reason = "one pass over the project's resolved GitHub source"
@@ -985,28 +1022,14 @@ fn review_pass(
     log: &DbEventLog,
     considered: &Considered,
     candidate: Option<&CommitSha>,
+    token: &str,
     api_url: &str,
     repository: &str,
     now: Timestamp,
 ) {
     let project = &considered.project;
     let Some(port) = &cx.wiring.review else {
-        tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
         return;
-    };
-    let observation = match port.readiness(repository, now) {
-        instrukt_core::interfaces::ReviewReadiness::Met { observation } => observation,
-        instrukt_core::interfaces::ReviewReadiness::Unmet(finding) => {
-            tracing::warn!(event = "review_readiness_unmet", project = %project.slug, finding = %finding);
-            return;
-        }
-        instrukt_core::interfaces::ReviewReadiness::CannotAsk(cause) => {
-            if let Err(error) = ci::record_source_cause(state, &project.slug, &cause, now) {
-                tracing::warn!(event = "ci_observation_state_failed", error = %error);
-            }
-            tracing::warn!(event = "review_readiness_unavailable", project = %project.slug, cause = %cause);
-            return;
-        }
     };
     let pass = crate::review::ReviewPass {
         home: cx.home,
@@ -1016,11 +1039,29 @@ fn review_pass(
         project,
         api_url,
         repository,
-        token: observation.token(),
+        token,
         port: port.as_ref(),
         now,
     };
     if let Err(error) = crate::review::observe(&pass) {
         tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use instrukt_core::interfaces::ReviewReadiness;
+
+    #[test]
+    fn a_project_not_admitted_here_has_its_ci_read_as_one_that_did_not_opt_in() {
+        assert!(!gates_ci(&ReviewReadiness::Unmet(
+            "the reviewer App lacks statuses: write".into()
+        )));
+    }
+
+    #[test]
+    fn while_github_cannot_be_asked_the_candidate_still_waits_for_its_review() {
+        assert!(gates_ci(&ReviewReadiness::CannotAsk("unreachable".into())));
     }
 }
