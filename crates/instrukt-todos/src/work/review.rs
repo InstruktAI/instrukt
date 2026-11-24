@@ -360,7 +360,15 @@ pub fn record(
     }
     let state = RunnerState::new(home);
     let requests = instrukt_runner::review::requests(&state, &project.slug, &head)?;
-    let answers = match _admission::request_check(&requests, &reviewer) {
+    let held = match _store::reader(home)? {
+        Some(conn) => _store::held(&conn, &project.slug, &head)?,
+        None => Held::Nothing,
+    };
+    let (offer, check) = _admission::offer(&held, &reviewer, &requests);
+    if let Offer::HandedOff(export) = &offer {
+        return Err(handed_off(&head, export));
+    }
+    let answers = match check {
         RequestCheck::Unrequested => None,
         RequestCheck::Answers(number) => Some(number),
         RequestCheck::Refused {
@@ -376,15 +384,11 @@ pub fn record(
             )));
         }
     };
-    let held = match _store::reader(home)? {
-        Some(conn) => _store::held(&conn, &project.slug, &head)?,
-        None => Held::Nothing,
-    };
     let returned_base = match &entering {
         Some(entering) => handed_over(home, env, &head, &reviewer, entering, request, &held)?,
         None => false,
     };
-    match _admission::settlement(&held, &reviewer, &requests) {
+    match offer {
         Offer::First | Offer::Revision => {}
         Offer::AskTurn => ask_turn(&state, project, &head, &reviewer)?,
         Offer::SettledByAnother(session) => {

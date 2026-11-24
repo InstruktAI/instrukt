@@ -84,6 +84,27 @@ pub(super) fn settlement(held: &Held, reviewer: &SessionRef, requests: &[Request
     }
 }
 
+/// What the stores and the commit's requests make of an offered verdict,
+/// read in this order: what this computer holds of the commit first. While
+/// it holds no verdict the Request row decides whose review it is. Once the
+/// commit is settled, or its verdict was handed off, every request of it
+/// ended answered with that verdict (`pull-request-review`, One review per
+/// commit), so the Request row does not apply, no version answers a request,
+/// and the Settlement row alone decides.
+pub(super) fn offer(
+    held: &Held,
+    reviewer: &SessionRef,
+    requests: &[Request],
+) -> (Offer, RequestCheck) {
+    match held {
+        Held::Nothing => (Offer::First, request_check(requests, reviewer)),
+        Held::Stands { .. } | Held::HandedOff { .. } => (
+            settlement(held, reviewer, requests),
+            RequestCheck::Unrequested,
+        ),
+    }
+}
+
 /// What the runner's turn answer makes of an offered revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TurnDecision {
@@ -297,6 +318,48 @@ mod tests {
             settlement(&stands("me"), &session("me"), &selected),
             Offer::AskTurn
         );
+    }
+
+    #[test]
+    fn a_settled_commits_selected_request_leaves_the_settling_session_its_turn_question() {
+        let selected = [request(1, Standing::Selected, None)];
+        assert_eq!(
+            offer(&stands("me"), &session("me"), &selected),
+            (Offer::AskTurn, RequestCheck::Unrequested)
+        );
+    }
+
+    #[test]
+    fn a_revision_answers_no_request_the_settled_verdict_already_answered() {
+        let handed = [request(1, Standing::HandedOver, Some("me"))];
+        assert_eq!(
+            offer(&stands("me"), &session("me"), &handed),
+            (Offer::AskTurn, RequestCheck::Unrequested)
+        );
+    }
+
+    #[test]
+    fn a_handed_off_verdict_is_refused_with_its_export_whatever_requests_stand() {
+        let held = Held::HandedOff {
+            export: "sha256:file".into(),
+        };
+        let queued = [request(1, Standing::Queued, None)];
+        assert_eq!(
+            offer(&held, &session("me"), &queued),
+            (
+                Offer::HandedOff("sha256:file".into()),
+                RequestCheck::Unrequested
+            )
+        );
+    }
+
+    #[test]
+    fn a_commit_without_a_verdict_is_its_live_requests_review() {
+        let queued = [request(1, Standing::Queued, None)];
+        assert!(matches!(
+            offer(&Held::Nothing, &session("me"), &queued),
+            (Offer::First, RequestCheck::Refused { number: 1, .. })
+        ));
     }
 
     #[test]
