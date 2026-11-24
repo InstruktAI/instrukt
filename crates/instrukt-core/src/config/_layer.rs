@@ -387,21 +387,21 @@ pub fn patch(
         });
     };
     let inspected_revision = Revision::of(&doc.bytes);
-    if let Version::Older(from) = version(&doc.value) {
+    // The machine's documents keep their conversion even when the patch is
+    // refused; a project layer is converted only by the write that applies
+    // the patch.
+    if matches!(layer, Layer::Global | Layer::Company(_))
+        && let Version::Older(from) = version(&doc.value)
+    {
         super::_migrate::selection(home, layer, &mut doc.value, true)?;
         doc.value = migrate_value(doc.value, from, layer.kind());
-        // The machine's documents keep their conversion even when the patch
-        // is refused; a project layer is converted only by the write that
-        // applies the patch.
-        if matches!(layer, Layer::Global | Layer::Company(_)) {
-            write(&path, &doc.bytes, &doc.value)?;
-            doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
-                path: path.clone(),
-                door: layer.init_door(),
-            })?;
-        }
+        write(&path, &doc.bytes, &doc.value)?;
+        doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
+            path: path.clone(),
+            door: layer.init_door(),
+        })?;
     }
-    require_usable(layer, &path, &doc.value)?;
+    let (before, next) = patched(layer, &path, &doc, patch)?;
     let current = Revision::of(&doc.bytes);
     if &inspected_revision != expected {
         return Err(ConfigError::RevisionMismatch {
@@ -409,9 +409,6 @@ pub fn patch(
             current: current.to_string(),
         });
     }
-    let before = doc.value;
-    let mut next = before.clone();
-    merge_patch(&mut next, patch);
     let mut findings = findings_for(&home.for_inspection(), layer, &path, &next)?;
     // Todos already on stay a validation finding; only a write that
     // switches them on is refused for it. Event responses that already
@@ -427,6 +424,11 @@ pub fn patch(
             Some(&before),
         )?) {
             findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+        }
+        // Automatic review already on stays a finding; only a write that
+        // switches it on is refused for one.
+        if super::_review::review_on(&before) {
+            findings.retain(|f| f.key != super::_review::REVIEW_AUTOMATIC_KEY);
         }
     }
     if layer.kind() == LayerKind::Global
@@ -449,6 +451,25 @@ pub fn patch(
         duration_ms = elapsed_ms(started),
     );
     Ok(revision)
+}
+
+/// The document `doc` of `layer` at `path` as it stands, converted to the
+/// current version in memory when older, and the document `patch` makes of
+/// it.
+fn patched(
+    layer: &Layer,
+    path: &Path,
+    doc: &Document,
+    patch: &Value,
+) -> Result<(Value, Value), ConfigError> {
+    let mut before = doc.value.clone();
+    if let Version::Older(from) = version(&before) {
+        before = migrate_value(before, from, layer.kind());
+    }
+    require_usable(layer, path, &before)?;
+    let mut next = before.clone();
+    merge_patch(&mut next, patch);
+    Ok((before, next))
 }
 
 fn elapsed_ms(started: Instant) -> u64 {
@@ -843,6 +864,38 @@ mod tests {
     fn revisions_follow_content_only() {
         assert_eq!(Revision::of(b"a: 1\n"), Revision::of(b"a: 1\n"));
         assert_ne!(Revision::of(b"a: 1\n"), Revision::of(b"a: 2\n"));
+    }
+
+    #[test]
+    fn a_patch_leaves_automatic_review_on_while_a_finding_at_it_stands() {
+        let dir = std::env::temp_dir().join(format!(
+            "instrukt-layer-review-standing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let home = Home::at_user_home(dir.join("user"));
+        std::fs::create_dir_all(home.root()).unwrap();
+        std::fs::write(
+            home.root().join(CONFIG_FILE_NAME),
+            format!("schema_version: {CURRENT_SCHEMA_VERSION}\n"),
+        )
+        .unwrap();
+        let root = dir.join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        // Events are off and nothing is published: findings stand at the
+        // setting, which is already on.
+        std::fs::write(
+            root.join(CONFIG_FILE_NAME),
+            format!(
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\ngithub:\n  repository: acme/demo\nreview:\n  automatic: true\n"
+            ),
+        )
+        .unwrap();
+        let layer = Layer::Project(root.clone());
+        let expected = revision(&home, &layer).unwrap();
+        let patched = patch(&home, &layer, &expected, &yaml("board: acme/1"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(patched.is_ok(), "{patched:?}");
     }
 
     #[test]

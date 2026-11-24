@@ -645,6 +645,15 @@ impl Configuration {
             .collect()
     }
 
+    /// Whether the project opted in to automatic review (`review.automatic`).
+    pub fn review_automatic(&self) -> Result<bool, ConfigError> {
+        match self.at(&["review", "automatic"]) {
+            None | Some(Value::Null) => Ok(false),
+            Some(Value::Bool(on)) => Ok(*on),
+            Some(_) => Err(invalid("review.automatic", "is not a boolean")),
+        }
+    }
+
     /// Project-selected remote branch prefixes for dependency CI observation.
     pub fn dependency_branch_prefixes(&self) -> Result<Vec<String>, ConfigError> {
         let Some(value) = self.at(&["ci", "dependency_branch_prefixes"]) else {

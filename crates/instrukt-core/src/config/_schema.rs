@@ -242,6 +242,10 @@ fn schema() -> Node {
                 Leaf(ProjectOnly, Shape::BranchPrefixes),
             )]),
         ),
+        (
+            "review",
+            map(vec![("automatic", Leaf(ProjectOnly, Shape::Bool))]),
+        ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
         (
             "blueprint",
@@ -1048,6 +1052,7 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                 &["ci", "dependency_branch_prefixes"],
                 Value::Sequence(vec![text(DEFAULT_DEPENDENCY_BRANCH_PREFIX)]),
             );
+            insert_at(&mut root, &["review", "automatic"], Value::Bool(false));
         }
         // A company home's document is read alone, without defaults.
         LayerKind::Company => {}

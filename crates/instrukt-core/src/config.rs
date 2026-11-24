@@ -25,6 +25,7 @@ mod _migrate;
 mod _module;
 mod _redis;
 mod _render;
+mod _review;
 mod _root;
 mod _runtime;
 mod _schema;
@@ -64,6 +65,7 @@ pub use _mcp::{
 pub use _module::Module;
 pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
 pub use _render::render_yaml;
+pub use _review::{REVIEW_AUTOMATIC_KEY, REVIEW_NEEDED_EVENT, REVIEW_PROCEDURE, REVIEW_ROLE};
 pub use _root::{RootDocument, classify_root};
 pub use _runtime::WorkflowCapability;
 pub use _runtime::{Env, NativeCapabilities, Runtime};

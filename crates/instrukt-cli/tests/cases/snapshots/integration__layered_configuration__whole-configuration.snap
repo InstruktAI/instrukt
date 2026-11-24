@@ -40,4 +40,6 @@ workflow:
 ci:
   dependency_branch_prefixes:
   - renovate/
+review:
+  automatic: false
 project: hostile

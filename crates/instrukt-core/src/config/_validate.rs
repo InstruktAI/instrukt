@@ -107,6 +107,12 @@ fn findings_in_scope(
     }
     if let Layer::Project(root) = layer {
         found.extend(code_on_github(root, value, global.as_ref())?);
+        found.extend(super::_review::findings(
+            &home.for_inspection(),
+            root,
+            value,
+            global.as_ref(),
+        )?);
     }
     if let Layer::Project(_) = layer {
         let effective = effective_value(global.as_ref(), Some(value))?;

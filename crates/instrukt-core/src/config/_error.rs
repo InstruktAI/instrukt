@@ -64,6 +64,9 @@ pub enum FindingKind {
     /// A company home's local-only material that its repository tracks or
     /// does not ignore.
     LeavesTheComputer,
+    /// `review.automatic` is on and something automatic review needs is
+    /// missing.
+    AutomaticReviewNotReady,
 }
 
 impl FindingKind {
@@ -83,6 +86,7 @@ impl FindingKind {
             Self::TodosNeedGitHub => "todos_need_github",
             Self::EventsNeedTransport => "events_need_transport",
             Self::LeavesTheComputer => "leaves_the_computer",
+            Self::AutomaticReviewNotReady => "automatic_review_not_ready",
         }
     }
 }
