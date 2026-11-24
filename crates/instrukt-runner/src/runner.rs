@@ -886,13 +886,33 @@ fn ci_read(
             return;
         }
     };
-    let client = CiClient::new(
+    let mut client = CiClient::new(
         api_url,
         repository,
         credential.token().to_owned(),
         state,
         &project.slug,
     );
+    // On a project that opted in, the reviewer bot's review status is no CI
+    // result: classification must tell it apart, or the read waits.
+    let review = if considered.review {
+        let Some(port) = &cx.wiring.review else {
+            tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
+            return;
+        };
+        match port.identities() {
+            Ok(identities) => {
+                client = client.with_reviewer(identities.reviewer);
+                Some(port)
+            }
+            Err(error) => {
+                tracing::warn!(event = "review_identities_unreadable", project = %project.slug, error = %error);
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let commits: Vec<&CommitSha> = candidate
         .iter()
         .chain(head.iter())
@@ -901,10 +921,23 @@ fn ci_read(
     match client.read(&commits, now) {
         Ok(CiRead::States(states)) => {
             let mut states = states.into_iter();
-            let candidate_state = candidate
-                .as_ref()
-                .and_then(|_| states.next())
-                .map(|read| read.state);
+            let candidate_read = candidate.as_ref().and_then(|_| states.next());
+            let candidate_state = candidate_read.as_ref().map(|read| read.state);
+            let gate = match (review, candidate.as_ref(), candidate_read.as_ref()) {
+                (Some(port), Some(candidate), Some(read)) => {
+                    match port.needs_work(&project.slug, candidate) {
+                        Ok(needs_work) => Some(ci::ReviewGate {
+                            needs_work,
+                            status: read.review_status.clone(),
+                        }),
+                        Err(error) => {
+                            tracing::warn!(event = "review_verdict_unreadable", project = %project.slug, error = %error);
+                            return;
+                        }
+                    }
+                }
+                _ => None,
+            };
             let head_state = head
                 .as_ref()
                 .and_then(|_| states.next())
@@ -913,6 +946,7 @@ fn ci_read(
                 &project.slug,
                 candidate.as_ref(),
                 candidate_state,
+                gate.as_ref(),
                 head.as_ref(),
                 head_state,
             ) {

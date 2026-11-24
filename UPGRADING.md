@@ -292,6 +292,42 @@ need App setup before remote work reflection and CI observation:
    integration. Local bot-attributed commits consume configured verified actor
    facts and require no installation access to the current repository.
 
+### Automatic review of pull requests and integration candidates
+
+Nothing changes until a project opts in: `review.automatic` is absent, so its
+pull requests are not observed, no review is asked for and nothing is
+published. To switch it on for a project, in this order:
+
+1. Install this release on the computer that serves the project.
+2. On the repository's App installations, grant the reviewer App (the one the
+   `commit-reviewer` role selects) write access to pull requests and to commit
+   statuses, and the project App read access to pull requests. No other
+   credential changes.
+3. Publish the documentation that holds the delivered
+   `sdlc/procedure/lifecycle/work/review-commits`, which subscribes to
+   `runner.review_needed` under the `commit-reviewer` role and is the only
+   procedure subscribed to it. Admission requires that route.
+4. Record the approval of every head reviewed before the cutover that is not
+   on the canonical branch yet: its reviewing session with `instrukt review
+   record`, or another session with `instrukt review record --reviewer
+   <session>`. A head whose approval is not recorded is reviewed as part of its
+   candidate.
+5. Set `review: {automatic: true}` in the project layer through a reviewed
+   commit. `instrukt config patch` refuses it while a finding stands, and
+   `instrukt install --check` reports any readiness finding of the two
+   identities.
+6. Observe that an integration candidate carries the reviewer bot's
+   `instrukt/review` status.
+7. Only then require `instrukt/review` on the canonical branch, with the
+   reviewer App as its expected source. Requiring it earlier blocks the
+   integrator's fast-forward until candidates carry the status.
+
+Review evidence is kept on the serving computer in `state/review.db`. When
+another computer starts serving the project, move it with `instrukt review
+export --to <file>` there and `instrukt review import <file>` here; a computer
+that starts without an import recognises what the reviewer bot already
+published and asks for every other owed head.
+
 ### Conversations without a switch, people known from Slack
 
 A company that declares a connector has conversations. The machine's

@@ -808,6 +808,12 @@ pub trait AutomaticReview: Send + Sync {
         project: &instrukt_core::ids::ProjectSlug,
         head: &instrukt_core::ids::CommitSha,
     ) -> Result<bool, String>;
+    /// Whether `commit`'s current verdict with work is needs work.
+    fn needs_work(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+        commit: &instrukt_core::ids::CommitSha,
+    ) -> Result<bool, String>;
     /// Derives whether the active integration `candidate` is covered and
     /// records, publishes or withdraws its derived approval accordingly.
     /// `pulls` are the eligible pull requests whose head it is.

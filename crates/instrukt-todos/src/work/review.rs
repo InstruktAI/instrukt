@@ -733,6 +733,13 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
         Ok(evidence.current().is_some() || evidence.recognised.is_some())
     }
 
+    fn needs_work(&self, project: &ProjectSlug, commit: &CommitSha) -> Result<bool, String> {
+        Ok(evidence(&self.home, project, commit)
+            .map_err(|error| error.to_string())?
+            .current()
+            .is_some_and(|version| version.verdict == Verdict::NeedsWork))
+    }
+
     fn candidate(
         &self,
         project: &instrukt_runner::interfaces::ProjectRef,
