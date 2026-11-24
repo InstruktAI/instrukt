@@ -269,10 +269,11 @@ struct Validators {
     cause: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct Cached {
-    etag: String,
-    body: String,
+/// One kept answer: its validator and its body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Cached {
+    pub(crate) etag: String,
+    pub(crate) body: String,
 }
 
 /// GitHub's commit status API for one project's repository.
@@ -392,73 +393,104 @@ impl<'a> CiClient<'a> {
         validators: &mut Validators,
         interval: &mut Option<i64>,
     ) -> Result<String, CiError> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
-            .timeout_global(Some(REQUEST_TIMEOUT))
-            .build()
-            .into();
-        let mut request = agent
-            .get(url)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "instrukt");
-        request = request.header("Authorization", &format!("Bearer {}", self.token));
-        if let Some(cached) = validators.answers.get(url) {
-            request = request.header("If-None-Match", &cached.etag);
+        match conditional_get(url, &self.token, validators.answers.get(url), interval)? {
+            Fetched::Unchanged { body } => {
+                tracing::debug!(event = "ci_not_modified", url);
+                Ok(body)
+            }
+            Fetched::Fresh { etag, body } => {
+                match etag {
+                    Some(etag) => {
+                        validators.answers.insert(
+                            url.to_owned(),
+                            Cached {
+                                etag,
+                                body: body.clone(),
+                            },
+                        );
+                    }
+                    None => {
+                        validators.answers.remove(url);
+                    }
+                }
+                Ok(body)
+            }
         }
-        let mut response = request.call().map_err(|err| CiError::Request {
+    }
+}
+
+/// What one conditional GitHub request answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Fetched {
+    /// `304`: the validator sent still matches; this is the kept body.
+    Unchanged { body: String },
+    /// A fresh `2xx` body with the validator GitHub sent for it, if any.
+    Fresh { etag: Option<String>, body: String },
+}
+
+/// One conditional `GET` of a GitHub API `url` under `token`. `cached` is the
+/// answer the caller keeps for `url`; a `304` is `Unchanged` only when one
+/// was sent. An `X-Poll-Interval` header raises `interval` whether or not the
+/// answer is usable. Where answers are kept is the caller's.
+pub(crate) fn conditional_get(
+    url: &str,
+    token: &str,
+    cached: Option<&Cached>,
+    interval: &mut Option<i64>,
+) -> Result<Fetched, CiError> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
+        .timeout_global(Some(REQUEST_TIMEOUT))
+        .build()
+        .into();
+    let mut request = agent
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "instrukt");
+    request = request.header("Authorization", &format!("Bearer {token}"));
+    if let Some(cached) = cached {
+        request = request.header("If-None-Match", &cached.etag);
+    }
+    let mut response = request.call().map_err(|err| CiError::Request {
+        url: url.to_owned(),
+        message: err.to_string(),
+    })?;
+    if let Some(secs) = response
+        .headers()
+        .get("X-Poll-Interval")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<i64>().ok())
+    {
+        *interval = Some(interval.map_or(secs, |known| known.max(secs)));
+    }
+    let status = response.status().as_u16();
+    if status == 304
+        && let Some(cached) = cached
+    {
+        return Ok(Fetched::Unchanged {
+            body: cached.body.clone(),
+        });
+    }
+    if !(200..300).contains(&status) {
+        return Err(CiError::Status {
+            url: url.to_owned(),
+            status,
+        });
+    }
+    let etag = response
+        .headers()
+        .get("ETag")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|err| CiError::Body {
             url: url.to_owned(),
             message: err.to_string(),
         })?;
-        if let Some(secs) = response
-            .headers()
-            .get("X-Poll-Interval")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().parse::<i64>().ok())
-        {
-            *interval = Some(interval.map_or(secs, |known| known.max(secs)));
-        }
-        let status = response.status().as_u16();
-        if status == 304
-            && let Some(cached) = validators.answers.get(url)
-        {
-            tracing::debug!(event = "ci_not_modified", url);
-            return Ok(cached.body.clone());
-        }
-        if !(200..300).contains(&status) {
-            return Err(CiError::Status {
-                url: url.to_owned(),
-                status,
-            });
-        }
-        let etag = response
-            .headers()
-            .get("ETag")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|err| CiError::Body {
-                url: url.to_owned(),
-                message: err.to_string(),
-            })?;
-        match etag {
-            Some(etag) => {
-                validators.answers.insert(
-                    url.to_owned(),
-                    Cached {
-                        etag,
-                        body: body.clone(),
-                    },
-                );
-            }
-            None => {
-                validators.answers.remove(url);
-            }
-        }
-        Ok(body)
-    }
+    Ok(Fetched::Fresh { etag, body })
 }
 
 fn parse<T: serde::de::DeserializeOwned>(url: &str, body: &str) -> Result<T, CiError> {

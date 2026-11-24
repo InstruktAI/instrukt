@@ -738,14 +738,15 @@ fn read_sources(
     observed: Option<&sources::MainObservation>,
     now: Timestamp,
 ) {
+    read_upstream(state, log, considered, now);
+    if let Some(observed) = observed {
+        github_pass(cx, state, log, considered, observed, now);
+    }
+}
+
+/// Reads the project's watched upstream repositories.
+fn read_upstream(state: &RunnerState, log: &DbEventLog, considered: &Considered, now: Timestamp) {
     let project = &considered.project;
-    let append = |event: &Event| match log.log(event) {
-        Ok(_) => true,
-        Err(err) => {
-            tracing::warn!(event = "event_not_logged", name = event.name(), project = %project.slug, error = %err);
-            false
-        }
-    };
     match considered.config.events_watch() {
         Ok(watched) if !watched.is_empty() => {
             if let Err(err) =
@@ -759,10 +760,26 @@ fn read_sources(
             tracing::warn!(event = "events_watch_unreadable", project = %project.slug, error = %err)
         }
     }
-    let Some(observed) = observed else {
-        return;
-    };
+}
 
+/// The project's GitHub pass: canonical, candidate and dependency heads read
+/// in one conditional pass, and what they found appended.
+fn github_pass(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &Considered,
+    observed: &sources::MainObservation,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    let append = |event: &Event| match log.log(event) {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!(event = "event_not_logged", name = event.name(), project = %project.slug, error = %err);
+            false
+        }
+    };
     // Canonical, candidate and selected dependency heads share one conditional
     // pass and the same source deferral and credential boundary.
     let candidate = observed.candidate.clone();
