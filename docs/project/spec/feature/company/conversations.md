@@ -150,9 +150,9 @@ path is the same for every connector, whichever channel it speaks to
   and manage that company's `mcp` service declarations under the company-agent
   scope of `project/instrukt/spec/feature/configuration/configuration-editing`;
   it declines anything else, as its procedure instructs. A connector declaring a
-  role with its own published procedure (such as `technical-coordinator`, which
-  opens `general/procedure/technical-coordinator`) follows that procedure's
-  duties — including filing and coordinating project todos — while keeping the
+  role with its own published procedure follows that procedure's duties (for
+  example, `technical-coordinator` opens `general/procedure/technical-coordinator`,
+  which includes filing and coordinating project todos) while keeping the
   connector's admission, company, speaker-envelope and administrator-DM
   boundaries intact.
 - Its role is the connector's `role` (default `company-agent`), stored on the
