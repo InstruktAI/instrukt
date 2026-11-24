@@ -25,6 +25,7 @@ Commands:
   blueprint  Structural graph queries (blueprint module)
   todo       The work record and workflow (todos module)
   eval       Evaluation reports from the work record
+  review     Independent review evidence of exact commits, and moving it between computers
   events     Discover producer-declared event types and their schemas
   history    Extract, import and search retained conversations across computers
   webhooks   Internal signed loopback webhook receiver (installation is separate)

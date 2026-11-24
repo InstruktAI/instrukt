@@ -78,7 +78,7 @@ enum Command {
     Todo(todo::TodoArgs),
     /// Evaluation reports from the work record.
     Eval(eval::EvalArgs),
-    /// Independent review evidence of exact commits: record, exempt, show.
+    /// Independent review evidence of exact commits, and moving it between computers.
     Review(review::ReviewArgs),
     /// Discover producer-declared event types and their schemas.
     Events(events::EventsArgs),
