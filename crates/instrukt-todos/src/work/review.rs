@@ -1771,6 +1771,11 @@ mod tests {
     fn recording_a_head_that_names_no_commit_is_the_repository_refusal() {
         let fixture = fixture();
         let tree = git(&fixture.project.root, &["rev-parse", "HEAD^{tree}"]);
+        let resolved = fixture.project.commit(&tree);
+        assert!(
+            matches!(resolved, Err(ReviewError::Refused(_))),
+            "{resolved:?}"
+        );
         let recorded = record(
             &fixture.home,
             &instrukt_core::config::Env::default(),
