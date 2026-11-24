@@ -180,13 +180,6 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
         status,
     });
     drop(guard);
-    if let Some(pause) = pause
-        && pause.reached.send(()).is_ok()
-    {
-        // The test owns the response boundary; disconnect releases it
-        // even if an assertion in the test unwinds.
-        let _released = pause.released.recv();
-    }
 
     let mut response = if status == 304 || reply.body.is_none() {
         tiny_http::Response::from_string(String::new()).with_status_code(status)
@@ -206,7 +199,23 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
     for (name, value) in &reply.headers {
         response.add_header(header(name, value));
     }
-    let _sent = request.respond(response);
+    match pause {
+        // A held response is answered from its own thread, so the fake
+        // keeps serving every other request meanwhile, as GitHub does.
+        Some(pause) => {
+            std::thread::spawn(move || {
+                if pause.reached.send(()).is_ok() {
+                    // The test owns the response boundary; disconnect
+                    // releases it even if an assertion in the test unwinds.
+                    let _released = pause.released.recv();
+                }
+                let _sent = request.respond(response);
+            });
+        }
+        None => {
+            let _sent = request.respond(response);
+        }
+    }
 }
 
 fn header(name: &str, value: &str) -> tiny_http::Header {

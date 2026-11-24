@@ -505,8 +505,9 @@ impl FakeGitHub {
         });
     }
 
-    /// Holds the next matching response at the network boundary. Dropping
-    /// the returned guard lets the server answer, including during unwind.
+    /// Holds the next matching response at the network boundary, while
+    /// every other request is still served. Dropping the returned guard lets
+    /// the server answer, including during unwind.
     pub fn pause_once(&self, method: &str, path_suffix: &str) -> RequestPause {
         let (reached, received) = mpsc::channel();
         let (release, released) = mpsc::channel();

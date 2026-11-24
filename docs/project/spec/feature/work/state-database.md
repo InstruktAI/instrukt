@@ -1,8 +1,6 @@
 ---
 description: The one SQLite database holding a computer's work record, runner state and conversations — its tables, its migrations, and instrukt as its single, transactional writer.
 visibility: public
-binding_reservations:
-  UC-SD5: fix-reflection-holds-writer-lock
 ---
 # State Database — Spec
 
@@ -58,8 +56,8 @@ meaning and the writes of the conversation tables.
   consumer holds no unrelated local write hostage. SQLite's own locking is not
   the serialization contract.
 - The state directory is resolved to its canonical location once, and the database,
-  its sidecars and every lock — writer, reflection, runner, runtime-dispatch, history
-  and conversation locks — derive from it, so a home or a state directory reached
+  its sidecars and every lock — writer, reflection, withdrawal, runner,
+  runtime-dispatch, history and conversation locks — derive from it, so a home or a state directory reached
   through a symbolic link keeps one authority. A symbolic link at the database file
   or one of its sidecars is refused, naming the door (link the home or `state/`
   instead): it alone would put one database under two lock domains
@@ -73,6 +71,14 @@ meaning and the writes of the conversation tables.
   the reflection lock. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
   before consuming it, except during status inspection.
+- A withdrawal holds the per-computer withdrawal lock
+  `~/.instrukt/state/withdrawal.lock` from before it records its intent
+  (`withdrawal_intents`) until it has committed or abandoned it, or returned
+  with the intent kept by a refusal. The lock tells a withdrawal in progress
+  from a recorded intent no command is acting on; it is never requested
+  while the writer lock is held, and it is released before the withdrawal's
+  reflection acquires the reflection lock. A withdrawal's git and filesystem
+  work runs under it and outside the writer lock.
 - A change to a todo is computed from the record its command read and is
   written only while that record is unchanged. When another command changed it
   in between, the later write is refused whole, naming the todo and its door:
@@ -188,6 +194,12 @@ Version 34 evolves the conversation tables for named company connectors:
 `conversation_refusals` widens its `reason` check constraint to admit
 `'not_admin'` alongside `'not_own'` and `'unavailable'`, preserving all
 existing rows verbatim.
+
+Version 36 rewrites a stored Antigravity manual standing reservation that
+holds `thinking_level` to carry it as T3's `thought_level`.
+
+Version 37 adds `withdrawal_intents` (Work tables), the durable intent of a
+withdrawal whose working resources are being released. It starts empty.
 
 ### Work tables
 
@@ -357,6 +369,202 @@ not a local item here, as the latest pickup listing read it. Key:
 
 A copy is replaced by each later pickup listing and removed when its todo
 becomes a local item or no longer appears in the listing.
+
+**`withdrawal_intents`** — a withdrawal of a local item whose working
+resources are being released (`project/instrukt/spec/feature/work/todos`,
+"Parking, withdrawal and delivery"). Key: `todo_id`. Local-only operational
+intent: it is never reflected to GitHub and never copied to another computer.
+
+| Column | Meaning |
+| --- | --- |
+| `todo_id` | The withdrawn todo (`todos.id`); removed with it. |
+| `branch` | The work branch the withdrawal releases, or `NULL` when there is none. |
+| `branch_head` | The commit that branch pointed at when the withdrawal last read it, or `NULL`. It is recorded before the branch is deleted, against that commit, and kept as the deleted branch's recovery commit. |
+| `worktrees` | The worktrees the withdrawal releases, as JSON: each with why it belongs to the todo (`bound`, named by a session binding, or `on_branch`, with the work branch checked out), the checkout it had when the withdrawal checked it (its branch, or the commit it was detached at), whether it is released yet, its git directory (its administrative directory in the repository, which a move keeps), and its stage: how far the withdrawal's own moves of it have come, each recorded before the `git worktree move` it names — not moved by the withdrawal (left out of the JSON), `moving_to` its staging location, `staged` at the place that move put it, or `restoring_from` that place back to its path. The staging location is a sibling of its path in the same directory, of bounded length whatever the worktree is called and distinct for each worktree; the place a move put it is its destination or, when a directory took that destination meanwhile, the worktree's directory name inside it. |
+| `workspace_path` | Where the todo's workspace is in the checkout the withdrawal was admitted from (`<checkout>/workspace/<slug>`): the one workspace the withdrawal checks and releases, whichever checkout of the project runs it again. |
+| `workspace` | The workspace at `workspace_path`: `absent` when there was none to release when the withdrawal checked, `present` while it is there, empty, to release, `released` once removed or found gone. |
+| `branch_state` | How far the work branch's release has come: `pending` while it is not deleted; `partial_marker` once a failed deletion is known to have left only the withdrawal's marker beside the branch it did not delete; `deleted` once it is deleted by this withdrawal, or found gone or recreated at a commit that does not descend from `branch_head`. |
+| `started_at` | When the withdrawal began. |
+
+The row is written, after the todo's record and its working resources were
+checked, before any resource is released. While it exists the todo stays live,
+with its claim as it was, or unclaimed when it had none. A change of the todo's
+record committed while the row exists is refused, naming its doors:
+`instrukt todo remove <slug>`, which completes the withdrawal, or the command
+run again once it has ended. Nothing read from GitHub replaces the record while
+the row exists: a pull or pickup listing keeps the local record, and
+`instrukt todo refresh` refuses naming `instrukt todo remove <slug>`. What
+reflection learns of its own receipts is still kept: a pull that finds this
+computer's own revision on GitHub records it as confirmed, setting the revision
+comment and remote revision to the ones GitHub holds. A conflict mark is kept
+too, and confirms nothing: it marks the todo conflicted and leaves the revision
+comment and remote revision as they were. A pull while the row exists answers
+no `/instrukt` command and applies no label action it finds on the issue: each
+stays outstanding, and the first pull after the withdrawal commits gives it the
+outcome a withdrawn todo gives. An answer to a command, or a label action
+recorded as ignored, is recorded only while the todo's live record is still the
+one it was decided on and no row exists, in the transaction that records it; one
+decided on a record that changed before it was recorded, such as an active
+record the withdrawal committed over meanwhile, is not recorded and stays
+outstanding. Whenever a command or label action is left outstanding this way,
+and when the row is removed, the issue's stored `ETag` is dropped, so the next
+pull reads the issue in full rather than being told nothing changed, even when
+the issue has not changed again since.
+Dispatch admission, read back after a reservation's reflection, refuses while
+the row exists, in the same read that confirms the reservation, claim and
+status. The row is updated as each step whose outcome must be recognized
+afterwards happens: the branch's commit before the branch is deleted, a
+worktree's stage before each move of it, and each worktree, the
+workspace and the branch once released; recording a partial marker is
+attempted before the marker is taken back, which goes ahead whether or not
+that write succeeded (see the marker-only outcome below). It is removed in the
+transaction that commits the withdrawn record, with `removal` naming exactly
+what was released, or on its own only when a refusal rests on what git or the
+filesystem positively shows — a resource that must be kept, or an attempted
+release proven to have changed nothing or taken back — while the command
+attempted no other release and the row records nothing released and nothing
+under way: no worktree the withdrawal is moving, has moved or is moving back,
+and no `partial_marker`. Then the
+todo is left as it was.
+Otherwise a refusal keeps the row with everything it records, `branch_head`,
+worktree stages and `partial_marker` included, whatever refused the command,
+such as files that appeared in the workspace before a partial marker was taken
+back. The refusal names what the row records as released and what it records
+under way; one that rests on an observation git or the filesystem could not
+make, or on a release that returned a failure without its outcome proven, says
+that the rest could not be established, claiming nothing beyond it.
+
+The work branch is deleted by one `git update-ref --stdin` call, against the
+commit the row holds, that first creates the withdrawal's marker ref
+`refs/instrukt/withdrawals/<todo_id>` in the project's repository at that commit
+and then deletes the branch. The call ends in one of four ways:
+
+- **Confirmed deletion.** The call succeeds. The row records the branch deleted
+  at that commit, then the marker is removed. A marker found while the row
+  records the branch `pending` shows the branch was deleted at the marker's
+  commit by a call whose success was not recorded.
+- **Attempt proven ineffective.** The call returns a failure, and the refs read
+  back show no marker and the branch still at that commit, or moved on from it:
+  nothing changed, and the attempt does not count as one.
+- **Marker only.** The call returns a failure, and the refs read back show the
+  marker and the branch both still at that commit. Recording `partial_marker`
+  in the row is attempted before the marker is removed, and the marker is
+  removed whether or not that write succeeded: once it is gone there is nothing
+  to misread. Once it is removed the row records `pending` again. A marker
+  removal that fails leaves `partial_marker` recorded, written again with the
+  refusal when the first write failed. While the row records `partial_marker`
+  the marker shows nothing: the withdrawal run again removes it, records
+  `pending`, and only then looks at the branch and deletes it.
+- **Unsettled failure.** The call returns a failure and the refs read back show
+  anything else; the marker is left.
+
+The branch is never recorded deleted on a returned failure: the command
+refuses with git's failure. An attempt proven ineffective counts as no attempt:
+when the command attempted no other release and the row records nothing
+released and nothing under way, the row is removed and the todo left as it
+was. After any other returned failure — a marker left, an unsettled outcome, or
+an ineffective attempt following another release — the row keeps what it
+records, for the withdrawal run again to recognize what happened.
+
+A withdrawal interrupted while the row exists is completed by running
+`instrukt todo remove <slug>` again, which continues from the row before reading
+GitHub: an action that arrived there meanwhile, such as a hold label, stays
+outstanding until the first pull after the withdrawal commits. It first records
+what the interrupted command did without recording it, and what became of the
+resources since: while the row records the branch `pending`, a marker records
+the branch deleted at the marker's commit, and whatever branch carries its name
+now is left as it is; each worktree is recognized by its git directory, never
+at the project's primary checkout nor where git reports it prunable, and acted
+on only at its path or where its stage says the withdrawal's own moves can have
+put it: being moved, its staging location or inside a directory that took that
+location; staged, where it was staged; being moved back, where it was staged or
+inside a directory that took its path. Found at its path, its stage records it
+not moved, even when it was staged and someone moved it back there, and it is
+read and checked there as a worktree the withdrawal has not moved; found
+anywhere else there, its stage records it staged at that place, and it is never
+taken for released. Until the withdrawal tries to remove a worktree, that is in
+every stage but staged, git keeps its git directory for it alone, so the
+withdrawal also reads every other worktree git lists: one listed elsewhere with
+its git directory was moved there by someone else, even while the withdrawal was
+moving it or moving it back, and is left where it is, never moved back, and
+leaves the withdrawal. One not staged that git lists nowhere is released only
+once git no longer keeps its git directory; a staged one is released once git
+lists it neither where it was staged nor at its path and nothing is where it
+was staged, whatever git lists elsewhere. Removing a worktree lets git give its
+git directory, which git names after the worktree's directory name, to the next
+worktree added under that name, wherever it is, so a checkout git lists with
+that git directory anywhere but its path or where it was staged, even of the
+same commit, is never taken for a staged worktree. The workspace at `workspace_path` is released when
+the row records it present and it is gone. A workspace at `workspace_path` holding
+files refuses the withdrawal and is named, whatever the row records of it. Without a marker, a branch absent, or recreated at a commit that does
+not descend from `branch_head`, is recorded as deleted with the commit the row
+holds and a recreated branch is left as it is; a branch that moved on to a
+descendant of `branch_head` is recorded at, and deleted against, the commit it
+moved to. What the row names as released stays released.
+
+Each worktree is released through git's own worktree commands. It is read
+again and checked at its path; a clean worktree still the todo's is moved with
+`git worktree move` to its staging location, its stage recording that move
+first, and read and checked again where the move put it. Still the todo's and
+clean, it is removed there with `git worktree remove`; otherwise it is moved
+back to its path, its stage recording that move first. One that holds
+uncommitted changes or is locked by then refuses the withdrawal, naming its
+path. One whose checkout is no longer the one the row records, or that has the
+work branch checked out once that branch is recorded deleted, is no longer the
+todo's: it is left at its path and leaves the withdrawal.
+Whatever a move returns, git's worktree list is read back and the worktree
+recognized by its git directory where that move can have put it, as when a
+withdrawal is run again. Listed at its path, the move did not happen: its stage
+records it not moved, and a move that returned a failure refuses the
+withdrawal with git's reason, having changed nothing. Listed at its staging
+location, or inside a directory that appeared there meanwhile, its stage
+records it staged at that place before anything else is done there, and it is
+released from there, even when the move returned a failure. Otherwise the row
+keeps the move recorded and the refusal says where it is could not be
+established. A worktree git lists where it is looked for whose git directory
+cannot be read, when none listed there is recognized as this one, establishes
+nothing: the refusal names where git lists it and git's diagnostic, and the
+row keeps what it records. So does a worktree not staged that no worktree git
+lists, apart from those it reports prunable, holds while git still keeps its
+git directory: its directory is gone, or was moved without git recording
+where, and the refusal names
+`git worktree repair` and `git worktree prune` as its doors; and a staged one
+git no longer lists where it was staged while something is still there, whose
+refusal names that place.
+A worktree is moved back only to a path nothing occupies: when git lists
+another worktree there, or any file or directory is there, such as a checkout
+created at the vacated path meanwhile, it is not moved back — git would move it
+inside that directory. It stays staged where it is, and the refusal names that
+place and says its path is taken; when that place is inside its path, the
+refusal names moving it out with `git worktree move` before its path is freed,
+rather than freeing the path. After a move back, the worktree is recognized by
+its git directory in the same way: listed at its path, it is back and no
+longer moved; listed where it was staged, the move back did not happen and it
+stays staged there; listed inside a directory that took its path between the
+look and the move, its stage records it staged there and the refusal names it;
+listed anywhere else with its git directory, someone else moved it there: the
+refusal names that place, and the withdrawal run again leaves it there;
+when where it is cannot be established, the move back stays recorded and the
+refusal says so, with git's diagnostic. A
+`git worktree remove` that returns a failure keeps the row, and the refusal
+says only what git's list and the filesystem show afterwards: git still listing
+it where it was staged, or no longer listing it with the directory still
+there or gone, or that this could not be established.
+Once a worktree is moved, a git command started afterwards and addressed to its
+path, such as `git -C <path> switch`, does not reach it: while the path is
+vacant, it finds no worktree there and changes nothing; once a replacement
+checkout occupies the path, it acts on that checkout and leaves the moved
+worktree untouched. A process whose working directory was already inside it
+is not stopped by the move (see Known caveats). A
+withdrawal interrupted while it is moving a worktree, has staged it or is
+moving it back continues from where it finds it when run again, removing it or
+moving it back, with nothing to clean up
+by hand unless its path is taken or git stopped inside its own move (see Known
+caveats). This holds whatever ref storage the repository uses. A git
+observation that fails decides nothing, and neither does a negative answer git
+gives together with a diagnostic, such as for an object store it could not
+read: the command refuses and the row keeps what it recorded, for the
+withdrawal to be run again.
 
 ### Runner tables
 
@@ -1016,6 +1224,47 @@ And the reflected change and the concurrent local change both reach GitHub intac
   start, the adapter discovers its semantic key through the adapter selected by `runner.runtime`; existing keyed
   threads are rebound rather than duplicated. A lost ambiguous start marker
   cannot be reconstructed when the runtime has no discoverable matching thread.
+- A git process stopped between creating a withdrawal's marker and deleting
+  the work branch leaves both. The withdrawal run again records the branch
+  deleted at the marker's commit and leaves the branch, which still points
+  there, as it is: nothing is lost, but the branch outlives the withdrawal.
+- Without a marker, a work branch deleted and recreated at a descendant of the
+  commit the withdrawal recorded is indistinguishable from the branch moving
+  on; the withdrawal deletes it against the commit it points at.
+- Moving a worktree to its staging location changes where it is addressed,
+  not what a process already inside it can do. A process whose working
+  directory was inside the worktree before the move, such as an open shell,
+  still reaches it at the staging location and can change its checkout between
+  the withdrawal's last look and its removal. Uncommitted work it leaves there
+  is kept, because `git worktree remove` refuses a worktree holding it; a
+  branch it switched to keeps its commits.
+- A staged worktree that someone else moves away from where it was staged,
+  to anywhere but its path, before the withdrawal runs again is recorded
+  released, as a removal whose receipt was lost would be, and is left where
+  they put it, once git lists nothing where it was staged and nothing is
+  there. Anything still at the place where it was staged, listed or not,
+  keeps the row open and the refusal names that place; one moved back to its
+  path is read and checked there as one the withdrawal has not moved: still
+  the todo's, it refuses the withdrawal naming its path when it holds
+  uncommitted changes, and one no longer the todo's is left there and leaves
+  the withdrawal.
+- A worktree the withdrawal has not moved, removed by someone else, whose git
+  directory git gave to a new checkout added elsewhere under the same name, is
+  taken for one moved by someone else: the new checkout is left as it is and
+  the worktree leaves the withdrawal without being recorded released.
+- A git process stopped inside its own `git worktree move`, after renaming the
+  directory and before recording its new location, leaves git listing the
+  worktree where it was, as prunable, while the directory is at its
+  destination. The withdrawal run again
+  refuses, naming the worktree and its git directory, until
+  `git worktree repair <where it is>` records where it is.
+- A failed branch deletion that left only its marker, where recording the
+  partial marker fails both before the marker removal and again with the
+  refusal, and removing the marker fails too, leaves the row `pending` with the
+  marker present. The withdrawal run again then reads the
+  marker as the deletion and leaves the branch, which still points at the
+  marker's commit, as it is: nothing is lost, but the branch outlives the
+  withdrawal.
 
 ## See Also
 

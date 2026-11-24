@@ -6,7 +6,7 @@ updated nested-lists
 reflection: reflected to GitHub
 ---
 updated nested-lists
-reflection: conflicted with a newer GitHub revision; refresh with `instrukt todo refresh <slug>`
+reflection: conflicted with a newer GitHub revision; refresh with `instrukt todo refresh nested-lists`
 ---
 instrukt: todo `nested-lists` changed on GitHub since this computer last read it; refresh it with `instrukt todo refresh nested-lists`, then re-apply your change
 ---

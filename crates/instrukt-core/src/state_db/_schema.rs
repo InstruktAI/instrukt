@@ -47,11 +47,29 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v34),
     Step(v35),
     Sql(V36),
+    Sql(V37),
 ];
 
 /// Version 36: a stored Antigravity reservation holding `thinking_level` carries it as T3's `thought_level`.
 const V36: &str = "
 UPDATE manual_standing_reservations SET request=json_remove(json_set(request,'$.selection.options.thought_level',json_extract(request,'$.selection.options.thinking_level')),'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind')='antigravity' AND json_type(request,'$.selection.options.thinking_level') IS NOT NULL;
+";
+
+/// Version 37: `withdrawal_intents`, the durable intent of a withdrawal
+/// whose working resources are being released (`state-database`, "Work
+/// tables"). Local-only; never reflected.
+const V37: &str = "
+CREATE TABLE IF NOT EXISTS withdrawal_intents (
+    todo_id     TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
+    branch      TEXT,
+    branch_head TEXT,
+    worktrees   TEXT NOT NULL,
+    workspace_path TEXT NOT NULL,
+    workspace   TEXT NOT NULL CHECK (workspace IN ('absent', 'present', 'released')),
+    branch_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (branch_state IN ('pending', 'partial_marker', 'deleted')),
+    started_at  TEXT NOT NULL
+);
 ";
 
 /// Version 35: pin `reply_mode` on `connected_conversations` at binding

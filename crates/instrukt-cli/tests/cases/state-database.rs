@@ -6,6 +6,10 @@
     reason = "test: a failed step fails the test"
 )]
 
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
 use crate::common;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
@@ -377,6 +381,142 @@ fn status_reports_older_and_newer_state_without_writing_it() {
     );
 }
 
+/// How long a command that must not wait on another may take. The writer
+/// lock's own wait is a minute; only a command that waited on it, or on
+/// GitHub, comes near this.
+const UNBLOCKED: Duration = Duration::from_secs(20);
+
+/// Runs `command` to completion within `bound`; `None` when it is still
+/// running then (it is left to finish on its own).
+fn finished_within(mut command: Command, bound: Duration) -> Option<Output> {
+    let child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || done.send(child.wait_with_output().unwrap()));
+    finished.recv_timeout(bound).ok()
+}
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD5
+#[test]
+fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
+    const FIRST: &str = "Started the depth parser.";
+    const SECOND: &str = "Joined the nested-list cases.";
+    let mut project = support::Project::new();
+    // One application clock for every command, so the listing's age of
+    // the copy is what the record says, whatever time the test takes.
+    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
+    project.create(
+        "list-depth",
+        "feature",
+        "Lists keep their depth everywhere.",
+    );
+    let todo = |args: &[&str]| {
+        let mut command = project.env.instrukt_process(project.repo.path());
+        command.arg("todo").args(args);
+        command
+    };
+    let read = || finished_within(todo(&["artifacts", "read", "list-depth", "log"]), UNBLOCKED);
+
+    // The coming reflection stops at its artifact upload, before its
+    // revision comment, and again at the issue fields once GitHub holds the
+    // revision.
+    let upload = project.github.pause_once("POST", "/issues/1/artifacts");
+    let fields = project.github.pause_once("PATCH", "/issues/1");
+    let first = todo(&["artifacts", "write", "list-depth", "log", FIRST])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    assert!(
+        upload.wait_until_received(Duration::from_secs(30)),
+        "the first command's reflection never reached GitHub"
+    );
+
+    // Reads complete while a local write holds the writer lock.
+    let writer = instrukt_core::fsx::LockGuard::acquire(
+        &project.env.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let listing = finished_within(todo(&["list"]), UNBLOCKED)
+        .expect("listing the work waited on the writer lock or on GitHub");
+    assert!(listing.status.success(), "{listing:?}");
+    let listing = String::from_utf8(listing.stdout).unwrap();
+    let current = read().expect("reading an artifact waited on the writer lock or on GitHub");
+    assert!(current.status.success(), "{current:?}");
+    let current = String::from_utf8(current.stdout).unwrap();
+    drop(writer);
+
+    // GitHub accepts the first revision, with newly assigned artifact
+    // coordinates, and the reflection stops before this computer records
+    // it.
+    drop(upload);
+    assert!(
+        fields.wait_until_received(Duration::from_secs(30)),
+        "the first command's revision never reached GitHub"
+    );
+
+    // A local change to the same todo commits while the reflection is in
+    // flight: its entry meets this computer's own unrecorded post.
+    let second = todo(&["artifacts", "write", "list-depth", "log", SECOND])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + UNBLOCKED;
+    loop {
+        let current = read().expect("reading an artifact waited on the writer lock or on GitHub");
+        if String::from_utf8(current.stdout).unwrap() == format!("{SECOND}\n") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the local change waited on the in-flight reflection"
+        );
+    }
+
+    // This computer holds a revision past the one GitHub holds and has not
+    // recorded. Reading the todo marks no conflict.
+    let during = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
+        .expect("showing the todo waited on the in-flight reflection");
+    assert!(during.status.success(), "{during:?}");
+    let during = String::from_utf8(during.stdout).unwrap();
+    drop(fields);
+    for command in [first, second] {
+        let output = command.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    // Both changes reached GitHub intact.
+    let listed = project.ok(["artifacts", "list", "list-depth"]);
+    let after = project.ok(["show", "list-depth"]);
+    let on_github: Vec<String> = project
+        .github
+        .artifacts(support::REPOSITORY, 1)
+        .iter()
+        .filter(|a| a["artifact"]["name"] == "log")
+        .flat_map(|a| a["versions"].as_array().unwrap().clone())
+        .map(|v| v["body"].as_str().unwrap().to_owned())
+        .collect();
+    // GitHub lists an artifact's versions newest first.
+    let on_github = on_github.join("\n");
+    let comments = project.github.comments(support::REPOSITORY, 1);
+    let head = comments
+        .iter()
+        .filter_map(|c| c["body"].as_str())
+        .next_back()
+        .unwrap();
+    insta::assert_snapshot!(
+        "reflection-in-flight",
+        support::redact(&format!(
+            "{listing}---\n{current}---\n{during}---\n{listed}---\n{after}---\n{on_github}\n---\n{head}"
+        ))
+    );
+}
+
 #[test]
 fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refusals() {
     let env = common::TestEnv::new();
@@ -454,4 +594,131 @@ fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refu
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(reasons, vec!["not_admin", "not_own", "unavailable"]);
+}
+
+/// The work tables' rows of `db`, each row as its columns' text, in key
+/// order: what a migration must leave as it found it.
+fn work_rows(db: &Connection) -> Vec<Vec<Option<String>>> {
+    let mut rows = Vec::new();
+    for query in [
+        "SELECT * FROM todos ORDER BY id",
+        "SELECT * FROM reflections ORDER BY todo_id",
+        "SELECT * FROM artifacts ORDER BY todo_id, name",
+        "SELECT * FROM artifact_versions ORDER BY todo_id, sequence",
+        "SELECT * FROM stamps ORDER BY todo_id, sequence",
+        "SELECT * FROM holds ORDER BY todo_id, set_at",
+    ] {
+        let mut statement = db.prepare(query).unwrap();
+        let columns = statement.column_count();
+        let found = statement
+            .query_map([], |row| {
+                (0..columns)
+                    .map(|i| {
+                        row.get::<_, instrukt_core::state_db::rusqlite::types::Value>(i)
+                            .map(|value| match value {
+                                instrukt_core::state_db::rusqlite::types::Value::Null => None,
+                                other => Some(format!("{other:?}")),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        rows.extend(found);
+    }
+    rows
+}
+
+/// Work as the shipped v35 writer (main 8bf7d63) stored it: a todo held for
+/// review with its input and plan, a build-started stamp, the hold, and its
+/// reflection to issue #1 and the project board. The claim columns, which
+/// only a dispatch fills, carry a claim in the form that writer stores.
+const V35_WORK: &str = r#"
+INSERT INTO todos VALUES('d34b9b4b157da44424c3630d9592445e','demo','list-depth','change','active','2026-11-23T08:04:23.212917Z','{"session":"t3:lead-1"}',NULL,4,NULL,NULL,NULL,'once',NULL,NULL,'a1b2c3d4e5f60718293a4b5c6d7e8f90','t3:lead-1','2026-11-23T08:04:23.9Z','list-depth',NULL,NULL,NULL,NULL,NULL,NULL,3,'2026-11-23T08:04:24.979941Z');
+INSERT INTO reflections VALUES('d34b9b4b157da44424c3630d9592445e',1,4,0,0,NULL,NULL,1013,1023,'W/"276c6835aac1d463"','the pull request waits for branch `list-depth` on GitHub',0,0,'acme/1','PVTI_1016','held',NULL);
+INSERT INTO artifacts VALUES('d34b9b4b157da44424c3630d9592445e','input',1);
+INSERT INTO artifacts VALUES('d34b9b4b157da44424c3630d9592445e','implementation-plan',2);
+INSERT INTO artifact_versions VALUES('d34b9b4b157da44424c3630d9592445e','input',1,'sha256:c5c8a5c4312ab4a773f36943b2b451017b19e6f97e3cfd2b59ce2b5c38345ab4','{"session":"t3:lead-1"}','2026-11-23T08:04:23.212917Z','Lists keep their depth everywhere.','[]','{}',1);
+INSERT INTO artifact_versions VALUES('d34b9b4b157da44424c3630d9592445e','implementation-plan',2,'sha256:ccbc8c07e0bbd0e6186a4c2778e51b3c0c90d989235ff97db55f5d6636548965','{"session":"t3:lead-1"}','2026-11-23T08:04:23.49263Z','1. Track depth in the parser.','[{"artifact":"input","digest":"sha256:c5c8a5c4312ab4a773f36943b2b451017b19e6f97e3cfd2b59ce2b5c38345ab4"},{"artifact":"prd","digest":null},{"artifact":"architecture","digest":null},{"artifact":"diagnosis","digest":null}]','{"head":"0bd0da14f58b73097505de14cf7e2ada3f78e478"}',1);
+INSERT INTO stamps VALUES('d34b9b4b157da44424c3630d9592445e',3,'build_started','2026-11-23T08:04:24.347203Z','{"session":"t3:lead-1"}',NULL,NULL,NULL,'unknown','sha256:62343d00ad6e9b8485b7e99c926c0979d2198f38e7ad6659ad97065fee998299',NULL,'{"plan":"sha256:ccbc8c07e0bbd0e6186a4c2778e51b3c0c90d989235ff97db55f5d6636548965","base":"0bd0da14f58b73097505de14cf7e2ada3f78e478"}',NULL);
+INSERT INTO holds VALUES('d34b9b4b157da44424c3630d9592445e','manual','Waits for the parser review.','{"session":"t3:lead-1"}','2026-11-23T08:04:24.097141Z',NULL,NULL);
+"#;
+
+#[test]
+fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdrawal_intents() {
+    let mut project = support::Project::new();
+    // One application clock, so the listing's age of the record is fixed.
+    project.env.set_env("INSTRUKT_NOW", "2026-11-23T09:00:00Z");
+    // GitHub cannot be read: the commands answer from the migrated database.
+    project.github.stop();
+    let state = project.env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let file = state.join("instrukt.db");
+    let before = {
+        let db = Connection::open(&file).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v35.sql"))
+            .unwrap();
+        db.execute_batch(V35_WORK).unwrap();
+        let version: u32 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 35);
+        work_rows(&db)
+    };
+
+    // The real CLI migrates the database to v36 and reads the work through
+    // the current work model: the todo, its claim and hold, its artifacts and
+    // their versions, its stamp and its reflection.
+    let listed = project.ok(["list"]);
+    let raw = Connection::open(&file).unwrap();
+    let version: u32 = raw
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, instrukt_core::state_db::schema_version());
+    assert_eq!(work_rows(&raw), before);
+    let intents: u32 = raw
+        .query_row("SELECT COUNT(*) FROM withdrawal_intents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(intents, 0);
+    let shown = project.ok(["show", "list-depth"]);
+    let artifacts = project.ok(["artifacts", "list", "list-depth"]);
+    let plan = project.ok(["artifacts", "read", "list-depth", "implementation-plan"]);
+    insta::assert_snapshot!(
+        "golden-v35-work",
+        support::redact(&format!("{listed}---\n{shown}---\n{artifacts}---\n{plan}"))
+    );
+
+    // The new table holds an intent of an existing todo, refuses one of a
+    // todo that does not exist, and goes with its todo.
+    raw.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+    raw.execute(
+        "INSERT INTO withdrawal_intents(todo_id,branch,branch_head,worktrees,workspace_path,workspace,branch_state,started_at)
+         VALUES ('d34b9b4b157da44424c3630d9592445e','list-depth',?1,'[]','/project/workspace/list-depth','present','pending','2026-11-21T09:00:00Z')",
+        [&"e".repeat(40)],
+    )
+    .unwrap();
+    let orphan = raw.execute(
+        "INSERT INTO withdrawal_intents(todo_id,worktrees,workspace_path,workspace,started_at) VALUES ('ffffffffffffffffffffffffffffffff','[]','/project/workspace/gone','absent','2026-11-21T09:00:00Z')",
+        [],
+    );
+    assert!(matches!(
+        orphan,
+        Err(instrukt_core::state_db::rusqlite::Error::SqliteFailure(
+            instrukt_core::state_db::rusqlite::ffi::Error {
+                code: instrukt_core::state_db::rusqlite::ErrorCode::ConstraintViolation,
+                ..
+            },
+            _
+        ))
+    ));
+    raw.execute(
+        "DELETE FROM todos WHERE id = 'd34b9b4b157da44424c3630d9592445e'",
+        [],
+    )
+    .unwrap();
+    let left: u32 = raw
+        .query_row("SELECT COUNT(*) FROM withdrawal_intents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
 }

@@ -113,6 +113,26 @@ where
     }
 }
 
+/// Runs one of git's predicate commands in `dir` where a negative answer
+/// decides something that cannot be taken back (`cat-file -e`,
+/// `merge-base --is-ancestor`): exit 0 is `true`, exit 1 with nothing on
+/// stderr is `false`, and anything else is an error carrying stderr. Git
+/// also exits 1 when it could not read what it was asked about, such as an
+/// unavailable alternate object directory, and says so on stderr; that is
+/// no answer.
+pub fn answers<I, S>(dir: &Path, args: I) -> Result<bool, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let (args_text, output) = raw(dir, args)?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) if output.stderr.iter().all(u8::is_ascii_whitespace) => Ok(false),
+        _ => Err(failed(dir, args_text, &output)),
+    }
+}
+
 /// Runs `git <args>` in `dir` and returns stdout as bytes, for blobs that
 /// need not be text.
 pub fn run_bytes<I, S>(dir: &Path, args: I) -> Result<Vec<u8>, GitError>
