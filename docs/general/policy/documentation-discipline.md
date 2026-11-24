@@ -72,20 +72,21 @@ restart, then check the logs` is directive. One string reaching a human and an
 
 - **Governed documentation is never self-reviewed.** A doc-only commit that
   changes what a snippet establishes or directs gets an independent review via
-  `sdlc/procedure/lifecycle/work/review-commits` on its worktree head before integration. Its author
-  classifies the change when dispatching that review:
+  `sdlc/procedure/lifecycle/work/review-commits` on its worktree head before
+  integration. The two review depths are:
   - **A change to what agents are directed to do** — directive text, the
     process layer (`sdlc/policy/process-change-authority`) included — is
-    reviewed at full depth (`general/procedure/orchestration`). The dispatch
-    carries the intent no diff shows, in its additional context or in the
-    message that hands the series to a reviewer already open: the problem the
-    change answers, the reader role whose behavior it changes and the behavior
-    wanted from that role, the human's direction wherever it shaped the change,
-    relayed faithfully, the alternatives the authoring context rejected, and
-    what the change leaves as it was.
+    reviewed at full depth. Its intent is carried in the commit body (or pull
+    request description) under `general/policy/commits`, never in the
+    reviewer's assignment brief.
   - **Any other change to what a snippet establishes** is reviewed at the
     lighter depth for the security lane's repository-privacy check and the
     doc-hygiene lane.
+
+  The author's classification selects the reviewer outside the brief
+  (`general/procedure/orchestration`); the reviewer independently determines
+  its depth from the diff and never takes classification from the assignment
+  (`sdlc/procedure/lifecycle/work/review-commits`).
 
   Every check is reviewer judgment, never prose scanning. Documentation curation
   and mechanical edits that leave rule semantics unchanged and add nothing to an
@@ -138,10 +139,13 @@ it.
 
 An author reviewing their own snippet believes it correct, which is no review.
 A reviewer handed only the diff can judge form, and a directive change can be
-well formed while it steers every later session the wrong way. Its intent lives
-in the authoring conversation, so it reaches the reviewer only when the author
-carries it there. A change that only refines what a snippet establishes steers
-no one, so its error costs less and a lighter review catches it. Company home
+well formed while it steers every later session the wrong way. Carrying that
+intent in the change description — corroborated against the recorded
+conversation — gives both delegated and event-triggered reviewers the same
+durable, untrusted basis without letting author prose or author
+classification enter the reviewer's mandate. A change that only refines what a
+snippet establishes steers no one, so its error costs less and a lighter review
+catches it. Company home
 documents reach every company agent and skill session on merge, so unreviewed
 direct commits publish stale history and unverified instructions straight to
 every reader.
