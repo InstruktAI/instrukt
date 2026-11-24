@@ -413,7 +413,7 @@ per-direction progress commit in the existing database, outside native network
 waits; ordinary startup resumes retained positions. Relay failure is visible in
 `instrukt events status` and logs. This reader has no scheduled tick path. Besides
 native notifications it reads again when the source asks its readers to
-(`project/instrukt/spec/feature/runner/history`, Freshness and participation).
+(`project/instrukt/spec/feature/runner/history`).
 Redis remains transport only.
 <!-- /planned-change:fix-flaky-conversation-links-wait-tests -->
 
@@ -521,11 +521,11 @@ session-fixed timing through A3's bounded batch log.
   that read finds nothing new and ends successfully, no native notification
   follows, and the link shows neither a failure nor a pending handover for the
   turn. Each reader then reaches the turn on its own trigger. Link relay reads
-  again each time the source asks its readers to
-  (`project/instrukt/spec/feature/runner/history`, Freshness and
-  participation), except for a link awaiting the retry of a failed pass, which
-  keeps to that retry. History extraction reads again on the requests it
-  follows, as that contract states. A company conversation with outstanding
-  work reads again on the company relay's own retry. A history search or an
-  explicit extraction catches up history only.
+  again when the source asks its readers to
+  (`project/instrukt/spec/feature/runner/conversation-links`). History
+  extraction reads again on the requests it follows
+  (`project/instrukt/spec/feature/runner/history`). A company conversation
+  with outstanding work reads again on the company relay's own retry
+  (`project/instrukt/spec/feature/company/conversations`). A history search or
+  an explicit extraction catches up history only.
 <!-- /planned:fix-flaky-conversation-links-wait-tests -->

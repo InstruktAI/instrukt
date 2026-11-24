@@ -177,7 +177,7 @@ read scope alone grants no send authority. Redis is transport only and owns
 neither turns, link membership nor relay decisions. There is no separate relay
 process, agent relay tool or scheduled tick relay. Besides native
 notifications, each link reads again when the source asks its readers to
-(`project/instrukt/spec/feature/runner/history`, Freshness and participation);
+(`project/instrukt/spec/feature/runner/history`);
 a link awaiting the retry of a failed pass keeps to that retry. A relay pass
 that failed is tried again after a growing delay, whether or not the source changes
 meanwhile; a pass that cannot acquire the source retries the acquisition inside the
