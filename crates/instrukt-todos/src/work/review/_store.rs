@@ -547,15 +547,27 @@ pub(super) fn exempt(
     Ok(())
 }
 
+/// What git shows to be history among the evidence aged past the retention
+/// period.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Aged {
+    /// Commits the canonical branch contains: all their evidence is history.
+    pub contained: Vec<(ProjectSlug, CommitSha)>,
+    /// Commits no branch of the project reaches any more: their exemptions
+    /// and imported derived approvals are history. A head verdict that
+    /// stands stays current, since the status GitHub keeps admits the
+    /// commit wherever it is proposed again.
+    pub unreached: Vec<(ProjectSlug, CommitSha)>,
+}
+
 /// Retires the history older than `cutoff` that this store alone shows to
-/// be history: replaced versions of a standing verdict and verdicts an
-/// import set aside. What only git can show to be history — evidence of a
-/// commit the canonical branch contains — is retired for the commits
-/// `contained` names.
+/// be history: replaced versions of a standing verdict, and verdicts an
+/// export handed off or an import set aside. What only git can show to be
+/// history is retired for the commits `aged` names.
 pub(super) fn retire(
     tx: &Transaction<'_>,
     cutoff: Timestamp,
-    contained: &[(ProjectSlug, CommitSha)],
+    aged: &Aged,
 ) -> Result<(), ReviewError> {
     let cutoff = cutoff.to_string();
     tx.execute(
@@ -563,14 +575,14 @@ pub(super) fn retire(
         params![cutoff],
     )?;
     tx.execute(
-        "DELETE FROM versions WHERE settlement IN (SELECT id FROM settlements WHERE standing='set_aside' AND changed_at < ?1)",
+        "DELETE FROM versions WHERE settlement IN (SELECT id FROM settlements WHERE standing IN ('set_aside','handed_off') AND changed_at < ?1)",
         params![cutoff],
     )?;
     tx.execute(
-        "DELETE FROM settlements WHERE standing='set_aside' AND changed_at < ?1",
+        "DELETE FROM settlements WHERE standing IN ('set_aside','handed_off') AND changed_at < ?1",
         params![cutoff],
     )?;
-    for (project, commit) in contained {
+    for (project, commit) in &aged.contained {
         tx.execute(
             "DELETE FROM versions WHERE settlement IN (SELECT id FROM settlements WHERE project=?1 AND head=?2)",
             params![project.as_str(), commit.as_str()],
@@ -579,8 +591,14 @@ pub(super) fn retire(
             "DELETE FROM settlements WHERE project=?1 AND head=?2",
             params![project.as_str(), commit.as_str()],
         )?;
+    }
+    for (project, commit) in aged.contained.iter().chain(&aged.unreached) {
         tx.execute(
             "DELETE FROM exemptions WHERE project=?1 AND commit_id=?2",
+            params![project.as_str(), commit.as_str()],
+        )?;
+        tx.execute(
+            "DELETE FROM imported_approvals WHERE project=?1 AND candidate=?2",
             params![project.as_str(), commit.as_str()],
         )?;
     }
@@ -597,7 +615,9 @@ pub(super) fn aged_commits(
 ) -> Result<Vec<CommitSha>, ReviewError> {
     let cutoff = cutoff.to_string();
     let mut statement = conn.prepare(
-        "SELECT head FROM settlements WHERE project=?1 AND changed_at < ?2 UNION SELECT commit_id FROM exemptions WHERE project=?1 AND recorded_at < ?2",
+        "SELECT head FROM settlements WHERE project=?1 AND changed_at < ?2
+         UNION SELECT commit_id FROM exemptions WHERE project=?1 AND recorded_at < ?2
+         UNION SELECT candidate FROM imported_approvals WHERE project=?1 AND imported_at < ?2",
     )?;
     let rows = statement
         .query_map(params![project.as_str(), cutoff], |row| {

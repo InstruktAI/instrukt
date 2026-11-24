@@ -247,6 +247,26 @@ impl ReviewProject {
         )?)
     }
 
+    /// Whether a branch of the project, local or fetched from the remote,
+    /// still reaches `commit`.
+    fn reached(&self, commit: &CommitSha) -> Result<bool, ReviewError> {
+        let remote = format!("refs/remotes/{REMOTE}");
+        Ok(!git::run(
+            &self.root,
+            [
+                "for-each-ref",
+                "--count=1",
+                "--format=%(refname)",
+                "--contains",
+                commit.as_str(),
+                "refs/heads",
+                remote.as_str(),
+            ],
+        )?
+        .trim()
+        .is_empty())
+    }
+
     fn contains(&self, ancestor: &str, descendant: &str) -> Result<bool, ReviewError> {
         Ok(git::succeeds(
             &self.root,
@@ -437,7 +457,7 @@ pub fn record(
         .map(|(sha, _)| sha.clone())
         .collect();
     let recorded_on = instrukt_core::machine::machine_id(home)?.to_string();
-    let contained = aged_contained(home, project, clock())?;
+    let aged = aged_history(home, project, clock())?;
     let mut db = _store::open(home)?;
     let recorded = db.write(|tx| {
         let now = clock();
@@ -471,7 +491,7 @@ pub fn record(
             recorded_on,
         };
         _store::add_version(tx, settlement_id, &version)?;
-        _store::retire(tx, retention_cutoff(now), &contained)?;
+        _store::retire(tx, retention_cutoff(now), &aged)?;
         Ok::<_, ReviewError>(Recorded {
             head: head.clone(),
             version: number,
@@ -588,25 +608,30 @@ fn retention_cutoff(now: Timestamp) -> Timestamp {
         .unwrap_or(Timestamp::MIN)
 }
 
-/// The commits of `project` whose evidence aged past the retention period
-/// and that the canonical branch contains. A commit this repository does
-/// not hold is not contained.
-fn aged_contained(
+/// The commits of `project` whose evidence aged past the retention period,
+/// as git shows them to be history: those the canonical branch contains,
+/// and those no branch reaches any more. A commit this repository does not
+/// hold is reached by no branch.
+fn aged_history(
     home: &Home,
     project: &ReviewProject,
     now: Timestamp,
-) -> Result<Vec<(ProjectSlug, CommitSha)>, ReviewError> {
+) -> Result<_store::Aged, ReviewError> {
+    let mut aged = _store::Aged::default();
     let Some(conn) = _store::reader(home)? else {
-        return Ok(Vec::new());
+        return Ok(aged);
     };
     let canonical = project.canonical()?;
-    let mut contained = Vec::new();
     for commit in _store::aged_commits(&conn, &project.slug, retention_cutoff(now))? {
-        if project.holds(&commit)? && project.contains(commit.as_str(), &canonical)? {
-            contained.push((project.slug.clone(), commit));
+        if !project.holds(&commit)? {
+            aged.unreached.push((project.slug.clone(), commit));
+        } else if project.contains(commit.as_str(), &canonical)? {
+            aged.contained.push((project.slug.clone(), commit));
+        } else if !project.reached(&commit)? {
+            aged.unreached.push((project.slug.clone(), commit));
         }
     }
-    Ok(contained)
+    Ok(aged)
 }
 
 /// An exemption offered for recording.
@@ -652,7 +677,7 @@ pub fn exempt(
         recorded_at: clock(),
         recorded_on: instrukt_core::machine::machine_id(home)?.to_string(),
     };
-    let contained = aged_contained(home, project, clock())?;
+    let aged = aged_history(home, project, clock())?;
     let mut db = _store::open(home)?;
     db.write(|tx| {
         if let Some(held) = _store::exemption(tx, &project.slug, &commit)? {
@@ -662,7 +687,7 @@ pub fn exempt(
             )));
         }
         _store::exempt(tx, &project.slug, &exemption)?;
-        _store::retire(tx, retention_cutoff(exemption.recorded_at), &contained)?;
+        _store::retire(tx, retention_cutoff(exemption.recorded_at), &aged)?;
         Ok::<_, ReviewError>(())
     })?;
     tracing::info!(event = "review_exemption_admitted", project = %project.slug, commit = %commit, names_session = exemption.names_session);
@@ -827,23 +852,34 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
         project: &ProjectSlug,
         repository: &str,
         eligible: &[(u64, CommitSha)],
+        candidate: Option<&CommitSha>,
         now: Timestamp,
     ) -> Result<(), String> {
-        publish(&self.home, &self.access, project, repository, eligible, now)
-            .map_err(|error| error.to_string())
+        publish(
+            &self.home,
+            &self.access,
+            project,
+            repository,
+            eligible,
+            candidate,
+            now,
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
 /// Publishes the current verdict of every commit whose head verdict stands
 /// here, and recognises what the reviewer bot already published for each
 /// eligible head this computer holds no evidence of (`github-apps`, Verdict
-/// publication). The tick's alone.
+/// publication). The tick's alone; it retires the publication store's
+/// history, keeping what concerns the active `candidate`.
 fn publish(
     home: &Home,
     access: &super::GitHubAccess,
     project: &ProjectSlug,
     repository: &str,
     eligible: &[(u64, CommitSha)],
+    candidate: Option<&CommitSha>,
     now: Timestamp,
 ) -> Result<(), ReviewError> {
     let gh = access
@@ -890,9 +926,9 @@ fn publish(
         publication.deliver(commit, &target, &pulls_at(commit))?;
     }
     let mut current: Vec<CommitSha> = standing.iter().map(|(commit, _)| commit.clone()).collect();
+    current.extend(candidate.cloned());
     let derived = standing_derived(home, project)?;
     for approval in &derived {
-        current.push(approval.candidate.clone());
         // Only one GitHub already shows as the status is completed here;
         // the candidate's own pass publishes one GitHub does not show.
         let shown = evidence(home, project, &approval.candidate)?
@@ -1782,5 +1818,115 @@ mod tests {
                 .unwrap()
                 .carries_verdict()
         );
+    }
+
+    fn exempt_side(fixture: &Fixture, commit: &CommitSha, now: Timestamp) {
+        exempt(
+            &fixture.home,
+            &fixture.project,
+            &ExemptRequest {
+                commit: commit.to_string(),
+                basis: "a typo fix".into(),
+                caller: None,
+            },
+            &|| now,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_handed_off_verdict_is_history_after_the_retention_period() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        let old = at("2026-10-01T00:00:00Z");
+        settled(&fixture, &fixture.side, old);
+        let mut db = _store::open(&fixture.home).unwrap();
+        db.write(|tx| _store::hand_off(tx, project, "sha256:file", old))
+            .unwrap();
+        drop(db);
+        let held = |fixture: &Fixture| {
+            _store::held(
+                &_store::reader(&fixture.home).unwrap().unwrap(),
+                project,
+                &fixture.side,
+            )
+            .unwrap()
+        };
+        assert!(matches!(held(&fixture), Held::HandedOff { .. }));
+        git(&fixture.project.root, &["checkout", "-qb", "other"]);
+        let other = commit(&fixture.project.root, "other.txt", "other");
+        exempt_side(&fixture, &other, at("2026-11-24T00:00:00Z"));
+        assert_eq!(
+            held(&fixture),
+            Held::Nothing,
+            "the commit admits a verdict again"
+        );
+    }
+
+    #[test]
+    fn an_exemption_of_a_commit_no_branch_reaches_any_more_is_history() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        exempt_side(&fixture, &fixture.side, at("2026-10-01T00:00:00Z"));
+        git(&fixture.project.root, &["branch", "-qD", "side"]);
+        git(&fixture.project.root, &["checkout", "-qb", "other"]);
+        let other = commit(&fixture.project.root, "other.txt", "other");
+        exempt_side(&fixture, &other, at("2026-11-24T00:00:00Z"));
+        assert_eq!(
+            evidence(&fixture.home, project, &fixture.side)
+                .unwrap()
+                .exemption,
+            None
+        );
+        assert!(
+            evidence(&fixture.home, project, &other)
+                .unwrap()
+                .exemption
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn an_exemption_of_a_commit_a_branch_still_reaches_stays_current() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        exempt_side(&fixture, &fixture.side, at("2026-10-01T00:00:00Z"));
+        git(&fixture.project.root, &["checkout", "-qb", "other"]);
+        let other = commit(&fixture.project.root, "other.txt", "other");
+        exempt_side(&fixture, &other, at("2026-11-24T00:00:00Z"));
+        assert!(
+            evidence(&fixture.home, project, &fixture.side)
+                .unwrap()
+                .exemption
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_tick_retires_withdrawn_and_past_derived_approvals_and_keeps_the_candidates() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        let old = at("2026-10-01T00:00:00Z");
+        let (withdrawn, past, active) = (sha('c'), sha('d'), sha('e'));
+        let mut db = _published::open(&fixture.home).unwrap();
+        db.write(|tx| {
+            for candidate in [&withdrawn, &past, &active] {
+                _published::record_derived(tx, project, &tick_derived(candidate, old))?;
+            }
+            _published::withdraw(tx, project, &tick_derived(&withdrawn, old), &sha('f'), old)?;
+            _published::retire(
+                tx,
+                project,
+                retention_cutoff(at("2026-11-24T00:00:00Z")),
+                std::slice::from_ref(&active),
+            )
+        })
+        .unwrap();
+        drop(db);
+        let held =
+            |candidate: &CommitSha| derived_approval(&fixture.home, project, candidate).unwrap();
+        assert_eq!(held(&withdrawn), None);
+        assert_eq!(held(&past), None);
+        assert!(held(&active).is_some());
     }
 }

@@ -469,7 +469,10 @@ pub(super) fn standing_derived(
 }
 
 /// Retires completed history older than `cutoff`: publications no longer
-/// outstanding and recognitions of commits `current` does not name.
+/// outstanding and recognitions of commits `current` does not name;
+/// withdrawn derived approvals; and derived approvals of a candidate
+/// `current` does not name, which is no longer the integration head
+/// (`github-apps`, Review evidence storage).
 pub(super) fn retire(
     tx: &Transaction<'_>,
     project: &ProjectSlug,
@@ -487,6 +490,11 @@ pub(super) fn retire(
     tx.execute(
         "DELETE FROM recognised WHERE project=?1 AND recognised_at < ?2
          AND commit_id NOT IN (SELECT value FROM json_each(?3))",
+        params![project.as_str(), cutoff, keep],
+    )?;
+    tx.execute(
+        "DELETE FROM derived WHERE project=?1 AND (withdrawn_at < ?2
+         OR (withdrawn_at IS NULL AND recorded_at < ?2 AND candidate NOT IN (SELECT value FROM json_each(?3))))",
         params![project.as_str(), cutoff, keep],
     )?;
     Ok(())

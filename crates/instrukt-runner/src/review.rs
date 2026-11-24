@@ -92,10 +92,13 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         .iter()
         .flat_map(|(head, at)| at.iter().map(move |pull| (pull.number, head.clone())))
         .collect();
-    if let Err(error) = pass
-        .port
-        .publish(project, pass.repository, &eligible, pass.now)
-    {
+    if let Err(error) = pass.port.publish(
+        project,
+        pass.repository,
+        &eligible,
+        pass.candidate,
+        pass.now,
+    ) {
         tracing::warn!(event = "review_publication_failed", project = %project, error = %error);
     }
     // The candidate's coverage is derived before any pull request's head is

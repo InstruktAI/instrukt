@@ -828,12 +828,14 @@ pub trait AutomaticReview: Send + Sync {
     /// Publishes every verdict this computer holds for `project`, and
     /// recognises what the reviewer bot already published for each eligible
     /// head it holds none of. `eligible` is each eligible pull request with
-    /// its current head, as this pass observed them.
+    /// its current head, as this pass observed them; `candidate` is the
+    /// active integration candidate, whose derived approval is current.
     fn publish(
         &self,
         project: &instrukt_core::ids::ProjectSlug,
         repository: &str,
         eligible: &[(u64, instrukt_core::ids::CommitSha)],
+        candidate: Option<&instrukt_core::ids::CommitSha>,
         now: Timestamp,
     ) -> Result<(), String>;
 }
