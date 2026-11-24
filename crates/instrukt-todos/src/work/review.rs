@@ -1345,40 +1345,105 @@ impl CoverageReader<'_> {
     }
 }
 
-/// The head a todo's record approves last by build review, when its last
-/// build verdict for that head approves.
-fn record_approval(
-    record: &crate::evidence::TodoEvidence,
+/// An independent approval a todo's record binds to an exact head.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecordApproval {
+    head: CommitSha,
+    report: String,
+    /// For a build-review approval, its place among the todo's build
+    /// verdicts, counted from one: the order they are reflected in on the
+    /// todo's pull request. None for a reviewed preparation head.
+    build: Option<usize>,
+}
+
+impl RecordApproval {
+    /// The covering item's reference (`github-apps`, Verdict publication):
+    /// the todo, the approval and its report's digest, and for a build-review
+    /// approval the todo's pull request once `reflected` — the pull request
+    /// and how many build verdicts were reflected there — shows it reflected
+    /// there as a review.
+    fn reference(
+        &self,
+        todo: &instrukt_core::ids::TodoSlug,
+        reflected: Option<(u64, usize)>,
+    ) -> String {
+        let (head, report) = (&self.head, &self.report);
+        match (self.build, reflected) {
+            (Some(index), Some((pull, reviews))) if index <= reviews => format!(
+                "build-review approval of {head} in todo {todo} ({report}), reflected as a review on pull request #{pull}"
+            ),
+            (Some(_), _) => format!("build-review approval of {head} in todo {todo} ({report})"),
+            (None, _) => format!("preparation-head approval of {head} in todo {todo} ({report})"),
+        }
+    }
+}
+
+/// The head a todo's record approves last, when the last build verdict or
+/// preparation-head review of that head among `facts` approves it.
+fn record_approval<'a>(
+    facts: impl IntoIterator<Item = &'a crate::evidence::StampFact>,
     commit: Option<&CommitSha>,
-) -> Option<(CommitSha, String)> {
+) -> Option<RecordApproval> {
     use crate::evidence::{BuildVerdict, ReviewVerdict, StampFact};
-    let mut last: Option<(CommitSha, String, bool)> = None;
-    for stamp in &record.stamps {
-        let (head, report, approves) = match &stamp.fact {
+    let mut last: Option<(RecordApproval, bool)> = None;
+    let mut builds = 0;
+    for fact in facts {
+        let (head, report, approves, build) = match fact {
             StampFact::BuildVerdict {
                 verdict,
                 target,
                 report,
-            } => (target, report, *verdict == BuildVerdict::Approve),
+            } => {
+                builds += 1;
+                (
+                    target,
+                    report,
+                    *verdict == BuildVerdict::Approve,
+                    Some(builds),
+                )
+            }
             StampFact::PreparationHeadReviewed {
                 verdict,
                 head,
                 report,
-            } => (head, report, *verdict == ReviewVerdict::Approve),
+            } => (head, report, *verdict == ReviewVerdict::Approve, None),
             _ => continue,
         };
         if commit.is_none_or(|commit| commit == head) {
-            last = Some((head.clone(), report.to_string(), approves));
+            last = Some((
+                RecordApproval {
+                    head: head.clone(),
+                    report: report.to_string(),
+                    build,
+                },
+                approves,
+            ));
         }
     }
-    last.filter(|(_, _, approves)| *approves)
-        .map(|(head, report, _)| {
-            let reference = format!(
-                "review approval of {head} in todo {} ({report})",
-                record.slug
-            );
-            (head, reference)
-        })
+    last.filter(|(_, approves)| *approves)
+        .map(|(approval, _)| approval)
+}
+
+impl CoverageReader<'_> {
+    /// The todo's pull request with how many build verdicts were reflected
+    /// there as reviews, when it has one.
+    fn reflection(&self, todo: &super::TodoId) -> Result<Option<(u64, usize)>, String> {
+        use instrukt_core::state_db::rusqlite::OptionalExtension as _;
+        let Some(db) = instrukt_core::state_db::StateRead::open(&self.work.home)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        db.conn()
+            .query_row(
+                "SELECT pull_number, reviews_reflected FROM reflections
+                 WHERE todo_id = ?1 AND pull_number IS NOT NULL",
+                [todo.as_str()],
+                |row| Ok((row.get::<_, u64>(0)?, row.get::<_, usize>(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
@@ -1397,11 +1462,20 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
                 todo: None,
             }));
         }
-        Ok(self.todo_of(commit)?.and_then(|record| {
-            record_approval(&record, Some(commit)).map(|(_, reference)| crate::workflow::Approved {
-                reference,
-                todo: Some(record.slug.clone()),
-            })
+        let Some(record) = self.todo_of(commit)? else {
+            return Ok(None);
+        };
+        let Some(approval) = record_approval(record.stamps.iter().map(|s| &s.fact), Some(commit))
+        else {
+            return Ok(None);
+        };
+        let reflected = match approval.build {
+            Some(_) => self.reflection(&record.id)?,
+            None => None,
+        };
+        Ok(Some(crate::workflow::Approved {
+            reference: approval.reference(&record.slug, reflected),
+            todo: Some(record.slug.clone()),
         }))
     }
 
@@ -1429,8 +1503,8 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
         Ok(records
             .evidence(self.project, todo)
             .map_err(|e| e.to_string())?
-            .and_then(|record| record_approval(&record, None))
-            .map(|(head, _)| head))
+            .and_then(|record| record_approval(record.stamps.iter().map(|s| &s.fact), None))
+            .map(|approval| approval.head))
     }
 
     fn red_promotion(&self, head: &CommitSha) -> Result<Option<CommitSha>, String> {
@@ -1928,5 +2002,51 @@ mod tests {
         assert_eq!(held(&withdrawn), None);
         assert_eq!(held(&past), None);
         assert!(held(&active).is_some());
+    }
+
+    fn build(verdict: crate::evidence::BuildVerdict, target: char) -> crate::evidence::StampFact {
+        crate::evidence::StampFact::BuildVerdict {
+            verdict,
+            target: sha(target),
+            report: ContentDigest::of("report"),
+        }
+    }
+
+    #[test]
+    fn a_finalized_approval_cites_the_todos_pull_request_once_reflected_there() {
+        use crate::evidence::BuildVerdict::{Approve, ChangesRequested};
+        let todo = instrukt_core::ids::TodoSlug::parse("shipped").unwrap();
+        let facts = [build(ChangesRequested, 'a'), build(Approve, 'a')];
+        let approval = record_approval(&facts, Some(&sha('a'))).unwrap();
+        assert_eq!(approval.build, Some(2));
+        assert!(
+            approval
+                .reference(&todo, Some((12, 2)))
+                .ends_with("reflected as a review on pull request #12")
+        );
+        assert!(
+            !approval
+                .reference(&todo, Some((12, 1)))
+                .contains("pull request"),
+            "not yet reflected there"
+        );
+        assert!(!approval.reference(&todo, None).contains("pull request"));
+    }
+
+    #[test]
+    fn a_reviewed_preparation_heads_approval_cites_no_pull_request() {
+        let todo = instrukt_core::ids::TodoSlug::parse("shipped").unwrap();
+        let facts = [crate::evidence::StampFact::PreparationHeadReviewed {
+            verdict: crate::evidence::ReviewVerdict::Approve,
+            head: sha('a'),
+            report: ContentDigest::of("report"),
+        }];
+        let approval = record_approval(&facts, Some(&sha('a'))).unwrap();
+        assert_eq!(approval.build, None);
+        assert!(
+            !approval
+                .reference(&todo, Some((12, 5)))
+                .contains("pull request")
+        );
     }
 }
