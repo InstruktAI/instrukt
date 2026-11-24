@@ -544,8 +544,7 @@ publishes. They are the computer's own, never committed anywhere.
 
 <!-- planned:unify-index-yaml-entrypoints -->
 Every global file opens with the generated line (Committed entrypoints,
-above), so a reader of the file sees that it is generated and where a change
-goes. Where a runtime's file format puts something of its own first, as the
+above). Where a runtime's file format puts something of its own first, as the
 frontmatter of Cursor's rule file does, the generated line follows it.
 <!-- /planned:unify-index-yaml-entrypoints -->
 
