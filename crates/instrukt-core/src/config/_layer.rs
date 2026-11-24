@@ -409,36 +409,7 @@ pub fn patch(
             current: current.to_string(),
         });
     }
-    let mut findings = findings_for(&home.for_inspection(), layer, &path, &next)?;
-    // Todos already on stay a validation finding; only a write that
-    // switches them on is refused for it. Event responses that already
-    // lacked their transport stay a finding too; a write that switches them
-    // on without it, or removes it from under them, is refused.
-    if layer.kind() == LayerKind::Project {
-        let global = read_usable(home, &Layer::Global)?;
-        if todos_on(&before, global.as_ref())? {
-            findings.retain(|f| f.kind != FindingKind::TodosNeedGitHub);
-        }
-        if super::_validate::needs_transport(&super::_effective::effective_value(
-            global.as_ref(),
-            Some(&before),
-        )?) {
-            findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
-        }
-        // Automatic review already on stays a finding; only a write that
-        // switches it on is refused for one.
-        if super::_review::review_on(&before) {
-            findings.retain(|f| f.key != super::_review::REVIEW_AUTOMATIC_KEY);
-        }
-    }
-    if layer.kind() == LayerKind::Global
-        && super::_validate::needs_transport(&super::_effective::effective_value(
-            Some(&before),
-            None,
-        )?)
-    {
-        findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
-    }
+    let findings = refused_findings(home, layer, &path, &before, &next)?;
     if !findings.is_empty() {
         return Err(ConfigError::Invalid(Findings(findings)));
     }
@@ -451,6 +422,48 @@ pub fn patch(
         duration_ms = elapsed_ms(started),
     );
     Ok(revision)
+}
+
+/// The findings for which a patch from `before` to `next` of `layer` at
+/// `path` is refused: those of `next`, less the ones that already stood on
+/// `before`. Todos already on stay a validation finding; only a write that
+/// switches them on is refused for it. Event responses that already lacked
+/// their transport stay a finding too; a write that switches them on
+/// without it, or removes it from under them, is refused. Automatic review
+/// already on stays a finding; only a write that switches it on is refused
+/// for one.
+fn refused_findings(
+    home: &Home,
+    layer: &Layer,
+    path: &Path,
+    before: &Value,
+    next: &Value,
+) -> Result<Vec<super::_error::Finding>, ConfigError> {
+    let mut findings = findings_for(&home.for_inspection(), layer, path, next)?;
+    if layer.kind() == LayerKind::Project {
+        let global = read_usable(home, &Layer::Global)?;
+        if todos_on(before, global.as_ref())? {
+            findings.retain(|f| f.kind != FindingKind::TodosNeedGitHub);
+        }
+        if super::_validate::needs_transport(&super::_effective::effective_value(
+            global.as_ref(),
+            Some(before),
+        )?) {
+            findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+        }
+        if super::_review::review_on(before) {
+            findings.retain(|f| f.key != super::_review::REVIEW_AUTOMATIC_KEY);
+        }
+    }
+    if layer.kind() == LayerKind::Global
+        && super::_validate::needs_transport(&super::_effective::effective_value(
+            Some(before),
+            None,
+        )?)
+    {
+        findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+    }
+    Ok(findings)
 }
 
 /// The document `doc` of `layer` at `path` as it stands, converted to the
@@ -496,7 +509,7 @@ pub fn review_switch(
     }
     let (before, next) = patched(layer, &path, &doc, patch)?;
     if !super::_review::switches_on(&before, &next)
-        || !findings_for(&home.for_inspection(), layer, &path, &next)?.is_empty()
+        || !refused_findings(home, layer, &path, &before, &next)?.is_empty()
     {
         return Ok(None);
     }
@@ -944,6 +957,49 @@ mod tests {
         let patched = patch(&home, &layer, &expected, &yaml("board: acme/1"));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(patched.is_ok(), "{patched:?}");
+    }
+
+    #[test]
+    fn switching_automatic_review_on_asks_for_readiness_while_a_finding_that_already_stood_remains()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(dir.path().join("user"));
+        std::fs::create_dir_all(home.root().join("state")).unwrap();
+        // No event transport on this computer.
+        std::fs::write(
+            home.root().join(CONFIG_FILE_NAME),
+            format!("schema_version: {CURRENT_SCHEMA_VERSION}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            home.index_file(),
+            format!(
+                "schema_version: 2\nsnippets:\n- id: {id}\n  description: d\n  type: procedure\n  scope: global\n  domain: sdlc\n  path: {id}.md\n  source_project: instrukt\n  role: {role}\n  subscriptions: [{event}]\n  subscription_home: project\n",
+                id = super::super::_review::REVIEW_PROCEDURE,
+                role = super::super::_review::REVIEW_ROLE,
+                event = super::super::_review::REVIEW_NEEDED_EVENT,
+            ),
+        )
+        .unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        // Event responses already lack their transport: that finding stood
+        // before the patch, and the patch does not refuse for it.
+        std::fs::write(
+            root.join(CONFIG_FILE_NAME),
+            format!(
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\ngithub:\n  repository: acme/demo\nmodules:\n  events: true\n"
+            ),
+        )
+        .unwrap();
+        let layer = Layer::Project(root);
+        let expected = revision(&home, &layer).unwrap();
+        let on = yaml("review: {automatic: true}");
+        assert_eq!(
+            review_switch(&home, &layer, &expected, &on).unwrap(),
+            Some("acme/demo".to_owned()),
+            "the identities' readiness is asked before the write"
+        );
     }
 
     #[test]
