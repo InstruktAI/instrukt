@@ -132,13 +132,10 @@ impl ReflectionLock {
 
     fn path(home: &Home) -> Result<PathBuf, WorkError> {
         let path = home.reflection_lock_file();
-        state_db::refuse_link(REFLECTION_LOCK, &path).map_err(StateDbError::from)?;
+        state_db::refuse_link("the reflection lock", &path).map_err(StateDbError::from)?;
         Ok(path)
     }
 }
-
-/// The name the reflection lock's errors use.
-const REFLECTION_LOCK: &str = "the reflection lock";
 
 /// Why a local change was not written: the row it was computed from
 /// changed in between (`state-database`, "Writing").
