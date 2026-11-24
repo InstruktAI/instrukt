@@ -320,6 +320,120 @@ pub(super) fn add_version(
     Ok(())
 }
 
+/// Hands off every verdict that stands here in `project` to the export
+/// `export`.
+pub(super) fn hand_off(
+    tx: &Transaction<'_>,
+    project: &ProjectSlug,
+    export: &str,
+    now: Timestamp,
+) -> Result<usize, ReviewError> {
+    Ok(tx.execute(
+        "UPDATE settlements SET standing='handed_off', cause=?2, changed_at=?3 WHERE project=?1 AND standing='stands'",
+        params![project.as_str(), format!("export {export}"), now.to_string()],
+    )?)
+}
+
+/// Sets settlement `settlement` aside, with the import that did it.
+pub(super) fn set_aside(
+    tx: &Transaction<'_>,
+    settlement: i64,
+    cause: &str,
+    now: Timestamp,
+) -> Result<(), ReviewError> {
+    tx.execute(
+        "UPDATE settlements SET standing='set_aside', cause=?2, changed_at=?3 WHERE id=?1",
+        params![settlement, cause, now.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Starts a settlement of `head` that an import set aside on arrival.
+pub(super) fn arrive_set_aside(
+    tx: &Transaction<'_>,
+    project: &ProjectSlug,
+    head: &CommitSha,
+    cause: &str,
+    now: Timestamp,
+) -> Result<i64, ReviewError> {
+    tx.execute(
+        "INSERT INTO settlements (project, head, standing, cause, changed_at) VALUES (?1, ?2, 'set_aside', ?3, ?4)",
+        params![project.as_str(), head.as_str(), cause, now.to_string()],
+    )?;
+    Ok(tx.last_insert_rowid())
+}
+
+/// Whether an import already set aside a verdict of `head` named `name`.
+pub(super) fn set_aside_named(
+    conn: &Connection,
+    project: &ProjectSlug,
+    head: &CommitSha,
+    name: &str,
+) -> Result<bool, ReviewError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM settlements s JOIN versions v ON v.settlement = s.id
+         WHERE s.project=?1 AND s.head=?2 AND s.standing='set_aside' AND v.name=?3)",
+        params![project.as_str(), head.as_str(), name],
+        |row| row.get(0),
+    )?)
+}
+
+/// Gives version `number` of settlement `settlement` the moment `moment`.
+pub(super) fn move_moment(
+    tx: &Transaction<'_>,
+    settlement: i64,
+    number: u64,
+    moment: Moment,
+) -> Result<(), ReviewError> {
+    tx.execute(
+        "UPDATE versions SET moment=?3 WHERE settlement=?1 AND number=?2",
+        params![settlement, number, moment.text()],
+    )?;
+    Ok(())
+}
+
+/// Every exemption of `project`.
+pub(super) fn exemptions(
+    conn: &Connection,
+    project: &ProjectSlug,
+) -> Result<Vec<super::Exemption>, ReviewError> {
+    let mut statement =
+        conn.prepare("SELECT commit_id FROM exemptions WHERE project=?1 ORDER BY commit_id")?;
+    let commits = statement
+        .query_map(params![project.as_str()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut found = Vec::new();
+    for commit in commits {
+        let commit = CommitSha::parse(&commit).map_err(|_| ReviewError::Record("commit".into()))?;
+        found.extend(exemption(conn, project, &commit)?);
+    }
+    Ok(found)
+}
+
+/// Keeps a derived approval an import brought, unless one is held for its
+/// candidate.
+pub(super) fn import_approval(
+    tx: &Transaction<'_>,
+    project: &ProjectSlug,
+    approval: &super::_transfer::ExportedDerived,
+    now: Timestamp,
+) -> Result<(), ReviewError> {
+    tx.execute(
+        "INSERT INTO imported_approvals (project, candidate, canonical, coverage, name, moment, imported_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (project, candidate) DO NOTHING",
+        params![
+            project.as_str(),
+            approval.candidate,
+            approval.canonical,
+            approval.coverage,
+            approval.name,
+            approval.moment,
+            now.to_string()
+        ],
+    )?;
+    Ok(())
+}
+
 /// `commit`'s exemption in `project`, when one is held.
 pub(super) fn exemption(
     conn: &Connection,

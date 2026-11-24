@@ -81,6 +81,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["eval", "report"] => EvalRead,
         ["review", "record" | "exempt"] => Stamp,
         ["review", "show"] => ArtifactRead,
+        ["review", "export" | "import"] => InstallationWrite,
         [
             "mcp",
             "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress" | "sign-out",

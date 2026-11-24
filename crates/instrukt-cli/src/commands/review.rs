@@ -29,6 +29,36 @@ enum ReviewCommand {
     Exempt(ExemptArgs),
     /// What this computer holds of a commit's review evidence.
     Show(ShowArgs),
+    /// Hand the project's review evidence that stands on this computer off
+    /// into one file.
+    Export(ExportArgs),
+    /// Take in an export written on another computer, or on this one.
+    Import(ImportArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct ExportArgs {
+    /// The file to write.
+    #[arg(long)]
+    to: PathBuf,
+}
+
+#[derive(Debug, clap::Args)]
+struct ImportArgs {
+    /// The export file.
+    file: PathBuf,
+    /// Which verdict stands for a commit of which the file and this
+    /// computer hold two different ones.
+    #[arg(long, value_parser = statement)]
+    standing: Option<review::Statement>,
+}
+
+fn statement(text: &str) -> Result<review::Statement, String> {
+    match text {
+        "imported" => Ok(review::Statement::Imported),
+        "held" => Ok(review::Statement::Held),
+        _ => Err(format!("`{text}` is neither `imported` nor `held`")),
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -77,7 +107,39 @@ pub fn run(args: ReviewArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         ReviewCommand::Record(args) => record(args, ctx),
         ReviewCommand::Exempt(args) => exempt(args, ctx),
         ReviewCommand::Show(args) => show(&args, ctx),
+        ReviewCommand::Export(args) => export(&args, ctx),
+        ReviewCommand::Import(args) => import(&args, ctx),
     }
+}
+
+fn export(args: &ExportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let (project, _) = standing_project(ctx)?;
+    let exported = review::export(&ctx.home, &project.slug, &args.to, ctx.clock.now())?;
+    ctx.out.line(&format!(
+        "exported {} verdicts, {} exemptions and {} derived approvals to {} ({}); they are handed off from this computer",
+        exported.verdicts,
+        exported.exemptions,
+        exported.derived,
+        args.to.display(),
+        exported.digest
+    ))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn import(args: &ImportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let (project, _) = standing_project(ctx)?;
+    let imported = review::import(
+        &ctx.home,
+        &project.slug,
+        &args.file,
+        args.standing,
+        ctx.clock.now(),
+    )?;
+    ctx.out.line(&format!(
+        "imported: {} verdicts now stand here, {} were already current, {} pairs were settled by the statement",
+        imported.standing, imported.unchanged, imported.set_aside
+    ))?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The project the caller stands in, with its configuration.

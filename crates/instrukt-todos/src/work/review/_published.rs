@@ -297,6 +297,30 @@ pub(super) fn recognise(
     Ok(())
 }
 
+/// The derived approvals the tick recorded for `project` and did not
+/// withdraw.
+pub(super) fn derived(
+    conn: &Connection,
+    project: &ProjectSlug,
+) -> Result<Vec<super::_transfer::ExportedDerived>, ReviewError> {
+    let mut statement = conn.prepare(
+        "SELECT candidate, canonical, coverage, name, moment FROM derived
+         WHERE project=?1 AND withdrawn_at IS NULL ORDER BY candidate",
+    )?;
+    let rows = statement
+        .query_map(params![project.as_str()], |row| {
+            Ok(super::_transfer::ExportedDerived {
+                candidate: row.get(0)?,
+                canonical: row.get(1)?,
+                coverage: row.get(2)?,
+                name: row.get(3)?,
+                moment: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Retires completed history older than `cutoff`: publications no longer
 /// outstanding and recognitions of commits `current` does not name.
 pub(super) fn retire(

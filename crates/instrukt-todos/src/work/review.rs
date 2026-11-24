@@ -10,6 +10,7 @@ mod _publication;
 mod _published;
 mod _recognition;
 mod _store;
+mod _transfer;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -23,6 +24,7 @@ use jiff::Timestamp;
 pub use _moment::Moment;
 pub use _publication::Published;
 pub use _published::{Delivery, DeliveryState, Destination, Recognised};
+pub use _transfer::Statement;
 
 use _admission::{Offer, RequestCheck, TurnDecision};
 use _store::Held;
@@ -818,4 +820,272 @@ fn publish(
     }
     let mut db = _published::open(home)?;
     db.write(|tx| _published::retire(tx, project, retention_cutoff(now), &current))
+}
+
+/// What an export handed off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exported {
+    pub digest: String,
+    pub verdicts: usize,
+    pub exemptions: usize,
+    pub derived: usize,
+}
+
+/// Writes one snapshot of `project`'s review evidence that stands here to
+/// `to` and hands its verdicts off (`instrukt review export`). The file is
+/// complete on disk before the hand-off commits, all under
+/// `state/review.lock`.
+pub fn export(
+    home: &Home,
+    project: &ProjectSlug,
+    to: &Path,
+    now: Timestamp,
+) -> Result<Exported, ReviewError> {
+    let derived = match _published::reader(home)? {
+        Some(conn) => _published::derived(&conn, project)?,
+        None => Vec::new(),
+    };
+    let mut db = _store::open(home)?;
+    let standing = _store::standing(db.conn(), project)?;
+    let exemptions = _store::exemptions(db.conn(), project)?;
+    let export = _transfer::Export {
+        project: project.to_string(),
+        computer: instrukt_core::machine::machine_id(home)?.to_string(),
+        written_at: now.to_string(),
+        verdicts: standing
+            .iter()
+            .map(|(head, version)| _transfer::ExportedVerdict {
+                head: head.to_string(),
+                verdict: version.verdict.as_str().to_owned(),
+                name: version.name.to_string(),
+                report: version.report.clone(),
+                reviewer: version.reviewer.to_string(),
+                entered_by: version.entered_by.as_ref().map(ToString::to_string),
+                base: version.base.to_string(),
+                base_on_canonical: version.base_on_canonical,
+                request: version.request,
+                unattributed: version
+                    .unattributed
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                moment: version.moment.text(),
+                recorded_at: version.recorded_at.to_string(),
+                recorded_on: version.recorded_on.clone(),
+            })
+            .collect(),
+        exemptions: exemptions
+            .iter()
+            .map(|exemption| _transfer::ExportedExemption {
+                commit: exemption.commit.to_string(),
+                basis: exemption.basis.clone(),
+                declared_by: exemption.declared_by.as_ref().map(ToString::to_string),
+                names_session: exemption.names_session,
+                recorded_at: exemption.recorded_at.to_string(),
+                recorded_on: exemption.recorded_on.clone(),
+            })
+            .collect(),
+        derived,
+    };
+    let (text, digest) =
+        _transfer::write(&export).map_err(|error| ReviewError::Record(error.to_string()))?;
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        instrukt_core::fsx::atomic_write_with_permissions(
+            to,
+            text.as_bytes(),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .map_err(|error| {
+            refused(format!(
+                "cannot write the export to {}: {error}",
+                to.display()
+            ))
+        })?;
+    }
+    db.write(|tx| _store::hand_off(tx, project, &digest, now))?;
+    tracing::info!(event = "review_evidence_exported", project = %project, export = %digest, verdicts = export.verdicts.len());
+    Ok(Exported {
+        digest,
+        verdicts: export.verdicts.len(),
+        exemptions: export.exemptions.len(),
+        derived: export.derived.len(),
+    })
+}
+
+/// What an import did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Imported {
+    pub standing: usize,
+    pub unchanged: usize,
+    pub set_aside: usize,
+}
+
+fn version_of(verdict: &_transfer::ExportedVerdict) -> Result<Version, ReviewError> {
+    let bad = |what: &str| {
+        refused(format!(
+            "the export's verdict of {} has an unreadable {what}",
+            verdict.head
+        ))
+    };
+    let session = |text: &str| SessionRef::parse(text).map_err(|_| bad("session"));
+    Ok(Version {
+        number: 1,
+        verdict: Verdict::parse(&verdict.verdict).ok_or_else(|| bad("verdict"))?,
+        name: ContentDigest::new(verdict.name.clone()),
+        report: verdict.report.clone(),
+        reviewer: session(&verdict.reviewer)?,
+        entered_by: verdict.entered_by.as_deref().map(session).transpose()?,
+        base: CommitSha::parse(&verdict.base).map_err(|_| bad("base"))?,
+        base_on_canonical: verdict.base_on_canonical,
+        request: verdict.request,
+        unattributed: verdict
+            .unattributed
+            .iter()
+            .map(|sha| CommitSha::parse(sha).map_err(|_| bad("commit")))
+            .collect::<Result<_, _>>()?,
+        moment: Moment::parse(&verdict.moment).ok_or_else(|| bad("moment"))?,
+        recorded_at: verdict
+            .recorded_at
+            .parse()
+            .map_err(|_| bad("recording time"))?,
+        recorded_on: verdict.recorded_on.clone(),
+    })
+}
+
+/// Takes in the export at `file` (`instrukt review import`), commit by
+/// commit, under `state/review.lock`. Two different verdicts of one commit
+/// refuse the import whole unless `statement` says which stands.
+pub fn import(
+    home: &Home,
+    project: &ProjectSlug,
+    file: &Path,
+    statement: Option<Statement>,
+    now: Timestamp,
+) -> Result<Imported, ReviewError> {
+    let text = std::fs::read_to_string(file)
+        .map_err(|error| refused(format!("cannot read {}: {error}", file.display())))?;
+    let (export, digest) = _transfer::read(&text).map_err(|why| {
+        refused(format!(
+            "{} is not an export this instrukt takes in ({why:?}); nothing changed",
+            file.display()
+        ))
+    })?;
+    if export.project != project.as_str() {
+        return Err(refused(format!(
+            "{} is an export of project {}, not {project}; nothing changed",
+            file.display(),
+            export.project
+        )));
+    }
+    let versions = export
+        .verdicts
+        .iter()
+        .map(|verdict| {
+            Ok((
+                CommitSha::parse(&verdict.head).map_err(|_| {
+                    refused(format!("the export names `{}` as a commit", verdict.head))
+                })?,
+                version_of(verdict)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, ReviewError>>()?;
+    let mut db = _store::open(home)?;
+    let imported = db.write(|tx| {
+        let mut done = Imported::default();
+        let mut two = Vec::new();
+        let mut plan = Vec::new();
+        for (head, version) in &versions {
+            let held = _store::held(tx, project, head)?;
+            let current = match &held {
+                Held::Stands { settlement, current } => Some((*settlement, current.as_ref())),
+                Held::Nothing | Held::HandedOff { .. } => None,
+            };
+            let rule = _transfer::rule(
+                current.map(|(_, v)| v),
+                version.verdict,
+                version.name.as_str(),
+                version.moment,
+            );
+            if rule == _transfer::Rule::Two {
+                two.push(head.to_string());
+            }
+            plan.push((head, version, current.map(|(id, v)| (id, v.clone())), rule));
+        }
+        if !two.is_empty() && statement.is_none() {
+            return Err(refused(format!(
+                "this computer and the export hold two different verdicts of {}; nothing changed: state which stands with --standing imported or --standing held",
+                two.join(", ")
+            )));
+        }
+        let cause = |which: &str| format!("import {digest} with --standing {which}");
+        for (head, version, current, rule) in plan {
+            match (rule, current, statement) {
+                (_transfer::Rule::Stands, _, _) => {
+                    let id = _store::settle(tx, project, head, now)?;
+                    _store::add_version(tx, id, version)?;
+                    done.standing += 1;
+                }
+                (_transfer::Rule::Same { later }, Some((id, held)), _) => {
+                    if let Some(later) = later {
+                        _store::move_moment(tx, id, held.number, later)?;
+                    }
+                    done.unchanged += 1;
+                }
+                (_transfer::Rule::Two, Some((id, held)), Some(Statement::Imported)) => {
+                    _store::set_aside(tx, id, &cause("imported"), now)?;
+                    let standing = _store::settle(tx, project, head, now)?;
+                    let mut version = version.clone();
+                    version.moment = _transfer::chosen_moment(version.moment, held.moment, now);
+                    _store::add_version(tx, standing, &version)?;
+                    done.set_aside += 1;
+                }
+                (_transfer::Rule::Two, Some((id, held)), Some(Statement::Held)) => {
+                    if !_store::set_aside_named(tx, project, head, version.name.as_str())? {
+                        let aside = _store::arrive_set_aside(tx, project, head, &cause("held"), now)?;
+                        _store::add_version(tx, aside, version)?;
+                    }
+                    let moment = _transfer::chosen_moment(held.moment, version.moment, now);
+                    if moment != held.moment {
+                        _store::move_moment(tx, id, held.number, moment)?;
+                    }
+                    done.set_aside += 1;
+                }
+                _ => {}
+            }
+        }
+        for exemption in &export.exemptions {
+            let commit = CommitSha::parse(&exemption.commit)
+                .map_err(|_| refused(format!("the export names `{}` as a commit", exemption.commit)))?;
+            if _store::exemption(tx, project, &commit)?.is_some() {
+                continue;
+            }
+            _store::exempt(
+                tx,
+                project,
+                &Exemption {
+                    commit,
+                    basis: exemption.basis.clone(),
+                    declared_by: exemption
+                        .declared_by
+                        .as_deref()
+                        .map(SessionRef::parse)
+                        .transpose()
+                        .map_err(|_| refused("the export names an unreadable declaring session"))?,
+                    names_session: exemption.names_session,
+                    recorded_at: exemption
+                        .recorded_at
+                        .parse()
+                        .map_err(|_| refused("the export holds an unreadable exemption time"))?,
+                    recorded_on: exemption.recorded_on.clone(),
+                },
+            )?;
+        }
+        for approval in &export.derived {
+            _store::import_approval(tx, project, approval, now)?;
+        }
+        Ok::<_, ReviewError>(done)
+    })?;
+    tracing::info!(event = "review_evidence_imported", project = %project, export = %digest, standing = imported.standing, set_aside = imported.set_aside);
+    Ok(imported)
 }
