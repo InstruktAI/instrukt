@@ -85,6 +85,16 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
             }
         }
     }
+    let eligible: Vec<(u64, CommitSha)> = heads
+        .iter()
+        .flat_map(|(head, at)| at.iter().map(move |pull| (pull.number, head.clone())))
+        .collect();
+    if let Err(error) = pass
+        .port
+        .publish(project, pass.repository, &eligible, pass.now)
+    {
+        tracing::warn!(event = "review_publication_failed", project = %project, error = %error);
+    }
     let mut owed = BTreeSet::new();
     let mut fetched = false;
     for (head, mut at_head) in heads {

@@ -216,3 +216,64 @@ fn one_multi_item_reflection_reuses_authenticated_actor_facts_and_operation_cred
         0
     );
 }
+
+// spec: project/instrukt/spec/feature/work/github-apps UC-GA3
+#[test]
+fn an_automatic_review_verdict_reaches_the_pull_request_and_its_exact_commit() {
+    use crate::fixtures::reviewed::{REPOSITORY, Reviewed};
+    let project = Reviewed::opted_in();
+    let head = project.push("feature", "one.txt");
+    let pull = project.open("feature", false);
+    project.tick();
+    project
+        .record_at(
+            &project.rt.native_id("s1"),
+            &head,
+            "needs_work",
+            Some("2026-11-24T12:00:00Z"),
+        )
+        .success();
+
+    project.tick();
+    let later = project.push("feature", "two.txt");
+    project.tick();
+
+    let reviewer = |actor: &serde_json::Value| actor["login"] == "instruktai-reviewer[bot]";
+    let published = serde_json::json!({
+        "pull_request_reviews": project
+            .github
+            .reviews(REPOSITORY, pull)
+            .iter()
+            .filter(|review| reviewer(&review["user"]))
+            .map(|review| serde_json::json!({
+                "state": review["state"],
+                "commit": review["commit_id"],
+                "body": review["body"],
+            }))
+            .collect::<Vec<_>>(),
+        "reviewed_commit_statuses": project
+            .github
+            .statuses(REPOSITORY, &head)
+            .iter()
+            .filter(|status| reviewer(&status["creator"]))
+            .map(|status| serde_json::json!({
+                "context": status["context"],
+                "state": status["state"],
+                "description": status["description"],
+                "target_url": status["target_url"],
+            }))
+            .collect::<Vec<_>>(),
+        "later_head_statuses": project
+            .github
+            .statuses(REPOSITORY, &later)
+            .iter()
+            .filter(|status| reviewer(&status["creator"]))
+            .count(),
+    });
+    insta::assert_snapshot!(
+        "automatic-review-verdict-on-github",
+        serde_json::to_string_pretty(&published)
+            .unwrap()
+            .replace(&head, "<reviewed-head>")
+    );
+}

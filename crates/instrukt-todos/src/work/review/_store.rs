@@ -123,21 +123,29 @@ pub(super) enum Held {
 }
 
 fn version(row: &instrukt_core::state_db::rusqlite::Row<'_>) -> Result<Version, ReviewError> {
-    let text = |at: usize| row.get::<_, String>(at);
+    version_at(row, 0)
+}
+
+/// The version whose columns start at `first` in `row`.
+fn version_at(
+    row: &instrukt_core::state_db::rusqlite::Row<'_>,
+    first: usize,
+) -> Result<Version, ReviewError> {
+    let text = |at: usize| row.get::<_, String>(first + at);
     let record = |what: &str| ReviewError::Record(what.to_owned());
     Ok(Version {
-        number: row.get(0)?,
+        number: row.get(first)?,
         verdict: Verdict::parse(&text(1)?).ok_or_else(|| record("verdict"))?,
         name: ContentDigest::new(text(2)?),
         report: text(3)?,
         reviewer: SessionRef::parse(&text(4)?).map_err(|_| record("reviewer"))?,
         entered_by: row
-            .get::<_, Option<String>>(5)?
+            .get::<_, Option<String>>(first + 5)?
             .map(|s| SessionRef::parse(&s).map_err(|_| record("entering session")))
             .transpose()?,
         base: CommitSha::parse(&text(6)?).map_err(|_| record("base"))?,
-        base_on_canonical: row.get(7)?,
-        request: row.get(8)?,
+        base_on_canonical: row.get(first + 7)?,
+        request: row.get(first + 8)?,
         unattributed: serde_json::from_str::<Vec<String>>(&text(9)?)
             .map_err(|_| record("unattributed commits"))?
             .iter()
@@ -188,6 +196,37 @@ pub(super) fn held(
         },
         None => Held::Nothing,
     })
+}
+
+/// The current version of every head verdict that stands here in
+/// `project`, with its commit.
+pub(super) fn standing(
+    conn: &Connection,
+    project: &ProjectSlug,
+) -> Result<Vec<(CommitSha, Version)>, ReviewError> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT s.head, {} FROM settlements s JOIN versions v ON v.settlement = s.id
+         WHERE s.project=?1 AND s.standing='stands'
+           AND v.number = (SELECT MAX(w.number) FROM versions w WHERE w.settlement = s.id)",
+        VERSION_COLUMNS
+            .split(", ")
+            .map(|column| format!("v.{column}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))?;
+    let rows = statement
+        .query_map(params![project.as_str()], |row| {
+            Ok((row.get::<_, String>(0)?, version_at(row, 1)))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(head, version)| {
+            Ok((
+                CommitSha::parse(&head).map_err(|_| ReviewError::Record("head".into()))?,
+                version?,
+            ))
+        })
+        .collect()
 }
 
 /// Every settlement of `head` in `project` with its versions, oldest first.

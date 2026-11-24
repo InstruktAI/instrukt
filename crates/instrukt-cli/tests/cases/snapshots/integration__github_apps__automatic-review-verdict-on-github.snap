@@ -1,0 +1,22 @@
+---
+source: crates/instrukt-cli/tests/cases/github-apps.rs
+expression: "serde_json::to_string_pretty(&published).unwrap().replace(&head,\n\"<reviewed-head>\")"
+---
+{
+  "pull_request_reviews": [
+    {
+      "state": "CHANGES_REQUESTED",
+      "commit": "<reviewed-head>",
+      "body": "instrukt/review sha256:a7cf6b28533ba1a70386e1b171dc94ed457e1a22d36dd1780de5644bff807bee 2026-11-24T12:00:00.000Z\n\n# Review\n\nVerdict: needs_work\n"
+    }
+  ],
+  "reviewed_commit_statuses": [
+    {
+      "context": "instrukt/review",
+      "state": "failure",
+      "description": "sha256:a7cf6b28533ba1a70386e1b171dc94ed457e1a22d36dd1780de5644bff807bee 2026-11-24T12:00:00.000Z",
+      "target_url": "https://github.test/acme/demo/pull/1#pullrequestreview-1003"
+    }
+  ],
+  "later_head_statuses": 0
+}

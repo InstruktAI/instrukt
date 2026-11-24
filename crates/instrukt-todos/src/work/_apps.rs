@@ -102,6 +102,27 @@ impl GitHubAccess {
             reviewer,
         })
     }
+    /// A client of `repository` under the publication credential of the
+    /// identity the `commit-reviewer` role selects.
+    pub(crate) fn review_client(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> Result<super::_github::GitHub, AppError> {
+        self.with_apps(|apps| {
+            let credential = apps.issue(
+                repository,
+                Some(instrukt_core::config::REVIEW_ROLE),
+                Operation::ReviewPublish,
+                now,
+            )?;
+            Ok(super::_github::GitHub::new(
+                &apps.api,
+                repository,
+                credential.token().to_owned(),
+            ))
+        })
+    }
     pub(crate) fn verified_bots(
         &self,
         repository: &str,

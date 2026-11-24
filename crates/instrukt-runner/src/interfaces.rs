@@ -794,6 +794,17 @@ pub trait AutomaticReview: Send + Sync {
         project: &instrukt_core::ids::ProjectSlug,
         head: &instrukt_core::ids::CommitSha,
     ) -> Result<bool, String>;
+    /// Publishes every verdict this computer holds for `project`, and
+    /// recognises what the reviewer bot already published for each eligible
+    /// head it holds none of. `eligible` is each eligible pull request with
+    /// its current head, as this pass observed them.
+    fn publish(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+        repository: &str,
+        eligible: &[(u64, instrukt_core::ids::CommitSha)],
+        now: Timestamp,
+    ) -> Result<(), String>;
 }
 
 /// Work-owned, non-mutating inspection of shared-record GitHub prerequisites,

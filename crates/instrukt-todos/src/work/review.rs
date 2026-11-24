@@ -6,6 +6,9 @@
 
 mod _admission;
 mod _moment;
+mod _publication;
+mod _published;
+mod _recognition;
 mod _store;
 
 use std::path::{Path, PathBuf};
@@ -18,6 +21,8 @@ use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 
 pub use _moment::Moment;
+pub use _publication::Published;
+pub use _published::{Delivery, DeliveryState, Destination, Recognised};
 
 use _admission::{Offer, RequestCheck, TurnDecision};
 use _store::Held;
@@ -133,11 +138,15 @@ pub struct Exemption {
     pub recorded_on: String,
 }
 
-/// Everything this computer holds of a commit's review evidence.
+/// Everything this computer holds of a commit's review evidence, with what
+/// the tick published of it and the verdict it recognised as already
+/// published.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommitEvidence {
     pub settlements: Vec<Settlement>,
     pub exemption: Option<Exemption>,
+    pub deliveries: Vec<Delivery>,
+    pub recognised: Option<Recognised>,
 }
 
 impl CommitEvidence {
@@ -564,13 +573,16 @@ pub fn evidence(
     project: &ProjectSlug,
     commit: &CommitSha,
 ) -> Result<CommitEvidence, ReviewError> {
-    let Some(conn) = _store::reader(home)? else {
-        return Ok(CommitEvidence::default());
-    };
-    Ok(CommitEvidence {
-        settlements: _store::settlements(&conn, project, commit)?,
-        exemption: _store::exemption(&conn, project, commit)?,
-    })
+    let mut evidence = CommitEvidence::default();
+    if let Some(conn) = _store::reader(home)? {
+        evidence.settlements = _store::settlements(&conn, project, commit)?;
+        evidence.exemption = _store::exemption(&conn, project, commit)?;
+    }
+    if let Some(conn) = _published::reader(home)? {
+        evidence.deliveries = _published::deliveries(&conn, project, commit)?;
+        evidence.recognised = _published::recognised(&conn, project, commit)?;
+    }
+    Ok(evidence)
 }
 
 /// The repository `root` of `project`, as review evidence reads it.
@@ -630,9 +642,106 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
     }
 
     fn carries_verdict(&self, project: &ProjectSlug, head: &CommitSha) -> Result<bool, String> {
-        Ok(evidence(&self.home, project, head)
-            .map_err(|error| error.to_string())?
-            .current()
-            .is_some())
+        let evidence = evidence(&self.home, project, head).map_err(|error| error.to_string())?;
+        Ok(evidence.current().is_some() || evidence.recognised.is_some())
     }
+
+    fn publish(
+        &self,
+        project: &ProjectSlug,
+        repository: &str,
+        eligible: &[(u64, CommitSha)],
+        now: Timestamp,
+    ) -> Result<(), String> {
+        publish(&self.home, &self.access, project, repository, eligible, now)
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Publishes the current verdict of every commit whose head verdict stands
+/// here, and recognises what the reviewer bot already published for each
+/// eligible head this computer holds no evidence of (`github-apps`, Verdict
+/// publication). The tick's alone.
+fn publish(
+    home: &Home,
+    access: &super::GitHubAccess,
+    project: &ProjectSlug,
+    repository: &str,
+    eligible: &[(u64, CommitSha)],
+    now: Timestamp,
+) -> Result<(), ReviewError> {
+    let gh = access
+        .review_client(repository, now)
+        .map_err(|error| refused(error.to_string()))?;
+    let reviewer = access
+        .review_identities()
+        .map_err(|error| refused(error.to_string()))?
+        .reviewer;
+    let publication = _recognition::Publication {
+        home,
+        gh: &gh,
+        project,
+        repository,
+        reviewer: &reviewer,
+        now,
+    };
+    let pulls_at = |commit: &CommitSha| -> Vec<u64> {
+        eligible
+            .iter()
+            .filter(|(_, head)| head == commit)
+            .map(|(number, _)| *number)
+            .collect()
+    };
+    let standing = match _store::reader(home)? {
+        Some(conn) => _store::standing(&conn, project)?,
+        None => Vec::new(),
+    };
+    for (commit, version) in &standing {
+        let target = _recognition::Target {
+            published: _publication::Published {
+                verdict: version.verdict,
+                name: version.name.clone(),
+                moment: version.moment,
+            },
+            body: Some(_publication::body(
+                &version.name,
+                version.moment,
+                &version.report,
+                commit,
+            )),
+        };
+        publication.deliver(commit, &target, &pulls_at(commit))?;
+    }
+    let mut current: Vec<CommitSha> = standing.iter().map(|(commit, _)| commit.clone()).collect();
+    let mut heads: Vec<&CommitSha> = eligible.iter().map(|(_, head)| head).collect();
+    heads.sort();
+    heads.dedup();
+    for commit in heads {
+        if standing.iter().any(|(held, _)| held == commit) {
+            continue;
+        }
+        current.push(commit.clone());
+        let pulls = pulls_at(commit);
+        let recognised = match publication.recognise(commit, &pulls) {
+            Ok(recognised) => recognised,
+            Err(error) => {
+                tracing::warn!(event = "review_recognition_failed", project = %project, commit = %commit, error = %error);
+                continue;
+            }
+        };
+        let Some(recognised) = recognised else {
+            continue;
+        };
+        let mut db = _published::open(home)?;
+        db.write(|tx| _published::recognise(tx, project, commit, &recognised))?;
+        drop(db);
+        tracing::info!(event = "review_verdict_recognised", project = %project, commit = %commit, verdict = recognised.published.verdict.as_str());
+        let target = _recognition::Target {
+            published: recognised.published,
+            body: recognised.body,
+        };
+        publication.deliver(commit, &target, &pulls)?;
+    }
+    let mut db = _published::open(home)?;
+    db.write(|tx| _published::retire(tx, project, retention_cutoff(now), &current))
 }

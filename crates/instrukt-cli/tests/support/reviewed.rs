@@ -180,8 +180,17 @@ impl Reviewed {
 
     /// Records `session`'s verdict of `head` from the merge base with main.
     pub fn record(&self, session: &str, head: &str, verdict: &str) -> Assert {
+        self.record_at(session, head, verdict, None)
+    }
+
+    /// As [`Reviewed::record`], with the command's clock reading `at`.
+    pub fn record_at(&self, session: &str, head: &str, verdict: &str, at: Option<&str>) -> Assert {
         let base = self.repo.git(["merge-base", head, "main"]);
-        self.as_session(session)
+        let mut command = self.as_session(session);
+        if let Some(at) = at {
+            command.env("INSTRUKT_NOW", at);
+        }
+        command
             .args([
                 "review",
                 "record",

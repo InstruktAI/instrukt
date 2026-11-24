@@ -289,6 +289,20 @@ impl Home {
         self.state_dir().join("review.db")
     }
 
+    /// `~/.instrukt/state/review-publication.lock` — the write-isolation unit
+    /// of the review publication store, taken by the tick alone
+    /// (`project/instrukt/spec/feature/work/github-apps`, Review evidence
+    /// storage).
+    pub fn review_publication_lock_file(&self) -> PathBuf {
+        self.state_dir().join("review-publication.lock")
+    }
+
+    /// `~/.instrukt/state/review-publication.db` — what GitHub shows of each
+    /// verdict, recognised verdicts and derived approvals.
+    pub fn review_publication_db_file(&self) -> PathBuf {
+        self.state_dir().join("review-publication.db")
+    }
+
     /// `~/.instrukt/state/review-observation.lock` — the write-isolation unit
     /// of the pull-request observation store, taken by the tick alone
     /// (`project/instrukt/spec/feature/runner/pull-request-review`,

@@ -151,7 +151,11 @@ fn show(args: &ShowArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let commit = CommitSha::parse(&args.sha)
         .map_err(|_| anyhow::anyhow!("`{}` is not a full commit id", args.sha))?;
     let evidence = review::evidence(&ctx.home, &project.slug, &commit)?;
-    if evidence.settlements.is_empty() && evidence.exemption.is_none() {
+    if evidence.settlements.is_empty()
+        && evidence.exemption.is_none()
+        && evidence.recognised.is_none()
+        && evidence.deliveries.is_empty()
+    {
         ctx.out.line(&format!(
             "{commit}: this computer holds no review evidence of it"
         ))?;
@@ -226,6 +230,42 @@ fn show(args: &ShowArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             },
             exemption.recorded_at,
             exemption.recorded_on
+        ))?;
+    }
+    if let Some(recognised) = &evidence.recognised {
+        ctx.out.line(&format!(
+            "recognised as already published: {} {} moment {} (recognised {}{})",
+            recognised.published.verdict.as_str(),
+            recognised.published.name,
+            recognised.published.moment,
+            recognised.recognised_at,
+            if recognised.body.is_some() {
+                ""
+            } else {
+                "; no review carrying it was read, so none is deliverable from this computer"
+            }
+        ))?;
+    }
+    for delivery in &evidence.deliveries {
+        let destination = match &delivery.destination {
+            review::Destination::Status => "review status".to_owned(),
+            review::Destination::Pull(number) => format!("review on pull request #{number}"),
+        };
+        ctx.out.line(&format!(
+            "publication: {destination} of {} {}: {}{}{}",
+            delivery.name,
+            delivery.moment,
+            delivery.state.as_str(),
+            delivery
+                .link
+                .as_ref()
+                .map(|link| format!(" ({link})"))
+                .unwrap_or_default(),
+            delivery
+                .cause
+                .as_ref()
+                .map(|cause| format!(": {cause}"))
+                .unwrap_or_default()
         ))?;
     }
     Ok(ExitCode::SUCCESS)
