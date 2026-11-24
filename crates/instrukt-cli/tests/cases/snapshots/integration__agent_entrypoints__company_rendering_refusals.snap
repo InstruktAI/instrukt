@@ -53,10 +53,12 @@ AGENTS.md: docs/index.yaml holds `description`, which is not allowed; a company 
 listed documents:
 AGENTS.md: docs/people.md is listed, but docs/company.md in `expanded` already brings it in full; remove it from `listed`; nothing is rendered until it is fixed
 AGENTS.md: docs/notes.md is listed but has no `description` in its frontmatter, the line that names it; add one; nothing is rendered until it is fixed
+AGENTS.md: docs/terms.md is listed but its frontmatter cannot be read (it is not YAML: mapping values are not allowed in this context at line 1 column 27); correct it so its `description` can be read; nothing is rendered until it is fixed
 instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
 config validate --company acme:
 AGENTS.md: docs/people.md is listed, but docs/company.md in `expanded` already brings it in full; remove it from `listed`; nothing is rendered until it is fixed
 AGENTS.md: docs/notes.md is listed but has no `description` in its frontmatter, the line that names it; add one; nothing is rendered until it is fixed
+AGENTS.md: docs/terms.md is listed but its frontmatter cannot be read (it is not YAML: mapping values are not allowed in this context at line 1 column 27); correct it so its `description` can be read; nothing is rendered until it is fixed
 
 a linked index:
 AGENTS.md: docs/index.yaml is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then

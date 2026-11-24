@@ -701,6 +701,9 @@ pub enum RenderFindingKind {
     },
     /// A `listed` company document has no description to name it by.
     CompanyListedWithoutDescription { document: String },
+    /// A `listed` company document's frontmatter is not a YAML mapping, so
+    /// its description cannot be read: why, as a sentence.
+    CompanyFrontmatterInvalid { document: String, reason: String },
     /// A `listed` company document is already held in full, brought in by
     /// the `expanded` document `carrier`.
     CompanyListedCarried { document: String, carrier: String },
@@ -764,6 +767,10 @@ impl std::fmt::Display for RenderFinding {
             RenderFindingKind::CompanyListedWithoutDescription { document } => write!(
                 f,
                 "{path}: {document} is listed but has no `description` in its frontmatter, the line that names it; add one; nothing is rendered until it is fixed"
+            ),
+            RenderFindingKind::CompanyFrontmatterInvalid { document, reason } => write!(
+                f,
+                "{path}: {document} is listed but its frontmatter cannot be read ({reason}); correct it so its `description` can be read; nothing is rendered until it is fixed"
             ),
             RenderFindingKind::CompanyListedCarried { document, carrier } => write!(
                 f,

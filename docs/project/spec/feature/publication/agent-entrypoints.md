@@ -507,7 +507,8 @@ the home and leaves any other there as it is.
   of keys nor empty, such as a list or a text; a key other than `expanded`
   and `listed`; a value that is not a list of document paths; an entry
   that does not end in `.md`; a `listed` document without a non-empty
-  `description`; a
+  `description`; a `listed` document whose frontmatter is not a YAML
+  mapping, naming why; a
   `listed` document the `expanded` documents already bring in, naming the
   expanded document whose required reads carry it.
   `instrukt config validate --company <name>` and `instrukt docs render` in

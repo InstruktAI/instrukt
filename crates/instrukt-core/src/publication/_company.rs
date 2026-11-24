@@ -25,7 +25,7 @@ use super::_render::{
     RenderPlan, finish,
 };
 use super::_source::{Committed, EntryIndex};
-use crate::docs::{self, CompanyDocument, CompanyReference, Directive};
+use crate::docs::{self, CompanyDocument, CompanyFrontmatter, CompanyReference, Directive};
 use crate::ids::{DomainName, SnippetId};
 
 /// The home's documents are below this folder.
@@ -337,11 +337,21 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
             continue;
         }
         let text = String::from_utf8_lossy(tree.file(&document).unwrap_or_default());
-        match docs::company_document(&text).description {
-            Some(description) => lines.push(listed_line(&document, &description)),
-            None => walk.found(RenderFindingKind::CompanyListedWithoutDescription {
-                document: document.clone(),
-            }),
+        match docs::company_document(&text).frontmatter {
+            CompanyFrontmatter::Read {
+                description: Some(description),
+            } => lines.push(listed_line(&document, &description)),
+            CompanyFrontmatter::Read { description: None } => {
+                walk.found(RenderFindingKind::CompanyListedWithoutDescription {
+                    document: document.clone(),
+                });
+            }
+            CompanyFrontmatter::Invalid(reason) => {
+                walk.found(RenderFindingKind::CompanyFrontmatterInvalid {
+                    document: document.clone(),
+                    reason,
+                });
+            }
         }
         walk.bring(&document, Traversal::Checked);
     }

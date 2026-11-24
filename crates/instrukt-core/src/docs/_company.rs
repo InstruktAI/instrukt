@@ -9,7 +9,7 @@
 use std::ops::Range;
 
 use super::_corpus::required_reads_section;
-use super::_frontmatter::{Frontmatter, parse_mapping};
+use super::_frontmatter::Frontmatter;
 use super::_refs;
 use super::_text::{self, Directive, split_frontmatter};
 use crate::ids::SnippetId;
@@ -27,9 +27,35 @@ pub(crate) struct CompanyDocument {
     /// Its `@config`, `@exec` and `@include` directives, the `## Required
     /// reads` section's included.
     pub directives: Vec<Directive>,
-    /// The `description` of its frontmatter, as any description is read:
-    /// trimmed, inner line breaks kept; `None` when it is missing or blank.
-    pub description: Option<String>,
+    /// What its frontmatter says.
+    pub frontmatter: CompanyFrontmatter,
+}
+
+/// A company document's frontmatter, as a company rendering reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CompanyFrontmatter {
+    /// No frontmatter block, or one that is a YAML mapping: its
+    /// `description`, read as any description is (trimmed, inner line breaks
+    /// kept), `None` when it is missing or blank.
+    Read { description: Option<String> },
+    /// A frontmatter block that is not a YAML mapping, with why.
+    Invalid(String),
+}
+
+impl CompanyFrontmatter {
+    fn of(text: &str) -> Self {
+        let Some(yaml) = split_frontmatter(text).frontmatter else {
+            return Self::Read { description: None };
+        };
+        match serde_yaml_ng::from_str::<serde_yaml_ng::Value>(yaml) {
+            Ok(serde_yaml_ng::Value::Mapping(mapping)) => Self::Read {
+                description: Frontmatter::read(mapping, None).description,
+            },
+            Ok(serde_yaml_ng::Value::Null) => Self::Read { description: None },
+            Ok(_) => Self::Invalid("it is not a YAML mapping".to_owned()),
+            Err(err) => Self::Invalid(format!("it is not YAML: {err}")),
+        }
+    }
 }
 
 /// A reference in a company document's text, as written.
@@ -75,14 +101,12 @@ pub(crate) fn company_document(text: &str) -> CompanyDocument {
             .map_or(text.len(), |line| line.span.start);
         body = format!("{}{}", &text[..from], &text[to..]);
     }
-    let description = parse_mapping(split_frontmatter(text).frontmatter)
-        .and_then(|mapping| Frontmatter::read(mapping, None).description);
     CompanyDocument {
         references: references(&body),
         directives,
         body,
         reads,
-        description,
+        frontmatter: CompanyFrontmatter::of(text),
     }
 }
 
@@ -292,22 +316,45 @@ mod tests {
         ));
     }
 
+    fn description(text: &str) -> Option<String> {
+        match company_document(text).frontmatter {
+            CompanyFrontmatter::Read { description } => description,
+            CompanyFrontmatter::Invalid(reason) => panic!("invalid frontmatter: {reason}"),
+        }
+    }
+
     #[test]
     fn a_company_documents_description_is_read_from_its_frontmatter() {
-        let described = company_document("---\ndescription: Who works here.\n---\n\n# People\n");
-        assert_eq!(described.description.as_deref(), Some("Who works here."));
-        let absent = company_document("---\nvisibility: internal\n---\n\n# People\n");
-        assert_eq!(absent.description, None);
-        let bare = company_document("# People\n");
-        assert_eq!(bare.description, None);
-        let blank = company_document("---\ndescription: '  '\n---\n\n# People\n");
-        assert_eq!(blank.description, None);
-        let across = company_document(
+        let described = description("---\ndescription: Who works here.\n---\n\n# People\n");
+        assert_eq!(described.as_deref(), Some("Who works here."));
+        assert_eq!(
+            description("---\nvisibility: internal\n---\n\n# People\n"),
+            None
+        );
+        assert_eq!(description("# People\n"), None);
+        assert_eq!(
+            description("---\ndescription: '  '\n---\n\n# People\n"),
+            None
+        );
+        let across = description(
             "---\ndescription: |\n  Who works here,\n  and since when.\n---\n\n# People\n",
         );
-        assert_eq!(
-            across.description.as_deref(),
-            Some("Who works here,\nand since when.")
-        );
+        assert_eq!(across.as_deref(), Some("Who works here,\nand since when."));
+    }
+
+    #[test]
+    fn frontmatter_that_is_no_yaml_mapping_is_invalid_not_a_missing_description() {
+        for text in [
+            "---\ndescription: Who works here: and why\n---\n\n# People\n",
+            "---\n- a list\n---\n\n# People\n",
+        ] {
+            assert!(
+                matches!(
+                    company_document(text).frontmatter,
+                    CompanyFrontmatter::Invalid(_)
+                ),
+                "{text:?}"
+            );
+        }
     }
 }

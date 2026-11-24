@@ -1106,9 +1106,13 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     )
     .write(
         "docs/index.yaml",
-        "expanded:\n  - company.md\nlisted:\n  - people.md\n  - notes.md\n",
+        "expanded:\n  - company.md\nlisted:\n  - people.md\n  - notes.md\n  - terms.md\n",
     )
-    .write("docs/notes.md", "# Notes\n");
+    .write("docs/notes.md", "# Notes\n")
+    .write(
+        "docs/terms.md",
+        "---\ndescription: Payment terms: thirty days\n---\n\n# Terms\n",
+    );
     refusals.push(refused("listed documents"));
 
     // A linked index is never read.
