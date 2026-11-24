@@ -225,6 +225,16 @@ impl ReviewProject {
         )
     }
 
+    /// Whether this repository holds `commit`: evidence is kept for commits
+    /// it does not hold, as an import may bring them or `git gc` may prune
+    /// an unmerged one.
+    fn holds(&self, commit: &CommitSha) -> Result<bool, ReviewError> {
+        Ok(git::succeeds(
+            &self.root,
+            ["cat-file", "-e", commit.as_str()],
+        )?)
+    }
+
     fn contains(&self, ancestor: &str, descendant: &str) -> Result<bool, ReviewError> {
         Ok(git::succeeds(
             &self.root,
@@ -563,7 +573,8 @@ fn retention_cutoff(now: Timestamp) -> Timestamp {
 }
 
 /// The commits of `project` whose evidence aged past the retention period
-/// and that the canonical branch contains.
+/// and that the canonical branch contains. A commit this repository does
+/// not hold is not contained.
 fn aged_contained(
     home: &Home,
     project: &ReviewProject,
@@ -575,7 +586,7 @@ fn aged_contained(
     let canonical = project.canonical()?;
     let mut contained = Vec::new();
     for commit in _store::aged_commits(&conn, &project.slug, retention_cutoff(now))? {
-        if project.contains(commit.as_str(), &canonical)? {
+        if project.holds(&commit)? && project.contains(commit.as_str(), &canonical)? {
             contained.push((project.slug.clone(), commit));
         }
     }
@@ -1406,5 +1417,117 @@ fn candidate_finding(
             .deliver(candidate, &derived_target(&approval), pulls)?;
             Ok(CandidateFinding::Covered)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A temporary home and a project repository whose canonical branch is
+    /// `main`, with one commit on a side branch the canonical branch does
+    /// not contain.
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        home: Home,
+        project: ReviewProject,
+        side: CommitSha,
+    }
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        git::run(root, args).unwrap()
+    }
+
+    fn commit(root: &Path, file: &str, message: &str) -> CommitSha {
+        std::fs::write(root.join(file), message).unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", message]);
+        CommitSha::parse(&git(root, &["rev-parse", "HEAD"])).unwrap()
+    }
+
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.name", "Test"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "commit.gpgsign", "false"],
+            vec!["config", "init.defaultBranch", "main"],
+        ] {
+            git(&root, &args);
+        }
+        commit(&root, "base.txt", "base");
+        git(&root, &["checkout", "-qb", "side"]);
+        let side = commit(&root, "side.txt", "side");
+        git(&root, &["checkout", "-q", "main"]);
+        let home = Home::at_user_home(dir.path().join("user"));
+        std::fs::create_dir_all(home.root()).unwrap();
+        Fixture {
+            project: project(ProjectSlug::parse("demo").unwrap(), &root),
+            home,
+            _dir: dir,
+            side,
+        }
+    }
+
+    fn sha(c: char) -> CommitSha {
+        CommitSha::parse(&c.to_string().repeat(40)).unwrap()
+    }
+
+    fn at(text: &str) -> Timestamp {
+        text.parse().unwrap()
+    }
+
+    fn version(at: Timestamp) -> Version {
+        Version {
+            number: 1,
+            verdict: Verdict::Approve,
+            name: ContentDigest::of("report"),
+            report: "report".into(),
+            reviewer: SessionRef::parse("t3:reviewer").unwrap(),
+            entered_by: None,
+            base: sha('b'),
+            base_on_canonical: true,
+            request: None,
+            unattributed: Vec::new(),
+            moment: Moment::decided(at, None),
+            recorded_at: at,
+            recorded_on: "elsewhere".into(),
+        }
+    }
+
+    /// A head verdict of `head` recorded and last changed at `at`.
+    fn settled(fixture: &Fixture, head: &CommitSha, at: Timestamp) {
+        let mut db = _store::open(&fixture.home).unwrap();
+        db.write(|tx| {
+            let id = _store::settle(tx, &fixture.project.slug, head, at)?;
+            _store::add_version(tx, id, &version(at))
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn aged_evidence_of_a_commit_the_repository_does_not_hold_leaves_recording_working() {
+        let fixture = fixture();
+        settled(&fixture, &sha('d'), at("2026-10-01T00:00:00Z"));
+        let exempted = exempt(
+            &fixture.home,
+            &fixture.project,
+            &ExemptRequest {
+                commit: fixture.side.to_string(),
+                basis: "a typo fix".into(),
+                caller: None,
+            },
+            &|| at("2026-11-24T00:00:00Z"),
+        );
+        assert!(exempted.is_ok(), "{exempted:?}");
+        let held = evidence(&fixture.home, &fixture.project.slug, &sha('d')).unwrap();
+        assert_eq!(
+            held.current().map(|v| v.name.clone()),
+            Some(ContentDigest::of("report")),
+            "evidence of a commit this repository does not hold is kept"
+        );
     }
 }
