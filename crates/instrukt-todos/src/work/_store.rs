@@ -469,7 +469,7 @@ impl Store {
     /// withdrawal is open (`withdrawal_intents`) or once its live record is
     /// no longer `decided_on`: the command stays outstanding for a pull
     /// that decides it on the committed record, and the issue's `ETag` is
-    /// dropped so that pull reads the command again ([`defer_inbound`]).
+    /// dropped so that pull reads the command again ([`may_record_inbound`]).
     pub fn retain_reply(
         &self,
         decided_on: &TodoRecord,
@@ -477,7 +477,7 @@ impl Store {
         answer: &str,
     ) -> Result<bool, WorkError> {
         self.write(|tx, path, project| {
-            if !defer_inbound(tx, path, project, decided_on)? {
+            if !may_record_inbound(tx, path, project, decided_on)? {
                 return Ok(false);
             }
             retain_reply(tx, path, decided_on.id.as_str(), comment, answer)?;
@@ -500,7 +500,7 @@ impl Store {
         at: &str,
     ) -> Result<bool, WorkError> {
         self.write(|tx, path, project| {
-            if !defer_inbound(tx, path, project, decided_on)? {
+            if !may_record_inbound(tx, path, project, decided_on)? {
                 return Ok(false);
             }
             tx.execute("INSERT INTO github_label_actions(project,issue_number,action_id,todo_id,action,login,at,outcome) VALUES (?1,?2,?3,?4,?5,?6,?7,'ignored') ON CONFLICT DO NOTHING",params![project.as_str(),issue,action,decided_on.id.as_str(),kind,login,at]).map_err(StateDbError::sqlite(path))?;
@@ -1357,7 +1357,7 @@ fn save_copy_in(
 /// the issue's `ETag` is dropped in the same transaction, so the next pull
 /// reads the issue's commands and actions again rather than being told
 /// nothing changed, and decides them on the committed record.
-fn defer_inbound(
+fn may_record_inbound(
     tx: &Connection,
     path: &Path,
     project: &ProjectSlug,
