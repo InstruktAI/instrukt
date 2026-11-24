@@ -1,5 +1,5 @@
 ---
-description: 'Integrate exact verified candidates carrying independent exact-SHA review approval, restore a red main before repair, and assess failed dependency updates.'
+description: 'Integrate verified candidates (with independent exact-SHA review approval where required by `general/policy/commits`), restore a red main before repair, and assess failed dependency updates.'
 visibility: 'public'
 role: integrator
 parameters:
@@ -17,12 +17,13 @@ interruptible: false
 
 ## Required reads
 
+- [general/policy/commits](../../../../general/policy/commits.md)
 - [general/principle/session-lifecycle](../../../../general/principle/session-lifecycle.md)
 - [general/procedure/event-handling/overview](../../../../general/procedure/event-handling/overview.md)
 
 ## Goal
 
-Merge finalized work and reviewed one-off worktree heads into a verified candidate,
+Merge finalized work and ready one-off worktree heads into a verified candidate,
 advance canonical main to exactly that commit, recover a red baseline
 before repairing its cause, and assess failed dependency updates for bug work.
 The standing integrator owns composition,
@@ -39,10 +40,12 @@ failure interpretation, promotion and recovery.
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
   `trees/_integration/`, separately from the project checkout and todo worktrees.
-- Every work or ad hoc candidate MUST carry an independent reviewer's `APPROVE`
-  stamp (or digest-bound cross-model review report for human-directed ad hoc
-  branches) bound to that **exact commit SHA** plus green CI before advancing
-  `main`. Only `integrate` writes `main`.
+- Every todo candidate — and every ad hoc candidate that owes independent review
+  under `general/policy/commits` — MUST carry an independent reviewer's `APPROVE`
+  stamp (or digest-bound review report for ad hoc branches) bound to that
+  **exact commit SHA** plus green CI before advancing `main`. An ad hoc candidate
+  exempt from review under `general/policy/commits` advances on green CI alone.
+  Only `integrate` writes `main`.
 - Project CI and required checks, or the documented project test command when CI is
   absent, provide verification. GitHub branch protection guards main where CI exists.
 
@@ -90,10 +93,12 @@ or promote whatever commit now occupies the integration branch.
 1. Fetch current remote main and candidate branches. Inspect the integration
    worktree before reuse; preserve any unique edits or an in-flight candidate.
 2. Compose from accepted upstream main in the integration worktree. Merge the
-   finalized `<slug>/work` branch or reviewed one-off branch.
-   Match independent approval to that exact branch head and complete report.
-   A changed or unreviewed head waits for current review; no per-commit git-note
-   verdict admits a candidate.
+   finalized `<slug>/work` branch or ready one-off branch.
+   Where `general/policy/commits` requires independent review, match independent
+   approval to that exact branch head and complete report; a changed or
+   unreviewed head waits for current review, and no per-commit git-note verdict
+   admits a candidate. Ad hoc branches exempt under `general/policy/commits`
+   require no review report.
    Uncommitted project-root files are outside the candidate and remain untouched.
 3. Read the delivery context, diff and branch history. Where integration needs
    a commit, compose it around the delivery intent and record it through
@@ -232,7 +237,7 @@ binding.
 
 - Exact verified candidates promoted and confirmed on remote main (with pending
   docs folded at delivery and `<slug>/work` worktree and local/origin branch
-  cleanup); reviewed one-off work integrated through the same gate.
+  cleanup); ready one-off work integrated through the same gate.
 - Durable delivery evidence, or findings and `--kickback` returned to the responsible todo.
 - A failing main restored by a verified revert before separate repair work.
 

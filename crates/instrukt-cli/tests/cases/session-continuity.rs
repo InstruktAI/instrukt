@@ -23,6 +23,27 @@ fn shown(project: &Tracked, bytes: &[u8]) -> String {
         "[TMP]",
     ))
 }
+/// The state database of `project`'s instrukt home, opened directly.
+fn state_db(project: &Tracked) -> instrukt_core::state_db::rusqlite::Connection {
+    instrukt_core::state_db::rusqlite::Connection::open(
+        project.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap()
+}
+/// The role section of the help instrukt renders for the native thread
+/// `native` in `cwd`; a caller without an assignment renders none.
+fn role_help(project: &Tracked, cwd: &std::path::Path, native: &str) -> String {
+    let output = project
+        .env
+        .instrukt(cwd)
+        .env("T3CODE_THREAD_ID", native)
+        .args(["--help"])
+        .assert()
+        .success();
+    let help = shown(project, &output.get_output().stdout);
+    help.split_once("\nRole:")
+        .map_or(help.clone(), |(_, role)| format!("Role:{role}"))
+}
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
 fn runner_places_only_the_orchestrator_and_workers_use_native_bindings() {
@@ -58,12 +79,62 @@ fn lost_start_result_recovers_the_same_orchestrator_and_its_phase_worktree() {
     change(&p, "parser");
     p.rt.kill_runner_on_next_start();
     p.env.run(p.env.home(), ["tick"]).failure();
+    // T3 already runs the orchestrator: its first turn reads its reserved
+    // assignment while work has yet to record its session.
+    let fake = FakeT3::create(&p.env);
+    let native = fake.native_id("s1");
+    let call = |cwd: &std::path::Path, args: &[&str]| {
+        p.env
+            .instrukt(cwd)
+            .env("T3CODE_THREAD_ID", &native)
+            .args(args)
+            .assert()
+    };
+    let first_turn = role_help(&p, p.repo.path(), &native);
+    call(p.repo.path(), &["todo", "show", "parser"]).success();
+    call(p.repo.path(), &["docs", "index"]).success();
     p.tick();
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
-    let fake = FakeT3::create(&p.env);
     assert!(fake.worktree("s1").is_dir());
     assert_eq!(fake.message_count("s1"), 1);
+    assert_eq!(role_help(&p, p.repo.path(), &native), first_turn);
+    insta::assert_snapshot!("lost-start-orchestrator-role", first_turn);
+    // Rewound to the window after the runtime accepted the start and recorded
+    // its worktree, a focused orchestrator works in that worktree.
+    let file = p.env.instrukt_home().join("agents.yaml");
+    let mut agents: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &std::fs::read_to_string(&file)
+            .unwrap_or_else(|_| instrukt_core::config::SHIPPED_AGENTS.to_owned()),
+    )
+    .unwrap();
+    agents["roles"]["todo-orchestrator"]["class"] = "focused".into();
+    std::fs::write(&file, serde_yaml_ng::to_string(&agents).unwrap()).unwrap();
+    let key = fake.key("s1");
+    let worktree = fake.worktree("s1");
+    let db = state_db(&p);
+    let recorded: String = db
+        .query_row(
+            "SELECT worktree FROM runtime_bindings WHERE semantic_key=?1 AND accepted",
+            [&key],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(std::path::Path::new(&recorded), worktree);
+    db.execute("UPDATE session_bindings SET session=NULL,worktree=NULL,evidence=json_set(evidence,'$.session',json('null'),'$.worktree',json('null')) WHERE semantic_key=?1",[&key]).unwrap();
+    db.execute(
+        "UPDATE todos SET claim_session=NULL WHERE slug='parser'",
+        [],
+    )
+    .unwrap();
+    call(&worktree, &["docs", "render"]).success();
+    // An attempt another session holds is not this start's assignment.
+    db.execute("UPDATE session_bindings SET session='t3:unrelated',evidence=json_set(evidence,'$.session','t3:unrelated') WHERE semantic_key=?1",[&key]).unwrap();
+    let refused = call(&worktree, &["todo", "show", "parser"]).failure();
+    insta::assert_snapshot!(
+        "unrelated-binding-start-refused",
+        shown(&p, &refused.get_output().stderr)
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS24
@@ -75,12 +146,26 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
     let fake = FakeT3::create(&p.env);
     let old = fake.native_id("s1");
     let key = fake.key("s1");
+    let predecessor = role_help(&p, p.repo.path(), &old);
     fake.delete("s1");
-    p.tick_at("2030-01-06T09:01:20Z");
-    let db = instrukt_core::state_db::rusqlite::Connection::open(
-        p.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
+    p.rt.kill_runner_on_next_start();
+    p.env.set_env("INSTRUKT_NOW", "2030-01-06T09:01:20Z");
+    p.env.run(p.env.home(), ["tick"]).failure();
+    p.env.remove_env("INSTRUKT_NOW");
+    // The successor T3 already runs reads the task's assignment before work
+    // moves the attempt and claim from the deleted thread to it.
+    let successor = fake.native_id("s2");
+    let first_turn = role_help(&p, p.repo.path(), &successor);
+    assert_eq!(first_turn, predecessor);
+    insta::assert_snapshot!("successor-task-role", first_turn);
+    p.env
+        .instrukt(p.repo.path())
+        .env("T3CODE_THREAD_ID", &successor)
+        .args(["todo", "show", "weekly-status"])
+        .assert()
+        .success();
+    p.tick_at("2030-01-06T09:01:40Z");
+    let db = state_db(&p);
     let (binding,claim,runtime,accepted):(String,String,String,bool)=db.query_row(
         "SELECT b.session,t.claim_session,r.session,r.accepted FROM session_bindings b JOIN todos t ON t.id=b.todo_id JOIN runtime_bindings r ON r.semantic_key=b.semantic_key WHERE b.semantic_key=?1",[&key],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
     assert_ne!(runtime, format!("t3:{old}"));
@@ -560,6 +645,43 @@ fn releasing_a_driver_resumes_its_same_native_phase_and_tree_on_pickup() {
         "retained-driver-resumed",
         support::redact(&p.todo(["show", "resume-parser"]))
     );
+    // An earlier build recorded each pickup of a resumed driver as a new
+    // attempt with its own start, so a retained thread is the start of
+    // several attempts of one assignment. Its active attempt is its
+    // assignment, and the latest once all are released.
+    let native = fake.native_id("s1");
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &native)
+        .args(["todo", "update", "resume-parser", "--unclaim"])
+        .assert()
+        .success();
+    let db = state_db(&p);
+    let first: String = db
+        .query_row(
+            "SELECT semantic_key FROM session_bindings WHERE session=?1 AND released_at IS NOT NULL",
+            [format!("t3:{native}")],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let second = format!("{}:2", first.strip_suffix(":1").unwrap());
+    db.execute_batch(&format!(
+        "CREATE TEMP TABLE attempt AS SELECT * FROM session_bindings WHERE semantic_key='{first}';
+         UPDATE attempt SET attempt=2,semantic_key='{second}',released_at=NULL,evidence=json_set(evidence,'$.attempt',2,'$.semantic_key','{second}','$.released_at',json('null'));
+         INSERT INTO session_bindings SELECT * FROM attempt;
+         CREATE TEMP TABLE start AS SELECT * FROM runtime_bindings WHERE semantic_key='{first}';
+         UPDATE start SET semantic_key='{second}',subject='{second}';
+         INSERT INTO runtime_bindings SELECT * FROM start;"
+    ))
+    .unwrap();
+    let second_attempt = role_help(&p, &worktree, &native);
+    insta::assert_snapshot!("retained-second-attempt-role", second_attempt);
+    db.execute(
+        "UPDATE session_bindings SET released_at=(SELECT released_at FROM session_bindings WHERE semantic_key=?1),evidence=json_set(evidence,'$.released_at',(SELECT json_extract(evidence,'$.released_at') FROM session_bindings WHERE semantic_key=?1)) WHERE semantic_key=?2",
+        [&first, &second],
+    )
+    .unwrap();
+    assert_eq!(role_help(&p, &worktree, &native), second_attempt);
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17

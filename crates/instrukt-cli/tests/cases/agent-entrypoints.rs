@@ -473,8 +473,30 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
         "acp-gemini": {"driver":"acpRegistry","config":{"agentId":"gemini"}},
     });
     configure(&env, providers.clone(), instances.clone());
-    env.run(engineering(&env).path(), ["sync"]).success();
+    let eng = engineering(&env);
+    eng.write(
+        "docs/domain/sdlc/procedure/watch.md",
+        &snippet(
+            "procedure",
+            "Watch",
+            "subscriptions: ['repo.pushed']\nsubscription_home: project\n",
+            &[],
+        ),
+    )
+    .commit("add sdlc subscription");
+    env.run(eng.path(), ["sync"]).success();
     let platform = general_owner(&env, "");
+    platform
+        .write(
+            "docs/general/procedure/triage.md",
+            &snippet(
+                "procedure",
+                "Triage",
+                "subscriptions: ['system.alert']\nsubscription_home: platform\n",
+                &[],
+            ),
+        )
+        .commit("add general subscription");
     let sync = |step: &str| {
         let synced = env.run(platform.path(), ["sync"]).success();
         format!(
@@ -513,6 +535,10 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
         let text = std::fs::read_to_string(delivered).unwrap();
         assert_eq!(text.lines().next(), Some(GENERATED_LINE), "{delivered:?}");
     }
+    let on_demand = env
+        .run(platform.path(), ["docs", "get", "--domain", "sdlc"])
+        .success();
+    insta::assert_snapshot!("configured_on_demand_domain", stdout(&env, &on_demand));
     assert!(!home.join(".fx/AGENTS.md").exists());
     insta::assert_snapshot!(
         "configured_claude_settings",

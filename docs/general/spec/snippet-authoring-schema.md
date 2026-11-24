@@ -59,8 +59,7 @@ A domain is a body of knowledge one publisher is the authority on, published as
 one unit: one owner per computer, its own `schema.yaml`, its own `index.yaml`,
 and optionally its own workflow (`docs/domain/<x>/workflow/`). A domain is named
 after what it is about, never after a category it belongs to. Domains carry no
-tags; an agent finds a domain through its `index.yaml` `description` and its
-procedures' activation triggers.
+tags; an agent finds a domain through its `index.yaml` `description`.
 
 ### `index.yaml`
 
@@ -133,7 +132,7 @@ Frontmatter (optional, authored):
   snippets (under `docs/general/` and `docs/domain/*/`) with `eval: true`, hashed as committed (raw) content,
   and every stamp carries it.
 
-- `activation_trigger` — procedures only. A non-empty string describing when to activate the procedure. The procedure is listed with its id, description, trigger and the command `instrukt docs get <id> --closure`: a `general` procedure in `general`'s section of every global agent file, a domain's procedure under that domain's line in every global agent file and in `instrukt docs get --domain <x>`, and a project's procedure in the project's root `AGENTS.md`. When a procedure earns a trigger is decided by `general/procedure/doc-snippet-authoring`. Validation rejects this field on non-procedure snippet types.
+- `activation_trigger` — procedures only. A non-empty string describing when to activate the procedure. The procedure is listed with its id, description, trigger and the command `instrukt docs get <id> --closure`: a `general` procedure in `general`'s section of every global agent file, a domain's procedure in `instrukt docs get --domain <x>`, and a project's procedure in the project's root `AGENTS.md`. When a procedure earns a trigger is decided by `general/procedure/doc-snippet-authoring`. Validation rejects this field on non-procedure snippet types.
 
 - `subscriptions` — procedures only. A non-empty list of event type patterns whose arrival activates the procedure through the runner, which resolves subscribed procedures from frontmatter. A pattern is an exact event type name, a prefix of whole name segments followed by `.*` (`a.b.*` selects every event under `a.b`), or `*`; any other form is rejected. A procedure declares `subscriptions` or `activation_trigger`, never both, because each names who is responsible for starting the work; a procedure used only as supporting knowledge declares neither. A procedure declaring `subscriptions` is never listed among triggered procedures. Validation rejects this field on non-procedure snippet types and on a procedure declaring both activation fields.
 

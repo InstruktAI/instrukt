@@ -549,13 +549,15 @@ frontmatter of Cursor's rule file does, the generated line follows it.
 <!-- /planned:unify-index-yaml-entrypoints -->
 
 - **Composition**, per agent runtime, in order:
-  1. `general`'s section, rendered from `docs/general/index.yaml`. Its
-     `expanded` and `listed` may name ids of any published domain.
+  1. `general`'s section, rendered from `docs/general/index.yaml`, followed
+     by `general`'s own subscribed procedures under “Configured
+     Responsibilities”. Its `expanded` and `listed` may name ids of any
+     published domain.
   2. One group per other published domain that has an `index.yaml`, ordered
-     by domain name: under `# <Name>`, the domain's `description` with the
-     command `instrukt docs get --domain <x>`, then one line per procedure of
-     that domain carrying an `activation_trigger`, as in step 4 above. A
-     domain's `expanded` and `listed` are not rendered here; they are what
+     by domain name: under `# <Name>`, only the domain's `description` with
+     the command `instrukt docs get --domain <x>`. A domain's `expanded`
+     snippets, `listed` snippets, triggered procedures and configured
+     responsibilities are not rendered here; they are what
      `instrukt docs get --domain <x>` renders.
   3. That runtime's `agents` snippets: the ids `docs/general/index.yaml`
      maps to the driver's exact, case-sensitive name, in full with their
@@ -740,7 +742,7 @@ Then it starts with that instruction file
 
 ```gherkin
 Given a developer's runtime has several agent runtimes configured, some with homes of their own, and another agent program is installed but not configured
-And the computer publishes always-on doctrine and an on-demand domain with a description and a triggered procedure
+And the computer publishes always-on doctrine (with a triggered procedure and a subscribed procedure) and an on-demand domain with a description, a triggered procedure and a subscribed procedure
 And the agent runtimes' settings hold the developer's own preferences
 And one configured agent runtime's global instruction file holds text another tool wrote
 When publication runs for the project that owns the always-on doctrine
@@ -749,7 +751,8 @@ And every configured instance without an established loader or home is named wit
 And the text the other tool wrote is gone
 And always-on doctrine taken from another domain sits under that domain's heading, in the order the doctrine requires it, even where the domains interleave
 And it reads one line naming the on-demand domain, its description and the command that loads it
-And it reads the domain's triggered procedure with the command that loads it with its closure
+And the always-on doctrine's own triggered procedure and subscribed procedure appear in the global file
+And the on-demand domain's triggered procedures and subscribed procedures are absent from the global file
 And each configured agent runtime that needs it is set to load project instruction files
 And every other setting the developer had is unchanged
 And the agent program that is not configured receives nothing
@@ -764,7 +767,7 @@ Then every configured agent runtime with an established native loader receives t
 
 ```gherkin
 Given a developer's runtime has several agent runtimes configured, some with homes of their own, and another agent program is installed but not configured
-And the computer publishes always-on doctrine and an on-demand domain with a description and a triggered procedure
+And the computer publishes always-on doctrine (with a triggered procedure and a subscribed procedure) and an on-demand domain with a description, a triggered procedure and a subscribed procedure
 And the agent runtimes' settings hold the developer's own preferences
 And one configured agent runtime's global instruction file holds text another tool wrote
 When publication runs for the project that owns the always-on doctrine
@@ -774,7 +777,8 @@ And every configured instance without an established loader or home is named wit
 And the text the other tool wrote is gone
 And always-on doctrine taken from another domain sits under that domain's heading, in the order the doctrine requires it, even where the domains interleave
 And it reads one line naming the on-demand domain, its description and the command that loads it
-And it reads the domain's triggered procedure with the command that loads it with its closure
+And the always-on doctrine's own triggered procedure and subscribed procedure appear in the global file
+And the on-demand domain's triggered procedures and subscribed procedures are absent from the global file
 And each configured agent runtime that needs it is set to load project instruction files
 And every other setting the developer had is unchanged
 And the agent program that is not configured receives nothing

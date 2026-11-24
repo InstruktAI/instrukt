@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/session-continuity.rs
+expression: first_turn
+---
+Role: todo-orchestrator · class: agent. Scope comes from assignment
+instrukt:todo:demo/<id 1>:todo-orchestrator:1. Object claims, phase and
+writer constraints apply.
+Usual capabilities: role: todo-orchestrator; class: agent; grants: docs-read:any, docs-write:own,
+todo-read:any, todo-write:own, bug-report:own, artifact-read:any, artifact-write:own, stamp:own,
+todo-orchestration:own, assignment-write:own, session-observe:own, standing-bind:own,
+conversation-link:own, agents-read:any, config-read:any, repository-read:any, code-commit:own,
+code-check:any, eval-read:any, events-read:any, installation-read:any

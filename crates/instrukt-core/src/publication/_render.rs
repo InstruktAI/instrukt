@@ -137,10 +137,8 @@ impl Renderer<'_> {
             rendering.expand(index.expanded(), file, &mut expansion)?;
             listed = rendering.listings(index.listed(), file, &mut expansion)?;
         }
-        let mut shown: BTreeSet<SnippetId> =
-            expansion.shown(&listed).into_iter().cloned().collect();
+        let shown: BTreeSet<SnippetId> = expansion.shown(&listed).into_iter().cloned().collect();
         let triggered = rendering.triggered(|e| global_of(e, &general), &shown);
-        shown.extend(triggered.iter().map(|l| l.id.clone()));
         let mut blocks = vec![
             Selection {
                 position: general.as_str().to_owned(),
@@ -157,7 +155,7 @@ impl Renderer<'_> {
                 .iter()
                 .filter(|entry| global_of(entry, &general)),
         ) {
-            blocks.push(configured);
+            blocks.push(format!("{configured}\n"));
         }
         for (domain, index) in self.indexes {
             if domain == &general {
@@ -166,23 +164,11 @@ impl Renderer<'_> {
             let PositionIndex::Domain(domain_index) = index else {
                 continue;
             };
-            let mut lines = vec![domain_line(domain, domain_index.description.as_deref())];
-            let triggered = rendering.triggered(|e| global_of(e, domain), &shown);
-            shown.extend(triggered.iter().map(|l| l.id.clone()));
-            lines.extend(triggered.iter().map(Listing::line));
             blocks.push(format!(
                 "{}\n\n{}\n",
                 docs::heading(domain.as_str()),
-                lines.join("\n")
+                domain_line(domain, domain_index.description.as_deref())
             ));
-        }
-        if let Some(configured) = docs::responsibilities(
-            self.index
-                .snippets
-                .iter()
-                .filter(|entry| entry.scope == IndexScope::Global && entry.domain != docs::GENERAL),
-        ) {
-            blocks.push(configured);
         }
         if let Some(PositionIndex::General(general_index)) = index {
             // What the general section holds in full is not repeated.

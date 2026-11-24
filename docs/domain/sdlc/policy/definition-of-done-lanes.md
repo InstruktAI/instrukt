@@ -151,6 +151,7 @@ Findings:
 - In a project that opts into tests, the named test would pass on a broken
   implementation → **Requirement-Violation**.
 - Unrequested feature (no criterion drives it) → **Critical**.
+- Policy-amplified gold-plating — a supporting mechanism introduced for a global policy whose state, rules, or coordination grow disproportionate to any criterion in the approved intent → **Critical**. When a proposed mechanism fails an internal consistency check, verify that the mechanism itself is warranted by the approved intent before demanding further state or rules to harden its edge cases.
 - For a change/bug, a behavioral delta the intent does not call for — including one introduced alongside a necessary change, or one resolving a forced decision by new behavior where established behavior or human escalation was the path → **Critical**.
 - Directive text authored where the intent called only for its removal or correction → **Critical**. Replacing an instruction the intent condemned with a different instruction of the author's own devising is a behavioral delta wearing the shape of the requested edit; the one-line diff and the honest commit subject are what let it pass. `general/policy/documentation-discipline` owns which text is directive.
 - Gold-plating (scope creep beyond the authorized intent) → Important.

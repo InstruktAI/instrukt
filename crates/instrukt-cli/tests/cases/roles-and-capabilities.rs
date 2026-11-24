@@ -29,26 +29,43 @@ fn focused_reviewer() -> TestEnv {
 #[test]
 fn focused_help_and_execution_use_the_recorded_binding() {
     let env = focused_reviewer();
-    let output = env
-        .instrukt(env.home())
-        .env("T3CODE_THREAD_ID", "focused")
-        .args(["--help"])
-        .assert()
-        .success();
-    insta::assert_snapshot!(
-        "focused-role-help",
-        String::from_utf8_lossy(&output.get_output().stdout)
-    );
-    let output = env
-        .instrukt(env.home())
-        .env("T3CODE_THREAD_ID", "focused")
-        .args(["config", "init", "--global"])
-        .assert()
-        .failure();
-    insta::assert_snapshot!(
-        "focused-role-refusal",
-        String::from_utf8_lossy(&output.get_output().stderr)
-    );
+    let help_and_refusal = || {
+        let help = env
+            .instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "focused")
+            .args(["--help"])
+            .assert()
+            .success();
+        let refusal = env
+            .instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "focused")
+            .args(["config", "init", "--global"])
+            .assert()
+            .failure();
+        (
+            String::from_utf8_lossy(&help.get_output().stdout).into_owned(),
+            String::from_utf8_lossy(&refusal.get_output().stderr).into_owned(),
+        )
+    };
+    // On its first turn the runner has recorded the start, and the
+    // responsibility has not yet recorded the session.
+    let db = state_db(&env);
+    db.execute(
+        "UPDATE procedure_responsibilities SET session=NULL WHERE responsibility='handler'",
+        [],
+    )
+    .unwrap();
+    db.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES('t3','handler','standing','handler','t3:focused',?1,0,1)",[env.home().to_str().unwrap()]).unwrap();
+    let first_turn = help_and_refusal();
+    db.execute(
+        "UPDATE procedure_responsibilities SET session='t3:focused' WHERE responsibility='handler'",
+        [],
+    )
+    .unwrap();
+    let (help, refusal) = help_and_refusal();
+    assert_eq!(first_turn, (help.clone(), refusal.clone()));
+    insta::assert_snapshot!("focused-role-help", help);
+    insta::assert_snapshot!("focused-role-refusal", refusal);
 }
 
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
@@ -582,4 +599,12 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     eval-read:any, events-read:any, installation-read:any, mcp-access:own, company-reply:own
     "
     );
+}
+
+/// The state database of `env`'s instrukt home, opened directly.
+fn state_db(env: &TestEnv) -> instrukt_core::state_db::rusqlite::Connection {
+    instrukt_core::state_db::rusqlite::Connection::open(
+        env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap()
 }
