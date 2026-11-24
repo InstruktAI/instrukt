@@ -670,16 +670,12 @@ mod tests {
         let one = "Who works at Acme.";
         let folded = "Who works at Acme,\nand since when.";
         let literal = "Who works at Acme,\n  and\tsince when.\n";
-        assert_eq!(
-            listed_line("docs/people.md", one),
-            "- docs/people.md: Who works at Acme."
-        );
-        for description in [folded, literal] {
-            assert_eq!(
-                listed_line("docs/people.md", description),
-                "- docs/people.md: Who works at Acme, and since when."
-            );
-        }
+        insta::assert_snapshot!("listed_line_one", listed_line("docs/people.md", one));
+        let across = listed_line("docs/people.md", folded);
+        insta::assert_snapshot!("listed_line_across_lines", across);
+        // Any whitespace run reads as one space: the literal form is the same
+        // line as the folded one.
+        assert_eq!(listed_line("docs/people.md", literal), across);
     }
 
     #[test]
