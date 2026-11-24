@@ -76,6 +76,18 @@ everything a forced one did.
 | Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path; no record of the files a sync wrote outside the home |
 | Eval fingerprint | `~/.instrukt/state/eval-fingerprint/` | digest associated with the published commit; `project/instrukt/spec/feature/publication/eval-fingerprint` |
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
+- Snippets are published raw: their `@config` directives resolve when they are
+  read (`project/instrukt/spec/domain/docs`). The global agent files
+  resolve `@config` at
+  publication, in-process against the publishing project's effective
+  configuration with no runtime session, so no rendered output captures a
+  session. A `runtime.*` path in a rendered output is a validation finding,
+  since publication has no session to resolve it against; any other path that
+  cannot be resolved fails the sync. Publication runs no command: an `@exec`
+  directive in a published snippet or master is a validation finding, and
+  sync refuses and names the file.
+<!-- change:unify-index-yaml-entrypoints -->
 - Snippets are published raw: their `@config` directives resolve when they are
   read (`project/instrukt/spec/domain/docs`). The global agent files
   resolve `@config` at
@@ -86,6 +98,7 @@ everything a forced one did.
   cannot be resolved fails the sync. Publication runs no command: an `@exec`
   directive in a published snippet is a validation finding, and
   sync refuses and names the file.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 - Rendering never inlines a pending snippet and drops planned material, so
   rendered outputs carry the current contract only.
 - Project snippets are copied from committed main into the project store;
