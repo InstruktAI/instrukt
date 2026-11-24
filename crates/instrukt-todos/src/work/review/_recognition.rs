@@ -114,29 +114,23 @@ impl Publication<'_> {
             Some(conn) => _published::deliveries(&conn, self.project, commit)?,
             None => Vec::new(),
         };
-        let settled = |destination: &Destination| {
-            held.iter().find(|d| {
-                &d.destination == destination
-                    && d.name == target.published.name
-                    && d.moment == target.published.moment
-                    && d.state != DeliveryState::Outstanding
-            })
-        };
-        let mut links: Vec<(u64, String)> = Vec::new();
-        let mut pulls = if target.status_first && settled(&Destination::Status).is_none() {
-            Vec::new()
-        } else {
-            pulls.to_vec()
-        };
-        pulls.sort_unstable();
-        for number in pulls {
-            let destination = Destination::Pull(number);
-            if let Some(done) = settled(&destination) {
-                if let Some(link) = &done.link {
-                    links.push((number, link.clone()));
+        let settled = |destination: &Destination| settled(&held, target, destination);
+        let Plan {
+            write,
+            mut links,
+            ended,
+        } = plan(&held, target, pulls);
+        if !ended.is_empty() {
+            let mut db = _published::open(self.home)?;
+            db.write(|tx| {
+                for number in &ended {
+                    _published::forget(tx, self.project, commit, &Destination::Pull(*number))?;
                 }
-                continue;
-            }
+                Ok::<_, ReviewError>(())
+            })?;
+        }
+        for number in write {
+            let destination = Destination::Pull(number);
             let Some(body) = &target.body else {
                 self.record(
                     commit,
@@ -318,6 +312,72 @@ impl Publication<'_> {
     }
 }
 
+/// What `held` records of `destination` for `target` once its delivery
+/// stopped being outstanding: shown, or refused.
+fn settled<'a>(
+    held: &'a [Delivery],
+    target: &Target,
+    destination: &Destination,
+) -> Option<&'a Delivery> {
+    held.iter().find(|d| {
+        &d.destination == destination
+            && d.name == target.published.name
+            && d.moment == target.published.moment
+            && d.state != DeliveryState::Outstanding
+    })
+}
+
+/// What one delivery does at the pull requests, from what the publication
+/// store holds.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Plan {
+    /// The pull requests whose review is written now, lowest first.
+    write: Vec<u64>,
+    /// The reviews already shown, by pull request.
+    links: Vec<(u64, String)>,
+    /// Pull requests refused earlier that the tick no longer observes
+    /// eligible at this head: the refusal ends, and the destination is owed
+    /// again once the pull request is eligible at this head again.
+    ended: Vec<u64>,
+}
+
+/// The plan for delivering `target` to `pulls`, the eligible pull requests
+/// observed at its commit. Of a status-first verdict no review is written
+/// until GitHub shows its status; a refused one shows nothing.
+fn plan(held: &[Delivery], target: &Target, pulls: &[u64]) -> Plan {
+    let mut plan = Plan {
+        ended: held
+            .iter()
+            .filter(|d| d.state == DeliveryState::Refused)
+            .filter_map(|d| match d.destination {
+                Destination::Pull(number) if !pulls.contains(&number) => Some(number),
+                _ => None,
+            })
+            .collect(),
+        ..Plan::default()
+    };
+    if target.status_first
+        && settled(held, target, &Destination::Status)
+            .is_none_or(|status| status.state != DeliveryState::Shown)
+    {
+        return plan;
+    }
+    let mut pulls = pulls.to_vec();
+    pulls.sort_unstable();
+    pulls.dedup();
+    for number in pulls {
+        match settled(held, target, &Destination::Pull(number)) {
+            Some(done) => {
+                if let Some(link) = &done.link {
+                    plan.links.push((number, link.clone()));
+                }
+            }
+            None => plan.write.push(number),
+        }
+    }
+    plan
+}
+
 /// What a failed delivery leaves: outstanding while GitHub cannot be
 /// reached or has not the commit yet, refused otherwise.
 fn failure_state(error: &GitHubError, status: bool) -> DeliveryState {
@@ -326,5 +386,71 @@ fn failure_state(error: &GitHubError, status: bool) -> DeliveryState {
         GitHubError::Status { status, .. } if *status >= 500 => DeliveryState::Outstanding,
         error if error.is_reach() => DeliveryState::Outstanding,
         _ => DeliveryState::Refused,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::ContentDigest;
+
+    fn derived() -> Target {
+        Target {
+            published: Published {
+                verdict: super::super::Verdict::Approve,
+                name: ContentDigest::of("coverage"),
+                moment: super::super::Moment::at(Timestamp::UNIX_EPOCH),
+            },
+            body: Some("coverage".into()),
+            status_first: true,
+        }
+    }
+
+    fn delivery(target: &Target, destination: Destination, state: DeliveryState) -> Delivery {
+        Delivery {
+            destination,
+            name: target.published.name.clone(),
+            moment: target.published.moment,
+            state,
+            link: None,
+            cause: None,
+            updated_at: Timestamp::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn a_derived_approval_whose_status_github_refused_reaches_no_pull_request() {
+        let target = derived();
+        let held = [delivery(
+            &target,
+            Destination::Status,
+            DeliveryState::Refused,
+        )];
+        assert_eq!(plan(&held, &target, &[7]).write, Vec::<u64>::new());
+    }
+
+    #[test]
+    fn a_derived_approval_reaches_its_pull_requests_once_github_shows_its_status() {
+        let target = derived();
+        assert_eq!(plan(&[], &target, &[7]).write, Vec::<u64>::new());
+        let held = [delivery(&target, Destination::Status, DeliveryState::Shown)];
+        assert_eq!(plan(&held, &target, &[9, 7]).write, [7, 9]);
+    }
+
+    #[test]
+    fn a_refusal_holds_while_its_pull_request_stays_eligible_and_ends_when_it_is_not() {
+        let target = Target {
+            status_first: false,
+            ..derived()
+        };
+        let held = [delivery(
+            &target,
+            Destination::Pull(7),
+            DeliveryState::Refused,
+        )];
+        let observed = plan(&held, &target, &[7]);
+        assert!(observed.write.is_empty() && observed.ended.is_empty());
+        assert_eq!(plan(&held, &target, &[]).ended, [7]);
+        assert_eq!(plan(&[], &target, &[7]).write, [7], "owed again once ended");
     }
 }

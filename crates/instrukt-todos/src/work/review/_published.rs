@@ -238,6 +238,21 @@ pub(super) fn deliver(
     Ok(())
 }
 
+/// Forgets what was recorded of `destination` of `commit`: a refusal that
+/// ended.
+pub(super) fn forget(
+    tx: &Transaction<'_>,
+    project: &ProjectSlug,
+    commit: &CommitSha,
+    destination: &Destination,
+) -> Result<(), ReviewError> {
+    tx.execute(
+        "DELETE FROM destinations WHERE project=?1 AND commit_id=?2 AND destination=?3",
+        params![project.as_str(), commit.as_str(), destination.key()],
+    )?;
+    Ok(())
+}
+
 /// The verdict recognised for `commit`, when one is.
 pub(super) fn recognised(
     conn: &Connection,
