@@ -227,6 +227,7 @@ fn show(args: &ShowArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let evidence = review::evidence(&ctx.home, &project.slug, &commit)?;
     if evidence.settlements.is_empty()
         && evidence.exemption.is_none()
+        && evidence.derived.is_none()
         && evidence.recognised.is_none()
         && evidence.deliveries.is_empty()
     {
@@ -305,6 +306,26 @@ fn show(args: &ShowArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             exemption.recorded_at,
             exemption.recorded_on
         ))?;
+    }
+    if let Some(derived) = &evidence.derived {
+        ctx.out.line(&format!(
+            "derived approval: {} moment {}, against canonical head {}, {} {}{}",
+            derived.name,
+            derived.moment,
+            derived.canonical,
+            if derived.imported {
+                "brought by an import"
+            } else {
+                "recorded by this computer's tick"
+            },
+            derived.recorded_at,
+            derived
+                .withdrawn
+                .as_ref()
+                .map(|(at, uncovered)| format!("; withdrawn {at}, {uncovered} found uncovered"))
+                .unwrap_or_default()
+        ))?;
+        ctx.out.text(&indent(&derived.coverage))?;
     }
     if let Some(recognised) = &evidence.recognised {
         ctx.out.line(&format!(

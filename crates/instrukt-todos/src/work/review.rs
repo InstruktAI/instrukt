@@ -147,6 +147,9 @@ pub struct Exemption {
 pub struct CommitEvidence {
     pub settlements: Vec<Settlement>,
     pub exemption: Option<Exemption>,
+    /// Its derived approval: standing, or withdrawn with the commit found
+    /// uncovered.
+    pub derived: Option<Derived>,
     pub deliveries: Vec<Delivery>,
     pub recognised: Option<Recognised>,
 }
@@ -669,6 +672,7 @@ pub fn evidence(
         evidence.deliveries = _published::deliveries(&conn, project, commit)?;
         evidence.recognised = _published::recognised(&conn, project, commit)?;
     }
+    evidence.derived = derived_approval(home, project, commit)?;
     Ok(evidence)
 }
 
@@ -1704,6 +1708,30 @@ mod tests {
         assert_eq!(
             derived_approval(&fixture.home, project, &sha('c')).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn a_commits_evidence_gives_its_derived_approval_and_its_withdrawal() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        let now = at("2026-11-24T00:00:00Z");
+        let candidate = sha('c');
+        let approval = tick_derived(&candidate, now);
+        let mut db = _published::open(&fixture.home).unwrap();
+        db.write(|tx| _published::record_derived(tx, project, &approval))
+            .unwrap();
+        drop(db);
+        let held = evidence(&fixture.home, project, &candidate).unwrap();
+        assert_eq!(held.derived, Some(approval.clone()));
+        let mut db = _published::open(&fixture.home).unwrap();
+        db.write(|tx| _published::withdraw(tx, project, &approval, &sha('e'), now))
+            .unwrap();
+        drop(db);
+        let held = evidence(&fixture.home, project, &candidate).unwrap();
+        assert_eq!(
+            held.derived.and_then(|d| d.withdrawn),
+            Some((now, sha('e').to_string()))
         );
     }
 }
