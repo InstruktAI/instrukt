@@ -70,11 +70,9 @@ readers retain unfamiliar kinds and identities unchanged.
 | `install` | Computer and installation number |
 | `release` | Repository and release version |
 
-<!-- planned:event-driven-pr-review-gate -->
 | Kind | Identity |
 | --- | --- |
 | `pull_request` | Project and pull-request number, e.g. `acme/108` |
-<!-- /planned:event-driven-pr-review-gate -->
 
 Vocabulary support creates no subsystem for signals, companies, people,
 operations, channels or memory. A relayed subject names its declaring source,
@@ -116,11 +114,9 @@ The shipped `runner.upstream_changed`, `runner.ci_completed`, and
 External names default to occurrence. A webhook source may explicitly declare
 state names and a payload field supplying the subject under inbound-webhook-endpoint-framework.
 
-<!-- planned:event-driven-pr-review-gate -->
 `runner.review_needed` is state. Its subject names the pull request, or the
 integration branch for a candidate, and the commit and request number stay in
 data.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ### Platform lifecycle states
 

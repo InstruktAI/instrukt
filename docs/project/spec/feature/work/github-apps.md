@@ -156,7 +156,6 @@ The App boundary supplies verified bot actor facts; commit-author resolution,
 precedence and refusal belong to
 `project/instrukt/spec/feature/repository/attributed-commit`.
 
-<!-- planned:event-driven-pr-review-gate -->
 ### Review verdict on the reviewed commit
 
 A verdict of an automatically started pull-request review
@@ -657,7 +656,6 @@ door. Verification writes no state. Where readiness is consulted belongs to
 review enablement). The credentials that observe CI and that reflect build
 reviews are unchanged: a project that has not opted in needs none of these
 permissions.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ## Use cases
 
@@ -680,7 +678,6 @@ And schema, artifact and evidence checks still apply
 But a similarly named unconfigured actor gains no record trust
 ```
 
-<!-- planned:event-driven-pr-review-gate -->
 ### UC-GA3: See an automatic review's verdict where GitHub can enforce it
 
 ```gherkin
@@ -690,7 +687,6 @@ Then the pull request shows the reviewer bot's approving or change-requesting re
 And the reviewed commit carries the reviewer bot's matching success or failure review status
 But a later head of that pull request carries no status from that verdict
 ```
-<!-- /planned:event-driven-pr-review-gate -->
 
 ## Known caveats
 
@@ -699,7 +695,6 @@ But a later head of that pull request carries no status from that verdict
 - Human approval attribution remains the approvals contract. App configuration
   does not grant a bot permission to speak for an authorized human.
 
-<!-- planned:event-driven-pr-review-gate -->
 - Review evidence exists only on the computer that recorded or imported it. A
   computer that is lost, or loses its home, without an export takes with it
   what it had not published: the computer that serves next has an owed head
@@ -788,7 +783,6 @@ But a later head of that pull request carries no status from that verdict
 - Work verifies a reviewer's independence only against the sessions the
   reviewed commits name. For a commit that names none it verifies nothing about
   its author.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ## See Also
 
@@ -802,7 +796,5 @@ But a later head of that pull request carries no status from that verdict
 - https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app
 - https://github.com/actions/create-github-app-token — GitHub's reference token issuance and bot commit-author example.
 
-<!-- planned:event-driven-pr-review-gate -->
 - https://docs.github.com/en/rest/commits/statuses — the newest-first listing, and the description and target address a status carries.
 - https://docs.github.com/en/rest/pulls/reviews — the listing in submission order, a review read by its own address, and the submission date GitHub sets at each delivery, which no request can set.
-<!-- /planned:event-driven-pr-review-gate -->

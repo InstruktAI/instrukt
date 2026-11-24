@@ -42,7 +42,6 @@ produces a plain validation finding naming that switch. An empty map adds no rec
 enable events. Installation and withdrawal are owned by
 `project/instrukt/spec/feature/runner/module-installation`; these schema rules install nothing.
 
-<!-- planned:event-driven-pr-review-gate -->
 ### Automatic review enablement
 
 `review.automatic` is a boolean allowed in the project layer only and defaults
@@ -85,7 +84,6 @@ that computer; its other capabilities are unaffected
 (`project/instrukt/policy/checks-and-guards`). The readiness findings need
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ### Layer rules
 

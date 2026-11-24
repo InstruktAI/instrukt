@@ -77,7 +77,6 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
 
-<!-- planned:event-driven-pr-review-gate -->
 Review evidence belongs to the Evidence family: `instrukt review record` and
 `instrukt review exempt` are `stamp`, and `instrukt review show` is
 `artifact-read`, addressing the review evidence of the project the caller
@@ -89,7 +88,6 @@ computer's review evidence for a project and are `installation-write`,
 addressing this computer's installation
 (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
 computer changes).
-<!-- /planned:event-driven-pr-review-gate -->
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`

@@ -36,7 +36,6 @@ meaning and the writes of the conversation tables.
   (`state/history.db`), publication state, the global index, eval
   fingerprints, hook outcomes and the machine id. Their owners' contracts
   place them.
-<!-- planned:event-driven-pr-review-gate -->
 - **Review evidence stays outside it too:** head verdicts and exemptions live
   in `state/review.db`, and derived approvals and publication records in
   `state/review-publication.db`, each under its own lock and never under the
@@ -45,7 +44,6 @@ meaning and the writes of the conversation tables.
   `state/review-observation.db` under its own lock
   (`project/instrukt/spec/feature/runner/pull-request-review`, Observation
   store).
-<!-- /planned:event-driven-pr-review-gate -->
 - **No file stores:** the work record and the runner's state have no other
   home. Directories left by earlier builds (`state/work/`, `state/runner/`)
   are neither read nor migrated.

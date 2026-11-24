@@ -101,7 +101,6 @@ not permission for an upstream module to depend on its consumer.
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
 
-<!-- planned:event-driven-pr-review-gate -->
 Automatic review adds these crossings; their composition is the review gate in
 `project/instrukt/design/architecture/overview`.
 
@@ -113,7 +112,6 @@ Automatic review adds these crossings; their composition is the review gate in
 | runner → work | Customer / Supplier | A commit's review requests, each with its number, its standing (queued, selected, handed over to a named session, or ended with its disposition), the session it reached and its pinned base; which input opened the turn a named session has in progress when it offers a revision; and a named session's conversation. All three are consulted when a head verdict is admitted |
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
-<!-- /planned:event-driven-pr-review-gate -->
 
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives

@@ -66,7 +66,6 @@ runner owns dispatch, and the configured runtime owns conversations.
 **Eval fingerprint**
 : The identity of the process-document set in force when evidence is stamped.
 
-<!-- planned:event-driven-pr-review-gate -->
 **Head verdict**
 : An independent review's recorded outcome for one exact commit that no todo's
   record carries: a judgment of the commits from its pinned base up to that
@@ -106,7 +105,6 @@ runner owns dispatch, and the configured runtime owns conversations.
 : One snapshot of the review evidence that stands on a computer for a project,
   written to a file for another computer to import. The exported verdicts are
   handed off: they stand again where the file is imported.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ## Ownership boundary
 
@@ -141,7 +139,6 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
-<!-- planned:event-driven-pr-review-gate -->
 Work also owns review evidence for exact commits that no todo's record
 carries: head verdicts, exemptions and derived approvals, their admission,
 which of them is current for a commit, their publication as the reviewer
@@ -152,7 +149,6 @@ are their published contract
 review and which review requests exist is the runner's decision, whether a
 candidate's content is covered is workflow's, and how a head is reviewed is its
 review procedure's.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ## Canonical fields
 
@@ -206,7 +202,6 @@ and issues installation credentials under
 - **Lifecycle:** grows and changes as work is filed, grouped, reordered and
   retired; it preserves the context needed to read retained work.
 
-<!-- planned:event-driven-pr-review-gate -->
 #### Review evidence
 
 - **Root entity:** the review evidence of one exact commit of a project's
@@ -239,7 +234,6 @@ and issues installation credentials under
   approval; published on ticks by a computer the project is admitted on;
   moved to another computer by an export and an import; kept while current and
   retired as history under the same contract.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ### Domain events emitted
 
@@ -315,7 +309,6 @@ owning design snippet or decision record is declared.
 - **Work → repository** — customer-supplier. Work supplies todo existence
   through the core-declared interface wired by the CLI when todos is enabled.
 
-<!-- planned:event-driven-pr-review-gate -->
 - **Work → runner (automatic review)** — customer-supplier. Work answers whether
   a pull request is a todo's, whether a commit carries a verdict and which
   review evidence is current for it, and whether both identities are ready.
@@ -334,7 +327,6 @@ owning design snippet or decision record is declared.
   workflow reads approval of a head that is not a todo's, and exemptions, from
   that answer alone, and reads a candidate's result from it together with the
   review status.
-<!-- /planned:event-driven-pr-review-gate -->
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation
   references; work stores these without translating native runtime mechanics.

@@ -1,7 +1,5 @@
 ---
 description: Pull requests from a project's trusted authors have their current head independently reviewed without anyone asking, and the verdict reaches GitHub where branch protection can require it.
-delivered_by:
-  - event-driven-pr-review-gate
 ---
 # Pull-Request Review — Spec
 

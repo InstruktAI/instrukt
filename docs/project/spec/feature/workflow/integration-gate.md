@@ -60,7 +60,6 @@ check runs:
 - **`no_ci`:** nothing has reported for the candidate and the canonical
   head carries no status and no check run; the project has no CI.
 
-<!-- planned:event-driven-pr-review-gate -->
 On a project that opted in to automatic review, the reviewer bot's review
 status is not a CI result (`project/instrukt/spec/feature/work/github-apps`).
 Classification leaves it out, and a project whose commits carry nothing else
@@ -87,7 +86,6 @@ recalled. On a
 project that has not opted in,
 classification reads every status and check run as before, a review status
 published earlier included.
-<!-- /planned:event-driven-pr-review-gate -->
 
 | Observed result | Integrator obligation |
 | --- | --- |
@@ -100,7 +98,6 @@ Any candidate altered by remediation is verified in its resulting form before
 promotion. The standing integrator drives this process; an automatic merge
 queue does not select, merge or discard candidates on its behalf.
 
-<!-- planned:event-driven-pr-review-gate -->
 ### Review coverage of a candidate
 
 On a project that opted in to automatic review, each tick that observes an
@@ -170,7 +167,6 @@ for, so nothing reaches the canonical branch because its author forgot to ask.
 Reproduction compares trees and judges no content
 (`general/principle/intelligence-boundaries`): a commit either equals what
 instrukt computes from its parents or it is not covered by reproduction.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ### Canonical-branch guard
 
@@ -179,7 +175,6 @@ status checks on the candidate commit before a push can advance the canonical
 branch. A missing or failing required result supplies no admission. This is
 an integrity guard in addition to the integrator's judgment.
 
-<!-- planned:event-driven-pr-review-gate -->
 Where the repository owner also requires the review status from the reviewer
 bot, the same push needs that status on the candidate commit. Requiring it is
 the owner's administration act
@@ -194,7 +189,6 @@ work is current (Candidate and verification); the status changes only when
 the current verdict is published
 (`project/instrukt/spec/feature/work/github-apps`, Admission of review
 evidence).
-<!-- /planned:event-driven-pr-review-gate -->
 
 The canonical-branch push promotes the exact candidate without creating an
 untested merge commit. That push is also the publication boundary observed by
@@ -228,13 +222,11 @@ building on the known-red baseline. The integrator judges whether the failure
 warrants a bug, deduplicates against existing work and files it once when
 warranted; the runner never turns every red check into a bug automatically.
 
-<!-- planned:event-driven-pr-review-gate -->
 On a project that requires the review status, a candidate that reverts the
 failing delivery of a red canonical head is covered by reproduction and carries
 the status without waiting for a review (Review coverage of a candidate). Which
 delivery to revert remains the integrator's judgment; a recovery that removes
 more than the red head's own promotion added is reviewed as an exact candidate.
-<!-- /planned:event-driven-pr-review-gate -->
 
 When the integrator cannot restore the baseline, the condition is an anomaly
 that can require notification. Ordinary approval and new-intent requests

@@ -443,7 +443,6 @@ unavailable homes fail there.
 Runtime delivery retains procedure-first briefing, untrusted event provenance and
 session-fixed timing through A3's bounded batch log.
 
-<!-- planned:event-driven-pr-review-gate -->
 ### Review gate
 
 On a project that opts in, every commit GitHub checks before the canonical
@@ -554,7 +553,6 @@ it and asks for the rest.
 Observation rides the tick's existing
 conditional GitHub pass, requests the event platform and publication the tick;
 the gate adds no webhook, queue or process.
-<!-- /planned:event-driven-pr-review-gate -->
 
 ## Failure modes
 
@@ -626,7 +624,6 @@ the gate adds no webhook, queue or process.
   (`project/instrukt/spec/feature/company/conversations`). A history search or
   an explicit extraction catches up history only.
 
-<!-- planned:event-driven-pr-review-gate -->
 - **A reviewer's turn ends without a verdict for a head it was handed:** the
   head stays owed. While it is still current the runner asks again at growing
   intervals; the head carries no review status meanwhile and, where the status
@@ -730,4 +727,3 @@ the gate adds no webhook, queue or process.
   not published is gone. The computer that serves next recognises what the
   reviewer bot published, has every other owed head reviewed again, and shows
   whatever approval GitHub last received.
-<!-- /planned:event-driven-pr-review-gate -->
