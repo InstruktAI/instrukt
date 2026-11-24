@@ -17,7 +17,17 @@ const MOST_RETRY: Duration = Duration::from_secs(60);
 #[derive(Default)]
 pub(super) struct Targets {
     links: BTreeMap<String, LinkWork>,
-    next_scan: Option<(Instant, Duration)>,
+    failed_scan: Option<FailedScan>,
+}
+
+/// A read of which links are active that failed. It is tried again at `at`
+/// for the most the source asked meanwhile, and a further failure waits
+/// `delay`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FailedScan {
+    at: Instant,
+    delay: Duration,
+    mark: Mark,
 }
 
 struct LinkWork {
@@ -61,7 +71,7 @@ enum Cause {
 
 impl Targets {
     pub(super) fn source_changed(&mut self, home: &Home) {
-        self.reconcile(home, Mark::Change);
+        self.wake(home, Mark::Change);
     }
 
     /// The source asks for another read: an earlier read may have come
@@ -69,22 +79,61 @@ impl Targets {
     /// one opened since the source last changed, except one that awaits the
     /// retry of a failed pass, which keeps to that retry.
     pub(super) fn read_again(&mut self, home: &Home) {
-        self.reconcile(home, Mark::Request);
+        self.wake(home, Mark::Request);
     }
 
-    /// Reads which links are active and marks each one. A failed read is
-    /// recorded and the scan is tried again after a growing delay.
-    fn reconcile(&mut self, home: &Home, mark: Mark) {
-        match active_link_ids(home) {
-            Ok(active) => {
-                self.next_scan = None;
+    /// Reads which links are active and marks each one, when a read is due;
+    /// otherwise marks the links already known.
+    fn wake(&mut self, home: &Home, mark: Mark) {
+        let now = Instant::now();
+        let Some(mark) = self.scan_for(now, mark) else {
+            self.mark_known(mark);
+            return;
+        };
+        let active = active_link_ids(home);
+        if let Err(error) = &active {
+            super::_watch::record(home, error);
+        }
+        self.scanned(now, mark, active.ok());
+    }
+
+    /// The mark a read of which links are active carries when the source asks
+    /// `mark` at `now`, or none while a failed read waits out its delay. A
+    /// source change always reads. A read due after a failure carries what
+    /// that failure was asked for too, so a request never takes the place of
+    /// a change.
+    fn scan_for(&self, now: Instant, mark: Mark) -> Option<Mark> {
+        match self.failed_scan {
+            None => Some(mark),
+            Some(failed) if mark == Mark::Change || failed.at <= now => Some(failed.mark.max(mark)),
+            Some(_) => None,
+        }
+    }
+
+    /// The read of which links are active made at `now` for `mark`: the links
+    /// it found, or none when it failed, which is tried again after a growing
+    /// delay for the same mark.
+    fn scanned(&mut self, now: Instant, mark: Mark, active: Option<Vec<String>>) {
+        match active {
+            Some(active) => {
+                self.failed_scan = None;
                 self.admit(active, mark);
             }
-            Err(error) => {
-                super::_watch::record(home, &error);
-                let delay = self.next_scan.map_or(FIRST_RETRY, |(_, delay)| delay);
-                self.next_scan = Some((Instant::now() + delay, (delay * 2).min(MOST_RETRY)));
+            None => {
+                let failed = self.failed_scan;
+                let delay = failed.map_or(FIRST_RETRY, |failed| failed.delay);
+                self.failed_scan = Some(FailedScan {
+                    at: now + delay,
+                    delay: (delay * 2).min(MOST_RETRY),
+                    mark: failed.map_or(mark, |failed| failed.mark.max(mark)),
+                });
             }
+        }
+    }
+
+    fn mark_known(&mut self, mark: Mark) {
+        for work in self.links.values_mut().filter(|work| work.active) {
+            work.mark(mark);
         }
     }
 
@@ -103,7 +152,7 @@ impl Targets {
 
     pub(super) fn ready(&self) -> bool {
         let now = Instant::now();
-        self.next_scan.is_some_and(|(at, _)| at <= now)
+        self.failed_scan.is_some_and(|failed| failed.at <= now)
             || self.links.values().any(|work| match &work.job {
                 Some(job) => job.is_finished(),
                 None => work.due(now).is_some(),
@@ -112,9 +161,12 @@ impl Targets {
 
     pub(super) fn advance(&mut self, home: &Home, env: &Env, runtime: Runtime) -> bool {
         let now = Instant::now();
-        let mut retried = self.next_scan.is_some_and(|(at, _)| at <= now);
-        if retried {
-            self.source_changed(home);
+        let mut retried = false;
+        if let Some(failed) = self.failed_scan
+            && failed.at <= now
+        {
+            retried = true;
+            self.wake(home, failed.mark);
         }
         self.links.retain(|link, work| {
             if work.job.as_ref().is_some_and(|job| job.is_finished())
@@ -302,6 +354,72 @@ mod tests {
             targets.links["failed"].due(now + FIRST_RETRY),
             Some(Cause::Retry)
         );
+    }
+
+    fn retrying_until(at: Instant) -> LinkWork {
+        let mut work = LinkWork::new();
+        work.standing = Standing::Retrying { at, changed: false };
+        work
+    }
+
+    #[test]
+    fn a_failed_request_scan_is_retried_as_a_request_and_keeps_a_failed_links_deadline() {
+        let now = Instant::now();
+        let mut targets = Targets::default();
+        targets
+            .links
+            .insert("failed".into(), retrying_until(now + MOST_RETRY));
+        targets.scanned(now, Mark::Request, None);
+        let at = targets.failed_scan.unwrap().at;
+        let mark = targets.scan_for(at, Mark::Request).unwrap();
+        assert_eq!(mark, Mark::Request);
+        targets.scanned(at, mark, Some(vec!["failed".into()]));
+        assert_eq!(targets.failed_scan, None);
+        assert_eq!(targets.links["failed"].due(at), None);
+        assert_eq!(
+            targets.links["failed"].standing,
+            Standing::Retrying {
+                at: now + MOST_RETRY,
+                changed: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_request_never_takes_the_place_of_a_failed_change_scan() {
+        let now = Instant::now();
+        let mut targets = Targets::default();
+        targets
+            .links
+            .insert("failed".into(), retrying_until(now + MOST_RETRY));
+        targets.scanned(now, Mark::Change, None);
+        let at = targets.failed_scan.unwrap().at;
+        assert_eq!(
+            targets.scan_for(at - Duration::from_millis(1), Mark::Request),
+            None
+        );
+        let mark = targets.scan_for(at, Mark::Request).unwrap();
+        targets.scanned(at, mark, Some(vec!["failed".into()]));
+        assert_eq!(targets.links["failed"].due(at), Some(Cause::Change));
+    }
+
+    #[test]
+    fn requests_wait_out_the_scan_delay_while_reads_of_active_links_fail() {
+        let mut now = Instant::now();
+        let mut targets = Targets::default();
+        let mut delays = Vec::new();
+        for _ in 0..8 {
+            targets.scanned(now, Mark::Request, None);
+            let at = targets.failed_scan.unwrap().at;
+            assert_eq!(
+                targets.scan_for(at - Duration::from_millis(1), Mark::Request),
+                None
+            );
+            delays.push((at - now).as_secs());
+            now = at;
+        }
+        assert_eq!(delays, [1, 2, 4, 8, 16, 32, 60, 60]);
+        assert_eq!(targets.scan_for(now, Mark::Request), Some(Mark::Request));
     }
 
     #[test]
