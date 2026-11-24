@@ -155,6 +155,15 @@ pub struct CommitEvidence {
 }
 
 impl CommitEvidence {
+    /// Whether the commit carries a verdict here: a head verdict that
+    /// stands, a derived approval that was not withdrawn, or a verdict
+    /// recognised as already published (`github-apps`, Review evidence).
+    pub fn carries_verdict(&self) -> bool {
+        self.current().is_some()
+            || self.derived.as_ref().is_some_and(|d| d.withdrawn.is_none())
+            || self.recognised.is_some()
+    }
+
     /// The current version of the head verdict that stands here.
     pub fn current(&self) -> Option<&Version> {
         self.settlements
@@ -787,7 +796,7 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
 
     fn carries_verdict(&self, project: &ProjectSlug, head: &CommitSha) -> Result<bool, String> {
         let evidence = evidence(&self.home, project, head).map_err(|error| error.to_string())?;
-        Ok(evidence.current().is_some() || evidence.recognised.is_some())
+        Ok(evidence.carries_verdict())
     }
 
     fn needs_work(&self, project: &ProjectSlug, commit: &CommitSha) -> Result<bool, String> {
@@ -902,7 +911,11 @@ fn publish(
     heads.sort();
     heads.dedup();
     for commit in heads {
-        if standing.iter().any(|(held, _)| held == commit) {
+        // A commit whose verdict this computer holds is published from it,
+        // never recognised.
+        if standing.iter().any(|(held, _)| held == commit)
+            || derived.iter().any(|approval| &approval.candidate == commit)
+        {
             continue;
         }
         current.push(commit.clone());
@@ -1732,6 +1745,38 @@ mod tests {
         assert_eq!(
             held.derived.and_then(|d| d.withdrawn),
             Some((now, sha('e').to_string()))
+        );
+    }
+
+    #[test]
+    fn a_standing_derived_approval_is_the_commits_verdict_and_a_withdrawn_one_is_not() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        let now = at("2026-11-24T00:00:00Z");
+        let candidate = sha('c');
+        assert!(
+            !evidence(&fixture.home, project, &candidate)
+                .unwrap()
+                .carries_verdict()
+        );
+        let approval = tick_derived(&candidate, now);
+        let mut db = _published::open(&fixture.home).unwrap();
+        db.write(|tx| _published::record_derived(tx, project, &approval))
+            .unwrap();
+        drop(db);
+        assert!(
+            evidence(&fixture.home, project, &candidate)
+                .unwrap()
+                .carries_verdict()
+        );
+        let mut db = _published::open(&fixture.home).unwrap();
+        db.write(|tx| _published::withdraw(tx, project, &approval, &sha('e'), now))
+            .unwrap();
+        drop(db);
+        assert!(
+            !evidence(&fixture.home, project, &candidate)
+                .unwrap()
+                .carries_verdict()
         );
     }
 }

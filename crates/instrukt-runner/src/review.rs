@@ -98,6 +98,14 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
     {
         tracing::warn!(event = "review_publication_failed", project = %project, error = %error);
     }
+    // The candidate's coverage is derived before any pull request's head is
+    // asked for: a covered candidate carries its derived approval, so a pull
+    // request at the same head starts no review of it (`github-apps`,
+    // Verdict publication).
+    let finding = match pass.candidate {
+        Some(candidate) => derive_candidate(pass, candidate, &eligible)?,
+        None => None,
+    };
     let mut owed = BTreeSet::new();
     let mut fetched = false;
     for (head, mut at_head) in heads {
@@ -113,28 +121,27 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         emit(pass, &head, Some(&at_head[0]), requests.len(), &mut fetched)?;
     }
     _requests::end_unowed(pass.state, project, &owed).map_err(|error| error.to_string())?;
-    if let Some(candidate) = pass.candidate {
-        candidate_pass(pass, candidate, &eligible, &mut fetched)?;
+    if let (Some(candidate), Some(finding)) = (pass.candidate, finding) {
+        ask_candidate(pass, candidate, &finding, &mut fetched)?;
     }
     Ok(())
 }
 
-/// The candidate's part of the pass: on an active candidate with no request
-/// selected or handed over, work derives its coverage; an uncovered one is
-/// asked for (`pull-request-review`, Candidate requests).
-fn candidate_pass(
+/// Work's finding on the active candidate, derived while no request of it
+/// is selected or handed over (`integration-gate`, Review coverage of a
+/// candidate); none while one is.
+fn derive_candidate(
     pass: &ReviewPass<'_>,
     candidate: &CommitSha,
     eligible: &[(u64, CommitSha)],
-    fetched: &mut bool,
-) -> Result<(), String> {
+) -> Result<Option<crate::interfaces::CandidateFinding>, String> {
     let project = &pass.project.slug;
     let requests = requests(pass.state, project, candidate).map_err(|e| e.to_string())?;
     if requests
         .iter()
         .any(|r| matches!(r.standing, Standing::Selected | Standing::HandedOver))
     {
-        return Ok(());
+        return Ok(None);
     }
     let pulls: Vec<u64> = eligible
         .iter()
@@ -145,9 +152,23 @@ fn candidate_pass(
         pass.port
             .candidate(pass.project, pass.repository, candidate, &pulls, pass.now)?;
     tracing::info!(event = "review_candidate_derived", project = %project, candidate = %candidate, finding = ?finding);
+    Ok(Some(finding))
+}
+
+/// The candidate's requests after its finding: an uncovered candidate is
+/// asked for (`pull-request-review`, Candidate requests), and queued
+/// candidate requests of commits no longer owed end.
+fn ask_candidate(
+    pass: &ReviewPass<'_>,
+    candidate: &CommitSha,
+    finding: &crate::interfaces::CandidateFinding,
+    fetched: &mut bool,
+) -> Result<(), String> {
+    let project = &pass.project.slug;
     let mut owed = BTreeSet::new();
-    if finding == crate::interfaces::CandidateFinding::Owed {
+    if *finding == crate::interfaces::CandidateFinding::Owed {
         owed.insert(candidate.clone());
+        let requests = requests(pass.state, project, candidate).map_err(|e| e.to_string())?;
         if !requests.iter().any(_requests::live) && _requests::due(&requests, pass.now) {
             emit(pass, candidate, None, requests.len(), fetched)?;
         }
