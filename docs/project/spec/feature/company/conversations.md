@@ -1,5 +1,5 @@
 ---
-description: Conversations — a person addresses a company's agent in a connected channel; each conversation is bound to one agent session in the company's home, started from the company-assistance procedure, every addressed message is its own turn naming its sender, and the session's answer is posted back, never through event subscriptions.
+description: Conversations — a person addresses a company's agent in a connected channel; each conversation is bound to an agent session in the company's home, started from the procedure declaring the connector's role (default `company-assistance`), every addressed message is its own turn naming its sender, and the session's answer is posted back, never through event subscriptions.
 ---
 # Conversations — Spec
 
@@ -139,15 +139,22 @@ path is the same for every connector, whichever channel it speaks to
   on a connector that already has live bindings, previously bound conversations
   stay exclusively with their existing bindings and new conversations bind under
   the newly declared scope, with no overlap or double delivery.
-- The conversation's agent works through the company's declared MCP servers
+- Under the default `company-agent` procedure
+  (`general/procedure/company-assistance`), the conversation's agent works
+  through the company's declared MCP servers
   (`project/instrukt/spec/feature/runner/mcp-access`) and on the company's
   own documents in its home, which it may change and commit
   (`project/instrukt/spec/feature/publication/agent-entrypoints`), and
   when an authenticated workspace administrator addresses it in a direct
   message (`is_admin = true` and `is_direct = true`), may inspect, discover
   and manage that company's `mcp` service declarations under the company-agent
-  scope of `project/instrukt/spec/feature/configuration/configuration-editing`.
-  It declines anything else. Its procedure instructs it so.
+  scope of `project/instrukt/spec/feature/configuration/configuration-editing`;
+  it declines anything else, as its procedure instructs. A connector declaring a
+  role with its own published procedure (such as `technical-coordinator`, which
+  opens `general/procedure/technical-coordinator`) follows that procedure's
+  duties — including filing and coordinating project todos — while keeping the
+  connector's admission, company, speaker-envelope and administrator-DM
+  boundaries intact.
 - Its role is the connector's `role` (default `company-agent`), stored on the
   session's `connected_conversations` binding so caller assignment lookup
   grants that role's class, capabilities, and model selection from `agents.yaml`

@@ -4991,24 +4991,68 @@ mod tests {
 
     #[test]
     fn a_technical_coordinator_connector_opens_from_its_own_procedure_not_company_assistance() {
-        let index: instrukt_core::index::GlobalIndex = serde_yaml_ng::from_str(concat!(
-            "schema_version: 2\nsnippets:\n",
-            "- id: general/procedure/company-assistance\n  description: Assist.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/company-assistance.md\n  source_project: demo\n  role: company-agent\n",
-            "- id: general/procedure/technical-coordinator\n  description: Coordinate.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/technical-coordinator.md\n  source_project: demo\n  role: technical-coordinator\n",
-        ))
-        .unwrap();
+        let project = instrukt_core::ids::ProjectSlug::parse("instrukt").unwrap();
+        let corpus = instrukt_core::docs::Corpus::from_sources(
+            Some(project.clone()),
+            None,
+            [
+                instrukt_core::docs::SourceFile {
+                    path: "docs/general/procedure/company-assistance.md".to_owned(),
+                    text: include_str!("../../../docs/general/procedure/company-assistance.md")
+                        .to_owned(),
+                },
+                instrukt_core::docs::SourceFile {
+                    path: "docs/general/procedure/technical-coordinator.md".to_owned(),
+                    text: include_str!("../../../docs/general/procedure/technical-coordinator.md")
+                        .to_owned(),
+                },
+            ],
+        );
+        let snippets = corpus
+            .snippets()
+            .iter()
+            .map(|snippet| {
+                let current = snippet.current();
+                let front = current.frontmatter();
+                instrukt_core::index::IndexEntry {
+                    id: snippet.id().clone(),
+                    description: front.description.clone().unwrap_or_default(),
+                    taxonomy: snippet.taxonomy().dir().to_owned(),
+                    scope: instrukt_core::index::IndexScope::Global,
+                    domain: snippet.domain().to_string(),
+                    path: current.path().to_path_buf(),
+                    source_project: project.clone(),
+                    visibility: None,
+                    delivered_by: Vec::new(),
+                    superseded_by: Vec::new(),
+                    activation_trigger: front.entry.activation_trigger.clone(),
+                    role: front.entry.role.clone(),
+                    subscriptions: Vec::new(),
+                    subscription_home: None,
+                    subscription_identity: Default::default(),
+                    subscription_attendance: Default::default(),
+                    required_reads: Vec::new(),
+                    parameters: Vec::new(),
+                    interruptible: false,
+                }
+            })
+            .collect();
+        let index = instrukt_core::index::GlobalIndex {
+            schema_version: 2,
+            snippets,
+            third_party: Vec::new(),
+        };
         let agents = Agents::parse(SHIPPED_AGENTS).unwrap();
-        assert!(agents.roles.contains_key("technical-coordinator"));
         let opened = opening_procedure_for_role(
             &index,
             &RoleName::parse("technical-coordinator").unwrap(),
             &agents,
         )
         .unwrap();
-        assert_eq!(
-            opened.id.as_str(),
-            "general/procedure/technical-coordinator"
-        );
+        let expected =
+            instrukt_core::ids::SnippetId::parse("general/procedure/technical-coordinator")
+                .unwrap();
+        assert_eq!(opened.id, expected);
     }
 
     /// The character count of each part, and whether the parts together

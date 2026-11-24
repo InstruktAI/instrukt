@@ -156,10 +156,16 @@ composition is:
 
 A company connector may declare `role: technical-coordinator`; its sessions
 then start from `general/procedure/technical-coordinator`, the procedure
-declaring that role, rather than from company assistance. Its entry grants
-what that procedure works with: reading every surface, writing its own
-documentation, commits and todos, reporting defects into any project, and the
-company's tool servers and explicit replies.
+declaring that role, rather than from company assistance. Its shipped entry
+carries the `read` bundle (every read surface in that bundle, excluding
+`history-read`), `worker` and `record` (documentation, commits, artifacts,
+stamps and todo writes scoped to `own`), `report` (defect reports into any
+project at `any`), and `tools` (`mcp-access` and `company-reply` at `own`,
+bound to the session's company). Because a company conversation binding carries
+no bound project or todo, `own`-scoped work-record grants do not match a target
+project on their own; as a `standing` role, the session carries these grants as
+declared focus and relies on object-level checks rather than focused-class
+command refusals.
 
 A company's agent reports defects of the system it works through
 (`general/procedure/bug-reporting`) into the project that owns the defect on its
