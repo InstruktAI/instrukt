@@ -85,6 +85,25 @@ impl Profile {
 /// The role the runner gives a conversation session.
 pub const COMPANY_AGENT_ROLE: &str = "company-agent";
 
+/// The role that drives a todo through preparation and work.
+pub const TODO_ORCHESTRATOR_ROLE: &str = "todo-orchestrator";
+
+/// The split orchestrator roles [`TODO_ORCHESTRATOR_ROLE`] replaced, in the
+/// order agents migration prefers their settings when neither file entry is
+/// unified yet: work's first.
+pub const RETIRED_ORCHESTRATOR_ROLES: [&str; 2] = ["work-orchestrator", "prepare-orchestrator"];
+
+/// The role whose `agents.yaml` entry governs work recorded under `role`: a
+/// retired split orchestrator's is [`TODO_ORCHESTRATOR_ROLE`]'s, because
+/// agents migration removes the split entries; any other role is its own.
+pub fn current_role(role: &str) -> &str {
+    if RETIRED_ORCHESTRATOR_ROLES.contains(&role) {
+        TODO_ORCHESTRATOR_ROLE
+    } else {
+        role
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agents {

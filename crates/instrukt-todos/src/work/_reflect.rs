@@ -379,7 +379,7 @@ fn reflect_board(
                 path: format!("/issues/{}", issue.number),
                 message: "an issue without a node id".to_owned(),
             })?;
-        let account = gh.for_role(None, instrukt_core::github::Operation::Board)?;
+        let account = gh.for_role(None, instrukt_core::github::Operation::Board);
         super::_board::reflect(&account, board, &content, status, needs_you)
     })();
     match attempt {
@@ -765,7 +765,7 @@ fn reflect_pull_request(
         .iter()
         .find(|binding| binding.attempt.branch.as_ref() == Some(&branch))
         .map(|binding| binding.role.as_str());
-    let author = gh.for_role(role, instrukt_core::github::Operation::Author)?;
+    let author = gh.for_role(role, instrukt_core::github::Operation::Author);
     if item.reflection.pull.is_none() {
         let owner = gh.repository().split('/').next().unwrap_or_default();
         let head = encode(&format!("{owner}:{branch}"));
@@ -813,11 +813,11 @@ fn reflect_pull_request(
     item.reflection.pull_outstanding = Some(format!("pull request #{pull} is not up to date"));
     let verdicts = build_verdicts(&item.record);
     for (verdict, commit, report, role) in verdicts.iter().skip(item.reflection.reviews_reflected) {
-        let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review)?;
+        let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review);
         let bot = reviewer.bot()?;
         let pull_actor = gh.read(&format!("/pulls/{pull}"))?;
         if bot.matches(&pull_actor["user"]) {
-            return Err(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into()).into());
+            return Err(reviewer.app_failure(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into())));
         }
         let body = format!(
             "[instrukt build review] verdict: {verdict} · reviewed commit {commit} · report {report}"

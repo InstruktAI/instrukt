@@ -53,43 +53,36 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
     Ok(Some(Converted { from, bytes: out }))
 }
 
-/// Replace retired split orchestrators (`prepare-orchestrator`, `work-orchestrator`)
-/// with the unified `todo-orchestrator` entry, preserving customized model/tier/app
-/// settings when `todo-orchestrator` is not already configured.
+/// Replace the retired split orchestrators ([`super::RETIRED_ORCHESTRATOR_ROLES`])
+/// with the unified [`super::TODO_ORCHESTRATOR_ROLE`] entry, preserving customized
+/// model/tier/app settings when the unified role is not already configured.
 fn migrate_orchestrator_roles(value: &mut Value) -> bool {
+    use super::{RETIRED_ORCHESTRATOR_ROLES as RETIRED, TODO_ORCHESTRATOR_ROLE as UNIFIED};
     let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) else {
         return false;
     };
-    let has_prepare = roles.contains_key("prepare-orchestrator");
-    let has_work = roles.contains_key("work-orchestrator");
-    if !has_prepare && !has_work {
+    let present: Vec<&Value> = RETIRED.iter().filter_map(|role| roles.get(role)).collect();
+    if present.is_empty() {
         return false;
     }
-    let has_unified = roles.contains_key("todo-orchestrator");
-    if has_prepare
-        && has_work
-        && !has_unified
-        && roles.get("prepare-orchestrator") != roles.get("work-orchestrator")
-    {
+    let has_unified = roles.contains_key(UNIFIED);
+    if !has_unified && present.len() == RETIRED.len() && present.windows(2).any(|w| w[0] != w[1]) {
         tracing::warn!(
             event = "agents_orchestrator_migration_preference",
             "both prepare-orchestrator and work-orchestrator were customised; adopting work-orchestrator settings for todo-orchestrator"
         );
     }
-    let preferred = roles
-        .get("work-orchestrator")
-        .or_else(|| roles.get("prepare-orchestrator"))
-        .cloned();
+    let preferred = present.first().copied().cloned();
     let mut inserted = has_unified;
     *roles = std::mem::take(roles)
         .into_iter()
         .filter_map(|(key, entry)| match key.as_str() {
-            Some("prepare-orchestrator" | "work-orchestrator") => {
+            Some(role) if RETIRED.contains(&role) => {
                 if !inserted {
                     inserted = true;
                     preferred
                         .clone()
-                        .map(|unified| (Value::from("todo-orchestrator"), unified))
+                        .map(|unified| (Value::from(UNIFIED), unified))
                 } else {
                     None
                 }
