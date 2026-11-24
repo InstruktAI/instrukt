@@ -81,6 +81,17 @@ every production default ships silently from the applicable baseline.
    branches — as the contract. Baseline items appear as delivered scope, not
    questions. On approval, the brief feeds the normal prepare/PRD machinery.
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
+6. **Create the project, then scaffold inside it.** Create the project's
+   folder and its git repository, then run `instrukt init` in it. It writes
+   `instrukt.yaml` with the `project` slug taken from the folder name,
+   `docs/project/`, `AGENTS.master.md` if absent, the hook sections and — when
+   the sdlc domain is published on the computer — `docs/project/schema.yaml`
+   copied from sdlc's schema, and never overwrites. Scaffold inside that
+   folder via the flavor's own generator, aimed at the existing folder, then
+   wire the quality gates and CI _before_ feature work. The flavor selects its
+   scaffolding procedure:
+<!-- change:unify-index-yaml-entrypoints -->
 6. **Create the project, then scaffold inside it.** Create the project's
    folder and its git repository, then run `instrukt init` in it. It writes
    `instrukt.yaml` with the `project` slug taken from the folder name,
@@ -90,6 +101,7 @@ every production default ships silently from the applicable baseline.
    folder via the flavor's own generator, aimed at the existing folder, then
    wire the quality gates and CI _before_ feature work. The flavor selects its
    scaffolding procedure:
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
    - Python → `sdlc/procedure/scaffolding/python`
    - Rust → `sdlc/procedure/scaffolding/rust`
