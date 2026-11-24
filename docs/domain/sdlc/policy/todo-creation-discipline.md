@@ -199,13 +199,14 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 
 - **A worker's observation is decided by the session that governs it.** A
   worker is a session executing one job for a governing session it reports back to: a
-  builder, reviewer, diagnosis peer, fixer, or finalizer. What it notices
+  builder, reviewer, verifier, diagnosis peer, fixer, or finalizer. What it notices
   outside that job reaches the governing session as an observation — what it
   saw, where, and how it came to see it — through the channel its own
   procedure names, or else in its final report. The governing session decides
-  each observation under this standard. A build's entries are decided by the
-  deferral worker `todo-orchestrator` dispatches: deciding them, and
-  creating or filing what this policy admits, is that worker's job
+  each observation under this standard. A build's entries and a verifier's
+  pre-existing observations are decided by the deferral worker
+  `todo-orchestrator` dispatches: deciding them, and creating or filing what
+  this policy admits, is that worker's job
   (`sdlc/procedure/lifecycle/work/deferrals`).
 
 - **A defect contradicts a current contract.** A defect is observed behavior

@@ -332,7 +332,7 @@ Apply the policy, not a per-function reflex:
 - **A scenario added or widened in a build range is a finding.** Scenarios are authored and frozen in preparation; a build pass that adds a use case or broadens one, including to justify a test, breaks the author/binder separation (`sdlc/policy/testing`, rule 2).
 - **Spec-delivered test specs:** every assertion from the spec-delivery commit must still exist; a removed or weakened assertion is a **Critical** finding (diff the spec-delivery commit against the final state).
 - **Weak tests are findings even when coverage exists.** Apply every weak-test anti-pattern the testing policy enumerates — the policy owns the full list; do not re-list it here.
-- **Browser / web UI changes** must include Playwright smoke evidence from build.
+- **Browser / web UI changes without downstream live verification:** verify observable behavior independently via review browser smoke, CI browser verification, or a separate `verifier` pass per `sdlc/procedure/lifecycle/review`.
 
 Before crediting any test as meaningful coverage, name the concrete production-code mutation it kills: a single plausible wrong implementation of the behavior under test — a flipped condition, a dropped branch, a stubbed-out value — that turns this test red. State it explicitly; a vacuous or unnameable answer ("it covers the feature") is itself the weak-test finding. A test that stays green on the broken implementation does not count, no matter what it asserts — the assertion is observing a projection of the output that cannot see the property the behavior actually changed.
 
@@ -374,7 +374,7 @@ Severity guidance:
 - A `functional`-marked test that drives an internal non-boundary symbol or fakes in-process collaborators so the real chain never runs -> **Important** (the coverage is illusory; **Critical** when it replaces or weakens a prepare-delivered spec assertion).
 - Supplemental cleanup observations where a strong behavioral test already exists -> **drop the observation; it is not a finding**.
 
-Missing browser-smoke verification for browser-based frontend changes is an **Important** finding.
+- Missing browser-smoke verification on a browser/UI change carrying no downstream `verifier` pass (a `HOTFIX_DEFERRED` hotfix or an ad-hoc commit) -> **Important** (on standard lifecycle builds, downstream `sdlc/procedure/lifecycle/work/verify` owns live browser verification).
 
 #### Error handling review
 

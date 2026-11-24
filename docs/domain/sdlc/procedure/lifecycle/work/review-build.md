@@ -16,9 +16,11 @@ parameters:
 
 ## Goal
 
-Review the implementation dispatched for one slug against its approved intent,
-prepared artifacts, and standards. The slug supplies the review context; the
-shared review procedure supplies the review judgment.
+Perform independent static white-box review of the implementation dispatched
+for one slug against its approved intent, prepared artifacts, and standards,
+ahead of downstream live behavioral verification (`sdlc/procedure/lifecycle/overview`).
+The slug supplies the review context; the shared review procedure supplies the
+review judgment and static review boundary (`sdlc/procedure/lifecycle/review`).
 
 ## Preconditions
 
@@ -127,6 +129,10 @@ For this invocation:
 - The applicable contract is the approved intent and its success criteria.
 - The scope lane runs.
 - All catalog lanes run according to their trigger conditions.
+- Static review boundary: downstream live verification
+  (`sdlc/procedure/lifecycle/work/verify`) and suite execution
+  (`sdlc/procedure/lifecycle/integrate`) run in their own stages
+  (`sdlc/procedure/lifecycle/review`).
 - Builder entries in `quality-checklist` direct attention but never
   substitute for independent review of the diff.
 

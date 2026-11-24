@@ -148,12 +148,39 @@ If the review produces no Important-or-higher findings, include a
 3. Evidence that copy-paste duplication was checked.
 4. Evidence that security was reviewed.
 
-For user-facing changes, record the observable behavior verified and the
-evidence that confirms it. For browser-based changes, follow the project's
-applicable browser smoke path when the environment allows it and record the
-observation.
-When lifecycle build evidence exists, inspect the builder's recorded smoke path
-as well. An unverified user-facing requirement is a finding.
+**Static review boundary.** Review judges the frozen target through static
+white-box inspection — reading source files, diffs, contracts, architecture,
+domain ownership, security, error handling, documentation, and test quality,
+along with read-only structural checks (`git diff`, `instrukt docs validate`,
+`instrukt docs render --check`, `instrukt specs coverage --check`). Live
+behavioral verification on real surfaces (booting application stacks,
+containers, browsers, mobile simulators, live daemons, and black-box user
+flows) belongs to the downstream `verifier` stage
+(`sdlc/procedure/lifecycle/work/verify`, `sdlc/policy/live-verification`) on
+the exact committed candidate HEAD; full test-suite execution belongs to
+`integrate` / CI (`sdlc/procedure/lifecycle/integrate`). Definition of Done
+gates (`sdlc/policy/definition-of-done`) name test passage and live behavior as
+delivery outcomes; on routes covered by downstream verification, leave
+test-suite execution to `integrate` / CI and live stack or runtime probes to
+`verifier` (`sdlc/policy/live-verification`), and do not file a finding solely
+that downstream live verification has not run yet.
+
+- **Lifecycle builds covered by downstream `verifier`**
+  (`sdlc/procedure/lifecycle/work/review-build`, excluding `HOTFIX_DEFERRED`
+  hotfixes): confirm from source, contracts, and test bindings that every
+  required user-facing outcome is delivered, inspecting recorded builder
+  build-smoke notes when present; live proof on the real surface runs in the
+  downstream `verifier` stage.
+- **Targets carrying no downstream `verifier` pass** — ad-hoc commit reviews
+  outside a todo lifecycle (`sdlc/procedure/lifecycle/work/review-commits`) and
+  emergency hotfixes deferring `verifier` via `HOTFIX_DEFERRED`
+  (`sdlc/policy/live-verification`): record the observable user-facing behavior
+  verified and the evidence confirming it. For browser-based changes on these
+  routes, follow the project's applicable browser smoke path when the
+  environment allows it (or rely on independent CI browser verification or a
+  separate `verifier` pass when present) and record the observation; an
+  unverified user-facing requirement observed by no party other than its author
+  is a finding.
 
 ### 3. Preserve reviewer separation
 

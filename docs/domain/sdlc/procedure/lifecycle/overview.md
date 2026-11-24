@@ -303,7 +303,14 @@ so the runner does not re-dispatch a fresh turn on every tick.
          `runtime.inspect_thread`. Persist the verifier's returned sanitized
          `verification-plan` and `verification-findings` payloads verbatim via
          `instrukt todo artifacts write` (noting the verifier's session ID and
-         exact candidate HEAD SHA).
+         exact candidate HEAD SHA). When `verification-findings` includes
+         pre-existing observations, append any not already recorded as new
+         observation entries (`sdlc/procedure/lifecycle/work/deferrals`) to
+         `{slug}`'s `deferrals` artifact via
+         `instrukt todo artifacts write {slug} deferrals '<content>'` —
+         preserving all existing `deferrals` entries — so `deferrer` triages
+         every build and live-verification observation together before
+         finalization.
        - On `FAIL`, dispatch an admitted workspace writer (`builder`/`fixer`
          via `instrukt todo attempt` / `bind`) through
          `sdlc/procedure/lifecycle/fix-review-findings` naming

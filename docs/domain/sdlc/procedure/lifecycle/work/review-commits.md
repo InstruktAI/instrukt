@@ -49,7 +49,7 @@ Independently review an exact committed head — whether requested by `runner.re
 
 ### 2. Execute the shared review contract
 
-Run the shared review procedure (`sdlc/procedure/lifecycle/review`) over `base..head`, applying every triggered lane against the full changed-file context and its governing current and pending contracts. For directive text, carry the problem, reader role, intended behavior, faithful human direction, rejected alternatives and what remains unchanged into the review context. Author-supplied evidence directs attention and never substitutes for reviewer judgment. Keep unrelated work outside the candidate's declared scope.
+Run the shared review procedure (`sdlc/procedure/lifecycle/review`) over `base..head`, applying every triggered lane and its static review boundary (commits outside a todo lifecycle carry no downstream `verifier` pass) against the full changed-file context and its governing current and pending contracts. For directive text, carry the problem, reader role, intended behavior, faithful human direction, rejected alternatives and what remains unchanged into the review context. Author-supplied evidence directs attention and never substitutes for reviewer judgment. Keep unrelated work outside the candidate's declared scope.
 
 ### 3. Record and return the exact-head verdict
 
