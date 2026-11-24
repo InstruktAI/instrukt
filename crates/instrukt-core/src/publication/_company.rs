@@ -34,9 +34,37 @@ const DOCS: &str = "docs/";
 /// The company index, which selects the home's rendering.
 pub(super) const COMPANY_INDEX: &str = "docs/index.yaml";
 
-/// The keys a company index holds.
-const EXPANDED: &str = "expanded";
-const LISTED: &str = "listed";
+/// A key a company index holds: the closed set of two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompanyIndexKey {
+    /// The documents held in full.
+    Expanded,
+    /// The documents named by one line.
+    Listed,
+}
+
+impl CompanyIndexKey {
+    const ALL: [Self; 2] = [Self::Expanded, Self::Listed];
+
+    /// The key as the index spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Expanded => "expanded",
+            Self::Listed => "listed",
+        }
+    }
+
+    /// The key the index spells `name`; `None` for any other.
+    fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.as_str() == name)
+    }
+}
+
+impl std::fmt::Display for CompanyIndexKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// A company's `docs/index.yaml`: the documents its agents start with in
 /// full, in order, and those named by one line. No other key is allowed.
@@ -115,10 +143,10 @@ pub enum CompanyIndexProblem {
     /// It holds a key other than `expanded` and `listed`.
     KeyNotAllowed(String),
     /// The value of `key` is not a list of document paths.
-    NotAList { key: String },
+    NotAList { key: CompanyIndexKey },
     /// An entry of `key` names no document the home holds.
     Entry {
-        key: String,
+        key: CompanyIndexKey,
         entry: String,
         problem: CompanyReadProblem,
     },
@@ -130,11 +158,15 @@ impl std::fmt::Display for CompanyIndexProblem {
             Self::NotYaml(reason) => write!(f, "is not YAML ({reason})"),
             Self::NotAMapping => write!(
                 f,
-                "is neither a mapping of `{EXPANDED}` and `{LISTED}` nor empty"
+                "is neither a mapping of `{}` and `{}` nor empty",
+                CompanyIndexKey::Expanded,
+                CompanyIndexKey::Listed
             ),
             Self::KeyNotAllowed(key) => write!(
                 f,
-                "holds `{key}`, which is not allowed; a company index holds only `{EXPANDED}` and `{LISTED}`"
+                "holds `{key}`, which is not allowed; a company index holds only `{}` and `{}`",
+                CompanyIndexKey::Expanded,
+                CompanyIndexKey::Listed
             ),
             Self::NotAList { key } => write!(
                 f,
@@ -163,7 +195,7 @@ fn read_index(text: &str) -> Result<CompanyIndex, Vec<CompanyIndexProblem>> {
     };
     let mut problems = Vec::new();
     for (key, value) in &mapping {
-        let Some(key) = key.as_str().filter(|key| [EXPANDED, LISTED].contains(key)) else {
+        let Some(key) = key.as_str().and_then(CompanyIndexKey::named) else {
             let shown = match key {
                 Value::String(text) => text.clone(),
                 other => serde_yaml_ng::to_string(other)
@@ -172,9 +204,7 @@ fn read_index(text: &str) -> Result<CompanyIndex, Vec<CompanyIndexProblem>> {
             problems.push(CompanyIndexProblem::KeyNotAllowed(shown));
             continue;
         };
-        let not_a_list = || CompanyIndexProblem::NotAList {
-            key: key.to_owned(),
-        };
+        let not_a_list = || CompanyIndexProblem::NotAList { key };
         let Value::Sequence(entries) = value else {
             problems.push(not_a_list());
             continue;
@@ -186,7 +216,7 @@ fn read_index(text: &str) -> Result<CompanyIndex, Vec<CompanyIndexProblem>> {
             };
             if !entry.ends_with(".md") {
                 problems.push(CompanyIndexProblem::Entry {
-                    key: key.to_owned(),
+                    key,
                     entry: entry.to_owned(),
                     problem: not_markdown(entry),
                 });
@@ -291,14 +321,14 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         findings: Vec::new(),
     };
     for entry in &index.expanded {
-        let Some(document) = walk.entry(EXPANDED, entry) else {
+        let Some(document) = walk.entry(CompanyIndexKey::Expanded, entry) else {
             continue;
         };
-        walk.bring(&document, Some(&document), true);
+        walk.bring(&document, Traversal::Held { carrier: &document });
     }
     let mut lines = Vec::new();
     for entry in &index.listed {
-        let Some(document) = walk.entry(LISTED, entry) else {
+        let Some(document) = walk.entry(CompanyIndexKey::Listed, entry) else {
             continue;
         };
         if let Some(carrier) = walk.carrier.get(&document) {
@@ -313,7 +343,7 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
                 document: document.clone(),
             }),
         }
-        walk.bring(&document, None, false);
+        walk.bring(&document, Traversal::Checked);
     }
     if !walk.findings.is_empty() {
         plan.findings.extend(walk.findings);
@@ -350,6 +380,16 @@ fn listed_line(document: &str, description: &str) -> String {
     format!("- {document}: {description}")
 }
 
+/// How a walk brings documents in.
+#[derive(Debug, Clone, Copy)]
+enum Traversal<'a> {
+    /// Under the `expanded` entry whose document is `carrier`: each document
+    /// is held in full and recorded as carried by it.
+    Held { carrier: &'a str },
+    /// Under a `listed` entry: each document is checked and nothing is held.
+    Checked,
+}
+
 /// The documents a company rendering holds in full, in order, and what it
 /// found on the way.
 struct Walk<'t> {
@@ -372,14 +412,14 @@ struct Walk<'t> {
 impl Walk<'_> {
     /// The home's document the index entry `entry` of `key` names, or the
     /// finding that it names none.
-    fn entry(&mut self, key: &str, entry: &CompanyEntry) -> Option<String> {
+    fn entry(&mut self, key: CompanyIndexKey, entry: &CompanyEntry) -> Option<String> {
         match self.file(COMPANY_INDEX, entry.as_str()) {
             Ok(path) => Some(path),
             Err(problem) => {
                 self.found(RenderFindingKind::CompanyIndex {
                     index: COMPANY_INDEX.to_owned(),
                     problem: CompanyIndexProblem::Entry {
-                        key: key.to_owned(),
+                        key,
                         entry: entry.as_str().to_owned(),
                         problem,
                     },
@@ -389,10 +429,9 @@ impl Walk<'_> {
         }
     }
 
-    /// Brings in the document at `path` after its own required reads, once:
-    /// each is checked, and held in full when `held`. `carrier` is the
-    /// `expanded` entry's document the walk is under, if any.
-    fn bring(&mut self, path: &str, carrier: Option<&str>, held: bool) {
+    /// Brings in the document at `path` after its own required reads, once,
+    /// each checked and, as `traversal` says, held in full.
+    fn bring(&mut self, path: &str, traversal: Traversal<'_>) {
         if let Some(at) = self.visiting.iter().position(|open| open == path) {
             let mut documents = self.visiting[at..].to_vec();
             documents.push(path.to_owned());
@@ -408,7 +447,7 @@ impl Walk<'_> {
         self.visiting.push(path.to_owned());
         for read in &document.reads {
             match self.document(path, read) {
-                Ok(read) => self.bring(&read, carrier, held),
+                Ok(read) => self.bring(&read, traversal),
                 Err(problem) => self.found(RenderFindingKind::CompanyRead {
                     document: path.to_owned(),
                     read: read.clone(),
@@ -418,10 +457,8 @@ impl Walk<'_> {
         }
         self.visiting.pop();
         self.done.insert(path.to_owned());
-        if let Some(carrier) = carrier {
+        if let Traversal::Held { carrier } = traversal {
             self.carrier.insert(path.to_owned(), carrier.to_owned());
-        }
-        if held {
             self.order.push(document.body);
         }
     }
@@ -578,7 +615,7 @@ mod tests {
                 CompanyIndexProblem::KeyNotAllowed("description".to_owned()),
                 CompanyIndexProblem::KeyNotAllowed("purpose".to_owned()),
                 CompanyIndexProblem::NotAList {
-                    key: LISTED.to_owned()
+                    key: CompanyIndexKey::Listed
                 },
             ]
         );
@@ -611,7 +648,7 @@ mod tests {
         let problems =
             read_index("expanded: [index.yaml, general/policy/commits, sdlc, 3]\n").unwrap_err();
         let entry = |entry: &str, problem| CompanyIndexProblem::Entry {
-            key: EXPANDED.to_owned(),
+            key: CompanyIndexKey::Expanded,
             entry: entry.to_owned(),
             problem,
         };
@@ -622,7 +659,7 @@ mod tests {
                 entry("general/policy/commits", CompanyReadProblem::Snippet),
                 entry("sdlc", CompanyReadProblem::Domain),
                 CompanyIndexProblem::NotAList {
-                    key: EXPANDED.to_owned()
+                    key: CompanyIndexKey::Expanded
                 },
             ]
         );
@@ -684,10 +721,10 @@ mod tests {
         let index = &schema["$defs"]["CompanyIndex"];
         let mut keys: Vec<&String> = index["properties"].as_object().unwrap().keys().collect();
         keys.sort();
-        assert_eq!(keys, [EXPANDED, LISTED]);
+        assert_eq!(keys, CompanyIndexKey::ALL.map(CompanyIndexKey::as_str));
         assert_eq!(index["additionalProperties"], false);
-        for key in [EXPANDED, LISTED] {
-            assert_eq!(index["properties"][key]["type"], "array");
+        for key in CompanyIndexKey::ALL {
+            assert_eq!(index["properties"][key.as_str()]["type"], "array");
         }
         assert_eq!(
             schema["$defs"]["CompanyEntry"]["pattern"],
