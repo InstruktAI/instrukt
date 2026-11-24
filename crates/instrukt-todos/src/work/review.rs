@@ -1362,22 +1362,31 @@ struct RecordApproval {
 }
 
 impl RecordApproval {
+    /// The pull request this approval cites: for a build-review approval,
+    /// the todo's pull request once `reflected` — the pull request and how
+    /// many build verdicts were reflected there — shows it reflected there as
+    /// a review; never for a reviewed preparation head.
+    fn cited_pull(&self, reflected: Option<(u64, usize)>) -> Option<u64> {
+        match (self.build, reflected) {
+            (Some(index), Some((pull, reviews))) if index <= reviews => Some(pull),
+            _ => None,
+        }
+    }
+
     /// The covering item's reference (`github-apps`, Verdict publication):
-    /// the todo, the approval and its report's digest, and for a build-review
-    /// approval the todo's pull request once `reflected` — the pull request
-    /// and how many build verdicts were reflected there — shows it reflected
-    /// there as a review.
+    /// the todo, the approval and its report's digest, and the pull request
+    /// it cites.
     fn reference(
         &self,
         todo: &instrukt_core::ids::TodoSlug,
         reflected: Option<(u64, usize)>,
     ) -> String {
         let (head, report) = (&self.head, &self.report);
-        match (self.build, reflected) {
-            (Some(index), Some((pull, reviews))) if index <= reviews => format!(
+        match (self.build, self.cited_pull(reflected)) {
+            (Some(_), Some(pull)) => format!(
                 "build-review approval of {head} in todo {todo} ({report}), reflected as a review on pull request #{pull}"
             ),
-            (Some(_), _) => format!("build-review approval of {head} in todo {todo} ({report})"),
+            (Some(_), None) => format!("build-review approval of {head} in todo {todo} ({report})"),
             (None, _) => format!("preparation-head approval of {head} in todo {todo} ({report})"),
         }
     }
@@ -2063,27 +2072,20 @@ mod tests {
     #[test]
     fn a_finalized_approval_cites_the_todos_pull_request_once_reflected_there() {
         use crate::evidence::BuildVerdict::{Approve, ChangesRequested};
-        let todo = instrukt_core::ids::TodoSlug::parse("shipped").unwrap();
         let facts = [build(ChangesRequested, 'a'), build(Approve, 'a')];
         let approval = record_approval(&facts, Some(&sha('a'))).unwrap();
         assert_eq!(approval.build, Some(2));
-        assert!(
-            approval
-                .reference(&todo, Some((12, 2)))
-                .ends_with("reflected as a review on pull request #12")
-        );
-        assert!(
-            !approval
-                .reference(&todo, Some((12, 1)))
-                .contains("pull request"),
+        assert_eq!(approval.cited_pull(Some((12, 2))), Some(12));
+        assert_eq!(
+            approval.cited_pull(Some((12, 1))),
+            None,
             "not yet reflected there"
         );
-        assert!(!approval.reference(&todo, None).contains("pull request"));
+        assert_eq!(approval.cited_pull(None), None);
     }
 
     #[test]
     fn a_reviewed_preparation_heads_approval_cites_no_pull_request() {
-        let todo = instrukt_core::ids::TodoSlug::parse("shipped").unwrap();
         let facts = [crate::evidence::StampFact::PreparationHeadReviewed {
             verdict: crate::evidence::ReviewVerdict::Approve,
             head: sha('a'),
@@ -2091,10 +2093,6 @@ mod tests {
         }];
         let approval = record_approval(&facts, Some(&sha('a'))).unwrap();
         assert_eq!(approval.build, None);
-        assert!(
-            !approval
-                .reference(&todo, Some((12, 5)))
-                .contains("pull request")
-        );
+        assert_eq!(approval.cited_pull(Some((12, 5))), None);
     }
 }
