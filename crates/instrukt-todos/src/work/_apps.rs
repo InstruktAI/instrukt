@@ -161,13 +161,14 @@ impl GitHubAccess {
         })
     }
     /// A client of `repository` under the publication credential of the
-    /// identity the `commit-reviewer` role selects.
+    /// identity the `commit-reviewer` role selects. `clock` is read here, as
+    /// issuance begins, never earlier in the caller's pass.
     pub(crate) fn review_client(
         &self,
         repository: &str,
-        now: Timestamp,
+        clock: &dyn Fn() -> Timestamp,
     ) -> Result<super::_github::GitHub, AppError> {
-        let clock = Clock::starting(now);
+        let clock = Clock::starting(clock());
         self.with_apps(|apps| {
             let credential = apps.issue(
                 repository,

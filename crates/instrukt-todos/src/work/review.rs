@@ -847,8 +847,9 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
         candidate: &CommitSha,
         pulls: &[u64],
         now: Timestamp,
+        clock: &dyn Fn() -> Timestamp,
     ) -> Result<instrukt_runner::interfaces::CandidateFinding, String> {
-        candidate_finding(self, project, repository, candidate, pulls, now)
+        candidate_finding(self, project, repository, candidate, pulls, now, clock)
             .map_err(|error| error.to_string())
     }
 
@@ -859,6 +860,7 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
         eligible: &[(u64, CommitSha)],
         candidate: Option<&CommitSha>,
         now: Timestamp,
+        clock: &dyn Fn() -> Timestamp,
     ) -> Result<(), String> {
         publish(
             &self.home,
@@ -868,6 +870,7 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
             eligible,
             candidate,
             now,
+            clock,
         )
         .map_err(|error| error.to_string())
     }
@@ -877,7 +880,12 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
 /// here, and recognises what the reviewer bot already published for each
 /// eligible head this computer holds no evidence of (`github-apps`, Verdict
 /// publication). The tick's alone; it retires the publication store's
-/// history, keeping what concerns the active `candidate`.
+/// history, keeping what concerns the active `candidate`. Its credential is
+/// issued on `clock`; `now` dates its records.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the tick's publication pass borrows each input from its own owner"
+)]
 fn publish(
     home: &Home,
     access: &super::GitHubAccess,
@@ -886,9 +894,10 @@ fn publish(
     eligible: &[(u64, CommitSha)],
     candidate: Option<&CommitSha>,
     now: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<(), ReviewError> {
     let gh = access
-        .review_client(repository, now)
+        .review_client(repository, clock)
         .map_err(|error| refused(error.to_string()))?;
     let reviewer = access
         .review_identities()
@@ -1550,6 +1559,7 @@ fn candidate_finding(
     candidate: &CommitSha,
     pulls: &[u64],
     now: Timestamp,
+    clock: &dyn Fn() -> Timestamp,
 ) -> Result<instrukt_runner::interfaces::CandidateFinding, ReviewError> {
     use instrukt_runner::interfaces::CandidateFinding;
     let held = evidence(&work.home, &project.slug, candidate)?;
@@ -1616,7 +1626,7 @@ fn candidate_finding(
             tracing::info!(event = "review_derived_approval_recorded", project = %project.slug, candidate = %candidate, items = items.len());
             let gh = work
                 .access
-                .review_client(repository, now)
+                .review_client(repository, clock)
                 .map_err(|error| refused(error.to_string()))?;
             let reviewer = work
                 .access

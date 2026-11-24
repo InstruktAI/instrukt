@@ -48,7 +48,11 @@ pub(crate) struct ReviewPass<'a> {
     pub repository: &'a str,
     pub token: &'a str,
     pub port: &'a dyn AutomaticReview,
+    /// The moment the wake began.
     pub now: Timestamp,
+    /// The operator's clock, read again where publication's credential is
+    /// issued: the pass's own requests come first.
+    pub clock: &'a dyn Fn() -> Timestamp,
 }
 
 /// The remote the project's checkout is fetched from.
@@ -98,6 +102,7 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         &eligible,
         pass.candidate,
         pass.now,
+        pass.clock,
     ) {
         tracing::warn!(event = "review_publication_failed", project = %project, error = %error);
     }
@@ -176,9 +181,14 @@ fn derive_candidate(
         .filter(|(_, head)| head == candidate)
         .map(|(number, _)| *number)
         .collect();
-    let finding =
-        pass.port
-            .candidate(pass.project, pass.repository, candidate, &pulls, pass.now)?;
+    let finding = pass.port.candidate(
+        pass.project,
+        pass.repository,
+        candidate,
+        &pulls,
+        pass.now,
+        pass.clock,
+    )?;
     tracing::info!(event = "review_candidate_derived", project = %project, candidate = %candidate, finding = ?finding);
     Ok(Some(finding))
 }
@@ -262,11 +272,142 @@ fn pinned_base(
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read as _, Write as _};
+    use std::sync::Mutex;
+
+    use instrukt_core::ids::ProjectSlug;
+
     use super::*;
-    use crate::interfaces::CandidateFinding;
+    use crate::interfaces::{CandidateFinding, ProjectRef, ReviewIdentities};
 
     fn sha(c: char) -> CommitSha {
         CommitSha::parse(&c.to_string().repeat(40)).unwrap()
+    }
+
+    /// A GitHub that answers one pull-request listing with no pull request.
+    fn listing_no_pulls() -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let served = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.windows(4).any(|end| end == b"\r\n\r\n") {
+                let read = stream.read(&mut chunk).unwrap();
+                assert!(read > 0, "the listing request ended early");
+                request.extend_from_slice(&chunk[..read]);
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                      Content-Length: 2\r\nConnection: close\r\n\r\n[]",
+                )
+                .unwrap();
+        });
+        (url, served)
+    }
+
+    /// Work holding no verdict, noting the moment publication and candidate
+    /// derivation would issue their credential.
+    #[derive(Default)]
+    struct Issuing {
+        issued: Mutex<Vec<(&'static str, Timestamp)>>,
+    }
+
+    impl AutomaticReview for Issuing {
+        fn readiness(
+            &self,
+            _repository: &str,
+            _now: Timestamp,
+        ) -> instrukt_core::interfaces::ReviewReadiness {
+            // Asked before the review pass, never within it.
+            instrukt_core::interfaces::ReviewReadiness::CannotAsk("not asked here".into())
+        }
+        fn identities(&self) -> Result<ReviewIdentities, String> {
+            Ok(ReviewIdentities {
+                trusted_bots: Vec::new(),
+                reviewer: instrukt_core::github::Bot {
+                    id: 1,
+                    node_id: "BOT_1".into(),
+                    login: "reviewer[bot]".into(),
+                },
+            })
+        }
+        fn todo_pulls(&self, _project: &ProjectSlug) -> Result<BTreeSet<u64>, String> {
+            Ok(BTreeSet::new())
+        }
+        fn carries_verdict(
+            &self,
+            _project: &ProjectSlug,
+            _head: &CommitSha,
+        ) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn needs_work(&self, _project: &ProjectSlug, _commit: &CommitSha) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn candidate(
+            &self,
+            _project: &ProjectRef,
+            _repository: &str,
+            _candidate: &CommitSha,
+            _pulls: &[u64],
+            _now: Timestamp,
+            clock: &dyn Fn() -> Timestamp,
+        ) -> Result<CandidateFinding, String> {
+            self.issued.lock().unwrap().push(("candidate", clock()));
+            Ok(CandidateFinding::Settled)
+        }
+        fn publish(
+            &self,
+            _project: &ProjectSlug,
+            _repository: &str,
+            _eligible: &[(u64, CommitSha)],
+            _candidate: Option<&CommitSha>,
+            _now: Timestamp,
+            clock: &dyn Fn() -> Timestamp,
+        ) -> Result<(), String> {
+            self.issued.lock().unwrap().push(("publish", clock()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn publication_and_candidate_derivation_issue_on_the_clock_not_when_the_wake_began() {
+        let dir = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        let woke: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
+        // The pass's own requests have taken their time by then.
+        let issuing: Timestamp = "2026-01-01T00:00:42Z".parse().unwrap();
+        let state = RunnerState::new(&home);
+        let log = DbEventLog::new(state.clone(), woke);
+        let project = ProjectRef {
+            slug: ProjectSlug::parse("demo").unwrap(),
+            root: dir.path().join("repo"),
+        };
+        let (api_url, served) = listing_no_pulls();
+        let port = Issuing::default();
+        let candidate = sha('c');
+        let clock = || issuing;
+        observe(&ReviewPass {
+            home: &home,
+            candidate: Some(&candidate),
+            state: &state,
+            log: &log,
+            project: &project,
+            api_url: &api_url,
+            repository: "acme/demo",
+            token: "observation",
+            port: &port,
+            now: woke,
+            clock: &clock,
+        })
+        .unwrap();
+        served.join().unwrap();
+        assert_eq!(
+            *port.issued.lock().unwrap(),
+            vec![("publish", issuing), ("candidate", issuing)]
+        );
     }
 
     #[test]

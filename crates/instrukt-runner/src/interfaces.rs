@@ -816,7 +816,9 @@ pub trait AutomaticReview: Send + Sync {
     ) -> Result<bool, String>;
     /// Derives whether the active integration `candidate` is covered and
     /// records, publishes or withdraws its derived approval accordingly.
-    /// `pulls` are the eligible pull requests whose head it is.
+    /// `pulls` are the eligible pull requests whose head it is. `now` is the
+    /// pass's moment; `clock` is read again when publication's credential is
+    /// issued, since coverage may first have spent seconds.
     fn candidate(
         &self,
         project: &ProjectRef,
@@ -824,12 +826,15 @@ pub trait AutomaticReview: Send + Sync {
         candidate: &instrukt_core::ids::CommitSha,
         pulls: &[u64],
         now: Timestamp,
+        clock: &dyn Fn() -> Timestamp,
     ) -> Result<CandidateFinding, String>;
     /// Publishes every verdict this computer holds for `project`, and
     /// recognises what the reviewer bot already published for each eligible
     /// head it holds none of. `eligible` is each eligible pull request with
     /// its current head, as this pass observed them; `candidate` is the
     /// active integration candidate, whose derived approval is current.
+    /// `now` is the pass's moment; `clock` is read again when publication's
+    /// credential is issued.
     fn publish(
         &self,
         project: &instrukt_core::ids::ProjectSlug,
@@ -837,6 +842,7 @@ pub trait AutomaticReview: Send + Sync {
         eligible: &[(u64, instrukt_core::ids::CommitSha)],
         candidate: Option<&instrukt_core::ids::CommitSha>,
         now: Timestamp,
+        clock: &dyn Fn() -> Timestamp,
     ) -> Result<(), String>;
 }
 
