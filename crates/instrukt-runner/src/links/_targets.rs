@@ -22,13 +22,30 @@ pub(super) struct Targets {
 
 struct LinkWork {
     active: bool,
-    /// The source changed since this link's last pass started.
-    changed: bool,
-    /// The source asked for another read since this link's last pass started.
-    requested: bool,
     job: Option<JoinHandle<Result<bool, LinkError>>>,
-    retry: Option<Instant>,
+    standing: Standing,
     delay: Duration,
+}
+
+/// What the source asked of a link since its last pass started. A change asks
+/// more than a request: it also cuts a failed pass's retry short.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Mark {
+    /// The source asked its readers to read again.
+    Request,
+    /// The source changed.
+    Change,
+}
+
+/// A link's standing between its passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    /// No failed pass awaits its retry; what the source asked since the last
+    /// pass started, if anything.
+    Ready(Option<Mark>),
+    /// A failed pass is retried at `at`; only a source change, recorded in
+    /// `changed`, starts a pass sooner.
+    Retrying { at: Instant, changed: bool },
 }
 
 /// Why a link starts a pass.
@@ -44,7 +61,7 @@ enum Cause {
 
 impl Targets {
     pub(super) fn source_changed(&mut self, home: &Home) {
-        self.reconcile(home, LinkWork::change);
+        self.reconcile(home, Mark::Change);
     }
 
     /// The source asks for another read: an earlier read may have come
@@ -52,12 +69,12 @@ impl Targets {
     /// one opened since the source last changed, except one that awaits the
     /// retry of a failed pass, which keeps to that retry.
     pub(super) fn read_again(&mut self, home: &Home) {
-        self.reconcile(home, LinkWork::request);
+        self.reconcile(home, Mark::Request);
     }
 
     /// Reads which links are active and marks each one. A failed read is
     /// recorded and the scan is tried again after a growing delay.
-    fn reconcile(&mut self, home: &Home, mark: fn(&mut LinkWork)) {
+    fn reconcile(&mut self, home: &Home, mark: Mark) {
         match active_link_ids(home) {
             Ok(active) => {
                 self.next_scan = None;
@@ -73,14 +90,14 @@ impl Targets {
 
     /// Makes `active` the links served, marking each: a link not yet known is
     /// admitted, and one no longer active is retired once its pass ends.
-    fn admit(&mut self, active: Vec<String>, mark: fn(&mut LinkWork)) {
+    fn admit(&mut self, active: Vec<String>, mark: Mark) {
         for work in self.links.values_mut() {
             work.active = false;
         }
         for link in active {
             let work = self.links.entry(link).or_insert_with(LinkWork::new);
             work.active = true;
-            mark(work);
+            work.mark(mark);
         }
     }
 
@@ -153,10 +170,8 @@ impl LinkWork {
     fn new() -> Self {
         Self {
             active: true,
-            changed: false,
-            requested: false,
             job: None,
-            retry: None,
+            standing: Standing::Ready(None),
             delay: FIRST_RETRY,
         }
     }
@@ -165,46 +180,41 @@ impl LinkWork {
     /// link awaits the retry of a failed pass.
     fn due(&self, now: Instant) -> Option<Cause> {
         if self.job.is_some() || !self.active {
-            None
-        } else if self.changed {
-            Some(Cause::Change)
-        } else if self.retry.is_some_and(|at| at <= now) {
-            Some(Cause::Retry)
-        } else if self.requested {
-            Some(Cause::Request)
-        } else {
-            None
+            return None;
+        }
+        match self.standing {
+            Standing::Ready(Some(Mark::Change)) | Standing::Retrying { changed: true, .. } => {
+                Some(Cause::Change)
+            }
+            Standing::Retrying { at, .. } if at <= now => Some(Cause::Retry),
+            Standing::Ready(Some(Mark::Request)) => Some(Cause::Request),
+            Standing::Ready(None) | Standing::Retrying { .. } => None,
         }
     }
-    /// A source change: a pass starts whatever the link awaits.
-    fn change(&mut self) {
-        self.changed = true;
-    }
-    /// A request to read again. A link awaiting a failed pass's retry keeps
-    /// its deadline and takes no mark; a running pass keeps the mark for
-    /// when it ends.
-    fn request(&mut self) {
-        if self.retry.is_none() {
-            self.requested = true;
+    /// The source asks something of this link. A running pass keeps the mark
+    /// for when it ends. A link awaiting a failed pass's retry keeps its
+    /// deadline and takes only a change.
+    fn mark(&mut self, mark: Mark) {
+        match &mut self.standing {
+            Standing::Ready(held) => *held = Some(held.map_or(mark, |held| held.max(mark))),
+            Standing::Retrying { changed, .. } => *changed |= mark == Mark::Change,
         }
     }
     /// A pass starts: it reads everything the marks asked for.
     fn started(&mut self) {
-        self.changed = false;
-        self.requested = false;
-        self.retry = None;
+        self.standing = Standing::Ready(None);
     }
-    /// A pass ended. A failed or uncertain one drops a request received
-    /// while it ran: its retry deadline governs.
+    /// A pass ended. A failed or uncertain one is retried after its delay; it
+    /// keeps a change received while it ran and drops a request.
     fn completed(&mut self, now: Instant, failed: bool) {
-        self.retry = failed.then(|| now + self.delay);
-        self.delay = if failed {
-            (self.delay * 2).min(MOST_RETRY)
-        } else {
-            FIRST_RETRY
-        };
         if failed {
-            self.requested = false;
+            self.standing = Standing::Retrying {
+                at: now + self.delay,
+                changed: self.standing == Standing::Ready(Some(Mark::Change)),
+            };
+            self.delay = (self.delay * 2).min(MOST_RETRY);
+        } else {
+            self.delay = FIRST_RETRY;
         }
     }
 }
@@ -218,7 +228,7 @@ mod tests {
         let now = Instant::now();
         let mut work = LinkWork::new();
         assert_eq!(work.due(now), None);
-        work.request();
+        work.mark(Mark::Request);
         assert_eq!(work.due(now), Some(Cause::Request));
     }
 
@@ -228,10 +238,10 @@ mod tests {
         let mut work = LinkWork::new();
         work.started();
         work.completed(now, true);
-        let deadline = work.retry;
-        work.request();
+        let standing = work.standing;
+        work.mark(Mark::Request);
         assert_eq!(work.due(now), None);
-        assert_eq!(work.retry, deadline);
+        assert_eq!(work.standing, standing);
         assert_eq!(work.due(now + FIRST_RETRY), Some(Cause::Retry));
     }
 
@@ -239,9 +249,9 @@ mod tests {
     fn a_request_received_during_a_pass_is_kept_when_that_pass_succeeds() {
         let now = Instant::now();
         let mut work = LinkWork::new();
-        work.request();
+        work.mark(Mark::Request);
         work.started();
-        work.request();
+        work.mark(Mark::Request);
         work.completed(now, false);
         assert_eq!(work.due(now), Some(Cause::Request));
     }
@@ -250,9 +260,9 @@ mod tests {
     fn a_request_received_during_a_pass_is_dropped_when_that_pass_fails() {
         let now = Instant::now();
         let mut work = LinkWork::new();
-        work.request();
+        work.mark(Mark::Request);
         work.started();
-        work.request();
+        work.mark(Mark::Request);
         work.completed(now, true);
         assert_eq!(work.due(now), None);
         assert_eq!(work.due(now + FIRST_RETRY), Some(Cause::Retry));
@@ -262,9 +272,9 @@ mod tests {
     fn a_request_admits_a_link_opened_since_the_source_last_changed() {
         let now = Instant::now();
         let mut targets = Targets::default();
-        targets.admit(vec!["known".into()], LinkWork::change);
+        targets.admit(vec!["known".into()], Mark::Change);
         targets.links.get_mut("known").unwrap().started();
-        targets.admit(vec!["known".into(), "opened".into()], LinkWork::request);
+        targets.admit(vec!["known".into(), "opened".into()], Mark::Request);
         assert_eq!(targets.links["opened"].due(now), Some(Cause::Request));
         assert_eq!(targets.links["known"].due(now), Some(Cause::Request));
     }
@@ -273,7 +283,7 @@ mod tests {
     fn a_request_retires_a_closed_link_and_keeps_a_failed_links_deadline() {
         let now = Instant::now();
         let mut targets = Targets::default();
-        targets.admit(vec!["failed".into(), "closed".into()], LinkWork::change);
+        targets.admit(vec!["failed".into(), "closed".into()], Mark::Change);
         for work in targets.links.values_mut() {
             work.started();
         }
@@ -282,12 +292,12 @@ mod tests {
             .get_mut("failed")
             .unwrap()
             .completed(now, true);
-        let deadline = targets.links["failed"].retry;
-        targets.admit(vec!["failed".into()], LinkWork::request);
+        let standing = targets.links["failed"].standing;
+        targets.admit(vec!["failed".into()], Mark::Request);
         assert_eq!(targets.links["closed"].due(now), None);
         assert!(!targets.links["closed"].active);
         assert_eq!(targets.links["failed"].due(now), None);
-        assert_eq!(targets.links["failed"].retry, deadline);
+        assert_eq!(targets.links["failed"].standing, standing);
         assert_eq!(
             targets.links["failed"].due(now + FIRST_RETRY),
             Some(Cause::Retry)
@@ -300,7 +310,10 @@ mod tests {
         let mut work = LinkWork::new();
         work.started();
         work.completed(now, true);
-        assert!(!work.changed && !work.requested);
+        assert!(matches!(
+            work.standing,
+            Standing::Retrying { changed: false, .. }
+        ));
         assert_eq!(work.due(now + FIRST_RETRY), Some(Cause::Retry));
     }
 }
