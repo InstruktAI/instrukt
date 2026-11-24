@@ -47,12 +47,13 @@ mod native {
     /// How long a file that is not registered waits for its next registration
     /// attempt: the two seconds of history's freshness contract.
     const REGISTRATION_RETRY: Duration = Duration::from_secs(2);
-    /// How long after a change the first request to read again becomes due:
-    /// above the publication lag the late-readable commits needed when the
-    /// host was not loaded, so the first request usually suffices.
+    /// How long after a change the first request to read again becomes due.
+    /// It exceeds the time SQLite usually takes to publish a commit after the
+    /// file write that announced it, so one request usually reaches the commit.
     const FIRST_REQUEST: Duration = Duration::from_millis(250);
-    /// The longest delay between two requests to read again: the two seconds
-    /// of history's freshness contract.
+    /// The longest delay between two requests to read again: the most a
+    /// reader waits to be asked to read a commit that became readable without
+    /// a file event.
     const LONGEST_REQUEST: Duration = Duration::from_secs(2);
 
     /// When readers are next asked to read again, and the delay that brought
@@ -98,14 +99,21 @@ mod native {
         failing: bool,
     }
 
+    /// What the producer waits for besides native notifications.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Schedule {
+        /// A file is not registered: the files not registered are tried again
+        /// at this time, and no reader is asked to read again.
+        Registering(Instant),
+        /// Both files are registered: readers are asked to read again.
+        Requesting(Requests),
+    }
+
     struct Notifications {
         receive: Receiver<Result<(), SourceError>>,
         watcher: SourceWatcher,
         files: [Watched; 2],
-        /// When the files not registered are tried again; none while both are.
-        next_attempt: Option<Instant>,
-        /// Requests to read again; only while both files are registered.
-        requests: Option<Requests>,
+        schedule: Schedule,
     }
     impl Notifications {
         /// Registers each file again: one replaced under its name is followed,
@@ -114,43 +122,42 @@ mod native {
             for file in &mut self.files {
                 register(&mut self.watcher, file)?;
             }
-            self.schedule();
             Ok(())
         }
         /// Tries the files not registered, when their time has come. Whether one
         /// of them is registered now, which counts as a change.
         fn attempt_due(&mut self) -> Result<bool, SourceError> {
-            if self.next_attempt.is_none_or(|at| Instant::now() < at) {
+            let Schedule::Registering(at) = self.schedule else {
+                return Ok(false);
+            };
+            if Instant::now() < at {
                 return Ok(false);
             }
             let mut established = false;
             for file in self.files.iter_mut().filter(|file| !file.registered) {
                 established |= register(&mut self.watcher, file)?;
             }
-            self.schedule();
+            if !established {
+                self.schedule = Schedule::Registering(Instant::now() + REGISTRATION_RETRY);
+            }
             Ok(established)
         }
-        fn schedule(&mut self) {
-            self.next_attempt = self
-                .files
-                .iter()
-                .any(|file| !file.registered)
-                .then(|| Instant::now() + REGISTRATION_RETRY);
-            if self.next_attempt.is_some() {
-                self.requests = None;
-            }
-        }
         /// A source change: requests to read again start from the shortest
-        /// delay, when both files are registered.
+        /// delay when both files are registered; otherwise the files not
+        /// registered are tried again later.
         fn changed(&mut self) -> SourceWake {
             let now = Instant::now();
-            if self.next_attempt.is_some() {
-                self.requests = None;
-            } else if let Some(requests) = &mut self.requests {
-                requests.restart(now);
+            self.schedule = if self.files.iter().any(|file| !file.registered) {
+                Schedule::Registering(now + REGISTRATION_RETRY)
             } else {
-                self.requests = Some(Requests::start(now));
-            }
+                match self.schedule {
+                    Schedule::Requesting(mut requests) => {
+                        requests.restart(now);
+                        Schedule::Requesting(requests)
+                    }
+                    Schedule::Registering(_) => Schedule::Requesting(Requests::start(now)),
+                }
+            };
             SourceWake::Changed
         }
     }
@@ -159,16 +166,11 @@ mod native {
             if self.attempt_due()? {
                 return Ok(self.changed());
             }
-            let now = Instant::now();
-            let bound = [
-                self.next_attempt,
-                self.requests.map(|requests| requests.due),
-            ]
-            .into_iter()
-            .flatten()
-            .fold(timeout, |bound, at| {
-                bound.min(at.saturating_duration_since(now))
-            });
+            let at = match self.schedule {
+                Schedule::Registering(at) => at,
+                Schedule::Requesting(requests) => requests.due,
+            };
+            let bound = timeout.min(at.saturating_duration_since(Instant::now()));
             match self.receive.recv_timeout(bound) {
                 Ok(result) => {
                     result?;
@@ -178,10 +180,8 @@ mod native {
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if self.attempt_due()? {
                         Ok(self.changed())
-                    } else if self
-                        .requests
-                        .as_mut()
-                        .is_some_and(|requests| requests.take(Instant::now()))
+                    } else if let Schedule::Requesting(requests) = &mut self.schedule
+                        && requests.take(Instant::now())
                     {
                         Ok(SourceWake::ReadAgain)
                     } else {
@@ -242,8 +242,8 @@ mod native {
             receive,
             watcher,
             files: [file(target), file(wal)],
-            next_attempt: None,
-            requests: None,
+            // Replaced by the change below, once registration is known.
+            schedule: Schedule::Registering(Instant::now()),
         };
         notifications.register_all()?;
         notifications.changed();
