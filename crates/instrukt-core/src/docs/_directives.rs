@@ -18,7 +18,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::_corpus::{Corpus, Lens, Stray, Version, View};
+use super::_corpus::{Corpus, Lens, Stray, View};
 use super::_finding::{Finding, FindingCode};
 use super::_position::{INDEX_FILE, Position, PositionIndex};
 use super::_refs::{RefTarget, Reference};
@@ -174,15 +174,6 @@ struct Compiled<'w, 'c> {
 }
 
 impl Compiled<'_, '_> {
-    /// Checks one compiled file, and then what it requires.
-    fn file(&mut self, path: &Path, body: &str) -> Result<(), DocsError> {
-        self.config_in(path, &current(body));
-        for read in _render::dependency_reads(body, Lens::Current, self.cx)? {
-            self.reference(&read)?;
-        }
-        Ok(())
-    }
-
     fn reference(&mut self, reference: &Reference) -> Result<(), DocsError> {
         let Some(target) = &reference.target else {
             return Ok(());
@@ -197,10 +188,12 @@ impl Compiled<'_, '_> {
                 let Some(snippet) = self.corpus.snippet(id) else {
                     return Ok(());
                 };
-                if let View::Visible { version, .. } = snippet.view(Lens::Current) {
-                    let path = version.path().to_path_buf();
-                    let body = version.body().to_owned();
-                    self.file(&path, &body)?;
+                // The snippet as compilation reads it, then what it requires.
+                if let View::Visible { version, body } = snippet.view(Lens::Current) {
+                    self.config_in(version.path(), &body);
+                    for read in _render::dependency_reads(version.body(), Lens::Current, self.cx)? {
+                        self.reference(&read)?;
+                    }
                 }
             }
             // A bare-domain read renders that domain's `expanded` set.
@@ -239,12 +232,6 @@ impl Compiled<'_, '_> {
             self.out.push(Finding::new(path, code, Some(value)));
         }
     }
-}
-
-/// `body` as compilation reads it: the current contract, planned material
-/// resolved away.
-fn current(body: &str) -> String {
-    Version::parse("", body, None, None, Path::new("")).lens_body(Lens::Current)
 }
 
 #[cfg(test)]
