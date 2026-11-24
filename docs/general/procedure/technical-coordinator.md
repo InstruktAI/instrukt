@@ -55,6 +55,20 @@ such a session's authority.
 
 ## Steps
 
+### Configured runtime operations
+
+Where the active runtime lists, reads, and messages threads, use these
+configured action values for read-only discovery and confirmed-overlap
+coordination:
+
+<!-- @config: runtime.look_around -->
+
+<!-- @config: runtime.inspect_thread -->
+
+<!-- @config: runtime.read_thread -->
+
+<!-- @config: runtime.message_peer -->
+
 1. **Anchor home scope and shared technical state.** Identify whether this
    session operates for a company home or at platform level. Where relayed
    messages arrive inside platform-framed envelopes, read speaker and context
@@ -67,11 +81,24 @@ such a session's authority.
      repository or with `--project <slug>`) and `instrukt todo show <slug>` in
      that repository for overlapping items;
    - declared MCP servers via `instrukt mcp list` and current repository state
-     (`git status`, open branches, and recent commits).
+     (`git status`, open branches, active worktrees via `git worktree list`,
+     and recent commits);
+   - the home's open, unsettled threads: where the active runtime lists and
+     reads threads, discover them with `runtime.look_around` and inspect
+     plausible overlaps read-only with `runtime.inspect_thread` and
+     `runtime.read_thread` (opening and latest messages), keeping private
+     direct-message details in the conversation where they were shared and
+     never quoting them into another channel. Never message or interrupt
+     another thread merely to ask what it is doing; message it with
+     `runtime.message_peer` only once read-only inspection confirms a real
+     overlap whose boundary or sequencing needs coordination.
 
    Treat the git-backed `docs/`, active `instrukt todo` ledger, and repository
    state as the single source of shared technical truth across requesters,
-   channels, and direct sessions.
+   channels, and direct sessions. Before filing any todo, run the bounded
+   creation check of `sdlc/policy/todo-creation-discipline`, so the human sees
+   what existing pipeline work already covers and each new todo stays minimal
+   and sequenced after the work it depends on (`instrukt todo create --after`).
 
 2. **Reconcile overlaps across requesters.** Check incoming requests against
    active todos, in-flight branches, and recorded decisions before starting new
@@ -104,14 +131,17 @@ such a session's authority.
      on the company's or operator's target container host — using any adopted
      deployment domain when present, or the configured host infrastructure —
      and connect it over MCP.
-   - **Lane 3 — Lean reviewed v1 prototype (in-context worktree delivery).**
-     When custom glue, a thin MCP adapter, or a focused v1 is needed and the
-     work satisfies the settled, bounded, explicitly authorized in-context
-     criteria of `sdlc/policy/todo-creation-discipline`, execute it in a
-     short-lived one-off worktree without speculative abstractions and route
-     its exact committed head through independent commit review before
-     integration (`general/policy/commits`,
-     `sdlc/procedure/lifecycle/work/review-commits`).
+   - **Lane 3 — Bounded settled change (in-context worktree delivery).** When
+     small custom glue, a thin MCP adapter, or another bounded change is
+     settled, fits one sitting, needs neither a plan, a builder, nor a
+     handoff, and is explicitly authorized — the in-context criteria of
+     `sdlc/policy/todo-creation-discipline` — execute it in a short-lived
+     one-off worktree without speculative abstractions and route its exact
+     committed head through independent commit review before integration
+     (`general/policy/commits`,
+     `sdlc/procedure/lifecycle/work/review-commits`). Work that is not
+     settled, needs planning, builders, or a handoff, or will not finish
+     cleanly in one sitting goes to Lane 4.
    - **Lane 4 — Steady-state SDLC (`instrukt todo`).** Whenever custom software
      requires planning, builders, handoffs, or contested design judgment under
      `sdlc/policy/todo-creation-discipline` — or starts a new repository via
@@ -159,7 +189,7 @@ such a session's authority.
   against current vendor documentation and `instrukt mcp discover`; either
   scope a thin adapter under Lane 3/4 as `sdlc/policy/todo-creation-discipline`
   decides, or step explicitly to the next lane.
-- **In-context prototype work expands beyond settled scope.** Move follow-on
+- **In-context work expands beyond settled scope.** Move follow-on
   work into Lane 4 by recording its behavioral contracts and filing a todo
   under `sdlc/policy/todo-creation-discipline`.
 - **Missing deployment host, adopted deployment domain, or operator-only

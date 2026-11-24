@@ -16,6 +16,8 @@ description: Decide whether a todo should exist, audit that decision at preparat
 
 Apply these configured action values to the identified assignment and session.
 
+<!-- @config: runtime.look_around -->
+
 <!-- @config: runtime.read_thread -->
 
 <!-- @config: runtime.message_peer -->
@@ -100,12 +102,23 @@ once, deduplicated, while preserving the existing restoration obligation.
   created with `--icebox` and made valid before it is unfrozen; unfreezing
   enters it into the lifecycle. Hold is a brake on valid work awaiting an
   external gate.
-- **Run the bounded creation check before every `instrukt todo create`.** Read
-  `instrukt todo list`, which lists the live work — the todos a new one could
-  overlap with. For each plausible match, read its `input`; if whether it has
-  started build affects the choice, inspect its current state too. This is
-  a cheap check for an obvious existing home, not the deeper judgment about
-  whether one premise yields to, supersedes, or depends on another.
+- **Run the bounded creation check before every `instrukt todo create` and
+  before starting ad-hoc work.** Read `instrukt todo list`, which lists the
+  live work — the todos a new one could overlap with. For each plausible
+  match, read its `input`; if whether it has started build affects the
+  choice, inspect its current state too. Live work also runs outside todos:
+  read `git worktree list` for active non-todo worktrees and branches, and
+  the project's open pull requests. Where the active runtime lists and reads
+  threads, discover unsettled non-todo top-level threads in the project or
+  home with the configured `runtime.look_around` action, then inspect
+  plausible overlaps with `runtime.inspect_thread` and `runtime.read_thread`,
+  reading each one's opening and latest messages. The check is
+  read-only: never message or interrupt another thread merely to ask what it
+  is doing. Message it with the configured `runtime.message_peer` action only
+  when the read-only inspection confirms a real overlap whose boundary or
+  sequencing needs coordination. This is a cheap check for an obvious
+  existing home, not the deeper judgment about whether one premise yields to,
+  supersedes, or depends on another.
 - **Use what the check finds.** Do not create a todo when the work is already
   plainly covered. When a small addition belongs in an existing `change`,
   `bug`, or `feature` that has not started build, route it to that todo's live
