@@ -756,8 +756,11 @@ impl std::fmt::Debug for RunnerWiring {
     }
 }
 
-/// Work-owned, non-mutating inspection of shared-record GitHub prerequisites.
-pub trait GitHubReadiness: Send + Sync {
+/// Work-owned, non-mutating inspection of shared-record GitHub prerequisites,
+/// and of automatic review's.
+pub trait GitHubReadiness:
+    Send + Sync + instrukt_core::interfaces::AutomaticReviewReadiness
+{
     fn reflection_ready(
         &self,
         repository: &str,

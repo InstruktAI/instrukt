@@ -55,7 +55,7 @@ pub use _features::{Feature, Unavailable, availability as feature_availability};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,
-    revision, unloadable_machine_layer,
+    review_switch, review_target, revision, unloadable_machine_layer,
 };
 pub use _mcp::{
     CompanyIssuerConfig, DEFAULT_ISSUER_SIGNING_KEY_NAME, McpClient, McpServer, McpSignIn,

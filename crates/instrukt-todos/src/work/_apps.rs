@@ -64,8 +64,9 @@ impl GitHubAccess {
             .map_err(|_| setup("GitHub capability lock failed"))?;
         if let Some(apps) = state.as_mut() {
             apps.installations.clear();
-            apps.credentials
-                .retain(|(_, _, operation), _| *operation == Operation::Observe);
+            apps.credentials.retain(|(_, _, operation), _| {
+                matches!(operation, Operation::Observe | Operation::ReviewObserve)
+            });
         }
         Ok(())
     }
@@ -163,6 +164,96 @@ fn permissions(operation: Operation) -> Value {
         Operation::Review => json!({"contents":"read","pull_requests":"write"}),
         Operation::Board => json!({"organization_projects":"write"}),
         Operation::Observe => json!({"checks":"read","statuses":"read","contents":"read"}),
+        Operation::ReviewObserve => json!({"pull_requests":"read"}),
+        Operation::ReviewPublish => json!({"pull_requests":"write","statuses":"write"}),
+    }
+}
+
+/// The identity whose credential automatic review could not be issued.
+struct Unready {
+    /// Which identity, in plain words.
+    identity: &'static str,
+    /// Its App's slug, when the configuration names one.
+    app: Option<String>,
+    operation: Operation,
+    error: AppError,
+}
+
+impl instrukt_core::interfaces::AutomaticReviewReadiness for GitHubAccess {
+    fn review_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness {
+        use instrukt_core::interfaces::ReviewReadiness;
+        let answer = self.with_apps(|apps| {
+            let unready = |apps: &Apps, identity, role, operation, error| Unready {
+                identity,
+                app: Some(apps.selected(role).slug.clone()),
+                operation,
+                error,
+            };
+            let observation = match apps.issue(repository, None, Operation::ReviewObserve, now) {
+                Ok(credential) => credential,
+                Err(error) => {
+                    return Ok(Err(unready(
+                        apps,
+                        "project",
+                        None,
+                        Operation::ReviewObserve,
+                        error,
+                    )));
+                }
+            };
+            let role = Some(instrukt_core::config::REVIEW_ROLE);
+            Ok(
+                match apps.issue(repository, role, Operation::ReviewPublish, now) {
+                    Ok(_) => Ok(observation),
+                    Err(error) => Err(unready(
+                        apps,
+                        "reviewer",
+                        role,
+                        Operation::ReviewPublish,
+                        error,
+                    )),
+                },
+            )
+        });
+        let unready = match answer {
+            Ok(Ok(observation)) => return ReviewReadiness::Met { observation },
+            Ok(Err(unready)) => unready,
+            Err(error) => Unready {
+                identity: "configured",
+                app: None,
+                operation: Operation::ReviewObserve,
+                error,
+            },
+        };
+        match &unready.error {
+            AppError::Unreachable | AppError::RateLimited { .. } => {
+                return ReviewReadiness::CannotAsk(unready.error.to_string());
+            }
+            AppError::Refused { status, .. } if *status >= 500 => {
+                return ReviewReadiness::CannotAsk(unready.error.to_string());
+            }
+            _ => {}
+        }
+        let needed = permissions(unready.operation)
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(name, level)| format!("{name}: {}", level.as_str().unwrap_or_default()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let app = unready
+            .app
+            .map(|slug| format!(" App `{slug}`"))
+            .unwrap_or_default();
+        tracing::info!(event = "review_readiness_unmet", repository, identity = unready.identity, error = %unready.error);
+        ReviewReadiness::Unmet(format!(
+            "the {} identity's{app} cannot do its part for automatic review on {repository}: {}; grant its installation on {repository} {needed}",
+            unready.identity, unready.error
+        ))
     }
 }
 #[derive(PartialEq, Eq)]

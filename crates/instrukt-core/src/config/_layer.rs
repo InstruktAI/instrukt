@@ -472,6 +472,54 @@ fn patched(
     Ok((before, next))
 }
 
+/// The repository whose two identities must be ready before `patch`
+/// applies to `layer` at `expected`: only for a patch that switches
+/// automatic review on and that nothing on this computer already refuses.
+/// Read without the document's lock, so GitHub is asked before it is
+/// taken; the patch's own revision check binds what was judged to what is
+/// written.
+pub fn review_switch(
+    home: &Home,
+    layer: &Layer,
+    expected: &Revision,
+    patch: &Value,
+) -> Result<Option<String>, ConfigError> {
+    let Layer::Project(root) = layer else {
+        return Ok(None);
+    };
+    let path = layer.path(home);
+    let Some(doc) = read(&path)? else {
+        return Ok(None);
+    };
+    if &Revision::of(&doc.bytes) != expected {
+        return Ok(None);
+    }
+    let (before, next) = patched(layer, &path, &doc, patch)?;
+    if !super::_review::switches_on(&before, &next)
+        || !findings_for(&home.for_inspection(), layer, &path, &next)?.is_empty()
+    {
+        return Ok(None);
+    }
+    let global = read_usable(home, &Layer::Global)?;
+    super::_review::repository(root, &next, global.as_ref())
+}
+
+/// The repository whose two identities must be ready for the project layer
+/// `layer` as stored: none while it does not switch automatic review on.
+pub fn review_target(home: &Home, layer: &Layer) -> Result<Option<String>, ConfigError> {
+    let Layer::Project(root) = layer else {
+        return Ok(None);
+    };
+    let Some(value) = read_usable(home, layer)? else {
+        return Ok(None);
+    };
+    if !super::_review::review_on(&value) {
+        return Ok(None);
+    }
+    let global = read_usable(home, &Layer::Global)?;
+    super::_review::repository(root, &value, global.as_ref())
+}
+
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }

@@ -369,13 +369,42 @@ fn patch(
             enforce_admin_dm_mcp_allowlist(mcp_patch, existing_mcp, own_company)?;
         }
     }
-    config::patch(
-        &ctx.home,
-        &layer,
-        &Revision::from_text(&args.revision),
-        &patch,
-    )?;
+    let expected = Revision::from_text(&args.revision);
+    // Readiness needs GitHub, so it is asked before the document's lock is
+    // taken; the patch's revision check binds the judged document to the
+    // written one.
+    if let Some(repository) = config::review_switch(&ctx.home, &layer, &expected, &patch)? {
+        review_readiness_finding(ctx, &layer, &repository)?.map_or(Ok(()), |finding| {
+            Err(config::ConfigError::Invalid(config::Findings(vec![
+                finding,
+            ])))
+        })?;
+    }
+    config::patch(&ctx.home, &layer, &expected, &patch)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Work's readiness for automatic review on `repository`, as a finding at
+/// `review.automatic` of `layer` when it is unmet or GitHub cannot be asked.
+fn review_readiness_finding(
+    ctx: &Ctx,
+    layer: &Layer,
+    repository: &str,
+) -> anyhow::Result<Option<config::Finding>> {
+    use instrukt_core::interfaces::{AutomaticReviewReadiness as _, ReviewReadiness};
+    let message = match ctx.github.review_readiness(repository, ctx.clock.now()) {
+        ReviewReadiness::Met { .. } => return Ok(None),
+        ReviewReadiness::Unmet(message) => message,
+        ReviewReadiness::CannotAsk(cause) => format!(
+            "GitHub cannot be asked whether automatic review's identities are ready on {repository}: {cause}; nothing is decided, try again once GitHub answers"
+        ),
+    };
+    Ok(Some(config::Finding {
+        document: layer.path(&ctx.home),
+        key: config::REVIEW_AUTOMATIC_KEY.to_owned(),
+        kind: config::FindingKind::AutomaticReviewNotReady,
+        message,
+    }))
 }
 
 /// Reject any YAML tag (`Value::Tagged`) anywhere in a company-agent patch so
@@ -614,7 +643,16 @@ fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 
 fn validate(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let layer = layer(args.global, args.company.as_ref(), ctx)?;
-    let findings = config::validate(&ctx.home, &layer)?;
+    let mut findings = config::validate(&ctx.home, &layer)?;
+    // Readiness is asked only once nothing local stands at the setting, so
+    // an unreachable GitHub never hides a local finding.
+    if !findings
+        .iter()
+        .any(|f| f.key == config::REVIEW_AUTOMATIC_KEY)
+        && let Some(repository) = config::review_target(&ctx.home, &layer)?
+    {
+        findings.extend(review_readiness_finding(ctx, &layer, &repository)?);
+    }
     for finding in &findings {
         ctx.out.line(&finding.to_string())?;
     }

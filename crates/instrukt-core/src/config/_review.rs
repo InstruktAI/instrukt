@@ -36,6 +36,29 @@ pub(crate) fn review_on(value: &Value) -> bool {
         == Some(true)
 }
 
+/// Whether a patch from `before` to `after` switches automatic review on.
+pub(crate) fn switches_on(before: &Value, after: &Value) -> bool {
+    !review_on(before) && review_on(after)
+}
+
+/// The GitHub repository of the project layer `value` rooted at `root`,
+/// judged with the machine's `global` layer; none when its code is not on
+/// GitHub.
+pub(crate) fn repository(
+    root: &Path,
+    value: &Value,
+    global: Option<&Value>,
+) -> Result<Option<String>, ConfigError> {
+    let configured = value
+        .get("github")
+        .and_then(|g| g.get("repository"))
+        .and_then(Value::as_str);
+    match crate::github::resolve_code_host(configured, api_url(global), root)? {
+        crate::github::CodeHost::GitHub { repository } => Ok(Some(repository)),
+        crate::github::CodeHost::Elsewhere { .. } => Ok(None),
+    }
+}
+
 /// The GitHub API address, from the machine's own layer, never a
 /// repository's.
 fn api_url(global: Option<&Value>) -> &str {
@@ -180,6 +203,15 @@ mod tests {
     fn the_review_procedure_alone_by_the_exact_type_and_its_role_routes_review() {
         let entries = [entry(REVIEW_PROCEDURE, REVIEW_ROLE, &[REVIEW_NEEDED_EVENT])];
         assert_eq!(routes_review(&entries, Some(&project())), Ok(()));
+    }
+
+    #[test]
+    fn only_a_patch_from_absent_or_off_to_on_switches_automatic_review_on() {
+        let doc = |text: &str| serde_yaml_ng::from_str::<Value>(text).unwrap();
+        let on = doc("review: {automatic: true}");
+        assert!(switches_on(&doc("project: demo"), &on));
+        assert!(switches_on(&doc("review: {automatic: false}"), &on));
+        assert!(!switches_on(&on, &on));
     }
 
     #[test]
