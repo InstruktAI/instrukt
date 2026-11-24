@@ -121,10 +121,35 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         emit(pass, &head, Some(&at_head[0]), requests.len(), &mut fetched)?;
     }
     _requests::end_unowed(pass.state, project, &owed).map_err(|error| error.to_string())?;
-    if let (Some(candidate), Some(finding)) = (pass.candidate, finding) {
-        ask_candidate(pass, candidate, &finding, &mut fetched)?;
+    if let (Some(candidate), Some(crate::interfaces::CandidateFinding::Owed)) =
+        (pass.candidate, &finding)
+    {
+        ask_candidate(pass, candidate, &mut fetched)?;
+    }
+    if let Some(owed) = owed_candidates(pass.candidate, finding.as_ref()) {
+        _requests::end_unowed_candidates(pass.state, project, &owed).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// The candidate commits still owed a review after this pass, whose queued
+/// requests stay; every other queued candidate request ends
+/// (`pull-request-review`, One review per commit: a queued request ends when
+/// its commit stops being owed). Without an active candidate, or with one
+/// whose request is selected or handed over, none is. Nothing is decided
+/// while the repository cannot answer.
+fn owed_candidates(
+    candidate: Option<&CommitSha>,
+    finding: Option<&crate::interfaces::CandidateFinding>,
+) -> Option<BTreeSet<CommitSha>> {
+    use crate::interfaces::CandidateFinding;
+    match (candidate, finding) {
+        (_, Some(CandidateFinding::CannotAnswer(_))) => None,
+        (Some(candidate), Some(CandidateFinding::Owed)) => {
+            Some(BTreeSet::from([candidate.clone()]))
+        }
+        _ => Some(BTreeSet::new()),
+    }
 }
 
 /// Work's finding on the active candidate, derived while no request of it
@@ -155,29 +180,17 @@ fn derive_candidate(
     Ok(Some(finding))
 }
 
-/// The candidate's requests after its finding: an uncovered candidate is
-/// asked for (`pull-request-review`, Candidate requests), and queued
-/// candidate requests of commits no longer owed end.
+/// Asks for an uncovered candidate (`pull-request-review`, Candidate
+/// requests), unless a request of it is live or the next is not due yet.
 fn ask_candidate(
     pass: &ReviewPass<'_>,
     candidate: &CommitSha,
-    finding: &crate::interfaces::CandidateFinding,
     fetched: &mut bool,
 ) -> Result<(), String> {
-    let project = &pass.project.slug;
-    let mut owed = BTreeSet::new();
-    if *finding == crate::interfaces::CandidateFinding::Owed {
-        owed.insert(candidate.clone());
-        let requests = requests(pass.state, project, candidate).map_err(|e| e.to_string())?;
-        if !requests.iter().any(_requests::live) && _requests::due(&requests, pass.now) {
-            emit(pass, candidate, None, requests.len(), fetched)?;
-        }
-    }
-    if !matches!(
-        finding,
-        crate::interfaces::CandidateFinding::CannotAnswer(_)
-    ) {
-        _requests::end_unowed_candidates(pass.state, project, &owed).map_err(|e| e.to_string())?;
+    let requests =
+        requests(pass.state, &pass.project.slug, candidate).map_err(|e| e.to_string())?;
+    if !requests.iter().any(_requests::live) && _requests::due(&requests, pass.now) {
+        emit(pass, candidate, None, requests.len(), fetched)?;
     }
     Ok(())
 }
@@ -242,4 +255,53 @@ fn pinned_base(
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interfaces::CandidateFinding;
+
+    fn sha(c: char) -> CommitSha {
+        CommitSha::parse(&c.to_string().repeat(40)).unwrap()
+    }
+
+    #[test]
+    fn without_an_active_candidate_no_candidate_is_owed_a_review() {
+        assert_eq!(owed_candidates(None, None), Some(BTreeSet::new()));
+    }
+
+    #[test]
+    fn a_candidate_whose_request_is_in_flight_leaves_no_other_candidate_owed() {
+        assert_eq!(
+            owed_candidates(Some(&sha('a')), None),
+            Some(BTreeSet::new())
+        );
+    }
+
+    #[test]
+    fn only_an_uncovered_candidate_is_owed_a_review() {
+        let candidate = sha('a');
+        assert_eq!(
+            owed_candidates(Some(&candidate), Some(&CandidateFinding::Owed)),
+            Some(BTreeSet::from([candidate.clone()]))
+        );
+        for covered in [CandidateFinding::Covered, CandidateFinding::Settled] {
+            assert_eq!(
+                owed_candidates(Some(&candidate), Some(&covered)),
+                Some(BTreeSet::new())
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_decided_while_the_repository_cannot_answer() {
+        assert_eq!(
+            owed_candidates(
+                Some(&sha('a')),
+                Some(&CandidateFinding::CannotAnswer("busy".into()))
+            ),
+            None
+        );
+    }
 }
