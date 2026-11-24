@@ -23,7 +23,7 @@ use jiff::Timestamp;
 
 pub use _moment::Moment;
 pub use _publication::Published;
-pub use _published::{Delivery, DeliveryState, Destination, Recognised};
+pub use _published::{Delivery, DeliveryState, Derived, Destination, Recognised};
 pub use _transfer::Statement;
 
 use _admission::{Offer, RequestCheck, TurnDecision};
@@ -673,11 +673,22 @@ pub fn project(slug: ProjectSlug, root: &Path) -> ReviewProject {
 pub struct ReviewWork {
     home: Home,
     access: std::sync::Arc<super::GitHubAccess>,
+    records: Option<std::sync::Arc<dyn crate::evidence::WorkEvidence>>,
 }
 
 impl ReviewWork {
-    pub fn new(home: Home, access: std::sync::Arc<super::GitHubAccess>) -> Self {
-        Self { home, access }
+    /// Work's answers, reading todos' records through `records` when the
+    /// todos module is available.
+    pub fn new(
+        home: Home,
+        access: std::sync::Arc<super::GitHubAccess>,
+        records: Option<std::sync::Arc<dyn crate::evidence::WorkEvidence>>,
+    ) -> Self {
+        Self {
+            home,
+            access,
+            records,
+        }
     }
 }
 
@@ -720,6 +731,18 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
     fn carries_verdict(&self, project: &ProjectSlug, head: &CommitSha) -> Result<bool, String> {
         let evidence = evidence(&self.home, project, head).map_err(|error| error.to_string())?;
         Ok(evidence.current().is_some() || evidence.recognised.is_some())
+    }
+
+    fn candidate(
+        &self,
+        project: &instrukt_runner::interfaces::ProjectRef,
+        repository: &str,
+        candidate: &CommitSha,
+        pulls: &[u64],
+        now: Timestamp,
+    ) -> Result<instrukt_runner::interfaces::CandidateFinding, String> {
+        candidate_finding(self, project, repository, candidate, pulls, now)
+            .map_err(|error| error.to_string())
     }
 
     fn publish(
@@ -785,10 +808,35 @@ fn publish(
                 &version.report,
                 commit,
             )),
+            status_first: false,
         };
         publication.deliver(commit, &target, &pulls_at(commit))?;
     }
     let mut current: Vec<CommitSha> = standing.iter().map(|(commit, _)| commit.clone()).collect();
+    let derived = match _published::reader(home)? {
+        Some(conn) => _published::standing_derived(&conn, project)?,
+        None => Vec::new(),
+    };
+    for approval in &derived {
+        current.push(approval.candidate.clone());
+        // Only one GitHub already shows as the status is completed here;
+        // the candidate's own pass publishes one GitHub does not show.
+        let shown = evidence(home, project, &approval.candidate)?
+            .deliveries
+            .iter()
+            .any(|d| {
+                d.destination == Destination::Status
+                    && d.state == DeliveryState::Shown
+                    && d.name == approval.name
+            });
+        if shown {
+            publication.deliver(
+                &approval.candidate,
+                &derived_target(approval),
+                &pulls_at(&approval.candidate),
+            )?;
+        }
+    }
     let mut heads: Vec<&CommitSha> = eligible.iter().map(|(_, head)| head).collect();
     heads.sort();
     heads.dedup();
@@ -815,6 +863,7 @@ fn publish(
         let target = _recognition::Target {
             published: recognised.published,
             body: recognised.body,
+            status_first: false,
         };
         publication.deliver(commit, &target, &pulls)?;
     }
@@ -1088,4 +1137,267 @@ pub fn import(
     })?;
     tracing::info!(event = "review_evidence_imported", project = %project, export = %digest, standing = imported.standing, set_aside = imported.set_aside);
     Ok(imported)
+}
+
+/// A derived approval as the verdict its publication delivers.
+fn derived_target(approval: &Derived) -> _recognition::Target {
+    _recognition::Target {
+        published: _publication::Published {
+            verdict: Verdict::Approve,
+            name: approval.name.clone(),
+            moment: approval.moment,
+        },
+        body: Some(_publication::body(
+            &approval.name,
+            approval.moment,
+            &approval.coverage,
+            &approval.candidate,
+        )),
+        status_first: true,
+    }
+}
+
+/// The evidence candidate coverage reads, as work holds it.
+struct CoverageReader<'a> {
+    work: &'a ReviewWork,
+    project: &'a instrukt_runner::interfaces::ProjectRef,
+}
+
+impl CoverageReader<'_> {
+    /// The todo a commit's `Todo:` trailer names.
+    fn todo_of(&self, commit: &CommitSha) -> Result<Option<crate::evidence::TodoEvidence>, String> {
+        let Some(records) = &self.work.records else {
+            return Ok(None);
+        };
+        let named = git::run(
+            &self.project.root,
+            [
+                "log",
+                "-1",
+                "--format=%(trailers:key=Todo,valueonly)",
+                commit.as_str(),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        let Some(slug) = named
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .and_then(|slug| instrukt_core::ids::TodoSlug::parse(slug).ok())
+        else {
+            return Ok(None);
+        };
+        records
+            .evidence(self.project, &slug)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The head a todo's record approves last by build review, when its last
+/// build verdict for that head approves.
+fn record_approval(
+    record: &crate::evidence::TodoEvidence,
+    commit: Option<&CommitSha>,
+) -> Option<(CommitSha, String)> {
+    use crate::evidence::{BuildVerdict, ReviewVerdict, StampFact};
+    let mut last: Option<(CommitSha, String, bool)> = None;
+    for stamp in &record.stamps {
+        let (head, report, approves) = match &stamp.fact {
+            StampFact::BuildVerdict {
+                verdict,
+                target,
+                report,
+            } => (target, report, *verdict == BuildVerdict::Approve),
+            StampFact::PreparationHeadReviewed {
+                verdict,
+                head,
+                report,
+            } => (head, report, *verdict == ReviewVerdict::Approve),
+            _ => continue,
+        };
+        if commit.is_none_or(|commit| commit == head) {
+            last = Some((head.clone(), report.to_string(), approves));
+        }
+    }
+    last.filter(|(_, _, approves)| *approves)
+        .map(|(head, report, _)| {
+            let reference = format!(
+                "review approval of {head} in todo {} ({report})",
+                record.slug
+            );
+            (head, reference)
+        })
+}
+
+impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
+    fn approved(&self, commit: &CommitSha) -> Result<Option<crate::workflow::Approved>, String> {
+        let held =
+            evidence(&self.work.home, &self.project.slug, commit).map_err(|e| e.to_string())?;
+        if let Some(version) = held.current()
+            && version.verdict == Verdict::Approve
+            && version.base_on_canonical
+        {
+            return Ok(Some(crate::workflow::Approved {
+                reference: format!(
+                    "head verdict {} of {commit} by {}",
+                    version.name, version.reviewer
+                ),
+                todo: None,
+            }));
+        }
+        Ok(self.todo_of(commit)?.and_then(|record| {
+            record_approval(&record, Some(commit)).map(|(_, reference)| crate::workflow::Approved {
+                reference,
+                todo: Some(record.slug.clone()),
+            })
+        }))
+    }
+
+    fn exempted(&self, commit: &CommitSha) -> Result<Option<String>, String> {
+        let held =
+            evidence(&self.work.home, &self.project.slug, commit).map_err(|e| e.to_string())?;
+        Ok(held.exemption.map(|exemption| {
+            format!(
+                "exemption of {commit}: {} (declared by {})",
+                exemption.basis,
+                exemption
+                    .declared_by
+                    .map_or_else(|| "no resolved session".to_owned(), |s| s.to_string())
+            )
+        }))
+    }
+
+    fn delivery_head(
+        &self,
+        todo: &instrukt_core::ids::TodoSlug,
+    ) -> Result<Option<CommitSha>, String> {
+        let Some(records) = &self.work.records else {
+            return Ok(None);
+        };
+        Ok(records
+            .evidence(self.project, todo)
+            .map_err(|e| e.to_string())?
+            .and_then(|record| record_approval(&record, None))
+            .map(|(head, _)| head))
+    }
+
+    fn red_promotion(&self, head: &CommitSha) -> Result<Option<CommitSha>, String> {
+        let state = RunnerState::new(&self.work.home);
+        if !instrukt_runner::review::observed_red(&state, &self.project.slug, head)
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(None);
+        }
+        let held =
+            evidence(&self.work.home, &self.project.slug, head).map_err(|e| e.to_string())?;
+        if let Some(version) = held.current() {
+            return Ok(Some(version.base.clone()));
+        }
+        let derived = match _published::reader(&self.work.home).map_err(|e| e.to_string())? {
+            Some(conn) => _published::derived_of(&conn, &self.project.slug, head)
+                .map_err(|e| e.to_string())?,
+            None => None,
+        };
+        Ok(derived.and_then(|d| CommitSha::parse(&d.canonical).ok()))
+    }
+}
+
+/// Work's part of a candidate's coverage (`integration-gate`, Review
+/// coverage of a candidate): the candidate's own verdict settles it;
+/// otherwise workflow derives coverage, and the derived approval is
+/// recorded and published, or withdrawn while GitHub does not show it.
+fn candidate_finding(
+    work: &ReviewWork,
+    project: &instrukt_runner::interfaces::ProjectRef,
+    repository: &str,
+    candidate: &CommitSha,
+    pulls: &[u64],
+    now: Timestamp,
+) -> Result<instrukt_runner::interfaces::CandidateFinding, ReviewError> {
+    use instrukt_runner::interfaces::CandidateFinding;
+    let held = evidence(&work.home, &project.slug, candidate)?;
+    if held
+        .current()
+        .is_some_and(|version| version.base_on_canonical)
+    {
+        return Ok(CandidateFinding::Settled);
+    }
+    let recorded = match _published::reader(&work.home)? {
+        Some(conn) => _published::derived_of(&conn, &project.slug, candidate)?,
+        None => None,
+    };
+    let shown = |approval: &Derived| {
+        held.deliveries.iter().any(|d| {
+            d.destination == Destination::Status
+                && d.state == DeliveryState::Shown
+                && d.name == approval.name
+        })
+    };
+    if let Some(approval) = recorded.as_ref().filter(|a| a.withdrawn.is_none())
+        && shown(approval)
+    {
+        return Ok(CandidateFinding::Settled);
+    }
+    let canonical_branch = git::default_branch(&project.root, REMOTE)?;
+    let canonical = format!("refs/remotes/{REMOTE}/{canonical_branch}");
+    let reader = CoverageReader { work, project };
+    match crate::workflow::coverage(&project.root, candidate, &canonical, &reader) {
+        crate::workflow::Coverage::CannotAnswer(cause) => Ok(CandidateFinding::CannotAnswer(cause)),
+        crate::workflow::Coverage::Uncovered(commit) => {
+            if recorded.as_ref().is_some_and(|a| a.withdrawn.is_none()) {
+                let mut db = _published::open(&work.home)?;
+                db.write(|tx| _published::withdraw(tx, &project.slug, candidate, &commit, now))?;
+                tracing::info!(event = "review_derived_approval_withdrawn", project = %project.slug, candidate = %candidate, uncovered = %commit);
+            }
+            Ok(CandidateFinding::Owed)
+        }
+        crate::workflow::Coverage::Covered(items) => {
+            let based = git::run(
+                &project.root,
+                ["merge-base", candidate.as_str(), canonical.as_str()],
+            )?;
+            let coverage = serde_json::to_string_pretty(&serde_json::json!({
+                "candidate": candidate.as_str(),
+                "canonical": based.trim(),
+                "covering": items.iter().map(|item| serde_json::json!({
+                    "commit": item.commit.as_str(),
+                    "kind": item.kind.as_str(),
+                    "evidence": item.reference,
+                })).collect::<Vec<_>>(),
+            }))
+            .map_err(|e| ReviewError::Record(e.to_string()))?;
+            let approval = Derived {
+                candidate: candidate.clone(),
+                canonical: based.trim().to_owned(),
+                name: ContentDigest::of(&coverage),
+                coverage,
+                moment: Moment::decided(now, None),
+                recorded_at: now,
+                withdrawn: None,
+            };
+            let mut db = _published::open(&work.home)?;
+            db.write(|tx| _published::record_derived(tx, &project.slug, &approval))?;
+            drop(db);
+            tracing::info!(event = "review_derived_approval_recorded", project = %project.slug, candidate = %candidate, items = items.len());
+            let gh = work
+                .access
+                .review_client(repository, now)
+                .map_err(|error| refused(error.to_string()))?;
+            let reviewer = work
+                .access
+                .review_identities()
+                .map_err(|error| refused(error.to_string()))?
+                .reviewer;
+            _recognition::Publication {
+                home: &work.home,
+                gh: &gh,
+                project: &project.slug,
+                repository,
+                reviewer: &reviewer,
+                now,
+            }
+            .deliver(candidate, &derived_target(&approval), pulls)?;
+            Ok(CandidateFinding::Covered)
+        }
+    }
 }

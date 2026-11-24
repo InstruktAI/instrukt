@@ -22,6 +22,9 @@ use crate::work::_github::{GitHub, GitHubError};
 pub(super) struct Target {
     pub published: Published,
     pub body: Option<String>,
+    /// A derived approval: its status is written first, and a pull request
+    /// receives its review only once GitHub shows that status.
+    pub status_first: bool,
 }
 
 /// One publication: where a verdict's destinations are and who may show it.
@@ -120,7 +123,11 @@ impl Publication<'_> {
             })
         };
         let mut links: Vec<(u64, String)> = Vec::new();
-        let mut pulls = pulls.to_vec();
+        let mut pulls = if target.status_first && settled(&Destination::Status).is_none() {
+            Vec::new()
+        } else {
+            pulls.to_vec()
+        };
         pulls.sort_unstable();
         for number in pulls {
             let destination = Destination::Pull(number);

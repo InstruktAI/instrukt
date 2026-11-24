@@ -297,6 +297,125 @@ pub(super) fn recognise(
     Ok(())
 }
 
+/// A derived approval the tick recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Derived {
+    pub candidate: CommitSha,
+    pub canonical: String,
+    pub coverage: String,
+    pub name: ContentDigest,
+    pub moment: Moment,
+    pub recorded_at: Timestamp,
+    /// When the tick withdrew it, with the commit found uncovered.
+    pub withdrawn: Option<(Timestamp, String)>,
+}
+
+/// The derived approval of `candidate`, withdrawn or not.
+pub(super) fn derived_of(
+    conn: &Connection,
+    project: &ProjectSlug,
+    candidate: &CommitSha,
+) -> Result<Option<Derived>, ReviewError> {
+    let row = conn
+        .query_row(
+            "SELECT canonical, coverage, name, moment, recorded_at, withdrawn_at, uncovered FROM derived WHERE project=?1 AND candidate=?2",
+            params![project.as_str(), candidate.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    row.map(
+        |(canonical, coverage, name, moment, at, withdrawn, uncovered)| {
+            Ok(Derived {
+                candidate: candidate.clone(),
+                canonical,
+                coverage,
+                name: ContentDigest::new(name),
+                moment: Moment::parse(&moment).ok_or_else(|| bad("moment"))?,
+                recorded_at: at.parse().map_err(|_| bad("time"))?,
+                withdrawn: withdrawn
+                    .map(|at| {
+                        Ok::<_, ReviewError>((
+                            at.parse().map_err(|_| bad("time"))?,
+                            uncovered.unwrap_or_default(),
+                        ))
+                    })
+                    .transpose()?,
+            })
+        },
+    )
+    .transpose()
+}
+
+/// Records `derived` as the candidate's derived approval, replacing one
+/// recorded earlier.
+pub(super) fn record_derived(
+    tx: &Transaction<'_>,
+    project: &ProjectSlug,
+    derived: &Derived,
+) -> Result<(), ReviewError> {
+    tx.execute(
+        "INSERT INTO derived (project, candidate, canonical, coverage, name, moment, recorded_at, withdrawn_at, uncovered)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL)
+         ON CONFLICT (project, candidate) DO UPDATE SET canonical=excluded.canonical, coverage=excluded.coverage,
+           name=excluded.name, moment=excluded.moment, recorded_at=excluded.recorded_at, withdrawn_at=NULL, uncovered=NULL",
+        params![
+            project.as_str(),
+            derived.candidate.as_str(),
+            derived.canonical,
+            derived.coverage,
+            derived.name.as_str(),
+            derived.moment.text(),
+            derived.recorded_at.to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Withdraws the derived approval of `candidate`, with the commit found
+/// uncovered.
+pub(super) fn withdraw(
+    tx: &Transaction<'_>,
+    project: &ProjectSlug,
+    candidate: &CommitSha,
+    uncovered: &CommitSha,
+    now: Timestamp,
+) -> Result<(), ReviewError> {
+    tx.execute(
+        "UPDATE derived SET withdrawn_at=?3, uncovered=?4 WHERE project=?1 AND candidate=?2 AND withdrawn_at IS NULL",
+        params![project.as_str(), candidate.as_str(), now.to_string(), uncovered.as_str()],
+    )?;
+    Ok(())
+}
+
+/// Every derived approval of `project` the tick did not withdraw.
+pub(super) fn standing_derived(
+    conn: &Connection,
+    project: &ProjectSlug,
+) -> Result<Vec<Derived>, ReviewError> {
+    let mut statement = conn.prepare(
+        "SELECT candidate FROM derived WHERE project=?1 AND withdrawn_at IS NULL ORDER BY candidate",
+    )?;
+    let candidates = statement
+        .query_map(params![project.as_str()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut found = Vec::new();
+    for candidate in candidates {
+        let candidate = CommitSha::parse(&candidate).map_err(|_| bad("candidate"))?;
+        found.extend(derived_of(conn, project, &candidate)?);
+    }
+    Ok(found)
+}
+
 /// The derived approvals the tick recorded for `project` and did not
 /// withdraw.
 pub(super) fn derived(

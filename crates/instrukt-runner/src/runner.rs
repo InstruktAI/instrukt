@@ -816,7 +816,16 @@ fn github_pass(
         now,
     );
     if considered.review {
-        review_pass(cx, state, log, considered, &api_url, &repository, now);
+        review_pass(
+            cx,
+            state,
+            log,
+            considered,
+            observed.candidate.as_ref(),
+            &api_url,
+            &repository,
+            now,
+        );
     }
 }
 
@@ -932,11 +941,16 @@ fn ci_read(
 /// Automatic review's part of the GitHub pass, on a project admitted for it
 /// as far as nothing but GitHub decides: the two identities' readiness is
 /// asked once, and a met answer admits the project for this pass.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one pass over the project's resolved GitHub source"
+)]
 fn review_pass(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
     log: &DbEventLog,
     considered: &Considered,
+    candidate: Option<&CommitSha>,
     api_url: &str,
     repository: &str,
     now: Timestamp,
@@ -962,6 +976,7 @@ fn review_pass(
     };
     let pass = crate::review::ReviewPass {
         home: cx.home,
+        candidate,
         state,
         log,
         project,

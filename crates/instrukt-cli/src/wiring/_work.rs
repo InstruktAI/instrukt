@@ -62,11 +62,14 @@ pub(super) fn ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
 
 /// Work's answers for automatic review, wired whether or not a project's
 /// todos module is on.
-pub(super) fn review(ctx: &Ctx) -> Arc<dyn instrukt_runner::interfaces::AutomaticReview> {
-    Arc::new(instrukt_todos::work::review::ReviewWork::new(
+pub(super) fn review(
+    ctx: &Ctx,
+) -> anyhow::Result<Arc<dyn instrukt_runner::interfaces::AutomaticReview>> {
+    Ok(Arc::new(instrukt_todos::work::review::ReviewWork::new(
         ctx.home.clone(),
         ctx.github.clone(),
-    ))
+        evidence(ctx)?,
+    )))
 }
 
 /// Work's evidence read contract for workflow, wired as the ports are: the

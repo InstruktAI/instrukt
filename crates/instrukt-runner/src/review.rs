@@ -22,7 +22,8 @@ use crate::state::RunnerState;
 
 pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
 pub use _requests::{
-    Disposition, Request, Standing, TurnOpening, requests, turn_opening, turn_opening_with,
+    Disposition, Request, Standing, TurnOpening, observed_red, requests, turn_opening,
+    turn_opening_with,
 };
 
 /// A review answer could not be read.
@@ -38,6 +39,8 @@ pub enum ReviewReadError {
 /// observation credential readiness issued.
 pub(crate) struct ReviewPass<'a> {
     pub home: &'a Home,
+    /// The active integration candidate, when there is one.
+    pub candidate: Option<&'a CommitSha>,
     pub state: &'a RunnerState,
     pub log: &'a DbEventLog,
     pub project: &'a ProjectRef,
@@ -106,31 +109,93 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         if requests.iter().any(_requests::live) || !_requests::due(&requests, pass.now) {
             continue;
         }
-        if !fetched {
-            // The request's commits must be present where its consumer runs.
-            instrukt_core::git::run(&pass.project.root, ["fetch", "--quiet", REMOTE])
-                .map_err(|error| error.to_string())?;
-            fetched = true;
-        }
         at_head.sort_by_key(|eligible| eligible.number);
-        let addressed = &at_head[0];
-        let Some(base) = pinned_base(&pass.project.root, &head, &addressed.base_branch)? else {
-            tracing::info!(event = "review_request_unpinned", project = %project, head = %head, "no merge base with the canonical branch or the pull request's base branch");
-            continue;
-        };
-        let request = Event::ReviewNeeded {
-            project: project.clone(),
-            pull_request: Some(addressed.number),
-            head_branch: Some(addressed.head_branch.clone()),
-            base_branch: Some(addressed.base_branch.clone()),
-            head: head.clone(),
-            base,
-            request: requests.len() as u64 + 1,
-        };
-        pass.log.log(&request).map_err(|error| error.to_string())?;
-        tracing::info!(event = "review_request_emitted", project = %project, head = %head, pull = addressed.number, request = requests.len() + 1);
+        emit(pass, &head, Some(&at_head[0]), requests.len(), &mut fetched)?;
     }
-    _requests::end_unowed(pass.state, project, &owed).map_err(|error| error.to_string())
+    _requests::end_unowed(pass.state, project, &owed).map_err(|error| error.to_string())?;
+    if let Some(candidate) = pass.candidate {
+        candidate_pass(pass, candidate, &eligible, &mut fetched)?;
+    }
+    Ok(())
+}
+
+/// The candidate's part of the pass: on an active candidate with no request
+/// selected or handed over, work derives its coverage; an uncovered one is
+/// asked for (`pull-request-review`, Candidate requests).
+fn candidate_pass(
+    pass: &ReviewPass<'_>,
+    candidate: &CommitSha,
+    eligible: &[(u64, CommitSha)],
+    fetched: &mut bool,
+) -> Result<(), String> {
+    let project = &pass.project.slug;
+    let requests = requests(pass.state, project, candidate).map_err(|e| e.to_string())?;
+    if requests
+        .iter()
+        .any(|r| matches!(r.standing, Standing::Selected | Standing::HandedOver))
+    {
+        return Ok(());
+    }
+    let pulls: Vec<u64> = eligible
+        .iter()
+        .filter(|(_, head)| head == candidate)
+        .map(|(number, _)| *number)
+        .collect();
+    let finding =
+        pass.port
+            .candidate(pass.project, pass.repository, candidate, &pulls, pass.now)?;
+    tracing::info!(event = "review_candidate_derived", project = %project, candidate = %candidate, finding = ?finding);
+    let mut owed = BTreeSet::new();
+    if finding == crate::interfaces::CandidateFinding::Owed {
+        owed.insert(candidate.clone());
+        if !requests.iter().any(_requests::live) && _requests::due(&requests, pass.now) {
+            emit(pass, candidate, None, requests.len(), fetched)?;
+        }
+    }
+    if !matches!(
+        finding,
+        crate::interfaces::CandidateFinding::CannotAnswer(_)
+    ) {
+        _requests::end_unowed_candidates(pass.state, project, &owed).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Emits the next review request of `head`: addressed to `pull` for a pull
+/// request's head, to the integration branch for a candidate. The project's
+/// checkout is fetched once per pass first.
+fn emit(
+    pass: &ReviewPass<'_>,
+    head: &CommitSha,
+    pull: Option<&_eligibility::Eligible>,
+    previous: usize,
+    fetched: &mut bool,
+) -> Result<(), String> {
+    let project = &pass.project.slug;
+    if !*fetched {
+        // The request's commits must be present where its consumer runs.
+        instrukt_core::git::run(&pass.project.root, ["fetch", "--quiet", REMOTE])
+            .map_err(|error| error.to_string())?;
+        *fetched = true;
+    }
+    let base_branch = pull.map(|pull| pull.base_branch.as_str());
+    let Some(base) = pinned_base(&pass.project.root, head, base_branch)? else {
+        tracing::info!(event = "review_request_unpinned", project = %project, head = %head, "no merge base with the canonical branch or the pull request's base branch");
+        return Ok(());
+    };
+    let number = previous as u64 + 1;
+    let request = Event::ReviewNeeded {
+        project: project.clone(),
+        pull_request: pull.map(|pull| pull.number),
+        head_branch: pull.map(|pull| pull.head_branch.clone()),
+        base_branch: base_branch.map(str::to_owned),
+        head: head.clone(),
+        base,
+        request: number,
+    };
+    pass.log.log(&request).map_err(|error| error.to_string())?;
+    tracing::info!(event = "review_request_emitted", project = %project, head = %head, pull = pull.map(|p| p.number), request = number);
+    Ok(())
 }
 
 /// The pinned base of `head` in the repository at `root`: its merge base
@@ -139,10 +204,10 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
 fn pinned_base(
     root: &std::path::Path,
     head: &CommitSha,
-    base_branch: &str,
+    base_branch: Option<&str>,
 ) -> Result<Option<CommitSha>, String> {
     let canonical = instrukt_core::git::default_branch(root, REMOTE).map_err(|e| e.to_string())?;
-    for branch in [canonical.as_str(), base_branch] {
+    for branch in std::iter::once(canonical.as_str()).chain(base_branch) {
         // A branch name from GitHub reaches git as one argument behind a
         // fixed prefix, never as an option or through a shell.
         let tracked = format!("refs/remotes/{REMOTE}/{branch}");

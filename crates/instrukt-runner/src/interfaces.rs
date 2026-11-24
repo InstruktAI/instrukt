@@ -769,6 +769,20 @@ pub struct ReviewIdentities {
     pub reviewer: instrukt_core::github::Bot,
 }
 
+/// What deriving a candidate's coverage found, as the runner acts on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CandidateFinding {
+    /// The candidate has its verdict: its own, or a derived approval GitHub
+    /// shows.
+    Settled,
+    /// Every commit is covered; the derived approval is recorded.
+    Covered,
+    /// A commit is not covered: the candidate owes a review.
+    Owed,
+    /// The repository cannot answer; derived again next tick.
+    CannotAnswer(String),
+}
+
 /// Work's answers the runner asks for automatic review
 /// (`project/instrukt/spec/feature/runner/pull-request-review`).
 pub trait AutomaticReview: Send + Sync {
@@ -794,6 +808,17 @@ pub trait AutomaticReview: Send + Sync {
         project: &instrukt_core::ids::ProjectSlug,
         head: &instrukt_core::ids::CommitSha,
     ) -> Result<bool, String>;
+    /// Derives whether the active integration `candidate` is covered and
+    /// records, publishes or withdraws its derived approval accordingly.
+    /// `pulls` are the eligible pull requests whose head it is.
+    fn candidate(
+        &self,
+        project: &ProjectRef,
+        repository: &str,
+        candidate: &instrukt_core::ids::CommitSha,
+        pulls: &[u64],
+        now: Timestamp,
+    ) -> Result<CandidateFinding, String>;
     /// Publishes every verdict this computer holds for `project`, and
     /// recognises what the reviewer bot already published for each eligible
     /// head it holds none of. `eligible` is each eligible pull request with

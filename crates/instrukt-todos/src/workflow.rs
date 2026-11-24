@@ -7,6 +7,7 @@
 //! gates), and runner dispatch. All activity routing lives in prose
 //! procedures for the unified `todo-orchestrator`.
 
+mod _coverage;
 mod _finding;
 mod _flavor;
 mod _observe;
@@ -16,6 +17,7 @@ mod _service;
 #[cfg(test)]
 mod _testing;
 
+pub use _coverage::{Approved, Coverage, CoverageEvidence, CoveringItem, CoveringKind, coverage};
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError, WORKFLOW_FILE};
 pub use _observe::ObservationError;

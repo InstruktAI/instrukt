@@ -249,6 +249,25 @@ pub(crate) fn end_unowed(
     project: &ProjectSlug,
     owed: &std::collections::BTreeSet<CommitSha>,
 ) -> Result<(), StateError> {
+    end_queued(state, project, true, owed)
+}
+
+/// Ends every queued candidate review request of `project` for a commit not
+/// in `owed`.
+pub(crate) fn end_unowed_candidates(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    owed: &std::collections::BTreeSet<CommitSha>,
+) -> Result<(), StateError> {
+    end_queued(state, project, false, owed)
+}
+
+fn end_queued(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    pulls: bool,
+    owed: &std::collections::BTreeSet<CommitSha>,
+) -> Result<(), StateError> {
     state.write(|tx| {
         let path = state::db_path(tx);
         let sql = state::sql(&path);
@@ -257,14 +276,15 @@ pub(crate) fn end_unowed(
                 "SELECT a.event_id, a.procedure, a.exact_home, json_extract(e.payload, '$.head')
                  FROM procedure_activations a JOIN events e ON e.id = a.event_id
                  WHERE a.event_type = ?1 AND a.exact_home = ?2
-                   AND json_extract(e.payload, '$.pull_request') IS NOT NULL AND {REPLACEABLE}"
+                   AND (json_extract(e.payload, '$.pull_request') IS NOT NULL) = ?3 AND {REPLACEABLE}"
             ))
             .map_err(&sql)?;
         let queued = statement
             .query_map(
                 params![
                     instrukt_core::config::REVIEW_NEEDED_EVENT,
-                    format!("project:{project}")
+                    format!("project:{project}"),
+                    pulls
                 ],
                 |row| {
                     Ok((
@@ -298,6 +318,25 @@ pub(crate) fn end_unowed(
         }
         Ok(())
     })
+}
+
+/// Whether the runner observed canonical head `head` of `project` red: it
+/// logged `runner.main_failing` for it.
+pub fn observed_red(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    head: &CommitSha,
+) -> Result<bool, ReviewReadError> {
+    Ok(state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM events WHERE name='runner.main_failing' AND project=?1 AND json_extract(payload, '$.head')=?2)",
+                params![project.as_str(), head.as_str()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(state::sql(path))
+        })?
+        .unwrap_or(false))
 }
 
 /// Which input opened the turn a session has in progress, with regard to a
