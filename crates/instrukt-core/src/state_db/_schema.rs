@@ -46,7 +46,13 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v33),
     Step(v34),
     Step(v35),
+    Sql(V36),
 ];
+
+/// Version 36: a stored Antigravity reservation holding `thinking_level` carries it as T3's `thought_level`.
+const V36: &str = "
+UPDATE manual_standing_reservations SET request=json_remove(json_set(request,'$.selection.options.thought_level',json_extract(request,'$.selection.options.thinking_level')),'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind')='antigravity' AND json_type(request,'$.selection.options.thinking_level') IS NOT NULL;
+";
 
 /// Version 35: pin `reply_mode` on `connected_conversations` at binding
 /// creation and record connector-supplied `thread` on `conversation_messages`

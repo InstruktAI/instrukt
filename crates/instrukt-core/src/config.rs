@@ -36,8 +36,9 @@ mod _webhooks;
 use std::path::Path;
 
 pub use _agents::{
-    AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile, RoleSelection,
-    SHIPPED_AGENTS,
+    AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile,
+    RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
+    current_role,
 };
 
 pub use _admitted::{

@@ -1,3 +1,12 @@
+# A declared local variant of InstruktAI/workflows
+# (project/instrukt/policy/shared-workflows, sdlc/policy/ci-pipeline-conventions).
+# Its ci-rust.yml runs one Ubuntu job calling `make lint test` and cannot
+# express this pipeline's input-driven selection, a test archive built once and
+# sharded across runners, a macOS runner, or this repository's required check
+# names; its deps-audit.yml fans out into jobs whose names do not match the
+# required `dependency audit`. The way back: move sharded nextest CI into
+# InstruktAI/workflows when a second Rust repository needs it, and compose it
+# from there.
 name: ci
 
 on:
@@ -16,13 +25,37 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Every required check depends on `changes` and gates its steps, never its job:
-# a check whose steps are skipped still reports success under its own name,
-# where a skipped matrix job would leave its expanded names pending. Each job
-# runs unless cancelled, and its steps read the outputs of `changes` only when
-# that job succeeded: a step runs unless its output is `false`, and nothing is
-# left out of the commit checks unless `changes` succeeded. A `changes` job that
-# fails, even after writing some outputs, runs every check.
+env:
+  # The rust-cache key of the pinned Graphify and T3 contract jobs. rust-cache
+  # hashes member manifests and Cargo.lock but not the virtual root Cargo.toml
+  # that sets the dependency opt-level, so without this key those jobs match
+  # their opt-level 0 caches, rebuild every dependency and save nothing. The
+  # name must not start with a prefix rust-cache hashes into every job's
+  # environment key (CARGO, CC, CFLAGS, CXX, CMAKE, RUST).
+  CONTRACT_CACHE_KEY: dev-opt2
+
+# A deselection is the literal `false` from a `changes` job that succeeded, and
+# nothing else: a `changes` job that fails, even after writing some outputs,
+# selects every check. The Linux build job's every-file commit-check run skips
+# hooks in two parts. Three hook IDs are always left out, whatever the
+# classifier reported and whether it succeeded: shellcheck,
+# cargo-clippy-and-unit-tests and config-validate; their checks run elsewhere,
+# each under its own selection condition, as that step's comment says. The
+# hooks the classifier names (precommit_skip) are added only when `changes`
+# succeeded; when it fails they are dropped, so no other hook, such as
+# cargo-fmt or the Python hooks, is left out. Three kinds of job rest on the
+# deselection rule:
+# - `shellcheck`, `dependency audit`, `pinned Graphify contract`,
+#   `pinned T3 contract` and `fmt, clippy, test (macos-latest)` carry required
+#   names. Each depends on `changes`, runs unless cancelled and gates its
+#   steps, never its job: a check whose steps are skipped still reports success
+#   under its own name.
+# - `fmt, clippy, test (ubuntu-latest)` is the aggregate. It always runs, also
+#   on a cancelled run, and none of its steps carries a condition.
+# - The Linux build job and the shard job carry no required name and skip
+#   themselves, as jobs, when the classifier deselected them, so they start no
+#   runner. The required platform jobs, the aggregate and
+#   `fmt, clippy, test (macos-latest)`, still start then, as the rows above say.
 jobs:
   changes:
     name: changed inputs
@@ -70,75 +103,181 @@ jobs:
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.shell != 'false' }}
         run: pre-commit run shellcheck --all-files
 
-  check:
-    name: fmt, clippy, test (${{ matrix.os }})
+  # Builds once on Linux and runs the OS-independent checks once: every check
+  # of .pre-commit-config.yaml over every file, use-case coverage, the
+  # committed configuration and the instruction files; where Rust is selected, also clippy, the test archive
+  # the shards run, and the doctests (scripts/ci-ubuntu-build.sh). Its last
+  # step writes the completion record the aggregate requires.
+  ubuntu-build:
+    name: build ubuntu
     needs: changes
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Document and configuration validation is OS-independent: a change
-          # that reaches no Rust input validates on Linux alone.
-          - os: ubuntu-latest
-            validate: validate
-          - os: macos-latest
-            validate: rust
-    runs-on: ${{ matrix.os }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.validate != 'false') }}
+    runs-on: ubuntu-latest
+    outputs:
+      record: ${{ steps.record.outputs.record }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
       - name: Read pinned test tools
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: ${{ steps.test-tools.outputs.UV_VERSION }}
+      - name: Install the commit-check framework
+        run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
+        with:
+          tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
+      # Every check of .pre-commit-config.yaml over every file, document
+      # validation with an instrukt built from this revision among them.
+      # SKIP always leaves out three hook IDs, whatever the classifier
+      # reported, because each check runs elsewhere under its own selection:
+      # shellcheck in the `shellcheck` job when shell is selected; clippy with
+      # the unit tests in the build script, the shards and the macOS job when
+      # rust is selected; and configuration validation in the `committed
+      # configuration` step below whenever Linux validation runs and the steps
+      # before it pass, which also fails when the committed project layer is
+      # missing. Only when `changes` succeeded does SKIP also take
+      # precommit_skip, the Rust, shell or Python hooks whose inputs did not
+      # change; a failed `changes` adds none, so every other hook runs. It runs
+      # before the Rust build: its build lock clears the workspace's artifacts
+      # the first time.
+      - name: commit checks over every file
+        env:
+          SKIP: shellcheck,cargo-clippy-and-unit-tests,config-validate,${{ needs.changes.result == 'success' && needs.changes.outputs.precommit_skip || '' }}
+        run: scripts/commit-checks.sh --all-files
+      - name: clippy, test archive and doctests
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
+        run: scripts/ci-ubuntu-build.sh nextest-archive.tar.zst
+      - name: Upload the test archive
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nextest-archive-ubuntu
+          path: nextest-archive.tar.zst
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: use-case coverage
+        run: scripts/check-coverage.sh
+      - name: committed configuration
+        run: scripts/check-committed-config.sh
+      - name: committed instruction files
+        run: scripts/check-entrypoints.sh
+      - name: Record completion
+        id: record
+        run: echo "record=built" >> "$GITHUB_OUTPUT"
+
+  # Runs the archive in four partitions (scripts/ci-ubuntu-shard.sh), from the
+  # matrix's own index and total. Each leg writes its completion record under
+  # its own output only after its partition passed. Adding or removing a matrix
+  # entry changes the partition count; the outputs below and the aggregate's
+  # record arguments must then follow, or the required check is red.
+  ubuntu-test:
+    name: test ubuntu (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: [changes, ubuntu-build]
+    if: ${{ !cancelled() && needs.ubuntu-build.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    outputs:
+      shard_1: ${{ steps.shard.outputs.shard_1 }}
+      shard_2: ${{ steps.shard.outputs.shard_2 }}
+      shard_3: ${{ steps.shard.outputs.shard_3 }}
+      shard_4: ${{ steps.shard.outputs.shard_4 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Read pinned test tools
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
+      - name: Refresh the package index
+        run: sudo apt-get update
+      - name: Install disposable-test Redis and shasum
+        run: sudo apt-get install -y redis-server libdigest-sha-perl
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nextest-archive-ubuntu
+      - name: test partition
+        id: shard
+        run: scripts/ci-ubuntu-shard.sh "${{ strategy.job-index }}" "${{ strategy.job-total }}" nextest-archive.tar.zst >> "$GITHUB_OUTPUT"
+
+  # The required Linux check (scripts/ci-verify-jobs.sh). It passes when each
+  # selected job both left its completion record, the build job's one and one
+  # per partition, and is reported by GitHub as `success`, and it takes neither
+  # fact for the other: a matrix was observed to report success with a leg that
+  # never ran, and a job keeps the outputs it wrote when it is cancelled or
+  # fails afterwards. It leaves a job unexamined only where the classifier
+  # deselected it: a document-only change requires the build job's record and
+  # result; a change reaching neither validation nor Rust requires nothing. It
+  # runs on always(), because a skipped required check reads as passing.
+  ubuntu-check:
+    name: fmt, clippy, test (ubuntu-latest)
+    needs: [changes, ubuntu-build, ubuntu-test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: scripts
+      # The upstream results and outputs reach the script through the
+      # environment, as data: an expression inside `run:` would be substituted
+      # into the command before the shell parses it.
+      - name: require each selected job's record and success
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CHANGES_VALIDATE: ${{ needs.changes.outputs.validate }}
+          CHANGES_RUST: ${{ needs.changes.outputs.rust }}
+          BUILD_RESULT: ${{ needs.ubuntu-build.result }}
+          BUILD_RECORD: ${{ needs.ubuntu-build.outputs.record }}
+          TEST_RESULT: ${{ needs.ubuntu-test.result }}
+          SHARD_1: ${{ needs.ubuntu-test.outputs.shard_1 }}
+          SHARD_2: ${{ needs.ubuntu-test.outputs.shard_2 }}
+          SHARD_3: ${{ needs.ubuntu-test.outputs.shard_3 }}
+          SHARD_4: ${{ needs.ubuntu-test.outputs.shard_4 }}
+        run: scripts/ci-verify-jobs.sh "$CHANGES_RESULT" "$CHANGES_VALIDATE" "$CHANGES_RUST" "$BUILD_RESULT" "$BUILD_RECORD" "$TEST_RESULT" "$SHARD_1" "$SHARD_2" "$SHARD_3" "$SHARD_4"
+
+  # Clippy and, on a pull request, the macOS selection; on every other event
+  # the full suite and the doctests (scripts/ci-macos.sh). Formatting and the
+  # other OS-independent checks run on Linux alone; the name stays as branch
+  # protection requires it.
+  macos-check:
+    name: fmt, clippy, test (macos-latest)
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
+      - name: Read pinned test tools
+        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
         id: test-tools
         run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
         with:
           tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
-      - name: Install disposable-test Redis (Linux)
-        if: ${{ runner.os == 'Linux' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
-        run: sudo apt-get update && sudo apt-get install -y redis-server libdigest-sha-perl
-      - name: Install disposable-test Redis (macOS)
-        if: ${{ runner.os == 'macOS' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
-        run: brew install redis shellcheck
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
-        with:
-          version: ${{ steps.test-tools.outputs.UV_VERSION }}
-      - name: Install the commit-check framework
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
-        run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
-      # Every check of .pre-commit-config.yaml over every file, document and
-      # configuration validation with an instrukt built from this revision;
-      # on a pull request, without the Rust, shell or Python checks whose inputs
-      # did not change (precommit_skip).
-      - name: commit checks over every file
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
-        env:
-          SKIP: ${{ needs.changes.result == 'success' && needs.changes.outputs.precommit_skip || '' }}
-        run: scripts/commit-checks.sh --all-files
-      - name: test
+      - name: Install disposable-test Redis
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
-        run: cargo nextest run --workspace --locked --profile ci
-      - name: doctests
+        run: brew install redis
+      - name: clippy and macOS tests
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
-        run: cargo test --workspace --locked --doc
-      - name: use-case coverage
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
-        run: scripts/check-coverage.sh
-      - name: committed configuration
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
-        run: scripts/check-committed-config.sh
-      - name: committed instruction files
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs[matrix.validate] != 'false' }}
-        run: scripts/check-entrypoints.sh
+        run: scripts/ci-macos.sh "${{ github.event_name }}"
 
   dependencies:
     name: dependency audit
@@ -174,6 +313,8 @@ jobs:
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
+        with:
+          key: ${{ env.CONTRACT_CACHE_KEY }}
       - name: Read pinned test tools
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.graphify != 'false' }}
         id: test-tools
@@ -205,6 +346,8 @@ jobs:
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
+        with:
+          key: ${{ env.CONTRACT_CACHE_KEY }}
       - name: Read pinned test tools
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.t3 != 'false' }}
         id: test-tools

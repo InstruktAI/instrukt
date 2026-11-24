@@ -151,6 +151,7 @@ Findings:
 - In a project that opts into tests, the named test would pass on a broken
   implementation → **Requirement-Violation**.
 - Unrequested feature (no criterion drives it) → **Critical**.
+- Policy-amplified gold-plating — a supporting mechanism introduced for a global policy whose state, rules, or coordination grow disproportionate to any criterion in the approved intent → **Critical**. When a proposed mechanism fails an internal consistency check, verify that the mechanism itself is warranted by the approved intent before demanding further state or rules to harden its edge cases.
 - For a change/bug, a behavioral delta the intent does not call for — including one introduced alongside a necessary change, or one resolving a forced decision by new behavior where established behavior or human escalation was the path → **Critical**.
 - Directive text authored where the intent called only for its removal or correction → **Critical**. Replacing an instruction the intent condemned with a different instruction of the author's own devising is a behavioral delta wearing the shape of the requested edit; the one-line diff and the honest commit subject are what let it pass. `general/policy/documentation-discipline` owns which text is directive.
 - Gold-plating (scope creep beyond the authorized intent) → Important.
@@ -521,8 +522,9 @@ Missing documentation updates are **Important** findings. Missing config surface
 **Authority:** `general/principle/intent-first-documentation` + `general/policy/adr-discipline` + `general/policy/snippet-value-contract` (full anti-pattern list, not Narration alone) + `general/policy/referencing-doc-snippets` (citation form) + `general/policy/agent-facing-text` (reader framing) + `sdlc/policy/process-change-authority` + `sdlc/policy/language-policy-ownership`.
 
 Conditional lane — fires whenever the diff touches a `docs/**` snippet,
-company home knowledge (`AGENTS.master.md` or any document anywhere under
-`docs/` in a company repository), **or any directive-text surface** (below).
+company home knowledge (any document anywhere under `docs/` in a company
+repository, or the `docs/index.yaml` that selects them), **or any
+directive-text surface** (below).
 The DoD docs lane above checks that docs _exist and reflect the change_; this
 lane checks that the changed prose is _clean_ and _the author's to write_. A
 snippet or company knowledge body states present-tense intent, facts, or
@@ -536,7 +538,7 @@ literals on the surfaces named below; it never grades what those literals say.
 section), the snippet's **frontmatter**, and any **newly-added or delivered**
 planned block (`&lt;!-- planned:slug --&gt;`), planned-change block
 (`&lt;!-- planned-change:slug --&gt;`), or companion (`<stem>.<slug>.md`). For
-company home knowledge — including purely descriptive documents or master-only
+company home knowledge — including purely descriptive documents or index-only
 changes — audit the changed regions and frontmatter under the full
 `general/policy/snippet-value-contract` (including Narration) and
 `general/policy/agent-facing-text` checks without requiring taxonomy placement

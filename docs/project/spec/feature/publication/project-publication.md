@@ -84,7 +84,7 @@ everything a forced one did.
   session. A `runtime.*` path in a rendered output is a validation finding,
   since publication has no session to resolve it against; any other path that
   cannot be resolved fails the sync. Publication runs no command: an `@exec`
-  directive in a published snippet or master is a validation finding, and
+  directive in a published snippet is a validation finding, and
   sync refuses and names the file.
 - Rendering never inlines a pending snippet and drops planned material, so
   rendered outputs carry the current contract only.
@@ -221,12 +221,9 @@ And the documentation of both projects is as it was before
 
 ```gherkin
 Given a developer's project whose published documentation includes a snippet and a domain
-And a directory of the project holds agent instructions rendered from a master in that directory
-When the developer deletes the snippet, removes the domain, deletes that master and commits to main
+When the developer deletes the snippet, removes the domain and commits to main
 And publication runs for the project
 Then the published corpus and index no longer contain the retired snippet or domain
-And the rendered agent instructions of the deleted master are gone
-And instructions rendered from masters that still exist are unchanged
 And another project's published documentation is unchanged
 ```
 

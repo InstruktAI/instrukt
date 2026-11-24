@@ -165,11 +165,10 @@ Holding `docs/general/` or a `docs/domain/<x>/` is what makes a project
 publish it; one project owns each on a computer, and `general`, `project` and
 `third-party` (whose published tree is unchanged) are never a domain's name. Each position may carry an `index.yaml` selecting
 what is rendered and a `schema.yaml` adding sections
-(`project/instrukt/spec/domain/docs`). The project also carries its
-root `AGENTS.master.md` (its purpose only), any nested masters, the committed
-`AGENTS.md` beside each master, rendered at each commit from the repository's
-own content, the generated and git-ignored `.instrukt/schemas/` its YAML
-files' modelines name, and
+(`project/instrukt/spec/domain/docs`). The project also carries its one
+committed `AGENTS.md`, at its root, rendered at each commit from
+`docs/project/index.yaml` and the repository's own content, the generated and
+git-ignored `.instrukt/schemas/` its YAML files' modelines name, and
 instrukt's marked sections in its git hooks. No generated index lives in a
 repository, and no git filter rewrites its files: references are snippet ids
 the CLI resolves when read.
@@ -398,8 +397,10 @@ recorded assignments and native identities. Native turn completion releases
 recorded conversational content to the peer in identity envelopes. Link and
 per-direction progress commit in the existing database, outside native network
 waits; ordinary startup resumes retained positions. Relay failure is visible in
-`instrukt events status` and logs. This reader has no scheduled tick path or
-periodic fallback. Redis remains transport only.
+`instrukt events status` and logs. This reader has no scheduled tick path. Besides
+native notifications it reads again when the source asks its readers to
+(`project/instrukt/spec/feature/runner/history`).
+Redis remains transport only.
 
 ### Event platform
 
@@ -613,6 +614,17 @@ the gate adds no webhook, queue or process.
   `instrukt todo refresh <slug>` is its door
   (`project/instrukt/spec/feature/work/github-record`).
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
+- **A turn's commit becomes readable after the read its notification triggered:**
+  that read finds nothing new and ends successfully, no native notification
+  follows, and the link shows neither a failure nor a pending handover for the
+  turn. Each reader then reaches the turn on its own trigger. Link relay reads
+  again when the source asks its readers to
+  (`project/instrukt/spec/feature/runner/conversation-links`). History
+  extraction reads again on the requests it follows
+  (`project/instrukt/spec/feature/runner/history`). A company conversation
+  with outstanding work reads again on the company relay's own retry
+  (`project/instrukt/spec/feature/company/conversations`). A history search or
+  an explicit extraction catches up history only.
 
 <!-- planned:event-driven-pr-review-gate -->
 - **A reviewer's turn ends without a verdict for a head it was handed:** the

@@ -368,6 +368,8 @@ fn columns(db: &Connection, table: &str) -> Result<BTreeMap<String, String>, Sou
         })?
         .collect::<Result<_, _>>()?)
 }
+/// Checks the source's shape before every read. It runs on each read, so its
+/// records are trace-level.
 fn validate(path: &Path, location: &T3Home) -> Result<(), SourceError> {
     let db = open(path)?;
     for projection in PROJECTIONS {
@@ -389,13 +391,13 @@ fn validate(path: &Path, location: &T3Home) -> Result<(), SourceError> {
             ) {
             Ok(level) => level,
             Err(error) => {
-                tracing::debug!(event="history_migration_diagnostic_unavailable",error=%error);
+                tracing::trace!(event="history_migration_diagnostic_unavailable",error=%error);
                 None
             }
         },
         Ok(_) => None,
         Err(error) => {
-            tracing::debug!(event="history_migration_diagnostic_unavailable",error=%error);
+            tracing::trace!(event="history_migration_diagnostic_unavailable",error=%error);
             None
         }
     };
@@ -404,11 +406,11 @@ fn validate(path: &Path, location: &T3Home) -> Result<(), SourceError> {
             .ok()
             .and_then(|v| v["serverVersion"].as_str().map(str::to_owned)),
         Err(error) => {
-            tracing::debug!(event="history_release_diagnostic_unavailable",error=%error);
+            tracing::trace!(event="history_release_diagnostic_unavailable",error=%error);
             None
         }
     };
-    tracing::debug!(event="history_source_shape_validated",migration_level=?migration,t3_release=?release);
+    tracing::trace!(event="history_source_shape_validated",migration_level=?migration,t3_release=?release);
     Ok(())
 }
 fn batch(

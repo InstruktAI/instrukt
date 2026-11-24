@@ -25,7 +25,18 @@ directly without dispatching a `finalizer`.)
 
 - `instrukt todo artifacts read {slug} review-findings` exists with APPROVE.
 - At admission, the bound build-review stamp is current for the target and report.
-  Changes made during finalization are reviewed after completion and release.
+  Changes made during finalization (including merging accepted upstream main
+  for a retained worktree that predates a delivered verification stack) are
+  independently reviewed and live-verification reclassified after completion
+  and release.
+- Before recording `--finalize-ready` (Step 5),
+  `instrukt todo artifacts read {slug} verification-findings` exists for the
+  exact candidate HEAD with `PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED` (with
+  tracked follow-up todo under `sdlc/policy/live-verification` Exceptions), and
+  for a real-occurrence `bug` (`sdlc/concept/defect-evidence`)
+  `instrukt todo artifacts read {slug} escape-assessment` is recorded — except
+  an emergency hotfix carrying `HOTFIX_DEFERRED`, whose tracked follow-up todo
+  delivers post-hotfix `escape-assessment`.
 - When `quality-checklist` is present, its build and review sections are complete.
 - Deferrals are resolved and their processing is recorded.
 
@@ -43,9 +54,13 @@ directly without dispatching a `finalizer`.)
 4. Record `instrukt todo stamp {slug} --role-complete` at that exact head. The
    stamp releases this attempt atomically. Report completion and any changed
    todo content or review evidence to your parent. A changed candidate is
-   independently reviewed at the current shared head after release.
-5. After your parent confirms current independent approval and no outstanding
-   workspace role, recheck matching candidate identities and record
+   independently reviewed and live-verification reclassified (Step 4b of
+   `sdlc/procedure/lifecycle/overview`) at the current shared head after
+   release.
+5. After your parent confirms current independent approval, current exact-SHA
+   `verification-findings` (`PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED` under
+   `sdlc/policy/live-verification` Exceptions), and no outstanding workspace
+   role, recheck matching candidate identities and record
    `instrukt todo stamp {slug} --finalize-ready` against the retained binding.
    This record-only write commits readiness and `workflow.finalized` together
    for the exact project/todo/SHA. Further workspace changes need a new attempt.

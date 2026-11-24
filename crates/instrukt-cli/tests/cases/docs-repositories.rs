@@ -96,7 +96,6 @@ fn adopt(env: &TestEnv, remote: &Path, name: &str) -> (Repo, Assert) {
 fn consumer(env: &TestEnv) -> Repo {
     let app = env.git_repo("app");
     app.write("instrukt.yaml", &layer("app", ""))
-        .write("AGENTS.master.md", "## Purpose\n\nThe app.\n")
         .write(
             "docs/project/index.yaml",
             "expanded:\n  - project/app/concept/way\n",
@@ -272,21 +271,6 @@ fn after_the_first_owner_retracts_a_domain_projects_read_the_new_owners_version(
         .run(app.path(), ["docs", "get", "sdlc/policy/rules"])
         .success();
     insta::assert_snapshot!("consumer-reads-own-doctrine", stdout(&env, &read));
-}
-
-// spec: project/instrukt/spec/feature/publication/docs-repositories UC-DOR3
-#[test]
-fn validating_a_project_whose_master_needs_an_unpublished_domain_names_it() {
-    let env = machine();
-    let app = env.git_repo("app");
-    app.write("instrukt.yaml", &layer("app", "")).write(
-        "tools/AGENTS.master.md",
-        "## Tools\n\nThe tools.\n\n## Required reads\n\n- sdlc\n",
-    );
-    app.commit("app");
-
-    let refused = env.run(app.path(), ["docs", "validate"]).failure();
-    insta::assert_snapshot!(stdout(&env, &refused), @"tools/AGENTS.master.md: reference-domain-unpublished: sdlc: domain `sdlc` is not published on this computer; adopt a docs repository that publishes it");
 }
 
 /// A project with `todos` on whose `workflow.domain` names `flows`, which

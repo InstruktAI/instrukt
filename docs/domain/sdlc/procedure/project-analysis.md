@@ -28,7 +28,7 @@ reflect concrete findings from the analyzed repository, not generic templates.
 - The project is adopted with `instrukt init`, so its `instrukt.yaml` (with the `project` slug), `docs/project` and hook sections exist.
 - The required reads above provide the snippet-authoring discipline (`doc-snippet-authoring`, which transitively
   pulls in the value contract, schema, and referencing rules), and the
-  agent-artifact governance (for the AGENTS.master.md decision in Step 15).
+  agent-artifact governance (for the agent bootstrap decision in Step 15).
 - The session runs inside the project root with full filesystem read access.
 
 ## Steps
@@ -244,35 +244,51 @@ over restating the contract.
 | `project/<slug>/design/test-strategy`             | design   | The project tests in non-standard ways agents must follow (custom fixtures, coverage philosophy, specific frameworks). Generic test-runner patterns do not earn a snippet.                      |
 | `project/<slug>/spec/build-deploy`                | spec     | The pipeline encodes constraints invisible in the CI YAML (why a step exists, what failure it defends). Otherwise the YAML is the source of truth.                                              |
 | `project/<slug>/spec/configuration`               | spec     | Configuration semantics are project-specific. **If the project implements a global policy, write a reverse pointer (`See also: <global policy ID>`) and stop — do not duplicate the contract.** |
+| `project/<slug>/spec/verification-substrate`      | spec     | Produced via `sdlc/procedure/verification-bootstrap`: declares the project's archetype(s), execution host, live surfaces, isolation primitive, seeders, and blind spots (`sdlc/policy/live-verification`). |
+| `project/<slug>/policy/reliability-checklist`     | policy   | Paired with `verification-substrate` via `sdlc/procedure/verification-bootstrap`: holds diff-triggered live checks born from real escapes (`sdlc/policy/live-verification`). |
 
-### 15. Agent Bootstrap Content (AGENTS.master.md decision)
+When `project/<slug>/spec/verification-substrate` or
+`project/<slug>/policy/reliability-checklist` is absent or stale for the
+analyzed repository's runtime surfaces, execute
+`sdlc/procedure/verification-bootstrap` to establish or refresh both fills and
+any earned verification stack.
 
-The analysis encounters one of four normal repository states. Apply the matching
+### 15. Agent Bootstrap Content (project index decision)
+
+The analysis encounters one of the repository states below. Apply the matching
 case; do not improvise.
 
 **Case 1 — `.instrukt/adopted/AGENTS.md` exists (preserved by `instrukt init`).**
 Review `.instrukt/adopted/AGENTS.md` with the human: place the repository's
-purpose in `AGENTS.master.md`'s `## Purpose`, migrate every durable instruction
+purpose in a project snippet named first in `expanded` of
+`docs/project/index.yaml`, migrate every durable instruction
 into its appropriate snippet under `docs/project/` with its entry in
 `docs/project/index.yaml` (`expanded` for always-loaded baseline rules, `listed`
 for progressive retrieval), and remove `.instrukt/adopted/AGENTS.md` once
 nothing in it remains unplaced. On commit, instrukt overwrites the root
 `AGENTS.md` with the generated rendering.
 
-**Case 2 — `AGENTS.master.md` exists, no `.instrukt/adopted/AGENTS.md`.**
-Respect `AGENTS.master.md`'s `## Purpose`; do not move procedural or policy
-instructions into the master. Place project knowledge in snippets under
-`docs/project/` and select them through `docs/project/index.yaml`.
+**Case 2 — `docs/project/index.yaml` already selects snippets, no `.instrukt/adopted/AGENTS.md`.**
+Respect the selection and the project's purpose snippet. Place project
+knowledge in snippets under `docs/project/` and select them through
+`docs/project/index.yaml`.
 
 **Case 3 — Substantive standalone runtime-specific instruction file, no `.instrukt/adopted/AGENTS.md`.**
 Respect by default. Do not auto-migrate or delete a standalone runtime-specific
 instruction file — moving its content into `docs/project/` snippets is an
 explicit human-driven decision.
 
-**Case 4 (greenfield) — minimal `AGENTS.master.md` and no prior instruction files.**
-Keep `AGENTS.master.md` carrying only `## Purpose` with the project name, and
-select project snippets through `docs/project/index.yaml` so publication renders
-`AGENTS.md`.
+**Case 4 (greenfield) — an index that selects nothing and no prior instruction files.**
+Write the project's purpose as a project snippet, name it first in `expanded`,
+and select the other project snippets through `docs/project/index.yaml` so the
+commit renders `AGENTS.md`.
+
+**Case 5 — a former master exists: an `AGENTS.master.md` kept at the repository's root or in a subfolder as the source of the `AGENTS.md` beside it.**
+No entrypoint is rendered from it, so what it holds reaches no agent through
+the project's rendering. Move its `## Purpose` into the project's purpose
+snippet and anything else it holds into snippets the index selects, then
+delete the file. A document under `docs/` that the index selects stays where
+it is, whatever its name.
 
 **Anomaly — both `.instrukt/adopted/AGENTS.md` (or a hand-authored `AGENTS.md`) and a substantive runtime-specific instruction file exist.**
 When the configured runtime loads both into the same session, two authored

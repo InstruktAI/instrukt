@@ -2,31 +2,106 @@
 source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
 expression: "refusals.join(\"\\n\")"
 ---
-a linked folder:
-AGENTS.md: AGENTS.master.md requires `docs/team/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+an entry naming a snippet:
+AGENTS.md: docs/index.yaml names `general/policy/commits` in `expanded`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
 instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml names `general/policy/commits` in `expanded`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+
+an entry naming a domain:
+AGENTS.md: docs/index.yaml names `sdlc` in `expanded`, a domain; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml names `sdlc` in `expanded`, a domain; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+
+an entry outside docs:
+AGENTS.md: docs/index.yaml names `../README.md` in `expanded`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml names `../README.md` in `expanded`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
+
+an entry naming a missing file:
+AGENTS.md: docs/index.yaml names `nowhere.md` in `expanded`, which the home does not hold; add the document or correct the path; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml names `nowhere.md` in `expanded`, which the home does not hold; add the document or correct the path; nothing is rendered until it is fixed
+
+an entry naming a link:
+AGENTS.md: docs/index.yaml names `team.md` in `expanded`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml names `team.md` in `expanded`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+
+an entry naming the index itself:
+AGENTS.md: docs/index.yaml names `index.yaml` in `expanded`, which does not end in `.md` and so names no company document; name a Markdown document in `docs/` instead; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml names `index.yaml` in `expanded`, which does not end in `.md` and so names no company document; name a Markdown document in `docs/` instead; nothing is rendered until it is fixed
+
+a required read that is no Markdown document:
+AGENTS.md: docs/company.md requires `notes.txt`, which does not end in `.md` and so names no company document; name a Markdown document in `docs/` instead; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/company.md requires `notes.txt`, which does not end in `.md` and so names no company document; name a Markdown document in `docs/` instead; nothing is rendered until it is fixed
+
+a key the index does not allow:
+AGENTS.md: docs/index.yaml holds `description`, which is not allowed; a company index holds only `expanded` and `listed`; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml holds `description`, which is not allowed; a company index holds only `expanded` and `listed`; nothing is rendered until it is fixed
+
+listed documents:
+AGENTS.md: docs/people.md is listed, but docs/company.md in `expanded` already brings it in full; remove it from `listed`; nothing is rendered until it is fixed
+AGENTS.md: docs/notes.md is listed but has no `description` in its frontmatter, the line that names it; add one; nothing is rendered until it is fixed
+AGENTS.md: docs/terms.md is listed but its frontmatter cannot be read (it is not YAML: mapping values are not allowed in this context at line 1 column 27); correct it so its `description` can be read; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/people.md is listed, but docs/company.md in `expanded` already brings it in full; remove it from `listed`; nothing is rendered until it is fixed
+AGENTS.md: docs/notes.md is listed but has no `description` in its frontmatter, the line that names it; add one; nothing is rendered until it is fixed
+AGENTS.md: docs/terms.md is listed but its frontmatter cannot be read (it is not YAML: mapping values are not allowed in this context at line 1 column 27); correct it so its `description` can be read; nothing is rendered until it is fixed
+
+a linked index:
+AGENTS.md: docs/index.yaml is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then
+
+a linked folder:
+AGENTS.md: docs/company.md requires `team/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/company.md requires `team/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
 
 a linked docs folder:
-AGENTS.md: AGENTS.master.md requires `docs/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+AGENTS.md: docs/index.yaml is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then
 instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then
 
 a staged docs link:
-AGENTS.md: AGENTS.master.md requires `docs/people.md`, a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to; nothing is rendered until it is fixed
+AGENTS.md: docs/index.yaml is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then
 instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/index.yaml is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then
 
 a configured value among the required reads:
-AGENTS.md: AGENTS.master.md reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead
+AGENTS.md: docs/company.md reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead
 instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
-
 config validate --company acme:
-AGENTS.md: AGENTS.master.md reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead
+AGENTS.md: docs/company.md reads a configured value, which a company's committed rendering cannot hold; write the value into the document instead
 
 a cycle:
 AGENTS.md: docs/a.md → docs/b.md → docs/a.md require each other in a cycle, so no order puts each document after what it requires; nothing is rendered until one of these required reads is removed
 instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/a.md → docs/b.md → docs/a.md require each other in a cycle, so no order puts each document after what it requires; nothing is rendered until one of these required reads is removed
 
 references in the text:
-AGENTS.md: AGENTS.master.md references `@general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
-AGENTS.md: AGENTS.master.md references `../secret.md`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
-AGENTS.md: AGENTS.master.md references `general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+AGENTS.md: docs/company.md references `@general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+AGENTS.md: docs/company.md references `../secret.md`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
+AGENTS.md: docs/company.md references `general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
 instrukt: the findings above leave their files as they were; fix them and run `instrukt docs render` again
+config validate --company acme:
+AGENTS.md: docs/company.md references `@general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed
+AGENTS.md: docs/company.md references `../secret.md`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
+AGENTS.md: docs/company.md references `general/policy/commits`, a snippet; a company's knowledge stands alone, so name one of the company's own documents in `docs/` instead; nothing is rendered until it is fixed

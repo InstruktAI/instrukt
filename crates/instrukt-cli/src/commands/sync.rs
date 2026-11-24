@@ -17,8 +17,7 @@ pub struct SyncArgs {}
 /// Publishes the project the caller stands in from its canonical main.
 ///
 /// Prints one line naming the outcome, then one `notice:` line per notice
-/// of a publishing sync (a domain without `index.yaml`, a root master
-/// without `docs/project/index.yaml`), one line per global agent file it
+/// of a publishing sync (a domain without `index.yaml`), one line per global agent file it
 /// wrote or found current with the program that reads it, one per symbolic
 /// link it replaced at one of its own destinations, one per finding about
 /// an agent file (a settings file left untouched, a reference a global file

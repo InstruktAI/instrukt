@@ -6,9 +6,11 @@ use instrukt_core::{
     ids::SessionRef,
     state_db::{
         StateDbError, StateRead,
-        rusqlite::{OptionalExtension, params},
+        rusqlite::{Connection, OptionalExtension, params},
     },
 };
+use instrukt_runner::assignments::RecordedStart;
+use std::path::Path;
 
 const CONFLICT_MESSAGE: &str =
     "session has conflicting recorded assignments; recover its binding/attempt";
@@ -75,42 +77,120 @@ fn select_assignment(
     Ok(latest)
 }
 
+/// One binding row with the worktree a runner start supplies when the row
+/// was found through that start.
+type BindingRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<String>,
+);
+
+/// Bindings recorded for the caller's session, directly or through a later
+/// runtime generation of their key.
+const RECORDED_BINDINGS: &str = "SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,NULL FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0";
+
+/// The reserved, unreleased attempt a runner start names before work records
+/// the caller's session on it: a fresh start whose binding has no session
+/// yet, or a successor of the session the start replaces. A binding already
+/// on the caller is read through [`RECORDED_BINDINGS`].
+const STARTED_BINDING: &str = "SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt,?5 FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE b.semantic_key=?3 AND (b.runtime IS NULL OR b.runtime=?2) AND b.released_at IS NULL AND (b.session IS NULL OR b.session=?4) AND b.session IS NOT ?1";
+
+fn binding_rows(
+    conn: &Connection,
+    path: &Path,
+    sql: &str,
+    params: impl instrukt_core::state_db::rusqlite::Params,
+) -> Result<Vec<BindingRow>, StateDbError> {
+    let mut stmt = conn
+        .prepare_cached(sql)
+        .map_err(StateDbError::sqlite(path))?;
+    stmt.query_map(params, |r| {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+            r.get(6)?,
+            r.get(7)?,
+            r.get(8)?,
+            r.get(9)?,
+        ))
+    })
+    .map_err(StateDbError::sqlite(path))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(StateDbError::sqlite(path))
+}
+
+/// The caller's assignment among its recorded bindings and the reserved
+/// attempts its runner `starts` name; [`select_assignment`] decides among
+/// several attempts.
 pub fn recorded_assignment(
     home: &Home,
     caller: &SessionRef,
+    starts: &[RecordedStart],
 ) -> Result<Option<Assignment>, StateDbError> {
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    let mut stmt = db.conn().prepare("SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt FROM session_bindings b LEFT JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 UNION ALL SELECT b.role,b.semantic_key,b.worktree,b.evidence,t.project,t.id,b.session,b.released_at,b.attempt FROM runtime_generations g JOIN session_bindings b ON b.semantic_key=g.semantic_key LEFT JOIN todos t ON t.id=b.todo_id WHERE g.session=?1 AND g.generation>0").map_err(StateDbError::sqlite(db.path()))?;
-    let rows = stmt
-        .query_map([caller.to_string()], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, Option<String>>(6)?,
-                r.get::<_, Option<String>>(7)?,
-                r.get::<_, i64>(8)?,
-            ))
-        })
-        .map_err(StateDbError::sqlite(db.path()))?;
+    let (conn, path) = (db.conn(), db.path());
+    let session = caller.to_string();
+    // Every row comes from one read snapshot. A binding work records on
+    // the caller between two separate reads would be missed by
+    // RECORDED_BINDINGS before the write and excluded by STARTED_BINDING
+    // after it.
+    let rows = {
+        let snapshot = conn
+            .unchecked_transaction()
+            .map_err(StateDbError::sqlite(path))?;
+        let mut rows = binding_rows(&snapshot, path, RECORDED_BINDINGS, params![session])?;
+        for start in starts {
+            rows.extend(binding_rows(
+                &snapshot,
+                path,
+                STARTED_BINDING,
+                params![
+                    session,
+                    caller.runtime.as_str(),
+                    start.semantic_key,
+                    start.replaced_session,
+                    start.worktree,
+                ],
+            )?);
+        }
+        rows
+    };
     let mut candidates = Vec::new();
     for row in rows {
-        let (role, key, workspace, evidence, project, todo, current_session, released_at, attempt) =
-            row.map_err(StateDbError::sqlite(db.path()))?;
+        let (
+            role,
+            key,
+            workspace,
+            evidence,
+            project,
+            todo,
+            current_session,
+            released_at,
+            attempt,
+            started_workspace,
+        ) = row;
         let binding: Binding = serde_json::from_str(&evidence).map_err(|e| {
             StateDbError::invalid(
-                db.path(),
+                path,
                 format!("binding {key}: {e}; recover the recorded attempt"),
             )
         })?;
         let current_session = current_session
             .map(|id| {
-                SessionRef::parse(&id).map_err(|e| StateDbError::invalid(db.path(), e.to_string()))
+                SessionRef::parse(&id).map_err(|e| StateDbError::invalid(path, e.to_string()))
             })
             .transpose()?;
         if binding.role.as_str() != role
@@ -123,7 +203,7 @@ pub fn recorded_assignment(
                 == instrukt_runner::interfaces::AssignmentKind::Unspecified
         {
             return Err(StateDbError::invalid(
-                db.path(),
+                path,
                 format!(
                     "binding {key} has contradictory or missing assignment facts; recover the binding/attempt"
                 ),
@@ -147,13 +227,13 @@ pub fn recorded_assignment(
             procedure: procedure
                 .map(|id| {
                     instrukt_core::ids::SnippetId::parse(&id)
-                        .map_err(|error| StateDbError::invalid(db.path(), error.to_string()))
+                        .map_err(|error| StateDbError::invalid(path, error.to_string()))
                 })
                 .transpose()?,
-            workspace: workspace.map(Into::into),
+            workspace: workspace.or(started_workspace).map(Into::into),
             project: Some(
                 instrukt_core::ids::ProjectSlug::parse(&project)
-                    .map_err(|error| StateDbError::invalid(db.path(), error.to_string()))?,
+                    .map_err(|error| StateDbError::invalid(path, error.to_string()))?,
             ),
             todo: Some(todo),
             platform: false,
@@ -166,7 +246,7 @@ pub fn recorded_assignment(
             assignment,
         });
     }
-    select_assignment(candidates).map_err(|message| StateDbError::invalid(db.path(), message))
+    select_assignment(candidates).map_err(|message| StateDbError::invalid(path, message))
 }
 
 pub fn target_identity(

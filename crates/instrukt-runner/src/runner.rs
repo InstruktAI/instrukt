@@ -193,13 +193,16 @@ pub enum TickOutcome {
     Busy,
 }
 
-/// One wake-up at `now`; exits at once when the runner lock is held. Its
-/// configuration is admitted at its start: an invalid machine layer or
-/// `agents.yaml` refuses it, and what was not admitted is left out.
+/// One wake-up at the moment it is invoked; exits at once when the runner
+/// lock is held. Its configuration is admitted at its start: an invalid
+/// machine layer or `agents.yaml` refuses it, and what was not admitted is
+/// left out. `clock` is read again only where an answer's own time matters.
 pub fn tick(
     cx: &RunnerContext<'_>,
-    clock: &dyn Fn() -> Timestamp,
+    clock: &(dyn Fn() -> Timestamp + Sync),
 ) -> Result<TickOutcome, RunnerError> {
+    // The scheduler's moment is the tick's arrival: the locking, admission
+    // and readiness work below never make an on-time occurrence late.
     let now = clock();
     let state = RunnerState::new(cx.home);
     let Some(_runner) = _holder::tick(cx.home)? else {
@@ -233,6 +236,7 @@ pub fn tick(
             cx,
             &state,
             now,
+            clock,
             &considered,
             platform.as_ref(),
             true,
@@ -489,6 +493,7 @@ pub fn run(
                     cx,
                     &state,
                     clock(),
+                    &*clock,
                     &considered,
                     enabled_platform,
                     false,
@@ -574,10 +579,18 @@ fn event_platform(
     }))
 }
 
+/// One wake at `now`, the moment it began; `clock` is read again only by
+/// the GitHub pass's credential issuance and its failure records.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the tick and the run loop each borrow these independent inputs from their own \
+              state; a struct built only to call `wake` would rename the list, not shorten it"
+)]
 fn wake(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
     now: Timestamp,
+    clock: &(dyn Fn() -> Timestamp + Sync),
     considered: &[Considered],
     platform: Option<&EventPlatform>,
     drain: bool,
@@ -616,6 +629,7 @@ fn wake(
             EventWake {
                 cx,
                 state,
+                clock,
                 now,
                 considered,
                 mains: &mains,
@@ -660,6 +674,8 @@ fn wake(
 struct EventWake<'a, 'cx> {
     cx: &'a RunnerContext<'cx>,
     state: &'a RunnerState,
+    /// The operator's clock, read again where an answer's time matters.
+    clock: &'a (dyn Fn() -> Timestamp + Sync),
     now: Timestamp,
     considered: &'a [Considered],
     mains:
@@ -673,6 +689,7 @@ impl EventWake<'_, '_> {
         let Self {
             cx,
             state,
+            clock,
             now,
             considered,
             mains,
@@ -689,6 +706,7 @@ impl EventWake<'_, '_> {
                 &log,
                 project,
                 mains.get(&project.project.slug),
+                clock,
                 now,
             );
         }
@@ -740,11 +758,12 @@ fn read_sources(
     log: &DbEventLog,
     considered: &Considered,
     observed: Option<&sources::MainObservation>,
+    clock: &dyn Fn() -> Timestamp,
     now: Timestamp,
 ) {
     read_upstream(state, log, considered, now);
     if let Some(observed) = observed {
-        github_pass(cx, state, log, considered, observed, now);
+        github_pass(cx, state, log, considered, observed, clock, now);
     }
 }
 
@@ -774,6 +793,7 @@ fn github_pass(
     log: &DbEventLog,
     considered: &Considered,
     observed: &sources::MainObservation,
+    clock: &dyn Fn() -> Timestamp,
     now: Timestamp,
 ) {
     let project = &considered.project;
@@ -809,7 +829,9 @@ fn github_pass(
     // project not admitted here has its CI read as one that did not opt in
     // (`layered-configuration`, Automatic review enablement).
     let readiness = match (considered.review, &cx.wiring.review) {
-        (true, Some(port)) => Some(port.readiness(&repository, now)),
+        // Readiness issues credentials, so it reads the clock as CI
+        // issuance does: discovery above may have spent seconds.
+        (true, Some(port)) => Some(port.readiness(&repository, clock())),
         (true, None) => {
             tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
             None
@@ -825,6 +847,7 @@ fn github_pass(
         readiness.as_ref().is_some_and(gates_ci),
         &api_url,
         &repository,
+        clock,
         now,
     );
     match readiness {
@@ -844,7 +867,7 @@ fn github_pass(
         }
         Some(instrukt_core::interfaces::ReviewReadiness::CannotAsk(cause)) => {
             // Recorded after the CI read, which would otherwise clear it.
-            if let Err(error) = ci::record_source_cause(state, &project.slug, &cause, now) {
+            if let Err(error) = ci::record_source_cause(state, &project.slug, &cause, clock()) {
                 tracing::warn!(event = "ci_observation_state_failed", error = %error);
             }
             tracing::warn!(event = "review_readiness_unavailable", project = %project.slug, cause = %cause);
@@ -879,6 +902,7 @@ fn ci_read(
     review_gate: bool,
     api_url: &str,
     repository: &str,
+    clock: &dyn Fn() -> Timestamp,
     now: Timestamp,
 ) {
     let project = &considered.project;
@@ -912,10 +936,14 @@ fn ci_read(
         tracing::warn!(event="ci_app_unavailable",project=%project.slug,cause="work credential capability unavailable");
         return;
     };
-    let credential = match credentials.credential(repository, github::Operation::Observe, now) {
+    // Issuance dates GitHub's answers from the moment it begins, so it reads
+    // the clock then, not when this wake began: discovery above may have
+    // spent seconds on the network.
+    let credential = match credentials.credential(repository, github::Operation::Observe, clock()) {
         Ok(credential) => credential,
         Err(error) => {
-            if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, now) {
+            if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, clock())
+            {
                 tracing::warn!(event="ci_observation_state_failed",error=%save);
             }
             tracing::warn!(event="ci_app_unavailable",project=%project.slug,error=%error);

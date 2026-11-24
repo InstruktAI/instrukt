@@ -119,6 +119,7 @@ fn a_committed_snippet_is_published_and_indexed_while_uncommitted_changes_stay_o
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/company-index.schema.json: schema written
     .instrukt/schemas/snippet-schema.schema.json: schema written
     .instrukt/schemas/instrukt.schema.json: schema written
     ");
@@ -204,6 +205,7 @@ fn a_linked_worktree_publishes_the_committed_main_of_its_project() {
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/company-index.schema.json: schema written
     .instrukt/schemas/snippet-schema.schema.json: schema written
     .instrukt/schemas/instrukt.schema.json: schema written
     ");
@@ -317,15 +319,14 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
     let repo = project(&env, "demo", &["acme", "legacy", "general"]);
     env.run(repo.path(), ["hooks", "install"]).success();
     repo.write("docs/domain/acme/policy/retired.md", &policy("Retired", ""))
-        .write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n")
-        .write("tools/AGENTS.master.md", "## Tools\n\nOnly the tools.\n");
+        .write(
+            "docs/project/index.yaml",
+            "expanded:\n  - project/demo/policy/house\n",
+        );
     repo.commit("retired");
     env.finished_hook_run(repo.path(), Hook::PostCommit);
     sync(&env, &repo).success();
-    assert!(
-        repo.git(["show", "HEAD:tools/AGENTS.md"])
-            .starts_with(GENERATED_LINE)
-    );
+    assert!(repo.read("AGENTS.md").starts_with(GENERATED_LINE));
     let kept_instructions = repo.read("AGENTS.md");
     let global_file = env.home().join(".claude/CLAUDE.md");
     let global_text = std::fs::read(&global_file).unwrap();
@@ -338,21 +339,14 @@ fn retired_docs_and_instructions_are_retracted_and_nothing_else() {
         .filter(|(path, _)| path.starts_with("shared"))
         .collect();
 
-    // The commit retiring the tools master removes its rendering, in the
-    // commit and in the working tree, and leaves the root one as it is.
+    // The commit retiring the snippet and the domains leaves the root
+    // rendering as it is.
     std::fs::remove_file(repo.path().join("docs/domain/acme/policy/retired.md")).unwrap();
     std::fs::remove_dir_all(repo.path().join("docs/domain/legacy")).unwrap();
     std::fs::remove_dir_all(repo.path().join("docs/general")).unwrap();
-    std::fs::remove_file(repo.path().join("tools/AGENTS.master.md")).unwrap();
     repo.write("instrukt.yaml", &layer("demo"));
     repo.commit("retire");
     env.finished_hook_run(repo.path(), Hook::PostCommit);
-    assert_eq!(
-        repo.git(["ls-tree", "-r", "--name-only", "HEAD", "--", "tools"]),
-        "",
-        "the commit holds no tools/AGENTS.md"
-    );
-    assert!(!repo.path().join("tools/AGENTS.md").exists());
     assert_eq!(repo.read("AGENTS.md"), kept_instructions);
 
     // The record an earlier release kept of the files it wrote, which no
@@ -487,8 +481,8 @@ fn publishing_again_restores_what_is_missing_without_a_new_commit() {
         )
         .commit("evaluated");
     let repo = project(&env, "demo", &["acme"]);
-    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n");
-    let sha = repo.commit("instructions");
+    repo.write("README.md", "# The demo project\n");
+    let sha = repo.commit("readme");
     let t1: jiff::Timestamp = "2030-01-01T08:00:00Z".parse().unwrap();
     env.set_env("INSTRUKT_NOW", &t1.to_string());
     sync(&env, &other).success();
@@ -670,6 +664,7 @@ fn an_output_that_is_a_symbolic_link_is_replaced_and_its_target_left_alone() {
     .instrukt/schemas/general-index.schema.json: schema written
     .instrukt/schemas/domain-index.schema.json: schema written
     .instrukt/schemas/project-index.schema.json: schema written
+    .instrukt/schemas/company-index.schema.json: schema written
     .instrukt/schemas/snippet-schema.schema.json: schema written
     .instrukt/schemas/instrukt.schema.json: schema written
     ");
@@ -764,8 +759,8 @@ fn a_replaced_publication_that_cannot_be_deleted_does_not_fail_the_sync() {
 fn a_linked_later_output_is_replaced_by_the_file() {
     let env = TestEnv::new();
     let repo = project(&env, "demo", &["acme"]);
-    repo.write("AGENTS.master.md", "## Purpose\n\nThe demo project.\n");
-    repo.commit("instructions");
+    repo.write("README.md", "# The demo project\n");
+    repo.commit("readme");
     sync(&env, &repo).success();
     let current = env
         .instrukt_home()
@@ -775,10 +770,7 @@ fn a_linked_later_output_is_replaced_by_the_file() {
     std::os::unix::fs::symlink(&elsewhere, &current).unwrap();
     let elsewhere_text = std::fs::read_to_string(&elsewhere).unwrap();
     repo.write("docs/domain/acme/policy/later.md", &policy("Later", ""))
-        .write(
-            "AGENTS.master.md",
-            "## Purpose\n\nThe changed demo project.\n",
-        );
+        .write("README.md", "# The changed demo project\n");
     let sha = repo.commit("later");
 
     let synced = sync(&env, &repo).success();

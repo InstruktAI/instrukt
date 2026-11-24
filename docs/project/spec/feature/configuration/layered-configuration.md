@@ -1,7 +1,5 @@
 ---
 description: '`instrukt.yaml` in a global and a project layer, and a company home''s own document — which key lives where, how the layers combine, validation, schema versions and migration.'
-binding_reservations:
-  UC-CL8: archive-terminal-todo-sessions
 ---
 
 # Layered Configuration — Spec

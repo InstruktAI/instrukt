@@ -432,7 +432,7 @@ fn check_shape(
             Some(entries) => {
                 let fields: Vec<_> = super::_runtime::ACTIONS
                     .iter()
-                    .map(|name| (*name, Field::NonEmptyStr))
+                    .map(|(name, _)| (*name, Field::NonEmptyStr))
                     .collect();
                 for (name, entry) in entries {
                     check_record(entry, &join(path, &key_text(name)), &[], &fields, out);
@@ -958,6 +958,37 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
     }
 }
 
+/// A JSON Schema `pattern` admitting exactly the strings
+/// [`Field::NonEmptyStr`] accepts: those holding a character outside Rust's
+/// `char::is_whitespace`, the set `str::trim` removes. A regex class escape
+/// such as `\S` would not do, because JSON Schema reads patterns as ECMA-262,
+/// whose whitespace differs (it adds U+FEFF and omits U+0085). The pattern is
+/// a complemented class of `\uXXXX` escapes, which ECMA-262 reads as exactly
+/// those code points; a validator using another regex dialect may not accept
+/// the `\uXXXX` escape.
+fn non_blank_pattern() -> String {
+    let mut runs: Vec<(u32, u32)> = Vec::new();
+    for code in (0..=u32::from(char::MAX))
+        .filter(|&code| char::from_u32(code).is_some_and(char::is_whitespace))
+    {
+        match runs.last_mut() {
+            Some((_, end)) if *end + 1 == code => *end = code,
+            _ => runs.push((code, code)),
+        }
+    }
+    let class: String = runs
+        .iter()
+        .map(|&(start, end)| {
+            if start == end {
+                format!("\\u{start:04X}")
+            } else {
+                format!("\\u{start:04X}-\\u{end:04X}")
+            }
+        })
+        .collect();
+    format!("[^{class}]")
+}
+
 fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
     let strings = |names: &[&str]| json!({ "type": "array", "items": { "enum": names } });
     let record = |required: &[&str], optional: &[(&str, serde_json::Value)]| {
@@ -979,7 +1010,26 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
     };
     match shape {
         Shape::Runtimes => {
-            json!({"type":"object","additionalProperties":record(&super::_runtime::ACTIONS, &[])})
+            // Each action is an optional, non-blank override, as validation
+            // reads it: an omitted one keeps the shipped instruction.
+            let non_blank = non_blank_pattern();
+            let actions: Vec<_> = super::_runtime::ACTIONS
+                .iter()
+                .map(|(name, contract)| {
+                    let action = json!({
+                        "type": "string",
+                        "pattern": non_blank,
+                        "description": contract,
+                    });
+                    (*name, action)
+                })
+                .collect();
+            let mut entry = record(&[], &actions);
+            entry["description"] = json!(
+                "This machine's agent-action instructions for the named runtime; \
+                 an action left out keeps the runtime's shipped instruction."
+            );
+            json!({ "type": "object", "additionalProperties": entry })
         }
         Shape::Webhooks => super::_webhooks::editor_schema(),
         Shape::Members => json!({ "type": "object" }),
@@ -1098,6 +1148,13 @@ mod tests {
     const BOTH: &str = "schema_version: 1\nmodules: {blueprint: true, todos: false, events: true}\n\
         blueprint: {engine: graphify}\n";
 
+    /// A JSON Schema `pattern`, compiled as Draft 2020-12 reads it: an
+    /// unanchored ECMA-262 regular expression, here in Unicode mode as
+    /// editors' validators compile it.
+    fn ecma_pattern(pattern: &str) -> regress::Regex {
+        regress::Regex::with_flags(pattern, "u").unwrap()
+    }
+
     /// Whether `value` fits `schema`, for the JSON Schema keywords
     /// [`editor_schema`] writes.
     fn fits(schema: &serde_json::Value, value: &serde_json::Value) -> bool {
@@ -1116,7 +1173,7 @@ mod tests {
             Some("string") => {
                 let pattern = object.get("pattern").and_then(J::as_str);
                 value.as_str().is_some_and(|text| {
-                    pattern.is_none_or(|p| regex::Regex::new(p).unwrap().is_match(text))
+                    pattern.is_none_or(|p| ecma_pattern(p).find(text).is_some())
                 })
             }
             Some("boolean") => value.is_boolean(),
@@ -1183,6 +1240,101 @@ mod tests {
                 "{extra}"
             );
             assert!(!fits(&editor_schema(), &as_json(&doc)), "{extra}");
+        }
+    }
+
+    #[test]
+    fn the_global_schema_reads_runtime_actions_as_validation_does() {
+        let schema = layer_json_schema(LayerKind::Global);
+        let entry = |actions: &str| format!("schema_version: 1\nruntimes:\n  t3:\n{actions}");
+        let earlier: String = super::super::_runtime::ACTIONS
+            .iter()
+            .filter(|(name, _)| *name != "retire_thread")
+            .map(|(name, _)| format!("    {name}: Follow the native {name}.\n"))
+            .collect();
+        for (doc, valid) in [
+            (entry(&earlier), true),
+            (
+                entry("    retire_thread: Archive the finished thread.\n"),
+                true,
+            ),
+            (entry("    retire_thread: '  '\n"), false),
+        ] {
+            assert_eq!(
+                check(&yaml(&doc), LayerKind::Global).is_empty(),
+                valid,
+                "{doc}"
+            );
+            assert_eq!(fits(&schema, &as_json(&doc)), valid, "{doc}");
+        }
+    }
+
+    #[test]
+    fn the_global_schema_reads_blank_runtime_actions_as_validation_does() {
+        let schema = layer_json_schema(LayerKind::Global);
+        for (action, valid) in [
+            ("\u{85}", false),
+            ("\u{FEFF}", true),
+            ("", false),
+            (" \t\n\r\u{B}\u{C}", false),
+            (
+                "\u{A0}\u{1680}\u{2000}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}",
+                false,
+            ),
+            ("archive", true),
+            ("\u{85} archive\u{3000}", true),
+            ("\u{1F5C4}", true),
+        ] {
+            let mut doc = yaml("schema_version: 1\nruntimes: {t3: {}}\n");
+            doc["runtimes"]["t3"]
+                .as_mapping_mut()
+                .unwrap()
+                .insert(Value::from("retire_thread"), Value::from(action));
+            let json = serde_json::to_value(&doc).unwrap();
+            assert_eq!(
+                check(&doc, LayerKind::Global).is_empty(),
+                valid,
+                "{action:?}"
+            );
+            assert_eq!(fits(&schema, &json), valid, "{action:?}");
+        }
+    }
+
+    /// Read as ECMA-262, each published action pattern admits a value exactly
+    /// when `str::trim` leaves something of it, on every Unicode scalar,
+    /// including those whose whitespace status ECMA-262 and Rust disagree on.
+    #[test]
+    fn the_runtime_action_pattern_admits_exactly_what_trim_keeps() {
+        let schema = layer_json_schema(LayerKind::Global);
+        let actions = &schema["properties"]["runtimes"]["additionalProperties"]["properties"];
+        let patterns: std::collections::BTreeSet<&str> = super::super::_runtime::ACTIONS
+            .iter()
+            .map(|(name, _)| actions[*name]["pattern"].as_str().unwrap())
+            .collect();
+        let whitespace: String = (0..=u32::from(char::MAX))
+            .filter_map(char::from_u32)
+            .filter(|c| c.is_whitespace())
+            .collect();
+        for pattern in patterns {
+            let compiled = ecma_pattern(pattern);
+            let admits = |text: &str| compiled.find(text).is_some();
+            let mut one = [0; 4];
+            let wrong: Vec<char> = (0..=u32::from(char::MAX))
+                .filter_map(char::from_u32)
+                .filter(|&c| {
+                    let text = c.encode_utf8(&mut one);
+                    admits(text) == text.trim().is_empty()
+                })
+                .collect();
+            assert!(wrong.is_empty(), "{pattern} misreads {wrong:?}");
+            for text in [
+                String::new(),
+                whitespace.clone(),
+                format!("{whitespace}\u{FEFF}{whitespace}"),
+                format!("{whitespace}archive{whitespace}"),
+            ] {
+                assert_eq!(admits(&text), !text.trim().is_empty(), "{text:?}");
+            }
         }
     }
 

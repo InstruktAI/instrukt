@@ -91,10 +91,12 @@ The default is **skip unless justified**, not "produce when applicable."
   dispositions and the rules every session acts on; the rest lives in on-demand
   snippets that an always-on rule names at the moment it applies. A `listed`
   line and a procedure's `activation_trigger` are ambient too: each is one line
-  in every agent's context, earned only by knowledge those agents need to know
-  exists before a task names it. Each ambient character is paid by every session — for `docs/general/`
-  and a domain's triggers, on every computer that adopts them — and dilutes the
-  attention every other rule receives.
+  in the context of every session its position reaches, earned only by knowledge
+  those agents need to know exists before a task names it. Each ambient
+  character is paid by every session that loads its position — for
+  `docs/general/`, every session on every computer that adopts it; for a domain,
+  every session that loads that domain — and dilutes the attention every other
+  rule receives.
 - **Genericity.** Asserting things true of every repository in the same
   language or framework. The global language policy already covers it.
 - **Vendor restatement.** Stating how a system we do not own behaves as if it
@@ -267,8 +269,8 @@ Applies to all snippet authoring contexts and company home knowledge:
 - Manual snippet authoring via `general/procedure/doc-snippet-authoring`.
 - Automated authoring during `sdlc/procedure/project-analysis` via
   `sdlc/procedure/project-analysis`.
-- Company home knowledge (`AGENTS.master.md` and documents anywhere under
-  `docs/` in a company repository): the value test,
+- Company home knowledge (the documents anywhere under `docs/` in a company
+  repository and the `docs/index.yaml` that selects them): the value test,
   `general/policy/agent-facing-text`, and all anti-patterns (including
   Narration) apply in full while company documents remain self-contained
   without taxonomy IDs or external doctrine references.

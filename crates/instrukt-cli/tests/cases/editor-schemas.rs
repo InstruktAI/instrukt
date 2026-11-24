@@ -16,10 +16,11 @@ use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
 
 /// The schema files instrukt generates.
-const SCHEMAS: [&str; 5] = [
+const SCHEMAS: [&str; 6] = [
     "general-index.schema.json",
     "domain-index.schema.json",
     "project-index.schema.json",
+    "company-index.schema.json",
     "snippet-schema.schema.json",
     "instrukt.schema.json",
 ];

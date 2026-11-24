@@ -1134,6 +1134,8 @@ impl TodoExistence for WorkExistence {
             }
         };
         let now = self.work.now();
+        // Anchored before the capability lock is taken (see `Session::open`).
+        let clock = super::_apps::Clock::starting(now);
         let unreadable = |reason: PendingReason| {
             failed(format!(
                 "cannot tell whether todo `{slug}` exists: it is not on this computer and GitHub cannot be read ({})",
@@ -1157,7 +1159,7 @@ impl TodoExistence for WorkExistence {
             &repository,
             None,
             github::Operation::Record,
-            now,
+            clock,
         )
         .map_err(|e| unreadable(_session::reason_of(&e)))?;
         let remote =

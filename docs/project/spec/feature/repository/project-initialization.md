@@ -1,5 +1,5 @@
 ---
-description: "Project initialization — `instrukt init` adopts a git repository in one idempotent step: project layer with its slug, `docs/project/` with its `index.yaml` and, when sdlc is published, a copy of sdlc's `schema.yaml`, a purpose-only root master, editor schemas with modelines, and instrukt's hook sections; it reports the claims a first sync will make and never overwrites what exists."
+description: "Project initialization — `instrukt init` adopts a git repository in one idempotent step: project layer with its slug, `docs/project/` with its `index.yaml` and, when sdlc is published, a copy of sdlc's `schema.yaml`, editor schemas with modelines, and instrukt's hook sections; it reports the claims a first sync will make and never overwrites what exists."
 ---
 # Project Initialization — Spec
 
@@ -19,19 +19,20 @@ sections.
 ## Canonical fields
 
 Adoption replaces whole instruction files and never injects into existing
-ones. A project's root `AGENTS.md` is taken over by adoption: when a
-hand-written root `AGENTS.md` exists without a master, init writes the
-purpose-only master as it does for any repository and keeps the file's
-content, byte for byte, at `.instrukt/adopted/AGENTS.md`, so nothing the
-developer wrote is lost while it finds its place. The master never takes that
-content: what a project's `AGENTS.md` includes comes only from
-`docs/project/index.yaml`.
+ones. A project's root `AGENTS.md` is taken over by adoption: when a root
+`AGENTS.md` exists that is not instrukt's rendering and no copy of it has
+been kept yet, init keeps the file's content, byte for byte, at
+`.instrukt/adopted/AGENTS.md`, whether or not the repository already holds a
+project index, so nothing the developer wrote is lost while it finds its
+place. What a project's `AGENTS.md` includes comes only
+from `docs/project/index.yaml`.
 
 Placing it is migration the adopting agent guides
 (`project/instrukt/spec/feature/distribution/agent-skill`): the file's purpose
-into the master's `## Purpose`, each instruction into a project snippet of its
-type under `docs/project/` with its entry in the index, and the kept copy
-removed once nothing in it is left unplaced.
+into a project snippet named first in the index's `expanded`, each
+instruction into a project snippet of its type under `docs/project/` with its
+entry in the index, and the kept copy removed once nothing in it is left
+unplaced.
 
 The root `AGENTS.md` is generated from then on, and it stays committed: the
 commit that adopts the project carries its rendering
@@ -51,8 +52,7 @@ the sync of the project that owns `docs/general/` writes them whole
 | Project docs | `docs/project/` | absent |
 | Project index | `docs/project/index.yaml`, with empty `expanded` and `listed` | absent |
 | Project schema | `docs/project/schema.yaml`, a copy of the published `sdlc` domain's `schema.yaml` | absent and `sdlc` is published on the computer with a `schema.yaml` |
-| Master | `AGENTS.master.md` at the repository root, holding only `## Purpose` with the project name | absent |
-| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists that does not open with instrukt's generated line, and there is no master |
+| Kept instructions | `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md` byte for byte | a root `AGENTS.md` exists that is not instrukt's rendering, and no kept copy exists |
 | Editor schemas and modelines | `.instrukt/schemas/` and the first line of each file they describe | as `project/instrukt/spec/feature/publication/editor-schemas` |
 | Ignores | `.gitignore`: `.instrukt/` | the line is missing; it is appended, every other line kept |
 | Hook sections | the hooks directory | as `instrukt hooks install` (`project/instrukt/spec/feature/repository/hook-sections`) |
@@ -100,7 +100,7 @@ The report claims nothing and writes nothing; ownership is taken by the sync
 Given a developer's existing git repository with no instrukt configuration
 When the developer initializes instrukt in it
 Then the repository has a project configuration named after its primary checkout's folder
-And it has a project documentation folder with an empty index and a master stating the project's purpose
+And it has a project documentation folder with an index that selects nothing yet
 And instrukt's hooks are installed beside any hooks the repository had
 And nothing has been committed
 ```
@@ -110,22 +110,25 @@ And nothing has been committed
 ```gherkin
 Given a developer's repository has a hand-written root agent instruction file and no instrukt configuration
 When the developer initializes instrukt in it
-Then everything the file said is kept aside for them, and the project's master holds only the purpose
+Then everything the file said is kept aside for them, and the project's index selects nothing yet
 And the developer is told that the instruction file is generated from now on
 And the file itself is left as it was
 When the developer commits
 Then the commit carries the rendered instruction file in its place, and the kept copy still holds what they wrote
 When their agent goes through the kept instructions with them
 Then each lands in the project's documentation and index, and the published instruction file carries them
+Given another repository that already holds its own project index beside a hand-written root agent instruction file never kept aside
+When the developer initializes instrukt in it
+Then everything that file said is kept aside for them as well
 ```
 
 ### UC-IN2: Initializing again completes an adoption without touching the developer's files
 
 ```gherkin
-Given a developer's repository that already has its own master, project index and ignore file
+Given a developer's repository that already has its own project index, project documents and ignore file
 And instrukt's hooks are missing
 When the developer initializes instrukt in it
-Then the developer's master and ignore lines are unchanged, and the project index is unchanged apart from its schema modeline
+Then the developer's documents and ignore lines are unchanged, and the project index is unchanged apart from its schema modeline
 And the missing hooks are installed
 When the developer initializes instrukt once more
 Then nothing in the repository changes

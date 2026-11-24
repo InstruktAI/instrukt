@@ -49,7 +49,7 @@ pub use _attempts::{
 };
 pub use _diff::DiffLine;
 pub use _error::WorkError;
-pub use _github::GitHubError;
+pub use _github::{GitHubError, OperationAppError};
 pub use _model::{
     AddressError, Artifact, Attempt, Binding, Claim, Delivery, ReleasedHold, Removal, TodoAddress,
     TodoId, TodoRecord, TodoRef, Version,

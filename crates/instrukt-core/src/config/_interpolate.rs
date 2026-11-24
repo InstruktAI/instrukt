@@ -176,7 +176,11 @@ impl<'a> Interpolator<'a> {
 
     fn locate_runtime(&self, path: &str, fields: &[&str]) -> Result<Located<'a>, ConfigError> {
         if fields != ["session_id"] {
-            if fields.len() != 1 || !super::_runtime::ACTIONS.contains(&fields[0]) {
+            if fields.len() != 1
+                || !super::_runtime::ACTIONS
+                    .iter()
+                    .any(|(name, _)| *name == fields[0])
+            {
                 return Err(missing(path, &fields.join("."), "runtime"));
             }
             let runtime = self

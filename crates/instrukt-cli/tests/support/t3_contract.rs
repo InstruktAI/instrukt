@@ -11,7 +11,10 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{home::Home, ids::SessionRef};
 use instrukt_runner::{
     process,
-    runtime::{InputState, RuntimeAdapter, T3, conversations::Scope},
+    runtime::{
+        InputState, RuntimeAdapter, T3,
+        conversations::{Scope, SourceWake},
+    },
     sessions::SessionState,
 };
 use serde_json::{Value, json};
@@ -918,10 +921,17 @@ pub fn real(root: &Path) -> Result<()> {
         &SessionRef::parse(&format!("t3:{id}"))?,
         "contract queued input",
     )?;
-    ensure!(
-        notifications.wait(BOUND)?,
-        "native source notification absent"
-    );
+    let deadline = Instant::now() + BOUND;
+    // Requests to read again become due while the check waits; only a
+    // native change answers it.
+    while notifications.wait(deadline.saturating_duration_since(Instant::now()))?
+        != SourceWake::Changed
+    {
+        ensure!(
+            Instant::now() < deadline,
+            "native source notification absent"
+        );
+    }
     let mut changed = false;
     loop {
         let changes = source.changed_since(Some(&unchanged.position), Scope::All)?;

@@ -1,5 +1,8 @@
 # yaml-language-server: $schema=../../.instrukt/schemas/project-index.schema.json
 expanded:
+  - project/instrukt/concept/purpose
   - project/instrukt/policy/shared-workflows
   - project/instrukt/policy/checks-and-guards
-listed: []
+listed:
+  - project/instrukt/spec/verification-substrate
+  - project/instrukt/policy/reliability-checklist

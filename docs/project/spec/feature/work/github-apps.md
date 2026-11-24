@@ -24,15 +24,20 @@ the key itself, a repository-selected path or an environment fallback.
 Configuration validates shapes, distinct App/bot identities and all references;
 the GitHub boundary verifies the configured actor against GitHub.
 
+
 The actual recorded session role selects `roles.<role>.github_app` in
-`~/.instrukt/agents.yaml`. An omitted mapping uses `github.project_app`,
-including an unknown role resolved through `default`. No per-task model override,
+`~/.instrukt/agents.yaml`. Work recorded under a retired split orchestrator role
+(`prepare-orchestrator`, `work-orchestrator`) selects the current mapping of
+`todo-orchestrator`, the role agents migration replaces the split entries with.
+An omitted mapping uses `github.project_app`, including an unknown role resolved
+through `default`. No per-task model override,
 command argument or profile order selects the GitHub actor. Background record,
 issue, bug and board maintenance uses the project identity. Role-driven pull
 request authoring and reviews use the selected role identity. Human work
 performed directly on GitHub keeps its human identity; instrukt's shared-record
 maintenance still uses the project App. This contract changes no human login/
 account association or runtime permission mode.
+
 
 | Profile reference | Shipped identity | Responsibility |
 | --- | --- | --- |
@@ -85,12 +90,43 @@ operation, never the App key. Raw agent `gh`/git use remains with the runtime
 permission and credential integration; this does not add a general secret
 export command or a permission gate for those external tools.
 
+
 Absent keys, an unavailable installation, identity/scope mismatch or failed
 issuance leaves the GitHub operation visibly pending/refused with a secret-safe
-cause. Rate limits retain their retry boundary. Locally accepted work and its
-pending reflection survive; no credential failure is reported as remote success
-or as proof that an ambiguous write had no effect. The record's existing
+cause. During one todo's reflection, a failure of the App its pull request,
+review or board update selects is local to that todo when that App's credential
+cannot be issued because of a setup or identity mismatch or GitHub refuses that
+App's request, or when the reviewer App's verified bot is the pull request's
+author. A failed issuance of the project credential every reflection request
+shares, an issuance GitHub throttles, may be throttling or cannot serve, a rate
+limit, an unreachable GitHub and GitHub refusing an issued credential are
+command-wide. What a failure stops depends on the operation it interrupts:
+
+- Record, issue, pull request and review reflection: a command-wide failure
+  stops the command's remaining GitHub requests; a local failure keeps the
+  todo's remaining reflection in that pass pending with the cause, and the pass
+  continues with the next todo.
+- Board setup at the start of reflection: when it cannot obtain the board
+  account's credential or the board, board updates stay pending with the cause;
+  a rate limit stops the command's remaining GitHub requests, and any other
+  cause leaves the rest of reflection running.
+- A todo's board update: its failure is kept for that update's own retry; a
+  rate limit or an unreachable GitHub stops the command's remaining GitHub
+  requests, and any other failure, an App setup mismatch or refusal and a
+  refused credential included, lets the pass continue.
+
+Rate limits retain their retry boundary: GitHub's `Retry-After` delay, counted
+from when the throttled answer is received, or without one its reset, and the
+later of the two when no requests remain. A secondary limit GitHub reports in the
+errors of a successful GraphQL answer without a `Retry-After` waits a minute from
+receipt instead of the reset, unless no requests remain. An HTTP 403 or 429
+refusal is judged by its headers alone, never by its body: a 429, or a 403 with no
+requests remaining or a `Retry-After`, is a rate limit with the boundary its
+headers name, and any other 403 stays a refusal. Locally accepted
+work and its pending reflection survive; no credential failure is reported as
+remote success or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.
+
 
 ### Read-only reflection readiness
 

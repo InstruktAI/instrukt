@@ -8,7 +8,7 @@ pre-commit: current
   last run: every file was already in committed form; 1 finding(s) left files as they were
   finding: AGENTS.md: the rendering keeps `@notes/house.md`, which an agent program would try to load; name the document by its id instead
 post-commit: current
-  last run: sync succeeded
+  last run: sync exited 1: instrukt: demo at [SHA] is not published: the committed documentation has 1 validation finding(s)
 post-merge: current
   last run: none
 post-rewrite: current

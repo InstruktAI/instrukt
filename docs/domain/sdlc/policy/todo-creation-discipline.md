@@ -22,6 +22,8 @@ Apply these configured action values to the identified assignment and session.
 
 <!-- @config: runtime.inspect_thread -->
 
+<!-- @config: runtime.retire_thread -->
+
 ### Progress, hold, or retire
 
 - **Keep active work actionable.** Each active todo has an authorized outcome,
@@ -50,6 +52,13 @@ Apply these configured action values to the identified assignment and session.
   owed keeps its owner and gates. Withdrawing a human-owned outcome follows
   `general/policy/human-contract`; lack of a technical path does not confer
   that authority on the agent.
+- **Retire terminal orchestrator threads after recording terminal state.** Once
+  a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
+  recorded orchestrator thread(s) (`todo-orchestrator`, plus any legacy
+  phase-orchestrator bindings) through the configured `runtime.retire_thread`
+  action. Complete all record writes and handoffs first when self-retiring, converge idempotently on already-retired
+  threads, preserve unfinished human or worker obligations, never gate
+  retirement on unrelated resource cleanup, and never retire standing agents.
 - **Reassess a hold when its basis changes.** Resume when its condition is
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is
@@ -333,8 +342,9 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     recorded sessions. Before releasing
     the claim, make the todo tell the truth by either holding it with the log
     entry above or amending `input` to carry the reconciliation. Only then run `instrukt todo update <slug> --unclaim` and confirm
-    its outcome, then record the settled assignments and handoff. The runtime
-    owns session ending and cleanup. A bare release is forbidden: it
+    its outcome, then record the settled assignments and handoff. Apart from
+    terminal orchestrator retirement, the runtime owns session ending and
+    cleanup. A bare release is forbidden: it
     returns the suspect premise to the runner with less context and recreates
     the same preparation waste.
   - **Retract.** For work that is truly invalid — including doc-only work,
@@ -347,9 +357,14 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     evidence during the work record's recovery window and releases working
     resources. The withdrawing agent removes that slug's pending markers in a doc commit;
     nothing removes them automatically. Record unresolved cleanup rather than
-    claiming it complete. Record the lane's handoff; the runtime owns session
-    ending and cleanup. Removal changes the work record, not a conversation's
-    lifecycle.
+    claiming it complete, and record the lane's handoff. Once removal, handoff,
+    and all record writes are confirmed, retire the withdrawn todo's recorded
+    phase orchestrator thread(s) through the configured `runtime.retire_thread`
+    action under the retirement rule above (converging idempotently on replay,
+    preserving unfinished human or worker obligations, never gating retirement
+    on unrelated resource cleanup, and never retiring standing agents). Apart
+    from terminal orchestrator retirement, session ending and cleanup belong to
+    the runtime.
 
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
   failure or other authoritative evidence that the claimant cannot answer —
@@ -387,9 +402,11 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   future dispatch and does not establish that current work stopped. Once the
   claim is released through `instrukt todo update <slug> --unclaim` and release is
   confirmed, record the claimant and worker handoffs, then run
-  `instrukt todo remove <slug>` and
-  inspect its outcome. The withdrawing agent removes the slug's pending
-  markers in a doc commit; nothing does so automatically.
+  `instrukt todo remove <slug>` and inspect its outcome. The withdrawing agent
+  removes the slug's pending markers in a doc commit; nothing does so
+  automatically. Once removal and all record writes are confirmed, retire the
+  withdrawn todo's recorded phase orchestrator thread(s) through the configured
+  `runtime.retire_thread` action under the retirement rule above.
 
 - **Only an agent-originated filing is the filer's to withdraw.** A filing that
   carries a human's request in their own words is withdrawn only by that human:

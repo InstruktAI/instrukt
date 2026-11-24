@@ -1,5 +1,5 @@
 ---
-description: 'The terms that ground a claimed defect — occurrence, dangerous path, reachable condition — shared by filing, triage, building, and review.'
+description: 'The terms that ground a claimed defect — occurrence, dangerous path, reachable condition, tail risk, and external-substrate boundary — shared by filing, triage, building, and review.'
 visibility: 'public'
 ---
 
@@ -32,7 +32,11 @@ review — uses them.
   only waits, losing nothing, until someone notices and undoes it. The path
   takes one of two forms:
   - **Ordinary use** — every step is an act the actor performs through the
-    surface's ordinary operation, with real-use inputs.
+    surface's ordinary operation, with real-use inputs. Conditions reached only
+    by staging artificial failure sequences, tampering with persisted state,
+    sabotaging runtime permissions or environment, or injecting timing controls
+    between operations are synthetic fault injection, never ordinary use — even
+    when executed through real external dependencies.
   - **Deliberate misuse** — an actor whose relationships grant it no reach to
     the exposed asset constructs inputs that reach or impair that asset. This is
     the only form in which constructed inputs count. An agent acting on such an
@@ -57,17 +61,34 @@ review — uses them.
 - **Reachable condition** — a condition that has occurred, that real-use input
   produces, or that a dangerous path reaches. Any other condition is
   unreachable, including one real use might produce but no shown real-use input
-  or dangerous path reaches. Having been produced so far only by tests decides
-  nothing either way; for code that has not shipped, a producer it actually
-  receives input from shows its real-use input.
+  or dangerous path reaches. A condition resting on synthetic fault injection,
+  extreme tail risk, or missing guarantees across an external-substrate
+  boundary is not a reachable defect condition. Having been produced so far
+  only by tests decides nothing either way; for code that has not shipped, a
+  producer it actually receives input from shows its real-use input.
+- **Tail risk** — a theoretically constructible interleaving or compounded
+  chain of independent rare faults whose real-world likelihood sits in the
+  extreme tail, especially where no irrecoverable human-owned asset is lost.
+  Intelligence weighs real-world likelihood against actual harm without
+  formulas or arbitrary thresholds; extreme-tail conditions fall outside
+  engineering scope and are not defects to build defensive machinery around.
+- **External-substrate boundary** — the boundary between the system's own
+  contract and capabilities an external dependency does not supply. The system
+  enforces its own contracts and handles declared failure surfaces; it does not
+  fabricate transactional atomicity or guarantees across external boundaries
+  that do not provide them, and missing atomicity in an external dependency is
+  not a defect in the caller.
 
 ## Why
 
-A defect that only synthetic input produces changes nothing anyone experiences.
-Reporting it spends a diagnosis, and handling it adds code that defends against
-nothing; such code accumulates into a codebase shaped by conjecture. Each term
-ties a claim to something a reader can check — an address, an observed input, a
-named actor, an access, an act — rather than to how plausible the claim sounds,
-so two agents reading the same claim classify it the same way. A report can
-always assert a malicious actor or a user who "pastes anything"; only shown
-evidence names one.
+A defect that only synthetic input, fault injection, extreme-tail interleavings,
+or missing guarantees across an external-substrate boundary produces changes
+nothing anyone experiences in ordinary use. Reporting it spends a diagnosis or
+review cycle, and handling it adds brittle defensive machinery — often
+oscillating against mutually exclusive synthetic cases — without improving
+real-world safety. Each term ties a claim to something a reader can check — an
+address, an observed input, a named actor, an access, an act, and the boundary
+of what the system owns — rather than to how plausible the claim sounds, so two
+agents reading the same claim classify it the same way. A report can always
+assert a malicious actor or a user who "pastes anything"; only shown evidence
+names one.

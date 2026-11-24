@@ -1,5 +1,5 @@
 ---
-description: 'Artifacts carry continuity; dispatchers record outcomes and handoffs, retain needed conversation context and leave session lifecycle to the runtime.'
+description: 'Artifacts carry continuity; dispatchers record outcomes and handoffs, retain needed conversation context, retire terminal todo orchestrator threads, and leave other session lifecycle to the runtime.'
 visibility: 'public'
 ---
 
@@ -10,8 +10,9 @@ visibility: 'public'
 Sessions are ephemeral expressions; artifacts carry continuity. A session exists
 for an outcome, and the work record carries that outcome beyond the
 conversation. Whoever dispatches work records its outcome and handoff, retaining
-context needed by later review rounds or a pending human conversation. The
-runtime owns session lifecycle, ending and cleanup.
+context needed by later review rounds or a pending human conversation. Apart
+from terminal todo orchestrator retirement through the configured runtime
+action, the runtime owns session lifecycle, ending and cleanup.
 
 Completion of a workflow assignment, release of its claim, end of an execution
 and loss of a session are separate facts. A step is done when the record carries
@@ -22,8 +23,9 @@ its required artifact and stamp, never because a reply says it is done.
 A workflow can establish completion of one assignment; the agent holds the
 current conversation and its remaining obligations. Treating one assignment as
 the whole session can cut off a forming conversation or discard context needed
-by a later review round. instrukt records that assignment's handoff; the runtime
-manages the conversation's lifecycle.
+by a later review round. instrukt records that assignment's handoff and retires
+only terminal todo orchestrator threads through the configured runtime action;
+otherwise the runtime manages the conversation's lifecycle.
 
 A claim determines who drives the work next, while a session determines where
 the conversation continues. Holding the claim after handing off the work stalls
@@ -63,10 +65,19 @@ conversation still has an open question.
   Starting a peer confers no authority over that peer's other obligations.
 - **A lane releases its claim before handoff.** Confirm `claim.held` is false
   after `instrukt todo update <slug> --unclaim`, then record the assignment's
-  outcome and next owner. Session ending and cleanup belong to the runtime.
+  outcome and next owner. Apart from terminal orchestrator retirement, session
+  ending and cleanup belong to the runtime.
 - **Standing roles persist under their mandate.** The standing integrator
   parks after current work settles and is woken by its subscribed events.
   Task recurrence is governed by its record and runner, not an improvised timer.
+- **Dormant settling and terminal retirement are distinct.** Active, held, and
+  between-phase sessions stay wakeable, using dormant settling where the
+  runtime supports it. Automation neither settles nor retires a standing agent.
+  Once a todo reaches a terminal state (`delivered` or `withdrawn`), its phase
+  orchestrator threads retire through the configured terminal retirement action
+  after all record writes and handoffs are confirmed, removing them from active
+  and settled thread lists while retaining transcripts for audit and history
+  extraction.
 - **Human questions stay in their thread.** Ask for approval or missing intent
   there and leave it waiting as `needs-input`. Resolve agent-owned technical
   work with its owner; disagreement alone does not transfer it to the human.

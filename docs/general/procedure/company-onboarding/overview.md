@@ -123,10 +123,12 @@ the services it touched, then step 10.
    separate worktree rather than in the serving checkout at
    `~/.instrukt/companies/<name>/`, so the serving home stays on the reviewed
    default branch throughout authoring and review (`general/policy/commits`).
-   Create `AGENTS.master.md` for the company's purpose and top-level required
-   reads, and place the company's knowledge — what it does, how its people
-   work, who owns and organizes it, and where people reach the agent — in
-   documents under `docs/` referenced by relative path. Follow the company home
+   Place the company's knowledge — what it is for, what it does, how its
+   people work, who owns and organizes it, and where people reach the agent —
+   in documents under `docs/`, and create `docs/index.yaml` naming under
+   `expanded` the documents every agent of the company starts with and under
+   `listed` the ones an agent reads when they apply, each by its path
+   relative to `docs/`. Follow the company home
    knowledge rules in `general/procedure/doc-snippet-authoring` and
    `general/policy/snippet-value-contract` (present-tense current truth without
    historical narration; self-contained with no references outside the

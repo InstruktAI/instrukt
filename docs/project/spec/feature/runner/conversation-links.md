@@ -158,7 +158,10 @@ sends run in a worker for that link. A slow target can delay its own link's
 handover while other links and company conversations continue. This reader needs no T3 session token. Native target delivery uses the adapter's supported input operation;
 read scope alone grants no send authority. Redis is transport only and owns
 neither turns, link membership nor relay decisions. There is no separate relay
-process, agent relay tool, scheduled tick relay or periodic fallback. A relay pass
+process, agent relay tool or scheduled tick relay. Besides native
+notifications, each link reads again when the source asks its readers to
+(`project/instrukt/spec/feature/runner/history`);
+a link awaiting the retry of a failed pass keeps to that retry. A relay pass
 that failed is tried again after a growing delay, whether or not the source changes
 meanwhile; a pass that cannot acquire the source retries the acquisition inside the
 relay (`project/instrukt/policy/checks-and-guards`: a part that depends on an outside
