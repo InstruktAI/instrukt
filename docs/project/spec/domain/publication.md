@@ -1,5 +1,5 @@
 ---
-description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner and patches the global index by owner; a repository's committed entrypoints are rendered from its committed content at each commit; and the owner of `docs/general/` renders a global agent file, with its settings key, for each agent runtime the selected runtime reports as configured.
+description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner and patches the global index by owner; a repository's rendered root `AGENTS.md` is committed, rendered at each commit from the repository's committed content alone; and the owner of `docs/general/` renders a global agent file, with its settings key, for each agent runtime the selected runtime reports as configured.
 ---
 # Publication — Spec
 
@@ -21,6 +21,11 @@ rendered from the repository's committed content alone at each commit, by
 the `pre-commit` hook section and by `instrukt docs render`, never by a sync. Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
+Publication never reads another project's repository, keeps no registry of
+projects, and after configuration migration converges: it writes only what is
+missing or different, whether or not main has moved. It
+does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
+retrieval, the configuration it reads, or the git hooks that trigger it.
 <!-- change:unify-index-yaml-entrypoints -->
 The publication context turns a project's committed documentation into what
 agents on this computer read. `instrukt sync` publishes the project the caller
@@ -37,12 +42,12 @@ instruction files. A repository carries one rendered instruction file, its root
 the `pre-commit` hook section and by `instrukt docs render`, never by a sync. Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
-<!-- /planned-change:unify-index-yaml-entrypoints -->
 Publication never reads another project's repository, keeps no registry of
 projects, and after configuration migration converges: it writes only what is
 missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 ## Ubiquitous language
 
