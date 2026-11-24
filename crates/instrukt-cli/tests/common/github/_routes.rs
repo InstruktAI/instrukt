@@ -5,7 +5,8 @@ use serde_json::{Value, json};
 use super::_apps::{app_login, auth_time};
 use super::_fake::StatusState;
 use super::_model::{
-    Artifact, ArtifactVersion, CLIENT_ASSOCIATION, Label, Pull, Repo, State, actor,
+    Artifact, ArtifactVersion, CLIENT_ASSOCIATION, Label, Pull, REVIEW_BODY_LIMIT, Repo, State,
+    Status, actor,
 };
 use super::_projects::{field_database_id, graphql};
 use super::_serve::{Reply, decode, paginate, query_param};
@@ -57,6 +58,20 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
             .checked_add(jiff::SignedDuration::from_secs(3600))
             .unwrap();
         let token = format!("app-token-{id}-{}", state.tokens.len() + 1);
+        let held = state.installation_permissions(id);
+        let exceeds =
+            input["permissions"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .any(|(name, wanted)| {
+                    held[name] != *wanted && !(wanted == "read" && held[name] == "write")
+                });
+        if exceeds {
+            return Reply::invalid(
+                "The permissions requested are not granted to this installation.",
+            );
+        }
         let has_repo_access = input["permissions"].as_object().is_some_and(|perms| {
             perms
                 .keys()
@@ -142,9 +157,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
                 "instruktai-reviewer[bot]" => 3,
                 _ => 1,
             };
-            Reply::ok(
-                json!({"id":id,"app_id":id,"permissions":{"issues":"write","contents":"write","pull_requests":"write","checks":"read","statuses":"read","organization_projects":"write"}}),
-            )
+            Reply::ok(json!({"id":id,"app_id":id,"permissions":state.installation_permissions(id)}))
         }
         ("GET", []) => Reply::ok(state.repo(&full).json()),
         ("GET", ["collaborators", login, "permission"]) => {
@@ -165,15 +178,30 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         ("GET", ["commits", sha, "check-runs"]) => {
             Reply::ok(state.repo(&full).check_runs_json(sha))
         }
+        ("GET", ["commits", sha, "statuses"]) => {
+            let items = state.repo(&full).statuses_json(sha);
+            paginate(&base, path, query, items)
+        }
         ("POST", ["statuses", sha]) => {
             let Some(status) = input["state"].as_str().and_then(StatusState::parse) else {
                 return Reply::invalid("state is required");
             };
-            let context = input["context"].as_str().unwrap_or("default").to_owned();
             let id = state.next_id();
             let now = state.now();
-            state.repo(&full).set_status(sha, &context, status, id, now);
-            Reply::created(json!({"id": id, "context": context, "state": status.as_str()}))
+            let status = Status {
+                id,
+                context: input["context"].as_str().unwrap_or("default").to_owned(),
+                state: status,
+                description: input["description"].as_str().map(str::to_owned),
+                target_url: input["target_url"].as_str().map(str::to_owned),
+                creator: login.clone(),
+                updated_at: now,
+            };
+            let value = json!({"id": id, "context": status.context, "state": status.state.as_str(), "description": status.description, "target_url": status.target_url, "creator": actor(&login)});
+            match state.repo(&full).post_status(sha, status) {
+                Ok(()) => Reply::created(value),
+                Err(message) => Reply::invalid(&message),
+            }
         }
         ("GET", ["issues"]) => list_issues(state, &base, &full, path, query),
         ("POST", ["issues"]) => {
@@ -292,6 +320,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
             let wanted = query_param(query, "state").unwrap_or("open");
             let head = query_param(query, "head").map(decode);
             let r = state.repo(&full);
+            let ascending = query_param(query, "direction") == Some("asc");
             let mut numbers: Vec<u64> = r
                 .issues
                 .values()
@@ -305,7 +334,10 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
                 })
                 .map(|i| i.number)
                 .collect();
-            numbers.reverse();
+            // GitHub's default order is newest created first.
+            if !ascending {
+                numbers.reverse();
+            }
             let items = numbers
                 .into_iter()
                 .filter_map(|n| r.pull_json(&base, &full, n))
@@ -328,12 +360,9 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
             let n = state.create_issue(&full, title, &body, &[], &login);
             let r = state.repo(&full);
             if let Some(issue) = r.issues.get_mut(&n) {
-                issue.pull = Some(Pull {
-                    head,
-                    base: base_ref.to_owned(),
-                    merged: false,
-                    reviews: Vec::new(),
-                });
+                let mut pull = Pull::new(head, base_ref.to_owned());
+                pull.draft = input["draft"] == json!(true);
+                issue.pull = Some(pull);
             }
             Reply::created(r.pull_json(&base, &full, n).unwrap_or_default())
         }
@@ -347,7 +376,9 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
             }) else {
                 return Reply::not_found();
             };
-            pull_route(state, method, &base, &full, n, tail, &input, &login)
+            pull_route(
+                state, method, &base, &full, n, tail, path, query, &input, &login,
+            )
         }
         _ => Reply::not_found(),
     }
@@ -744,6 +775,8 @@ fn pull_route(
     full: &str,
     n: u64,
     tail: &[&str],
+    path: &str,
+    query: &str,
     input: &Value,
     login: &str,
 ) -> Reply {
@@ -778,13 +811,31 @@ fn pull_route(
                 .as_ref()
                 .map(|p| p.reviews.clone())
                 .unwrap_or_default();
-            Reply::ok(Value::Array(reviews))
+            paginate(base, path, query, reviews)
+        }
+        ("GET", ["reviews", id]) => {
+            let review = id.parse::<u64>().ok().and_then(|id| {
+                state.repo(full).issues[&n]
+                    .pull
+                    .as_ref()
+                    .and_then(|p| p.reviews.iter().find(|r| r["id"] == id).cloned())
+            });
+            match review {
+                Some(review) => Reply::ok(review),
+                None => Reply::not_found(),
+            }
         }
         ("POST", ["reviews"]) => {
             if matches!(input["event"].as_str(), Some("APPROVE" | "REQUEST_CHANGES"))
                 && state.repo(full).issues[&n].login == login
             {
                 return Reply::invalid("Can not review your own pull request");
+            }
+            if input["body"]
+                .as_str()
+                .is_some_and(|body| body.chars().count() > REVIEW_BODY_LIMIT)
+            {
+                return Reply::invalid("Body is too long (maximum is 65536 characters)");
             }
             let id = state.next_id();
             let now = state.now();
@@ -801,6 +852,8 @@ fn pull_route(
                 "state": review_state,
                 "commit_id": input["commit_id"],
                 "submitted_at": now,
+                "html_url": format!("https://github.test/{full}/pull/{n}#pullrequestreview-{id}"),
+                "pull_request_url": format!("{base}/repos/{full}/pulls/{n}"),
             });
             if let Some(pull) = state
                 .repo(full)

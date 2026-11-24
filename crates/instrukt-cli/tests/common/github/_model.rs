@@ -17,6 +17,18 @@ const DEFAULT_LOGIN: &str = "instrukt-test";
 /// the token's user has write access to the repository.
 pub(super) const CLIENT_ASSOCIATION: &str = "COLLABORATOR";
 
+/// The longest commit-status description GitHub accepts.
+const STATUS_DESCRIPTION_LIMIT: usize = 140;
+
+/// The longest review body GitHub accepts.
+pub(super) const REVIEW_BODY_LIMIT: usize = 65_536;
+
+/// What an installation of each App may do on a repository unless a test set
+/// otherwise.
+fn default_installation_permissions() -> Value {
+    json!({"issues":"write","contents":"write","pull_requests":"write","checks":"read","statuses":"read","organization_projects":"write"})
+}
+
 pub(super) struct Canned {
     pub(super) method: String,
     pub(super) path_suffix: String,
@@ -48,6 +60,8 @@ pub(super) struct State {
     pub(super) auth_clock: std::path::PathBuf,
     pub(super) tokens: BTreeMap<String, (u64, jiff::Timestamp, bool)>,
     pub(super) active_token: Option<String>,
+    /// Each App's installation permissions a test set, by App id.
+    pub(super) installation_permissions: BTreeMap<u64, Value>,
 }
 
 impl State {
@@ -68,7 +82,16 @@ impl State {
             auth_clock,
             tokens: BTreeMap::new(),
             active_token: None,
+            installation_permissions: BTreeMap::new(),
         }
+    }
+
+    /// The permissions App `id`'s installation holds.
+    pub(super) fn installation_permissions(&self, id: u64) -> Value {
+        self.installation_permissions
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(default_installation_permissions)
     }
 
     pub(super) fn next_id(&mut self) -> u64 {
@@ -203,6 +226,27 @@ pub(super) struct Pull {
     pub(super) base: String,
     pub(super) merged: bool,
     pub(super) reviews: Vec<Value>,
+    pub(super) draft: bool,
+    /// The repository the head branch lives in when it is not this one: a
+    /// fork. Its head commit is still read from this repository's branch
+    /// of the same name.
+    pub(super) fork: Option<String>,
+    /// GitHub's `author_association` for the pull request's author.
+    pub(super) association: String,
+}
+
+impl Pull {
+    pub(super) fn new(head: String, base: String) -> Self {
+        Self {
+            head,
+            base,
+            merged: false,
+            reviews: Vec::new(),
+            draft: false,
+            fork: None,
+            association: CLIENT_ASSOCIATION.to_owned(),
+        }
+    }
 }
 
 pub(super) struct Comment {
@@ -223,11 +267,32 @@ pub(super) struct Label {
     pub(super) description: Option<String>,
 }
 
-struct Status {
-    id: u64,
-    context: String,
-    state: StatusState,
-    updated_at: String,
+/// One posted commit status. Every post is kept, as GitHub keeps them.
+pub(super) struct Status {
+    pub(super) id: u64,
+    pub(super) context: String,
+    pub(super) state: StatusState,
+    pub(super) description: Option<String>,
+    pub(super) target_url: Option<String>,
+    /// The login that posted it.
+    pub(super) creator: String,
+    pub(super) updated_at: String,
+}
+
+impl Status {
+    fn json(&self) -> Value {
+        json!({
+            "id": self.id,
+            "node_id": format!("SC_{}", self.id),
+            "context": self.context,
+            "state": self.state.as_str(),
+            "description": self.description,
+            "target_url": self.target_url,
+            "creator": actor(&self.creator),
+            "created_at": self.updated_at,
+            "updated_at": self.updated_at,
+        })
+    }
 }
 
 pub(super) struct Artifact {
@@ -272,11 +337,16 @@ impl Repo {
         }
     }
 
+    pub(super) fn full_name(&self) -> String {
+        format!("{}/{}", self.owner, self.name)
+    }
+
     pub(super) fn json(&self) -> Value {
         json!({
             "id": self.id,
             "name": self.name,
-            "full_name": format!("{}/{}", self.owner, self.name),
+            "full_name": self.full_name(),
+            "fork": false,
             "node_id":format!("R_{}",self.id),
             "owner": actor(&self.owner),
             "default_branch": "main",
@@ -339,6 +409,13 @@ impl Repo {
     pub(super) fn pull_json(&self, base: &str, full: &str, number: u64) -> Option<Value> {
         let issue = self.issues.get(&number)?;
         let pull = issue.pull.as_ref()?;
+        let head_repo = match &pull.fork {
+            Some(fork) => {
+                let (owner, _) = fork.split_once('/').unwrap_or((fork, ""));
+                json!({"full_name": fork, "fork": true, "owner": actor(owner)})
+            }
+            None => self.json(),
+        };
         Some(json!({
             "id": issue.id,
             "node_id": format!("PR_{}", issue.id),
@@ -349,8 +426,10 @@ impl Repo {
             "body": issue.body,
             "state": issue.state,
             "user": actor(&issue.login),
-            "head": {"ref": pull.head, "sha": self.branches.get(&pull.head)},
-            "base": {"ref": pull.base, "sha": self.branches.get(&pull.base)},
+            "author_association": pull.association,
+            "draft": pull.draft,
+            "head": {"ref": pull.head, "sha": self.branches.get(&pull.head), "repo": head_repo},
+            "base": {"ref": pull.base, "sha": self.branches.get(&pull.base), "repo": self.json()},
             "merged": pull.merged,
             "created_at": issue.created_at,
             "updated_at": issue.updated_at,
@@ -358,30 +437,45 @@ impl Repo {
         }))
     }
 
-    pub(super) fn set_status(
-        &mut self,
-        sha: &str,
-        context: &str,
-        state: StatusState,
-        id: u64,
-        now: String,
-    ) {
-        let statuses = self.statuses.entry(sha.to_owned()).or_default();
-        statuses.retain(|s| s.context != context);
-        statuses.push(Status {
-            id,
-            context: context.to_owned(),
-            state,
-            updated_at: now,
-        });
+    /// Keeps a posted status; refuses a description GitHub would.
+    pub(super) fn post_status(&mut self, sha: &str, status: Status) -> Result<(), String> {
+        if status
+            .description
+            .as_ref()
+            .is_some_and(|d| d.chars().count() > STATUS_DESCRIPTION_LIMIT)
+        {
+            return Err(format!(
+                "description is too long (maximum is {STATUS_DESCRIPTION_LIMIT} characters)"
+            ));
+        }
+        self.statuses
+            .entry(sha.to_owned())
+            .or_default()
+            .push(status);
+        Ok(())
     }
 
+    /// Every status posted for `sha`, newest first, as GitHub lists them.
+    pub(super) fn statuses_json(&self, sha: &str) -> Vec<Value> {
+        self.statuses
+            .get(sha)
+            .map(|all| all.iter().rev().map(Status::json).collect())
+            .unwrap_or_default()
+    }
+
+    /// GitHub's combined status: each context's latest status.
     pub(super) fn combined_status(&self, sha: &str) -> Value {
-        let statuses = self
+        let all = self
             .statuses
             .get(sha)
             .map(Vec::as_slice)
             .unwrap_or_default();
+        let statuses: Vec<&Status> = all
+            .iter()
+            .enumerate()
+            .filter(|(at, s)| !all[at + 1..].iter().any(|later| later.context == s.context))
+            .map(|(_, s)| s)
+            .collect();
         let state = if statuses
             .iter()
             .any(|s| matches!(s.state, StatusState::Failure | StatusState::Error))
@@ -400,8 +494,8 @@ impl Repo {
                 "id": s.id,
                 "context": s.context,
                 "state": s.state.as_str(),
-                "description": null,
-                "target_url": null,
+                "description": s.description,
+                "target_url": s.target_url,
                 "created_at": s.updated_at,
                 "updated_at": s.updated_at,
             })).collect::<Vec<_>>(),

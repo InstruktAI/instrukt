@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::super::TestEnv;
 use super::_apps::configure_apps;
 use super::_front::{Front, Reach, accept, lock_front, serve_requests};
-use super::_model::{Canned, PausedRequest, Pull, Repo, State};
+use super::_model::{Canned, PausedRequest, Pull, Repo, State, Status};
 
 /// One request the fake received, with the status it answered.
 #[derive(Debug, Clone)]
@@ -71,6 +71,22 @@ pub struct IssueSeed {
     pub closed: bool,
     /// The author's login; the fake's own login when `None`.
     pub login: Option<String>,
+}
+
+/// How a pull request is seeded.
+#[derive(Debug, Clone, Default)]
+pub struct PullSeed {
+    pub title: String,
+    /// The head branch; its commit is this repository's branch of that name.
+    pub head: String,
+    pub base: String,
+    pub draft: bool,
+    /// The author's login; the fake's own login when `None`.
+    pub login: Option<String>,
+    /// GitHub's `author_association`; `COLLABORATOR` when `None`.
+    pub association: Option<String>,
+    /// The fork the head branch lives in, when it is not this repository.
+    pub fork: Option<String>,
 }
 
 /// A check run's state (`status` and, once completed, `conclusion`).
@@ -332,13 +348,53 @@ impl FakeGitHub {
     /// Seeds a pull request in the repository's shared issue-number space.
     pub fn seed_pull_request(&self, repo: &str, seed: IssueSeed) -> u64 {
         let number = self.seed_issue(repo, seed);
-        self.lock().repo(repo).issues.get_mut(&number).unwrap().pull = Some(Pull {
-            head: format!("pull-{number}"),
-            base: "main".into(),
-            merged: false,
-            reviews: Vec::new(),
-        });
+        self.lock().repo(repo).issues.get_mut(&number).unwrap().pull =
+            Some(Pull::new(format!("pull-{number}"), "main".into()));
         number
+    }
+
+    /// Opens a pull request as `seed` describes; returns its number. Its
+    /// head commit is this repository's branch `seed.head`.
+    pub fn seed_pull(&self, repo: &str, seed: PullSeed) -> u64 {
+        let number = self.seed_issue(
+            repo,
+            IssueSeed {
+                title: seed.title,
+                login: seed.login,
+                ..IssueSeed::default()
+            },
+        );
+        let mut pull = Pull::new(seed.head, seed.base);
+        pull.draft = seed.draft;
+        pull.fork = seed.fork;
+        if let Some(association) = seed.association {
+            pull.association = association;
+        }
+        self.lock().repo(repo).issues.get_mut(&number).unwrap().pull = Some(pull);
+        number
+    }
+
+    /// Marks pull request `number` a draft or ready for review.
+    pub fn set_pull_draft(&self, repo: &str, number: u64, draft: bool) {
+        let mut state = self.lock();
+        let now = state.now();
+        let issue = state.repo(repo).issues.get_mut(&number).unwrap();
+        issue.pull.as_mut().unwrap().draft = draft;
+        issue.updated_at = now;
+    }
+
+    /// What App `app_id`'s installation may do, as GitHub answers it for
+    /// the installation and for every credential requested from it.
+    pub fn set_installation_permissions(&self, app_id: u64, permissions: Value) -> &Self {
+        self.lock()
+            .installation_permissions
+            .insert(app_id, permissions);
+        self
+    }
+
+    /// Every status posted for `sha`, newest first.
+    pub fn statuses(&self, repo: &str, sha: &str) -> Vec<Value> {
+        self.lock().repos[repo].statuses_json(sha)
     }
 
     /// Changes an issue out of band, as another computer or a person on
@@ -400,12 +456,28 @@ impl FakeGitHub {
         self
     }
 
-    /// Records a commit status for `sha` under `context`.
+    /// Records a commit status for `sha` under `context`, posted by the
+    /// fake's own login.
     pub fn set_status(&self, repo: &str, sha: &str, context: &str, state: StatusState) -> &Self {
         let mut guard = self.lock();
         let id = guard.next_id();
         let now = guard.now();
-        guard.repo(repo).set_status(sha, context, state, id, now);
+        let creator = guard.login.clone();
+        guard
+            .repo(repo)
+            .post_status(
+                sha,
+                Status {
+                    id,
+                    context: context.to_owned(),
+                    state,
+                    description: None,
+                    target_url: None,
+                    creator,
+                    updated_at: now,
+                },
+            )
+            .unwrap();
         self
     }
 
