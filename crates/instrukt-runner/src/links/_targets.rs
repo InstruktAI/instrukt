@@ -85,16 +85,19 @@ impl Targets {
     /// Reads which links are active and marks each one, when a read is due;
     /// otherwise marks the links already known.
     fn wake(&mut self, home: &Home, mark: Mark) {
-        let now = Instant::now();
-        let Some(mark) = self.scan_for(now, mark) else {
+        let Some(mark) = self.scan_for(Instant::now(), mark) else {
             self.mark_known(mark);
             return;
         };
-        let active = active_link_ids(home);
-        if let Err(error) = &active {
-            super::_watch::record(home, error);
+        match active_link_ids(home) {
+            Ok(active) => self.scanned(mark, active),
+            Err(error) => {
+                super::_watch::record(home, &error);
+                // The delay runs from when the failure is known: the read and
+                // its recording can each wait on the state database.
+                self.scan_failed(Instant::now(), mark);
+            }
         }
-        self.scanned(now, mark, active.ok());
     }
 
     /// The mark a read of which links are active carries when the source asks
@@ -110,25 +113,22 @@ impl Targets {
         }
     }
 
-    /// The read of which links are active made at `now` for `mark`: the links
-    /// it found, or none when it failed, which is tried again after a growing
-    /// delay for the same mark.
-    fn scanned(&mut self, now: Instant, mark: Mark, active: Option<Vec<String>>) {
-        match active {
-            Some(active) => {
-                self.failed_scan = None;
-                self.admit(active, mark);
-            }
-            None => {
-                let failed = self.failed_scan;
-                let delay = failed.map_or(FIRST_RETRY, |failed| failed.delay);
-                self.failed_scan = Some(FailedScan {
-                    at: now + delay,
-                    delay: (delay * 2).min(MOST_RETRY),
-                    mark: failed.map_or(mark, |failed| failed.mark.max(mark)),
-                });
-            }
-        }
+    /// A read of which links are active, made for `mark`, found `active`.
+    fn scanned(&mut self, mark: Mark, active: Vec<String>) {
+        self.failed_scan = None;
+        self.admit(active, mark);
+    }
+
+    /// A read of which links are active, made for `mark`, failed at `now`: it
+    /// is tried again after a growing delay, for the most the source asked.
+    fn scan_failed(&mut self, now: Instant, mark: Mark) {
+        let failed = self.failed_scan;
+        let delay = failed.map_or(FIRST_RETRY, |failed| failed.delay);
+        self.failed_scan = Some(FailedScan {
+            at: now + delay,
+            delay: (delay * 2).min(MOST_RETRY),
+            mark: failed.map_or(mark, |failed| failed.mark.max(mark)),
+        });
     }
 
     fn mark_known(&mut self, mark: Mark) {
@@ -369,11 +369,11 @@ mod tests {
         targets
             .links
             .insert("failed".into(), retrying_until(now + MOST_RETRY));
-        targets.scanned(now, Mark::Request, None);
+        targets.scan_failed(now, Mark::Request);
         let at = targets.failed_scan.unwrap().at;
         let mark = targets.scan_for(at, Mark::Request).unwrap();
         assert_eq!(mark, Mark::Request);
-        targets.scanned(at, mark, Some(vec!["failed".into()]));
+        targets.scanned(mark, vec!["failed".into()]);
         assert_eq!(targets.failed_scan, None);
         assert_eq!(targets.links["failed"].due(at), None);
         assert_eq!(
@@ -392,14 +392,14 @@ mod tests {
         targets
             .links
             .insert("failed".into(), retrying_until(now + MOST_RETRY));
-        targets.scanned(now, Mark::Change, None);
+        targets.scan_failed(now, Mark::Change);
         let at = targets.failed_scan.unwrap().at;
         assert_eq!(
             targets.scan_for(at - Duration::from_millis(1), Mark::Request),
             None
         );
         let mark = targets.scan_for(at, Mark::Request).unwrap();
-        targets.scanned(at, mark, Some(vec!["failed".into()]));
+        targets.scanned(mark, vec!["failed".into()]);
         assert_eq!(targets.links["failed"].due(at), Some(Cause::Change));
     }
 
@@ -409,7 +409,7 @@ mod tests {
         let mut targets = Targets::default();
         let mut delays = Vec::new();
         for _ in 0..8 {
-            targets.scanned(now, Mark::Request, None);
+            targets.scan_failed(now, Mark::Request);
             let at = targets.failed_scan.unwrap().at;
             assert_eq!(
                 targets.scan_for(at - Duration::from_millis(1), Mark::Request),
