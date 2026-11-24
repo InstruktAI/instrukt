@@ -510,6 +510,39 @@ pub(crate) fn credential_deferral(
         .not_before
         .filter(|until| *until > now))
 }
+/// Records `cause` as the source's state without deferring it: the next
+/// tick reads again.
+pub(crate) fn record_source_cause(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    cause: &str,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    let mut validators = load_validators(state, project)?;
+    validators.not_before = Some(validators.not_before.map_or(now, |until| until.max(now)));
+    validators.cause = Some(cause.to_owned());
+    save_validators(state, project, &validators)
+}
+
+/// Defers the source for `seconds` from `now`, unless it is already
+/// deferred longer: a poll interval one of its reads was given.
+pub(crate) fn defer_polling(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    seconds: i64,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    let Ok(until) = now.checked_add(SignedDuration::from_secs(seconds)) else {
+        return Ok(());
+    };
+    let mut validators = load_validators(state, project)?;
+    if validators.not_before.is_some_and(|known| known >= until) {
+        return Ok(());
+    }
+    validators.not_before = Some(until);
+    save_validators(state, project, &validators)
+}
+
 pub(crate) fn record_credential_failure(
     state: &RunnerState,
     project: &ProjectSlug,

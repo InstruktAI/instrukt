@@ -662,6 +662,9 @@ impl std::fmt::Debug for WorkPorts {
 #[derive(Clone, Default)]
 pub struct RunnerWiring {
     pub github_credentials: Option<Arc<dyn GitHubCredentials>>,
+    /// Work's answers for automatic review, wired whether or not a
+    /// project's todos module is on.
+    pub review: Option<Arc<dyn AutomaticReview>>,
     pub work: Option<WorkPorts>,
     pub workflow: Option<Arc<dyn WorkflowAssignments>>,
     /// The company the runner hosts: its conversations. `None` hosts none.
@@ -750,10 +753,47 @@ impl std::fmt::Debug for RunnerWiring {
         f.debug_struct("RunnerWiring")
             .field("work", &self.work.is_some())
             .field("github_credentials", &self.github_credentials.is_some())
+            .field("review", &self.review.is_some())
             .field("workflow", &self.workflow.is_some())
             .field("company", &self.company.is_some())
             .finish()
     }
+}
+
+/// The configured identities automatic review reads: the App bots trusted
+/// as pull-request authors and the reviewer identity's bot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewIdentities {
+    /// Every configured App's bot other than the reviewer's.
+    pub trusted_bots: Vec<instrukt_core::github::Bot>,
+    pub reviewer: instrukt_core::github::Bot,
+}
+
+/// Work's answers the runner asks for automatic review
+/// (`project/instrukt/spec/feature/runner/pull-request-review`).
+pub trait AutomaticReview: Send + Sync {
+    /// The two identities' readiness on `repository`; a met answer carries
+    /// the observation credential, and work keeps the publication
+    /// credential for the pass.
+    fn readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness;
+    /// The configured identities.
+    fn identities(&self) -> Result<ReviewIdentities, String>;
+    /// The pull requests a todo's work lifecycle owns in `project`.
+    fn todo_pulls(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+    ) -> Result<std::collections::BTreeSet<u64>, String>;
+    /// Whether `head` carries a verdict: evidence this computer holds, or
+    /// what the reviewer bot already published.
+    fn carries_verdict(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<bool, String>;
 }
 
 /// Work-owned, non-mutating inspection of shared-record GitHub prerequisites,

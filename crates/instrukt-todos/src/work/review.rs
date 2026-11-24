@@ -580,3 +580,59 @@ pub fn project(slug: ProjectSlug, root: &Path) -> ReviewProject {
         root: root.to_path_buf(),
     }
 }
+
+/// Work's answers for automatic review, as the runner asks them.
+pub struct ReviewWork {
+    home: Home,
+    access: std::sync::Arc<super::GitHubAccess>,
+}
+
+impl ReviewWork {
+    pub fn new(home: Home, access: std::sync::Arc<super::GitHubAccess>) -> Self {
+        Self { home, access }
+    }
+}
+
+impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
+    fn readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness {
+        use instrukt_core::interfaces::AutomaticReviewReadiness as _;
+        self.access.review_readiness(repository, now)
+    }
+
+    fn identities(&self) -> Result<instrukt_runner::interfaces::ReviewIdentities, String> {
+        self.access
+            .review_identities()
+            .map_err(|error| error.to_string())
+    }
+
+    fn todo_pulls(&self, project: &ProjectSlug) -> Result<std::collections::BTreeSet<u64>, String> {
+        let read = instrukt_core::state_db::StateRead::open(&self.home)
+            .map_err(|error| error.to_string())?;
+        let Some(db) = read else {
+            return Ok(std::collections::BTreeSet::new());
+        };
+        let mut statement = db
+            .conn()
+            .prepare(
+                "SELECT r.pull_number FROM reflections r JOIN todos t ON t.id = r.todo_id
+                 WHERE t.project = ?1 AND r.pull_number IS NOT NULL",
+            )
+            .map_err(|error| error.to_string())?;
+        statement
+            .query_map([project.as_str()], |row| row.get::<_, u64>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|error| error.to_string())
+    }
+
+    fn carries_verdict(&self, project: &ProjectSlug, head: &CommitSha) -> Result<bool, String> {
+        Ok(evidence(&self.home, project, head)
+            .map_err(|error| error.to_string())?
+            .current()
+            .is_some())
+    }
+}

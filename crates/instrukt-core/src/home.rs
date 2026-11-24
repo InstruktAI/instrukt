@@ -289,6 +289,20 @@ impl Home {
         self.state_dir().join("review.db")
     }
 
+    /// `~/.instrukt/state/review-observation.lock` — the write-isolation unit
+    /// of the pull-request observation store, taken by the tick alone
+    /// (`project/instrukt/spec/feature/runner/pull-request-review`,
+    /// Observation store).
+    pub fn review_observation_lock_file(&self) -> PathBuf {
+        self.state_dir().join("review-observation.lock")
+    }
+
+    /// `~/.instrukt/state/review-observation.db` — the pages of each opted-in
+    /// project's pull-request listing with their conditional validators.
+    pub fn review_observation_db_file(&self) -> PathBuf {
+        self.state_dir().join("review-observation.db")
+    }
+
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
     pub fn eval_fingerprint_dir(&self) -> PathBuf {
         self.root.join("state").join("eval-fingerprint")

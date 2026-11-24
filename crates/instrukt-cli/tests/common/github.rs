@@ -59,7 +59,9 @@ mod _routes;
 mod _serve;
 
 pub use _apps::sync_auth_clock;
-pub use _fake::{CannedResponse, CheckRun, Conclusion, FakeGitHub, IssueSeed, StatusState};
+pub use _fake::{
+    CannedResponse, CheckRun, Conclusion, FakeGitHub, IssueSeed, PullSeed, StatusState,
+};
 
 // Public names of the fake before it was split into modules; no current test
 // names them, and they keep the test-support interface's paths unchanged.

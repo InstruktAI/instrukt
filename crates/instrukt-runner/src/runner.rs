@@ -152,6 +152,9 @@ pub struct Considered {
     pub config: Configuration,
     pub todos: bool,
     pub events: bool,
+    /// Admitted for automatic review here, as far as nothing but GitHub
+    /// decides; readiness is asked once per pass.
+    pub review: bool,
 }
 
 /// The published projects that switch on `todos` or `events`. A project
@@ -171,6 +174,7 @@ pub fn considered(admitted: &Admitted) -> Vec<Considered> {
             config: project.config.clone(),
             todos: project.todos,
             events: project.events,
+            review: project.review,
         })
         .collect()
 }
@@ -773,17 +777,9 @@ fn github_pass(
     now: Timestamp,
 ) {
     let project = &considered.project;
-    let append = |event: &Event| match log.log(event) {
-        Ok(_) => true,
-        Err(err) => {
-            tracing::warn!(event = "event_not_logged", name = event.name(), project = %project.slug, error = %err);
-            false
-        }
-    };
-    // Canonical, candidate and selected dependency heads share one conditional
-    // pass and the same source deferral and credential boundary.
-    let candidate = observed.candidate.clone();
-    let head = observed.remote_main.clone();
+    // Canonical, candidate and selected dependency heads, and an opted-in
+    // project's pull requests, share one conditional pass and the same
+    // source deferral and credential boundary.
     let api_url = match github::api_url(cx.home) {
         Ok(url) => url,
         Err(err) => {
@@ -809,6 +805,47 @@ fn github_pass(
             return;
         }
     }
+    ci_read(
+        cx,
+        state,
+        log,
+        considered,
+        observed,
+        &api_url,
+        &repository,
+        now,
+    );
+    if considered.review {
+        review_pass(cx, state, log, considered, &api_url, &repository, now);
+    }
+}
+
+/// The CI read of the GitHub pass: canonical, candidate and selected
+/// dependency heads.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one pass over the project's resolved GitHub source"
+)]
+fn ci_read(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &Considered,
+    observed: &sources::MainObservation,
+    api_url: &str,
+    repository: &str,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    let append = |event: &Event| match log.log(event) {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!(event = "event_not_logged", name = event.name(), project = %project.slug, error = %err);
+            false
+        }
+    };
+    let candidate = observed.candidate.clone();
+    let head = observed.remote_main.clone();
     let dependencies = match considered
         .config
         .dependency_branch_prefixes()
@@ -830,7 +867,7 @@ fn github_pass(
         tracing::warn!(event="ci_app_unavailable",project=%project.slug,cause="work credential capability unavailable");
         return;
     };
-    let credential = match credentials.credential(&repository, github::Operation::Observe, now) {
+    let credential = match credentials.credential(repository, github::Operation::Observe, now) {
         Ok(credential) => credential,
         Err(error) => {
             if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, now) {
@@ -841,8 +878,8 @@ fn github_pass(
         }
     };
     let client = CiClient::new(
-        &api_url,
-        &repository,
+        api_url,
+        repository,
         credential.token().to_owned(),
         state,
         &project.slug,
@@ -889,5 +926,52 @@ fn github_pass(
             tracing::debug!(event = "ci_poll_deferred", project = %project.slug, until = %until);
         }
         Err(err) => tracing::warn!(event = "ci_unreadable", project = %project.slug, error = %err),
+    }
+}
+
+/// Automatic review's part of the GitHub pass, on a project admitted for it
+/// as far as nothing but GitHub decides: the two identities' readiness is
+/// asked once, and a met answer admits the project for this pass.
+fn review_pass(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &Considered,
+    api_url: &str,
+    repository: &str,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    let Some(port) = &cx.wiring.review else {
+        tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
+        return;
+    };
+    let observation = match port.readiness(repository, now) {
+        instrukt_core::interfaces::ReviewReadiness::Met { observation } => observation,
+        instrukt_core::interfaces::ReviewReadiness::Unmet(finding) => {
+            tracing::warn!(event = "review_readiness_unmet", project = %project.slug, finding = %finding);
+            return;
+        }
+        instrukt_core::interfaces::ReviewReadiness::CannotAsk(cause) => {
+            if let Err(error) = ci::record_source_cause(state, &project.slug, &cause, now) {
+                tracing::warn!(event = "ci_observation_state_failed", error = %error);
+            }
+            tracing::warn!(event = "review_readiness_unavailable", project = %project.slug, cause = %cause);
+            return;
+        }
+    };
+    let pass = crate::review::ReviewPass {
+        home: cx.home,
+        state,
+        log,
+        project,
+        api_url,
+        repository,
+        token: observation.token(),
+        port: port.as_ref(),
+        now,
+    };
+    if let Err(error) = crate::review::observe(&pass) {
+        tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
     }
 }

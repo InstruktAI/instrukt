@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/pull-request-review.rs
+expression: "stderr.replace(project.root().to_str().unwrap(), \"[ROOT]\")"
+---
+instrukt: refused; nothing was written: [ROOT]/instrukt.yaml: review.automatic: the reviewer identity's App `instruktai-reviewer` cannot do its part for automatic review on acme/demo: GitHub App setup incomplete: installation credential lacks required statuses permission; repair github.apps and its repository installation with the configuration skill; grant its installation on acme/demo pull_requests: write, statuses: write

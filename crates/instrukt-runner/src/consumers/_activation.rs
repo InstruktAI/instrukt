@@ -223,10 +223,33 @@ fn supersede(
     }
     for (id, _) in rows {
         if newest.as_ref().is_some_and(|(latest, _)| latest != &id) {
-            tx.execute("UPDATE procedure_activations SET state='superseded',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![id,procedure,home,format!("superseded before delivery by {}",newest.as_ref().map(|r|r.0.as_str()).unwrap_or("unknown"))]).map_err(state::sql(&path))?;
-            tx.execute("UPDATE runtime_inputs SET state='superseded' WHERE state='pending' AND input_id IN (SELECT input_id FROM standing_deliveries WHERE event_id=?1 AND procedure=?2 AND exact_home=?3)",params![id,procedure,home]).map_err(state::sql(&path))?;
-            tx.execute("UPDATE standing_deliveries SET state='superseded' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![id,procedure,home]).map_err(state::sql(&path))?;
+            end_replaceable(
+                tx,
+                &id,
+                procedure,
+                home,
+                &format!(
+                    "superseded before delivery by {}",
+                    newest.as_ref().map(|r| r.0.as_str()).unwrap_or("unknown")
+                ),
+            )?;
         }
     }
+    Ok(())
+}
+
+/// Ends a replaceable activation before delivery: it, its pending input and
+/// its delivery become superseded, with `failure` saying why.
+pub(crate) fn end_replaceable(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    event: &str,
+    procedure: &str,
+    home: &str,
+    failure: &str,
+) -> Result<(), StateError> {
+    let path = state::db_path(tx);
+    tx.execute("UPDATE procedure_activations SET state='superseded',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![event,procedure,home,failure]).map_err(state::sql(&path))?;
+    tx.execute("UPDATE runtime_inputs SET state='superseded' WHERE state='pending' AND input_id IN (SELECT input_id FROM standing_deliveries WHERE event_id=?1 AND procedure=?2 AND exact_home=?3)",params![event,procedure,home]).map_err(state::sql(&path))?;
+    tx.execute("UPDATE standing_deliveries SET state='superseded' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![event,procedure,home]).map_err(state::sql(&path))?;
     Ok(())
 }

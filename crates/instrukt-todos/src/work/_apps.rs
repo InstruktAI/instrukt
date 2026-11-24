@@ -79,6 +79,29 @@ impl GitHubAccess {
     ) -> Result<Arc<Credential>, AppError> {
         self.with_apps(|apps| apps.issue(repository, role, operation, now))
     }
+    /// The configured App bots trusted as pull-request authors and the bot
+    /// of the identity the `commit-reviewer` role selects, from the
+    /// machine's recorded configuration without a request.
+    pub(crate) fn review_identities(
+        &self,
+    ) -> Result<instrukt_runner::interfaces::ReviewIdentities, AppError> {
+        let config = Configuration::load_global(&self.home)
+            .map_err(|_| setup("cannot read machine-global configuration"))?;
+        let identity = IdentitySettings::read(&config, &self.home)?;
+        let reviewer = identity
+            .selected(Some(instrukt_core::config::REVIEW_ROLE))
+            .bot
+            .clone();
+        Ok(instrukt_runner::interfaces::ReviewIdentities {
+            trusted_bots: identity
+                .apps
+                .values()
+                .map(|app| app.bot.clone())
+                .filter(|bot| bot != &reviewer)
+                .collect(),
+            reviewer,
+        })
+    }
     pub(crate) fn verified_bots(
         &self,
         repository: &str,

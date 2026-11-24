@@ -210,6 +210,96 @@ fn request(
     }))
 }
 
+/// How long the second request of a commit waits after the first; each
+/// further one waits twice as long as the one before.
+const FIRST_RETRY: jiff::SignedDuration = jiff::SignedDuration::from_mins(10);
+
+/// The longest a further request waits.
+const LONGEST_RETRY: jiff::SignedDuration = jiff::SignedDuration::from_hours(4);
+
+/// Whether the next request of a commit whose requests are `previous` may
+/// be emitted at `now`: at once for the first, otherwise once the wait the
+/// last one's number gives has passed.
+pub(crate) fn due(previous: &[Request], now: Timestamp) -> bool {
+    let Some(last) = previous.last() else {
+        return true;
+    };
+    let doublings = u32::try_from(last.number.saturating_sub(1))
+        .unwrap_or(u32::MAX)
+        .min(16);
+    let wait = FIRST_RETRY
+        .checked_mul(1 << doublings)
+        .unwrap_or(LONGEST_RETRY)
+        .min(LONGEST_RETRY);
+    last.logged_at.checked_add(wait).is_ok_and(|at| at <= now)
+}
+
+/// Whether a request is live: queued, selected or handed over.
+pub(crate) fn live(request: &Request) -> bool {
+    matches!(
+        request.standing,
+        Standing::Queued | Standing::Selected | Standing::HandedOver
+    )
+}
+
+/// Ends every queued pull-request review request of `project` whose commit
+/// is not in `owed`: it is never handed over.
+pub(crate) fn end_unowed(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    owed: &std::collections::BTreeSet<CommitSha>,
+) -> Result<(), StateError> {
+    state.write(|tx| {
+        let path = state::db_path(tx);
+        let sql = state::sql(&path);
+        let mut statement = tx
+            .prepare(&format!(
+                "SELECT a.event_id, a.procedure, a.exact_home, json_extract(e.payload, '$.head')
+                 FROM procedure_activations a JOIN events e ON e.id = a.event_id
+                 WHERE a.event_type = ?1 AND a.exact_home = ?2
+                   AND json_extract(e.payload, '$.pull_request') IS NOT NULL AND {REPLACEABLE}"
+            ))
+            .map_err(&sql)?;
+        let queued = statement
+            .query_map(
+                params![
+                    instrukt_core::config::REVIEW_NEEDED_EVENT,
+                    format!("project:{project}")
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .map_err(&sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(&sql)?;
+        drop(statement);
+        for (event, procedure, home, head) in queued {
+            if head
+                .as_deref()
+                .and_then(|head| CommitSha::parse(head).ok())
+                .is_some_and(|head| owed.contains(&head))
+            {
+                continue;
+            }
+            crate::consumers::end_replaceable(
+                tx,
+                &event,
+                &procedure,
+                &home,
+                "its commit stopped being owed a review before delivery selected it",
+            )?;
+            tracing::info!(event = "review_request_ended", project = %project, request = %event, "commit no longer owed");
+        }
+        Ok(())
+    })
+}
+
 /// Which input opened the turn a session has in progress, with regard to a
 /// commit's review requests handed over to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,6 +502,38 @@ mod tests {
             standing(&row(None, true, None)),
             Standing::Ended(Disposition::NeverHandedOver)
         );
+    }
+
+    fn requested(number: u64, logged_at: &str) -> Request {
+        Request {
+            number,
+            base: CommitSha::parse(&"a".repeat(40)).unwrap(),
+            pull_request: Some(1),
+            logged_at: logged_at.parse().unwrap(),
+            standing: Standing::Ended(Disposition::NoVerdict),
+            session: None,
+        }
+    }
+
+    #[test]
+    fn a_commit_never_asked_for_is_asked_for_at_once() {
+        assert!(due(&[], "2026-11-24T10:00:00Z".parse().unwrap()));
+    }
+
+    #[test]
+    fn each_further_request_waits_twice_as_long_as_the_one_before() {
+        let second = [
+            requested(1, "2026-11-24T10:00:00Z"),
+            requested(2, "2026-11-24T10:10:00Z"),
+        ];
+        assert!(!due(&second, "2026-11-24T10:29:59Z".parse().unwrap()));
+        assert!(due(&second, "2026-11-24T10:30:00Z".parse().unwrap()));
+    }
+
+    #[test]
+    fn no_request_waits_longer_than_the_bound() {
+        let late = [requested(9, "2026-11-24T10:00:00Z")];
+        assert!(due(&late, "2026-11-24T14:00:00Z".parse().unwrap()));
     }
 
     #[test]
