@@ -18,6 +18,7 @@ roles:
   - builder
   - fixer
   - build-reviewer
+  - verifier
   - deferrer
   - finalizer
   - integrator

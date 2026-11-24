@@ -261,3 +261,6 @@ and command preconditions. The todo workflow's own rules follow their contracts.
 ### Exceptions
 
 - None.
+
+- project/instrukt/spec/verification-substrate: Live verification substrate for instrukt — archetype classification (Rust CLI/daemon/orchestrator plus executable agent doctrine), real surfaces, Docker-free isolated-root primitive, concurrency cap, and declared blind spots. — `instrukt docs get project/instrukt/spec/verification-substrate`
+- project/instrukt/policy/reliability-checklist: Diff-triggered live verification checks for instrukt born solely from confirmed real occurrences with auditable evidence, governed by sdlc/policy/live-verification. — `instrukt docs get project/instrukt/policy/reliability-checklist`

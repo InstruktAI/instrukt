@@ -301,6 +301,131 @@ A scenario enclosed by no pending marker and bound by no test is unclaimed and f
 to reserve. The plan's declared bindings are what the plan-review reservation check
 validates against the published claims and the todo's `<slug>/work` pending markers.
 
+### 2e. Check verification substrate readiness
+
+Compare the surfaces this todo touches or introduces against the project
+extension point `project/<project>/spec/verification-substrate` (declared by
+`sdlc/procedure/lifecycle/work/verify`) and the archetype matrix in
+`sdlc/policy/live-verification`. Resolve the repository's canonical default
+branch `<default-branch>` and `<canonical-ref>`, and handle all Git lookups and
+ancestry exit codes (`0` = ancestor, `1` = confirmed non-ancestor, other
+non-zero = fatal lookup error), using the exact rules in
+`sdlc/procedure/lifecycle/work/verify` (tracking `HEAD` symrefs across
+`git remote` order, then `init.defaultBranch`, then `main`; fetch
+`<default-branch>` from `origin` when `origin` exists and confirm
+`git rev-parse --verify "<canonical-ref>^{commit}"`; resolve `$base` via checked
+`git merge-base HEAD "<canonical-ref>"` before any `git diff`; check `git log`
+exit status before interpreting empty stdout as absent). On any fatal ref or
+history lookup failure, never treat a fill or workflow as absent — leave
+`<slug>/work` clean, record the diagnostic in `log`, and stop without writing
+`implementation-plan` or stamping `--role-complete`.
+
+Resolve Layer 1 accurately against `<canonical-ref>`, including on a retained
+worktree predating a recently landed bootstrap or substrate extension:
+
+- **Candidate-owned additions, in-body edits, replacements, or retirements:**
+  Check `instrukt docs index --target {slug}` and `{slug}`'s changes relative to
+  the checked `$base` across both parent and sibling companions
+  (`docs/project/spec/verification-substrate.md` and
+  `docs/project/spec/verification-substrate.*.md`, including working-tree edits
+  or companions in `<slug>/work`, per `general/procedure/doc-snippet-authoring`).
+  When matched, read `{slug}`'s candidate view via
+  `instrukt docs get project/<project>/spec/verification-substrate --target {slug}`;
+  when `{slug}` retires Layer 1 via an empty sibling companion (rendered with an
+  empty body) or removes it, treat Layer 1 as absent for `{slug}`, report that
+  absence explicitly in the plan, and assess surfaces against the generic
+  archetype matrix.
+- **Untouched by `{slug}` (published canonical docs):** Confirm published
+  project docs include `<canonical-ref>`'s latest commit touching
+  `docs/project/spec/verification-substrate.md` by comparing the
+  `published commit` in `instrukt docs index --project <project>` against
+  `git log -1 --format=%H "<canonical-ref>" -- docs/project/spec/verification-substrate.md`
+  (checking exit `0` first; when `<fill-commit>` is non-empty, checking
+  `git merge-base --is-ancestor "<fill-commit>" "<published-commit>"` with exit
+  `0` = current, exit `1` = confirmed lag, other non-zero = fatal lookup
+  failure). When the project has no published commit yet or exit `1` confirms
+  detached post-merge publication lags behind `<canonical-ref>` (do not run a
+  separate agent sync; canonical publication belongs to the runner and git hooks
+  per `sdlc/procedure/lifecycle/integrate`), re-check briefly; if publication
+  still lags behind `<canonical-ref>`, do not fall back to the generic archetype
+  matrix or draft against a stale fill — leave `<slug>/work` clean (discarding
+  any uncommitted scratch edits while preserving legitimate committed
+  preparation work), record the published commit versus `<canonical-ref>`'s fill
+  commit in `log`, and stop without writing `implementation-plan` or stamping
+  `--role-complete` so `todo-orchestrator` resolves this stopped attempt
+  (`--failed`) and retries once publication catches up. Once publication is
+  current for that path, read the delivered fill via
+  `instrukt docs get project/<project>/spec/verification-substrate` (without
+  `--target`); only when unlisted on current published canonical docs and absent
+  from `{slug}`, report the missing fill in the plan and assess surfaces against
+  the generic archetype matrix:
+
+- **Standalone verification bootstrap or CI workflow path migration:** When this
+  todo's approved `input` IS a standalone verification bootstrap or CI
+  verification workflow path migration (`sdlc/policy/live-verification`,
+  Standalone CI workflow bootstrap or path-migration rule — carrying zero mixed
+  application changes), do **not** stop on the missing default-branch workflow.
+  Verify the pre-entry reviewed pending Layer 1 and Layer 2 fills committed on
+  `<slug>/work` (`sdlc/policy/todo-creation-discipline` for pre-entry authoring
+  and independent review; `general/spec/snippet-authoring-schema`,
+  `general/procedure/doc-snippet-authoring`, and
+  `sdlc/procedure/verification-bootstrap` Step 4 for `delivered_by: [{slug}]`
+  omitted from `docs/project/index.yaml` while pending, or pending markers and
+  companions on edits; if a standalone bootstrap entered without those reviewed
+  pending fills, stop and surface the entry-boundary gap in `log` rather than
+  planning against unreviewed contracts). Draft `implementation-plan` strictly
+  for the implementation work (Steps 2–3 of
+  `sdlc/procedure/verification-bootstrap`: `verification/` stack, seeders, CI
+  workflow exposing the checked-in branch/`pull_request` exact-SHA baseline
+  smoke required by `sdlc/procedure/lifecycle/work/verify`, and live
+  self-healing probe), adding **no** builder documentation or pending-marker
+  tasks (honoring Step 4b), and noting newly delivered fill IDs for post-fold
+  `docs/project/index.yaml` `listed` registration and rendering in
+  `sdlc/procedure/lifecycle/integrate`.
+- **Application delivery facing a missing first-time CI verification workflow:**
+  When an application delivery touches a surface resolving to
+  `execution_host: ci` and `<canonical-ref>` has no default-branch CI
+  verification workflow yet, do not embed first-time CI workflow creation inside
+  the application plan (`sdlc/policy/live-verification`, Standalone CI workflow
+  bootstrap or path-migration rule) and do not draft a stale plan against the
+  unbootstrapped repository: leave `<slug>/work` clean (discarding any
+  uncommitted scratch edits while preserving legitimate committed preparation
+  work), record the missing default-branch workflow in `log`, and stop without
+  writing `implementation-plan` or stamping `--role-complete` so
+  `todo-orchestrator` resolves this stopped attempt cleanly (`--failed`) and
+  orders `{slug}` after the standalone prerequisite bootstrap todo (`--after` +
+  `--unclaim`, Step 2 of `sdlc/procedure/lifecycle/overview`).
+- **Existing substrate extension and retained-worktree synchronization:** When
+  the default-branch verification workflow already exists on `<canonical-ref>`
+  (or the resolved host is `local`):
+  - Check `git log -1 --format=%H "<canonical-ref>" -- verification/` (exit `0`
+    required) and, when `<stack-commit>` is non-empty,
+    `git merge-base --is-ancestor "<stack-commit>" HEAD`: on confirmed
+    non-ancestry (exit `1`), include **Task 1: fetch and merge accepted
+    `<canonical-ref>` into `<slug>/work`** at the start of `implementation-plan`
+    (for either `ci` or `local` hosts) so the admitted `builder` incorporates
+    the delivered verification stack and seeders into the candidate commit
+    before executing subsequent application or in-scope `verification/` tasks
+    (on any exit status other than `0` or `1`, stop with a lookup error as
+    above).
+  - When the todo adds or alters a live surface, runtime dependency, or seeder
+    and the target `verification/` or Layer 1 files are present in `<slug>/work`
+    (or `verification/` is brought in by Task 1 above without requiring pre-plan
+    Layer 1 pending-marker edits to a file absent from `<slug>/work`), author
+    any Layer 1 pending carrier in Step 4b (not as a builder task) and include
+    the matching `verification/` implementation task directly in the plan.
+  - When the todo requires pre-plan pending Layer 1 documentation edits
+    (`general/policy/documentation-discipline`) against a newly landed
+    `docs/project/spec/verification-substrate.md` still absent from
+    `<slug>/work`, record that substrate extension as a tracked prerequisite
+    change todo started from post-bootstrap `<canonical-ref>` (linked via
+    `--after` without `--hold`, rather than merging `<canonical-ref>` during
+    preparation), and include Task 1 (`merge <canonical-ref>`) once that
+    prerequisite delivers so the candidate SHA carries the delivered stack.
+  - When an external paid or legal third-party identity lacks both a local
+    emulator and an org sandbox credential-pool entry, record the declared
+    blind spot upfront.
+
 ### 3. Draft the implementation plan
 
 Apply the plan-specific quality rules from the preparation artifact quality
@@ -415,7 +540,15 @@ documented contract has no behavioral delta; record
 `doc_impact_none: fix restores documented contract` in step 4b instead of
 authoring new contract text. Only when the diagnosed cause is that the
 documented contract itself is wrong does any other snippet change enter the
-plan — bounded to correcting that contract.
+plan — bounded to correcting that contract. For a real occurrence
+(`sdlc/concept/defect-evidence`), identify the expected Escape Ratchet
+disposition (`sdlc/policy/live-verification`): a `regression-graduated`
+regression test/scenario enters the bug plan under the single-regression
+exception above, while `trigger-added` (Layer 2) or `substrate-upgraded`
+(Layer 1/stack) work for a fix that restores documented behavior is routed to a
+tracked follow-up todo cited in `escape-assessment` (preserving
+`doc_impact_none`); `todo-orchestrator` persists `escape-assessment` before
+finalization.
 
 An ambiguous or stale symptom is resolved by the `diagnosis`; only an ambiguity
 in the intended behavior itself is held as one question for the human

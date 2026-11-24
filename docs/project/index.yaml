@@ -2,4 +2,6 @@
 expanded:
   - project/instrukt/policy/shared-workflows
   - project/instrukt/policy/checks-and-guards
-listed: []
+listed:
+  - project/instrukt/spec/verification-substrate
+  - project/instrukt/policy/reliability-checklist

@@ -244,6 +244,14 @@ over restating the contract.
 | `project/<slug>/design/test-strategy`             | design   | The project tests in non-standard ways agents must follow (custom fixtures, coverage philosophy, specific frameworks). Generic test-runner patterns do not earn a snippet.                      |
 | `project/<slug>/spec/build-deploy`                | spec     | The pipeline encodes constraints invisible in the CI YAML (why a step exists, what failure it defends). Otherwise the YAML is the source of truth.                                              |
 | `project/<slug>/spec/configuration`               | spec     | Configuration semantics are project-specific. **If the project implements a global policy, write a reverse pointer (`See also: <global policy ID>`) and stop — do not duplicate the contract.** |
+| `project/<slug>/spec/verification-substrate`      | spec     | Produced via `sdlc/procedure/verification-bootstrap`: declares the project's archetype(s), execution host, live surfaces, isolation primitive, seeders, and blind spots (`sdlc/policy/live-verification`). |
+| `project/<slug>/policy/reliability-checklist`     | policy   | Paired with `verification-substrate` via `sdlc/procedure/verification-bootstrap`: holds diff-triggered live checks born from real escapes (`sdlc/policy/live-verification`). |
+
+When `project/<slug>/spec/verification-substrate` or
+`project/<slug>/policy/reliability-checklist` is absent or stale for the
+analyzed repository's runtime surfaces, execute
+`sdlc/procedure/verification-bootstrap` to establish or refresh both fills and
+any earned verification stack.
 
 ### 15. Agent Bootstrap Content (AGENTS.master.md decision)
 

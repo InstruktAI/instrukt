@@ -103,6 +103,9 @@ every production default ships silently from the applicable baseline.
 
    For sites, follow `sdlc/procedure/setup-visual-regression`.
 
+   Bootstrap the project's live verification substrate via
+   `sdlc/procedure/verification-bootstrap` (`sdlc/policy/live-verification`).
+
    Whatever the flavor, end by documenting the project's own quality commands
    in its project documentation so procedures can run those checks.
 
