@@ -672,6 +672,48 @@ pub fn evidence(
     Ok(evidence)
 }
 
+/// The derived approval of `candidate`: the one the publication store holds,
+/// withdrawn or not, else the one an import brought (`github-apps`, Review
+/// evidence storage: whether a derived approval was withdrawn is read from
+/// the publication store by every reader).
+fn derived_approval(
+    home: &Home,
+    project: &ProjectSlug,
+    candidate: &CommitSha,
+) -> Result<Option<Derived>, ReviewError> {
+    if let Some(conn) = _published::reader(home)?
+        && let Some(approval) = _published::derived_of(&conn, project, candidate)?
+    {
+        return Ok(Some(approval));
+    }
+    match _store::reader(home)? {
+        Some(conn) => _store::imported_approval(&conn, project, candidate),
+        None => Ok(None),
+    }
+}
+
+/// Every derived approval of `project` that was not withdrawn: those the
+/// tick recorded, and those imports brought that the publication store
+/// holds nothing of.
+fn standing_derived(home: &Home, project: &ProjectSlug) -> Result<Vec<Derived>, ReviewError> {
+    let (mut standing, held) = match _published::reader(home)? {
+        Some(conn) => (
+            _published::standing_derived(&conn, project)?,
+            _published::candidates(&conn, project)?,
+        ),
+        None => Default::default(),
+    };
+    if let Some(conn) = _store::reader(home)? {
+        standing.extend(
+            _store::imported_approvals(&conn, project)?
+                .into_iter()
+                .filter(|approval| !held.contains(&approval.candidate)),
+        );
+    }
+    standing.sort_by(|a, b| a.candidate.cmp(&b.candidate));
+    Ok(standing)
+}
+
 /// The repository `root` of `project`, as review evidence reads it.
 pub fn project(slug: ProjectSlug, root: &Path) -> ReviewProject {
     ReviewProject {
@@ -831,10 +873,7 @@ fn publish(
         publication.deliver(commit, &target, &pulls_at(commit))?;
     }
     let mut current: Vec<CommitSha> = standing.iter().map(|(commit, _)| commit.clone()).collect();
-    let derived = match _published::reader(home)? {
-        Some(conn) => _published::standing_derived(&conn, project)?,
-        None => Vec::new(),
-    };
+    let derived = standing_derived(home, project)?;
     for approval in &derived {
         current.push(approval.candidate.clone());
         // Only one GitHub already shows as the status is completed here;
@@ -908,10 +947,16 @@ pub fn export(
     to: &Path,
     now: Timestamp,
 ) -> Result<Exported, ReviewError> {
-    let derived = match _published::reader(home)? {
-        Some(conn) => _published::derived(&conn, project)?,
-        None => Vec::new(),
-    };
+    let derived = standing_derived(home, project)?
+        .into_iter()
+        .map(|approval| _transfer::ExportedDerived {
+            candidate: approval.candidate.to_string(),
+            canonical: approval.canonical,
+            coverage: approval.coverage,
+            name: approval.name.to_string(),
+            moment: approval.moment.text(),
+        })
+        .collect();
     let mut db = _store::open(home)?;
     let standing = _store::standing(db.conn(), project)?;
     let exemptions = _store::exemptions(db.conn(), project)?;
@@ -1020,6 +1065,33 @@ fn version_of(verdict: &_transfer::ExportedVerdict) -> Result<Version, ReviewErr
     })
 }
 
+/// A derived approval an export carries, read as this computer keeps it.
+fn derived_of_export(
+    approval: &_transfer::ExportedDerived,
+    now: Timestamp,
+) -> Result<Derived, ReviewError> {
+    let bad = |what: &str| {
+        refused(format!(
+            "the export's derived approval of {} has an unreadable {what}",
+            approval.candidate
+        ))
+    };
+    let canonical = CommitSha::parse(&approval.canonical).map_err(|_| bad("canonical head"))?;
+    if ContentDigest::of(&approval.coverage).as_str() != approval.name {
+        return Err(bad("name: it is not the digest of its coverage"));
+    }
+    Ok(Derived {
+        candidate: CommitSha::parse(&approval.candidate).map_err(|_| bad("candidate"))?,
+        canonical: canonical.to_string(),
+        coverage: approval.coverage.clone(),
+        name: ContentDigest::new(approval.name.clone()),
+        moment: Moment::parse(&approval.moment).ok_or_else(|| bad("moment"))?,
+        recorded_at: now,
+        withdrawn: None,
+        imported: true,
+    })
+}
+
 /// Takes in the export at `file` (`instrukt review import`), commit by
 /// commit, under `state/review.lock`. Two different verdicts of one commit
 /// refuse the import whole unless `statement` says which stands.
@@ -1056,6 +1128,11 @@ pub fn import(
                 version_of(verdict)?,
             ))
         })
+        .collect::<Result<Vec<_>, ReviewError>>()?;
+    let approvals = export
+        .derived
+        .iter()
+        .map(|approval| derived_of_export(approval, now))
         .collect::<Result<Vec<_>, ReviewError>>()?;
     let mut db = _store::open(home)?;
     let imported = db.write(|tx| {
@@ -1148,8 +1225,8 @@ pub fn import(
                 },
             )?;
         }
-        for approval in &export.derived {
-            _store::import_approval(tx, project, approval, now)?;
+        for approval in &approvals {
+            _store::import_approval(tx, project, approval)?;
         }
         Ok::<_, ReviewError>(done)
     })?;
@@ -1311,11 +1388,8 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
         if let Some(version) = held.current() {
             return Ok(Some(version.base.clone()));
         }
-        let derived = match _published::reader(&self.work.home).map_err(|e| e.to_string())? {
-            Some(conn) => _published::derived_of(&conn, &self.project.slug, head)
-                .map_err(|e| e.to_string())?,
-            None => None,
-        };
+        let derived = derived_approval(&self.work.home, &self.project.slug, head)
+            .map_err(|e| e.to_string())?;
         Ok(derived.and_then(|d| CommitSha::parse(&d.canonical).ok()))
     }
 }
@@ -1340,10 +1414,7 @@ fn candidate_finding(
     {
         return Ok(CandidateFinding::Settled);
     }
-    let recorded = match _published::reader(&work.home)? {
-        Some(conn) => _published::derived_of(&conn, &project.slug, candidate)?,
-        None => None,
-    };
+    let recorded = derived_approval(&work.home, &project.slug, candidate)?;
     let shown = |approval: &Derived| {
         held.deliveries.iter().any(|d| {
             d.destination == Destination::Status
@@ -1362,9 +1433,9 @@ fn candidate_finding(
     match crate::workflow::coverage(&project.root, candidate, &canonical, &reader) {
         crate::workflow::Coverage::CannotAnswer(cause) => Ok(CandidateFinding::CannotAnswer(cause)),
         crate::workflow::Coverage::Uncovered(commit) => {
-            if recorded.as_ref().is_some_and(|a| a.withdrawn.is_none()) {
+            if let Some(approval) = recorded.as_ref().filter(|a| a.withdrawn.is_none()) {
                 let mut db = _published::open(&work.home)?;
-                db.write(|tx| _published::withdraw(tx, &project.slug, candidate, &commit, now))?;
+                db.write(|tx| _published::withdraw(tx, &project.slug, approval, &commit, now))?;
                 tracing::info!(event = "review_derived_approval_withdrawn", project = %project.slug, candidate = %candidate, uncovered = %commit);
             }
             Ok(CandidateFinding::Owed)
@@ -1392,6 +1463,7 @@ fn candidate_finding(
                 moment: Moment::decided(now, None),
                 recorded_at: now,
                 withdrawn: None,
+                imported: false,
             };
             let mut db = _published::open(&work.home)?;
             db.write(|tx| _published::record_derived(tx, &project.slug, &approval))?;
@@ -1528,6 +1600,110 @@ mod tests {
             held.current().map(|v| v.name.clone()),
             Some(ContentDigest::of("report")),
             "evidence of a commit this repository does not hold is kept"
+        );
+    }
+
+    /// A derived approval of `candidate` as the tick records it at `at`.
+    fn tick_derived(candidate: &CommitSha, at: Timestamp) -> Derived {
+        let coverage = format!("{{\"candidate\": \"{candidate}\"}}");
+        Derived {
+            candidate: candidate.clone(),
+            canonical: sha('b').to_string(),
+            name: ContentDigest::of(&coverage),
+            coverage,
+            moment: Moment::decided(at, None),
+            recorded_at: at,
+            withdrawn: None,
+            imported: false,
+        }
+    }
+
+    /// Exports `project` from `from` and imports the file into `to`.
+    fn transfer(from: &Home, to: &Home, project: &ProjectSlug, now: Timestamp) -> PathBuf {
+        let file = from.root().join("export.json");
+        export(from, project, &file, now).unwrap();
+        import(to, project, &file, None, now).unwrap();
+        file
+    }
+
+    #[test]
+    fn a_derived_approval_an_import_brought_is_read_withdrawn_and_carried_on() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        let exporter = Home::at_user_home(fixture._dir.path().join("exporter"));
+        std::fs::create_dir_all(exporter.root()).unwrap();
+        let now = at("2026-11-24T00:00:00Z");
+        let candidate = sha('c');
+        let mut db = _published::open(&exporter).unwrap();
+        db.write(|tx| _published::record_derived(tx, project, &tick_derived(&candidate, now)))
+            .unwrap();
+        drop(db);
+        transfer(&exporter, &fixture.home, project, now);
+
+        let brought = derived_approval(&fixture.home, project, &candidate)
+            .unwrap()
+            .expect("the imported derived approval is read");
+        assert!(brought.imported && brought.withdrawn.is_none());
+        assert_eq!(brought.canonical, sha('b').to_string());
+        assert_eq!(
+            standing_derived(&fixture.home, project).unwrap(),
+            std::slice::from_ref(&brought)
+        );
+        let again = fixture.home.root().join("again.json");
+        assert_eq!(
+            export(&fixture.home, project, &again, now).unwrap().derived,
+            1
+        );
+
+        let mut db = _published::open(&fixture.home).unwrap();
+        db.write(|tx| _published::withdraw(tx, project, &brought, &sha('e'), now))
+            .unwrap();
+        drop(db);
+        let withdrawn = derived_approval(&fixture.home, project, &candidate)
+            .unwrap()
+            .unwrap();
+        assert_eq!(withdrawn.withdrawn, Some((now, sha('e').to_string())));
+        assert!(
+            withdrawn.imported,
+            "the withdrawal keeps where it came from"
+        );
+        assert!(standing_derived(&fixture.home, project).unwrap().is_empty());
+        let last = fixture.home.root().join("last.json");
+        assert_eq!(
+            export(&fixture.home, project, &last, now).unwrap().derived,
+            0
+        );
+    }
+
+    #[test]
+    fn an_export_whose_derived_approval_is_not_named_by_its_coverage_is_refused() {
+        let fixture = fixture();
+        let project = &fixture.project.slug;
+        let now = at("2026-11-24T00:00:00Z");
+        let export = _transfer::Export {
+            project: project.to_string(),
+            computer: "elsewhere".into(),
+            written_at: now.to_string(),
+            verdicts: Vec::new(),
+            exemptions: Vec::new(),
+            derived: vec![_transfer::ExportedDerived {
+                candidate: sha('c').to_string(),
+                canonical: sha('b').to_string(),
+                coverage: "covered".into(),
+                name: ContentDigest::of("something else").to_string(),
+                moment: Moment::decided(now, None).text(),
+            }],
+        };
+        let (text, _) = _transfer::write(&export).unwrap();
+        let file = fixture.home.root().join("bad.json");
+        std::fs::write(&file, text).unwrap();
+        assert!(matches!(
+            import(&fixture.home, project, &file, None, now),
+            Err(ReviewError::Refused(_))
+        ));
+        assert_eq!(
+            derived_approval(&fixture.home, project, &sha('c')).unwrap(),
+            None
         );
     }
 }

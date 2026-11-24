@@ -50,6 +50,7 @@ CREATE TABLE derived (
  recorded_at TEXT NOT NULL,
  withdrawn_at TEXT,
  uncovered TEXT,
+ imported INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY (project, candidate)
 );
 "#;
@@ -297,7 +298,7 @@ pub(super) fn recognise(
     Ok(())
 }
 
-/// A derived approval the tick recorded.
+/// A derived approval: one the tick recorded, or one an import brought.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Derived {
     pub candidate: CommitSha,
@@ -305,9 +306,12 @@ pub struct Derived {
     pub coverage: String,
     pub name: ContentDigest,
     pub moment: Moment,
+    /// When the tick recorded it, or when an import brought it.
     pub recorded_at: Timestamp,
     /// When the tick withdrew it, with the commit found uncovered.
     pub withdrawn: Option<(Timestamp, String)>,
+    /// An import brought it rather than this computer's tick.
+    pub imported: bool,
 }
 
 /// The derived approval of `candidate`, withdrawn or not.
@@ -318,7 +322,7 @@ pub(super) fn derived_of(
 ) -> Result<Option<Derived>, ReviewError> {
     let row = conn
         .query_row(
-            "SELECT canonical, coverage, name, moment, recorded_at, withdrawn_at, uncovered FROM derived WHERE project=?1 AND candidate=?2",
+            "SELECT canonical, coverage, name, moment, recorded_at, withdrawn_at, uncovered, imported FROM derived WHERE project=?1 AND candidate=?2",
             params![project.as_str(), candidate.as_str()],
             |row| {
                 Ok((
@@ -329,12 +333,13 @@ pub(super) fn derived_of(
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, bool>(7)?,
                 ))
             },
         )
         .optional()?;
     row.map(
-        |(canonical, coverage, name, moment, at, withdrawn, uncovered)| {
+        |(canonical, coverage, name, moment, at, withdrawn, uncovered, imported)| {
             Ok(Derived {
                 candidate: candidate.clone(),
                 canonical,
@@ -350,6 +355,7 @@ pub(super) fn derived_of(
                         ))
                     })
                     .transpose()?,
+                imported,
             })
         },
     )
@@ -367,7 +373,8 @@ pub(super) fn record_derived(
         "INSERT INTO derived (project, candidate, canonical, coverage, name, moment, recorded_at, withdrawn_at, uncovered)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL)
          ON CONFLICT (project, candidate) DO UPDATE SET canonical=excluded.canonical, coverage=excluded.coverage,
-           name=excluded.name, moment=excluded.moment, recorded_at=excluded.recorded_at, withdrawn_at=NULL, uncovered=NULL",
+           name=excluded.name, moment=excluded.moment, recorded_at=excluded.recorded_at, withdrawn_at=NULL, uncovered=NULL,
+           imported=0",
         params![
             project.as_str(),
             derived.candidate.as_str(),
@@ -381,20 +388,50 @@ pub(super) fn record_derived(
     Ok(())
 }
 
-/// Withdraws the derived approval of `candidate`, with the commit found
-/// uncovered.
+/// Withdraws `approval`, with the commit found uncovered. An approval an
+/// import brought has no row here yet: its withdrawal is recorded here all
+/// the same, as the tick's record of what it did.
 pub(super) fn withdraw(
     tx: &Transaction<'_>,
     project: &ProjectSlug,
-    candidate: &CommitSha,
+    approval: &Derived,
     uncovered: &CommitSha,
     now: Timestamp,
 ) -> Result<(), ReviewError> {
     tx.execute(
-        "UPDATE derived SET withdrawn_at=?3, uncovered=?4 WHERE project=?1 AND candidate=?2 AND withdrawn_at IS NULL",
-        params![project.as_str(), candidate.as_str(), now.to_string(), uncovered.as_str()],
+        "INSERT INTO derived (project, candidate, canonical, coverage, name, moment, recorded_at, withdrawn_at, uncovered, imported)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT (project, candidate) DO UPDATE SET withdrawn_at=excluded.withdrawn_at, uncovered=excluded.uncovered
+         WHERE withdrawn_at IS NULL",
+        params![
+            project.as_str(),
+            approval.candidate.as_str(),
+            approval.canonical,
+            approval.coverage,
+            approval.name.as_str(),
+            approval.moment.text(),
+            approval.recorded_at.to_string(),
+            now.to_string(),
+            uncovered.as_str(),
+            approval.imported,
+        ],
     )?;
     Ok(())
+}
+
+/// Every candidate of `project` this store holds a derived approval of,
+/// withdrawn or not.
+pub(super) fn candidates(
+    conn: &Connection,
+    project: &ProjectSlug,
+) -> Result<std::collections::BTreeSet<CommitSha>, ReviewError> {
+    let mut statement = conn.prepare("SELECT candidate FROM derived WHERE project=?1")?;
+    let rows = statement
+        .query_map(params![project.as_str()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.iter()
+        .map(|candidate| CommitSha::parse(candidate).map_err(|_| bad("candidate")))
+        .collect()
 }
 
 /// Every derived approval of `project` the tick did not withdraw.
@@ -414,30 +451,6 @@ pub(super) fn standing_derived(
         found.extend(derived_of(conn, project, &candidate)?);
     }
     Ok(found)
-}
-
-/// The derived approvals the tick recorded for `project` and did not
-/// withdraw.
-pub(super) fn derived(
-    conn: &Connection,
-    project: &ProjectSlug,
-) -> Result<Vec<super::_transfer::ExportedDerived>, ReviewError> {
-    let mut statement = conn.prepare(
-        "SELECT candidate, canonical, coverage, name, moment FROM derived
-         WHERE project=?1 AND withdrawn_at IS NULL ORDER BY candidate",
-    )?;
-    let rows = statement
-        .query_map(params![project.as_str()], |row| {
-            Ok(super::_transfer::ExportedDerived {
-                candidate: row.get(0)?,
-                canonical: row.get(1)?,
-                coverage: row.get(2)?,
-                name: row.get(3)?,
-                moment: row.get(4)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
 }
 
 /// Retires completed history older than `cutoff`: publications no longer

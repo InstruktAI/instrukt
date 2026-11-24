@@ -415,23 +415,73 @@ pub(super) fn exemptions(
 pub(super) fn import_approval(
     tx: &Transaction<'_>,
     project: &ProjectSlug,
-    approval: &super::_transfer::ExportedDerived,
-    now: Timestamp,
+    approval: &super::Derived,
 ) -> Result<(), ReviewError> {
     tx.execute(
         "INSERT INTO imported_approvals (project, candidate, canonical, coverage, name, moment, imported_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (project, candidate) DO NOTHING",
         params![
             project.as_str(),
-            approval.candidate,
+            approval.candidate.as_str(),
             approval.canonical,
             approval.coverage,
-            approval.name,
-            approval.moment,
-            now.to_string()
+            approval.name.as_str(),
+            approval.moment.text(),
+            approval.recorded_at.to_string()
         ],
     )?;
     Ok(())
+}
+
+const IMPORTED_COLUMNS: &str = "candidate, canonical, coverage, name, moment, imported_at";
+
+fn imported(
+    row: &instrukt_core::state_db::rusqlite::Row<'_>,
+) -> Result<super::Derived, ReviewError> {
+    let text = |at: usize| row.get::<_, String>(at);
+    let record = |what: &str| ReviewError::Record(format!("imported derived approval's {what}"));
+    Ok(super::Derived {
+        candidate: CommitSha::parse(&text(0)?).map_err(|_| record("candidate"))?,
+        canonical: text(1)?,
+        coverage: text(2)?,
+        name: ContentDigest::new(text(3)?),
+        moment: Moment::parse(&text(4)?).ok_or_else(|| record("moment"))?,
+        recorded_at: text(5)?.parse().map_err(|_| record("time"))?,
+        withdrawn: None,
+        imported: true,
+    })
+}
+
+/// The derived approval an import brought for `candidate`, when one did.
+pub(super) fn imported_approval(
+    conn: &Connection,
+    project: &ProjectSlug,
+    candidate: &CommitSha,
+) -> Result<Option<super::Derived>, ReviewError> {
+    conn.query_row(
+        &format!(
+            "SELECT {IMPORTED_COLUMNS} FROM imported_approvals WHERE project=?1 AND candidate=?2"
+        ),
+        params![project.as_str(), candidate.as_str()],
+        |row| Ok(imported(row)),
+    )
+    .optional()?
+    .transpose()
+}
+
+/// Every derived approval imports brought for `project`.
+pub(super) fn imported_approvals(
+    conn: &Connection,
+    project: &ProjectSlug,
+) -> Result<Vec<super::Derived>, ReviewError> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {IMPORTED_COLUMNS} FROM imported_approvals WHERE project=?1 ORDER BY candidate"
+    ))?;
+    statement
+        .query_map(params![project.as_str()], |row| Ok(imported(row)))?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .collect()
 }
 
 /// `commit`'s exemption in `project`, when one is held.
