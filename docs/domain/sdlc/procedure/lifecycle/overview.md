@@ -169,9 +169,9 @@ so the runner does not re-dispatch a fresh turn on every tick.
    findings are fixed, invalid or out-of-bounds findings are rejected on the
    record by the producer, and repeated failures on the same mechanism or
    invariant trigger re-derivation — cutting back to a simpler policy-compliant
-   boundary whenever that satisfies every approved criterion instead of
-   layering defensive machinery (prune-before-patch in
-   `sdlc/procedure/lifecycle/review`).
+   boundary whenever it satisfies every approved criterion and eliminates the
+   failing interaction instead of layering defensive machinery
+   (prune-before-patch in `sdlc/procedure/lifecycle/review`).
 5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, and all required approvals hold.

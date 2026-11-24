@@ -101,10 +101,10 @@ procedure is ever dispatched.
    destination is always that phase, never a person, and a finding cannot
    create the boundary by proposing it. An all-rejections pass (zero target
    edits, grounded dispositions recorded) or a pruning pass that cuts back a
-   repeatedly failing mechanism when a simpler compliant boundary satisfies
-   every approved criterion (prune-before-patch in
-   `sdlc/procedure/lifecycle/review`) is a complete remediation returned to
-   review. For each finding
+   repeatedly failing mechanism when a simpler policy-compliant boundary
+   satisfies every approved criterion and eliminates the failing interaction
+   (prune-before-patch in `sdlc/procedure/lifecycle/review`) is a complete
+   remediation returned to review. For each finding
    you fix:
    - Understand the issue and its referenced location.
    - Apply the minimal fix that satisfies the independently validated invariant.
