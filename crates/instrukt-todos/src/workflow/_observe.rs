@@ -222,31 +222,61 @@ fn classify(
         )? {
             return Ok(ChangeSinceReview::TodoChanged);
         }
-        let merged = git::run_output(dir, ["merge-tree", "--write-tree", first, second])?;
-        if !merged.status.success() {
-            // Exit 1 is a conflicted merge: the commit's resolution is the
-            // todo's own change. Any other status is git failing to tell.
-            return Ok(if merged.status.code() == Some(1) {
-                ChangeSinceReview::TodoChanged
-            } else {
-                ChangeSinceReview::Undetermined
-            });
-        }
-        let merged_tree = String::from_utf8_lossy(&merged.stdout)
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        let tree = git::run(dir, ["rev-parse", &format!("{commit}^{{tree}}")])?;
-        if merged_tree.is_empty() {
-            return Ok(ChangeSinceReview::Undetermined);
-        }
-        if tree.trim() != merged_tree {
-            return Ok(ChangeSinceReview::TodoChanged);
+        match reproduce_merge(dir, commit, first, second)? {
+            MergeReproduction::Reproduced => {}
+            MergeReproduction::Differs | MergeReproduction::Conflicted => {
+                return Ok(ChangeSinceReview::TodoChanged);
+            }
+            MergeReproduction::Undetermined => return Ok(ChangeSinceReview::Undetermined),
         }
     }
     Ok(ChangeSinceReview::CleanUpstreamMerges)
+}
+
+/// What git's own merge of a merge commit's two parents says of the commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MergeReproduction {
+    /// The commit's tree is exactly the merge of its parents.
+    Reproduced,
+    /// The parents merge cleanly to another tree.
+    Differs,
+    /// The parents conflict: the commit's resolution is its own change.
+    Conflicted,
+    /// Git could not tell.
+    Undetermined,
+}
+
+/// Reproduces merge `commit` from its parents `first` and `second` in `dir`.
+pub(crate) fn reproduce_merge(
+    dir: &Path,
+    commit: &str,
+    first: &str,
+    second: &str,
+) -> Result<MergeReproduction, ObservationError> {
+    let merged = git::run_output(dir, ["merge-tree", "--write-tree", first, second])?;
+    if !merged.status.success() {
+        // Exit 1 is a conflicted merge. Any other status is git failing to tell.
+        return Ok(if merged.status.code() == Some(1) {
+            MergeReproduction::Conflicted
+        } else {
+            MergeReproduction::Undetermined
+        });
+    }
+    let merged_tree = String::from_utf8_lossy(&merged.stdout)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let tree = git::run(dir, ["rev-parse", &format!("{commit}^{{tree}}")])?;
+    if merged_tree.is_empty() {
+        return Ok(MergeReproduction::Undetermined);
+    }
+    Ok(if tree.trim() == merged_tree {
+        MergeReproduction::Reproduced
+    } else {
+        MergeReproduction::Differs
+    })
 }
 
 impl From<crate::work::_grounding::GroundingIoError> for ObservationError {
