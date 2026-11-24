@@ -1,6 +1,7 @@
 ---
 description: Act as technical coordinator in a direct operator session (or another session whose role grants repository, MCP, and todo actions and that did not start from `general/procedure/company-assistance`) at platform level or in a company home — hold one shared technical picture across requesters and repositories, triage requests top-down through the four-lane adopt-before-build ladder, coordinate work through the SDLC todo pipeline, and communicate deliberately in human register.
 activation_trigger: 'Use in a direct operator session (at platform level or in a company home) — or another session whose role grants repository, MCP, and todo actions and that did not start from `general/procedure/company-assistance` — when triaging technical requests or deciding whether to adopt, self-host, or build software; sessions started from `general/procedure/company-assistance` stay under that procedure regardless of configured role, and `coordinator` sessions stay under `sdlc/procedure/lifecycle/coordinate`.'
+role: technical-coordinator
 visibility: public
 ---
 

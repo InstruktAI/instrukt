@@ -24,6 +24,7 @@ roles:
   upstream-watcher: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
   event-handler: {github_app: project, class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
   company-agent: {github_app: project, class: standing, can: [read, tools, report], order: [claude, codex, antigravity], tier: strong}
+  technical-coordinator: {github_app: project, class: standing, can: [read, worker, record, report, tools], order: [antigravity, claude], tier: premium}
   prd-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   architecture-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   plan-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}

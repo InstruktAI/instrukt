@@ -4896,9 +4896,10 @@ impl instrukt_runner::interfaces::CompanySupervision for crate::connector_host::
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage, effective_since,
-        opening_procedure, split,
+        Agents, COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage,
+        effective_since, opening_procedure, opening_procedure_for_role, split,
     };
+    use instrukt_core::config::SHIPPED_AGENTS;
 
     #[test]
     fn a_messages_interval_is_its_own_or_the_relays_failure_from_its_admission() {
@@ -4986,6 +4987,28 @@ mod tests {
             opening_procedure(COMPANY_AGENT_ROLE, None),
             Err(ConversationError::NoProcedure { ref role }) if role == "company-agent"
         ));
+    }
+
+    #[test]
+    fn a_technical_coordinator_connector_opens_from_its_own_procedure_not_company_assistance() {
+        let index: instrukt_core::index::GlobalIndex = serde_yaml_ng::from_str(concat!(
+            "schema_version: 2\nsnippets:\n",
+            "- id: general/procedure/company-assistance\n  description: Assist.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/company-assistance.md\n  source_project: demo\n  role: company-agent\n",
+            "- id: general/procedure/technical-coordinator\n  description: Coordinate.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/technical-coordinator.md\n  source_project: demo\n  role: technical-coordinator\n",
+        ))
+        .unwrap();
+        let agents = Agents::parse(SHIPPED_AGENTS).unwrap();
+        assert!(agents.roles.contains_key("technical-coordinator"));
+        let opened = opening_procedure_for_role(
+            &index,
+            &RoleName::parse("technical-coordinator").unwrap(),
+            &agents,
+        )
+        .unwrap();
+        assert_eq!(
+            opened.id.as_str(),
+            "general/procedure/technical-coordinator"
+        );
     }
 
     /// The character count of each part, and whether the parts together

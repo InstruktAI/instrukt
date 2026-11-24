@@ -154,6 +154,13 @@ composition is:
 | `tools` | `mcp-access`, `company-reply`, each at `own`. |
 | `all` | Every catalog action at `any`. |
 
+A company connector may declare `role: technical-coordinator`; its sessions
+then start from `general/procedure/technical-coordinator`, the procedure
+declaring that role, rather than from company assistance. Its entry grants
+what that procedure works with: reading every surface, writing its own
+documentation, commits and todos, reporting defects into any project, and the
+company's tool servers and explicit replies.
+
 A company's agent reports defects of the system it works through
 (`general/procedure/bug-reporting`) into the project that owns the defect on its
 computer, which its own assignment never binds; `report` therefore reaches any
@@ -165,8 +172,10 @@ report files is the work context's
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
 the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
-They share the model `order`/`tier` defaults of agent-selection; the table's App
-column names the identity reference, not another model/provider choice.
+They share the model `order`/`tier` defaults of agent-selection, except
+`technical-coordinator`, which ships `order: [antigravity, claude]` at tier
+`premium`; the table's App column names the identity reference, not another
+model/provider choice.
 
 | Roles | Class | `can` bundles | App |
 | --- | --- | --- | --- |
@@ -180,6 +189,7 @@ column names the identity reference, not another model/provider choice.
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
 | `company-agent` | `standing` | `read`, `tools`, `report` | project |
+| `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
 | `default` | `agent` | `all` | project |
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
