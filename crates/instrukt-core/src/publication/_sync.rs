@@ -900,15 +900,12 @@ fn relative_to(root: &Path, path: &Path) -> Result<PathBuf, PublicationError> {
         })
 }
 
-/// The agent runtime whose rule file opens with frontmatter of its own.
-const CURSOR: &str = "cursor";
-
 /// The text written to the global file of the agent runtime `cli`: the
 /// generated line, then `rendering`. Where the runtime's file format puts
 /// something of its own first, as Cursor's rule file does with its
 /// frontmatter, the generated line follows it.
 fn global_file_text(cli: &str, rendering: &str) -> String {
-    if cli == CURSOR {
+    if cli == "cursor" {
         format!(
             "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{GENERATED_LINE}\n{rendering}"
         )
@@ -925,7 +922,7 @@ mod tests {
 
     #[test]
     fn cursors_frontmatter_comes_first_and_the_generated_line_right_after_it() {
-        let text = global_file_text(CURSOR, RENDERING);
+        let text = global_file_text("cursor", RENDERING);
         let after = text
             .strip_prefix("---\n")
             .and_then(|rest| rest.split_once("\n---\n\n"))
