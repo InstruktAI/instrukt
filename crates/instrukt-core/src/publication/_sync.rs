@@ -922,23 +922,11 @@ mod tests {
 
     #[test]
     fn cursors_frontmatter_comes_first_and_the_generated_line_right_after_it() {
-        let text = global_file_text("cursor", RENDERING);
-        let after = text
-            .strip_prefix("---\n")
-            .and_then(|rest| rest.split_once("\n---\n\n"))
-            .map(|(_, after)| after)
-            .unwrap_or_default();
-        assert_eq!(after.lines().next(), Some(GENERATED_LINE));
-        assert_eq!(
-            after.strip_prefix(GENERATED_LINE),
-            Some(&*format!("\n{RENDERING}"))
-        );
-        assert_eq!(text.matches(GENERATED_LINE).count(), 1);
+        insta::assert_snapshot!(global_file_text("cursor", RENDERING));
     }
 
     #[test]
     fn another_runtimes_file_opens_with_the_generated_line() {
-        let text = global_file_text("claude", RENDERING);
-        assert_eq!(text, format!("{GENERATED_LINE}\n{RENDERING}"));
+        insta::assert_snapshot!(global_file_text("claude", RENDERING));
     }
 }
