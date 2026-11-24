@@ -447,11 +447,6 @@ trait Source {
     /// repository publishes that domain on this computer; `None` when the
     /// domain is published (the read is unresolved for another reason).
     fn missing_domain(&self, domain: &DomainName, file: &str) -> Option<PublicationError>;
-
-    /// What a failure to render `file` through the read pipeline is.
-    fn failure(&self, file: &str, error: DocsError) -> PublicationError {
-        render_error(file, &error.to_string())
-    }
 }
 
 /// The published source: the publishing project's committed corpus for
@@ -603,7 +598,11 @@ impl Source for Repository<'_> {
     fn missing_domain(&self, _domain: &DomainName, _file: &str) -> Option<PublicationError> {
         None
     }
+}
 
+impl Repository<'_> {
+    /// What a failure to render `file` through the read pipeline is: a
+    /// configured value in a committed rendering is a finding.
     fn failure(&self, file: &str, error: DocsError) -> PublicationError {
         match error {
             DocsError::ConfigUnresolved { .. } => PublicationError::CommittedConfig {
@@ -871,7 +870,7 @@ fn render_project(
 ) -> Result<(), PublicationError> {
     let path = PathBuf::from(AGENTS_FILE);
     let index_path = project_index_path();
-    match tree.entry_index(&index_path) {
+    let bytes = match tree.entry_index(&index_path) {
         EntryIndex::Absent => {
             plan.notices.push(project_without_index());
             return Ok(());
@@ -883,17 +882,19 @@ fn render_project(
             });
             return Ok(());
         }
-        EntryIndex::Present(_) => {}
-    }
+        EntryIndex::Present(bytes) => bytes,
+    };
     if override_beside_root {
         plan.findings.push(RenderFinding {
             path: PathBuf::from(OVERRIDE_FILE),
             kind: RenderFindingKind::OverrideBesideRoot,
         });
     }
-    let Some(project_index) = super::_sync::committed_index(tree, &Position::Project)? else {
-        return Ok(());
-    };
+    let project_index = PositionIndex::parse(&Position::Project, &String::from_utf8_lossy(bytes))
+        .map_err(|source| PublicationError::Parse {
+        path: PathBuf::from(&index_path),
+        source,
+    })?;
     let (held, _reserved) = super::_tree::held_positions(tree);
     let corpus = Corpus::from_sources(project.cloned(), None, tree.doc_sources());
     let index = GlobalIndex {
