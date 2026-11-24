@@ -265,9 +265,18 @@ the home and leaves any other there as it is.
   document carries: a non-empty `description` in its frontmatter and what is
   true of the company now, in the present tense, what was true before staying
   in the repository's history (`general/procedure/doc-snippet-authoring`).
+  It says that the company's own documents name any live agents and
+  messaging channels the company operates, what each one handles, and who may
+  reach it, and that a cloud agent reading the knowledge cannot invoke those
+  agents or relay to them and does not push the company's software directly:
+  when a person needs a live company service or software built, it helps them
+  frame the request clearly and follows the company's documented routing and
+  access rules — directing them to address a documented agent only when that
+  agent handles the work and admits them, or otherwise routing them as the
+  company's documents say or noting that no live agent is documented for it.
   The path and the repository name carry `<slug>` as literal text: the
-  passage takes no company's key, names the home and no repository host or
-  organization, and is the same for every company, in a home and in a clone
+  passage takes no company's key, names the home and no repository host,
+  organization, messaging host or agent handle, and is the same for every company, in a home and in a clone
   of the repository, wherever instrukt renders it. It is owned by this spec;
   a file the shared workflows repository's publisher writes carries that
   publisher's own passage (Who renders it, below).
