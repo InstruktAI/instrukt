@@ -1261,7 +1261,22 @@ fn a_failed_link_pass_retries_without_another_native_change() {
             .is_ok_and(|log| log.contains("conversation_relay_source_processed"))
     });
     store.turn("parent", "first-reply", 1, "Shared topic.", "Parent reply.");
-    wait_for(|| fake.message_count("child") == 2);
+    // The link records a delivery only after the native send has returned,
+    // which follows the fake's write of T3's database: only then is the
+    // database free to be taken.
+    common::wait_until(
+        "the link records the first reply delivered",
+        Duration::from_secs(15),
+        || {
+            links::status(&home).unwrap().iter().any(|link| {
+                link.directions.iter().any(|direction| {
+                    direction.delivered_turn.as_deref() == Some("first-reply")
+                        && direction.pending == 0
+                })
+            })
+        },
+    );
+    assert_eq!(fake.message_count("child"), 2);
     assert!(fake.message("child", 1).contains("Parent reply."));
     assert_eq!(fake.message_count("parent"), 1);
     store.exclude_readers();

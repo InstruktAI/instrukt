@@ -1,6 +1,6 @@
 //! Native database notifications drive the runner's independent relay reader.
 use super::{_targets::Targets, LinkError, failure, status};
-use crate::interfaces::CompanyRelayPass;
+use crate::{interfaces::CompanyRelayPass, runtime::conversations::SourceWake};
 use instrukt_core::{
     config::{Current, Env},
     home::Home,
@@ -192,11 +192,15 @@ fn serve(
                 until = std::time::Instant::now() + Duration::from_secs(2);
             }
             match notifications.wait(Duration::from_millis(100)) {
-                Ok(true) => {
+                Ok(SourceWake::Changed) => {
                     links_due = true;
                     break CompanyRelayPass::CatchUp;
                 }
-                Ok(false) => {}
+                Ok(SourceWake::ReadAgain) => {
+                    state.targets.read_again(home);
+                    break CompanyRelayPass::Retry;
+                }
+                Ok(SourceWake::Timeout) => {}
                 Err(error) => return Err(LinkError::Source(error)),
             }
         };

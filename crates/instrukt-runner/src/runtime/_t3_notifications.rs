@@ -1,5 +1,10 @@
-//! Native notifications for T3's database and WAL; no periodic source reads.
-use super::conversations::{ConversationNotifications, SourceError};
+//! Native notifications for T3's database and WAL. A notification can arrive
+//! before the commit it announces is readable: SQLite publishes a commit
+//! through its shared-memory index, which raises no file event. So while both
+//! files are watched, the source also asks its readers to read again, shortly
+//! after each change and then on a doubling delay up to a longest one. A
+//! request only becomes due here; a reader receives it at its next wait.
+use super::conversations::{ConversationNotifications, SourceError, SourceWake};
 use std::path::Path;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -17,7 +22,7 @@ pub(super) fn subscribe(_path: &Path) -> Result<Box<dyn ConversationNotification
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native {
-    use super::{ConversationNotifications, SourceError};
+    use super::{ConversationNotifications, SourceError, SourceWake};
     use notify::{EventKind, RecursiveMode, Watcher};
     use std::{
         path::{Path, PathBuf},
@@ -42,6 +47,49 @@ mod native {
     /// How long a file that is not registered waits for its next registration
     /// attempt: the two seconds of history's freshness contract.
     const REGISTRATION_RETRY: Duration = Duration::from_secs(2);
+    /// How long after a change the first request to read again becomes due.
+    /// It exceeds the time SQLite usually takes to publish a commit after the
+    /// file write that announced it, so one request usually reaches the commit.
+    const FIRST_REQUEST: Duration = Duration::from_millis(250);
+    /// The longest delay between two requests to read again: the most a
+    /// reader waits to be asked to read a commit that became readable without
+    /// a file event.
+    const LONGEST_REQUEST: Duration = Duration::from_secs(2);
+
+    /// When readers are next asked to read again, and the delay that brought
+    /// that time. It never ends by itself; it is dropped only while a file is
+    /// not registered.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Requests {
+        due: Instant,
+        delay: Duration,
+    }
+    impl Requests {
+        /// The schedule after a change at `now`: its first request is due
+        /// after the shortest delay.
+        fn start(now: Instant) -> Self {
+            Self {
+                due: now + FIRST_REQUEST,
+                delay: FIRST_REQUEST,
+            }
+        }
+        /// A change at `now`: the next request is due after the shortest
+        /// delay again, whatever the delay had grown to.
+        fn restart(&mut self, now: Instant) {
+            *self = Self::start(now);
+        }
+        /// Whether a request is due at `now`. A due request is reported once,
+        /// however long ago it became due, and the next is scheduled from
+        /// `now` after double the delay, up to the longest.
+        fn take(&mut self, now: Instant) -> bool {
+            if now < self.due {
+                return false;
+            }
+            self.delay = (self.delay * 2).min(LONGEST_REQUEST);
+            self.due = now + self.delay;
+            true
+        }
+    }
 
     /// One of the two files watched: T3's database or its WAL.
     struct Watched {
@@ -51,12 +99,21 @@ mod native {
         failing: bool,
     }
 
+    /// What the producer waits for besides native notifications.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Schedule {
+        /// A file is not registered: the files not registered are tried again
+        /// at this time, and no reader is asked to read again.
+        Registering(Instant),
+        /// Both files are registered: readers are asked to read again.
+        Requesting(Requests),
+    }
+
     struct Notifications {
         receive: Receiver<Result<(), SourceError>>,
         watcher: SourceWatcher,
         files: [Watched; 2],
-        /// When the files not registered are tried again; none while both are.
-        next_attempt: Option<Instant>,
+        schedule: Schedule,
     }
     impl Notifications {
         /// Registers each file again: one replaced under its name is followed,
@@ -65,45 +122,72 @@ mod native {
             for file in &mut self.files {
                 register(&mut self.watcher, file)?;
             }
-            self.schedule();
             Ok(())
         }
         /// Tries the files not registered, when their time has come. Whether one
         /// of them is registered now, which counts as a change.
         fn attempt_due(&mut self) -> Result<bool, SourceError> {
-            if self.next_attempt.is_none_or(|at| Instant::now() < at) {
+            let Schedule::Registering(at) = self.schedule else {
+                return Ok(false);
+            };
+            if Instant::now() < at {
                 return Ok(false);
             }
             let mut established = false;
             for file in self.files.iter_mut().filter(|file| !file.registered) {
                 established |= register(&mut self.watcher, file)?;
             }
-            self.schedule();
+            if !established {
+                self.schedule = Schedule::Registering(Instant::now() + REGISTRATION_RETRY);
+            }
             Ok(established)
         }
-        fn schedule(&mut self) {
-            self.next_attempt = self
-                .files
-                .iter()
-                .any(|file| !file.registered)
-                .then(|| Instant::now() + REGISTRATION_RETRY);
+        /// A source change: requests to read again start from the shortest
+        /// delay when both files are registered; otherwise the files not
+        /// registered are tried again later.
+        fn changed(&mut self) -> SourceWake {
+            let now = Instant::now();
+            self.schedule = if self.files.iter().any(|file| !file.registered) {
+                Schedule::Registering(now + REGISTRATION_RETRY)
+            } else {
+                match self.schedule {
+                    Schedule::Requesting(mut requests) => {
+                        requests.restart(now);
+                        Schedule::Requesting(requests)
+                    }
+                    Schedule::Registering(_) => Schedule::Requesting(Requests::start(now)),
+                }
+            };
+            SourceWake::Changed
         }
     }
     impl ConversationNotifications for Notifications {
-        fn wait(&mut self, timeout: Duration) -> Result<bool, SourceError> {
+        fn wait(&mut self, timeout: Duration) -> Result<SourceWake, SourceError> {
             if self.attempt_due()? {
-                return Ok(true);
+                return Ok(self.changed());
             }
-            let bound = self.next_attempt.map_or(timeout, |at| {
-                timeout.min(at.saturating_duration_since(Instant::now()))
-            });
+            let at = match self.schedule {
+                Schedule::Registering(at) => at,
+                Schedule::Requesting(requests) => requests.due,
+            };
+            let bound = timeout.min(at.saturating_duration_since(Instant::now()));
             match self.receive.recv_timeout(bound) {
                 Ok(result) => {
                     result?;
                     self.register_all()?;
-                    Ok(true)
+                    Ok(self.changed())
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => self.attempt_due(),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if self.attempt_due()? {
+                        Ok(self.changed())
+                    } else if let Schedule::Requesting(requests) = &mut self.schedule
+                        && requests.take(Instant::now())
+                    {
+                        Ok(SourceWake::ReadAgain)
+                    } else {
+                        Ok(SourceWake::Timeout)
+                    }
+                }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     Err(SourceError::Shape("source notification channel closed"))
                 }
@@ -158,9 +242,11 @@ mod native {
             receive,
             watcher,
             files: [file(target), file(wal)],
-            next_attempt: None,
+            // Replaced by the change below, once registration is known.
+            schedule: Schedule::Registering(Instant::now()),
         };
         notifications.register_all()?;
+        notifications.changed();
         Ok(Box::new(notifications))
     }
     /// Registers `file`, the one place a path is given to the backend. Whether
@@ -225,5 +311,60 @@ mod native {
     #[cfg(target_os = "macos")]
     fn retire(_watcher: &mut SourceWatcher, _path: &Path) -> Result<(), SourceError> {
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn requests_double_from_the_shortest_delay_up_to_the_longest() {
+            let change = Instant::now();
+            let mut requests = Requests::start(change);
+            assert!(!requests.take(change + FIRST_REQUEST - Duration::from_millis(1)));
+            let mut now = change + FIRST_REQUEST;
+            let mut delays = Vec::new();
+            for _ in 0..6 {
+                assert!(requests.take(now));
+                delays.push(requests.due - now);
+                assert!(!requests.take(requests.due - Duration::from_millis(1)));
+                now = requests.due;
+            }
+            assert_eq!(
+                delays,
+                [500, 1000, 2000, 2000, 2000, 2000].map(Duration::from_millis)
+            );
+        }
+
+        #[test]
+        fn a_change_returns_requests_to_the_shortest_delay() {
+            let change = Instant::now();
+            let mut requests = Requests::start(change);
+            let mut now = change;
+            for _ in 0..4 {
+                now = requests.due;
+                assert!(requests.take(now));
+            }
+            assert_eq!(requests.delay, LONGEST_REQUEST);
+            let again = now + Duration::from_millis(10);
+            requests.restart(again);
+            assert_eq!(
+                requests,
+                Requests {
+                    due: again + FIRST_REQUEST,
+                    delay: FIRST_REQUEST,
+                }
+            );
+        }
+
+        #[test]
+        fn a_request_due_long_ago_is_reported_once_and_the_next_follows_the_report() {
+            let change = Instant::now();
+            let mut requests = Requests::start(change);
+            let late = change + Duration::from_secs(60);
+            assert!(requests.take(late));
+            assert!(!requests.take(late));
+            assert_eq!(requests.due, late + FIRST_REQUEST * 2);
+        }
     }
 }

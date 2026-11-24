@@ -150,7 +150,7 @@ pub fn manage(
                     )?;
                     final_message.turn = key;
                     direction.pending.insert(0, final_message);
-                    retain(home, &direction)?;
+                    retain(home, &mut direction)?;
                 }
                 deliver(
                     home,

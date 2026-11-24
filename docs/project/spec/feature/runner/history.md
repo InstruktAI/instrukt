@@ -73,15 +73,27 @@ verified vendor contract is T3's projection writer (see See Also).
 ### Freshness and participation
 
 The existing long-lived `instrukt run` catches up at startup and on native
-notifications of database or WAL changes. While T3's database or its WAL does
-not exist or cannot be watched, the runner tries every two seconds to watch
-it, reading nothing, and catches up once when the watch is established: a
-source that is absent or unwatchable is recovered from, not failed on
-(`sdlc/principle/design-fundamentals`). Explicit extraction and every history
-search also catch up before reading the local index. Each remote participant
-performs its own catch-up before answering. There is no tick-driven
-extraction, no periodic reading of T3's state and no scheduled reconciliation
-fallback.
+notifications of database or WAL changes. A native notification can arrive
+before the change it announces is readable. While both T3's database and its
+WAL are watched, the adapter also asks its readers to read again: a first time
+shortly after the subscription, an established watch or a native notification,
+then after a delay that doubles up to a longest delay, for as long as both
+stay watched. The next native notification starts the delays from the shortest
+again. The T3 notification producer owns the shortest and the longest delay.
+Such a request becomes due in the producer; a reader receives it when it next
+waits on the source, and then does its own read. History extraction, whose
+read covers the whole source, follows the first request after a native change
+and after that a request only once the time since that change has doubled.
+While T3's database or its WAL does not exist or cannot be watched, the runner
+tries every two seconds to watch it, reading nothing, and catches up once when
+the watch is established: a source that is absent or unwatchable is recovered
+from, not failed on (`sdlc/principle/design-fundamentals`). Only the repeated
+requests pause while either file is unwatched; the catch-up at startup, at an
+established watch and on a native notification is unchanged. Explicit
+extraction and every history search also catch up before reading the local
+index. Each remote participant performs its own catch-up before answering.
+There is no tick-driven extraction, and outside these repeated reads nothing
+reads T3's state on a schedule.
 
 Extraction and the query responder each retry inside themselves when their
 source or transport fails after they started, and report their state in
@@ -312,6 +324,11 @@ Then that conversation is in the developer's instrukt history without a search o
   a batch's text bound is read and written whole.
 - A mirror added to the mirror store below the last committed id while an
   import is incomplete is not imported.
+- A turn whose commit becomes readable after the read its notification
+  triggered is read at a later repeated read. The source asks for one no later
+  than its longest delay after the previous request. When a reader acts on it
+  depends on when that reader next waits on the source and on the work its
+  read takes, which this contract does not bound.
 
 ## See Also
 
