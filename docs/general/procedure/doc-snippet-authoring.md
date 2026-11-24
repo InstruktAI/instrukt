@@ -58,6 +58,27 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     source. Apply `general/policy/snippet-value-contract` rigorously: the default
     is **skip unless justified**, not "produce when applicable."
 
+    **Pre-materialization sparring on high-consequence directive changes.** In a
+    human-present authoring session that will commit a change to the process
+    layer (`sdlc/policy/process-change-authority`), directive text in
+    `docs/general/` or `docs/domain/`, or promotion into an always-on set
+    (`general/policy/documentation-discipline`), unless the design has already
+    converged with an independent peer, consult one complementary peer (selected
+    through `~/.instrukt/agents.yaml` under `general/procedure/orchestration`
+    and invoked via `general/procedure/ai-to-ai-operations`) before
+    materializing the change from the scratchpad. Use two exchanges
+    (`sdlc/policy/peer-invocation`): first send the problem, evidence and corpus
+    pointers so the peer forms its own reading; then send the draft and rejected
+    alternatives to test for duplication, contradictions, layer bleed and
+    unintended consequences. State in the peer's brief that it authors nothing
+    and owes no sparring. The peer is consulted, not a gating participant or a
+    separate approval lane (`sdlc/policy/process-change-authority`): hold and
+    ground any disagreement on evidence (`general/procedure/brainstorming`), and
+    decide on evidence. This sparring does not replace post-commit independent
+    review (`sdlc/procedure/lifecycle/work/review-commits`), which runs in a
+    fresh session from coordinates only. Dispatched sessions never invoke a peer
+    (`sdlc/policy/peer-invocation`).
+
 1.  Place the file at the correct path — the path determines `id`/`type`/`scope`/`domain` (publication derives and materializes them; you do not author them). Choose the position first (`general/policy/artifact-scope`): `docs/general/` for what every agent on every computer needs, `docs/domain/<x>/` for the body of knowledge one domain is the authority on, `docs/project/` for this project's own knowledge. Then choose the folder within the position whose overview the snippet belongs under. A new domain is named after what it is about, never after a category it belongs to, and never `general` or `project` (`general/spec/snippet-authoring-schema`). In a project whose domain specs follow `sdlc/spec/domain-spec`, a new design snippet is listed, in the same change, in the domain spec of the context it governs or in the context map when it is cross-cutting.
 2.  Author top-down: broader context should point to narrower details, not the other way around. Name the role of the reader this snippet's load path reaches, and write the reality wanted from that role (`general/policy/agent-facing-text`).
 
