@@ -20,6 +20,7 @@ projects keep their own tooling.
 
 ### Hooks used
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 | Hook | When instrukt installs it | What the hook run does |
 | --- | --- | --- |
 | `pre-commit` | always | converts an older project layer to the current schema, inserts or corrects the editor modelines of the files being committed, and renders the repository's `AGENTS.md` files from the content being committed, staging all of them into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/publication/editor-schemas`, `project/instrukt/spec/feature/publication/agent-entrypoints`) |
@@ -28,6 +29,16 @@ projects keep their own tooling.
 | `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
 | `post-checkout` | always | in the primary checkout, starts `instrukt sync` detached; in a linked worktree, does nothing |
 | `pre-push` | the blueprint module is on | hands a push to main to the blueprint, which starts generation detached (`project/instrukt/spec/domain/blueprint`) |
+<!-- change:unify-index-yaml-entrypoints -->
+| Hook | When instrukt installs it | What the hook run does |
+| --- | --- | --- |
+| `pre-commit` | always | converts an older project layer to the current schema, inserts or corrects the editor modelines of the files being committed, renders the repository's root `AGENTS.md` from the content being committed and removes renderings instrukt left below the root, staging all of them into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/publication/editor-schemas`, `project/instrukt/spec/feature/publication/agent-entrypoints`) |
+| `post-commit` | always | starts `instrukt sync` detached; after a partial commit, returns an index entry the pre-commit conversion left in its unconverted form to the committed version, leaving every other staging choice as it is |
+| `post-merge` | always | starts `instrukt sync` detached; when a pull or runner fast-forward advances main to its fetched upstream head and blueprint is enabled, hands the revision to blueprint |
+| `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
+| `post-checkout` | always | in the primary checkout, starts `instrukt sync` detached; in a linked worktree, does nothing |
+| `pre-push` | the blueprint module is on | hands a push to main to the blueprint, which starts generation detached (`project/instrukt/spec/domain/blueprint`) |
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 - Graph-generation policy belongs to
   `project/instrukt/spec/feature/blueprint/graph-generation`; each
@@ -38,8 +49,13 @@ projects keep their own tooling.
   section's run outcome, which `instrukt hooks status` reports; the
   repository's CI check reports it too
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - A checkout receives its `AGENTS.md` files from git, committed at its
   revision; no section renders them after a checkout.
+<!-- change:unify-index-yaml-entrypoints -->
+- A checkout receives its root `AGENTS.md` from git, committed at its
+  revision; no section renders it after a checkout.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 - A started sync runs under the publication lock and converges: it writes
   only what is missing or different
   (`project/instrukt/spec/feature/publication/project-publication`), so

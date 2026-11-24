@@ -52,6 +52,7 @@ the machine, the global layer and company home documents among them, writing com
 installation convergence and ticks persist the conversion before proceeding; a sync
 compares its outputs only after migration, whether or not main has moved.
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 A project layer is committed to its repository, so it changes only in a commit,
 as do the editor modelines and the repository's generated `AGENTS.md` files
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
@@ -72,6 +73,28 @@ the bytes on disk. A revision-checked writing patch verifies those bytes and
 performs conversion under the same configuration write lock. Receiver inspection
 and signature rejection use the in-memory view; a verified valid delivery persists
 conversion before event publication.
+<!-- change:unify-index-yaml-entrypoints -->
+A project layer is committed to its repository, so it changes only in a commit,
+as do the editor modelines and the repository's generated root `AGENTS.md`
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
+instrukt's pre-commit hook section converts an older project layer and stages it
+into the commit being made, and the `instrukt config` writing verbs a developer
+runs convert it in their checkout. Every other path, checkout rendering, the hooks
+that run after a commit, publication, installation convergence and ticks among
+them, converts it in memory and leaves the file as committed.
+`instrukt config validate` reports a committed project layer older than the
+binary's schema as a finding, so a commit that bypassed the hook is caught in CI.
+Every write to a configuration layer, a conversion or an
+`instrukt config` writing verb, keeps the document's text outside the top-level
+keys it changes, comments and formatting included. A conversion
+preserves supported user settings and writes atomically; a failed conversion leaves its source intact
+and reports the cause. Existing rejection of a configuration version newer
+than the binary remains the upgrade door. A revision read during inspection names
+the bytes on disk. A revision-checked writing patch verifies those bytes and
+performs conversion under the same configuration write lock. Receiver inspection
+and signature rejection use the in-memory view; a verified valid delivery persists
+conversion before event publication.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 
 Migration preserves explicit module settings and configuration inheritance.
 An absent history setting follows the configuration owner

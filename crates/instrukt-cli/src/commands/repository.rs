@@ -194,7 +194,8 @@ enum HooksCommand {
     /// last run's outcome.
     Status,
     /// What a section calls: pre-commit stages the repository's generated
-    /// `AGENTS.md` files and a project layer converted to the current schema
+    /// root `AGENTS.md`, the removal of renderings left below it, and a
+    /// project layer converted to the current schema
     /// into the commit; post-commit keeps the index in step with what was
     /// committed; checkout in the primary checkout starts publication
     /// detached; other publication triggers run detached. Never fails the git
