@@ -577,7 +577,11 @@ fn event_platform(
 
 /// One wake at `now`, the moment it began; `clock` is read again only by
 /// CI credential issuance and its failure record.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the tick and the run loop each borrow these independent inputs from their own \
+              state; a struct built only to call `wake` would rename the list, not shorten it"
+)]
 fn wake(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
