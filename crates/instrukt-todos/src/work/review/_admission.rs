@@ -132,6 +132,34 @@ pub(super) fn pinned_base(
         .or_else(|| merge_base.cloned())
 }
 
+/// The approving verdict line a review report ends in
+/// (`sdlc/procedure/lifecycle/review`, Report format).
+const APPROVING_LINE: &str = "Verdict: APPROVE";
+
+/// Whether `report`'s last non-empty line is the approving verdict line.
+pub(super) fn approving(report: &str) -> bool {
+    report.lines().map(str::trim).rfind(|line| !line.is_empty()) == Some(APPROVING_LINE)
+}
+
+/// The hexadecimal runs of `text`: the forms a commit id or a digest is
+/// named in, whatever surrounds them.
+fn hex_runs(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !c.is_ascii_hexdigit())
+        .filter(|run| !run.is_empty())
+}
+
+/// Whether `text` names `commit` as a full commit id.
+pub(super) fn names_commit(text: &str, commit: &CommitSha) -> bool {
+    hex_runs(text).any(|run| run.eq_ignore_ascii_case(commit.as_str()))
+}
+
+/// Whether one message names `head` together with the SHA-256 `digest`
+/// (`sha256:<hex>`) of a report.
+pub(super) fn names_head_and_digest(message: &str, head: &CommitSha, digest: &str) -> bool {
+    let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+    names_commit(message, head) && hex_runs(message).any(|run| run.eq_ignore_ascii_case(hex))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{Moment, Verdict, Version};
@@ -295,6 +323,27 @@ mod tests {
             turn_decision(&TurnOpening::CannotSay("down".into())),
             TurnDecision::AskAgain(_)
         ));
+    }
+
+    #[test]
+    fn a_report_ending_in_the_approving_verdict_line_approves() {
+        assert!(approving("REVIEW COMPLETE: x\n\nVerdict: APPROVE\n\n"));
+        assert!(!approving("Verdict: APPROVE\nmore after it\n"));
+        assert!(!approving("Verdict: REQUEST CHANGES\n"));
+    }
+
+    #[test]
+    fn one_message_naming_head_and_digest_together_returns_the_report() {
+        let digest = crate::evidence::ContentDigest::of("report");
+        let message = format!("Reviewed {}: report {digest}, verdict approve.", sha('a'));
+        assert!(names_head_and_digest(&message, &sha('a'), digest.as_str()));
+    }
+
+    #[test]
+    fn a_message_naming_only_the_head_does_not_return_the_report() {
+        let digest = crate::evidence::ContentDigest::of("report");
+        let apart = format!("Reviewed {}.", sha('a'));
+        assert!(!names_head_and_digest(&apart, &sha('a'), digest.as_str()));
     }
 
     #[test]

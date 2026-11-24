@@ -296,6 +296,9 @@ pub struct RecordRequest {
     pub report: String,
     /// The calling session, when one resolves.
     pub caller: Option<SessionRef>,
+    /// The session whose approval the caller enters, for a handed-over
+    /// approval.
+    pub reviewer: Option<SessionRef>,
 }
 
 /// What a recording admitted.
@@ -313,16 +316,19 @@ pub struct Recorded {
 /// again and decides under the lock.
 pub fn record(
     home: &Home,
+    env: &instrukt_core::config::Env,
     project: &ReviewProject,
     request: &RecordRequest,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<Recorded, ReviewError> {
     let head = project.commit(&request.head)?;
-    let Some(reviewer) = request.caller.clone() else {
+    let Some(caller) = request.caller.clone() else {
         return Err(refused(
             "no session resolves for this caller; record a verdict from the reviewing agent session the selected runtime recognises",
         ));
     };
+    let entering = request.reviewer.as_ref().map(|_| caller.clone());
+    let reviewer = request.reviewer.clone().unwrap_or(caller);
     if request.report.trim().is_empty() {
         return Err(refused(
             "the report is missing; supply the complete review report with --report",
@@ -350,6 +356,10 @@ pub fn record(
         Some(conn) => _store::held(&conn, &project.slug, &head)?,
         None => Held::Nothing,
     };
+    let returned_base = match &entering {
+        Some(entering) => handed_over(home, env, &head, &reviewer, entering, request, &held)?,
+        None => false,
+    };
     match _admission::settlement(&held, &reviewer, &requests) {
         Offer::First | Offer::Revision => {}
         Offer::AskTurn => ask_turn(&state, project, &head, &reviewer)?,
@@ -375,15 +385,22 @@ pub fn record(
     }
     let base_on_canonical = project.contains(pinned.as_str(), &canonical)?;
     let commits = project.sessions_in(&pinned, &head)?;
-    let naming: Vec<String> = commits
-        .iter()
-        .filter(|(_, sessions)| sessions.iter().any(|s| s == &reviewer.to_string()))
-        .map(|(sha, _)| sha.to_string())
-        .collect();
-    if !naming.is_empty() {
+    for session in std::iter::once(&reviewer).chain(entering.as_ref()) {
+        let naming: Vec<String> = commits
+            .iter()
+            .filter(|(_, sessions)| sessions.iter().any(|s| s == &session.to_string()))
+            .map(|(sha, _)| sha.to_string())
+            .collect();
+        if !naming.is_empty() {
+            return Err(refused(format!(
+                "session {session} authored reviewed commits {}; the review needs a session none of them names",
+                naming.join(", ")
+            )));
+        }
+    }
+    if entering.is_some() && !_admission::names_commit(&request.report, &base) && !returned_base {
         return Err(refused(format!(
-            "session {reviewer} authored reviewed commits {}; the review needs a session none of them names",
-            naming.join(", ")
+            "the base {base} is named neither in session {reviewer}'s message returning the report nor in the report"
         )));
     }
     let unattributed = commits
@@ -416,7 +433,7 @@ pub fn record(
             name: ContentDigest::of(&request.report),
             report: request.report.clone(),
             reviewer: reviewer.clone(),
-            entered_by: None,
+            entered_by: entering.clone(),
             base: pinned.clone(),
             base_on_canonical,
             request: answers,
@@ -436,6 +453,63 @@ pub fn record(
     })?;
     tracing::info!(event = "review_verdict_admitted", project = %project.slug, head = %recorded.head, version = recorded.version, verdict = request.verdict.as_str(), request = ?answers);
     Ok(recorded)
+}
+
+/// The facts work establishes beside a handed-over approval's statement:
+/// an approving report, no verdict of the commit yet, an entering session
+/// other than the named one, and a message the named session authored that
+/// names the head together with the report's digest. Returns whether such a
+/// message also names the supplied base.
+fn handed_over(
+    home: &Home,
+    env: &instrukt_core::config::Env,
+    head: &CommitSha,
+    reviewer: &SessionRef,
+    entering: &SessionRef,
+    request: &RecordRequest,
+    held: &Held,
+) -> Result<bool, ReviewError> {
+    if request.verdict != Verdict::Approve || !_admission::approving(&request.report) {
+        return Err(refused(
+            "a handed-over result is entered only as an approval whose report ends in the approving verdict line `Verdict: APPROVE`",
+        ));
+    }
+    if held != &Held::Nothing {
+        return Err(refused(format!(
+            "{head} already has a verdict; a handed-over approval is entered only for a commit that has none"
+        )));
+    }
+    if entering == reviewer {
+        return Err(refused(
+            "the named session records its own result without --reviewer",
+        ));
+    }
+    let messages = match instrukt_runner::review::conversation(home, env, reviewer) {
+        instrukt_runner::review::Conversation::Read { messages, .. } => messages,
+        instrukt_runner::review::Conversation::CannotRead(cause) => {
+            return Err(refused(format!(
+                "session {reviewer}'s conversation cannot be read ({cause}); nothing is recorded"
+            )));
+        }
+    };
+    let digest = ContentDigest::of(&request.report);
+    let returning: Vec<&str> = messages
+        .iter()
+        .filter(|message| message.role == instrukt_runner::runtime::conversations::Role::Assistant)
+        .map(|message| message.text.as_str())
+        .filter(|text| _admission::names_head_and_digest(text, head, digest.as_str()))
+        .collect();
+    if returning.is_empty() {
+        return Err(refused(format!(
+            "no message session {reviewer} authored names {head} together with the report's digest {digest}"
+        )));
+    }
+    let base = CommitSha::parse(&request.base).ok();
+    Ok(base.is_some_and(|base| {
+        returning
+            .iter()
+            .any(|text| _admission::names_commit(text, &base))
+    }))
 }
 
 fn handed_off(head: &CommitSha, export: &str) -> ReviewError {
