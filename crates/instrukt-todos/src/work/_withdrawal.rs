@@ -1621,99 +1621,8 @@ fn delete_branch(
         recorded(intent)?;
     }
     if !intent.branch_deleted() {
-        let kept = |why: String| Stop::refused(format!("its work branch `{name}` is kept: {why}"));
         match branch_now(root, intent, name)? {
-            BranchNow::Live(head) => {
-                let listed = worktrees(root)?;
-                if let Some(user) = listed.iter().find(|w| w.branch.as_deref() == Some(name)) {
-                    return Err(kept(format!(
-                        "the worktree {} has it checked out",
-                        user.path.display()
-                    )));
-                }
-                if intent.branch_head.as_ref() != Some(&head) {
-                    intent.branch_head = Some(head.clone());
-                    recorded(intent)?;
-                }
-                tracing::trace!(
-                    event = "work_branch_delete_attempted",
-                    branch = name,
-                    head = %head,
-                    "deleting a withdrawn todo's work branch against its recorded commit"
-                );
-                let transaction =
-                    format!("create {marker} {head}\ndelete refs/heads/{name} {head}\n");
-                if let Err(err) =
-                    git::run_with_input(root, ["update-ref", "--stdin"], transaction.as_bytes())
-                {
-                    let failure = match &err {
-                        git::GitError::Failed { stderr, .. } => stderr.trim().to_owned(),
-                        other => other.to_string(),
-                    };
-                    let marked = ref_tip(root, &marker)?;
-                    let tip = ref_tip(root, &format!("refs/heads/{name}"))?;
-                    let not_deleted = || {
-                        WorkError::refused(format!(
-                            "git did not delete its work branch `{name}`, which is still at {head} ({failure})"
-                        ))
-                    };
-                    return Err(
-                        match deletion_after_failure(&head, marked.as_ref(), tip.as_ref()) {
-                            DeletionAfterFailure::Ineffective => Stop::Refused(not_deleted()),
-                            DeletionAfterFailure::MovedOn => kept(format!(
-                                "it moved on from {head} while it was released ({failure})"
-                            )),
-                            DeletionAfterFailure::MarkerOnly => {
-                                // Recording the marker partial is attempted
-                                // before it is taken back, so a marker a failed
-                                // removal leaves is not read as the deletion. The
-                                // marker is taken back whether or not that write
-                                // succeeded: once it is gone there is nothing to
-                                // misread. The intent kept with this stop writes
-                                // the outcome again; only a marker left with both
-                                // writes failed is read as the deletion
-                                // (`state-database`, "Known caveats").
-                                intent.branch_state = BranchRelease::PartialMarker;
-                                let noted = recorded(intent);
-                                match git::run(
-                                    root,
-                                    ["update-ref", "-d", marker.as_str(), head.as_str()],
-                                ) {
-                                    Ok(_) => {
-                                        intent.branch_state = BranchRelease::Pending;
-                                        Stop::Unverified(not_deleted())
-                                    }
-                                    Err(err) => {
-                                        let recorded = match noted {
-                                            Ok(()) => String::new(),
-                                            Err(cause) => format!(
-                                                "; recording it as left by a failed deletion failed too ({cause})"
-                                            ),
-                                        };
-                                        Stop::Unverified(WorkError::refused(format!(
-                                            "{}; the marker {marker} it left beside the branch was not removed ({err}){recorded}. Run the withdrawal again to remove the marker and delete the branch",
-                                            not_deleted()
-                                        )))
-                                    }
-                                }
-                            }
-                            DeletionAfterFailure::Unsettled => {
-                                Stop::Unverified(WorkError::refused(format!(
-                                    "git returned a failure deleting its work branch `{name}` at {head} ({failure}); what it changed is recognized when the withdrawal is run again"
-                                )))
-                            }
-                        },
-                    );
-                }
-                intent.branch_state = BranchRelease::Deleted;
-                recorded(intent)?;
-                // Git's own branch deletion also drops the branch's
-                // configuration; a branch without any has none to drop.
-                let section = format!("branch.{name}");
-                if let Err(err) = git::run(root, ["config", "--remove-section", section.as_str()]) {
-                    tracing::debug!(event = "work_branch_config_kept", branch = name, error = %err, "no branch configuration removed");
-                }
-            }
+            BranchNow::Live(head) => delete_live(root, name, &marker, head, intent, recorded)?,
             gone => {
                 note_gone(intent, &gone);
                 recorded(intent)?;
@@ -1728,6 +1637,111 @@ fn delete_branch(
         name: name.to_owned(),
         head,
     }))
+}
+
+/// Deletes work branch `name`, live at `head`, together with the
+/// withdrawal's `marker` at that commit ([`delete_branch`]).
+fn delete_live(
+    root: &Path,
+    name: &str,
+    marker: &str,
+    head: CommitSha,
+    intent: &mut WithdrawalIntent,
+    recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
+) -> Result<(), Stop> {
+    let kept = |why: String| Stop::refused(format!("its work branch `{name}` is kept: {why}"));
+    let listed = worktrees(root)?;
+    if let Some(user) = listed.iter().find(|w| w.branch.as_deref() == Some(name)) {
+        return Err(kept(format!(
+            "the worktree {} has it checked out",
+            user.path.display()
+        )));
+    }
+    if intent.branch_head.as_ref() != Some(&head) {
+        intent.branch_head = Some(head.clone());
+        recorded(intent)?;
+    }
+    tracing::trace!(
+        event = "work_branch_delete_attempted",
+        branch = name,
+        head = %head,
+        "deleting a withdrawn todo's work branch against its recorded commit"
+    );
+    let transaction = format!("create {marker} {head}\ndelete refs/heads/{name} {head}\n");
+    if let Err(err) = git::run_with_input(root, ["update-ref", "--stdin"], transaction.as_bytes()) {
+        let failure = match &err {
+            git::GitError::Failed { stderr, .. } => stderr.trim().to_owned(),
+            other => other.to_string(),
+        };
+        let marked = ref_tip(root, marker)?;
+        let tip = ref_tip(root, &format!("refs/heads/{name}"))?;
+        let not_deleted = || {
+            WorkError::refused(format!(
+                "git did not delete its work branch `{name}`, which is still at {head} ({failure})"
+            ))
+        };
+        return Err(
+            match deletion_after_failure(&head, marked.as_ref(), tip.as_ref()) {
+                DeletionAfterFailure::Ineffective => Stop::Refused(not_deleted()),
+                DeletionAfterFailure::MovedOn => kept(format!(
+                    "it moved on from {head} while it was released ({failure})"
+                )),
+                DeletionAfterFailure::MarkerOnly => {
+                    take_back_marker(root, marker, &head, not_deleted(), intent, recorded)
+                }
+                DeletionAfterFailure::Unsettled => Stop::Unverified(WorkError::refused(format!(
+                    "git returned a failure deleting its work branch `{name}` at {head} ({failure}); what it changed is recognized when the withdrawal is run again"
+                ))),
+            },
+        );
+    }
+    intent.branch_state = BranchRelease::Deleted;
+    recorded(intent)?;
+    // Git's own branch deletion also drops the branch's
+    // configuration; a branch without any has none to drop.
+    let section = format!("branch.{name}");
+    if let Err(err) = git::run(root, ["config", "--remove-section", section.as_str()]) {
+        tracing::debug!(event = "work_branch_config_kept", branch = name, error = %err, "no branch configuration removed");
+    }
+    Ok(())
+}
+
+/// Takes back the withdrawal's `marker` a failed deletion left at `head`
+/// beside the untouched branch, which `not_deleted` says.
+///
+/// Recording the marker partial is attempted before it is taken back, so a
+/// marker a failed removal leaves is not read as the deletion. The marker is
+/// taken back whether or not that write succeeded: once it is gone there is
+/// nothing to misread. The intent kept with this stop writes the outcome
+/// again; only a marker left with both writes failed is read as the
+/// deletion (`state-database`, "Known caveats").
+fn take_back_marker(
+    root: &Path,
+    marker: &str,
+    head: &CommitSha,
+    not_deleted: WorkError,
+    intent: &mut WithdrawalIntent,
+    recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
+) -> Stop {
+    intent.branch_state = BranchRelease::PartialMarker;
+    let noted = recorded(intent);
+    match git::run(root, ["update-ref", "-d", marker, head.as_str()]) {
+        Ok(_) => {
+            intent.branch_state = BranchRelease::Pending;
+            Stop::Unverified(not_deleted)
+        }
+        Err(err) => {
+            let unrecorded = match noted {
+                Ok(()) => String::new(),
+                Err(cause) => {
+                    format!("; recording it as left by a failed deletion failed too ({cause})")
+                }
+            };
+            Stop::Unverified(WorkError::refused(format!(
+                "{not_deleted}; the marker {marker} it left beside the branch was not removed ({err}){unrecorded}. Run the withdrawal again to remove the marker and delete the branch"
+            )))
+        }
+    }
 }
 
 /// The per-computer withdrawal lock `state/withdrawal.lock`, held by a
