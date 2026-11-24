@@ -809,7 +809,10 @@ pub(super) fn render_tree(
 ) -> Result<RenderPlan, PublicationError> {
     let mut plan = RenderPlan::default();
     let project_index = project_index_path();
-    let entry_index = match classify_root(tree.file(CONFIG_FILE_NAME)) {
+    let root = classify_root(tree.file(CONFIG_FILE_NAME));
+    let company_index_absent =
+        tree.entry_index(super::_company::COMPANY_INDEX) == EntryIndex::Absent;
+    let entry_index = match root {
         RootDocument::Unreadable(reason) => {
             plan.findings.push(RenderFinding {
                 path: PathBuf::from(CONFIG_FILE_NAME),
@@ -817,21 +820,15 @@ pub(super) fn render_tree(
             });
             return Ok(plan);
         }
-        RootDocument::CompanySettings(_) => {
-            super::_company::render(tree, override_beside_root, &mut plan);
-            Some(super::_company::COMPANY_INDEX)
-        }
-        RootDocument::Absent
-            if tree.entry_index(super::_company::COMPANY_INDEX) != EntryIndex::Absent =>
-        {
-            super::_company::render(tree, override_beside_root, &mut plan);
-            Some(super::_company::COMPANY_INDEX)
-        }
-        RootDocument::Absent => None,
         RootDocument::ProjectLayer(project) => {
             render_project(tree, project.as_ref(), override_beside_root, &mut plan)?;
             Some(project_index.as_str())
         }
+        root if company_home(&root, company_index_absent) => {
+            super::_company::render(tree, override_beside_root, &mut plan);
+            Some(super::_company::COMPANY_INDEX)
+        }
+        _ => None,
     };
     let root_kept = entry_index.is_some_and(|index| tree.entry_index(index) != EntryIndex::Absent);
     for (path, bytes) in tree.entrypoints() {
@@ -841,6 +838,19 @@ pub(super) fn render_tree(
         }
     }
     Ok(plan)
+}
+
+/// Whether a tree whose root document is `root` renders as a company home
+/// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "What makes
+/// a repository a company home"): a company's settings document, or no root
+/// document beside a `docs/index.yaml` that is there, read or linked. The one
+/// rule rendering and [`super::is_company_index`] decide by.
+pub(super) fn company_home(root: &RootDocument, company_index_absent: bool) -> bool {
+    match root {
+        RootDocument::CompanySettings(_) => true,
+        RootDocument::Absent => !company_index_absent,
+        RootDocument::ProjectLayer(_) | RootDocument::Unreadable(_) => false,
+    }
 }
 
 /// The project mode of [`render_tree`]: the root `AGENTS.md` rendered from

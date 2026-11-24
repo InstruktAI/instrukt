@@ -104,6 +104,30 @@ pub fn render_repository(view: RepositoryView<'_>) -> Result<RenderPlan, Publica
     _render::render_tree(&tree, override_beside_root)
 }
 
+/// Whether `rel`, a path relative to the root of the working tree at `root`,
+/// is that repository's company index, which rendering reads and the
+/// documentation's validation leaves alone
+/// (`project/instrukt/spec/feature/publication/agent-entrypoints`): it is
+/// `docs/index.yaml`, and the tree renders as a company home by the rule
+/// rendering decides by, with the root `instrukt.yaml` read as a view of the
+/// tree reads it.
+pub fn is_company_index(root: &Path, rel: &str) -> Result<bool, PublicationStateError> {
+    if rel != _company::COMPANY_INDEX {
+        return Ok(false);
+    }
+    let read = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| PublicationStateError::Read { path, source }
+    };
+    let document = _source::root_document_on_disk(root)
+        .map_err(read(&root.join(crate::config::CONFIG_FILE_NAME)))?;
+    let absent = _source::entry_index_absent_on_disk(root, rel).map_err(read(&root.join(rel)))?;
+    Ok(_render::company_home(
+        &crate::config::classify_root(document.as_deref()),
+        absent,
+    ))
+}
+
 /// The findings of rendering the company home whose root is `home_dir`,
 /// from its working tree: what `instrukt config validate --company` reports
 /// beside configuration's own findings.

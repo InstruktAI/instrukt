@@ -1,10 +1,11 @@
 ---
-description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner and patches the global index by owner; a repository's `AGENTS.md` files are rendered from its committed content at each commit; and the owner of `docs/general/` renders a global agent file, with its settings key, for each agent runtime the selected runtime reports as configured.
+description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner and patches the global index by owner; a repository's committed entrypoints are rendered from its committed content at each commit; and the owner of `docs/general/` renders a global agent file, with its settings key, for each agent runtime the selected runtime reports as configured.
 ---
 # Publication — Spec
 
 ## What it is
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 The publication context turns a project's committed documentation into what
 agents on this computer read. `instrukt sync` publishes the project the caller
 stands in, and only that project: from the committed state of its canonical
@@ -20,6 +21,23 @@ rendered from the repository's committed content alone at each commit, by
 the `pre-commit` hook section and by `instrukt docs render`, never by a sync. Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
+<!-- change:unify-index-yaml-entrypoints -->
+The publication context turns a project's committed documentation into what
+agents on this computer read. `instrukt sync` publishes the project the caller
+stands in, and only that project: from the committed state of its canonical
+main it publishes the project's general, domain and project positions
+into the home, claims each of them for the project, patches the
+global index so that exactly the project's own entries change, and records
+the commit it published beside the project's checkout path. The project that
+owns `docs/general/` also renders a global agent file for each agent runtime
+the selected runtime reports as configured, from what is published on the
+computer, and sets the one settings key each needs to load project
+instruction files. A repository carries one rendered instruction file, its root
+`AGENTS.md`, which is committed: it is rendered from the repository's committed content alone at each commit, by
+the `pre-commit` hook section and by `instrukt docs render`, never by a sync. Every sync that publishes recomputes the eval fingerprint
+and regenerates the editor schemas and modelines in the project's primary
+worktree, which `instrukt init` also writes through the same operation.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 Publication never reads another project's repository, keeps no registry of
 projects, and after configuration migration converges: it writes only what is
 missing or different, whether or not main has moved. It
@@ -155,6 +173,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 ## Ownership boundary
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **Owns** — reading a project's committed main for publication; the
   published-commit and checkout-path record and convergence; the ownership
   record and its refusals (a second claimant, a reserved domain name);
@@ -171,6 +190,24 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   `instrukt status` report, which reads this state together with the
   configuration layers and the repository's hook sections, and changes
   nothing.
+<!-- change:unify-index-yaml-entrypoints -->
+- **Owns** — reading a project's committed main for publication; the
+  published-commit and checkout-path record and convergence; the ownership
+  record and its refusals (a second claimant, a reserved domain name);
+  index patching by owner with its duplicate-id refusal; retraction;
+  rendering of the committed root `AGENTS.md` — a project's and a company
+  home's — and of the global agent files; the choice of global
+  file targets from the configured agent runtimes; writing those files whole,
+  with no record of what was written;
+  merging the entrypoint-loading keys; the editor
+  schemas in a repository's `.instrukt/schemas/` and their modelines, which
+  sync and `instrukt init` write; the eval
+  fingerprint; owner-scoped publication and retraction of domain workflow
+  definitions, roles, actions and templates as non-snippet files; the
+  `instrukt status` report, which reads this state together with the
+  configuration layers and the repository's hook sections, and changes
+  nothing.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 - **Does not own** — snippet identity, the reference forms, the `@config`
   directive grammar, pending carriers, `index.yaml` and `schema.yaml` and
   their findings, structural validation, `instrukt docs get --domain` and
@@ -183,6 +220,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   stamps that carry the eval fingerprint (work,
   `project/instrukt/spec/domain/work`); skills, MCP configuration and
   every other agent setting (outside instrukt).
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **Published contracts** — `instrukt sync`; the home's published tree
   (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
   `index.yaml` and `schema.yaml` when the position has them); the global
@@ -195,6 +233,22 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
   (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- change:unify-index-yaml-entrypoints -->
+- **Published contracts** — `instrukt sync`; the home's published tree
+  (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
+  `index.yaml` and `schema.yaml` when the position has them); the global
+  index `~/.instrukt/state/index.yaml`; the ownership record, published
+  commits and checkout paths under
+  `~/.instrukt/state/publication/`; the eval fingerprint per published commit
+  under `~/.instrukt/state/eval-fingerprint/`; the committed root `AGENTS.md`
+  of a repository and `instrukt docs render [--check]`; whether a
+  repository's `docs/index.yaml` is its company index, which docs
+  validation asks before reading the file; the global
+  agent files; `.instrukt/schemas/` and the modeline
+  form (`project/instrukt/spec/feature/publication/editor-schemas`);
+  `instrukt status [--json]` and its report
+  (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 - **Allowed dependencies** — docs (snippet model, `index.yaml` and
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime choice, its migration operation, and the configuration schema type
@@ -341,11 +395,20 @@ This context emits no events.
 
 ## Context map position
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **docs** — Customer / Supplier, both ways. Docs supplies the snippet model,
   the `index.yaml` and `schema.yaml` model and validation publication renders
   and refuses by; publication supplies the home's published tree and global
   index that retrieval reads, and the published commit the behind-main
   warning compares with.
+<!-- change:unify-index-yaml-entrypoints -->
+- **docs** — Customer / Supplier, both ways. Docs supplies the snippet model,
+  the `index.yaml` and `schema.yaml` model and validation publication renders
+  and refuses by; publication supplies the home's published tree and global
+  index that retrieval reads, the published commit the behind-main
+  warning compares with, and whether a repository's `docs/index.yaml` is
+  its company index, which validation leaves to publication.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice and the migration operation invoked before
   publication.

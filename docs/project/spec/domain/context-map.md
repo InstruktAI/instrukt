@@ -77,7 +77,11 @@ not permission for an upstream module to depend on its consumer.
 | work, runner, company → CLI admission | Published language | Owner-supplied todo attempts, standing/scheduled assignment facts and conversation assignments for the recognized caller; core-declared lookup wired by the CLI |
 | work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
 | docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
+<!-- planned-change:unify-index-yaml-entrypoints -->
 | publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval |
+<!-- change:unify-index-yaml-entrypoints -->
+| publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval; whether a repository's `docs/index.yaml` is its company index, consumed by validation |
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 | publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
 | publication → repository | Customer / Supplier | Sync and committed-entrypoint rendering invoked by repository hook sections |
 | runner → publication | Customer / Supplier | Configured agent runtimes and their homes from the selected runtime's adapter, for the global agent files; core-declared interface wired by the CLI |

@@ -194,12 +194,23 @@ recorded by publication.
   `general/spec/snippet-authoring-schema`, the position index model and the
   listing-line shape, which publication relies on to derive index entries and
   render agent files.
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **Allowed dependencies** — publication (reads the home it writes and the
   published commit it records); configuration (the `project` slug, and the
   in-process resolution of `@config` paths); work (todo-slug existence through
   an interface core declares and the CLI wires only when `todos` is enabled);
   workflow (declared flavor roles through a core-declared lookup interface
   wired by the CLI when `todos` is enabled).
+<!-- change:unify-index-yaml-entrypoints -->
+- **Allowed dependencies** — publication (reads the home it writes and the
+  published commit it records, and asks whether a repository's
+  `docs/index.yaml` is its company index, which validation leaves to
+  publication); configuration (the `project` slug, and the in-process
+  resolution of `@config` paths); work (todo-slug existence through an
+  interface core declares and the CLI wires only when `todos` is enabled);
+  workflow (declared flavor roles through a core-declared lookup interface
+  wired by the CLI when `todos` is enabled).
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 - **Implementation roots** — the docs module of the `instrukt-core` crate;
   its module layout is set by the architecture design.
 
@@ -308,12 +319,22 @@ This context emits no events.
 
 ## Context map position
 
+<!-- planned-change:unify-index-yaml-entrypoints -->
 - **Publication** — customer / supplier. Publication supplies the home's
   published files, global index and published commit. Docs supplies
   publication with snippet identity, validation, the position index model,
   closures and the listing-line shape it renders agent files from. Project
   bodies come from `~/.instrukt/docs/project/<slug>/…`; validation reads the
   invoking working tree.
+<!-- change:unify-index-yaml-entrypoints -->
+- **Publication** — customer / supplier. Publication supplies the home's
+  published files, global index and published commit, and whether a
+  repository's `docs/index.yaml` is its company index. Docs supplies
+  publication with snippet identity, validation, the position index model,
+  closures and the listing-line shape it renders agent files from. Project
+  bodies come from `~/.instrukt/docs/project/<slug>/…`; validation reads the
+  invoking working tree.
+<!-- /planned-change:unify-index-yaml-entrypoints -->
 - **Configuration** — customer / supplier. Configuration supplies the
   project's slug and resolves `@config` paths in-process through its `get`.
 - **Repository** — no direct relationship; repository triggers publication,

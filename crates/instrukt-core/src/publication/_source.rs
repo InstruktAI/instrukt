@@ -36,6 +36,36 @@ pub(super) enum EntryIndex<'a> {
     Linked,
 }
 
+/// The root `instrukt.yaml` of the working tree at `root` as a view of it
+/// holds it: its bytes when it is a regular file; `None` when it is absent or
+/// a symbolic link, through which nothing is read.
+pub(super) fn root_document_on_disk(root: &Path) -> Result<Option<Vec<u8>>, std::io::Error> {
+    let path = root.join(CONFIG_FILE_NAME);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() => std::fs::read(&path).map(Some),
+        Ok(_) => Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Whether the working tree at `root` holds nothing at `rel`, the place of an
+/// entry index: no file there and no link at or above it, as
+/// [`EntryIndex::Absent`] states for a view.
+pub(super) fn entry_index_absent_on_disk(root: &Path, rel: &str) -> Result<bool, std::io::Error> {
+    let mut at = root.to_path_buf();
+    for part in rel.split('/') {
+        at.push(part);
+        match std::fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() => return Ok(false),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(!std::fs::symlink_metadata(&at)?.is_file())
+}
+
 /// The project a sync publishes.
 #[derive(Debug, Clone)]
 pub(super) struct Project {

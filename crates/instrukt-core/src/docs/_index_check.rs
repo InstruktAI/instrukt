@@ -9,10 +9,9 @@
 //! unless it is `general`'s), the agent CLIs `agents` maps, and the listed
 //! ids the expanded ones already bring in. An `index.yaml` anywhere but a
 //! position's root is a finding, reported from its path without reading it;
-//! a domain without one is a notice. Whether `docs/index.yaml` is such a
-//! misplaced index or a company's index, which validation leaves alone,
-//! follows from the repository's root document
-//! ([`crate::config::classify_root`]), decided before the file is read.
+//! a domain without one is a notice. Whether an `index.yaml` is a
+//! company's index, which validation leaves alone, is publication's answer
+//! ([`crate::publication::is_company_index`]), asked before the file is read.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -23,7 +22,6 @@ use super::_corpus::{Corpus, relative};
 use super::_finding::{Finding, FindingCode, Notice, NoticeCode};
 use super::_position::{AgentCli, GENERAL, INDEX_FILE, Position, PositionIndex};
 use super::DocsError;
-use crate::config::RootDocument;
 use crate::ids::{DomainName, SnippetId};
 use crate::index::GlobalIndex;
 
@@ -139,27 +137,6 @@ fn index_files(repo_root: &Path) -> Result<Vec<(String, PathBuf)>, DocsError> {
     Ok(out)
 }
 
-/// The place a company home keeps its index, which is no position's.
-const COMPANY_INDEX: &str = "docs/index.yaml";
-
-/// Whether `docs/index.yaml` in the repository at `repo_root` is a
-/// company's index, which validation neither reads nor reports: so when the
-/// root holds a company's settings document or no `instrukt.yaml`. A project
-/// layer, or a root document that cannot be read, does not show the tree to
-/// be a company's.
-fn holds_company_index(repo_root: &Path) -> Result<bool, DocsError> {
-    let path = repo_root.join(crate::config::CONFIG_FILE_NAME);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => Some(bytes),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(source) => return Err(DocsError::Read { path, source }),
-    };
-    Ok(matches!(
-        crate::config::classify_root(bytes.as_deref()),
-        RootDocument::Absent | RootDocument::CompanySettings(_)
-    ))
-}
-
 /// Which snippets an id may name, and what each id is.
 pub(super) trait Snippets {
     /// Whether `id` names a snippet, and whether that snippet is pending;
@@ -182,7 +159,8 @@ pub(super) fn check(
 ) -> Result<(), DocsError> {
     let mut indexed = BTreeSet::new();
     for (rel, path) in index_files(repo_root)? {
-        if rel == COMPANY_INDEX && holds_company_index(repo_root)? {
+        // A company's index is publication's to read and judge.
+        if crate::publication::is_company_index(repo_root, &rel)? {
             continue;
         }
         let Some(position) = position_of(&rel) else {
