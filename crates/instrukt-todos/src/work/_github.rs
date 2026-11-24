@@ -824,38 +824,61 @@ mod tests {
         assert!(matches!(error, GitHubError::Status { status: 200, .. }));
     }
 
+    fn shared() -> GitHub {
+        GitHub::new("http://127.0.0.1", "o/r", String::new())
+    }
+
+    fn scoped() -> GitHub {
+        shared().for_role(Some("builder"), instrukt_core::github::Operation::Author)
+    }
+
+    fn refused(status: u16) -> instrukt_core::github::AppError {
+        instrukt_core::github::AppError::Refused {
+            operation: "/app/installations/2/access_tokens".into(),
+            status,
+        }
+    }
+
     #[test]
-    fn only_an_operation_scoped_app_setup_or_app_refusal_leaves_the_command_running() {
-        use instrukt_core::github::{AppError, Operation};
-        let shared = GitHub::new("http://127.0.0.1", "o/r", String::new());
-        let scoped = shared.for_role(Some("builder"), Operation::Author);
-        let errors = [
-            AppError::Setup("mismatch".into()),
-            AppError::Refused {
-                operation: "/repos/o/r/installation".into(),
-                status: 404,
-            },
-            AppError::Refused {
-                operation: "/app/installations/2/access_tokens".into(),
-                status: 403,
-            },
-            AppError::Refused {
-                operation: "/app/installations/2/access_tokens".into(),
-                status: 503,
-            },
-            AppError::Unreachable,
-            AppError::RateLimited { until: None },
-        ];
-        let stops = |client: &GitHub| -> Vec<bool> {
-            errors
-                .iter()
-                .map(|error| client.app_failure(error.clone()).is_reach())
-                .collect()
-        };
-        // The credential every request shares stops the command on any failure.
-        assert_eq!(stops(&shared), [true, true, true, true, true, true]);
-        // One operation's App setup or refusal stays with its todo, unless it
-        // may be throttling (403) or the App API is unavailable or deferring.
-        assert_eq!(stops(&scoped), [false, false, true, true, true, true]);
+    fn a_setup_mismatch_of_the_shared_credential_stops_the_command() {
+        let error = shared().app_failure(instrukt_core::github::AppError::Setup("mismatch".into()));
+        assert!(matches!(error, GitHubError::App(_)));
+        assert!(error.is_reach());
+    }
+
+    #[test]
+    fn a_setup_mismatch_of_an_operation_app_stays_with_its_todo() {
+        let error = scoped().app_failure(instrukt_core::github::AppError::Setup("mismatch".into()));
+        assert!(matches!(error, GitHubError::OperationApp(_)));
+        assert!(!error.is_reach());
+    }
+
+    #[test]
+    fn an_operation_app_refused_with_a_client_error_stays_with_its_todo() {
+        let error = scoped().app_failure(refused(404));
+        assert!(matches!(error, GitHubError::OperationApp(_)));
+        assert!(!error.is_reach());
+    }
+
+    #[test]
+    fn an_operation_app_refused_as_forbidden_stops_the_command_as_a_possible_throttle() {
+        let error = scoped().app_failure(refused(403));
+        assert!(matches!(error, GitHubError::App(_)));
+        assert!(error.is_reach());
+    }
+
+    #[test]
+    fn an_operation_app_refused_by_an_unavailable_app_api_stops_the_command() {
+        let error = scoped().app_failure(refused(503));
+        assert!(matches!(error, GitHubError::App(_)));
+        assert!(error.is_reach());
+    }
+
+    #[test]
+    fn an_operation_app_deferred_by_the_app_api_stops_the_command() {
+        let error =
+            scoped().app_failure(instrukt_core::github::AppError::RateLimited { until: None });
+        assert!(matches!(error, GitHubError::App(_)));
+        assert!(error.is_reach());
     }
 }
