@@ -1184,23 +1184,13 @@ fn from_original(
     };
     check_worktree(&worktree, &path)?;
     let staging = staging_path(&path, &intent.todo)?;
-    match std::fs::symlink_metadata(&staging) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(_) => {
-            return Err(Stop::refused(format!(
-                "{} is in the way of releasing the worktree {}; remove it, then withdraw again",
-                staging.display(),
-                path.display()
-            ))
-            .into());
-        }
-        Err(source) => {
-            return Err(Stop::Unverified(WorkError::Io {
-                path: staging,
-                source,
-            })
-            .into());
-        }
+    if exists(&staging)? {
+        return Err(Stop::refused(format!(
+            "{} is in the way of releasing the worktree {}; remove it, then withdraw again",
+            staging.display(),
+            path.display()
+        ))
+        .into());
     }
     intent.worktrees[at].stage = WorktreeStage::MovingTo(staging.clone());
     recorded(intent)?;
