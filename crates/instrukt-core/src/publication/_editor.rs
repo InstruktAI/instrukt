@@ -32,15 +32,19 @@ enum EditorSchema {
     GeneralIndex,
     DomainIndex,
     ProjectIndex,
+    /// A company home's `docs/index.yaml`. No file in a project is
+    /// described by it, so it takes no modeline.
+    CompanyIndex,
     Snippets,
     Configuration,
 }
 
 impl EditorSchema {
-    const ALL: [EditorSchema; 5] = [
+    const ALL: [EditorSchema; 6] = [
         EditorSchema::GeneralIndex,
         EditorSchema::DomainIndex,
         EditorSchema::ProjectIndex,
+        EditorSchema::CompanyIndex,
         EditorSchema::Snippets,
         EditorSchema::Configuration,
     ];
@@ -50,6 +54,7 @@ impl EditorSchema {
             EditorSchema::GeneralIndex => "general-index.schema.json",
             EditorSchema::DomainIndex => "domain-index.schema.json",
             EditorSchema::ProjectIndex => "project-index.schema.json",
+            EditorSchema::CompanyIndex => "company-index.schema.json",
             EditorSchema::Snippets => "snippet-schema.schema.json",
             EditorSchema::Configuration => "instrukt.schema.json",
         }
@@ -61,6 +66,7 @@ impl EditorSchema {
             EditorSchema::GeneralIndex => GeneralIndex::editor_schema(),
             EditorSchema::DomainIndex => DomainIndex::editor_schema(),
             EditorSchema::ProjectIndex => ProjectIndex::editor_schema(),
+            EditorSchema::CompanyIndex => super::_company::CompanyIndex::editor_schema(),
             EditorSchema::Snippets => PositionSchema::editor_schema(),
             EditorSchema::Configuration => config::editor_schema(),
         };

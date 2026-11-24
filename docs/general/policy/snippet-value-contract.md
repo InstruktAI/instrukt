@@ -269,8 +269,8 @@ Applies to all snippet authoring contexts and company home knowledge:
 - Manual snippet authoring via `general/procedure/doc-snippet-authoring`.
 - Automated authoring during `sdlc/procedure/project-analysis` via
   `sdlc/procedure/project-analysis`.
-- Company home knowledge (`AGENTS.master.md` and documents anywhere under
-  `docs/` in a company repository): the value test,
+- Company home knowledge (the documents anywhere under `docs/` in a company
+  repository and the `docs/index.yaml` that selects them): the value test,
   `general/policy/agent-facing-text`, and all anti-patterns (including
   Narration) apply in full while company documents remain self-contained
   without taxonomy IDs or external doctrine references.

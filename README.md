@@ -60,8 +60,7 @@ $ instrukt init
 
 ```text
 my-project/
-├── AGENTS.master.md      # one section: what this project is for
-├── AGENTS.md             # generated from here on, and committed
+├── AGENTS.md             # generated from docs/project/index.yaml from here on, and committed
 ├── instrukt.yaml         # the project's settings and slug
 ├── docs/project/
 │   ├── index.yaml        # which snippets load in full, and which as one line
@@ -71,9 +70,9 @@ my-project/
 
 It also appends its own marked section to your git hooks without touching existing hooks. If you already had a hand-written `AGENTS.md`, `init` leaves it intact and saves an exact copy at `.instrukt/adopted/AGENTS.md` so nothing is lost.
 
-**Adopting an existing (brownfield) repository.** `init` lays down the mechanical skeleton; intelligence harvests what is already there. The cockpit skill walks through `.instrukt/adopted/AGENTS.md` with you — moving the project's purpose into `AGENTS.master.md`, placing each rule into a snippet under `docs/project/` with its index entry, and deleting the kept copy once placed. To capture the rest of the repository, ask your agent to analyze it: `sdlc/procedure/project-analysis` inventories the codebase alongside existing READMEs, API specs, ADRs, and existing `docs/` content, turning durable project knowledge into schema-valid snippets under `docs/project/` and indexing them in `docs/project/index.yaml`.
+**Adopting an existing (brownfield) repository.** `init` lays down the mechanical skeleton; intelligence harvests what is already there. The cockpit skill walks through `.instrukt/adopted/AGENTS.md` with you — moving the project's purpose into a project snippet named first in the index's `expanded`, placing each rule into a snippet under `docs/project/` with its index entry, and deleting the kept copy once placed. To capture the rest of the repository, ask your agent to analyze it: `sdlc/procedure/project-analysis` inventories the codebase alongside existing READMEs, API specs, ADRs, and existing `docs/` content, turning durable project knowledge into schema-valid snippets under `docs/project/` and indexing them in `docs/project/index.yaml`.
 
-Commit to `main` and the hooks take over. Every commit overwrites the root `AGENTS.md` with the generated rendering — your `## Purpose`, the small baseline of always-loaded (`expanded`) snippets, and the compact one-line progressive index — so every clone and cloud agent gets it directly from git. Commits on `main` also run `instrukt sync`, registering the repository on your machine and publishing its committed docs to `~/.instrukt/docs/`. Only committed `main` is ever published, so a half-written draft in a working tree never becomes live doctrine.
+Commit to `main` and the hooks take over. Every commit overwrites the root `AGENTS.md` with the generated rendering of `docs/project/index.yaml` — your purpose snippet and the rest of the small baseline of always-loaded (`expanded`) snippets, then the compact one-line progressive index — so every clone and cloud agent gets it directly from git. It is the one instruction file a repository carries: nothing below the root is rendered, the same in every agent CLI. Commits on `main` also run `instrukt sync`, registering the repository on your machine and publishing its committed docs to `~/.instrukt/docs/`. Only committed `main` is ever published, so a half-written draft in a working tree never becomes live doctrine.
 
 ### What an agent sees
 
@@ -213,13 +212,14 @@ $ instrukt config init --company acme
 
 ```text
 ~/.instrukt/companies/acme/     # a checkout of Acme's own git repository
-├── AGENTS.master.md            # who Acme is and how it works               (committed)
-├── docs/                       # company procedures, policies and memory    (committed)
+├── AGENTS.md                   # generated from docs/index.yaml              (committed)
+├── docs/                       # who Acme is, its procedures and memory      (committed)
+│   └── index.yaml              # which documents load in full, and which as one line
 ├── instrukt.yaml               # members, connectors, webhooks, MCP servers (this machine only)
 └── secrets.env                 # company-scoped tokens and secrets          (this machine only)
 ```
 
-The folder itself is the registration — a company exists wherever a folder carries a valid `instrukt.yaml`. Because `AGENTS.master.md` and `docs/` live in Acme's own git repo, agents working for Acme can update company procedures and commit them, giving you full git history of everything the business has taught its assistant.
+The folder itself is the registration — a company exists wherever a folder carries a valid `instrukt.yaml`. Because `docs/` and its `index.yaml` live in Acme's own git repo, agents working for Acme can update company procedures and commit them, giving you full git history of everything the business has taught its assistant. The index selects which documents every agent starts with in full and which it reads by one line when the work calls for them.
 
 **Strict separation by construction.** Each company has its own folder and docs, its own settings, its own `secrets.env` (`${NAME}` references resolve exclusively from that company's file, never falling back to the host or another company), its own members and per-user logins, its own chat connections, its own agent threads, and its own MCP servers. (OS-level Linux container isolation per company is [coming next](#built-to-be-pluggable-and-what-comes-next).)
 

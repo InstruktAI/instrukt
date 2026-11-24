@@ -5,9 +5,9 @@
 //! See Also entry opens with an id or carries a linked id
 //! (`project/instrukt/spec/domain/docs`, "Reference").
 //!
-//! The `@` path forms ([`parse`]) remain only for the non-snippet sources
-//! publication still compiles from paths — masters and baseline manifests:
-//! the published-home form (`~/.instrukt/docs/<id>.md` or its
+//! The `@` path forms ([`parse`]) remain only so the documentation's own
+//! reading can recognise them: in a baseline manifest, and in a snippet,
+//! where validation reports them. They are the published-home form (`~/.instrukt/docs/<id>.md` or its
 //! home-expanded absolute form) naming a published snippet, the same form
 //! naming a domain bundle (`~/.instrukt/docs/<domain>/bundle.md`), and
 //! `docs/project/<…>` naming material in the project position. In a

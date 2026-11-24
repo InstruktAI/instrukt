@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-core/src/publication/_company.rs
+expression: across
+---
+- docs/people.md: Who works at Acme, and since when.

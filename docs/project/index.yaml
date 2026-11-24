@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=../../.instrukt/schemas/project-index.schema.json
 expanded:
+  - project/instrukt/concept/purpose
   - project/instrukt/policy/shared-workflows
   - project/instrukt/policy/checks-and-guards
 listed: []

@@ -178,12 +178,6 @@ codes! {
     /// A flavor's `orchestrator` role that no procedure declares.
     OrchestratorWithoutProcedure => "workflow-orchestrator-without-procedure",
 
-    // Masters
-    /// A repository-root `AGENTS.master.md` carrying `## Required reads`:
-    /// `docs/project/index.yaml` selects what the root `AGENTS.md`
-    /// includes.
-    MasterRequiredReads => "master-required-reads",
-
     // Directives
     /// An `@exec` directive: the format has no directive that runs a
     /// command.
@@ -194,8 +188,8 @@ codes! {
     /// A `@config` directive with a `runtime.*` path in a file publication
     /// compiles, which has no runtime session to resolve it against.
     ConfigRuntimeCompiled => "directive-config-runtime-compiled",
-    /// A `@config` directive in a master, or in a snippet a committed
-    /// `AGENTS.md` holds in full: a committed rendering resolves no
+    /// A `@config` directive in a snippet the committed root `AGENTS.md`
+    /// holds in full: a committed rendering resolves no
     /// configured value; the snippet is listed instead, so it is read where
     /// `instrukt docs get` resolves the value.
     ConfigCommitted => "directive-config-committed",
@@ -259,8 +253,8 @@ pub enum NoticeCode {
     /// A domain without `index.yaml`: absent from the global agent files,
     /// found only through `instrukt docs index --domain <x>`.
     DomainWithoutIndex,
-    /// A root master without `docs/project/index.yaml`: the root
-    /// `AGENTS.md` holds the purpose and the triggered procedures only.
+    /// A project without `docs/project/index.yaml`: it has no rendering,
+    /// and a root `AGENTS.md` instrukt rendered there is removed.
     ProjectWithoutIndex,
     /// A delivered snippet no `index.yaml` names and no snippet requires:
     /// reachable only through `instrukt docs index`.

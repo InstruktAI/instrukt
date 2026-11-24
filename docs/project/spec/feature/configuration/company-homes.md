@@ -24,7 +24,7 @@ no authorization.
 | Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
 | Settings document | `instrukt.yaml` in the home folder | Carries `schema_version`, `company: <name>` equal to the folder name, and the company-home keys of `project/instrukt/spec/feature/configuration/layered-configuration`. |
 | Secrets file | `secrets.env` in the home folder | The company's own protected secrets, under the protection, write and disclosure rules of `project/instrukt/spec/feature/configuration/owned-files`. |
-| Company knowledge | `AGENTS.master.md` in the home folder, and the company's documents in its `docs/` folder | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md`. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
+| Company knowledge | The company's documents in the home's `docs/` folder, and the index `docs/index.yaml` that selects from them | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md`. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
 | Ignore file | `.gitignore` in the home folder | Keeps the settings document, the secrets file, `projects/` and the local state instrukt keeps in the home out of the repository. |
 
 - A folder under `companies/` without a valid settings document is not a

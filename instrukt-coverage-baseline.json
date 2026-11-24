@@ -57,7 +57,7 @@
     },
     "project/instrukt/spec/feature/publication/docs-repositories": {
       "UC-DOR2": 2,
-      "UC-DOR3": 6
+      "UC-DOR3": 5
     },
     "project/instrukt/spec/feature/publication/editor-schemas": {
       "UC-ES1": 3,

@@ -86,7 +86,10 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     let project = env.run(repo.path(), ["config", "get", "project"]).success();
     insta::assert_snapshot!(stdout(&env, &project), @"my-demo");
     insta::assert_snapshot!("seeded-index", repo.read("docs/project/index.yaml"));
-    insta::assert_snapshot!("seeded-master", repo.read("AGENTS.master.md"));
+    assert!(
+        !repo.path().join("AGENTS.master.md").exists(),
+        "init seeds no master"
+    );
     insta::assert_snapshot!(
         "own-hook-beside-section",
         repo.read(".git/hooks/post-commit")
@@ -108,9 +111,10 @@ fn one_init_adopts_the_repository_and_commits_nothing() {
     env.run(repo.path(), ["sync"]).success();
     let validated = env.run(repo.path(), ["docs", "validate"]).success();
     insta::assert_snapshot!("adopted-docs-validate", stdout(&env, &validated));
-    // The adopting commit carries the rendering, made by the hook.
+    // The adopting commit carries the rendering of the index that selects
+    // nothing yet, made by the hook.
     insta::assert_snapshot!(
-        "compiled-seeded-master",
+        "adopting-commit-rendering",
         repo.git(["show", "HEAD:AGENTS.md"])
     );
 }
@@ -137,7 +141,7 @@ fn a_folder_without_a_usable_slug_needs_one_supplied_and_outside_a_repository_in
     insta::assert_snapshot!(stdout(&env, &project), @"named");
 }
 
-const OWN_MASTER: &str = "## Purpose\n\nThe developer's own master.\n";
+const OWN_RULES: &str = "---\ndescription: The house rules.\n---\n\n# House Rules — Policy\n\n## Rules\n\nThe developer's own rules.\n";
 const OWN_INDEX: &str = "expanded: [project/demo/policy/house-rules]\n";
 const OWN_IGNORES: &str = "/build\n*.log";
 const OWN_ATTRIBUTES: &str = "*.png binary\ndocs/**/*.md text eol=lf\n";
@@ -147,7 +151,7 @@ const OWN_ATTRIBUTES: &str = "*.png binary\ndocs/**/*.md text eol=lf\n";
 fn init_completes_a_partial_adoption_and_then_changes_nothing() {
     let env = machine();
     let repo = env.git_repo("demo");
-    repo.write("AGENTS.master.md", OWN_MASTER);
+    repo.write("docs/project/policy/house-rules.md", OWN_RULES);
     repo.write(".gitattributes", OWN_ATTRIBUTES);
     repo.write(".gitignore", OWN_IGNORES);
     repo.write("docs/project/index.yaml", OWN_INDEX);
@@ -157,9 +161,9 @@ fn init_completes_a_partial_adoption_and_then_changes_nothing() {
     let completed = env.run(repo.path(), ["init"]).success();
     insta::assert_snapshot!("completing-init", stdout(&env, &completed));
     assert_eq!(
-        repo.read("AGENTS.master.md"),
-        OWN_MASTER,
-        "the developer's master is unchanged"
+        repo.read("docs/project/policy/house-rules.md"),
+        OWN_RULES,
+        "the developer's documents are unchanged"
     );
     insta::assert_snapshot!("index-with-modeline", repo.read("docs/project/index.yaml"));
     insta::assert_snapshot!("completed-ignores", repo.read(".gitignore"));
@@ -201,8 +205,8 @@ fn a_hand_written_agents_file_is_kept_aside_and_the_rendering_takes_its_place() 
         "the hand-written instructions are kept byte for byte"
     );
     insta::assert_snapshot!(
-        "master-beside-kept-instructions",
-        repo.read("AGENTS.master.md")
+        "index-beside-kept-instructions",
+        repo.read("docs/project/index.yaml")
     );
     assert_eq!(
         repo.read("AGENTS.md"),
@@ -242,6 +246,21 @@ fn a_hand_written_agents_file_is_kept_aside_and_the_rendering_takes_its_place() 
         "rendering-with-the-placed-instruction",
         repo.git(["show", "HEAD:AGENTS.md"])
     );
+
+    // Another repository already holds its own index beside a hand-written
+    // root file that was never kept aside: init keeps it all the same.
+    let indexed = env.git_repo("indexed");
+    indexed
+        .write("AGENTS.md", HAND_WRITTEN)
+        .write("docs/project/index.yaml", "expanded: []\n");
+    indexed.commit("an index beside the developer's own instructions");
+    env.run(indexed.path(), ["init"]).success();
+    assert_eq!(
+        indexed.read(".instrukt/adopted/AGENTS.md"),
+        HAND_WRITTEN,
+        "the hand-written instructions are kept byte for byte"
+    );
+    assert_eq!(indexed.read("AGENTS.md"), HAND_WRITTEN);
 }
 
 // spec: project/instrukt/spec/feature/repository/project-initialization UC-IN2

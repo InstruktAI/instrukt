@@ -1,5 +1,5 @@
 ---
-description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner and patches the global index by owner; a repository's `AGENTS.md` files are rendered from its committed content at each commit; and the owner of `docs/general/` renders a global agent file, with its settings key, for each agent runtime the selected runtime reports as configured.
+description: Publication — a project publishes its general, domain and project positions from its committed main into the home, claims each by owner and patches the global index by owner; a repository's rendered root `AGENTS.md` is committed, rendered at each commit from the repository's committed content alone; and the owner of `docs/general/` renders a global agent file, with its settings key, for each agent runtime the selected runtime reports as configured.
 ---
 # Publication — Spec
 
@@ -15,8 +15,8 @@ the commit it published beside the project's checkout path. The project that
 owns `docs/general/` also renders a global agent file for each agent runtime
 the selected runtime reports as configured, from what is published on the
 computer, and sets the one settings key each needs to load project
-instruction files. A repository's `AGENTS.md` files are committed: they are
-rendered from the repository's committed content alone at each commit, by
+instruction files. A repository carries one rendered instruction file, its root
+`AGENTS.md`, which is committed: it is rendered from the repository's committed content alone at each commit, by
 the `pre-commit` hook section and by `instrukt docs render`, never by a sync. Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
@@ -90,11 +90,10 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 **Retraction**
 :  Removal of what a project published before and no longer owns.
 
-**Master**
-:  An `AGENTS.master.md` file in a project or a company home. A project's root master holds only the
-   project's `## Purpose`; a nested master is the source of the `AGENTS.md`
-   beside it. A company home's master is the company's own knowledge, rendered
-   into the home's `AGENTS.md`
+**Entry index**
+:  The `index.yaml` a committed entrypoint is rendered from:
+   `docs/project/index.yaml` in a project, `docs/index.yaml` in a company
+   home, which selects from the company's own documents
    (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 **Rendering**
@@ -107,10 +106,11 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    admits no configured value.
 
 **Committed entrypoint**
-:  An `AGENTS.md` beside an `AGENTS.master.md` in a repository or a company
-   home: committed with the repository, opening with the generated line that
-   marks it as a rendering, and a function of the repository's committed
-   content and the rendering instrukt release only.
+:  The `AGENTS.md` at the root of a repository that holds its entry index, a
+   project's or a company home's: committed with the repository, opening with
+   the generated line that marks it as a rendering, and a function of the
+   repository's committed content and the rendering instrukt release only. A
+   repository has at most one.
 
 **Configured agent runtime**
 :  An agent runtime the runtime `runner.runtime` selects reports as configured
@@ -142,8 +142,8 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   published-commit and checkout-path record and convergence; the ownership
   record and its refusals (a second claimant, a reserved domain name);
   index patching by owner with its duplicate-id refusal; retraction;
-  rendering of the committed entrypoints — a project's `AGENTS.md` files and
-  each company home's — and of the global agent files; the choice of global
+  rendering of the committed root `AGENTS.md` — a project's and a company
+  home's — and of the global agent files; the choice of global
   file targets from the configured agent runtimes; writing those files whole,
   with no record of what was written;
   merging the entrypoint-loading keys; the editor
@@ -172,8 +172,10 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   index `~/.instrukt/state/index.yaml`; the ownership record, published
   commits and checkout paths under
   `~/.instrukt/state/publication/`; the eval fingerprint per published commit
-  under `~/.instrukt/state/eval-fingerprint/`; the committed `AGENTS.md`
-  files of a repository and `instrukt docs render [--check]`; the global
+  under `~/.instrukt/state/eval-fingerprint/`; the committed root `AGENTS.md`
+  of a repository and `instrukt docs render [--check]`; whether a
+  repository's `docs/index.yaml` is its company index, which docs
+  validation asks before reading the file; the global
   agent files; `.instrukt/schemas/` and the modeline
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
@@ -245,26 +247,28 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 #### Committed entrypoint (aggregate)
 
-- **Root:** one `AGENTS.md` beside a master, in a project's repository or a
+- **Root:** the one `AGENTS.md` at the root of a project's repository or a
   company home.
-- **Contains:** the rendered file, its generated line and the master it is
-  rendered from.
+- **Contains:** the rendered file, its generated line and the entry index it
+  is rendered from.
 - **Invariants:**
   - A function of the repository's committed content and the rendering
     instrukt release: nothing published on the computer, no configuration
     layer and no environment enters it.
   - Changes only in a commit, or in the working tree through
     `instrukt docs render`; no sync, checkout, start or tick writes it.
-  - Written over whatever the file holds; removed, when its master no longer
-    exists, only while it opens with the generated line.
-  - A company home's rendering is its master's own content and references
-    nothing outside the company's own documents.
+  - Written over whatever the file holds; removed, when its entry index no
+    longer exists, only while it is instrukt's rendering.
+  - At most one per repository, at its root; a rendering of instrukt's below
+    the root is removed.
+  - A company home's rendering is the selection its index makes from the
+    company's own documents and references nothing outside them.
   - It has no published commit, no claim and no index entry, and belongs to
     no project's published part.
 - **Identifier:** the file's path in its repository or home.
 - **Lifecycle:** rendered and staged by the `pre-commit` section at each
   commit, or written by `instrukt docs render`, including a repository's CI
-  workflow; removed with its master
+  workflow; removed with its entry index
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 ### Domain events emitted
@@ -301,8 +305,9 @@ This context emits no events.
 - **docs** — Customer / Supplier, both ways. Docs supplies the snippet model,
   the `index.yaml` and `schema.yaml` model and validation publication renders
   and refuses by; publication supplies the home's published tree and global
-  index that retrieval reads, and the published commit the behind-main
-  warning compares with.
+  index that retrieval reads, the published commit the behind-main
+  warning compares with, and whether a repository's `docs/index.yaml` is
+  its company index, which validation leaves to publication.
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice and the migration operation invoked before
   publication.

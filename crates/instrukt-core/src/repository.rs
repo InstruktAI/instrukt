@@ -2,7 +2,7 @@
 //! (`docs/project/spec/domain/repository.md`).
 //!
 //! - [`init`] adopts a repository: project layer, `docs/project/` with its
-//!   index and schema, master, kept instructions, editor schemas, ignores
+//!   index and schema, kept instructions, editor schemas, ignores
 //!   and hook sections, never overwriting a file, and reports the claims
 //!   its first sync will make.
 //! - [`install_hooks`], [`remove_hooks`] and [`hooks_status`] manage
@@ -24,8 +24,8 @@ mod _run;
 mod _section;
 
 pub use _adoption::{
-    GENERATED_FILE, InitPart, InitReport, KEPT_INSTRUCTIONS, KeptInstructions, MASTER_FILE,
-    NotWritten, PROJECT_DOCS, PartOutcome, init,
+    GENERATED_FILE, InitPart, InitReport, KEPT_INSTRUCTIONS, KeptInstructions, NotWritten,
+    PROJECT_DOCS, PartOutcome, init,
 };
 pub use _commit::{CommitRequest, OWNED_TRAILERS, commit};
 pub use _error::RepositoryError;

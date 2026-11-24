@@ -2,8 +2,8 @@
 activation_trigger: >-
   Use as soon as you consider creating, changing or retiring a taxonomy snippet
   under `docs/general/`, `docs/domain/<name>/` or `docs/project/`, companions
-  included, or company home knowledge (`AGENTS.master.md` and documents under
-  `docs/`). Ordinary README or website prose never activates it. Changes to
+  included, or company home knowledge (a company repository's documents under
+  `docs/` and the file that selects them). Ordinary README or website prose never activates it. Changes to
   directive text for agents elsewhere still require an update to the owning
   snippet and independent review of the commit under
   `general/policy/documentation-discipline`.
@@ -36,7 +36,7 @@ tooling.
 
 ## Steps
 
-For taxonomy snippets, authoring reads and edits the snippet's source file in the repository. `instrukt docs get` is for knowledge: it renders the snippet, filters pending content and resolves references, so its output is not the file you are changing. Before committing taxonomy snippets, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed. For company home knowledge (`AGENTS.master.md` and documents anywhere under `docs/` in a company repository), follow Step 0 and **Company home knowledge** below, and verify with `instrukt docs render --check` instead of `instrukt docs validate`.
+For taxonomy snippets, authoring reads and edits the snippet's source file in the repository. `instrukt docs get` is for knowledge: it renders the snippet, filters pending content and resolves references, so its output is not the file you are changing. Before committing taxonomy snippets, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed. For company home knowledge (the documents anywhere under `docs/` in a company repository and the `docs/index.yaml` that selects them), follow Step 0 and **Company home knowledge** below, and verify with `instrukt docs render --check` instead of `instrukt docs validate`.
 
 0.  **Establish authoring authority, then earn the snippet.** Load this procedure
     when a snippet first enters consideration, before drafting its shape. A
@@ -244,18 +244,25 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     enters its awareness only when that event arrives
     (`general/principle/priming`).
 
-18. **Company home knowledge.** A company repository's `AGENTS.master.md` and
-    documents anywhere under `docs/` carry no taxonomy ID and reference nothing
-    outside the company's own documents, so taxonomy placement, snippet
-    schemas, `index.yaml`, `instrukt docs validate`, and pending markers do not
-    apply; retain ordinary Markdown and relative required reads. Give each
+18. **Company home knowledge.** A company repository's documents anywhere
+    under `docs/` carry no taxonomy ID and reference nothing outside the
+    company's own documents, so taxonomy placement, snippet schemas,
+    `instrukt docs validate`, and pending markers do not apply; retain
+    ordinary Markdown and relative required reads. The repository's
+    `docs/index.yaml` selects what the company's rendered `AGENTS.md` holds,
+    each entry a document's path relative to `docs/`: `expanded` names the
+    documents every agent of the company acts on in ordinary work, held in
+    full; `listed` names the documents an agent fetches when they apply, each
+    shown as one line with its `description`. Keep a `listed` document out of
+    the required reads of the `expanded` ones. Give each
     document under `docs/` frontmatter with a non-empty `description` (and
     optional `visibility: internal` or `public`, defaulting to `internal`, so
     the company skill publisher accepts it alongside `AGENTS.md` rendering).
     Apply Step 0, `general/policy/snippet-value-contract`, and
     `general/policy/agent-facing-text`. Author routine knowledge updates in
-    documents under `docs/` inside a separate worktree (keeping the serving
-    company home checkout on the reviewed default branch), render with
+    documents under `docs/` and in that index inside a separate worktree
+    (keeping the serving company home checkout on the reviewed default
+    branch), render with
     `instrukt docs render` (or commit through the installed pre-commit hook)
     and verify the committed worktree with `instrukt docs render --check`, then
     route the committed worktree head through independent review before

@@ -839,11 +839,6 @@ fn published_linked_demo(env: &TestEnv) -> Repo {
         "docs/project/index.yaml",
         "expanded: [project/demo/spec/feature/x]\n".to_owned(),
     ));
-    files.push((
-        "tools/AGENTS.master.md",
-        "# Tools\n\n## Required reads\n\n- acme/policy/rules\n\n## Purpose\n\nTooling.\n"
-            .to_owned(),
-    ));
     let demo = project(env, "demo", &files);
     sync(env, &demo);
     demo
@@ -887,7 +882,7 @@ fn a_domain_read_shows_reference_links_as_ids() {
 
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR9
 #[test]
-fn rendered_nested_agent_instructions_show_reference_links_as_ids() {
+fn rendered_agent_instructions_show_reference_links_as_ids() {
     let mut env = TestEnv::new();
     // The hook sections call the built `instrukt` by name.
     let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
@@ -899,8 +894,8 @@ fn rendered_nested_agent_instructions_show_reference_links_as_ids() {
     env.run(demo.path(), ["hooks", "install"]).success();
     demo.commit("instructions");
     env.finished_hook_run(demo.path(), instrukt_core::repository::Hook::PostCommit);
-    let agents = demo.git(["show", "HEAD:tools/AGENTS.md"]);
-    insta::assert_snapshot!("linked-nested-agents", text(&env, agents.as_bytes()));
+    let agents = demo.git(["show", "HEAD:AGENTS.md"]);
+    insta::assert_snapshot!("linked-root-agents", text(&env, agents.as_bytes()));
 }
 
 // spec: project/instrukt/spec/feature/docs/progressive-retrieval UC-DR1

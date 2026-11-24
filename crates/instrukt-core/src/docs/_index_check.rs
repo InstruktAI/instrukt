@@ -8,7 +8,10 @@
 //! shape of each value, the ids it names (delivered, of its own position
 //! unless it is `general`'s), the agent CLIs `agents` maps, and the listed
 //! ids the expanded ones already bring in. An `index.yaml` anywhere but a
-//! position's root is a finding; a domain without one is a notice.
+//! position's root is a finding, reported from its path without reading it;
+//! a domain without one is a notice. Whether an `index.yaml` is a
+//! company's index, which validation leaves alone, is publication's answer
+//! ([`crate::publication::is_company_index`]), asked before the file is read.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -101,8 +104,8 @@ fn read_optional(path: &Path) -> Result<Option<String>, DocsError> {
 }
 
 /// Every `index.yaml` below `<repo_root>/docs/`, skipping `_` directories,
-/// as its repository path and text.
-fn index_files(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError> {
+/// as its repository path and its path on disk; none is read here.
+fn index_files(repo_root: &Path) -> Result<Vec<(String, PathBuf)>, DocsError> {
     let docs = super::_corpus::confined_docs(repo_root)?;
     if !docs.is_dir() {
         return Ok(Vec::new());
@@ -126,11 +129,10 @@ fn index_files(repo_root: &Path) -> Result<Vec<(String, String)>, DocsError> {
         if !entry.file_type().is_file() || entry.file_name() != INDEX_FILE {
             continue;
         }
-        let text = std::fs::read_to_string(entry.path()).map_err(|source| DocsError::Read {
-            path: entry.path().to_path_buf(),
-            source,
-        })?;
-        out.push((relative(repo_root, entry.path()), text));
+        out.push((
+            relative(repo_root, entry.path()),
+            entry.path().to_path_buf(),
+        ));
     }
     Ok(out)
 }
@@ -156,11 +158,17 @@ pub(super) fn check(
     notices: &mut Vec<Notice>,
 ) -> Result<(), DocsError> {
     let mut indexed = BTreeSet::new();
-    for (rel, text) in index_files(repo_root)? {
+    for (rel, path) in index_files(repo_root)? {
+        // A company's index is publication's to read and judge.
+        if crate::publication::is_company_index(repo_root, &rel)? {
+            continue;
+        }
         let Some(position) = position_of(&rel) else {
             out.push(Finding::new(&rel, FindingCode::IndexNested, None));
             continue;
         };
+        let text =
+            std::fs::read_to_string(&path).map_err(|source| DocsError::Read { path, source })?;
         indexed.insert(position.clone());
         Index {
             corpus,

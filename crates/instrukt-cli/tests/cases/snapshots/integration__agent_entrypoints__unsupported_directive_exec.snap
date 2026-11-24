@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
 expression: "stdout(&env, &refused)"
 ---
-AGENTS.md: AGENTS.master.md: directive-exec: echo harmless
+AGENTS.md: docs/project/policy/house.md: directive-exec: echo harmless

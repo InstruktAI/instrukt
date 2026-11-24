@@ -2,9 +2,6 @@
 source: crates/instrukt-cli/tests/cases/snippet-validation.rs
 expression: run.out
 ---
-AGENTS.master.md: master-required-reads: the root master holds only `## Purpose`; `docs/project/index.yaml` selects what the root AGENTS.md includes
-AGENTS.master.md: directive-exec: touch ran
-AGENTS.master.md: directive-config-committed: runtime.session_id
 docs/domain/acme/baseline-progressive.md: baseline-line-invalid: not a reference
 docs/domain/acme/baseline-progressive.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/shape.md
 docs/domain/acme/baseline-progressive.md: baseline-already-carried: ~/.instrukt/docs/acme/policy/rules.md
@@ -18,7 +15,6 @@ docs/domain/acme/policy/refs.md: structure-required-reads-not-first
 docs/domain/acme/policy/refs.md: reference-by-path: ~/.instrukt/docs/acme/principle/care.md
 docs/domain/acme/policy/refs.md: reference-unresolved: acme/principle/missing
 docs/domain/acme/policy/refs.md: reference-local-from-published: project/demo/design/shape
-docs/domain/acme/principle/session.md: directive-config-committed: runtime.session_id
 docs/domain/acme/principle/shape.md: structure-h1-not-first
 docs/domain/acme/principle/shape.md: structure-section-missing: Tensions, required by instrukt root rules
 docs/domain/acme/principle/shape.md: structure-section-unknown: Extra, outside the schema of docs/domain/acme/principle; see `instrukt docs schema docs/domain/acme/principle`

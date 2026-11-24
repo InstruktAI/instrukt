@@ -12,5 +12,6 @@ notice: instance `claude-second` (claude): home source: native_variable; instruc
 .instrukt/schemas/general-index.schema.json: schema written
 .instrukt/schemas/domain-index.schema.json: schema written
 .instrukt/schemas/project-index.schema.json: schema written
+.instrukt/schemas/company-index.schema.json: schema written
 .instrukt/schemas/snippet-schema.schema.json: schema written
 .instrukt/schemas/instrukt.schema.json: schema written

@@ -97,8 +97,8 @@ restart, then check the logs` is directive. One string reaching a human and an
   schema, and closure overlap) and they owe no independent review
   (`general/policy/commits`). Promoting a snippet into an always-on set
   (`expanded`, `agents`, or a `Required read` on an `expanded` snippet) remains
-  subject to independent review (`sdlc/policy/definition-of-done-lanes`). Company home knowledge (`AGENTS.master.md` and
-  documents anywhere under `docs/` in a company repository) is governed
+  subject to independent review (`sdlc/policy/definition-of-done-lanes`). Company home knowledge (the documents anywhere under `docs/` in a company
+  repository and the `docs/index.yaml` that selects them) is governed
   content: it renders into the company's committed `AGENTS.md` and published
   skills, so its content follows `general/policy/snippet-value-contract` and
   `general/policy/agent-facing-text`, and its changes are authored in a

@@ -165,11 +165,10 @@ Holding `docs/general/` or a `docs/domain/<x>/` is what makes a project
 publish it; one project owns each on a computer, and `general`, `project` and
 `third-party` (whose published tree is unchanged) are never a domain's name. Each position may carry an `index.yaml` selecting
 what is rendered and a `schema.yaml` adding sections
-(`project/instrukt/spec/domain/docs`). The project also carries its
-root `AGENTS.master.md` (its purpose only), any nested masters, the committed
-`AGENTS.md` beside each master, rendered at each commit from the repository's
-own content, the generated and git-ignored `.instrukt/schemas/` its YAML
-files' modelines name, and
+(`project/instrukt/spec/domain/docs`). The project also carries its one
+committed `AGENTS.md`, at its root, rendered at each commit from
+`docs/project/index.yaml` and the repository's own content, the generated and
+git-ignored `.instrukt/schemas/` its YAML files' modelines name, and
 instrukt's marked sections in its git hooks. No generated index lives in a
 repository, and no git filter rewrites its files: references are snippet ids
 the CLI resolves when read.

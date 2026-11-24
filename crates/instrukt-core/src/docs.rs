@@ -97,12 +97,14 @@ mod _validate;
 
 use std::path::PathBuf;
 
-pub(crate) use _company::{CompanyDocument, CompanyReference, company_document};
+pub(crate) use _company::{
+    CompanyDocument, CompanyFrontmatter, CompanyReference, company_document,
+};
 pub use _corpus::{
     BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,
     Version, View,
 };
-pub(crate) use _directives::{carries_required_reads, unsupported_directives};
+pub(crate) use _directives::unsupported_directives;
 pub use _finding::{Finding, FindingCode, Notice, NoticeCode};
 pub use _fold::{FoldOutcome, fold};
 pub use _frontmatter::{Frontmatter, Parameter, ProcedureEntry, Visibility};

@@ -160,9 +160,8 @@ pub(super) fn required_reads_section(lines: &[_text::Line<'_>]) -> Option<std::o
 /// Outside fenced code and HTML comments, each non-blank line is one entry:
 /// a list item holding a plain or linked snippet id or a bare domain
 /// name ([`_refs::entry`]); a line holding `@` references, read in the path
-/// forms masters and baseline manifests still use ([`_refs::parse`]), which
-/// validation reports in a snippet; anything else an entry that names
-/// nothing.
+/// forms baseline manifests still use ([`_refs::parse`]), which validation
+/// reports in a snippet; anything else an entry that names nothing.
 pub(super) fn section_reads(
     lines: &[_text::Line<'_>],
     project: Option<&ProjectSlug>,
