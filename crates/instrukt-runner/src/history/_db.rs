@@ -105,6 +105,30 @@ pub(super) fn read(home: &Home) -> Result<Option<Connection>, HistoryError> {
     read(home)
 }
 
+/// The normalized records the store retained of conversation `thread` from
+/// `source`: one keyed read of a store opened read-only, which migrates and
+/// moves nothing; `None` when no current store exists.
+pub(super) fn retained_records(
+    home: &Home,
+    source: &str,
+    thread: &str,
+) -> Result<Option<Vec<crate::runtime::conversations::ConversationRecord>>, HistoryError> {
+    let Some(Read::Current(conn)) = store(home).read(true)? else {
+        return Ok(None);
+    };
+    let mut statement = conn.prepare(
+        "SELECT payload_json FROM history_projection_records WHERE source=?1 AND thread_id=?2",
+    )?;
+    let payloads = statement
+        .query_map(params![source, thread], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let records = payloads
+        .iter()
+        .map(|payload| serde_json::from_str(payload))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(records))
+}
+
 /// How far moving earlier history in has progressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Progress {

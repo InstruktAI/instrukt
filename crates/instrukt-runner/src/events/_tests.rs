@@ -663,3 +663,41 @@ fn ci_subjects_name_the_candidate_commit() {
         EventRef::new(ReferenceKind::Commit, &format!("{project}/{candidate}")).unwrap()
     );
 }
+
+fn review_request(pull_request: Option<u64>) -> Event {
+    Event::ReviewNeeded {
+        project: ProjectSlug::parse("demo").unwrap(),
+        pull_request,
+        head_branch: pull_request.map(|_| "feature".to_owned()),
+        base_branch: pull_request.map(|_| "main".to_owned()),
+        head: CommitSha::parse(&"b".repeat(40)).unwrap(),
+        base: CommitSha::parse(&"a".repeat(40)).unwrap(),
+        request: 1,
+    }
+}
+
+#[test]
+fn a_pull_request_review_request_names_the_pull_request_as_its_subject() {
+    let envelope = review_request(Some(108)).envelope(&context()).unwrap();
+    assert_eq!(
+        envelope.subject,
+        EventRef::new(ReferenceKind::PullRequest, "demo/108").unwrap()
+    );
+}
+
+#[test]
+fn a_candidate_review_request_names_the_integration_branch_as_its_subject() {
+    let envelope = review_request(None).envelope(&context()).unwrap();
+    assert_eq!(
+        envelope.subject,
+        EventRef::new(ReferenceKind::RepositoryRef, "demo/origin/integrate").unwrap()
+    );
+}
+
+#[test]
+fn the_review_request_is_the_type_automatic_review_routes() {
+    assert_eq!(
+        review_request(None).name(),
+        instrukt_core::config::REVIEW_NEEDED_EVENT
+    );
+}

@@ -33,6 +33,7 @@ pub enum ReferenceKind {
     RepositoryRef,
     Install,
     Release,
+    PullRequest,
 }
 
 impl ReferenceKind {
@@ -60,6 +61,7 @@ impl ReferenceKind {
             Self::RepositoryRef => "repository_ref",
             Self::Install => "install",
             Self::Release => "release",
+            Self::PullRequest => "pull_request",
         }
     }
 }

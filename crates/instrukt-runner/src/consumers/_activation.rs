@@ -187,6 +187,12 @@ pub(crate) fn consumer(
     })
 }
 
+/// Whether activation `a` is still replaceable, as an SQL condition over the
+/// alias `a`: accepted or pending, with no runtime input selected, accepted
+/// or entered and no delivery selected without a target. Anything else is
+/// frozen for handover or has ended.
+pub(crate) const REPLACEABLE: &str = "a.state IN ('accepted','pending') AND NOT EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND i.state IN ('selected','accepted','entered')) AND NOT EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND d.state='selected' AND d.target IS NULL)";
+
 /// Only unselected input is replaceable. Selected/accepted runtime messages are immutable.
 fn supersede(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
@@ -195,7 +201,7 @@ fn supersede(
     home: &str,
 ) -> Result<(), StateError> {
     let path = state::db_path(tx);
-    let mut q=tx.prepare("SELECT a.event_id,a.envelope FROM procedure_activations a WHERE a.procedure=?1 AND a.exact_home=?2 AND a.subject=?3 AND a.event_type=?4 AND a.delivery_kind='state' AND a.state IN ('accepted','pending') AND NOT EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND i.state IN ('selected','accepted','entered')) AND NOT EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND d.state='selected' AND d.target IS NULL) ORDER BY a.rowid").map_err(state::sql(&path))?;
+    let mut q=tx.prepare(&format!("SELECT a.event_id,a.envelope FROM procedure_activations a WHERE a.procedure=?1 AND a.exact_home=?2 AND a.subject=?3 AND a.event_type=?4 AND a.delivery_kind='state' AND {REPLACEABLE} ORDER BY a.rowid")).map_err(state::sql(&path))?;
     let rows = q
         .query_map(
             params![procedure, home, event.subject.to_string(), event.event_type],
