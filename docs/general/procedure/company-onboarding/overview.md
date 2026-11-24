@@ -111,7 +111,18 @@ the services it touched, then step 10.
    `~/.instrukt/companies/<name>/`, where `<name>` is the company's key.
    Protect its default branch under `general/policy/commits` so human and agent
    changes land through reviewed worktree heads and integration rather than
-   direct pushes. Automated skill publication must use a route compatible with
+   direct pushes. Enable host-side branch protection or rulesets where the
+   hosting plan supports them for the repository (on GitHub, public
+   repositories, private personal repositories on GitHub Pro, or private
+   organization repositories on GitHub Team and above; restricting push actors
+   requires a plan feature that supports push restrictions or rulesets). Where
+   the hosting plan does not support host-side branch protection — such as a
+   private organization repository on GitHub Free — agent delivery still routes
+   through reviewed worktree heads and instrukt's integration gate, while
+   host-side push prevention is unavailable and a collaborator with write access
+   can still push directly to the default branch unless repository permissions
+   and operational discipline prevent it; upgrade the hosting plan when
+   host-side push enforcement is required. Automated skill publication must use a route compatible with
    `general/policy/commits`'s single-writer rule rather than granting a second
    direct writer on the default branch; where the repository's skill publisher
    still requires pushing directly to the default branch, leave that part of
