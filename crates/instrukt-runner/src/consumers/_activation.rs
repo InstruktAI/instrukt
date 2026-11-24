@@ -65,34 +65,7 @@ pub(crate) fn subscriptions(home: &Home) -> Result<Subscriptions, ReactionError>
         .into_iter()
         .filter(|entry| !entry.subscriptions.is_empty() && entry.delivered_by.is_empty())
     {
-        let invalid = if entry.taxonomy != "procedure" {
-            Some("only a procedure may declare subscriptions".to_owned())
-        } else if entry
-            .role
-            .as_deref()
-            .is_none_or(|role| role.trim().is_empty())
-        {
-            Some("a subscribing procedure must declare a role".to_owned())
-        } else if entry.activation_trigger.is_some() {
-            Some("a subscribing procedure must not declare an activation trigger".to_owned())
-        } else if entry.subscription_home.is_none() {
-            Some("a subscribing procedure must declare its subscription home".to_owned())
-        } else if entry.scope == IndexScope::Local
-            && entry.subscription_home != Some(SubscriptionHome::Project)
-        {
-            Some("a project's own procedure must subscribe in its project".to_owned())
-        } else {
-            None
-        };
-        let patterns = match invalid {
-            Some(reason) => Err(reason),
-            None => entry
-                .subscriptions
-                .iter()
-                .map(|text| TypePattern::parse(text))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| error.to_string()),
-        };
+        let patterns = instrukt_core::subscription::subscriber_patterns(&entry);
         match patterns {
             Ok(patterns) => selected.push((entry, patterns)),
             Err(reason) => dropped.push(DroppedEntry {
