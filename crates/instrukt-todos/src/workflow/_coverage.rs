@@ -320,6 +320,16 @@ fn fold(
             return Ok(None);
         }
     }
+    // `git diff --name-only` lists a deleted path and a modified one
+    // alike: each path the fold removes must be absent from the commit.
+    for removed in &outcome.removed {
+        let path = relative(removed);
+        let present = git::run_output(root, ["cat-file", "-e", &format!("{commit}:{path}")])
+            .map_err(|e| e.to_string())?;
+        if present.status.success() {
+            return Ok(None);
+        }
+    }
     Ok(Some(format!("fold of {todo} reproduced from {parent}")))
 }
 
@@ -565,6 +575,98 @@ mod tests {
         assert_eq!(
             kinds(&coverage(repo.path(), &candidate, "main", &evidence)),
             [CoveringKind::DocumentationFold, CoveringKind::ApprovedHead]
+        );
+    }
+
+    /// A delivery whose pending documentation is a companion, on an
+    /// integration branch: the repository, the delivery head, the commit the
+    /// fold applies to and the fold's own tree written into a scratch copy.
+    fn companion_delivery() -> (Repo, CommitSha, tempfile::TempDir) {
+        let repo = Repo::new();
+        repo.commit(
+            "instrukt.yaml",
+            "schema_version: 4\nproject: demo\n",
+            "adopt",
+        );
+        repo.commit(
+            "docs/project/spec/thing.md",
+            "---\ndescription: A thing.\n---\n# Thing — Spec\n\n## What it is\n\nThe old thing.\n",
+            "docs: thing",
+        );
+        repo.commit(
+            "docs/project/spec/thing.shipped.md",
+            "---\ndescription: A thing.\n---\n# Thing — Spec\n\n## What it is\n\nThe new thing.\n",
+            "docs: pending thing",
+        );
+        repo.git(&["checkout", "-qb", "integrate"]);
+        let delivery = repo.commit("src.txt", "code", "feat: the thing");
+        let fold_root = tempfile::tempdir().unwrap();
+        let tree_dir = fold_root.path().join("tree");
+        git::check_out_tree(
+            repo.path(),
+            delivery.as_str(),
+            &fold_root.path().join("index"),
+            &tree_dir,
+        )
+        .unwrap();
+        git::run(&tree_dir, ["init", "-q"]).unwrap();
+        std::fs::copy(fold_root.path().join("index"), tree_dir.join(".git/index")).unwrap();
+        let outcome =
+            instrukt_core::docs::fold(&tree_dir, &TodoSlug::parse("shipped").unwrap()).unwrap();
+        assert_eq!(
+            outcome.removed,
+            [std::path::PathBuf::from(
+                "docs/project/spec/thing.shipped.md"
+            )]
+        );
+        (repo, delivery, fold_root)
+    }
+
+    fn shipped(delivery: &CommitSha) -> Evidence {
+        Evidence {
+            approved: BTreeMap::from([(delivery.to_string(), "build review".into())]),
+            deliveries: BTreeMap::from([("shipped".to_owned(), delivery.clone())]),
+            ..Evidence::default()
+        }
+    }
+
+    #[test]
+    fn a_fold_that_removes_its_companion_is_reproduced() {
+        let (repo, delivery, fold_root) = companion_delivery();
+        let folded =
+            std::fs::read_to_string(fold_root.path().join("tree/docs/project/spec/thing.md"))
+                .unwrap();
+        std::fs::write(repo.path().join("docs/project/spec/thing.md"), folded).unwrap();
+        repo.git(&["rm", "-q", "docs/project/spec/thing.shipped.md"]);
+        repo.git(&["commit", "-qam", "docs: fold shipped\n\nTodo: shipped"]);
+        assert_eq!(
+            kinds(&coverage(
+                repo.path(),
+                &repo.head(),
+                "main",
+                &shipped(&delivery)
+            )),
+            [CoveringKind::DocumentationFold, CoveringKind::ApprovedHead]
+        );
+    }
+
+    #[test]
+    fn a_fold_that_keeps_a_changed_companion_instead_of_removing_it_is_not_reproduced() {
+        let (repo, delivery, fold_root) = companion_delivery();
+        let folded =
+            std::fs::read_to_string(fold_root.path().join("tree/docs/project/spec/thing.md"))
+                .unwrap();
+        std::fs::write(repo.path().join("docs/project/spec/thing.md"), folded).unwrap();
+        std::fs::write(
+            repo.path().join("docs/project/spec/thing.shipped.md"),
+            "kept, not removed\n",
+        )
+        .unwrap();
+        repo.git(&["commit", "-qam", "docs: fold shipped\n\nTodo: shipped"]);
+        let fold = repo.head();
+        assert_eq!(
+            coverage(repo.path(), &fold, "main", &shipped(&delivery)),
+            Coverage::Uncovered(fold)
         );
     }
 
