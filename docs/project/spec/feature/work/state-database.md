@@ -1235,8 +1235,10 @@ And the reflected change and the concurrent local change both reach GitHub intac
   they put it, once git lists nothing where it was staged and nothing is
   there. Anything still at the place where it was staged, listed or not,
   keeps the row open and the refusal names that place; one moved back to its
-  path is read and checked there, and refuses the withdrawal naming its path
-  when it holds uncommitted changes.
+  path is read and checked there as one the withdrawal has not moved: still
+  the todo's, it refuses the withdrawal naming its path when it holds
+  uncommitted changes, and one no longer the todo's is left there and leaves
+  the withdrawal.
 - A worktree the withdrawal has not moved, removed by someone else, whose git
   directory git gave to a new checkout added elsewhere under the same name, is
   taken for one moved by someone else: the new checkout is left as it is and
