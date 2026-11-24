@@ -1,0 +1,325 @@
+//! The decisions that admit a head verdict (`github-apps`, Admission of
+//! review evidence), each a function of facts already read.
+
+use instrukt_core::ids::{CommitSha, SessionRef};
+use instrukt_runner::review::{Disposition, Request, Standing, TurnOpening};
+
+use super::_store::Held;
+
+/// Whose review the commit's requests make it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RequestCheck {
+    /// No request is live: the verdict is a one-off review's.
+    Unrequested,
+    /// The live request handed over to the reviewing session: it answers it.
+    Answers(u64),
+    /// A live request is another's, or no session holds it yet.
+    Refused {
+        number: u64,
+        standing: Standing,
+        holder: Option<SessionRef>,
+    },
+}
+
+/// The Request row: while a request is queued, selected or handed over, only
+/// the session it was handed over to records the commit's verdict.
+pub(super) fn request_check(requests: &[Request], reviewer: &SessionRef) -> RequestCheck {
+    let Some(live) = requests.iter().rev().find(|request| {
+        matches!(
+            request.standing,
+            Standing::Queued | Standing::Selected | Standing::HandedOver
+        )
+    }) else {
+        return RequestCheck::Unrequested;
+    };
+    if live.standing == Standing::HandedOver && live.session.as_ref() == Some(reviewer) {
+        return RequestCheck::Answers(live.number);
+    }
+    RequestCheck::Refused {
+        number: live.number,
+        standing: live.standing,
+        holder: (live.standing == Standing::HandedOver)
+            .then(|| live.session.clone())
+            .flatten(),
+    }
+}
+
+/// What the stores say of an offered verdict, before any runtime answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Offer {
+    /// No verdict of the commit is held: this is its first.
+    First,
+    /// A revision admitted from the stores alone.
+    Revision,
+    /// A revision decided by which input opened the session's turn.
+    AskTurn,
+    /// Settled by another session's verdict.
+    SettledByAnother(SessionRef),
+    /// The verdict that stood here was handed off.
+    HandedOff(String),
+}
+
+/// The Settlement row and the first of its tables.
+pub(super) fn settlement(held: &Held, reviewer: &SessionRef, requests: &[Request]) -> Offer {
+    let current = match held {
+        Held::Nothing => return Offer::First,
+        Held::HandedOff { export } => return Offer::HandedOff(export.clone()),
+        Held::Stands { current, .. } => current,
+    };
+    if &current.reviewer != reviewer {
+        return Offer::SettledByAnother(current.reviewer.clone());
+    }
+    let reached = requests.iter().any(|request| {
+        request.session.as_ref() == Some(reviewer)
+            && matches!(
+                request.standing,
+                Standing::HandedOver
+                    | Standing::Ended(Disposition::NoVerdict | Disposition::Unconfirmed)
+            )
+    });
+    if reached || requests.iter().any(Request::awaits_handover) {
+        Offer::AskTurn
+    } else {
+        Offer::Revision
+    }
+}
+
+/// What the runner's turn answer makes of an offered revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum TurnDecision {
+    Admit,
+    /// A request of this commit opened the turn.
+    OpenedByRequest(u64),
+    /// The session has no turn in progress.
+    NoTurn,
+    /// Ask again within the command's wait.
+    AskAgain(String),
+}
+
+/// The second table of the Settlement row.
+pub(super) fn turn_decision(answer: &TurnOpening) -> TurnDecision {
+    match answer {
+        TurnOpening::Other => TurnDecision::Admit,
+        TurnOpening::Request(number) => TurnDecision::OpenedByRequest(*number),
+        TurnOpening::NoTurn => TurnDecision::NoTurn,
+        TurnOpening::CannotSay(cause) => TurnDecision::AskAgain(cause.clone()),
+    }
+}
+
+/// The pinned base the Range row fixes: a revision keeps its predecessor's;
+/// otherwise the commit's request carries it (the live one, else the latest);
+/// a commit that has had no request is pinned at its merge base with the
+/// canonical branch.
+pub(super) fn pinned_base(
+    held: &Held,
+    requests: &[Request],
+    merge_base: Option<&CommitSha>,
+) -> Option<CommitSha> {
+    if let Held::Stands { current, .. } = held {
+        return Some(current.base.clone());
+    }
+    requests
+        .iter()
+        .rev()
+        .find(|request| {
+            matches!(
+                request.standing,
+                Standing::Queued | Standing::Selected | Standing::HandedOver
+            )
+        })
+        .or_else(|| requests.last())
+        .map(|request| request.base.clone())
+        .or_else(|| merge_base.cloned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Moment, Verdict, Version};
+    use super::*;
+    use crate::evidence::ContentDigest;
+
+    fn session(id: &str) -> SessionRef {
+        SessionRef::parse(&format!("t3:{id}")).unwrap()
+    }
+
+    fn sha(c: char) -> CommitSha {
+        CommitSha::parse(&c.to_string().repeat(40)).unwrap()
+    }
+
+    fn request(number: u64, standing: Standing, holder: Option<&str>) -> Request {
+        Request {
+            number,
+            base: sha('b'),
+            pull_request: Some(1),
+            logged_at: jiff::Timestamp::UNIX_EPOCH,
+            standing,
+            session: holder.map(session),
+        }
+    }
+
+    fn stands(reviewer: &str) -> Held {
+        Held::Stands {
+            settlement: 1,
+            current: Box::new(Version {
+                number: 1,
+                verdict: Verdict::Approve,
+                name: ContentDigest::of("report"),
+                report: "report".into(),
+                reviewer: session(reviewer),
+                entered_by: None,
+                base: sha('c'),
+                base_on_canonical: true,
+                request: None,
+                unattributed: Vec::new(),
+                moment: Moment::at(jiff::Timestamp::UNIX_EPOCH),
+                recorded_at: jiff::Timestamp::UNIX_EPOCH,
+                recorded_on: "here".into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_commit_without_a_live_request_is_a_one_off_review_whoever_reviews_it() {
+        let ended = [request(
+            1,
+            Standing::Ended(Disposition::NoVerdict),
+            Some("other"),
+        )];
+        assert_eq!(
+            request_check(&ended, &session("me")),
+            RequestCheck::Unrequested
+        );
+    }
+
+    #[test]
+    fn the_session_a_live_request_was_handed_over_to_answers_it() {
+        let live = [request(2, Standing::HandedOver, Some("me"))];
+        assert_eq!(
+            request_check(&live, &session("me")),
+            RequestCheck::Answers(2)
+        );
+    }
+
+    #[test]
+    fn a_queued_request_refuses_every_caller() {
+        let live = [request(1, Standing::Queued, None)];
+        assert!(matches!(
+            request_check(&live, &session("me")),
+            RequestCheck::Refused { number: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn a_commit_without_a_verdict_takes_its_first() {
+        assert_eq!(
+            settlement(&Held::Nothing, &session("me"), &[]),
+            Offer::First
+        );
+    }
+
+    #[test]
+    fn a_verdict_settled_by_another_session_refuses_the_offer() {
+        assert_eq!(
+            settlement(&stands("other"), &session("me"), &[]),
+            Offer::SettledByAnother(session("other"))
+        );
+    }
+
+    #[test]
+    fn a_handed_off_verdict_refuses_a_further_version() {
+        let held = Held::HandedOff {
+            export: "sha256:file".into(),
+        };
+        assert!(matches!(
+            settlement(&held, &session("me"), &[]),
+            Offer::HandedOff(_)
+        ));
+    }
+
+    #[test]
+    fn no_request_reached_the_settling_session_and_none_awaits_handover_admits_from_the_stores() {
+        let other = [request(
+            1,
+            Standing::Ended(Disposition::NoVerdict),
+            Some("other"),
+        )];
+        assert_eq!(
+            settlement(&stands("me"), &session("me"), &other),
+            Offer::Revision
+        );
+    }
+
+    #[test]
+    fn a_request_handed_over_to_the_settling_session_asks_the_turn() {
+        let reached = [request(
+            1,
+            Standing::Ended(Disposition::NoVerdict),
+            Some("me"),
+        )];
+        assert_eq!(
+            settlement(&stands("me"), &session("me"), &reached),
+            Offer::AskTurn
+        );
+    }
+
+    #[test]
+    fn a_selected_request_still_to_be_handed_over_asks_the_turn() {
+        let selected = [request(1, Standing::Selected, None)];
+        assert_eq!(
+            settlement(&stands("me"), &session("me"), &selected),
+            Offer::AskTurn
+        );
+    }
+
+    #[test]
+    fn a_turn_something_else_opened_admits_the_revision() {
+        assert_eq!(turn_decision(&TurnOpening::Other), TurnDecision::Admit);
+    }
+
+    #[test]
+    fn a_turn_a_request_of_the_commit_opened_refuses_the_revision() {
+        assert_eq!(
+            turn_decision(&TurnOpening::Request(1)),
+            TurnDecision::OpenedByRequest(1)
+        );
+    }
+
+    #[test]
+    fn a_session_without_a_turn_refuses_the_revision() {
+        assert_eq!(turn_decision(&TurnOpening::NoTurn), TurnDecision::NoTurn);
+    }
+
+    #[test]
+    fn a_runtime_that_cannot_say_is_asked_again() {
+        assert!(matches!(
+            turn_decision(&TurnOpening::CannotSay("down".into())),
+            TurnDecision::AskAgain(_)
+        ));
+    }
+
+    #[test]
+    fn a_revision_keeps_the_pinned_base_of_the_version_it_replaces() {
+        let requests = [request(1, Standing::HandedOver, Some("me"))];
+        assert_eq!(
+            pinned_base(&stands("me"), &requests, Some(&sha('d'))),
+            Some(sha('c'))
+        );
+    }
+
+    #[test]
+    fn a_requested_commit_is_pinned_where_its_request_was() {
+        let requests = [request(1, Standing::HandedOver, Some("me"))];
+        assert_eq!(
+            pinned_base(&Held::Nothing, &requests, Some(&sha('d'))),
+            Some(sha('b'))
+        );
+    }
+
+    #[test]
+    fn an_unrequested_commit_is_pinned_at_its_merge_base_with_the_canonical_branch() {
+        assert_eq!(
+            pinned_base(&Held::Nothing, &[], Some(&sha('d'))),
+            Some(sha('d'))
+        );
+    }
+}

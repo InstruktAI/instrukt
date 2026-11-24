@@ -79,6 +79,8 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "affected" | "path" | "query" | "explain" | "status",
         ] => CodeCheck,
         ["eval", "report"] => EvalRead,
+        ["review", "record" | "exempt"] => Stamp,
+        ["review", "show"] => ArtifactRead,
         [
             "mcp",
             "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress" | "sign-out",
@@ -203,6 +205,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["sessions", "list"]
             | ["history", "search" | "show"]
             | ["todo", "list" | "show"]
+            | ["review", "show"]
             | ["todo", "artifacts", "list" | "read" | "diff"]
             | ["specs", "coverage" | "trace"]
             | [
@@ -300,6 +303,8 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     });
     use Action::*;
     let owned = match action {
+        // Review evidence addresses the project the caller stands in.
+        ArtifactRead | Stamp if path.first() == Some(&"review") => in_project,
         ArtifactRead | ArtifactWrite | Stamp | AssignmentWrite | Integration
         | TodoOrchestration => own_todo,
         TodoRead | TodoWrite => {

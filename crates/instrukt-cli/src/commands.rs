@@ -13,6 +13,7 @@ pub mod events;
 pub mod history;
 pub mod mcp;
 pub mod repository;
+pub mod review;
 pub mod runner;
 pub mod specs;
 pub mod specs_trace;

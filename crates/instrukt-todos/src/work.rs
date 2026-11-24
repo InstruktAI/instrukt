@@ -113,4 +113,5 @@ impl Work {
     }
 }
 
+pub mod review;
 pub mod suppressions;

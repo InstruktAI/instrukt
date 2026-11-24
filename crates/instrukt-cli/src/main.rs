@@ -27,7 +27,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     agents, blueprint, bugs, company, config, discuss, docs, eval, events, history, mcp,
-    repository, runner, secrets, specs, sync, todo, webhooks,
+    repository, review, runner, secrets, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -78,6 +78,8 @@ enum Command {
     Todo(todo::TodoArgs),
     /// Evaluation reports from the work record.
     Eval(eval::EvalArgs),
+    /// Independent review evidence of exact commits: record, exempt, show.
+    Review(review::ReviewArgs),
     /// Discover producer-declared event types and their schemas.
     Events(events::EventsArgs),
     /// Extract, import and search retained conversations across computers.
@@ -287,6 +289,7 @@ fn run() -> ExitCode {
         Command::Blueprint(args) => blueprint::run(args, &mut ctx),
         Command::Todo(args) => todo::run(args, &mut ctx),
         Command::Eval(args) => eval::run(args, &mut ctx),
+        Command::Review(args) => review::run(args, &mut ctx),
         Command::Events(args) => events::run(args, &mut ctx),
         Command::History(args) => history::run(args, &mut ctx),
         Command::Webhooks(args) => webhooks::run(args, &mut ctx),
@@ -418,6 +421,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Blueprint(_) => "blueprint",
         Command::Todo(_) => "todo",
         Command::Eval(_) => "eval",
+        Command::Review(_) => "review",
         Command::Events(_) => "events",
         Command::History(_) => "history",
         Command::Webhooks(_) => "webhooks",

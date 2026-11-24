@@ -274,6 +274,21 @@ impl Home {
         self.state_dir().join("history.db")
     }
 
+    /// `~/.instrukt/state/review.lock` — the write-isolation unit of the
+    /// review evidence store, taken only by the commands that write it
+    /// (`project/instrukt/spec/feature/work/github-apps`, Review evidence
+    /// storage).
+    pub fn review_lock_file(&self) -> PathBuf {
+        self.state_dir().join("review.lock")
+    }
+
+    /// `~/.instrukt/state/review.db` — the review evidence store: head
+    /// verdicts with their versions, exemptions and imported derived
+    /// approvals.
+    pub fn review_db_file(&self) -> PathBuf {
+        self.state_dir().join("review.db")
+    }
+
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
     pub fn eval_fingerprint_dir(&self) -> PathBuf {
         self.root.join("state").join("eval-fingerprint")

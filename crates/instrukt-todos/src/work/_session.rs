@@ -29,7 +29,7 @@ use instrukt_runner::events::{Event, EventLog};
 use instrukt_runner::sessions::Sessions;
 
 /// The fixed recovery window of withdrawn work.
-const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
+pub(crate) const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
 
 /// Why reflection is pending.
 #[derive(Debug, Clone, PartialEq, Eq)]
