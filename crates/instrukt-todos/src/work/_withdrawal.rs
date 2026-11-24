@@ -956,12 +956,13 @@ pub(super) fn release(
             Err(err) => err,
         }
     };
-    // A stop the run can prove, while no effect was attempted or each one
-    // attempted is proven to have changed nothing, and the intent records
-    // nothing released and nothing under way, leaves the todo as it was.
-    let stopped = |intent: &WithdrawalIntent, acted: bool, stop: Stop| -> WorkError {
+    // A stop the run can prove, while the intent records nothing released
+    // and nothing under way, leaves the todo as it was. A stop is proven
+    // only before an effect or after one proven to have changed nothing;
+    // an effect that may have changed something stops unverified or is
+    // recorded in the intent.
+    let stopped = |intent: &WithdrawalIntent, stop: Stop| -> WorkError {
         if let Stop::Refused(_) = &stop
-            && !acted
             && intent.abandonable()
         {
             match store.abandon_withdrawal(&intent.todo) {
@@ -988,7 +989,6 @@ pub(super) fn release(
             return Err(kept(&intent, Stop::Unverified(cause)));
         }
     }
-    let mut acted = false;
     let mut at = 0;
     while at < intent.worktrees.len() {
         if intent.worktrees[at].released {
@@ -996,40 +996,27 @@ pub(super) fn release(
             continue;
         }
         match release_worktree(root, slug, &mut intent, at, &recorded) {
-            Ok(Advance::Released { removed }) => {
-                acted |= removed;
-                at += 1;
-            }
+            Ok(Advance::Released) => at += 1,
             Ok(Advance::Left) => {}
-            Err(Attempt { stop, removing }) => {
-                // A worktree moved, or a move or removal git returned a
-                // failure for, may be anywhere between its path and its
-                // removal: never an abandonment.
-                let stop = match *stop {
-                    Stop::Refused(cause) if removing => Stop::Unverified(cause),
-                    other => other,
-                };
-                return Err(stopped(&intent, acted || removing, stop));
-            }
+            Err(stop) => return Err(stopped(&intent, stop)),
         }
     }
     let workspace = match workspace_now(&intent.workspace_path) {
         Ok(now) => workspace_step(intent.workspace, now),
-        Err(stop) => return Err(stopped(&intent, acted, stop)),
+        Err(stop) => return Err(stopped(&intent, stop)),
     };
     match workspace {
         WorkspaceStep::Nothing => {}
-        WorkspaceStep::Holding(path) => return Err(stopped(&intent, acted, holding_files(&path))),
+        WorkspaceStep::Holding(path) => return Err(stopped(&intent, holding_files(&path))),
         WorkspaceStep::Gone | WorkspaceStep::Remove(_) => {
-            if let WorkspaceStep::Remove(path) = workspace {
-                acted = true;
-                if let Err(source) = instrukt_core::fsx::remove_dir(&path) {
-                    let cause = WorkError::refused(format!(
-                        "its workspace {} was not removed ({source})",
-                        path.display()
-                    ));
-                    return Err(kept(&intent, Stop::Unverified(cause)));
-                }
+            if let WorkspaceStep::Remove(path) = workspace
+                && let Err(source) = instrukt_core::fsx::remove_dir(&path)
+            {
+                let cause = WorkError::refused(format!(
+                    "its workspace {} was not removed ({source})",
+                    path.display()
+                ));
+                return Err(kept(&intent, Stop::Unverified(cause)));
             }
             intent.workspace = WorkspaceRelease::Released;
             if let Err(cause) = recorded(&intent) {
@@ -1038,9 +1025,9 @@ pub(super) fn release(
         }
     }
     let branch = match intent.branch.clone() {
-        Some(name) => match delete_branch(root, &name, &mut intent, &recorded, &mut acted) {
+        Some(name) => match delete_branch(root, &name, &mut intent, &recorded) {
             Ok(branch) => branch,
-            Err(stop) => return Err(stopped(&intent, acted, stop)),
+            Err(stop) => return Err(stopped(&intent, stop)),
         },
         None => None,
     };
@@ -1052,47 +1039,22 @@ pub(super) fn release(
 
 /// How the release of one worktree ended.
 enum Advance {
-    /// It is released and recorded; `removed` when this run removed it.
-    Released { removed: bool },
+    /// It is released and recorded.
+    Released,
     /// It is no longer the todo's: left where it is and out of the intent.
     Left,
 }
 
-/// Why the release of one worktree stopped, and whether its removal had
-/// been started.
-struct Attempt {
-    stop: Box<Stop>,
-    removing: bool,
-}
-
-impl Attempt {
-    /// A stop while the worktree at `path` may be at `staging`: never an
-    /// abandonment. The refusal names `staging` as where the intent records
-    /// it; `cause` says what git and the filesystem show of it.
-    fn moving(path: &Path, staging: &Path, stop: Stop) -> Self {
-        let stop = match stop {
-            Stop::Refused(cause) | Stop::Unverified(cause) => {
-                Stop::Unverified(WorkError::refused(format!(
-                    "the withdrawal records its worktree {} at {}, where it moves it to be released: {cause}",
-                    path.display(),
-                    staging.display()
-                )))
-            }
-        };
-        Self {
-            stop: Box::new(stop),
-            removing: true,
-        }
-    }
-}
-
-impl<E: Into<Stop>> From<E> for Attempt {
-    fn from(err: E) -> Self {
-        Self {
-            stop: Box::new(err.into()),
-            removing: false,
-        }
-    }
+/// A stop while the worktree at `path` may be at `staging`: never an
+/// abandonment. The refusal names `staging` as where the intent records
+/// it; `cause` says what git and the filesystem show of it.
+fn stop_while_moved(path: &Path, staging: &Path, stop: Stop) -> Stop {
+    let (Stop::Refused(cause) | Stop::Unverified(cause)) = stop;
+    Stop::Unverified(WorkError::refused(format!(
+        "the withdrawal records its worktree {} at {}, where it moves it to be released: {cause}",
+        path.display(),
+        staging.display()
+    )))
 }
 
 /// Where the withdrawal moves, moved or moves back a worktree at `stage`
@@ -1122,15 +1084,15 @@ fn release_worktree(
     intent: &mut WithdrawalIntent,
     at: usize,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-) -> Result<Advance, Attempt> {
+) -> Result<Advance, Stop> {
     let path = intent.worktrees[at].path.clone();
     let moved = away(&intent.worktrees[at].stage).map(Path::to_path_buf);
     let fail = |stop: Stop| match &moved {
-        Some(moved) => Attempt::moving(&path, moved, stop),
-        None => Attempt::from(stop),
+        Some(moved) => stop_while_moved(&path, moved, stop),
+        None => stop,
     };
     match located(root, intent, at, recorded).map_err(fail)? {
-        Located::Gone => released(intent, at, false, recorded),
+        Located::Gone => released(intent, at, recorded),
         Located::Elsewhere(found) => left(slug, intent, at, Leaving::MovedTo(found.path), recorded),
         Located::At(found) => {
             let stage = settled(&path, &found.path);
@@ -1170,7 +1132,7 @@ fn from_original(
     at: usize,
     now: Worktree,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-) -> Result<Advance, Attempt> {
+) -> Result<Advance, Stop> {
     let path = intent.worktrees[at].path.clone();
     note_branch(root, intent, at, recorded)?;
     let worktree = match worktree_step(
@@ -1189,8 +1151,7 @@ fn from_original(
             "{} is in the way of releasing the worktree {}; remove it, then withdraw again",
             staging.display(),
             path.display()
-        ))
-        .into());
+        )));
     }
     intent.worktrees[at].stage = WorktreeStage::MovingTo(staging.clone());
     recorded(intent)?;
@@ -1199,7 +1160,7 @@ fn from_original(
         staging.to_string_lossy().into_owned(),
     );
     let moved = git::run(root, ["worktree", "move", from.as_str(), to.as_str()]);
-    let moving = |stop: Stop| Attempt::moving(&path, &staging, stop);
+    let moving = |stop: Stop| stop_while_moved(&path, &staging, stop);
     // Read back where git has it, whatever the move returned: a directory
     // that appeared at its staging location meanwhile has git move it
     // inside.
@@ -1216,8 +1177,7 @@ fn from_original(
                 "git kept the worktree {} where it is ({})",
                 path.display(),
                 stderr.trim()
-            ))
-            .into())
+            )))
         }
         (Err(err), Ok(_)) => Err(moving(Stop::Unverified(WorkError::refused(format!(
             "git returned a failure moving it ({err}); where it is now is recognized when the withdrawal is run again"
@@ -1247,11 +1207,11 @@ fn from_staged(
     at: usize,
     staged: Worktree,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-) -> Result<Advance, Attempt> {
+) -> Result<Advance, Stop> {
     let path = intent.worktrees[at].path.clone();
     let staging = staged.path.clone();
-    let moving = |stop: Stop| Attempt::moving(&path, &staging, stop);
-    note_branch(root, intent, at, recorded).map_err(|a| moving(*a.stop))?;
+    let moving = |stop: Stop| stop_while_moved(&path, &staging, stop);
+    note_branch(root, intent, at, recorded).map_err(moving)?;
     let worktree = match worktree_step(
         &intent.worktrees[at],
         staged,
@@ -1268,7 +1228,7 @@ fn from_staged(
         Ok(()) => {}
         Err(Stop::Refused(cause)) => {
             restore(root, intent, at, &staging, recorded)?;
-            return Err(Stop::Refused(cause).into());
+            return Err(Stop::Refused(cause));
         }
         Err(stop) => return Err(moving(stop)),
     }
@@ -1284,7 +1244,7 @@ fn from_staged(
         ));
         return Err(moving(Stop::Unverified(cause)));
     }
-    released(intent, at, true, recorded)
+    released(intent, at, recorded)
 }
 
 /// What git and the filesystem show of a worktree at `staging` after its
@@ -1351,10 +1311,10 @@ fn restore(
     at: usize,
     staging: &Path,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-) -> Result<(), Attempt> {
+) -> Result<(), Stop> {
     let path = intent.worktrees[at].path.clone();
     let unmoved =
-        |why: String| Attempt::moving(&path, staging, Stop::Unverified(WorkError::refused(why)));
+        |why: String| stop_while_moved(&path, staging, Stop::Unverified(WorkError::refused(why)));
     let listed = worktrees(root).map_err(|err| {
         unmoved(format!(
             "it is no longer releasable and git's worktrees could not be read ({err}); it is not moved back"
@@ -1380,14 +1340,10 @@ fn restore(
         )));
     }
     let kept_at = |at: &Path, why: String| {
-        Attempt::moving(&path, at, Stop::Unverified(WorkError::refused(why)))
-    };
-    let keep = |cause: WorkError| Attempt {
-        stop: Box::new(Stop::Unverified(cause)),
-        removing: true,
+        stop_while_moved(&path, at, Stop::Unverified(WorkError::refused(why)))
     };
     intent.worktrees[at].stage = WorktreeStage::RestoringFrom(staging.to_path_buf());
-    recorded(intent).map_err(keep)?;
+    recorded(intent)?;
     let (from, to) = (
         staging.to_string_lossy().into_owned(),
         path.to_string_lossy().into_owned(),
@@ -1404,7 +1360,7 @@ fn restore(
         Ok(Located::At(found)) => {
             let found = found.path;
             intent.worktrees[at].stage = settled(&path, &found);
-            recorded(intent).map_err(keep)?;
+            recorded(intent)?;
             if found == path {
                 return Ok(());
             }
@@ -1446,21 +1402,16 @@ fn restore(
     }
 }
 
-/// Records the worktree `intent` records at `at` released, no longer moved;
-/// `removed` when this run removed it.
+/// Records the worktree `intent` records at `at` released, no longer moved.
 fn released(
     intent: &mut WithdrawalIntent,
     at: usize,
-    removed: bool,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-) -> Result<Advance, Attempt> {
+) -> Result<Advance, Stop> {
     intent.worktrees[at].released = true;
     intent.worktrees[at].stage = WorktreeStage::AtOriginal;
-    recorded(intent).map_err(|cause| Attempt {
-        stop: Box::new(Stop::Unverified(cause)),
-        removing: removed,
-    })?;
-    Ok(Advance::Released { removed })
+    recorded(intent)?;
+    Ok(Advance::Released)
 }
 
 /// Leaves the worktree `intent` records at `at`, no longer the todo's
@@ -1472,7 +1423,7 @@ fn left(
     at: usize,
     why: Leaving,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-) -> Result<Advance, Attempt> {
+) -> Result<Advance, Stop> {
     let moved_to = match &why {
         Leaving::MovedTo(found) => Some(found.display().to_string()),
         Leaving::CheckoutChanged | Leaving::BranchReplaced => None,
@@ -1498,7 +1449,7 @@ fn note_branch(
     intent: &mut WithdrawalIntent,
     at: usize,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-) -> Result<(), Attempt> {
+) -> Result<(), Stop> {
     if !intent.branch_deleted()
         && on_branch(&intent.worktrees[at], intent.branch.as_deref())
         && let Some(name) = intent.branch.clone()
@@ -1660,7 +1611,6 @@ fn delete_branch(
     name: &str,
     intent: &mut WithdrawalIntent,
     recorded: &dyn Fn(&WithdrawalIntent) -> Result<(), WorkError>,
-    acted: &mut bool,
 ) -> Result<Option<ReleasedBranch>, Stop> {
     let marker = marker(&intent.todo);
     if intent.branch_state == BranchRelease::PartialMarker {
@@ -1691,8 +1641,6 @@ fn delete_branch(
                     head = %head,
                     "deleting a withdrawn todo's work branch against its recorded commit"
                 );
-                let attempted_before = *acted;
-                *acted = true;
                 let transaction =
                     format!("create {marker} {head}\ndelete refs/heads/{name} {head}\n");
                 if let Err(err) =
@@ -1711,16 +1659,10 @@ fn delete_branch(
                     };
                     return Err(
                         match deletion_after_failure(&head, marked.as_ref(), tip.as_ref()) {
-                            DeletionAfterFailure::Ineffective => {
-                                *acted = attempted_before;
-                                Stop::Refused(not_deleted())
-                            }
-                            DeletionAfterFailure::MovedOn => {
-                                *acted = attempted_before;
-                                kept(format!(
-                                    "it moved on from {head} while it was released ({failure})"
-                                ))
-                            }
+                            DeletionAfterFailure::Ineffective => Stop::Refused(not_deleted()),
+                            DeletionAfterFailure::MovedOn => kept(format!(
+                                "it moved on from {head} while it was released ({failure})"
+                            )),
                             DeletionAfterFailure::MarkerOnly => {
                                 // Recording the marker partial is attempted
                                 // before it is taken back, so a marker a failed
