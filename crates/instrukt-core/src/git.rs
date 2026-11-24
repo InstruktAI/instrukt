@@ -170,6 +170,33 @@ where
     Ok(output.stdout)
 }
 
+/// Writes the committed tree of `commit` in the repository at `root` to the
+/// directory `tree` through the private index file `index`: the
+/// repository's own index, working trees and hooks are untouched.
+pub fn check_out_tree(
+    root: &Path,
+    commit: &str,
+    index: &Path,
+    tree: &Path,
+) -> Result<(), GitError> {
+    let prefix = format!("{}/", tree.display());
+    let tree_ish = format!("{commit}^{{tree}}");
+    run_on_index(root, Some(index), ["read-tree", tree_ish.as_str()], &[])?;
+    run_on_index(
+        root,
+        Some(index),
+        [
+            "checkout-index",
+            "--all",
+            "--force",
+            "--prefix",
+            prefix.as_str(),
+        ],
+        &[],
+    )?;
+    Ok(())
+}
+
 /// Runs `git <args>` in `dir` and returns its whole output whatever its
 /// exit status, for commands whose standard output says what failed
 /// (`push --porcelain`). Only a git that cannot be started is an error.
