@@ -219,7 +219,7 @@ Use this format:
 Severity — Policy: <citation>
 Location: <file:line>
 Violation: <one sentence stating what the target does that the cited rule forbids>
-Method: <how the finding was discovered or reproduced: real-use producer or unassisted ordinary-use steps, explicitly disclosing any synthetic setup, state tampering, environment modification, or timing control>
+Method: <how the finding was discovered or reproduced — e.g. direct source or document comparison, concrete deliberate-misuse path, or real-use producer / unassisted ordinary-use steps — explicitly disclosing any constructed inputs, synthetic setup, state tampering, environment modification, or timing control>
 Evidence: <each factual premise of the violation, with the observation that shows it>
 Closure: <the state of the target that resolves it, within the frozen scope, stated without prescribing implementation>
 ```
@@ -338,12 +338,16 @@ weakened finding.
 Review is bidirectionally adversarial. Findings and their dispositions persist
 with the reviewed work. A fresh reviewer derives independently before reading
 prior dispositions, then reconciles; a continuing reviewer works from its own
-ledger. When a producer or orchestrator records a grounded rejection —
-including that a finding omits `Method:` or that its disclosed `Method:` fails
-`sdlc/concept/defect-evidence` — the reviewer adjudicates the rejection on its
-merits and withdraws the finding unless real-use evidence or changed substrate
-overturns it. A disposition reopens only on changed substrate or material new
-evidence; re-filing an unrefuted rejected finding is reviewer incompleteness.
+ledger. When the producer records a grounded rejection — including that a
+finding omits `Method:` or that its disclosed `Method:` fails admissibility
+(including `sdlc/concept/defect-evidence` for defect claims) — the reviewer
+adjudicates the rejection on its merits and withdraws the finding unless
+admissible evidence for the claim or changed substrate overturns it. An
+orchestrator may audit findings and raise an evidence-backed challenge to guide
+remediation or continuation, while formal finding dispositions remain the
+producer's and verdicts remain the reviewer's. A disposition reopens only on
+changed substrate or material new evidence; re-filing an unrefuted rejected
+finding is reviewer incompleteness.
 
 ## Outputs
 

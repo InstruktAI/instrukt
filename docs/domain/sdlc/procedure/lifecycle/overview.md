@@ -66,8 +66,10 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      (`sdlc/procedure/lifecycle/work/review-build`) against the exact clean
      committed HEAD.
   4. If `changes_requested`, dispatch `builder`/`fixer`
-     (`sdlc/procedure/lifecycle/fix-review-findings`) to resolve findings and
-     re-run independent `build-reviewer` on the new exact HEAD.
+     (`sdlc/procedure/lifecycle/fix-review-findings`) to adjudicate and
+     remediate findings, then re-run independent `build-reviewer` on the
+     resulting exact HEAD (or the unchanged exact HEAD with updated disposition
+     evidence after an evidence-only rejection pass).
   5. Process any `deferrals` artifact via `deferrer`
      (`sdlc/procedure/lifecycle/work/deferrals`).
   6. Push the exact reviewed HEAD to `origin/<slug>/work`, stamp
@@ -156,16 +158,20 @@ so the runner does not re-dispatch a fresh turn on every tick.
    a time; completion stamps release it atomically.
 4. **Verify review substance and contest invalid findings before acting on verdicts.**
    Confirm the findings artifact exists, covers all applicable review lanes,
-   discloses each finding's `Method:` (`sdlc/procedure/lifecycle/review` §4),
-   and justifies clean approvals specifically for the target. Maintain a
-   bidirectional adversarial stance: distrust unverified claims and audit every
-   finding's `Method:` and premise against `sdlc/concept/defect-evidence` and
-   the frozen intent rather than forwarding reviewer demands as mandatory
-   closures. Route review remediation through
+   discloses each finding's `Method:` (finding format in
+   `sdlc/procedure/lifecycle/review`), and justifies clean approvals
+   specifically for the target. Maintain a bidirectional adversarial stance:
+   distrust unverified claims and audit every finding's `Method:` and premises
+   against its governing contract (`sdlc/concept/defect-evidence` for defect
+   claims) and the frozen intent rather than forwarding reviewer demands as
+   mandatory closures. Route review remediation through
    `sdlc/procedure/lifecycle/fix-review-findings` (contest-first) so valid
    findings are fixed, invalid or out-of-bounds findings are rejected on the
-   record, and repeatedly failing mechanisms are pruned rather than layered
-   (`sdlc/procedure/lifecycle/review` §6).
+   record by the producer, and repeated failures on the same mechanism or
+   invariant trigger re-derivation — cutting back to a simpler policy-compliant
+   boundary whenever that satisfies every approved criterion instead of
+   layering defensive machinery (prune-before-patch in
+   `sdlc/procedure/lifecycle/review`).
 5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, and all required approvals hold.
