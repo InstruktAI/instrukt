@@ -57,6 +57,12 @@ how the problem is solved in general. The outcome is the one thing a design and
 its existing equivalent share before either exists, so it is the point where the
 existing path can be found before a new mechanism is built.
 
+The same failure mode faces outward: when input validity is governed by an
+external specification — a data or markup grammar, a protocol, a format — a
+hand-built parser or reimplementation beside a conforming implementation drifts
+from that specification on every edge case, and a local constraint offered as
+its reason holds only when grounded at its source (`general/principle/grounding`).
+
 Placing the burden on the preparing agent rather than the input author keeps the
 human contract intact: the human owns what, the agent owns how, and how begins
 with what already exists.
@@ -70,13 +76,16 @@ with what already exists.
 
 - A change description or RFC without an anchoring declaration is incomplete and
   is returned before review proceeds.
-- A reviewer who finds an existing module whose contract covers the work, or an
-  existing path that already reaches the work's outcome, where the artifact
-  declares none, files a **Critical** finding: the work is an undeclared
-  parallel.
+- A reviewer who finds an existing module whose contract covers the work, an
+  existing path that already reaches the work's outcome, or an established
+  external solution (a conforming implementation of an externally defined
+  grammar, protocol, or format under `general/principle/grounding`) where the
+  artifact declares none, files a **Critical** finding: the work is an
+  undeclared parallel.
 - A declared divergence whose stated reason does not hold — same owner, same
-  invariant, same reason to change — is **Important**: the extension path was
-  available and not taken.
+  invariant, same reason to change, or an ungrounded constraint offered to
+  justify reinventing an established external solution — is **Important**: the
+  extension or adoption path was available and not taken.
 
 ## Exceptions
 
@@ -87,3 +96,4 @@ with what already exists.
 - [sdlc/principle/module-depth](../principle/module-depth.md) — the one-sentence contract an anchor names.
 - [sdlc/principle/architectural-defaults](../principle/architectural-defaults.md) — the ownership invariants that decide extend versus stand beside.
 - [general/policy/human-contract](../../../general/policy/human-contract.md) — why the input author carries no anchoring burden.
+- [general/principle/grounding](../../../general/principle/grounding.md) — solution truth and outward prior-art grounding.
