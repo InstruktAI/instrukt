@@ -58,7 +58,7 @@ persisting a phase or dictating a next step:
 - Recorded artifacts, digests, and drift status.
 - Preparation and build review verdicts, open findings, exact-SHA binding, and reviewer independence.
 - Verification dispositions with their exact-commit and report binding, and whether one is current for the worktree head.
-- Configured `approvals.prd` / `approvals.task` status and `integrate` review gate readiness.
+- Configured `approvals.prd` / `approvals.task` status and `integrate` handoff gate readiness: independent build-review approval and a current admitting verification disposition, both at the exact worktree head.
 - Prerequisite standings.
 <!-- /planned-change:verification-stamp-and-evidence-store -->
 
