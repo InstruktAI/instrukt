@@ -185,11 +185,13 @@ records its verdict. The reply does not wait for the review.
 
 When the runtime does not accept the start or the send within the command's
 wait, the ask is refused, naming the runtime and its door: the same command.
-It replays the ask with the identities the first one recorded. For a send it
-first asks the runtime whether that command identity was accepted, and sends
-again under the same identity only when it was not
-(`project/instrukt/policy/checks-and-guards`). Only that command replays an
-ask; nothing in the background delivers it.
+It replays the ask with the identities the first one recorded
+(`project/instrukt/policy/checks-and-guards`). A send is sent again under its
+command identity, which the runtime accepts once: a send it already accepted
+opens no second turn and is reported accepted
+(`project/instrukt/spec/feature/runner/t3-contract`). Nothing recognises a send
+by its text, because the same coordinates always render the same text. Only
+that command replays an ask; nothing in the background delivers it.
 
 ### Verdict
 
