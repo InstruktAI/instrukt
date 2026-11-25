@@ -17,6 +17,8 @@ event=$1
 
 # The macOS selection, one group per line:
 #   Darwin process-group cleanup (crates/instrukt-core/src/process.rs);
+#   the write fence's path resolution and admission
+#   (crates/instrukt-core/src/fsx/_fence.rs);
 #   launchd labels and scheduler units (instrukt-runner install and installation);
 #   launchd services and socket custody (cases/module-installation.rs);
 #   the launchd wake-up registration (cases/task-timing.rs);
@@ -26,6 +28,7 @@ event=$1
 # --no-tests=fail trips only when the whole expression selects nothing; a
 # renamed test inside one group is not caught by it.
 selection='package(instrukt-core) & test(darwin_group_tests)
+| package(instrukt-core) & test(/^fsx::_fence::/)
 | package(instrukt-runner) & test(install)
 | package(instrukt-cli) & test(/^module_installation::/)
 | package(instrukt-cli) & test(=task_timing::the_installed_wake_up_runs_due_work_under_its_missed_run_policy)

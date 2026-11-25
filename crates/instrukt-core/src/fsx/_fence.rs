@@ -16,6 +16,7 @@
 //! path that another process retargets between the check and the write is
 //! outside what it stops.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write as _};
 use std::os::unix::fs::MetadataExt as _;
@@ -129,8 +130,12 @@ fn open_record(roots: &[PathBuf], directory: &Path) -> Result<Record, RecordUnav
         source,
     };
     let place = resolved(directory);
-    let fold = place.folds_case();
-    if let Some(root) = roots.iter().find(|root| Root::at(root).holds(&place, fold)) {
+    let mut parents = Parents::default();
+    let mut target = Target::new(&place);
+    if let Some(root) = roots
+        .iter()
+        .find(|root| Root::at(root, &mut parents).holds(&mut target))
+    {
         return Err(unavailable(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("it lies under the fenced {}", root.display()),
@@ -195,25 +200,43 @@ pub fn refused() -> bool {
 ///
 /// Everything is resolved during this admission, as the file system stands
 /// when the write is checked; what one admission needs more than once — each
-/// fenced root, each target's case folding — is resolved once and shared
-/// within it. The targets are checked in turn against the roots in their
+/// fenced root, each parent directory, each target's case folding — is
+/// resolved once and shared within it. The targets are checked in turn against the roots in their
 /// setting's order, so the first that refuses names the refusal.
 pub fn admit(path: &Path) -> io::Result<()> {
     let Some(fence) = FENCE.get() else {
         return Ok(());
     };
     let absolute = absolute(path);
+    let mut parents = Parents::default();
     // The entry itself (what a rename or removal changes) and, through a
     // final symbolic link, what a write into it changes; the latter is
-    // checked only where it leads somewhere else.
-    let whole = resolved(&absolute);
-    let entry = entry(&absolute).unwrap_or_else(|| whole.clone());
-    let roots: Vec<Root<'_>> = fence.roots.iter().map(|root| Root::at(root)).collect();
+    // checked only where it leads somewhere else. Both share the parent's
+    // resolution with the roots.
+    let shared = split(&absolute).and_then(|(parent, name)| Some((parents.of(parent)?, name)));
+    let (entry, whole) = match shared {
+        Some((parent, name)) => (
+            Resolved {
+                path: parent.path.join(name),
+                existing: parent.existing,
+            },
+            beneath(parent, name).unwrap_or_else(|| resolved(&absolute)),
+        ),
+        None => {
+            let whole = resolved(&absolute);
+            (entry(&absolute).unwrap_or_else(|| whole.clone()), whole)
+        }
+    };
+    let roots: Vec<Root<'_>> = fence
+        .roots
+        .iter()
+        .map(|root| Root::at(root, &mut parents))
+        .collect();
     let second = (whole != entry).then_some(whole);
     for target in std::iter::once(entry).chain(second) {
-        let fold = target.folds_case();
-        if let Some(root) = roots.iter().find(|root| root.holds(&target, fold)) {
-            return Err(refuse(fence, path, &target.path, root.name));
+        let mut target = Target::new(&target);
+        if let Some(root) = roots.iter().find(|root| root.holds(&mut target)) {
+            return Err(refuse(fence, path, &target.resolved.path, root.name));
         }
     }
     Ok(())
@@ -274,28 +297,165 @@ pub fn is_refusal(error: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
-/// A fenced root as the file system stands at one check: where it leads,
-/// and the root entry itself, which differs from it for a fenced link.
+/// A fenced root as the file system stands at one check: the root entry
+/// itself, and where it leads, which differs from it for a fenced link.
 struct Root<'a> {
     name: &'a Path,
-    leads: Resolved,
     entry: Resolved,
+    leads: Leads,
+}
+
+/// Where a fenced root leads, as far as one check needs it resolved.
+enum Leads {
+    /// Resolved as [`resolved`] resolves the root: a root that does not
+    /// exist, a symbolic link, or one whose parent the walk decides.
+    Place(Resolved),
+    /// The root entry itself, which exists and is no link, under its
+    /// resolved parent; only the name the file system stores for it is left
+    /// unspelled. A target can lie under it only through that very directory
+    /// entry, which no other entry of the parent shares this identity with.
+    Unspelled(Identity),
 }
 
 impl<'a> Root<'a> {
-    /// Resolves `name` now, for the check that uses it and no later one.
-    fn at(name: &'a Path) -> Self {
+    /// Resolves `name` now, for the check that uses it and no later one,
+    /// sharing its parent's resolution with every root and target of the
+    /// same admission that has the same parent.
+    fn at(name: &'a Path, parents: &mut Parents) -> Self {
+        let absolute = absolute(name);
+        if let Some((parent, file)) = split(&absolute)
+            && let Some(parent) = parents.of(parent)
+        {
+            let entry = Resolved {
+                path: parent.path.join(file),
+                existing: parent.existing,
+            };
+            // The walk's next step from that parent: a name that is missing,
+            // or under a missing parent, is taken as written; a link is
+            // followed as the walk follows it.
+            let leads = if !parent.whole() {
+                Leads::Place(entry.clone())
+            } else {
+                match std::fs::symlink_metadata(&entry.path) {
+                    Err(_) => Leads::Place(entry.clone()),
+                    Ok(meta) if meta.file_type().is_symlink() => Leads::Place(resolved(name)),
+                    Ok(meta) => Leads::Unspelled(Identity::of(&meta)),
+                }
+            };
+            return Self { name, entry, leads };
+        }
         let leads = resolved(name);
-        let entry = entry(&absolute(name)).unwrap_or_else(|| leads.clone());
-        Self { name, leads, entry }
+        let entry = entry(&absolute).unwrap_or_else(|| leads.clone());
+        Self {
+            name,
+            entry,
+            leads: Leads::Place(leads),
+        }
     }
 
-    /// Whether `target`, whose volume folds case as `fold` says, lies under
-    /// this root: under where it leads, or, for a fenced link, under the
-    /// link itself.
-    fn holds(&self, target: &Resolved, fold: bool) -> bool {
-        under(target, &self.leads, fold) || under(target, &self.entry, fold)
+    /// Whether `target` lies under this root: under the root entry itself
+    /// or under where it leads. An unspelled root is spelled, during this
+    /// check, only for a target that may pass through its entry, so every
+    /// target that lies under it meets the full comparison.
+    fn holds(&self, target: &mut Target<'_>) -> bool {
+        if under(target.resolved, &self.entry, target.fold) {
+            return true;
+        }
+        match &self.leads {
+            Leads::Place(place) => under(target.resolved, place, target.fold),
+            Leads::Unspelled(identity) => {
+                self.may_pass_through(target, *identity)
+                    && under(target.resolved, &resolved(self.name), target.fold)
+            }
+        }
     }
+
+    /// Whether `target` may pass through this existing root entry: false
+    /// only where the target's components before it differ from its parent's,
+    /// or where the target exists to its depth as another directory entry,
+    /// whose stored name then differs from the root's.
+    fn may_pass_through(&self, target: &mut Target<'_>, identity: Identity) -> bool {
+        let depth = self.entry.path.components().count();
+        let Some(parent) = self.entry.path.parent() else {
+            return true;
+        };
+        if target.resolved.path.components().count() < depth
+            || !under_path(target.resolved, parent, depth, target.fold)
+        {
+            return false;
+        }
+        target.resolved.existing < depth
+            || target
+                .identity_at(depth)
+                .is_none_or(|found| found == identity)
+    }
+}
+
+/// A directory entry's identity: its device and inode, as `lstat` reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Identity {
+    dev: u64,
+    ino: u64,
+}
+
+impl Identity {
+    fn of(meta: &std::fs::Metadata) -> Self {
+        Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+        }
+    }
+}
+
+/// The parent directories one admission resolves, each once, by
+/// [`from_existing`]; `None` where the walk must decide.
+#[derive(Default)]
+struct Parents(HashMap<PathBuf, Option<Resolved>>);
+
+impl Parents {
+    fn of(&mut self, parent: &Path) -> Option<&Resolved> {
+        if !self.0.contains_key(parent) {
+            self.0.insert(parent.to_path_buf(), from_existing(parent));
+        }
+        self.0.get(parent).and_then(Option::as_ref)
+    }
+}
+
+/// One target of a check, with what the check looks up about it at most
+/// once: whether its volume folds case, and its existing prefixes' identities.
+struct Target<'t> {
+    resolved: &'t Resolved,
+    fold: bool,
+    identities: HashMap<usize, Option<Identity>>,
+}
+
+impl<'t> Target<'t> {
+    fn new(resolved: &'t Resolved) -> Self {
+        Self {
+            resolved,
+            fold: resolved.folds_case(),
+            identities: HashMap::new(),
+        }
+    }
+
+    /// The identity of the entry its first `depth` components name.
+    fn identity_at(&mut self, depth: usize) -> Option<Identity> {
+        let path = &self.resolved.path;
+        *self.identities.entry(depth).or_insert_with(|| {
+            let prefix: PathBuf = path.components().take(depth).collect();
+            std::fs::symlink_metadata(prefix)
+                .ok()
+                .map(|meta| Identity::of(&meta))
+        })
+    }
+}
+
+/// A plain absolute path's parent and final name; `None` for any other.
+fn split(absolute: &Path) -> Option<(&Path, &OsStr)> {
+    if !plain(absolute) {
+        return None;
+    }
+    Some((absolute.parent()?, absolute.file_name()?))
 }
 
 /// The entry an absolute path names, without following it when it is a
@@ -375,19 +535,21 @@ fn recase(name: &OsStr) -> Option<OsString> {
 /// the file system spells them; where either side does not exist yet, a
 /// volume that folds case compares the names without regard to case.
 pub(super) fn under(target: &Resolved, root: &Resolved, fold: bool) -> bool {
-    let target_parts: Vec<Component<'_>> = target.path.components().collect();
-    let root_parts: Vec<Component<'_>> = root.path.components().collect();
-    root_parts.len() <= target_parts.len()
-        && root_parts
-            .iter()
-            .zip(&target_parts)
-            .enumerate()
-            .all(|(at, (r, t))| {
-                r == t
-                    || (fold
-                        && (at >= target.existing || at >= root.existing)
-                        && same_ignoring_case(r.as_os_str(), t.as_os_str()))
-            })
+    under_path(target, &root.path, root.existing, fold)
+}
+
+/// [`under`] for a root given as its path and how many of its components
+/// exist.
+fn under_path(target: &Resolved, root: &Path, root_existing: usize, fold: bool) -> bool {
+    let mut target_parts = target.path.components();
+    root.components().enumerate().all(|(at, r)| {
+        target_parts.next().is_some_and(|t| {
+            r == t
+                || (fold
+                    && (at >= target.existing || at >= root_existing)
+                    && same_ignoring_case(r.as_os_str(), t.as_os_str()))
+        })
+    })
 }
 
 fn same_ignoring_case(a: &OsStr, b: &OsStr) -> bool {
@@ -601,6 +763,47 @@ mod tests {
                 existing: dir.components().count(),
             }
         );
+    }
+
+    /// Whether the fenced `root` holds `target`, as one check finds them.
+    fn holds(root: &Path, target: &Path) -> bool {
+        let target = resolved(target);
+        Root::at(root, &mut Parents::default()).holds(&mut Target::new(&target))
+    }
+
+    #[test]
+    fn a_fenced_link_holds_what_lies_where_it_leads() {
+        let scratch = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(scratch.path()).unwrap();
+        std::fs::create_dir(base.join("t")).unwrap();
+        std::fs::create_dir(base.join("u")).unwrap();
+        std::os::unix::fs::symlink(base.join("t"), base.join("l")).unwrap();
+        assert!(holds(&base.join("l"), &base.join("t/new")));
+        assert!(!holds(&base.join("l"), &base.join("u/new")));
+    }
+
+    #[test]
+    fn a_fenced_entry_holds_only_what_passes_through_that_entry() {
+        let scratch = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(scratch.path()).unwrap();
+        std::fs::write(base.join("b"), "").unwrap();
+        std::fs::hard_link(base.join("b"), base.join("a")).unwrap();
+        std::fs::create_dir(base.join("d")).unwrap();
+        std::fs::create_dir(base.join("e")).unwrap();
+        assert!(holds(&base.join("b"), &base.join("b")));
+        assert!(!holds(&base.join("b"), &base.join("a")));
+        assert!(holds(&base.join("d"), &base.join("d/new")));
+        assert!(!holds(&base.join("d"), &base.join("e/new")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_fenced_root_spelled_otherwise_than_stored_holds_what_lies_inside_it() {
+        let scratch = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(scratch.path()).unwrap();
+        let composed = base.join("caf\u{e9}");
+        std::fs::create_dir(&composed).unwrap();
+        assert!(holds(&base.join("cafe\u{301}"), &composed.join("new")));
     }
 
     #[test]
