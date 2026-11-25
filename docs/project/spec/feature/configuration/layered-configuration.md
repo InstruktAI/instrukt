@@ -105,12 +105,13 @@ finding.
 revision check and whole-document validation
 (`project/instrukt/spec/feature/configuration/configuration-editing`).
 `config validate` reports it without changing anything. A project layer that
-arrives with it through a commit is not admitted for worktree reclamation on
-that computer; the project's other capabilities are unaffected
+arrives with it through a commit is not admitted for reclaiming declared
+output on that computer; the project's other capabilities are unaffected
 (`project/instrukt/policy/checks-and-guards`). Installation inspection reports
 the withheld reclamation
-(`project/instrukt/spec/feature/runner/module-installation`), and reclamation
-removes nothing without an admitted declaration
+(`project/instrukt/spec/feature/runner/module-installation`), and no declared
+output is removed without an admitted declaration; the release of a delivered
+todo's worktree does not depend on it
 (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 <!-- /planned:runner-owned-workspace-cleanup -->
 

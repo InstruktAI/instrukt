@@ -246,7 +246,7 @@ fn a_declared_regenerable_location_outside_the_checkout_is_reported_and_withhold
     insta::assert_snapshot!(stdout(&env, &validated), @"[TMP]/demo/instrukt.yaml: regenerable: the entry `../elsewhere` steps to a parent directory; an entry names a location inside the checkout");
     insta::assert_json_snapshot!(reclamation_findings(), @r#"
     [
-      "[TMP]/demo/instrukt.yaml `regenerable`: the entry `../elsewhere` steps to a parent directory; an entry names a location inside the checkout; worktree reclamation is withheld for this project on this computer"
+      "[TMP]/demo/instrukt.yaml `regenerable`: the entry `../elsewhere` steps to a parent directory; an entry names a location inside the checkout; reclaiming the declared output of this project's idle worktrees is withheld on this computer, and a delivered todo's worktree is still released"
     ]
     "#);
 }

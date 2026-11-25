@@ -400,7 +400,7 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
             report.finding(
                 label,
                 format!(
-                    "{}; worktree reclamation is withheld for this project on this computer",
+                    "{}; reclaiming the declared output of this project's idle worktrees is withheld on this computer, and a delivered todo's worktree is still released",
                     finding.message
                 ),
             );

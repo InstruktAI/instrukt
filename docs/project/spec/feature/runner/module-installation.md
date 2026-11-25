@@ -101,8 +101,9 @@ its secret values or its provider permissions
 
 <!-- planned:runner-owned-workspace-cleanup -->
 They report in the same way a project whose declaration of regenerable output
-is not admitted: worktree reclamation is withheld for that project on this
-computer (`project/instrukt/spec/feature/configuration/layered-configuration`).
+is not admitted: reclaiming that output from its idle worktrees is withheld
+for that project on this computer, while a delivered todo's worktree is still
+released (`project/instrukt/spec/feature/configuration/layered-configuration`).
 <!-- /planned:runner-owned-workspace-cleanup -->
 
 ### Graphify installation
