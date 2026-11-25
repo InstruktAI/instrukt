@@ -342,3 +342,11 @@ owning design snippet or decision record is declared.
   (`project/instrukt/spec/feature/work/todos`), which work performs when the
   runner asks. Work owns the attempt lock and the release; the runner owns
   when it asks.
+<!-- planned:archive-finished-threads -->
+- **Work → runner (thread retention)** — customer-supplier. Work answers which
+  native sessions its session bindings hold for a project's todos that have not
+  reached a terminal outcome, delivered or withdrawn, whatever the state of
+  each role attempt; the runner keeps those threads
+  (`project/instrukt/spec/feature/runner/thread-retention`). Work owns which
+  outcomes are terminal; the runner owns what it keeps.
+<!-- /planned:archive-finished-threads -->

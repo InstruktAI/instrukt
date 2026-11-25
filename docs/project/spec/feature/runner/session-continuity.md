@@ -38,6 +38,10 @@ creates no replacement session identity.
 | `conversation_source` | Optional durable changes since an opaque source position, through two reads, each returning the next position; also supplies a native change-notification subscription. The turn read returns, for the conversations a caller names, normalized conversations/messages and native records, native ids and parent links, roles, available timestamps and typed runtime-neutral completed turns (native reference, ordered contributions, author kind/identity and text). The text read returns, over every conversation the source holds, each changed conversation by its native id with its own record, where the source holds one, and its finished messages, except a runtime's report of a background command it ran (for T3, a message whose `notification.source.kind` is `command` or `background_command`; a subagent's, a delegated task's or any other notification is returned), with native ids, roles, available timestamps, text and the native record without that text and without the members of its attached context that hold what the runtime captured; for T3, a `terminal` context record's `text`, a `review-comment` record's `diff`, an `element` record's `htmlPreview` and the `htmlPreview` of each of a `preview-annotation` record's `elements`, while every other member of those records, a review comment's `text` and an annotation's `comment` among them, stays. Each read validates, fingerprints and reads only the source tables it returns from; a read's fingerprint covers every row of those tables, the finished rows it leaves out of what it returns included, so a position of one read holds fingerprints the other does not share. | The independent conversation-link relay (turn read) and history extraction (text read), without owning their storage, indexing or relay behavior. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
+<!-- planned:archive-finished-threads -->
+| `finished_threads` | Registered project checkout; returns each thread the runtime lists for that project and reports finished, with its finishing time, its latest activity (a person reading or writing to it included), whether it is quiet (not running, queued, snoozed or waiting on a person's input or approval) and whether a person pinned it. A time the runtime does not report is unknown, never substituted. Optional capability: thread archiving. | Thread retention (`project/instrukt/spec/feature/runner/thread-retention`). |
+| `archive` | Native session id and the finished-thread observation it was chosen from; archives the thread only while that observation still holds: present, finished, quiet, not pinned and without activity after the observed latest activity. Returns archived, already archived (which is done) or changed (not archived). Optional capability: thread archiving. | Thread retention. |
+<!-- /planned:archive-finished-threads -->
 
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended native launch adapter supports existing-worktree attachment. Agent workflow requirements use typed native capability metadata;
@@ -167,6 +171,9 @@ adapter verb templates.
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
+<!-- planned:archive-finished-threads -->
+| Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
+<!-- /planned:archive-finished-threads -->
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
@@ -190,6 +197,13 @@ requirements from action prose. Missing steering is a supported degradation,
 not an enablement failure. Conversation links read T3's durable projection database without a session token and use
 native input delivery, not on a CLI link command. Notification remains
 unavailable on T3's published CLI; instrukt does not rebuild it.
+
+<!-- planned:archive-finished-threads -->
+A retention window set while the selected runtime lacks thread archiving is
+refused and reported the same way, naming the runtime and the missing
+capability. A finding at the window withholds only thread retention
+(`project/instrukt/spec/feature/configuration/layered-configuration`).
+<!-- /planned:archive-finished-threads -->
 
 ### Start keys and locks
 
@@ -462,6 +476,10 @@ instruction prose is a separate configuration surface.
 | Operational listing | `t3 thread list --project <checkout> --json` supplies native identity, title, state and activity for people. Known semantic keys come only from retained bindings. Listing never selects an actor. |
 | Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+<!-- planned:archive-finished-threads -->
+| Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet excludes the `running` and `needs-input` statuses below, `snoozed`, `blockedOnThreadWait` and a non-empty `pendingBackgroundTasks`. Pinned is `pinned`. Latest activity is the latest of `updatedAt`, `settledAt` and `lastVisitedAt`: T3 records a person opening a thread only in `lastVisitedAt`, leaves `updatedAt` unchanged, and exposes it only in its projection database, which the adapter reads read-only as for the linked-thread source. A listed thread without a projection row is not reported finished. |
+| Archive | Re-reads the thread's projection row (archive and deletion marks, settlement, pin, snooze, `updatedAt`, `lastVisitedAt`) with its active runs and pending requests, and reports changed unless the observation still holds. Then authenticated `orchestration.dispatchCommand` with `thread.archive` and a fresh command ID, through the same session-token path as sends. T3's refusal that the thread is already archived is reported as already archived. |
+<!-- /planned:archive-finished-threads -->
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
@@ -837,6 +855,12 @@ And the orchestrator has received its opening brief once
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
   a visible gap; the operational session surface is independent of extracted
   history under `project/instrukt/spec/feature/runner/history`.
+<!-- planned:archive-finished-threads -->
+- T3's `thread.archive` takes no condition on the thread's state. A message a
+  person sends between the adapter's re-read and its archive command still
+  reaches an archived thread, whose queued run T3 then cancels; the person
+  unarchives the thread to continue.
+<!-- /planned:archive-finished-threads -->
 
 - T3 reports a turn that ended on a plain message, with no pending request, as
   `input-ready`; nothing in the thread tells a session that paused there from

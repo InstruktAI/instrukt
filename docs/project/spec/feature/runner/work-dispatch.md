@@ -41,7 +41,13 @@ module withholds only that module's own work: with a `modules.todos` finding (fo
 example, a project whose code is not on GitHub) the project gets no todo dispatch.
 Whether the runner considers the project, and its canonical checkout
 synchronization (the `main` fast-forward that feeds the blueprint), still follow
-its switches; its other work is unaffected. No part
+its switches; its other work is unaffected.
+<!-- planned:archive-finished-threads -->
+A machine-layer finding at `runner.archive_finished_after` likewise withholds
+only thread retention: the layer is admitted with the window off
+(`project/instrukt/spec/feature/configuration/layered-configuration`).
+<!-- /planned:archive-finished-threads -->
+No part
 of the runner reads those files on its own
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters; nothing running handles a missing one).
