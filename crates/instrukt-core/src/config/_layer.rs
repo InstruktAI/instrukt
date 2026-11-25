@@ -250,19 +250,6 @@ impl LayerInspection {
             })
     }
 }
-pub(super) fn current_view(
-    home: &Home,
-    layer: &Layer,
-    path: &Path,
-    mut value: Value,
-) -> Result<Value, ConfigError> {
-    if let Version::Older(from) = version(&value) {
-        super::_migrate::selection(home, layer, &mut value, false)?;
-        value = migrate_value(value, from, layer.kind());
-    }
-    require_usable(layer, path, &value)?;
-    Ok(value)
-}
 /// Why the machine layer cannot be loaded at all: it is unreadable, not
 /// YAML, not a mapping, or its `schema_version` is missing or newer than this
 /// instrukt knows. `None` when it is absent or loads; what validation finds
@@ -572,7 +559,7 @@ pub fn bring_current(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
     };
     match version(&doc.value) {
         Version::Current => Ok(()),
-        Version::Older(_) => current_view(home, layer, &path, doc.value).map(drop),
+        Version::Older(_) => inspected(home, layer, &path, doc.value).map(drop),
         Version::Newer(found) => Err(ConfigError::NewerSchema {
             path,
             found,
