@@ -383,9 +383,12 @@ pub(super) fn read(tree: &Committed, path: &Path) -> Option<Result<Selection, Ve
                 description: Some(description),
                 ..
             } => listed.push((document.clone(), description)),
+            // A block holding only `null` names no description, as no block
+            // does.
             CompanyFrontmatter::Read {
                 description: None, ..
-            } => {
+            }
+            | CompanyFrontmatter::Null => {
                 walk.found(RenderFindingKind::CompanyListedWithoutDescription {
                     document: document.clone(),
                 });

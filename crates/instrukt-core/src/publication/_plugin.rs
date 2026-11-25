@@ -447,6 +447,12 @@ impl Carried {
                         reason: reason.clone(),
                     });
                 }
+                CompanyFrontmatter::Null => {
+                    findings.push(PluginFinding::FrontmatterInvalid {
+                        document: path.clone(),
+                        reason: "it is empty or `null`, not a YAML mapping".to_owned(),
+                    });
+                }
                 CompanyFrontmatter::Read {
                     visibility: declared,
                     ..
@@ -905,6 +911,23 @@ mod tests {
             findings(&tree).as_slice(),
             [PluginFinding::FrontmatterInvalid { document, .. }] if document == "docs/company.md"
         ));
+    }
+
+    #[test]
+    fn an_empty_or_null_frontmatter_block_on_a_carried_document_is_a_finding() {
+        for block in ["---\n---\n", "---\nnull\n---\n"] {
+            let tree = Committed::of(&[
+                (INDEX, "expanded: [company.md]\n"),
+                ("docs/company.md", &format!("{block}\n# Company\n")),
+            ]);
+            assert!(
+                matches!(
+                    findings(&tree).as_slice(),
+                    [PluginFinding::FrontmatterInvalid { document, .. }] if document == "docs/company.md"
+                ),
+                "{block:?}"
+            );
+        }
     }
 
     #[test]

@@ -57,6 +57,9 @@ pub(crate) enum CompanyFrontmatter {
         description: Option<String>,
         visibility: Option<serde_yaml_ng::Value>,
     },
+    /// A frontmatter block that holds no YAML document, or only `null`: no
+    /// mapping, and so no description and no visibility.
+    Null,
     /// A frontmatter block that is not a YAML mapping, with why.
     Invalid(String),
 }
@@ -77,10 +80,7 @@ impl CompanyFrontmatter {
                     visibility,
                 }
             }
-            Ok(serde_yaml_ng::Value::Null) => Self::Read {
-                description: None,
-                visibility: None,
-            },
+            Ok(serde_yaml_ng::Value::Null) => Self::Null,
             Ok(_) => Self::Invalid("it is not a YAML mapping".to_owned()),
             Err(err) => Self::Invalid(format!("it is not YAML: {err}")),
         }
@@ -540,7 +540,7 @@ mod tests {
     fn a_documents_visibility_is_read_as_written_whatever_its_type() {
         let visibility = |text: &str| match company_document(text).frontmatter {
             CompanyFrontmatter::Read { visibility, .. } => visibility,
-            CompanyFrontmatter::Invalid(reason) => panic!("invalid frontmatter: {reason}"),
+            other => panic!("unread frontmatter: {other:?}"),
         };
         assert_eq!(
             visibility("---\nvisibility: public\n---\n\n# A\n"),
@@ -557,6 +557,7 @@ mod tests {
     fn description(text: &str) -> Option<String> {
         match company_document(text).frontmatter {
             CompanyFrontmatter::Read { description, .. } => description,
+            CompanyFrontmatter::Null => None,
             CompanyFrontmatter::Invalid(reason) => panic!("invalid frontmatter: {reason}"),
         }
     }
