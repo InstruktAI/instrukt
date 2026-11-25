@@ -838,35 +838,52 @@ mod tests {
         );
     }
 
+    /// Follow-up checks precede binding the head: no repository is needed
+    /// for them to refuse.
+    const NOWHERE: &str = "/nonexistent";
+
     #[test]
-    fn follow_up_presence_and_identity_are_refused_before_anything_is_bound() {
-        let record = record();
-        let nowhere = Path::new("/nonexistent");
-        let this = todo_ref('a', "ship-it");
-        let other = todo_ref('c', "verify-live-later");
-        let resolved = |disposition, named, found| {
-            resolve_disposition(&record, nowhere, disposition, named, found)
-        };
-        assert!(refused(resolved(
+    fn a_hotfix_deferral_without_a_follow_up_is_refused() {
+        assert!(refused(resolve_disposition(
+            &record(),
+            Path::new(NOWHERE),
             VerificationDisposition::HotfixDeferred,
             None,
-            None
+            None,
         )));
-        assert!(refused(resolved(
+    }
+
+    #[test]
+    fn a_follow_up_on_a_disposition_other_than_a_hotfix_deferral_is_refused() {
+        let other = todo_ref('c', "verify-live-later");
+        assert!(refused(resolve_disposition(
+            &record(),
+            Path::new(NOWHERE),
             VerificationDisposition::Tier0Skip,
             Some("verify-live-later"),
-            Some(&other)
+            Some(&other),
         )));
-        assert!(refused(resolved(
+    }
+
+    #[test]
+    fn a_follow_up_naming_no_open_todo_is_refused() {
+        assert!(refused(resolve_disposition(
+            &record(),
+            Path::new(NOWHERE),
             VerificationDisposition::HotfixDeferred,
             Some("gone-todo"),
-            None
+            None,
         )));
-        let mut same = record.clone();
-        same.id = this.id.clone();
+    }
+
+    #[test]
+    fn a_follow_up_naming_this_todo_is_refused() {
+        let this = todo_ref('a', "ship-it");
+        let mut record = record();
+        record.id = this.id.clone();
         assert!(refused(resolve_disposition(
-            &same,
-            nowhere,
+            &record,
+            Path::new(NOWHERE),
             VerificationDisposition::HotfixDeferred,
             Some("ship-it"),
             Some(&this),
