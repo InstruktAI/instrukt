@@ -70,7 +70,7 @@ at a staging location is deleted by a later one.
 ### Delivered worktrees
 
 After a todo is delivered, the runner has work release that todo's worktree
-and work branch on each computer that holds them
+and work branch on each computer that holds any of them
 (`project/instrukt/spec/feature/work/todos`): the cleanup
 `project/instrukt/spec/feature/workflow/delivery-cycle` requires of a
 delivered todo. The worktree's regenerable output leaves with it. A worktree
@@ -89,16 +89,20 @@ argument nor the caller's working directory selects what it acts on. It
 removes exactly what the runner removes from that worktree, and it answers
 once that output is deleted, naming each path it removed and each declared
 path it left with the reason, or stating that the project declares nothing.
+Where the project's declaration is not admitted on that computer, it refuses
+with that configuration finding and removes nothing.
 
-It is a write to that worktree. Its action and object are those of a commit
-in the assigned authoring workspace
-(`project/instrukt/spec/feature/configuration/roles-and-capabilities`), and
-the worktree's own state admits one writer: the session whose open role
-attempt holds the worktree, or, while no role attempt is open there, the
-session holding the todo's execution claim. Any other caller the assignment
-binds is refused, and the refusal names who holds the worktree: the open
-attempt, or the claim's session. A caller no todo assignment binds to a
-worktree is refused, and the refusal names the assignment that would bind it.
+It is a write to that worktree. Its action is the one a commit in the
+assigned authoring workspace takes, and its object is the workspace the
+caller's assignment records
+(`project/instrukt/spec/feature/configuration/roles-and-capabilities`). The
+worktree's own state decides who may write. A caller the assignment binds is
+refused only while another session holds the worktree: a role attempt open
+there that is not the caller's, or, with no role attempt open, an execution
+claim the caller does not hold. The refusal names that holder. While nothing
+holds the worktree, any caller the assignment binds reclaims it. A caller no
+todo assignment binds to a worktree is refused, and the refusal names the
+assignment that would bind it.
 
 ### Mechanical work
 
@@ -158,9 +162,11 @@ Then the request is refused and names the assignment that would bind it
   reclaimed and not removed.
 - A declared path names one location. A project whose regenerable output sits
   at many locations declares each of them.
-- A computer acts on what its own work record holds; it learns that a todo
-  was delivered elsewhere through work's refresh
-  (`project/instrukt/spec/feature/work/github-record`).
+- A computer acts on what its own work record holds. It learns of a delivery
+  made elsewhere because work reads GitHub for the todos whose worktree or
+  work branch the computer holds
+  (`project/instrukt/spec/feature/work/github-record`); until it has, the
+  worktree keeps the standing the record last gave it.
 
 ## See Also
 

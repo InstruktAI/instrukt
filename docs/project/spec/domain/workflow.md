@@ -84,6 +84,11 @@ kind of evidence and its reason is never read
 (`general/principle/intelligence-boundaries`): a candidate sent back for a
 failing check stays under way until preparation evidence is written. A
 structural holder has no lifecycle and no standing.
+
+For a delivered todo workflow also answers what it still owes: its worktree,
+its local work branch and its work branch on origin, each for as long as git
+lists it for the project on that computer. It finds them from what git lists
+there, never by reading through delivered work.
 <!-- /planned:runner-owned-workspace-cleanup -->
 
 ## Event subjects and origins

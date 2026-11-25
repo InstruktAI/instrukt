@@ -172,6 +172,17 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 
+<!-- planned:runner-owned-workspace-cleanup -->
+The runner also owns worktree reclamation: that and when the disk todo
+worktrees hold is reclaimed on a computer, the removal of a project's declared
+regenerable output, and the reporting of what stays owed. Its published
+contract there is `instrukt repo reclaim`. It does not own a todo worktree's
+standing, owned by workflow; the attempt lock and the release of a delivered
+todo's worktree and work branch, owned by work; or the declaration of
+regenerable output and its validation, owned by configuration
+(`project/instrukt/spec/feature/runner/worktree-reclamation`).
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
 Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.

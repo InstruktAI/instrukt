@@ -99,6 +99,12 @@ withhold a responsibility on this computer: event responses switched on without
 its secret values or its provider permissions
 (`project/instrukt/spec/feature/configuration/company-homes`).
 
+<!-- planned:runner-owned-workspace-cleanup -->
+They report in the same way a project whose declaration of regenerable output
+is not admitted: worktree reclamation is withheld for that project on this
+computer (`project/instrukt/spec/feature/configuration/layered-configuration`).
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 ### Graphify installation
 
 For blueprint demand, use the lifecycle and pin owned by

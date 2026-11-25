@@ -528,7 +528,7 @@ sequenceDiagram
 
 A review is one judgment of one commit from the pinned base its request
 carries, which the runner selects
-(`project/instrukt/spec/feature/runner/pull-request-review`, Review requests).
+(`project/instrukt/spec/feature/runner/pull-request-review`).
 A verdict covers the canonical branch only when that base lies on it, and
 earns candidate coverage only then. Requests are counted per commit: one is live
 at a time, and a request delivery selected for handover keeps the commit until

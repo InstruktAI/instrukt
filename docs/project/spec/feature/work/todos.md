@@ -90,7 +90,7 @@ The questions, each with the sources it names:
 | --- | --- |
 | Bug or change | Which current contract does the behaviour break? A failure shows that something happened, not that it is wrong. Where no current contract states otherwise it is not a bug: file a change with `instrukt todo create <slug> <content> --kind change --approved` only when the behaviour is wanted, and otherwise file nothing. A report whose premise is that nothing followed up first establishes whether the sanctioned recovery was attempted. |
 | Validity | Have the intended outcome and every contract it rests on converged, with no pending authoring, review or commit still expected to change them? A todo enters the lifecycle valid (`sdlc/policy/todo-creation-discipline`); work that has not converged is not filed through this door yet. |
-| Fix in context or file | Is the repair settled work the filer already holds authority for: the approach known, the edit bounded, needing neither a plan, a builder nor a handoff, with authority from an explicit execution request, a bounded brief, or a completed human conversation in which every active participant agreed the outcome and the human released the edit (`sdlc/policy/todo-creation-discipline`, Execute settled code work in context)? Then it is made in context and nothing is filed. Human presence alone supplies no authority, and a change whose correctness is contested belongs in the lifecycle. A company's agent never holds repair authority: for it the answer is always to report. |
+| Fix in context or file | Is the repair settled work the filer already holds authority for: the approach known, the edit bounded, needing neither a plan, a builder nor a handoff, with authority from an explicit execution request, a bounded brief, or a completed human conversation in which every active participant agreed the outcome and the human released the edit (`sdlc/policy/todo-creation-discipline`)? Then it is made in context and nothing is filed. Human presence alone supplies no authority, and a change whose correctness is contested belongs in the lifecycle. A company's agent never holds repair authority: for it the answer is always to report. |
 | Evidence | An occurrence or a dangerous path in hand (`sdlc/concept/defect-evidence`). The report puts the observations and their addresses first, and keeps any causal account apart from them: each transition with its evidence, the alternatives checked and what remains unknown, or that the cause is not established. |
 | Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt bugs suppressions --project <slug>` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
 | Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
@@ -291,18 +291,19 @@ for audit and for identifying the todo's recorded orchestrator sessions
 (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
 Work releases a delivered todo's worktree and work branch when the runner
-asks, on each computer that holds them
+asks, on each computer that holds any of them
 (`project/instrukt/spec/feature/runner/worktree-reclamation`). The worktree
 goes first, through the release a withdrawal uses
 (`project/instrukt/spec/feature/work/state-database`): read and checked at
 its path, moved aside with git's own worktree move, read and checked again,
 then removed with git's own worktree remove or moved back. A worktree that
 holds uncommitted changes, is locked, has a role attempt open or is no longer
-the todo's stays where it is. The work branch on origin goes next and the
-local work branch last, each only where it holds no commit beyond the head
-the todo handed to integration; a branch that holds more stays. While the
-local work branch is there the cleanup is owed, and an origin branch already
-gone counts as removed. This release records no intent and writes no marker:
+the todo's stays where it is. The work branch is then deleted locally and on
+origin, each only where it holds no commit beyond the head the todo handed to
+integration; a branch that holds more stays. The cleanup is owed while the
+worktree, the local work branch or the origin work branch remains, whichever
+of them the computer holds, and an origin branch already gone counts as
+removed. This release records no intent and writes no marker:
 git shows of the worktree and of each branch whether it is still there, and a
 release that stopped part-way is continued by the next from what git shows
 (`sdlc/policy/state-storage`).

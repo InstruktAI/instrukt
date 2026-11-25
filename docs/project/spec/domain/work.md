@@ -77,8 +77,7 @@ runner owns dispatch, and the configured runtime owns conversations.
   reviewer. A head verdict covers the whole range from it, and covers the
   canonical branch only when its pinned base lies on that branch. A review
   request carries the pinned base the runner selected
-  (`project/instrukt/spec/feature/runner/pull-request-review`, Review
-  requests).
+  (`project/instrukt/spec/feature/runner/pull-request-review`).
 
 **Exemption**
 : The recorded decision that a commit owes no independent review under

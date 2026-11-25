@@ -47,6 +47,12 @@ On each runner tick, each computer polls, with conditional requests:
   listing copies;
 - the prerequisites its own claimed work is blocked on.
 
+<!-- planned:runner-owned-workspace-cleanup -->
+- the todos whose worktree or work branch it holds, so that a delivery made
+  on another computer reaches the computer that still holds them
+  (`project/instrukt/spec/feature/runner/worktree-reclamation`).
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 A list read follows pages up to its page limit (`crates/instrukt-todos/src/work/_github.rs`);
 reaching it with a full last page is stated in the command's report as an
 incomplete read, never passed off as the whole list.
