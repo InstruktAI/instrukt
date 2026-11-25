@@ -44,7 +44,7 @@ to the integration gate.
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
 
-Apply the artifact-discovery rule from `preparation-artifact-quality`
+Apply the artifact-discovery rule from `sdlc/policy/preparation-artifact-quality`
 (`instrukt todo artifacts list {slug}`) before assuming only the numbered
 artifacts below exist — read `log` when present, and any other present
 artifact relevant to executing this plan.
@@ -70,13 +70,13 @@ with the governing contract.
 4. When prepared artifacts or feature-spec deltas are present, work from the
    scenario delta they identify — added, changed, and removed. (On the fast track
    with no feature-spec delta, bind or update tests covering the `input` intent
-   under `policy/testing`.) For each spec scenario:
+   under `sdlc/policy/testing`.) For each spec scenario:
    - **Added scenario** — bind it: write the test at the spec-mirrored path
      and confirm it fails, implement the required behavior, then confirm it passes.
    - **Changed scenario** — update the bound test to the new contract
      and confirm it fails, update the code, then confirm it passes.
    - **Removed scenario** — delete its bound test, then the code it exclusively covered.
-     You bind the scenarios the spec defines; you never invent what to test. See `policy/testing`.
+     You bind the scenarios the spec defines; you never invent what to test. See `sdlc/policy/testing`.
 5. Execute tasks sequentially:
    - Before editing, resolve the active todo worktree root with `git rev-parse --show-toplevel`. Resolve every edit target from that root and its repository-relative path. Use repository-relative paths where the edit tool supports them; when it requires an absolute path, construct it from the freshly resolved root. Do not reuse absolute paths from the project checkout or another worktree. After each edit, verify the expected target with `git -C <worktree-root> diff -- <relative-path>` before continuing.
    - Follow the build mode determined in step 4.
@@ -145,7 +145,7 @@ with the governing contract.
    preparatory deepening as its own commit before the behavioral change it
    prepares; never fold it into a behavioral commit. Structural debt the plan
    did not assess is handled the same way at build time
-   (`definition-of-done` §2): when the deepening is behavior-preserving,
+   (`sdlc/policy/definition-of-done`): when the deepening is behavior-preserving,
    owner-local, contract-preserving, one coherent commit, and within the cost
    cap, do it as its own commit and record it in the build report; otherwise
    record it in `deferrals` as a ratchet candidate, naming the condition that

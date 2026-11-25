@@ -405,5 +405,5 @@ Verdict: APPROVE | REQUEST CHANGES
 
 If the target, applicable contract, or required evidence cannot be resolved,
 report the blocker to the invoking procedure and stop. Do not narrow the review
-to what happens to be available. A producing conversation that cannot be read
-is not such a blocker; Step 0 governs it.
+to what happens to be available. Step 0 decides whether a producing
+conversation that cannot be read is such a blocker.

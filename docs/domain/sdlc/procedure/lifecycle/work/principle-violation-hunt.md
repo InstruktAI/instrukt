@@ -13,7 +13,7 @@ Hunt for code that violates documented design principles. Surface structural iss
 ## Preconditions
 
 - Changed files are available (diff or worktree).
-- The reviewer has loaded `design-fundamentals` for anti-pattern vocabulary.
+- The reviewer has loaded `sdlc/principle/design-fundamentals` for anti-pattern vocabulary.
 
 ## Steps
 
@@ -146,7 +146,8 @@ wrong layer.
 A structural invariant policed by a lint, guardrail, regex, or meta-test that
 a type or schema could make **unrepresentable**. The fix is to move the
 invariant up to the strongest layer that can express it (see the
-enforcement-placement order in `definition-of-done-lanes` → test-coverage lane),
+enforcement-placement order of the test coverage lane in
+`sdlc/policy/definition-of-done-lanes`),
 not to add the scanner.
 
 Patterns to detect:
