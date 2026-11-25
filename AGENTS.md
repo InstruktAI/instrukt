@@ -150,6 +150,11 @@ Before a design gives a piece of state a home, it states:
   agent waits on.
 - A domain whose write pattern or lifecycle differs from its neighbours' gets
   its own write-isolation unit. Having fewer files is no reason to share one.
+- For committed repository state, every concurrent stream that changes files and
+  merges — including parallel branches — is a writer. Independent items updated
+  on separate branches keep separate write-isolation units rather than sharing
+  one monolithic digest or aggregate file whose updates collide on merge, unless
+  an evidenced trade-off justifies the shared unit.
 
 #### Scope and lifecycle are declared
 
@@ -176,7 +181,9 @@ Before a design gives a piece of state a home, it states:
 - Writers sharing a write-isolation unit wait on each other. A background
   writer sharing one with a waiting path adds its write durations to every
   waiter's latency
-  (`sdlc/policy/code-quality-practices`, Concurrency).
+  (`sdlc/policy/code-quality-practices`, Concurrency). For committed repository
+  state, parallel branches editing independent items collide on every merge when
+  those items share one digest or aggregate file.
 - State left behind when its responsibility moves is rebuilt from scratch by
   the new owner, at the cost the rebuild states.
 - A store that mixes current state with history is either pruned by age, losing
@@ -184,10 +191,11 @@ Before a design gives a piece of state a home, it states:
 
 ### Scope
 
-All durable state a delivery introduces, relocates or changes, in every
-project. An existing store is brought in line when a delivery's change path
-touches it (`sdlc/policy/definition-of-done`, structural ratchet) or by work
-whose purpose that is.
+All durable state a delivery introduces, relocates or changes — runtime stores
+and committed repository state files alike — in every project. An existing store
+is brought in line when a delivery's change path touches it
+(`sdlc/policy/definition-of-done`, structural ratchet) or by work whose purpose
+that is.
 
 ### Enforcement
 

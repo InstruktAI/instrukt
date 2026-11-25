@@ -7,9 +7,9 @@ visibility: 'public'
 
 ## What
 
-These terms carry the evidence for a claimed defect. Every contract that judges
-a defect claim — filing it, triaging it, building around it, or raising it in
-review — uses them.
+These terms carry the evidence for a claimed defect in existing or implemented
+system behavior. Every contract that judges such a defect claim — filing it,
+triaging it, building around it, or raising it in code review — uses them.
 
 - **Occurrence** — the defect happened in real use. A person or system acting
   for its own purpose produced the triggering input and state, and an address a

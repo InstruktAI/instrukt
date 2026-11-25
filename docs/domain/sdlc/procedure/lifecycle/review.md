@@ -209,10 +209,13 @@ A finding is valid only when all four hold:
    violates — a principle is a citeable clause;
 2. it establishes, from current authoritative sources and the reviewed
    artifact, that the cited clause applies here — including that no more
-   specific contract on the same subject decides the case otherwise, such as a
-   project policy that settles what a general spec leaves open
+   specific governing contract on the same subject decides the case otherwise,
+   such as a project policy that settles what a general spec leaves open
    (`general/policy/conflict-resolution`), or, for a bug, the bug-fix lane's
-   scope authority (`sdlc/policy/definition-of-done-lanes`);
+   scope authority (`sdlc/policy/definition-of-done-lanes`). A work artifact
+   (`input`, `prd`, `architecture`, `implementation-plan`) stands outside that
+   precedence ladder and never shields a target from a standing principle,
+   ownership, storage, or grounding violation (`general/policy/conflict-resolution`);
 3. it explains the contradiction causally — what the target introduces and why
    that conflicts with the clause. Every factual premise the contradiction rests
    on is shown by an observation of current substrate — the file, the command
@@ -220,13 +223,25 @@ A finding is valid only when all four hold:
    target leaves as it was, or restores to its previously delivered behavior,
    is not introduced by the target;
 4. it states the closure condition as a state of the target within the frozen
-   scope, without prescribing implementation. A closure that waits on a
-   decision or an authorization names no state of the target.
+   scope, without prescribing implementation. When an upstream artifact itself
+   prescribes a standing-principle violation or an unreachable premise, state
+   the closure as the compliant state of the reviewed target; routing any
+   upstream revision belongs to the orchestrator (`general/procedure/orchestration`).
+   A closure that waits on a decision or an authorization names no state of the
+   target.
 
-A finding that claims a defect establishes, from current sources, that a
-reachable condition triggers it (`sdlc/concept/defect-evidence`); any defect
-claim failing `sdlc/concept/defect-evidence` is an investigation lead, never a
-finding.
+A finding that claims a defect in existing or implemented behavior establishes,
+from current sources, that a reachable condition triggers it
+(`sdlc/concept/defect-evidence`); any such claim failing
+`sdlc/concept/defect-evidence` is an investigation lead, never a finding. For
+preparation targets — where no implementation has executed yet — a design-defect
+finding may instead rest on a substrate-grounded derivation with every step
+shown from current files, measurements, or contracts: arithmetic against
+measured substrate, a concrete sequence of ordinary operations including
+concurrent branches (`sdlc/policy/state-storage`), or a direct contradiction
+with the target's own success criteria. Speculative risks without shown
+substrate steps remain investigation leads, and the convergence and
+re-derivation bounds below apply equally to derivation findings.
 
 An observation missing any one of these is an **investigation lead**, not a
 finding: it cannot block, never enters remediation, requires no producer

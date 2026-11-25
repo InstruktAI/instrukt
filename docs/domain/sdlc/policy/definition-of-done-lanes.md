@@ -278,13 +278,13 @@ is Important. Bypassing the data layer is Critical. A backward-compatibility bra
 
 #### Principle violation hunt
 
-**Authority:** the documented design principles (`principle-violation-hunt`).
+**Authority:** the documented design principles (`sdlc/procedure/lifecycle/work/principle-violation-hunt`).
 
-Systematic check of changed code against documented design principles, with fallback detection as the most prominent target. Its brief carries the complete target and the intent basis, and the hunt reads beyond them wherever a principle leads.
+Systematic check of the reviewed target — changed code, preparation artifacts, or pending contracts — against documented design principles, with fallback detection and feasibility grounding as primary targets. Its brief carries the complete target and the intent basis, and the hunt reads beyond them wherever a principle leads.
 
-Use the `principle-violation-hunt` procedure for detailed hunt criteria.
+Use the `sdlc/procedure/lifecycle/work/principle-violation-hunt` procedure for detailed hunt criteria.
 
-**Severity baseline:** Unjustified fallback paths are **Critical**. A fallback is justified only when UX literally dies without it, documented in a code comment at the fallback site.
+**Severity baseline:** Unjustified fallback paths are **Critical**, including when named in an upstream work artifact (`general/policy/conflict-resolution`). A fallback is justified only when UX literally dies without it, documented in a code comment at the fallback site (or, in preparation, justified by that exact standard in the design).
 
 #### Intelligence-boundaries
 
