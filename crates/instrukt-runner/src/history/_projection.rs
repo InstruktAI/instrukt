@@ -45,10 +45,11 @@ pub(super) fn apply(
     let loaded = conversations.len();
     db.write(|tx| -> Result<usize, HistoryError> {
         for changed in conversations {
-            let texts = changed
-                .messages
+            let (conversation, record, messages) = changed.into_parts();
+            let texts = messages
                 .into_iter()
                 .map(|m| {
+                    let m = m.into_parts();
                     Ok(Text {
                         native_id: m.id,
                         role: serde_json::to_value(m.role)?.as_str().map(str::to_owned),
@@ -56,21 +57,21 @@ pub(super) fn apply(
                         created_at: m.created_at.map(stored_time),
                         updated_at: m.updated_at.map(stored_time),
                         place: Some(MESSAGES.into()),
-                        record: Some(m.native),
+                        record: Some(m.record),
                     })
                 })
                 .collect::<Result<Vec<_>, HistoryError>>()?;
-            match changed.record {
+            match record {
                 Some(record) => _store::write_conversation(
                     tx,
                     source,
                     None,
                     &Conversation {
-                        aliases: vec![changed.conversation_id.clone()],
-                        native_id: changed.conversation_id,
+                        aliases: vec![conversation.to_string()],
+                        native_id: conversation.to_string(),
                         computer: computer.clone(),
                         title: record.title,
-                        parent: record.parent_id,
+                        parent: record.parent.map(|parent| parent.to_string()),
                         limitations: vec![
                             "Only content retained by the source runtime is available.".into(),
                         ],
@@ -78,7 +79,7 @@ pub(super) fn apply(
                         texts,
                     },
                 )?,
-                None => _store::write_texts_of(tx, source, &changed.conversation_id, &texts)?,
+                None => _store::write_texts_of(tx, source, conversation.as_str(), &texts)?,
             }
         }
         tx.execute("INSERT INTO history_source_positions VALUES(?1,?2) ON CONFLICT(source) DO UPDATE SET position_json=excluded.position_json",params![source,serde_json::to_string(position)?])?;

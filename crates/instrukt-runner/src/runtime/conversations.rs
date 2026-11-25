@@ -102,31 +102,103 @@ pub struct TextChanges {
 }
 
 /// One changed conversation of a text read, named by its native id whether
-/// or not the read found the conversation's own record.
+/// or not the read found the conversation's own record; it always carries
+/// that record or at least one finished message.
 pub struct ConversationText {
-    pub conversation_id: String,
-    /// The conversation's own record, where the source holds one.
-    pub record: Option<ConversationOwnRecord>,
-    /// The conversation's finished messages.
-    pub messages: Vec<MessageText>,
+    conversation: SessionId,
+    record: Option<ConversationOwnRecord>,
+    messages: Vec<MessageText>,
+}
+
+impl ConversationText {
+    /// What a text read returns of `conversation`: its own record, where the
+    /// source holds one, and its finished messages; `None` when it holds
+    /// neither, which is no change to return.
+    pub fn new(
+        conversation: SessionId,
+        record: Option<ConversationOwnRecord>,
+        messages: Vec<MessageText>,
+    ) -> Option<Self> {
+        (record.is_some() || !messages.is_empty()).then_some(Self {
+            conversation,
+            record,
+            messages,
+        })
+    }
+
+    pub fn conversation(&self) -> &SessionId {
+        &self.conversation
+    }
+
+    /// The conversation's id, own record and finished messages.
+    pub fn into_parts(self) -> (SessionId, Option<ConversationOwnRecord>, Vec<MessageText>) {
+        (self.conversation, self.record, self.messages)
+    }
 }
 
 /// What a source holds of a conversation itself.
 pub struct ConversationOwnRecord {
     pub title: String,
-    pub parent_id: Option<String>,
+    pub parent: Option<SessionId>,
     pub native: Value,
 }
 
 /// One finished message: its text, and the source's record of it without
-/// that text.
+/// that text, so the text is held once.
 pub struct MessageText {
+    id: String,
+    role: Role,
+    text: String,
+    created_at: Option<jiff::Timestamp>,
+    updated_at: Option<jiff::Timestamp>,
+    record: Value,
+}
+
+/// The parts of a [`MessageText`], taken apart by its consumer.
+pub struct MessageParts {
     pub id: String,
     pub role: Role,
     pub text: String,
     pub created_at: Option<jiff::Timestamp>,
     pub updated_at: Option<jiff::Timestamp>,
-    pub native: Value,
+    /// The source's record of the message, without its text.
+    pub record: Value,
+}
+
+impl MessageText {
+    /// The message the source records as `record`, an object whose `text`
+    /// is a string: that text is taken out of the record. `None` for any
+    /// other record.
+    pub fn from_record(
+        id: String,
+        role: Role,
+        created_at: Option<jiff::Timestamp>,
+        updated_at: Option<jiff::Timestamp>,
+        mut record: Value,
+    ) -> Option<Self> {
+        let Some(Value::String(text)) = record.as_object_mut()?.shift_remove("text") else {
+            return None;
+        };
+        Some(Self {
+            id,
+            role,
+            text,
+            created_at,
+            updated_at,
+            record,
+        })
+    }
+
+    pub fn into_parts(self) -> MessageParts {
+        MessageParts {
+            id: self.id,
+            role: self.role,
+            text: self.text,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            record: self.record,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

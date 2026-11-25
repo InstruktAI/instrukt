@@ -825,11 +825,8 @@ fn text(
     thread: &str,
     finished: Vec<(Projection, Row)>,
 ) -> Result<Option<ConversationText>, SourceError> {
-    let mut found = ConversationText {
-        conversation_id: thread.to_owned(),
-        record: None,
-        messages: Vec::new(),
-    };
+    let mut record = None;
+    let mut messages = Vec::new();
     for (projection, row) in finished {
         match projection {
             Projection::Threads => {
@@ -837,11 +834,13 @@ fn text(
                     .as_str()
                     .ok_or_else(|| source_error("invalid thread shape"))?
                     .to_owned();
-                found.record = Some(ConversationOwnRecord {
+                let parent = row.payload["lineage"]["parentThreadId"]
+                    .as_str()
+                    .map(conversation)
+                    .transpose()?;
+                record = Some(ConversationOwnRecord {
                     title,
-                    parent_id: row.payload["lineage"]["parentThreadId"]
-                        .as_str()
-                        .map(str::to_owned),
+                    parent,
                     native: row.payload,
                 });
             }
@@ -850,19 +849,16 @@ fn text(
                 let created_at = payload_time(&row.payload, "createdAt")?
                     .or(payload_time(&row.payload, "requestedAt")?);
                 let role = serde_json::from_value::<Role>(row.payload["role"].clone())?;
-                let mut native = row.payload;
-                let text = match native.as_object_mut().and_then(|n| n.shift_remove("text")) {
-                    Some(Value::String(text)) => text,
-                    _ => return Err(source_error("invalid message shape")),
-                };
-                found.messages.push(MessageText {
-                    id: row.native_id,
-                    role,
-                    text,
-                    created_at,
-                    updated_at,
-                    native,
-                });
+                messages.push(
+                    MessageText::from_record(
+                        row.native_id,
+                        role,
+                        created_at,
+                        updated_at,
+                        row.payload,
+                    )
+                    .ok_or_else(|| source_error("invalid message shape"))?,
+                );
             }
             Projection::Runs | Projection::Subagents | Projection::TurnItems => {
                 return Err(source_error(
@@ -871,7 +867,11 @@ fn text(
             }
         }
     }
-    Ok((found.record.is_some() || !found.messages.is_empty()).then_some(found))
+    Ok(ConversationText::new(
+        conversation(thread)?,
+        record,
+        messages,
+    ))
 }
 
 /// What one settled conversation contributes to a batch; its fingerprint is
