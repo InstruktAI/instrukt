@@ -143,6 +143,20 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             self.db.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,'child',?2,'completed',?3,?4)",params![id,kind,at,item.to_string()]).unwrap();
         }
     }
+    /// T3 changes a row of each of its run, subagent and turn-item tables
+    /// for `child`, and nothing else of it.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn rewrite_runs_subagents_and_turn_items(&self) {
+        let at = "2026-11-08T11:00:00.000Z";
+        self.db.execute("UPDATE orchestration_v2_projection_runs SET completed_at=?1,payload_json=json_set(payload_json,'$.completedAt',?1) WHERE thread_id='child'",[at]).unwrap();
+        self.db.execute("UPDATE orchestration_v2_projection_subagents SET updated_at=?1,payload_json=json_set(payload_json,'$.result','Rewrittentoken result.','$.updatedAt',?1) WHERE thread_id='child'",[at]).unwrap();
+        self.db.execute("UPDATE orchestration_v2_projection_turn_items SET updated_at=?1,payload_json=json_set(payload_json,'$.output','Rewrittentoken output.','$.updatedAt',?1) WHERE thread_id='child' AND type='command_execution'",[at]).unwrap();
+    }
+    /// T3's run, subagent and turn-item tables are gone.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn remove_runs_subagents_and_turn_items(&self) {
+        self.db.execute_batch("DROP TABLE orchestration_v2_projection_runs; DROP TABLE orchestration_v2_projection_subagents; DROP TABLE orchestration_v2_projection_turn_items;").unwrap();
+    }
     #[allow(
         dead_code,
         reason = "completed turns are used by the shared relay scenarios"

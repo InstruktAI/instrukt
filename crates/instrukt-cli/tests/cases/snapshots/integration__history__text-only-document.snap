@@ -1,0 +1,64 @@
+---
+source: crates/instrukt-cli/tests/cases/history.rs
+assertion_line: 763
+expression: document
+---
+{
+  "messages": [
+    {
+      "id": "message-child",
+      "threadId": "child",
+      "role": "assistant",
+      "createdAt": "2026-11-08T10:00:00.000Z",
+      "updatedAt": "2026-11-08T10:00:00.000Z",
+      "streaming": false,
+      "runId": null,
+      "nodeId": null,
+      "attachments": [],
+      "createdBy": "agent",
+      "creationSource": "provider",
+      "text": "Keep the jewels searchable."
+    },
+    {
+      "id": "native-assistant-message",
+      "threadId": "child",
+      "runId": "native-run",
+      "nodeId": null,
+      "role": "assistant",
+      "createdAt": "2026-11-08T10:00:00.000Z",
+      "updatedAt": "2026-11-08T10:00:00.000Z",
+      "streaming": false,
+      "attachments": [],
+      "createdBy": "agent",
+      "creationSource": "provider",
+      "text": "Assistantitemtoken text."
+    },
+    {
+      "id": "native-user-message",
+      "threadId": "child",
+      "runId": "native-run",
+      "nodeId": null,
+      "role": "user",
+      "createdAt": "2026-11-08T10:00:00.000Z",
+      "updatedAt": "2026-11-08T10:00:00.000Z",
+      "streaming": false,
+      "attachments": [],
+      "createdBy": "user",
+      "creationSource": "web",
+      "text": "Useritemtoken text."
+    }
+  ],
+  "thread": {
+    "id": "child",
+    "projectId": "project",
+    "title": "Local jewels",
+    "lineage": {
+      "parentThreadId": "parent",
+      "relationshipToParent": "subagent"
+    },
+    "createdAt": "2026-11-08T10:00:00.000Z",
+    "updatedAt": "2026-11-08T10:00:00.000Z",
+    "archivedAt": null,
+    "deletedAt": null
+  }
+}
