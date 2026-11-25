@@ -18,8 +18,9 @@
 #   python    the Python lint and type check among the commit checks
 #   validate  the Linux build job builds instrukt and validates (rust or docs):
 #             with validate true and rust false it validates and no test runs;
-#             with both false neither the Linux build job nor the shard job
-#             starts, while the required platform jobs still start and report
+#             with both false neither the Linux build job, the archive job
+#             nor the shard job starts, while the required platform jobs
+#             still start and report
 # and precommit_skip, the commit checks (.pre-commit-config.yaml hook ids) this
 # classification leaves out: the Rust ones unless rust, shellcheck unless
 # shell, the Python ones unless python; empty when every check runs. The

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs one partition of the Linux test suite from the archive the build job
-# made (scripts/ci-ubuntu-build.sh), for CI's shard matrix
+# Runs one partition of the Linux test suite from the archive the workflow's
+# archive job made (`cargo nextest archive`), for CI's shard matrix
 # (project/instrukt/policy/testing). The index is zero-based and the total is
 # the number of shard jobs, both as the matrix reports them, so the partitions
 # run cannot disagree with the number of jobs. The archive is extracted into
