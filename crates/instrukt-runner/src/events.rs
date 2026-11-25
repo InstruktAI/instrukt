@@ -10,7 +10,7 @@ mod _reference;
 #[cfg(test)]
 mod _tests;
 
-use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoSlug};
+use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoId, TodoSlug};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -100,7 +100,7 @@ acquisition_events! {
         project: ProjectSlug, todo: TodoSlug, source: AttentionHoldSource, placed_at: Timestamp
     };
     AttentionAttemptsFailing, "runner.attention.attempts_failing", "A role's attempt on a todo failed where an earlier attempt of that role on that todo already failed.", Occurrence, Todo {
-        project: ProjectSlug, todo: TodoSlug, role: RoleName, attempt: u64, reason: String
+        project: ProjectSlug, todo: TodoSlug, todo_id: TodoId, role: RoleName, attempt: u64, reason: String
     };
     AttentionFleetQuiet, "runner.attention.fleet_quiet", "The project's attention episode ended: its last active todo that is unheld and not a structural holder left active work or was held.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, opened_by: String
@@ -218,6 +218,7 @@ impl Event {
             }
             Self::AttentionAttemptsFailing {
                 todo,
+                todo_id,
                 role,
                 attempt,
                 ..
@@ -226,6 +227,7 @@ impl Event {
                     self.name(),
                     self.project().as_str(),
                     todo.as_str(),
+                    todo_id.as_str(),
                     role.as_str(),
                     &attempt.to_string(),
                 ]);

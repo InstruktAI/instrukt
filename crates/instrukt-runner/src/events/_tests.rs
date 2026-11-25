@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoSlug};
+use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoId, TodoSlug};
 use serde_json::{Value, json};
 
 use super::{
@@ -859,6 +859,7 @@ fn a_repeated_failure_is_one_occurrence_per_role_attempt_whatever_its_reason() {
     let failing = |role: &str, attempt, reason: &str| Event::AttentionAttemptsFailing {
         project: demo(),
         todo: todo("failing"),
+        todo_id: TodoId::parse(&"a".repeat(32)).unwrap(),
         role: RoleName::parse(role).unwrap(),
         attempt,
         reason: reason.into(),

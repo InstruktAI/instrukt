@@ -46,6 +46,7 @@ pub(super) fn facts(before: Option<&TodoRecord>, after: &TodoRecord) -> Option<F
         change: RecordChange {
             project: after.project.clone(),
             todo: after.slug.clone(),
+            todo_id: after.id.clone(),
             hold_before,
             hold_after,
             left_active,

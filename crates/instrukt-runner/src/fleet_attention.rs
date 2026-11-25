@@ -13,7 +13,7 @@
 //! project it works in.
 
 use instrukt_core::home::Home;
-use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoId, TodoSlug};
 use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, Transaction, params};
 use jiff::Timestamp;
 
@@ -48,6 +48,9 @@ pub struct FailedAttempt {
 pub struct RecordChange {
     pub project: ProjectSlug,
     pub todo: TodoSlug,
+    /// The todo's durable identity, which a later todo reusing its slug
+    /// never shares.
+    pub todo_id: TodoId,
     pub hold_before: Option<HoldFact>,
     pub hold_after: Option<HoldFact>,
     /// The todo was active before the change and is not after it.
@@ -121,6 +124,7 @@ fn conditions(change: &RecordChange) -> Vec<Event> {
         events.push(Event::AttentionAttemptsFailing {
             project: project.clone(),
             todo: todo.clone(),
+            todo_id: change.todo_id.clone(),
             role: failed.role.clone(),
             attempt: failed.attempt,
             reason: failed.reason.clone(),
@@ -325,12 +329,35 @@ mod tests {
         RecordChange {
             project: ProjectSlug::parse("demo").unwrap(),
             todo: TodoSlug::parse(todo).unwrap(),
+            todo_id: identity('a'),
             hold_before: None,
             hold_after: None,
             left_active: false,
             failed_attempt: None,
             runnable_remains: true,
         }
+    }
+
+    /// A todo identity spelled with `digit` throughout.
+    fn identity(digit: char) -> TodoId {
+        TodoId::parse(&digit.to_string().repeat(32)).unwrap()
+    }
+
+    /// `builder`'s second attempt failing on `demo`'s todo `reused` with
+    /// identity `todo_id`, appended in a transaction of its own.
+    fn second_failure(home: &Home, todo_id: TodoId) -> AppendOutcome {
+        let failing = Event::AttentionAttemptsFailing {
+            project: ProjectSlug::parse("demo").unwrap(),
+            todo: TodoSlug::parse("reused").unwrap(),
+            todo_id,
+            role: RoleName::parse("builder").unwrap(),
+            attempt: 2,
+            reason: "crashed".into(),
+        };
+        let context = context(home, now(), None).unwrap();
+        RunnerState::new(home)
+            .write(|tx| condition(tx, &context, &failing, true))
+            .unwrap()
     }
 
     fn failed(attempt: u64, earlier_failures: usize) -> Option<FailedAttempt> {
@@ -526,6 +553,27 @@ mod tests {
         apply(&home, &repeated);
         assert_eq!(logged(&home), ["runner.attention.attempts_failing"]);
         assert_eq!(episode(&home), opened);
+    }
+
+    #[test]
+    fn todos_reusing_a_slug_each_append_their_own_repeated_failure() {
+        let (_dir, home) = home();
+        let outcomes = (
+            second_failure(&home, identity('a')),
+            second_failure(&home, identity('b')),
+        );
+        assert_eq!(outcomes, (AppendOutcome::Appended, AppendOutcome::Appended));
+        assert_eq!(logged(&home).len(), 2);
+    }
+
+    #[test]
+    fn a_replayed_failure_of_one_todo_identity_is_already_logged() {
+        let (_dir, home) = home();
+        second_failure(&home, identity('a'));
+        assert_eq!(
+            second_failure(&home, identity('a')),
+            AppendOutcome::AlreadyLogged
+        );
     }
 
     /// Work's answer: `demo` has these active todos and runnable work.
