@@ -181,13 +181,12 @@ fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, 
         crate::runtime::without_captured_context(&mut native);
         // The native record's text, where it has one; a record an earlier
         // state migration repaired holds that text twice in its own.
-        let text = match native.get("text") {
-            Some(Value::String(_)) => {
-                match native.as_object_mut().and_then(|n| n.shift_remove("text")) {
-                    Some(Value::String(text)) => text,
-                    _ => return Err(ConversionError::Shape("a retained message's text moved")),
-                }
-            }
+        let text = match native
+            .as_object_mut()
+            .filter(|n| n.get("text").is_some_and(Value::is_string))
+            .and_then(|n| n.shift_remove("text"))
+        {
+            Some(Value::String(text)) => text,
             _ => record["text"].as_str().unwrap_or_default().to_owned(),
         };
         let time = |name: &str| -> Result<Option<StoredTime>, ConversionError> {
