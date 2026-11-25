@@ -525,14 +525,17 @@ the owning project, named with `--project <slug>`. `instrukt todo create
 --kind bug` is refused and names that door. The capability catalog gains the
 action `bug-report`: the `record` bundle carries it at `own`, the new `report`
 bundle at `any`, and `company-agent` holds `read`, `tools` and `report`. An
-`~/.instrukt/agents.yaml` you never edited is removed by the first writing
-command, and every role then takes these defaults. In one you edited, every
-role, bundle and field the file leaves out takes them too; what it names stays
-as written: a `company-agent` whose `can` it lists cannot report a defect until
-you add `report` there, and roles using a `record` bundle it defines report
-into their own project once you add `{action: bug-report, scope: own}` to it.
-A role naming `report` in a file that defines no such bundle receives the
-shipped one.
+`~/.instrukt/agents.yaml` that an earlier release wrote and its deployment
+record recognises as unedited is removed by the first writing command, and
+every role then takes these defaults. Any other file is kept as your
+overrides: every role, bundle and field it leaves out takes these defaults,
+and what it names stays as written. A `company-agent` whose `can` the file
+lists keeps that list: unless it names `report`, `all` or a grant of
+`bug-report`, its help and briefing do not offer defect reporting until you
+add `report` there. Focused roles using a `record` bundle the file defines
+report into their own project once you add `{action: bug-report, scope: own}`
+to it. A role naming `report` in a file that defines no such bundle receives
+the shipped one.
 
 ### One root AGENTS.md, rendered from an index.yaml
 
