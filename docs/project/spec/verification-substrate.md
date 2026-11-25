@@ -1,5 +1,5 @@
 ---
-description: Live verification substrate for instrukt — archetype classification (Rust CLI/daemon/orchestrator plus executable agent doctrine), real surfaces, Docker-free isolated-root primitive, concurrency cap, and declared blind spots.
+description: Live verification substrate for instrukt — archetype classification (Rust CLI/daemon/orchestrator), real surfaces, Docker-free isolated-root primitive, concurrency cap, and declared blind spots.
 ---
 
 # Verification Substrate — Spec
@@ -26,7 +26,6 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
 | Deterministic CLI commands, doc validation, rendering, specs, state migrations | Compiled candidate `instrukt` binary against isolated `TestEnv` | Tier 0 — compiler + real-binary `TestEnv` integration tests and `insta` snapshots (`project/instrukt/policy/testing`); skip separate live `verifier` |
 | Daemon concurrency, SQLite locking, git hooks, release install, relocatable runtime publication | Built candidate binary (`./target/debug/instrukt`), real temp git repo hooks, live `instrukt tick` / `instrukt run`, and isolated relocatable runtime roots | Tier 1/2 — isolated-root live smoke executing the exact built candidate binary and inspecting filesystem, hook, lock, and rendered output effects |
 | Inbound webhooks and company Slack connector | Local loopback webhook receiver and ephemeral local Redis transport | Tier 1/2 — isolated-root smoke with candidate binary + ephemeral local Redis port and signed webhook payloads (or org sandbox Slack credential pool when exercising live Slack delivery) |
-| Executable agent doctrine and procedures (`docs/general/`, `docs/domain/sdlc/`) | Frontier agents executing tasks under rendered instructions | Tier 1/2 — `instrukt docs validate`, `instrukt docs render --check`, plus targeted behavioral scenario replay or real-CLI/workflow dry-run against the candidate rendering |
 
 ### Execution host, isolation primitive, and concurrency
 
@@ -37,8 +36,8 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
 - **Candidate binary:** Build `cargo build -p instrukt-cli` once per candidate
   HEAD and invoke the built candidate executable explicitly
   (`./target/debug/instrukt`), never a `PATH`-resolved installed binary.
-- **Isolation primitive:** Follow `project/instrukt/policy/testing`
-  ("Inherited home and isolated application roots") and
+- **Isolation primitive:** Follow `project/instrukt/policy/testing` on
+  inheriting the home and isolating application roots, and
   `project/instrukt/spec/feature/publication/agent-entrypoints`:
   - Isolate `INSTRUKT_HOME`, `INSTRUKT_LOG_DIR`, T3 root, scheduler roots
     (`SYSTEMD_UNIT_PATH`, `INSTRUKT_LAUNCH_AGENTS_DIR`,
@@ -47,7 +46,7 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
     `KIRO_HOME`, `PI_CODING_AGENT_DIR`) inside per-slot temporary directories
     paired with a temporary git repository.
   - Inherit `HOME`, broad XDG base directories, and `TMPDIR` unchanged
-    (`sdlc/policy/testing`, Rule 17).
+    (`sdlc/policy/testing`).
   - Initialize the slot with the candidate binary (`init`), execute the smoke
     flow, then kill any spawned daemon/Redis process group and delete the
     temporary slot directory on exit (`general/policy/shared-machine-resources`).
@@ -74,10 +73,6 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
   Slack API round-trips require org-level sandbox credentials; absent those
   credentials on the execution host, live verification covers up to the signed
   loopback webhook boundary and reports the remote-delivery blind spot.
-- **Automated doctrine calibration benchmarks:** `instrukt eval report`
-  summarizes historical delivery outcomes from the work record; automated
-  mutation/replay calibration of agent doctrine is not yet implemented as a CLI
-  runner and is covered manually through targeted behavioral scenario replay.
 
 ## See Also
 

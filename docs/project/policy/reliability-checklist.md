@@ -41,8 +41,7 @@ verify that every entry cites an inspectable real occurrence and obeys
 
 ## Exceptions
 
-- Tier 0 changes with no runtime or executable-doctrine delta skip live
-  execution.
+- Tier 0 changes skip live execution.
 
 ## See Also
 

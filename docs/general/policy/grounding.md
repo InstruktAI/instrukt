@@ -125,8 +125,12 @@ reasoning, or conversational hypothesis.
 
 ## Exceptions
 
-- None. The scaling clause in Rules bounds what counts as consequential; it is
-  not an exemption from the rule.
+- A procedure that assigns checking a record or a delivered change against the
+  conversation that produced it reads that conversation: that check is where a
+  wrong reading of the human is caught before work is built on it
+  (`general/policy/human-contract`).
+- The scaling clause in Rules bounds what counts as consequential; it is not an
+  exemption from the rule.
 
 ## See Also
 
