@@ -534,8 +534,9 @@ And a second instrukt home on the computer installs under its own names without 
 - No release-pointer, daemon lifecycle, fleet update or legacy Redis config
   migration is imported from TeleClaude.
 <!-- change:remove-teleclaude-import-and-references -->
-- There is no release-pointer, daemon lifecycle, fleet update or legacy Redis
-  config migration.
+- There is no release-pointer, fleet update or legacy Redis config migration,
+  and no daemon lifecycle beyond the owned units this contract installs and
+  withdraws.
 <!-- /planned-change:remove-teleclaude-import-and-references -->
 - Installation and `install --check` judge this computer's own settings
   only: computers that disagree on the ingress or the reacting computer each
