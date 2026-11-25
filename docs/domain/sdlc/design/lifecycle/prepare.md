@@ -34,7 +34,7 @@ by the human, who is the sole authority on intent.
 **Outputs**
 
 - `prd` (intake) — plus the feature spec snippet with Gherkin for Category A work
-- architecture: domain-spec / architecture-v2 design-doc snippet updates plus a thin `architecture` index artifact (when not skipped)
+- architecture: structural domain-spec / design-doc snippet updates plus the `architecture` delivery-reasoning artifact (when not skipped)
 - `implementation-plan`
 
 ## Invariants
