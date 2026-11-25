@@ -293,6 +293,11 @@ impl<'w> Session<'w> {
                     self.learned(row);
                     return Ok(());
                 }
+                if read.issue.is_some() {
+                    // Read, and unchanged since its last read.
+                    let now = self.now;
+                    self.amend(index, |r| r.refreshed_at = Some(now))?;
+                }
                 return self.post_pending_replies(index);
             }
         };
@@ -355,7 +360,9 @@ impl<'w> Session<'w> {
             outstanding,
             "people's controls read from the todo's issue"
         );
+        let now = self.now;
         self.amend(index, |r| {
+            r.refreshed_at = Some(now);
             r.comments_since.clone_from(&comments_since);
             r.events_page = events_page;
             r.events_last = events_last;
