@@ -253,10 +253,13 @@ fn a_declared_regenerable_location_outside_the_checkout_is_reported_and_withhold
 
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3
 #[test]
-fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
+fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     // Schema version 1 is the first schema; documents an earlier instrukt
-    // wrote carry it. Initializing again brings both layers to the current
-    // schema with every setting kept, and reads answer as before.
+    // wrote carry it. Validating the project before anything converts it
+    // passes on the converted view and notes the committed file still to be
+    // converted, leaving it as committed. Initializing again brings both
+    // layers to the current schema with every setting kept, and reads answer
+    // as before.
     let env = TestEnv::new();
     let global =
         format!("{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n  conversations: false\n");
@@ -272,6 +275,18 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     .unwrap();
     let layer = "schema_version: 1\nproject: kept\nboard: acme/7\nactions:\n  test: make test\n";
     let repo = project(&env, "kept", layer);
+
+    let validated = env.run(repo.path(), ["config", "validate"]).success();
+    assert_eq!(stdout(&env, &validated), "", "no finding");
+    insta::assert_snapshot!(stderr(&env, &validated), @r"
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
+    ");
+    assert_eq!(
+        repo.read("instrukt.yaml"),
+        layer,
+        "the committed file is left as committed"
+    );
 
     env.run(repo.path(), ["config", "init"]).success();
     env.run(repo.path(), ["config", "init", "--global"])

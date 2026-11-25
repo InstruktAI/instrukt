@@ -175,17 +175,10 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
       last run: staged in committed form: instrukt.yaml, AGENTS.md
     ");
 
-    // A commit that bypasses the hook keeps the older layer, and validation
-    // reports it.
+    // A commit that bypasses the hook keeps the older layer.
     repo.write("instrukt.yaml", project);
     repo.git(["commit", "--quiet", "--no-verify", "-am", "bypass"]);
     env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
-    let validated = env.run(repo.path(), ["config", "validate"]).failure();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&validated.get_output().stdout)
-            .replace(&repo.path().display().to_string(), "[REPO]"),
-        @"[REPO]/instrukt.yaml: schema_version: this instrukt writes schema_version 6"
-    );
 
     // An edit of the layer the developer staged stays staged through a
     // partial commit that converts the committed layer, and their next

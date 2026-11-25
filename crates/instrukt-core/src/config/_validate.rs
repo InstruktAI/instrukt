@@ -488,9 +488,10 @@ pub fn connector_procedure_finding(
 
 /// `instrukt config validate`: the findings of `layer`. A missing layer,
 /// or one of a newer schema version, is refused rather than judged. A
-/// project layer is judged as converted in memory, and one committed at an
-/// older schema version is itself a finding: only a commit brings it
-/// current (`docs/project/spec/feature/configuration/owned-files.md`).
+/// project layer is judged as converted in memory; one committed at an
+/// older schema version is no finding, its pending conversion reported by
+/// the inspection notice, and the next commit brings it current
+/// (`docs/project/spec/feature/configuration/owned-files.md`).
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
     super::_layer::migrate_if_needed(home, layer)?;
     let path = layer.path(home);
@@ -502,16 +503,6 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         });
     };
     let mut findings = findings_for(home, layer, &path, &value)?;
-    if layer.kind() == LayerKind::Project
-        && let Some(stale) = view.schema_version.and_then(schema_version_finding)
-    {
-        findings.push(Finding {
-            document: path.clone(),
-            key: stale.key,
-            kind: stale.kind,
-            message: stale.message,
-        });
-    }
     if let Layer::Company(name) = layer {
         findings.extend(local_material(home, name)?);
         if let Some(entries) = value.get("connectors").and_then(Value::as_mapping)
