@@ -207,7 +207,8 @@ fn a_working_session_reclaims_only_its_own_worktrees_declared_output() {
     std::fs::write(own.join("cache/kept"), "undeclared").unwrap();
     std::fs::create_dir_all(own.join("gen")).unwrap();
     std::fs::write(own.join("gen/new.txt"), "untracked work").unwrap();
-    std::os::unix::fs::symlink("target", own.join("latest")).unwrap();
+    // An absolute referent, which still resolves once the link is staged.
+    std::os::unix::fs::symlink(own.join("target"), own.join("latest")).unwrap();
     prepared(&mut crew, "other");
     let (_, other) = attempt(&crew, "other", "builder", BUILD);
     output(&other);
