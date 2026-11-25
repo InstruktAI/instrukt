@@ -982,11 +982,13 @@ fn contribute(
     Ok(())
 }
 
-fn empty_changes(position: SourcePosition, has_more: bool) -> ConversationChanges {
+/// The turn read's one batch before it is filled: nothing follows it, and its
+/// position is set once the read has compared every named conversation.
+fn turn_batch() -> ConversationChanges {
     ConversationChanges {
         records: Vec::new(),
-        position,
-        has_more,
+        position: SourcePosition(serde_json::Value::Null),
+        has_more: false,
         completed_turns: Vec::new(),
         scoped_presence: None,
         conversations: Vec::new(),
@@ -1117,7 +1119,7 @@ impl T3Conversations {
             .observed
             .retain(|thread| only.contains(thread.as_str()));
         state.after = None;
-        let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), false);
+        let mut changes = turn_batch();
         let mut db = open(&self.path)?;
         let snapshot = db.transaction()?;
         let fingerprints = discover(&snapshot, Some(ids), TURN, &mut changes.scoped_presence)?;
