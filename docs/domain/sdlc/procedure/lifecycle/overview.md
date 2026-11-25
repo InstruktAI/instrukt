@@ -162,7 +162,7 @@ building, reviewing and fixing keeps its output.
 
 <!-- @config: runtime.inspect_thread -->
 
-<!-- @config: runtime.retire_thread -->
+<!-- @config: runtime.finish_thread -->
 
 1. **Read current facts and claim the todo.** Run `instrukt todo work {slug}`
    (or `instrukt todo show {slug} --json` to inspect). For deliberate entry
@@ -422,15 +422,15 @@ building, reviewing and fixing keeps its output.
    `instrukt todo update {slug} --unclaim`; the runner reclaims the build output
    `<slug>/work` holds while the handoff waits
    (`general/policy/shared-machine-resources`). Keep this orchestrator thread
-   wakeable (never retire it before delivery — `integrate` retires it once the
-   todo is delivered).
-6. **Retire on direct withdrawal.** When this orchestrator withdraws or removes
+   wakeable until delivery — `integrate` finishes it once the todo is
+   delivered.
+6. **Finish on direct withdrawal.** When this orchestrator withdraws or removes
    a todo directly (for example under triage, retraction, or a no-fix exit),
    finish all record writes (`log`, `instrukt todo remove {slug}`) and confirm
    the removal outcome first, preserve any unfinished human or worker
-   obligations, and then retire this terminal orchestrator thread via the
-   configured `runtime.retire_thread` action (converging idempotently on replay
-   and never retiring standing agents).
+   obligations, and then finish this orchestrator thread via the configured
+   `runtime.finish_thread` action (converging idempotently on replay and never
+   finishing standing agents).
 
 ## Outputs
 

@@ -64,7 +64,7 @@ Apply these configured action values to the identified assignment and session.
 
 <!-- @config: runtime.read_thread -->
 
-<!-- @config: runtime.retire_thread -->
+<!-- @config: runtime.finish_thread -->
 
 ### 1. Triage — the driving session, before any peer is dispatched
 
@@ -86,9 +86,9 @@ judgment is yours to make from the symptoms, not a string match.
   `sdlc/policy/todo-creation-discipline` requires. A bug whose evidence holds continues
   through the rest of triage. A bug without evidence, or whose cited evidence fails a check,
   is retired: record the reason in the todo's `log`, run `instrukt todo remove {slug}` and
-  confirm its outcome, and then retire the withdrawn todo's orchestrator thread via the
-  configured `runtime.retire_thread` action without dispatching a peer (complete all record
-  writes first and never retire standing agents). A fix the human asked for in their own words is
+  confirm its outcome, and then finish the withdrawn todo's orchestrator thread via the
+  configured `runtime.finish_thread` action without dispatching a peer (complete all record
+  writes first and never finish standing agents). A fix the human asked for in their own words is
   authorized intent and is not retired here; a human's acknowledgement of an agent's report
   is not such a request.
 - **If a sibling for the same defect is already in flight, retire this todo as the
@@ -98,8 +98,8 @@ judgment is yours to make from the symptoms, not a string match.
   survivor is the **earliest-created** todo, tie-broken by lexically-first slug. If this todo
   is not the survivor, remove it — run `instrukt todo remove {slug}` (naming the surviving
   slug in the reason) and confirm its outcome — and after any additive handoff message below
-  and all record writes complete, retire this withdrawn todo's orchestrator thread via
-  `runtime.retire_thread`. Dispatch no peer.
+  and all record writes complete, finish this withdrawn todo's orchestrator thread via
+  `runtime.finish_thread`. Dispatch no peer.
 - **Hand forward material info — only when sure it helps.** Before removing, compare this
   twin's `input` against the survivor's. If this twin carries discovery context the survivor
   does not surface — a distinct reproduction, a second occurrence site, an environment
@@ -111,9 +111,9 @@ judgment is yours to make from the symptoms, not a string match.
   dispatching.** A report may describe expected behavior, an intentionally
   accepted limit, or a symptom already fixed. Confirm that conclusion against
   `input`, current contracts and targeted evidence. Record the evidence in
-  `log`, run `instrukt todo remove {slug}` and confirm its outcome, and retire
-  the withdrawn todo's orchestrator thread via `runtime.retire_thread` once all
-  record writes complete (converging idempotently on replay and never retiring
+  `log`, run `instrukt todo remove {slug}` and confirm its outcome, and finish
+  the withdrawn todo's orchestrator thread via `runtime.finish_thread` once all
+  record writes complete (converging idempotently on replay and never finishing
   standing agents). When confidence is
   insufficient, retain the todo and dispatch. No suppression ledger participates.
 - **Triage a fix-shaped input.** When the `input` names a missing capability or a solution

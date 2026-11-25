@@ -91,19 +91,14 @@ lifecycle contract.
 
    <!-- @config: runtime.dispatch_remote -->
 
-   A mandate that calls for cancelling a child or dormantly settling a
-   wakeable conversation uses:
+   A mandate that calls for cancelling a child, resting a wakeable conversation,
+   or finishing a terminal (`delivered` or `withdrawn`) todo's orchestrator
+   thread(s) — never standing agents — after confirming all record writes and
+   handoffs uses:
 
    <!-- @config: runtime.cancel_child -->
 
    <!-- @config: runtime.finish_thread -->
-
-   Once a todo reaches a terminal state (`delivered` or `withdrawn`), retire
-   its phase orchestrator thread(s) — never standing agents — through the
-   configured terminal retirement action, completing all record writes and
-   handoffs first and converging idempotently on already-retired threads:
-
-   <!-- @config: runtime.retire_thread -->
 
    Work artifacts and stamps establish workflow completion. Runtime state,
    conversation text and silence establish none of those record writes.
@@ -127,7 +122,7 @@ lifecycle contract.
    nor implicitly releases a claim. Retain workers needed for further rounds
    and retain a thread that holds a human question. Release the claim with
    `instrukt todo update <slug> --unclaim`. Conclude a completed discussion through the configured runtime discussion
-   instruction and record the contribution's handoff. Apart from terminal orchestrator retirement, the runtime owns session ending and cleanup.
+   instruction and record the contribution's handoff. Apart from finishing completed todo orchestrator threads, the runtime owns session ending and cleanup.
 
 A focused worker's outputs belong in its assigned artifacts and its own turn.
 It messages or links other sessions only where its brief authorizes that
