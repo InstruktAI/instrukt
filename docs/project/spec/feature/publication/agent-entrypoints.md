@@ -198,15 +198,6 @@ and commits to main only when what it rendered differs from what main holds;
 that workflow and its renderer belong to the shared workflows repository
 (`project/instrukt/policy/shared-workflows`).
 
-<!-- planned:company-home-integration -->
-In a company home integrated through its standing integrator, each
-integration candidate carries instrukt's rendering of the home's `AGENTS.md`
-(`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
-candidate). A company repository whose host also runs that workflow has a
-second writer of its default branch beside its integrator
-(`general/policy/commits`).
-<!-- /planned:company-home-integration -->
-
 ### Company home entrypoint
 
 A company home (`project/instrukt/spec/feature/configuration/company-homes`)

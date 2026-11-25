@@ -15,17 +15,6 @@ readable. Promotion, failure judgment, revert-first recovery and separate
 repair are the integrator's obligations under its procedure, guarded by
 branch protection.
 
-<!-- planned:company-home-integration -->
-The gate serves every repository instrukt integrates the same way: each
-adopted project's repository and each company home's
-(`project/instrukt/spec/feature/configuration/company-homes`). Each has its
-own standing integrator and its own candidate, and once the repository exists
-that integrator is the one writer of its canonical branch
-(`general/policy/commits`). A company home has no todos: its candidates are
-composed from reviewed worktree heads, such as changes to the company's
-knowledge.
-<!-- /planned:company-home-integration -->
-
 ## Canonical fields
 
 ### Candidate and verification
@@ -45,6 +34,15 @@ The integrator receives reviewed todo or one-off worktree heads. Main has no
 independent authoring commits to discover: only the integrator merges
 candidates, and publication goes live atomically at that integration. A
 dependent todo waits for delivery of the contracts it requires.
+
+<!-- planned:company-home-integration -->
+In a company home, an adopted project without todos
+(`project/instrukt/spec/feature/configuration/company-homes`), the integrator
+also receives a knowledge change proposed through the company's agent, for a
+proposer the company admits to change its knowledge, once the change's exact
+head holds an approving independent review. No person hands it on
+(`project/instrukt/spec/feature/runner/pull-request-review`).
+<!-- /planned:company-home-integration -->
 
 The active candidate is the fetched `origin/integrate` head while it is not
 already contained in remote canonical main. An absent integrate ref or a head
@@ -228,17 +226,21 @@ hooks and CI retain their own checks.
 
 Every candidate of a company home carries the home's rendered `AGENTS.md`
 (`project/instrukt/spec/feature/publication/agent-entrypoints`) and the
-company's plugin with its catalog entry
+company's skill with its plugin catalog entry
 (`project/instrukt/spec/feature/publication/company-plugin`), rendered from the
 knowledge that candidate holds and committed in it before it is verified. Once
 the repository exists, the integrator is the only writer that renders them onto
 its default branch (`general/policy/commits`).
 
 A candidate whose knowledge the rendering refuses, or whose committed
-`AGENTS.md` or plugin differs from what its knowledge renders, holds no
+`AGENTS.md` or skill differs from what its knowledge renders, holds no
 admission: it stays unpromoted and its failure stays with the integrator under
 the remediation routes above. For a company home without CI that comparison is
 the local admission evidence for the exact candidate.
+
+A commit whose tree is exactly what rendering the company's knowledge produces
+from its parent's tree is covered by reproduction, as a documentation fold is
+(Review coverage of a candidate). It owes no review of its own.
 <!-- /planned:company-home-integration -->
 
 ### Recovery of a red canonical branch
@@ -274,7 +276,6 @@ Dependency-branch failure does not imply red main or trigger a revert of main.
 
 ### Mechanical canonical-checkout synchronization
 
-<!-- planned-change:company-home-integration -->
 On each tick, before dispatch, the runner observes remote main with Git and
 fetches the observed commits without a GitHub API call. When remote main is
 ahead, it fast-forwards the clean project checkout's local main to that exact
@@ -285,13 +286,6 @@ of the events switch. Equal heads require no merge. Dirty checkouts, a checkout
 on another branch, failed fetches and non-fast-forward history are reported;
 no checkout is forced, switched, stashed or discarded. A later tick retries.
 The integrator promotes remote main; it no longer synchronizes other checkouts.
-<!-- change:company-home-integration -->
-The runner keeps each computer's checkout of a repository's canonical branch
-current, a company's home included
-(`project/instrukt/spec/feature/runner/work-dispatch`, Canonical checkout
-synchronization). The integrator promotes remote main; it synchronizes no
-checkout.
-<!-- /planned-change:company-home-integration -->
 
 `runner.main_failing` wakes the integrator for revert-first recovery. The
 existing recovery obligation keeps subsequent deliveries from building on the

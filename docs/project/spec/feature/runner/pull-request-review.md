@@ -19,6 +19,15 @@ build review is reflected on them by
 `project/instrukt/spec/feature/work/github-record`, and their content reaches the
 canonical branch through the integration candidate.
 
+<!-- planned:company-home-integration -->
+In a company home (`project/instrukt/spec/feature/configuration/company-homes`),
+a pull request carrying a knowledge change proposed through the company's
+agent, for a proposer the company admits to change its knowledge, is handed to
+the company's standing integrator once its current head holds an approving
+verdict. It does not wait for a person to merge it
+(`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- /planned:company-home-integration -->
+
 ## Canonical fields
 
 ### Observation

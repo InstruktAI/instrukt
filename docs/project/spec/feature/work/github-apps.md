@@ -70,13 +70,6 @@ applicable. Missing installation, permissions or an API capability remains an
 explicit incomplete setup with its repair door. No personal token or `gh`
 login is silently substituted for the selected App.
 
-<!-- planned:company-home-integration -->
-A company home's repository is set up the same way where its integration
-observes CI: the App installation reaches the company's repository with the
-check-observation permissions, and a missing installation is that company
-home's incomplete setup with the same repair door.
-<!-- /planned:company-home-integration -->
-
 ### Installation credentials
 
 The shared GitHub boundary resolves the chosen App's key from the protected
@@ -239,12 +232,6 @@ to it, and they bind every caller, a session without a role included
 | Independence | No commit after the pinned base up to the head names the reviewing session in its `Session:` trailer. | The commits that name the reviewing session. The door is a review by a session none of them names. |
 | Settlement | This computer holds no verdict of the commit, or the verdict is a revision: the commit's verdict stands here, the caller is the session that recorded the current version, and, where a review request for this commit reached that session, the turn the session has in progress when it offers the verdict was not opened by such a request. | The settled verdict and `instrukt review show`; for the session that recorded it, which of the answers below applied; for a verdict this computer handed off, the export and its door (Evidence when the serving computer changes). |
 | Report | A non-empty report is supplied. It is stored whole with the version. | The missing report. |
-
-<!-- planned:company-home-integration -->
-A caller standing in a company home records review evidence for that
-company's repository under the same invariants, the company home taking the
-project's place in each.
-<!-- /planned:company-home-integration -->
 
 A review request is answered in the turn it opened. A verdict the settling
 session offers in such a turn, for a commit that is already settled, answers

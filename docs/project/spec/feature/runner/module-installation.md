@@ -36,17 +36,6 @@ retained facts are findings with the `instrukt install` door. An unreadable or
 invalid project's desired state is never proof that its shared resources are
 unused; withdrawal waits for a complete demand read.
 
-<!-- planned:company-home-integration -->
-While events is on, each company home on the computer also demands the events
-dependencies and the shared wake-up, whether or not it declares a connector or
-sources, so its standing integrator is activated and its home kept current
-(`project/instrukt/spec/feature/runner/work-dispatch`, Canonical checkout
-synchronization). Observing its repository's CI needs the selected GitHub App
-installed on that repository; a missing installation is an unmet finding naming
-the company and the repository, with the App setup door
-(`project/instrukt/spec/feature/work/github-apps`).
-<!-- /planned:company-home-integration -->
-
 | Effective demand | Infrastructure and prerequisites |
 | --- | --- |
 | Core, with history explicitly off and no project with todos/events/history enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |

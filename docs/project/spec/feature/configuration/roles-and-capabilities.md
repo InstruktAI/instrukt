@@ -126,7 +126,6 @@ driver and its admitted child use the recorded shared todo workspace. An
 mutation it names the assignment's recorded workspace. Rename follows durable
 todo identity. Merely inspecting another todo never binds it.
 
-<!-- planned-change:company-home-integration -->
 For a subscribed responsibility, runner's standing assignment/generation supplies
 the canonical procedure, exact subscription home, optional subject and own
 thread. Project scope resolves to that recorded project home; platform scope
@@ -136,18 +135,6 @@ recorded native session. Obsolete `session-recover` grants migrate away with
 the removed commands; every other configured grant and restriction is retained. Scheduled and other
 instrukt starts retain their role and placement in their existing assignment
 evidence. No second session registry or login identity is introduced.
-<!-- change:company-home-integration -->
-For a subscribed responsibility, runner's standing assignment/generation supplies
-the canonical procedure, exact subscription home, optional subject and own
-thread. Project scope resolves to that recorded project home; company scope
-resolves to that recorded company home; platform scope resolves to the
-recorded platform responsibility, not all projects. The
-subject does not imply a todo claim. The own-thread object is the caller's
-recorded native session. Obsolete `session-recover` grants migrate away with
-the removed commands; every other configured grant and restriction is retained. Scheduled and other
-instrukt starts retain their role and placement in their existing assignment
-evidence. No second session registry or login identity is introduced.
-<!-- /planned-change:company-home-integration -->
 
 A recognized session with no instrukt assignment is roleless; an unreadable,
 contradictory or partially lost known assignment is a resolution failure, not a
