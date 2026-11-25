@@ -397,6 +397,24 @@ The agents file converts by itself: its `roles.conversation` entry becomes
 `roles.company-agent` with its settings kept. A file holding both entries is
 refused, and left as it is, until one of them is removed.
 
+### The project coordinator stands and is woken by fleet attention
+
+The project's coordinator is now `sdlc-coordinator`, a standing role woken by
+`runner.attention.*` events, and agents can raise a condition about their
+project's active todos with `instrukt events raise`.
+
+The agents file converts by itself: its `roles.coordinator` entry becomes
+`roles.sdlc-coordinator` with its settings kept. A file holding both entries
+is refused, and left as it is, until one of them is removed.
+
+The shipped `technical-coordinator` role now selects at `tier: strong`. A kept
+agents file that sets its own tier for that role keeps it.
+
+The shipped `orchestrate` bundle grants `attention-raise` at `own`. A kept
+agents file that defines its own `orchestrate` bundle replaces the shipped one
+whole; add `{action: attention-raise, scope: own}` to it so orchestrating
+roles can raise.
+
 ### Protected secrets and owned files
 
 Existing development installations need machine-local secret setup before using
