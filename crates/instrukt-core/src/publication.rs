@@ -206,13 +206,12 @@ fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, Pub
 
 /// Applies `plan` to the working tree whose root is `root`, and nothing
 /// while it holds a finding. Each removal comes first, so a new file never
-/// meets an old one on its way. Then each write follows in the plan's
-/// order: the plugin's other files, its manifest, the catalog. Each write
-/// is atomic and nothing passes through a symbolic link. A rendering cut
-/// short keeps the manifest it found beside the files already written; the
-/// next rendering compares against what the folder then holds, and raises
-/// the version only when that differs from its rendering with the held
-/// version. Returns the paths it changed, relative to `root`.
+/// meets an old one on its way. Then each write follows, one file at a
+/// time: the plugin's other files, then its manifest, then the catalog.
+/// Each write is atomic and nothing passes through a symbolic link. A
+/// rendering cut short leaves exactly the removals and writes made before
+/// the cut; the next rendering compares against what the folder then
+/// holds. Returns the paths it changed, relative to `root`.
 pub fn write_plugin(root: &Path, plan: &PluginPlan) -> Result<Vec<PathBuf>, PublicationError> {
     let mut changed = Vec::new();
     let Some(drift) = plan.drift.as_ref().filter(|_| plan.findings.is_empty()) else {
