@@ -39,6 +39,7 @@ roles:
   - fixer
   - finalizer
   - build-reviewer
+  - verifier
 ";
 
 /// The project, its fake GitHub and the machine's fake runtime.
@@ -127,6 +128,7 @@ impl Tracked {
             ("build", "builder", true),
             ("finalize", "finalizer", true),
             ("review-build", "build-reviewer", true),
+            ("verify", "verifier", true),
         ] {
             let (path, text) = procedure(name, role, parameters);
             repo.write(&path, &text);

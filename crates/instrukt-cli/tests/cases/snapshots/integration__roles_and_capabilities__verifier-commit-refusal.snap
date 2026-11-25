@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
+expression: "String::from_utf8_lossy(&commit.get_output().stderr)"
+---
+instrukt: role `verifier` (focused) cannot perform code-commit on repo commit with its ungranted scope; return the required action to the dispatcher in your own output or assigned artifact

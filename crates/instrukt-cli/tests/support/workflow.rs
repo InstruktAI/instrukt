@@ -21,7 +21,7 @@ use crate::fixtures::work::{Project, REPOSITORY, stdout};
 
 /// The flavor's procedures: path below `procedure/`, and the role each
 /// declares.
-const PROCEDURES: [(&str, &str); 13] = [
+const PROCEDURES: [(&str, &str); 14] = [
     ("todo-lead", "todo-lead"),
     ("review-commits", "commit-reviewer"),
     ("intake", "intaker"),
@@ -31,6 +31,7 @@ const PROCEDURES: [(&str, &str); 13] = [
     ("build", "builder"),
     ("fix", "fixer"),
     ("review-build", "build-reviewer"),
+    ("verify", "verifier"),
     ("deferrals", "deferrer"),
     ("finalize", "finalizer"),
     ("drift-analyze", "drift-analyzer"),
@@ -51,6 +52,7 @@ roles:
   - builder
   - fixer
   - build-reviewer
+  - verifier
   - deferrer
   - finalizer
   - drift-analyzer
