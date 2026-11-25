@@ -96,6 +96,18 @@ objects, `own` is empty unless that machine-wide configuration or installation
 responsibility is explicitly part of the recorded assignment; being in a
 project does not own the machine.
 
+<!-- planned:focused-author-commit-hook-refused -->
+The `instrukt hooks run` that git starts for a commit, merge, rewrite or
+checkout belongs to the Repository family: it is `code-commit`, addressing the
+working tree the hook runs in, so `own` reaches it in the workspace the
+caller's assignment records. A hook run writes only instrukt's own generated
+files into the commit being made there
+(`project/instrukt/spec/feature/repository/hook-sections`), so it reaches
+nothing that commit does not (`project/instrukt/policy/checks-and-guards`).
+The detached `hooks worker` a post-hook starts remains `runner-execute`, and
+the sync it runs remains `publication`.
+<!-- /planned:focused-author-commit-hook-refused -->
+
 ### Caller and object resolution
 
 The selected runtime adapter recognizes the native caller. For T3,
@@ -265,8 +277,20 @@ Then reporting a defect into any project on its computer and reading which defec
 And creating, changing or withdrawing any other work is not
 ```
 
+<!-- planned:focused-author-commit-hook-refused -->
+### UC-RCAP4: A focused author's commit carries what instrukt generates
+
+```gherkin
+Given a focused author bound to its assigned worktree, with instrukt's hooks installed
+When it commits a change to the project's documentation selection there
+Then the commit carries the re-rendered agent instruction file
+And instrukt's hook status reports that run
+```
+<!-- /planned:focused-author-commit-hook-refused -->
+
 ## Known caveats
 
+<!-- planned-change:focused-author-commit-hook-refused -->
 - Capabilities cover instrukt commands only. File edits, raw git, `gh` and
   native runtime tools remain governed by the runtime's permission mode.
   Per-role runtime permission mode is unspecified.
@@ -278,6 +302,21 @@ And creating, changing or withdrawing any other work is not
   (`general/procedure/company-assistance`), not refused by this layer. A
   `focused` company agent would also be refused the instrukt hook run its own
   commits trigger in the company home.
+<!-- change:focused-author-commit-hook-refused -->
+- Capabilities cover instrukt commands only. File edits, raw git, `gh` and
+  native runtime tools remain governed by the runtime's permission mode.
+  Per-role runtime permission mode is unspecified.
+- This contract adds no agent-to-agent discussion design or session-authority
+  hierarchy. Native conversation operations retain their existing contracts.
+- `company-agent` is a `standing` role, so its grants shape its help and
+  briefing and refuse nothing: an instrukt command outside `read`, `tools` and
+  `report` is held back by its procedure
+  (`general/procedure/company-assistance`), not refused by this layer.
+- A `focused` role without `code-commit`, such as a reviewer, is refused the
+  hook run a commit of its own triggers, and that commit is made without what
+  instrukt generates. Every shipped `focused` role that commits holds
+  `code-commit` through `worker`.
+<!-- /planned-change:focused-author-commit-hook-refused -->
 
 ## See Also
 
