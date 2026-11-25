@@ -16,6 +16,7 @@
 //! | [`TaskFirings`] | `task-timing` "Task and schedule" | work | runner task timing |
 //! | [`AutomaticHolds`] | `dependencies-and-holds` "Session bindings, claims and holds" | work | runner dispatch and anomalies |
 //! | [`RetentionPurge`] | `todos` "Parking, withdrawal and delivery" | work | runner tick |
+//! | [`FleetRecord`] | `fleet-attention` "Attention episodes", "Raised conditions" | work | runner executions, dispatch and raise |
 //! | [`WorkflowAssignments`] | `workflow` "Published contracts", `work-dispatch` "Todo pickup" | workflow (`instrukt_todos::workflow`) | runner dispatch |
 //!
 //! The CLI wires them into [`RunnerWiring`] (`crates/instrukt-cli/src/
@@ -556,6 +557,31 @@ pub trait AutomaticHolds: Send + Sync {
         todo: &TodoSlug,
         cause: &HoldCause,
     ) -> Result<(), WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
+// Fleet record
+// ---------------------------------------------------------------------
+
+/// What fleet attention reads of a project's active work, inside the
+/// caller's write transaction (`fleet-attention`, "Attention episodes",
+/// "Raised conditions").
+pub trait FleetRecord: Send + Sync {
+    /// Whether `project` has an active todo on this computer that is unheld
+    /// and not a structural holder.
+    fn runnable_remains(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+    ) -> Result<bool, WorkInterfaceError>;
+
+    /// Whether `todo` is active work of `project` on this computer.
+    fn active_todo(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+        todo: &TodoSlug,
+    ) -> Result<bool, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
