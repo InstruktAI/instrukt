@@ -482,7 +482,19 @@ impl Deferred {
                 return;
             }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    // The rest of the directory may still be read.
+                    reported.owed(
+                        &project.slug,
+                        &dir.display().to_string(),
+                        &format!("an entry could not be read: {error}"),
+                    );
+                    continue;
+                }
+            };
             let Some(todo) = staged_for(&entry.file_name()) else {
                 continue;
             };
