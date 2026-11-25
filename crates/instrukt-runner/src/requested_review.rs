@@ -194,7 +194,8 @@ pub(crate) fn assignment(
             .map_err(failed)?,
         project: Some(ProjectSlug::parse(&ask.project).map_err(failed)?),
         procedure: Some(
-            instrukt_core::ids::SnippetId::parse(_admission::PROCEDURE).map_err(failed)?,
+            instrukt_core::ids::SnippetId::parse(instrukt_core::config::REVIEW_PROCEDURE)
+                .map_err(failed)?,
         ),
         todo: None,
         workspace: Some(ask.checkout),

@@ -7,6 +7,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+use instrukt_core::config::REVIEW_PROCEDURE;
 use instrukt_core::git;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, SessionRef, SnippetId};
@@ -14,9 +15,6 @@ use instrukt_core::ids::{CommitSha, SessionRef, SnippetId};
 use super::{AskError, Check};
 use crate::interfaces::{HeadVerdictValue, VerdictStanding};
 use crate::review::{Request, Standing};
-
-/// The review procedure a requested review is answered by.
-pub(super) const PROCEDURE: &str = "sdlc/procedure/lifecycle/work/review-commits";
 
 /// The coordinates' option values exactly as the command received them.
 #[derive(Debug, Clone, Default)]
@@ -322,11 +320,11 @@ fn failed(error: impl std::fmt::Display) -> AskError {
 /// Procedure: the review procedure is active in the published set and
 /// declares the `commit-reviewer` role.
 pub(super) fn procedure(home: &Home) -> Result<SnippetId, AskError> {
-    let id = SnippetId::parse(PROCEDURE).map_err(failed)?;
+    let id = SnippetId::parse(REVIEW_PROCEDURE).map_err(failed)?;
     let entry = crate::launch::procedure(home, &id).map_err(|error| {
         refused(
             Check::Procedure,
-            format!("the review procedure {PROCEDURE} is not active in the published set: {error}"),
+            format!("the review procedure {REVIEW_PROCEDURE} is not active in the published set: {error}"),
         )
     })?;
     match entry.role.as_deref() {
@@ -334,14 +332,14 @@ pub(super) fn procedure(home: &Home) -> Result<SnippetId, AskError> {
         Some(role) => Err(refused(
             Check::Procedure,
             format!(
-                "the published review procedure {PROCEDURE} declares the role `{role}`, not `{}`",
+                "the published review procedure {REVIEW_PROCEDURE} declares the role `{role}`, not `{}`",
                 instrukt_core::config::REVIEW_ROLE
             ),
         )),
         None => Err(refused(
             Check::Procedure,
             format!(
-                "the published review procedure {PROCEDURE} declares no role; it answers requested reviews under `{}`",
+                "the published review procedure {REVIEW_PROCEDURE} declares no role; it answers requested reviews under `{}`",
                 instrukt_core::config::REVIEW_ROLE
             ),
         )),

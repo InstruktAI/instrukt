@@ -6,9 +6,10 @@
 //! nothing the requester composed: no requester identity, no timestamp, no
 //! other envelope.
 
+use instrukt_core::config::REVIEW_PROCEDURE;
 use instrukt_core::ids::ProjectSlug;
 
-use super::_admission::{Coordinates, PROCEDURE};
+use super::_admission::Coordinates;
 use crate::envelopes::Control;
 
 /// A rendering and its SHA-256 digest: the same coordinates always render
@@ -25,7 +26,7 @@ pub(super) struct Rendering {
 pub(super) fn render(project: &ProjectSlug, coordinates: &Coordinates) -> Rendering {
     use sha2::{Digest, Sha256};
     let mut body = format!(
-        "Run `instrukt docs get {PROCEDURE} --closure` and execute that procedure for the one-off worktree review it describes.\nrole: {}\nproject: {project}\n",
+        "Run `instrukt docs get {REVIEW_PROCEDURE} --closure` and execute that procedure for the one-off worktree review it describes.\nrole: {}\nproject: {project}\n",
         instrukt_core::config::REVIEW_ROLE
     );
     for (name, value) in coordinates.named() {
