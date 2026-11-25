@@ -405,6 +405,20 @@ pub struct Binding {
     pub attempt: Attempt,
 }
 
+impl Binding {
+    /// Whether this is a role attempt open on the todo's worktree: an
+    /// unreleased workspace or child assignment. A driver binding is not
+    /// one. It is the writer that keeps another role, readiness and
+    /// reclamation out of the worktree.
+    pub(crate) fn is_open_role_attempt(&self) -> bool {
+        matches!(
+            self.attempt.assignment,
+            instrukt_runner::interfaces::AssignmentKind::Workspace
+                | instrukt_runner::interfaces::AssignmentKind::Child
+        ) && self.attempt.released_at.is_none()
+    }
+}
+
 /// Immutable assignment facts and retained completion/failure evidence.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attempt {

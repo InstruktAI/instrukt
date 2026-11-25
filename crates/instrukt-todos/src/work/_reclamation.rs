@@ -22,8 +22,8 @@ use instrukt_core::fsx::LockGuard;
 use instrukt_core::git;
 use instrukt_core::ids::CommitSha;
 use instrukt_runner::interfaces::{
-    AssignmentKind, DeliveredRelease, DeliveredResource, Lane, ProjectRef, SectionAdmission,
-    SectionOutcome, WorkInterfaceError, WorktreeHolder, WorktreeReclamation,
+    DeliveredRelease, DeliveredResource, Lane, ProjectRef, SectionAdmission, SectionOutcome,
+    WorkInterfaceError, WorktreeHolder, WorktreeReclamation,
 };
 
 use super::_error::WorkError;
@@ -161,7 +161,7 @@ impl Release<'_> {
             item.record
                 .bindings
                 .iter()
-                .find(|binding| open_attempt(binding))
+                .find(|binding| binding.is_open_role_attempt())
                 .map(holder)
         });
         Ok(open.map(|holder| format!("{holder} is open on it")))
@@ -396,7 +396,7 @@ fn refusal(record: &TodoRecord, admission: &SectionAdmission) -> Option<SectionO
     let mut open = record
         .bindings
         .iter()
-        .filter(|binding| open_attempt(binding));
+        .filter(|binding| binding.is_open_role_attempt());
     match admission {
         SectionAdmission::Runner { revision } => match open.next() {
             Some(binding) => Some(SectionOutcome::Held(holder(binding))),
@@ -420,15 +420,6 @@ fn refusal(record: &TodoRecord, admission: &SectionAdmission) -> Option<SectionO
             }
         }
     }
-}
-
-/// Whether `binding` is a role attempt open on the todo's worktree: an
-/// unreleased workspace or child assignment. A driver binding is not one.
-fn open_attempt(binding: &Binding) -> bool {
-    matches!(
-        binding.attempt.assignment,
-        AssignmentKind::Workspace | AssignmentKind::Child
-    ) && binding.attempt.released_at.is_none()
 }
 
 fn holder(binding: &Binding) -> WorktreeHolder {
