@@ -201,8 +201,8 @@ jobs:
   # record arguments must then follow, or the required check is red.
   ubuntu-test:
     name: test ubuntu (${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [changes, ubuntu-archive]
-    if: ${{ !cancelled() && needs.ubuntu-archive.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
+    needs: ubuntu-archive
+    if: ${{ !cancelled() && needs.ubuntu-archive.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
