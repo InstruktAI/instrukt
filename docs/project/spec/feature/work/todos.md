@@ -435,12 +435,12 @@ And the agent is told that a bug is reported through the bug front door, and how
 ```
 
 <!-- planned:reuse-retained-worker-sessions -->
-### UC-TD13: A developer's further round keeps the worker that did the earlier one
+### UC-TD13: A developer's further round assigned to the earlier worker keeps its context
 
 ```gherkin
 Given a developer's todo whose worker completed an earlier round in its role
-When that role is given a further round
-Then the further round is recorded on the same worker's conversation, where its earlier context lives
+When that role's further round is assigned to the same worker
+Then the further round is recorded on that worker's conversation, where its earlier context lives
 And each round's evidence is attributed to its own round
 And the earlier round's record stays as it was
 ```
