@@ -867,9 +867,11 @@ pub(crate) fn without_captured_context(message: &mut Value) {
 /// Whether `message`, a T3 message's native record, is T3's report that a
 /// background command finished: its `notification.source.kind` is `command`,
 /// or `background_command`, the encoding T3 also writes for that source. Its
-/// text is the server's account of the command and its output, so the text
-/// read leaves the message out; every other notification, a subagent's or a
-/// delegated task's among them, is a message like any other.
+/// text is written by the server or the provider, not a person or the agent:
+/// a header naming the command with the tail of its output when it printed
+/// any, or a provider's summary of the command. The text read leaves such a
+/// message out whatever its text says; every other notification, a
+/// subagent's or a delegated task's among them, is a message like any other.
 pub(crate) fn reports_background_command(message: &Value) -> bool {
     matches!(
         message
@@ -879,9 +881,10 @@ pub(crate) fn reports_background_command(message: &Value) -> bool {
     )
 }
 
-/// What the text read returns of `thread`'s finished rows of [`TEXT`]:
-/// `None` when it found neither the conversation's own record nor a
-/// finished message.
+/// What the text read returns of `thread`'s finished rows of [`TEXT`]: its
+/// own record and every finished message but a background command's report;
+/// `None` when that leaves neither the conversation's own record nor a
+/// message.
 fn text(
     thread: &str,
     finished: Vec<(Projection, Row)>,

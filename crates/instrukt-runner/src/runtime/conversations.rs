@@ -112,8 +112,8 @@ pub struct ConversationText {
 
 impl ConversationText {
     /// What a text read returns of `conversation`: its own record, where the
-    /// source holds one, and its finished messages; `None` when it holds
-    /// neither, which is no change to return.
+    /// source holds one, and the finished messages it returns; `None` when
+    /// it has neither, which is nothing to return.
     pub fn new(
         conversation: SessionId,
         record: Option<ConversationOwnRecord>,
@@ -247,9 +247,11 @@ pub trait ConversationSource: Send {
     ) -> Result<ConversationChanges, SourceError>;
     /// The text read: the next bounded batch of changed conversations over
     /// every conversation the source holds, each with its own record where
-    /// the source holds one and its finished messages, and nothing else the
-    /// source holds of it. Its position is its own; the position commits
-    /// with what it delivered.
+    /// the source holds one and the finished messages it returns, which
+    /// leave out a runtime's reports of a background command, and nothing
+    /// else the source holds of it. A change to a finished row it leaves out
+    /// still makes its conversation changed. Its position is its own; the
+    /// position commits with what it delivered.
     fn text_since(&self, position: Option<&SourcePosition>) -> Result<TextChanges, SourceError>;
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError>;
     /// The newest assistant message the runtime has recorded in `thread`'s
