@@ -54,11 +54,13 @@ Apply these configured action values to the identified assignment and session.
   owed keeps its owner and gates. Withdrawing a human-owned outcome follows
   `general/policy/human-contract`; lack of a technical path does not confer
   that authority on the agent.
-- **Finish terminal orchestrator threads after recording terminal state.** Once
-  a todo reaches a terminal state (`delivered` or `withdrawn`), finish its
-  recorded orchestrator thread(s) (`todo-orchestrator`, plus any legacy
-  phase-orchestrator bindings) through the configured `runtime.finish_thread`
-  action so they stay quiet, readable, and wakeable rather than archived.
+- **Finish resting and terminal orchestrator threads after handoff or terminal
+  state.** Once an orchestrator hands a todo off to `integrate`
+  (`--finalize-ready` and `--unclaim`), or once a todo reaches a terminal state
+  (`delivered` or `withdrawn`), finish its recorded orchestrator thread(s)
+  (`todo-orchestrator`, plus any legacy phase-orchestrator bindings) through
+  the configured `runtime.finish_thread` action so they stay quiet, readable,
+  and wakeable in place (if kicked back or resumed) rather than archived.
   Complete all record writes and handoffs first when self-finishing, converge
   idempotently on already-finished threads (distinguishing an already-finished
   thread from a failed observation), preserve unfinished human or worker
