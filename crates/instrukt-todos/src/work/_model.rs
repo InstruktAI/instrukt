@@ -410,10 +410,10 @@ impl Binding {
     /// unreleased workspace or child assignment. A driver binding is not
     /// one. While it is open no other role starts there, readiness is
     /// refused and the runner reclaims nothing there. Work's holder guard
-    /// refuses reclaiming to every session but the attempt's own; whether
-    /// that session may run the command at all is its `code-commit` grant's
-    /// to decide, which a writing role holds and a read-only reviewer does
-    /// not, so nobody reclaims during a review.
+    /// refuses reclaiming to every session but the attempt's own; it decides
+    /// nothing about who may run the command. For a focused role the command
+    /// also needs the `code-commit` grant, which a read-only reviewer lacks,
+    /// so nobody reclaims during a review.
     pub(crate) fn is_open_role_attempt(&self) -> bool {
         matches!(
             self.attempt.assignment,
