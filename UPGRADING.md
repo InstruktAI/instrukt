@@ -593,8 +593,12 @@ TeleClaude keep their document and are found by the same text as before.
 The first history operation after upgrading, on each computer, converts
 `state/history.db` in place and then rewrites it to free the space the
 dropped records held, holding the history lock throughout; on a large store
-this takes a while, and history commands started meanwhile fail with a
-timeout until it ends, while the runner retries its extraction. What the
+each step takes a while. While the conversion runs, every history command
+fails once its wait for the lock times out. Once the conversion has
+committed, `history show` and the search's own read work again while the
+rewrite continues; `history extract` and `history import-teleclaude` still
+time out, and `history search` returns what is retained and reports its
+catch-up as failed. The runner retries its extraction throughout. What the
 store held of tool records, runs and subagents is dropped by the conversion
 and nothing restores it. To keep a copy, take one before installing the new
 build, while the store is still in its earlier shape, with SQLite's online

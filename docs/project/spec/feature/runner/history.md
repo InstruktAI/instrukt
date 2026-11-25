@@ -483,15 +483,19 @@ Then that conversation is in the developer's instrukt history without a search o
   document; the runtime's own state is where they are read while the runtime
   still holds them. A store brought forward from an earlier schema version has
   dropped what it held of them, and nothing restores it.
-- Bringing a store forward from an earlier schema version and reclaiming the
-  space it freed hold the history lock from start to end. The history lock
-  bounds only how long another process waits to acquire it; it bounds neither
-  step, whose migration takes as long as removing the earlier records needs
-  and whose reclamation grows with the data that remains. Meanwhile an
-  extraction, an import or a document lookup fails visibly when its wait ends,
-  the runner's extraction records the failure and retries, and a search
-  behaves as it does while earlier history is moved in, below. Operations
-  started after both complete succeed.
+- Bringing a store forward from an earlier schema version holds the history
+  lock from start to end, and reclaiming the space it freed follows in the
+  same hold once the migration has committed. The history lock bounds only how
+  long another process waits to acquire it; it bounds neither step, whose
+  migration takes as long as removing the earlier records needs and whose
+  reclamation grows with the data that remains. While the migration runs the
+  store is still at its earlier version, so every history operation takes the
+  write path and fails visibly when its wait ends, a search included. While
+  reclamation runs the store is current: a document lookup and a search's own
+  read take no lock and succeed, an extraction or an import fails visibly when
+  its wait ends, and a search returns what the store retains with its
+  catch-up reported failed. The runner's extraction records each failure and
+  retries. Operations started after both complete succeed.
 - The first catch-up after a store is brought forward reads again every
   conversation the source still holds whose stored fingerprint covered more
   than its own record and its messages, one conversation per committed batch,
