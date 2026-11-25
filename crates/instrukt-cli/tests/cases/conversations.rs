@@ -69,8 +69,9 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // source reader while the runner runs.
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     // The machine's and the company's secrets files hold values that are
-    // also ordinary words of the answer, as installation stores the word
-    // `instrukt` as the local Redis username.
+    // also ordinary words of the answer, as a secret value can be an
+    // everyday word: the machine's local Redis username, owned by the Redis
+    // installation step, is one.
     let here = c.env.path("");
     for (name, value, company) in [
         ("INSTRUKT_REDIS_USERNAME", "instrukt", None),
