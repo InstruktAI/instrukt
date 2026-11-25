@@ -69,6 +69,7 @@ retains its initialized role, home, subject, attendance and delivery facts.
 
 ### Continuation and successors
 
+<!-- planned-change:standing-sdlc-coordinator -->
 Standing T3 threads are settled, never closed. Automation never settles a
 standing agent: it stays unsettled in the sidebar by design. A human may settle
 it; the thread remains findable and reachable, wakes on a message and can be
@@ -76,6 +77,19 @@ unsettled. Later activations reuse the same keyed assignment for home and
 subject identity, attended and unattended alike. Settling neither retires a
 responsibility nor authorizes a successor. There is no closed T3 context to
 revive or non-resumability proof to obtain.
+<!-- change:standing-sdlc-coordinator -->
+Standing T3 threads are settled, never closed. A standing agent whose procedure
+names no rest condition is never settled by automation: it stays unsettled in
+the sidebar by design. A standing agent whose procedure names a rest condition
+rests when that condition holds and its current work is recorded: its thread
+is settled out of the active list. A human may settle any standing thread.
+Settled by rest or by a human, the thread remains findable and reachable, wakes
+on a message or its next activation and can be unsettled. Later activations
+reuse the same keyed assignment for home and subject identity, attended and
+unattended alike. Settling neither retires a responsibility nor authorizes a
+successor. There is no closed T3 context to revive or non-resumability proof to
+obtain.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 A confirmed native archive or deletion with pending/new work admits one
 successor through the shared runner binding owner. Failed observation/send and
@@ -101,11 +115,20 @@ declaration as evidence. A new successor uses the current published role,
 attendance and delivery settings. Required reads are retrieved from current
 publication; settings persistence creates no historical documentation snapshot.
 
+<!-- planned-change:standing-sdlc-coordinator -->
 `attended` is the default. `unattended` declares an audience, never reach,
 authorization or event trust: it changes neither whether an agent is started nor
 which events it receives. Standing T3 threads stay visible and unsettled
 under automation regardless of attendance. Work an unattended agent dispatches
 has its own attendance; it does not inherit unattended status.
+<!-- change:standing-sdlc-coordinator -->
+`attended` is the default. `unattended` declares an audience, never reach,
+authorization or event trust: it changes neither whether an agent is started nor
+which events it receives. Outside a rest its procedure names, a standing T3
+thread stays visible and unsettled under automation regardless of attendance.
+Work an unattended agent dispatches has its own attendance; it does not inherit
+unattended status.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 Manual agent entry first records `instrukt events bind <procedure> --reserve`.
 This record-only command takes the responsibility guard, resolves the procedure's
@@ -369,6 +392,17 @@ Given a developer's procedure has malformed entry metadata that cannot supply a 
 When automatic activation or manual entry reservation is requested for it
 Then entry refuses before creating a session and identifies the unusable effective role
 ```
+
+<!-- planned:standing-sdlc-coordinator -->
+### UC-PSA30: Keep a quiet responsibility's agent out of the active list
+
+```gherkin
+Given a developer's standing agent answers a responsibility whose procedure names when it rests
+When that rest condition holds and the agent's current work is recorded
+Then its thread leaves the active list and stays findable and reachable
+And the next activation wakes that same thread without a new generation
+```
+<!-- /planned:standing-sdlc-coordinator -->
 
 ## Known caveats
 

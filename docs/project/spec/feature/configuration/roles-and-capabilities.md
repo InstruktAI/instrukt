@@ -46,6 +46,15 @@ version 2 converts to version 3 on the owned migration path
 it was, and nothing else changes. A version-2 file that holds both entries is
 refused with its source intact, naming both, until one is removed.
 
+<!-- planned:standing-sdlc-coordinator -->
+The standing project coordinator's role is `sdlc-coordinator`. A configured
+`roles.coordinator` entry converts to `roles.sdlc-coordinator` on the same
+owned migration path, with every field as it was, and nothing else changes. A
+file that holds both entries is refused with its source intact, naming both,
+until one is removed. A file that configures neither takes the shipped
+`sdlc-coordinator` entry.
+<!-- /planned:standing-sdlc-coordinator -->
+
 Every effective entry has a class and grants; model inputs inherit from
 `default` as agent-selection specifies. The shipped `default` and
 `event-handler` are unrestricted, awareness-only entries. A role absent from
@@ -175,6 +184,7 @@ project at `any`. It is the company agent's only work-record write: it holds no
 report files is the work context's
 (`project/instrukt/spec/feature/work/todos`, Bug reports).
 
+<!-- planned-change:standing-sdlc-coordinator -->
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
 the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
@@ -197,6 +207,36 @@ model/provider choice.
 | `company-agent` | `standing` | `read`, `tools`, `report` | project |
 | `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
 | `default` | `agent` | `all` | project |
+<!-- change:standing-sdlc-coordinator -->
+These entries cover every role declared by instrukt's shipped procedures and
+the `company-agent` role the runner gives a conversation session, declared by
+the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
+They share the model `order`/`tier` defaults of agent-selection, except
+`technical-coordinator` and `sdlc-coordinator`, which ship
+`order: [antigravity, claude]` at tier `premium`; the table's App column names
+the identity reference, not another model/provider choice.
+
+| Roles | Class | `can` bundles | App |
+| --- | --- | --- | --- |
+| `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
+| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer` | `focused` | `read`, `review` | reviewer |
+| `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
+| `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
+| `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
+| `integrator` | `standing` | `read`, `record`, `orchestrate`, `integrate` | project |
+| `sdlc-coordinator` | `standing` | `read`, `record`, `orchestrate`, `report` | project |
+| `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
+| `event-handler` | `standing` | `all` | project |
+| `company-agent` | `standing` | `read`, `tools`, `report` | project |
+| `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
+| `default` | `agent` | `all` | project |
+
+`sdlc-coordinator` is the standing role of a project's fleet coordination. Its
+`own` scope is the project home of its standing assignment: `record` reaches
+that project's todos and `orchestrate` its sessions, and `report` files a
+defect of the system it works through into the project that owns the defect,
+as it does for a company's agent.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
 entry and in its resolved publication metadata. The author can declare a role

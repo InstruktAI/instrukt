@@ -446,6 +446,11 @@ has no origin, as declared in Canonical fields.
 - **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 
+<!-- planned:standing-sdlc-coordinator -->
+- **Fleet attention** — `project/instrukt/spec/feature/runner/fleet-attention`
+  — have stuck or colliding work across a project's todos attended to without watching its sessions.
+<!-- /planned:standing-sdlc-coordinator -->
+
 ## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — module boundaries
