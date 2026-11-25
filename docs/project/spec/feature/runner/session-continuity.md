@@ -763,6 +763,7 @@ Then the runtime binding, work binding and claim move to one successor atomicall
 And a lost acknowledgement replays that successor with the same IDs
 ```
 
+<!-- planned-change:fix-false-recovery-on-released-executions -->
 ### UC-SS27: A handed-off orchestrator's conversation stays settled
 
 ```gherkin
@@ -772,6 +773,17 @@ When the runner next considers the project's work
 Then that conversation receives no recovery message and stays settled
 And no stopped execution is reported for it
 ```
+<!-- change:fix-false-recovery-on-released-executions -->
+### UC-SS27: A handed-off orchestrator's conversation stays settled
+
+```gherkin
+Given a developer's orchestrator released its todo and settled its conversation
+And another session has since taken that todo up
+When the runner next considers the project's work
+Then that conversation receives no recovery message and stays settled
+And no stopped execution is reported for it
+```
+<!-- /planned-change:fix-false-recovery-on-released-executions -->
 
 ### UC-SS25: Keyed recovery commands (retired)
 
