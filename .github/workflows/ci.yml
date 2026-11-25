@@ -193,7 +193,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  # Runs the archive the archive job built in four partitions
+  # Runs the archive the archive job built in eight partitions
   # (scripts/ci-ubuntu-shard.sh), from the matrix's own index and total. Each
   # leg writes its completion record under its own output only after its
   # partition passed. Adding or removing a matrix
@@ -206,13 +206,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-latest
     outputs:
       shard_1: ${{ steps.shard.outputs.shard_1 }}
       shard_2: ${{ steps.shard.outputs.shard_2 }}
       shard_3: ${{ steps.shard.outputs.shard_3 }}
       shard_4: ${{ steps.shard.outputs.shard_4 }}
+      shard_5: ${{ steps.shard.outputs.shard_5 }}
+      shard_6: ${{ steps.shard.outputs.shard_6 }}
+      shard_7: ${{ steps.shard.outputs.shard_7 }}
+      shard_8: ${{ steps.shard.outputs.shard_8 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Read pinned test tools
@@ -269,7 +273,11 @@ jobs:
           SHARD_2: ${{ needs.ubuntu-test.outputs.shard_2 }}
           SHARD_3: ${{ needs.ubuntu-test.outputs.shard_3 }}
           SHARD_4: ${{ needs.ubuntu-test.outputs.shard_4 }}
-        run: scripts/ci-verify-jobs.sh "$CHANGES_RESULT" "$CHANGES_VALIDATE" "$CHANGES_RUST" "$BUILD_RESULT" "$BUILD_RECORD" "$TEST_RESULT" "$SHARD_1" "$SHARD_2" "$SHARD_3" "$SHARD_4"
+          SHARD_5: ${{ needs.ubuntu-test.outputs.shard_5 }}
+          SHARD_6: ${{ needs.ubuntu-test.outputs.shard_6 }}
+          SHARD_7: ${{ needs.ubuntu-test.outputs.shard_7 }}
+          SHARD_8: ${{ needs.ubuntu-test.outputs.shard_8 }}
+        run: scripts/ci-verify-jobs.sh "$CHANGES_RESULT" "$CHANGES_VALIDATE" "$CHANGES_RUST" "$BUILD_RESULT" "$BUILD_RECORD" "$TEST_RESULT" "$SHARD_1" "$SHARD_2" "$SHARD_3" "$SHARD_4" "$SHARD_5" "$SHARD_6" "$SHARD_7" "$SHARD_8"
 
   # Clippy and, on a pull request, the macOS selection; on every other event
   # the full suite and the doctests (scripts/ci-macos.sh). Formatting and the
