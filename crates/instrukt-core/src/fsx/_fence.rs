@@ -313,7 +313,9 @@ enum Leads {
     /// The root entry itself, which exists and is no link, under its
     /// resolved parent; only the name the file system stores for it is left
     /// unspelled. A target can lie under it only through that very directory
-    /// entry, which no other entry of the parent shares this identity with.
+    /// entry, so a target whose entry at that depth has another identity is
+    /// ruled out. An equal identity is no proof of the same entry, as a hard
+    /// link shares it: such a target still meets the full comparison.
     Unspelled(Identity),
 }
 
