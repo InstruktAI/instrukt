@@ -5,6 +5,7 @@
 //! - core's [`FlavorRoles`] for docs validation.
 
 use std::collections::BTreeSet;
+use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -300,21 +301,24 @@ impl WorkflowAssignments for Workflow {
         let Some(evidence) = self.evidence.evidence(project, todo)? else {
             return Ok(None);
         };
+        let holder = claim_holder(&evidence);
+        if !record_admits(&evidence, holder.as_ref()) {
+            return Ok(None);
+        }
+        let prereqs = standings(&evidence.prerequisites, |slug| {
+            self.evidence.evidence(project, slug)
+        })?;
+        if !prereqs
+            .iter()
+            .all(|(_, standing)| *standing == PrerequisiteStanding::Delivered)
+        {
+            return Ok(None);
+        }
         let approvers =
             approvers_of(&reading.config).map_err(|err| WorkflowInterfaceError::Flavor {
                 message: err.to_string(),
             })?;
-        let Some(published) = admitted(&evidence, approvers, || {
-            let prereqs = standings(&evidence.prerequisites, |slug| {
-                self.evidence.evidence(project, slug)
-            })?;
-            Ok::<_, WorkflowInterfaceError>(
-                prereqs
-                    .iter()
-                    .all(|(_, standing)| *standing == PrerequisiteStanding::Delivered),
-            )
-        })?
-        else {
+        let Some(published) = published(&evidence, holder, approvers) else {
             return Ok(None);
         };
         let others = related_evidence(self.evidence.as_ref(), project, &evidence)?;
@@ -357,39 +361,42 @@ struct Published {
     waits_on_person: bool,
 }
 
-/// The assignment gates that need no repository observation, and the
-/// values an admitted todo publishes; `None` when a gate leaves the todo
-/// without an assignment. `prerequisites_delivered` reads the
-/// prerequisites' evidence and runs only for an active todo the hold gate
-/// lets through.
-fn admitted<E>(
-    evidence: &TodoEvidence,
-    approvers: Approvers,
-    prerequisites_delivered: impl FnOnce() -> Result<bool, E>,
-) -> Result<Option<Published>, E> {
-    let holder = evidence
+/// The session holding `evidence`'s execution claim, if a session holds it.
+fn claim_holder(evidence: &TodoEvidence) -> Option<SessionRef> {
+    evidence
         .claim
         .as_ref()
-        .and_then(|claim| claim.session.clone());
-    // A hold pauses pickup and ends no running work: a session that holds
-    // the claim keeps its assignment through the hold.
-    if evidence.status != TodoStatus::Active || (evidence.hold.is_some() && holder.is_none()) {
-        return Ok(None);
+        .and_then(|claim| claim.session.clone())
+}
+
+/// Whether the todo's own record lets an assignment through: it is active,
+/// and held only while a session holds its claim. A hold pauses pickup and
+/// ends no running work: a session that holds the claim keeps its
+/// assignment through the hold.
+fn record_admits(evidence: &TodoEvidence, holder: Option<&SessionRef>) -> bool {
+    evidence.status == TodoStatus::Active && (evidence.hold.is_none() || holder.is_some())
+}
+
+/// What a todo whose record and prerequisites admit it publishes, or `None`
+/// while no claim is held and an approval gate waits for a human: do not
+/// re-dispatch until the approval arrives.
+fn published(
+    evidence: &TodoEvidence,
+    holder: Option<SessionRef>,
+    approvers: Approvers,
+) -> Option<Published> {
+    let awaiting_human_approval =
+        waiting_for_human_approval(evidence, approvers.prd, approvers.task);
+    if evidence.claim.is_none() && awaiting_human_approval {
+        return None;
     }
-    if !prerequisites_delivered()? {
-        return Ok(None);
-    }
-    // Human-owned approval gate: when unclaimed and waiting on the human,
-    // do not re-dispatch until the approval arrives.
-    if evidence.claim.is_none()
-        && waiting_for_human_approval(evidence, approvers.prd, approvers.task)
-    {
-        return Ok(None);
-    }
-    Ok(Some(Published {
+    let shown = crate::work::ShownStatus::of(evidence.status, evidence.hold.is_some());
+    let Ok(waits_on_person) =
+        crate::work::waits_on_person(shown, || Ok::<_, Infallible>(awaiting_human_approval));
+    Some(Published {
         holder,
-        waits_on_person: crate::work::waits_on_person(evidence, approvers.prd, approvers.task),
-    }))
+        waits_on_person,
+    })
 }
 
 /// Every todo whose evidence `evidence` depends on: prerequisites by slug
@@ -597,35 +604,39 @@ mod tests {
             task: approver,
         };
         let admit = |evidence: &TodoEvidence, approver| {
-            admitted(evidence, approvers(approver), || Ok::<_, ()>(true)).unwrap()
+            let holder = claim_holder(evidence);
+            record_admits(evidence, holder.as_ref())
+                .then(|| published(evidence, holder, approvers(approver)))
+                .flatten()
         };
         let holder = Some(session("orchestrator"));
 
-        let at_prd_approval = todo(TodoKind::Feature)
-            .artifact(artifact_names::PRD, "prd-v1")
-            .artifact(artifact_names::PRD_REVIEW_FINDINGS, "ok")
-            .stamped(StampFact::PreparationVerdict {
-                phase: PreparationReview::PrdReview,
-                verdict: ReviewVerdict::Approve,
-                target: digest("prd-v1"),
-                report: digest("ok"),
-            })
-            .claimed()
-            .build();
+        let at_prd_approval = || {
+            todo(TodoKind::Feature)
+                .artifact(artifact_names::PRD, "prd-v1")
+                .artifact(artifact_names::PRD_REVIEW_FINDINGS, "ok")
+                .stamped(StampFact::PreparationVerdict {
+                    phase: PreparationReview::PrdReview,
+                    verdict: ReviewVerdict::Approve,
+                    target: digest("prd-v1"),
+                    report: digest("ok"),
+                })
+        };
         assert_eq!(
-            admit(&at_prd_approval, Approver::Human),
+            admit(&at_prd_approval().claimed().build(), Approver::Human),
             Some(Published {
                 holder: holder.clone(),
                 waits_on_person: true,
             })
         );
         assert_eq!(
-            admit(&at_prd_approval, Approver::Peer),
+            admit(&at_prd_approval().claimed().build(), Approver::Peer),
             Some(Published {
                 holder: holder.clone(),
                 waits_on_person: false,
             })
         );
+        assert_eq!(admit(&at_prd_approval().build(), Approver::Human), None);
 
         let held_and_claimed = todo(TodoKind::Change).held().claimed().build();
         assert_eq!(

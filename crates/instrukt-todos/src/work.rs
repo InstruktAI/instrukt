@@ -50,6 +50,7 @@ pub use _attempts::{
     StoppedChild, WorkspaceEntry, WorkspaceRequest,
 };
 pub use _diff::DiffLine;
+pub(crate) use _envelope::ShownStatus;
 pub use _error::WorkError;
 pub use _github::{GitHubError, OperationAppError};
 pub use _model::{

@@ -45,31 +45,54 @@ impl IssueFields {
     }
 }
 
-/// The record's status as the issue and board show it: active, iceboxed,
-/// held, delivered or withdrawn (a structural holder is active work),
-/// never a workflow phase.
-pub(crate) fn record_status(record: &TodoRecord) -> &'static str {
-    shown_status(record.status, record.hold.is_some())
+/// A todo's record status as the issue and board show it: active,
+/// iceboxed, held, delivered or withdrawn (a structural holder is active
+/// work), never a workflow phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShownStatus {
+    Active,
+    Iceboxed,
+    Held,
+    Delivered,
+    Withdrawn,
 }
 
-/// The status shown for a todo in `status` with a hold set or not: a
-/// delivered, withdrawn or iceboxed todo shows that status whatever hold
-/// it retains; otherwise a hold shows as held.
-pub(crate) fn shown_status(status: TodoStatus, held: bool) -> &'static str {
-    match (status, held) {
-        (TodoStatus::Delivered, _) => "delivered",
-        (TodoStatus::Removed, _) => "withdrawn",
-        (TodoStatus::Iceboxed, _) => "iceboxed",
-        (_, true) => "held",
-        (TodoStatus::Active | TodoStatus::StructuralHolder, false) => "active",
+impl ShownStatus {
+    /// The status shown for a todo in `status` with a hold set or not: a
+    /// delivered, withdrawn or iceboxed todo shows that status whatever
+    /// hold it retains; otherwise a hold shows as held.
+    pub(crate) fn of(status: TodoStatus, held: bool) -> Self {
+        match (status, held) {
+            (TodoStatus::Delivered, _) => Self::Delivered,
+            (TodoStatus::Removed, _) => Self::Withdrawn,
+            (TodoStatus::Iceboxed, _) => Self::Iceboxed,
+            (_, true) => Self::Held,
+            (TodoStatus::Active | TodoStatus::StructuralHolder, false) => Self::Active,
+        }
     }
+
+    /// The word the issue body and the board's status field carry.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Iceboxed => "iceboxed",
+            Self::Held => "held",
+            Self::Delivered => "delivered",
+            Self::Withdrawn => "withdrawn",
+        }
+    }
+}
+
+/// The record's status as the issue and board show it.
+pub(crate) fn record_status(record: &TodoRecord) -> ShownStatus {
+    ShownStatus::of(record.status, record.hold.is_some())
 }
 
 /// The issue of `record`.
 pub(crate) fn issue(record: &TodoRecord) -> IssueFields {
     let mut lines = vec![format!("{ISSUE_MARKER}{}{COMMENT_CLOSE}", record.id)];
     // The record's status, never a workflow phase.
-    let status = record_status(record);
+    let status = record_status(record).as_str();
     lines.push(format!("**Kind:** {} · **Status:** {status}", record.kind));
     if let Some(hold) = &record.hold {
         lines.push(format!("**On hold:** {}", hold.reason));

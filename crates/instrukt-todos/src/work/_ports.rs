@@ -2,7 +2,7 @@
 //! runner's work interfaces, workflow's evidence read and core's todo
 //! existence.
 
-use instrukt_core::config::{Approver, Configuration};
+use instrukt_core::config::Configuration;
 use instrukt_core::github;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
@@ -13,6 +13,7 @@ use instrukt_runner::interfaces::{
 };
 use jiff::Timestamp;
 
+use super::_envelope::ShownStatus;
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
@@ -1291,11 +1292,18 @@ pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisi
 
 /// Whether the todo waits on a person (`github-record`, the `Needs you`
 /// marker): it shows as held, or a current approval gate waits for a
-/// human under the configured `prd` and `task` approvers. Work decides
-/// this once; the board marker and workflow's assignment relay it.
-pub(crate) fn waits_on_person(evidence: &TodoEvidence, prd: Approver, task: Approver) -> bool {
-    super::_envelope::shown_status(evidence.status, evidence.hold.is_some()) == "held"
-        || crate::workflow::waiting_for_human_approval(evidence, prd, task)
+/// human. Work decides this once; the board marker and workflow's
+/// assignment relay it. `awaiting_human_approval` answers whether an
+/// approval gate waits for a human under the configured `prd` and `task`
+/// approvers; it is asked only when the shown status leaves that open.
+pub(crate) fn waits_on_person<E>(
+    shown: ShownStatus,
+    awaiting_human_approval: impl FnOnce() -> Result<bool, E>,
+) -> Result<bool, E> {
+    if shown == ShownStatus::Held {
+        return Ok(true);
+    }
+    awaiting_human_approval()
 }
 
 pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
@@ -1390,17 +1398,24 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
+
     use instrukt_core::config::Approver;
     use instrukt_runner::interfaces::TodoKind;
 
-    use super::waits_on_person;
+    use super::{ShownStatus, waits_on_person};
     use crate::evidence::{
         PreparationReview, ReviewVerdict, StampFact, TodoEvidence, TodoStatus, artifact_names,
     };
     use crate::workflow::_testing::{digest, todo};
+    use crate::workflow::waiting_for_human_approval;
 
     fn waits(evidence: &TodoEvidence, approver: Approver) -> bool {
-        waits_on_person(evidence, approver, approver)
+        let shown = ShownStatus::of(evidence.status, evidence.hold.is_some());
+        let Ok(waits) = waits_on_person(shown, || {
+            Ok::<_, Infallible>(waiting_for_human_approval(evidence, approver, approver))
+        });
+        waits
     }
 
     #[test]
@@ -1415,6 +1430,12 @@ mod tests {
             .build();
         assert!(!waits(&delivered, Approver::Human));
         assert!(!waits(&delivered, Approver::Peer));
+    }
+
+    #[test]
+    fn a_todo_shown_as_held_waits_without_asking_about_approval() {
+        assert_eq!(waits_on_person(ShownStatus::Held, || Err(())), Ok(true));
+        assert_eq!(waits_on_person(ShownStatus::Active, || Err(())), Err(()));
     }
 
     #[test]

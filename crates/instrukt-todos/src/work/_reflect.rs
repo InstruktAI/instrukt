@@ -408,7 +408,7 @@ fn reflect_board(
     issue: IssueRef,
     needs_you: bool,
 ) -> Result<(), GitHubError> {
-    let status = _envelope::record_status(&item.record);
+    let status = _envelope::record_status(&item.record).as_str();
     let attempt = (|| {
         let content = gh.read(&format!("/issues/{}", issue.number))?["node_id"]
             .as_str()

@@ -2072,7 +2072,7 @@ fn view(s: &mut Session<'_>, record: TodoRecord, local: bool) -> TodoView {
         }
     }
     TodoView {
-        record_status: super::_envelope::record_status(&record),
+        record_status: super::_envelope::record_status(&record).as_str(),
         record,
         local,
         reflection: None,
