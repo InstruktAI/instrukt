@@ -64,6 +64,12 @@ enum TodoCommand {
     /// Record the confirmed delivered commit.
     Deliver(DeliverArgs),
     /// Reserve a native role assignment, or record no-start/failure evidence.
+    ///
+    /// A reservation's reply carries `prior_session` when the role has an
+    /// earlier attempt bound on the selected runtime: the session and attempt
+    /// number of the most recent such attempt, with its recorded selection and
+    /// dispatching session where the record holds them. The reply omits it
+    /// otherwise.
     Attempt(AttemptArgs),
     /// Bind a reserved assignment to its native shared child.
     Bind(BindArgs),
