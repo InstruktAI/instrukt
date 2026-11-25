@@ -59,6 +59,13 @@ catalog formats (See Also), which decide where each of its files stands.
   (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
   generated line).
 
+<!-- planned:compressed-global-entrypoints -->
+The skill's main file holds each document it holds in full as that
+document's current compressed unit, and in its prose where the unit is stale
+or missing (`project/instrukt/spec/feature/publication/compressed-units`). A
+document the skill carries as a file of its own is carried in its prose.
+<!-- /planned:compressed-global-entrypoints -->
+
 ### What the documents may say
 
 The index and the documents are read as the home's `AGENTS.md` rendering

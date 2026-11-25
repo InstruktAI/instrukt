@@ -85,6 +85,13 @@ Only references outside code are resolved; a reference inside a code span or
 fenced code block is left exactly as written and is never reported as
 unresolved.
 
+<!-- planned:compressed-global-entrypoints -->
+Wherever this spec says a rendering holds a snippet or a company document in
+full, the rendering holds that source's current compressed unit in its place,
+and the source's prose where its unit is stale or missing
+(`project/instrukt/spec/feature/publication/compressed-units`).
+<!-- /planned:compressed-global-entrypoints -->
+
 ### Committed entrypoints
 
 A repository's rendered `AGENTS.md` is committed, and it stands at the
@@ -518,6 +525,20 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   the company's repository and on request, which no sync renders
   (`project/instrukt/spec/feature/publication/company-plugin`).
 
+<!-- planned:compressed-global-entrypoints -->
+#### The uncompressed copy
+
+Every sync that writes global files also writes, for each runtime, the same
+rendering with every source in its prose, into the home, at a place no agent
+runtime loads or reads as an instruction file, on a case-insensitive file
+system as well. It is written whole every time, as the global file is. A
+global file that holds a compressed unit names, near its top and in text
+every runtime loads, where that uncompressed copy stands and how to read any
+snippet it names in full. In a global file, `general`'s listed snippets and
+triggered procedures stand under headings that carry their read command once
+(`project/instrukt/spec/feature/docs/progressive-retrieval`, Listing lines).
+<!-- /planned:compressed-global-entrypoints -->
+
 ## Use cases
 
 ### UC-AE1: An agent that checks out a developer's project starts with what the project selected
@@ -631,6 +652,18 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 ### UC-AE14: A developer whose agent runtimes could not be asked is told, and the next publication catches up (retired)
 
 ### UC-AE15: A developer whose repository still carries a master keeps its instructions until they move them (retired)
+
+<!-- planned:compressed-global-entrypoints -->
+### UC-AE16: A developer reads in full what their agents were given
+
+```gherkin
+Given a developer's computer publishes always-on doctrine whose sources have current compressed units
+When publication runs for the project that owns the always-on doctrine
+Then each configured runtime's global instruction file names where its uncompressed text stands
+And that text holds the same selection with every source in its full prose
+And no agent runtime loads it
+```
+<!-- /planned:compressed-global-entrypoints -->
 
 ## Known caveats
 

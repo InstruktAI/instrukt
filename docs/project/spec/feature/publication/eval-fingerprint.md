@@ -25,6 +25,7 @@ and the report procedure itself are outside this shipped process set.
 
 ### The fingerprint
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **Input.** Every snippet in the published corpus of the home — published
   from `docs/general/` or a `docs/domain/<x>/` of any project — whose
   frontmatter declares `eval: true`, after this sync's patch.
@@ -46,6 +47,34 @@ and the report procedure itself are outside this shipped process set.
   unchanged is left as it is, its time included. That a commit was published
   before never decides it: another project may have changed evaluated
   doctrine since, which changes the fingerprint of an unchanged commit.
+<!-- change:compressed-global-entrypoints -->
+- **Input.** Every snippet in the published corpus of the home — published
+  from `docs/general/` or a `docs/domain/<x>/` of any project — whose
+  frontmatter declares `eval: true`, after this sync's patch.
+- **Determinism.** The same set of snippets with the same content yields the
+  same fingerprint, whichever project's sync computed it and in whatever
+  order the projects published.
+- **Change.** Adding, removing or changing the content of an `eval: true`
+  snippet changes the fingerprint; changes to other snippets do not.
+- **Compressed units.** An `eval: true` snippet's compressed unit
+  (`project/instrukt/spec/feature/publication/compressed-units`) is part of
+  the evaluated doctrine: adding, removing or changing it changes the
+  fingerprint, and what state records per published commit tells a change of
+  evaluated prose apart from a change of compressed units alone.
+- **Empty.** A corpus with no `eval: true` snippet has a defined fingerprint
+  of its own, distinct from any non-empty one.
+- **Association.** State records the fingerprint per published commit, rather
+  than only overwriting a current digest. The current fingerprint remains
+  available to work; no separate eval log is maintained.
+- **When.** Computed by every sync that publishes, as part of the same
+  publication, from the corpus as it stands then. A record is written, with
+  the sync's time, only when what it holds differs from what was computed:
+  the per-commit record when its fingerprint or snippet count differs, the
+  current record when its fingerprint differs. A record whose content is
+  unchanged is left as it is, its time included. That a commit was published
+  before never decides it: another project may have changed evaluated
+  doctrine since, which changes the fingerprint of an unchanged commit.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 ## Use cases
 
