@@ -576,3 +576,28 @@ order:
    any project's `.instrukt/schemas/`. Nothing writes schemas or a modeline in
    a company home; point an editor there at it by hand. The domain index
    schema now requires `description`, as validation already did.
+
+### History keeps only what was said
+
+History now retains, of each conversation, its identity, title, parent,
+archive aliases and the runtime's record of it, and its messages with their
+roles, times and text, each text stored once
+(`project/instrukt/spec/feature/runner/history`). It no longer retains what a
+conversation's tools ran and returned, the files it changed, its reasoning
+traces, its runs or its subagents; that text is no longer found by
+`instrukt history search`, and `instrukt history show` of a runtime
+conversation prints its `thread` and `messages` without the `runs`,
+`subagents` and `turnItems` collections. Conversations imported from
+TeleClaude keep their document and are found by the same text as before.
+
+The first history operation after upgrading, on each computer, converts
+`state/history.db` in place and then rewrites it to free the space the
+dropped records held, holding the history lock throughout; on a large store
+this takes a while, and history commands started meanwhile fail with a
+timeout until it ends, while the runner retries its extraction. What the
+store held of tool records, runs and subagents is dropped by the conversion
+and nothing restores it. To keep a copy, take one before installing the new
+build, while the store is still in its earlier shape, with SQLite's online
+backup, which is safe while instrukt uses the store:
+
+    sqlite3 ~/.instrukt/state/history.db ".backup '/path/to/history-before-upgrade.db'"
