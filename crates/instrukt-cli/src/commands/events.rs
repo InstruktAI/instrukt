@@ -54,19 +54,21 @@ enum EventsCommand {
     },
 }
 
-/// The door of a raise refused for its project.
-const RAISE_PROJECT_DOOR: &str = "a raise comes from a session working in the project it concerns; this session's assignment is not in a project. Return the condition to the session that dispatched you, or raise it from a session working in that project";
-
 /// The project a raise belongs to: a recorded assignment's project, never
 /// the directory's, or for a caller with no assignment the project it
-/// stands in. `None` when neither places it in a project.
+/// stands in. A caller neither places in a project is refused with its
+/// door.
 fn raise_project(
     assignment: Option<&instrukt_core::capabilities::Assignment>,
     standing_in: Option<instrukt_core::ids::ProjectSlug>,
-) -> Option<instrukt_core::ids::ProjectSlug> {
+) -> Result<instrukt_core::ids::ProjectSlug, &'static str> {
     match assignment {
-        Some(assignment) => assignment.project.clone(),
-        None => standing_in,
+        Some(assignment) => assignment.project.clone().ok_or(
+            "a raise comes from a session working in the project it concerns; this session's assignment is not in a project. Return the condition to the session that dispatched you, or raise it from a session working in that project",
+        ),
+        None => standing_in.ok_or(
+            "a raise comes from a session working in the project it concerns; this directory is in no project. Run the raise from that project's checkout",
+        ),
     }
 }
 
@@ -244,7 +246,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 }
             };
             let project = raise_project(recorded.as_ref().map(|(a, _)| a), standing_in)
-                .ok_or_else(|| anyhow::anyhow!(RAISE_PROJECT_DOOR))?;
+                .map_err(|door| anyhow::anyhow!(door))?;
             let fleet = crate::wiring::fleet_record(ctx)?;
             let identity = instrukt_runner::fleet_attention::raise(
                 &ctx.home,
@@ -297,25 +299,22 @@ mod tests {
     fn an_assigned_session_raises_in_its_assignments_project_wherever_it_stands() {
         assert_eq!(
             raise_project(Some(&assigned(Some("demo"))), Some(slug("other"))),
-            Some(slug("demo"))
+            Ok(slug("demo"))
         );
     }
 
     #[test]
-    fn an_assignment_outside_a_project_never_falls_back_to_the_directory() {
-        assert_eq!(
-            raise_project(Some(&assigned(None)), Some(slug("demo"))),
-            None
-        );
+    fn an_assignment_outside_a_project_is_refused_without_falling_back_to_the_directory() {
+        assert!(raise_project(Some(&assigned(None)), Some(slug("demo"))).is_err());
     }
 
     #[test]
     fn a_session_without_an_assignment_raises_in_the_project_it_stands_in() {
-        assert_eq!(raise_project(None, Some(slug("demo"))), Some(slug("demo")));
+        assert_eq!(raise_project(None, Some(slug("demo"))), Ok(slug("demo")));
     }
 
     #[test]
-    fn a_session_without_an_assignment_outside_any_project_has_none() {
-        assert_eq!(raise_project(None, None), None);
+    fn a_session_without_an_assignment_outside_any_project_is_refused() {
+        assert!(raise_project(None, None).is_err());
     }
 }
