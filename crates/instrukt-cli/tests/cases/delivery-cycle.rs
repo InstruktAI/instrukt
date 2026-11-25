@@ -303,8 +303,21 @@ fn the_runner_removes_a_delivered_worktree_and_branch_once_no_uncommitted_change
         .repo
         .git(["merge", "--quiet", "--ff-only", "add-depth/work"]);
     crew.project.repo.git(["push", "--quiet", "origin", "main"]);
+    let identity = crew
+        .todo(["show", SLUG])
+        .lines()
+        .find_map(|line| line.strip_prefix("identity: ").map(str::to_owned))
+        .unwrap();
     crew.todo(["deliver", SLUG, "--commit", &candidate]);
     crew.project.env.run(crew.root(), ["sync"]).success();
+    // The retained session bindings and attempts, as the record shows them.
+    let retained = || {
+        let shown = crew.todo(["show", &format!("{SLUG}@{identity}")]);
+        let start = shown.find("\nsessions:\n").unwrap();
+        let end = shown[start + 1..].find("\nartifacts:").unwrap() + start + 1;
+        shown[start..end].to_owned()
+    };
+    let bound = retained();
     let cleanup = || {
         let out = crew
             .project
@@ -345,6 +358,7 @@ fn the_runner_removes_a_delivered_worktree_and_branch_once_no_uncommitted_change
             .is_empty()
     );
     assert_eq!(crew.runtime.thread_calls(), threads);
+    assert_eq!(retained(), bound);
 }
 
 // spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC9
