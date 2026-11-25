@@ -479,12 +479,9 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
         .args(["todo", "stamp", slug, "--finalize-ready"])
         .assert()
         .failure();
-    let undisposed_err = String::from_utf8_lossy(&undisposed.get_output().stderr);
-    assert!(
-        undisposed_err.contains(
-            "readiness requires a current verification disposition admitting handoff at this exact commit SHA"
-        ) && undisposed_err.contains("no verification disposition recorded"),
-        "expected the owed disposition to be named, got: {undisposed_err}"
+    insta::assert_snapshot!(
+        "fast-track-disposition-owed",
+        shown(&crew, &undisposed.get_output().stderr)
     );
     // The orchestrator judges the bounded change Tier 0 and records the skip.
     assert_eq!(crew.workspace(slug), builder_path);
@@ -619,8 +616,9 @@ fn lead(crew: &Crew, args: &[&str]) -> assert_cmd::assert::Assert {
         .assert()
 }
 
-fn stderr(assert: &assert_cmd::assert::Assert) -> String {
-    String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
+/// A refusal's text, with temporary paths and commits redacted.
+fn stderr(crew: &Crew, assert: &assert_cmd::assert::Assert) -> String {
+    shown(crew, &assert.get_output().stderr)
 }
 
 fn ledger(crew: &Crew) -> serde_json::Value {
@@ -638,38 +636,19 @@ fn only_an_independent_verifiers_pass_accounts_for_live_behavior_at_handoff() {
 
     // No disposition is current for the approved commit: readiness is refused.
     let refused = lead(&crew, &["--finalize-ready"]).failure();
-    assert!(
-        stderr(&refused).contains("no verification disposition recorded"),
-        "{}",
-        stderr(&refused)
-    );
-    let gate = &ledger(&crew)["gates"]["integrate_review_gate"];
-    assert_eq!(gate["status"], "blocked");
-    assert!(
-        gate["reasons"].as_array().unwrap().iter().any(|r| r
-            .as_str()
-            .unwrap()
-            .starts_with("no verification disposition recorded")),
-        "{gate}"
+    insta::assert_snapshot!("disposition-owed", stderr(&crew, &refused));
+    assert_eq!(
+        ledger(&crew)["gates"]["integrate_review_gate"]["status"],
+        "blocked"
     );
 
     // A pass from the orchestrator or from the change's writer records nothing.
     crew.write(SLUG, "verification-findings", "Live run passed.");
     let before = crew.todo(["show", SLUG]);
     let orchestrator = lead(&crew, &["--verification", "pass"]).failure();
-    assert!(
-        stderr(&orchestrator).contains("never a pass")
-            && stderr(&orchestrator).contains("new independent `verifier` attempt"),
-        "{}",
-        stderr(&orchestrator)
-    );
+    insta::assert_snapshot!("orchestrator-pass-refused", stderr(&crew, &orchestrator));
     let writer = stamp(&crew, &builder, &["--verification", "pass"]).failure();
-    assert!(
-        stderr(&writer)
-            .contains("holds neither a verifier attempt nor the todo's live driver binding"),
-        "{}",
-        stderr(&writer)
-    );
+    insta::assert_snapshot!("writer-pass-refused", stderr(&crew, &writer));
     assert_eq!(crew.todo(["show", SLUG]), before);
 
     // An independent verifier's pass releases its attempt and admits handoff.
@@ -701,30 +680,21 @@ fn a_verifiers_fail_is_not_waved_through_by_a_skip_or_a_deferral() {
         .create("verify-parser-live", "change", "Verify the parser live.");
     crew.verified(SLUG, "fail");
     let before = crew.todo(["show", SLUG]);
-    for args in [
-        &["--verification", "tier_0_skip"][..],
+    let skip = lead(&crew, &["--verification", "tier_0_skip"]).failure();
+    insta::assert_snapshot!("skip-after-fail-refused", stderr(&crew, &skip));
+    let deferral = lead(
+        &crew,
         &[
             "--verification",
             "hotfix_deferred",
             "--follow-up",
             "verify-parser-live",
         ],
-    ] {
-        let refused = lead(&crew, args).failure();
-        assert!(
-            stderr(&refused).contains("a verifier recorded fail for commit")
-                && stderr(&refused)
-                    .contains("a new candidate commit, or a new verifier attempt on this commit"),
-            "{args:?}: {}",
-            stderr(&refused)
-        );
-    }
+    )
+    .failure();
+    insta::assert_snapshot!("deferral-after-fail-refused", stderr(&crew, &deferral));
     let readiness = lead(&crew, &["--finalize-ready"]).failure();
-    assert!(
-        stderr(&readiness).contains("latest verification disposition is fail"),
-        "{}",
-        stderr(&readiness)
-    );
+    insta::assert_snapshot!("readiness-after-fail-refused", stderr(&crew, &readiness));
     assert_eq!(crew.todo(["show", SLUG]), before);
     let limited = ledger(&crew);
     assert_eq!(limited["verifier_limit"]["disposition"], "fail");

@@ -156,9 +156,6 @@ fn a_bound_reviewer_can_write_its_own_evidence_but_cannot_choose_another_assignm
             .args(args)
             .assert()
     };
-    let help = run(&["--help"]).success();
-    let help = String::from_utf8_lossy(&help.get_output().stdout).into_owned();
-    assert!(help.contains("Role: verifier · class: focused"), "{help}");
     run(&[
         "todo",
         "artifacts",

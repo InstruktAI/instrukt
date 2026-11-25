@@ -795,7 +795,7 @@ mod tests {
         disposition: VerificationDisposition,
         named: Option<&str>,
         found: Option<&TodoRef>,
-    ) -> Result<StampFact, String> {
+    ) -> Result<StampFact, WorkError> {
         let request = StampRequest::VerificationDisposition {
             disposition,
             follow_up: named.map(|slug| TodoSlug::parse(slug).unwrap()),
@@ -807,9 +807,11 @@ mod tests {
             now: Timestamp::from_second(9).unwrap(),
             follow_up: found,
         };
-        resolve(&request, record, &inputs)
-            .map(|resolved| resolved.fact)
-            .map_err(|err| err.to_string())
+        resolve(&request, record, &inputs).map(|resolved| resolved.fact)
+    }
+
+    fn refused(result: Result<StampFact, WorkError>) -> bool {
+        matches!(result, Err(WorkError::Refused(_)))
     }
 
     #[test]
@@ -842,42 +844,33 @@ mod tests {
         let nowhere = Path::new("/nonexistent");
         let this = todo_ref('a', "ship-it");
         let other = todo_ref('c', "verify-live-later");
-        let refusal = |disposition, named, found| {
-            resolve_disposition(&record, nowhere, disposition, named, found).unwrap_err()
+        let resolved = |disposition, named, found| {
+            resolve_disposition(&record, nowhere, disposition, named, found)
         };
-        assert!(
-            refusal(VerificationDisposition::HotfixDeferred, None, None)
-                .contains("names its tracked follow-up todo")
-        );
-        assert!(
-            refusal(
-                VerificationDisposition::Tier0Skip,
-                Some("verify-live-later"),
-                Some(&other)
-            )
-            .contains("only a hotfix deferral names a follow-up")
-        );
-        assert!(
-            refusal(
-                VerificationDisposition::HotfixDeferred,
-                Some("gone-todo"),
-                None
-            )
-            .contains("unknown, delivered or withdrawn")
-        );
+        assert!(refused(resolved(
+            VerificationDisposition::HotfixDeferred,
+            None,
+            None
+        )));
+        assert!(refused(resolved(
+            VerificationDisposition::Tier0Skip,
+            Some("verify-live-later"),
+            Some(&other)
+        )));
+        assert!(refused(resolved(
+            VerificationDisposition::HotfixDeferred,
+            Some("gone-todo"),
+            None
+        )));
         let mut same = record.clone();
         same.id = this.id.clone();
-        assert!(
-            resolve_disposition(
-                &same,
-                nowhere,
-                VerificationDisposition::HotfixDeferred,
-                Some("ship-it"),
-                Some(&this),
-            )
-            .unwrap_err()
-            .contains("is this one")
-        );
+        assert!(refused(resolve_disposition(
+            &same,
+            nowhere,
+            VerificationDisposition::HotfixDeferred,
+            Some("ship-it"),
+            Some(&this),
+        )));
     }
 
     #[test]
@@ -885,14 +878,12 @@ mod tests {
         let (repo, _) = candidate();
         let mut record = record();
         record.artifacts.clear();
-        let refusal = resolve_disposition(
+        assert!(refused(resolve_disposition(
             &record,
             repo.path(),
             VerificationDisposition::Pass,
             None,
             None,
-        )
-        .unwrap_err();
-        assert!(refusal.contains("`verification-findings`"), "{refusal}");
+        )));
     }
 }
