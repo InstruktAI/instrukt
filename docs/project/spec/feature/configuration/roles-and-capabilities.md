@@ -275,13 +275,13 @@ And creating, changing or withdrawing any other work is not
 ```
 
 <!-- planned:focused-author-commit-hook-refused -->
-### UC-RCAP4: A focused author's commit carries what instrukt generates
+### UC-RCAP4: A focused author's hook runs are admitted in its own workspace
 
 ```gherkin
-Given a focused author bound to its assigned worktree, with instrukt's hooks installed
-When it commits a change to the project's documentation selection there
-Then the commit carries the re-rendered agent instruction file
-And instrukt's hook status reports that run
+Given a focused author holding code-commit at own, bound to its assigned worktree, with instrukt's hooks installed
+When it commits there
+Then the hook runs its commit triggers are admitted
+But a hook run it starts outside its assigned worktree is refused before it runs, with its reporting path
 ```
 <!-- /planned:focused-author-commit-hook-refused -->
 
