@@ -443,11 +443,14 @@ pub(crate) fn has_write_access(comment: &Value) -> bool {
 }
 
 /// Uploads every artifact version not yet on GitHub and learns the
-/// provider's version numbers by digest. Only the versions newer than the
-/// last one confirmed are read, and an upload is confirmed by GitHub's
-/// newest version alone, so the cost does not grow with the artifact's
-/// history (SC-11). A retry reuses versions GitHub already holds instead of
-/// uploading them twice.
+/// provider's version numbers by digest. An upload to an artifact whose
+/// address the record holds reads no earlier version: it is confirmed by
+/// GitHub's newest version alone, so the cost does not grow with the
+/// artifact's history (SC-11). The versions newer than the last one
+/// confirmed are read only to recover: for an address just found on the
+/// issue (a creation whose answer was lost), whose versions a retry then
+/// reuses instead of uploading them twice, and for a confirmation that
+/// does not match.
 fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Result<(), GitHubError> {
     let number = issue.number;
     let mut listed: Option<Vec<Value>> = None;
@@ -455,7 +458,8 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
         if artifact.versions.iter().all(|v| v.remote.is_some()) {
             continue;
         }
-        if artifact.address.is_none() {
+        let recovered = artifact.address.is_none();
+        if recovered {
             let existing = match &listed {
                 Some(list) => list.clone(),
                 None => {
@@ -477,8 +481,8 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
             .max()
             .unwrap_or(0);
         let mut remote = match artifact.address {
-            Some(address) => remote_versions(gh, number, address, confirmed)?,
-            None => Vec::new(),
+            Some(address) if recovered => remote_versions(gh, number, address, confirmed)?,
+            _ => Vec::new(),
         };
         // Versions keep their order: a version maps to a remote version
         // after the one its predecessor maps to.
