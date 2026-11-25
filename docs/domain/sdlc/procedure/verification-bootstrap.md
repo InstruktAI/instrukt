@@ -197,17 +197,17 @@ Following `general/procedure/doc-snippet-authoring`,
         enters `<slug>` into the active lifecycle via
         `instrukt todo unfreeze <slug>`.
 
-     In the active lifecycle, `planner` (`plan-draft`) plans only Steps 2–3
+     In the active lifecycle, `planner` (`sdlc/procedure/lifecycle/prepare/plan-draft`) plans only Steps 2–3
      against those reviewed fills without assigning documentation tasks to
-     `builder` (`plan-draft` Step 4b), and `plan-reviewer` approves
+     `builder` (`sdlc/procedure/lifecycle/prepare/plan-draft`), and `plan-reviewer` approves
      `implementation-plan` before build. During build, `builder` executes only
      Steps 2–3 (stack authoring and live probe); if the live probe discovers an
      irreducible contract delta to Layer 1 or Layer 2 (such as an uncovered
      declared blind spot or changed execution host / isolation primitive),
      `builder` stops and escalates to `todo-orchestrator` so the owning
-     preparation route (`planner` Step 4b → `plan-reviewer`) updates and
+     preparation route (`planner` → `plan-reviewer`) updates and
      re-reviews the pending fills and plan. At delivery
-     (`sdlc/procedure/lifecycle/integrate`, Step 2.4), `integrate` runs
+     (`sdlc/procedure/lifecycle/integrate`), `integrate` runs
      `instrukt docs fold <slug>`, adds any newly delivered fill IDs under
      `listed` in `docs/project/index.yaml`, runs `instrukt docs render`, and
      verifies with `instrukt docs validate` and `instrukt docs render --check`

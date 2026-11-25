@@ -479,12 +479,14 @@ Check the plan against:
   net", "best-effort recovery", and "tolerant parsing" are the usual aliases —
   judge the mechanism (a substitute path taken when the primary fails or input
   is bad), not the label.
-- **Intelligence boundaries** (per `principle/intelligence-boundaries`):
+- **Intelligence boundaries** (per `general/principle/intelligence-boundaries`):
   reject plan tasks that prescribe regex / classifier / scorer / auto-fixer
   code on free-text content. Patterns: hardcoded vocabulary tables;
   word-count thresholds for "is this meaningful?"; `is_*` / `should_*`
   predicates on natural language; auto-rewriters that edit agent artifacts
-  to match structural rubrics. The defining test: would the task be
+  to match structural rubrics; tests, replays or scores whose subject is a
+  document, a prompt or a skill, run by code or by staged agent sessions. The
+  defining test: would the task be
   unnecessary if the agent's briefing said the right thing? If yes, the
   task belongs in the briefing, not the plan. Critical — these accumulate
   silently and corrupt the codebase faster than coupling violations

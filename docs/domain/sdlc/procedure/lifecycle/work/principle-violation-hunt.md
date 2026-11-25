@@ -115,7 +115,7 @@ violate the immutability-preference policy is not a finding — drop the observa
 
 ### 9. Intelligence in the wrong layer
 
-Per `principle/intelligence-boundaries`. Code performing classification,
+Per `general/principle/intelligence-boundaries`. Code performing classification,
 scoring, judgment, evaluation, or auto-editing of content semantics — work
 the agent layer should do.
 
@@ -132,6 +132,8 @@ Patterns to detect:
   (regex section-header grading then regex-driven section insertion).
 - Structural-rubric grading via regex on document headers / formatting
   ("documents with `## Goal` and `## Acceptance` score higher").
+- A test, replay or score whose subject is a document, a prompt or a skill,
+  whether code or staged agent sessions run it.
 
 **Severity: Critical.** This pattern accumulates and corrupts the codebase
 faster than coupling violations because every implementation looks

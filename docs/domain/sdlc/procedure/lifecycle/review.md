@@ -58,9 +58,10 @@ preferred classification or design alone does not reopen a decision.
 
 Where a procedure has you read the conversation that produced the work — a
 session transcript named by an artifact's writers or a commit's `Session:`
-trailer — that reading checks the work against what the human directed there,
-where the conversation holds human direction, and its absence never gates the
-work. Read it when it can be read. When it cannot — the writer has no recorded
+trailer — that reading serves the comparison the invoking procedure assigns.
+Where the invoking procedure makes an unreadable conversation a blocker, as the
+intent check on a todo's `input` does (`sdlc/policy/todo-creation-discipline`),
+its rule applies. Otherwise read it when it can be read. When it cannot — the writer has no recorded
 session, or the conversation is unavailable through
 the configured runtime conversation read instruction — record what you tried and why
 it failed, and proceed on the artifact or commit as the authorized basis, with its governing
@@ -86,8 +87,7 @@ defective: finding defects is the lane's work.
   or a fast-track lifecycle review with no prepare artifacts (and verifies no
   contract delta was missed when preparation authored pending docs).
 - The project's focus points: walk the project's fixed entry points to its
-  governing contracts (`sdlc/policy/preparation-artifact-quality`, Governing
-  contracts) and take every contract that bears on the target. Each is carried
+  governing contracts (`sdlc/policy/preparation-artifact-quality`) and take every contract that bears on the target. Each is carried
   in the brief of the general lane it sharpens, or runs as a lane of its own
   when no general lane covers it. An entry point the project lacks is recorded
   as a gap, never as nothing found.
@@ -202,7 +202,7 @@ prescribe speculative defenses.
 
 The review result carries findings, investigation leads, and the verdict. It
 names no owner, destination, or decision for another party: what follows a
-review is the dispatching orchestrator's (§6, `general/procedure/orchestration`).
+review is the dispatching orchestrator's (`general/procedure/orchestration`).
 
 A finding is valid only when all four hold:
 

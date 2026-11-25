@@ -474,9 +474,10 @@ are also defective, even when the proposed layer is otherwise correct.
 
 ### 3b. Intelligence-boundary check
 
-Per `principle/intelligence-boundaries`, scan every task you've drafted with
-this question: does the task prescribe code that classifies, scores, judges,
-evaluates, or auto-edits content semantics? If yes, that task is intelligence
+Per `general/principle/intelligence-boundaries`, scan every task you've drafted
+with this question: does the task prescribe code that classifies, scores,
+judges, evaluates, or auto-edits content semantics, or a check whose subject is
+prose? If yes, that task is intelligence
 in the wrong layer — the rule belongs in the agent's briefing, not in code
 the agent wraps. Strike the task, or restate it as a briefing change.
 
@@ -489,6 +490,8 @@ Detection patterns to refuse in plan tasks:
   rubric."
 - Predicates on natural language: `is_meaningful`, `should_emit`,
   `is_actionable`, `is_ack`, `classify_*` on free text.
+- "Test, replay or score [a document / a prompt / a skill]", whether code or
+  staged agent sessions would run it.
 
 The defining test: would this task be unnecessary if the agent's briefing
 said the right thing? If yes, the task is policy in the wrong layer — fix

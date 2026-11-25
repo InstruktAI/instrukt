@@ -111,7 +111,8 @@ with the governing contract.
      observation: what you saw, where, and how you came to see it.
 7. **Plan tasks that violate intelligence-boundaries.** If a plan task asks
    you to build a classifier, scorer, judge, evaluator, or auto-fixer on
-   free-text content, stop. Per `principle/intelligence-boundaries`, the
+   free-text content, or to test, replay or score a document, a prompt or a
+   skill, stop. Per `general/principle/intelligence-boundaries`, the
    principle outranks the plan. Surface as a blocker and report back —
    the plan needs to change. Do not faithfully execute a task that
    substitutes code for the agent's judgment. Detection patterns:

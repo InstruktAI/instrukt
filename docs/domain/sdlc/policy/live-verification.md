@@ -78,7 +78,7 @@ Live verification (`verifier`) operates as the black-box dual of static white-bo
 
 Every `bug` todo originating from a real occurrence (`sdlc/concept/defect-evidence`) records an `escape-assessment` artifact before finalization answering why pre-merge verification missed that defect class. It resolves to one disposition:
 
-- `trigger-added`: add one diff-triggered entry to Layer 2 (`project/<project>/policy/reliability-checklist`) via a tracked follow-up todo when the bug fix restores existing documented behavior (preserving minimal bug-fix scope under `sdlc/policy/definition-of-done-lanes`, Bug-fix review).
+- `trigger-added`: add one diff-triggered entry to Layer 2 (`project/<project>/policy/reliability-checklist`) via a tracked follow-up todo when the bug fix restores existing documented behavior (preserving minimal bug-fix scope under `sdlc/policy/definition-of-done-lanes`).
 - `substrate-upgraded`: deliver or file a tracked follow-up todo for the Layer 1 or stack upgrade closing the missing surface, engine, or test identity (filed as a tracked follow-up when the bug fix restores existing documented behavior).
 - `regression-graduated`: bind a permanent deterministic or hybrid regression scenario/test within the bug delivery (`sdlc/policy/testing`).
 - `escape-unmodelable`: state the concrete reason the external anomaly cannot be prevented upstream, or that the defect lay in prose, which review corrects (`general/principle/intelligence-boundaries`).

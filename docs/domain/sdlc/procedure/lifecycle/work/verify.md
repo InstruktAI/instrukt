@@ -272,8 +272,8 @@ Select execution by archetype and Layer 1 `execution_host`:
     yet):**
     - Permitted **only** for a standalone prerequisite bootstrap delivery
       carrying zero application-feature changes
-      (`sdlc/policy/live-verification`, Standalone CI workflow bootstrap or
-      path-migration rule). If a candidate mixes application changes with a missing
+      (`sdlc/policy/live-verification`: a standalone CI workflow bootstrap or
+      path migration carries no application change). If a candidate mixes application changes with a missing
       default-branch workflow, return `Verdict: BLOCKED` naming the missing
       default-branch workflow so `todo-orchestrator` routes standalone
       prerequisite bootstrap first.
@@ -301,7 +301,8 @@ Select execution by archetype and Layer 1 `execution_host`:
     `-f verification/docker-compose.verify.yml` on both startup and teardown:
     `docker compose -p verify-<slot> -f verification/docker-compose.verify.yml up -d`;
     for CLI/daemon stacks, build and invoke the candidate binary path under
-    isolated temp homes honoring Layer 1 and `sdlc/policy/testing` Rule 17; for
+    isolated temp homes honoring Layer 1 and `sdlc/policy/testing` on inheriting the home and isolating application
+    roots; for
     native mobile/ERP hosts, boot the simulator or ephemeral tenant).
   - Run deterministic seed shortcuts to reach precondition state, and register
     guaranteed cleanup on both normal completion and error so every spawned
@@ -333,8 +334,8 @@ For a **standalone first-time CI bootstrap** (`first-bootstrap-smoke`) or
 **standalone workflow-path migration** (`candidate-workflow-smoke`) candidate
 (Step 3), the branch-push or `pull_request` checked-in baseline smoke
 exercising the shared verification entrypoint supplies the live execution on
-the real surface (`sdlc/policy/live-verification`, Standalone CI workflow
-bootstrap or path-migration rule) without requiring per-todo `workflow_dispatch`
+the real surface (`sdlc/policy/live-verification`: a standalone CI workflow
+bootstrap or path migration carries no application change) without requiring per-todo `workflow_dispatch`
 inputs.
 
 ### 5. Checker — audit honesty, verify evidence, and triage anomalies

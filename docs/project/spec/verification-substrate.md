@@ -36,8 +36,8 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
 - **Candidate binary:** Build `cargo build -p instrukt-cli` once per candidate
   HEAD and invoke the built candidate executable explicitly
   (`./target/debug/instrukt`), never a `PATH`-resolved installed binary.
-- **Isolation primitive:** Follow `project/instrukt/policy/testing`
-  ("Inherited home and isolated application roots") and
+- **Isolation primitive:** Follow `project/instrukt/policy/testing` on
+  inheriting the home and isolating application roots, and
   `project/instrukt/spec/feature/publication/agent-entrypoints`:
   - Isolate `INSTRUKT_HOME`, `INSTRUKT_LOG_DIR`, T3 root, scheduler roots
     (`SYSTEMD_UNIT_PATH`, `INSTRUKT_LAUNCH_AGENTS_DIR`,
@@ -46,7 +46,7 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
     `KIRO_HOME`, `PI_CODING_AGENT_DIR`) inside per-slot temporary directories
     paired with a temporary git repository.
   - Inherit `HOME`, broad XDG base directories, and `TMPDIR` unchanged
-    (`sdlc/policy/testing`, Rule 17).
+    (`sdlc/policy/testing`).
   - Initialize the slot with the candidate binary (`init`), execute the smoke
     flow, then kill any spawned daemon/Redis process group and delete the
     temporary slot directory on exit (`general/policy/shared-machine-resources`).
