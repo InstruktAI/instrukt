@@ -37,6 +37,14 @@ runner owns dispatch, and the configured runtime owns conversations.
 : The first non-author recipient's recorded check that an intent version
   faithfully reflects its originating conversation.
 
+<!-- planned:verification-stamp-and-evidence-store -->
+**Verification disposition**
+: A stamp recording what is established about a candidate commit's live
+  behavior — pass, fail, blocked, Tier 0 skip or hotfix deferral — bound to
+  that commit and its `verification-findings` report; workflow owns who may
+  record it and what handoff requires of it.
+<!-- /planned:verification-stamp-and-evidence-store -->
+
 **Prerequisite**
 : Another project todo whose evidence or delivery gates a dependent's pickup.
 
@@ -108,6 +116,7 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 ## Ownership boundary
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Owns:** todo identity and record mutations; artifact versions; stamp
   evidence; approvals and intent-check records; prerequisite and group facts;
   holds; per-role session bindings and task schedules; local-leading
@@ -136,6 +145,37 @@ runner owns dispatch, and the configured runtime owns conversations.
   append the finalize-ready stamp uses. Standing-agent event delivery
   is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
+<!-- change:verification-stamp-and-evidence-store -->
+- **Owns:** todo identity and record mutations; artifact versions; stamp
+  evidence; approvals and intent-check records; prerequisite and group facts;
+  holds; per-role session bindings and task schedules; local-leading
+  persistence in the state database — its file, writer rules, migrations and
+  work tables (`project/instrukt/spec/feature/work/state-database`);
+  GitHub reflection and recovery, record-schema checks/conversion, verified App
+  bot trust and installation credentials at its GitHub boundary; reports derived
+  from that record. The GitHub boundary's credential interface is shared through
+  CLI wiring with runner and repository consumers, not a reverse core dependency.
+- **Does not own:** workflow definitions and next-action derivation, execution
+  and integration decisions, runner scheduling and dispatch, runtime thread
+  status and conversation storage, or documentation publication. Those
+  capabilities consume or supply this context's evidence through their own
+  boundaries.
+- **Published contracts:** the `instrukt todo` record and artifact surfaces,
+  `instrukt todo update <slug> --unclaim` for releasing the execution claim,
+  `instrukt todo deliver <slug> --commit <sha>`, `instrukt todo stamp <slug> --build-started`,
+  `--finalize-ready`, verdict stamps, verification disposition stamps
+  (`--verification`) and `--prd-approved` / `--task-approved`
+  with `--by human|peer [--session <runtime:id>]`; evidence read capabilities for workflow, and
+  `instrukt eval report`. Workflow-driving subcommands belong to the workflow
+  contract even though they share the todo namespace.
+- **Allowed dependencies:** configuration supplies project settings; publication supplies
+  published eval provenance; workflow and runner record evidence through
+  work’s mutation contract; the configured runtime supplies session and conversation references;
+  GitHub supplies the required reflected store; the runner supplies the event-log
+  append the finalize-ready stamp uses. Standing-agent event delivery
+  is optional and is not the work record.
+- **Implementation roots:** the `instrukt-todos` crate.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 

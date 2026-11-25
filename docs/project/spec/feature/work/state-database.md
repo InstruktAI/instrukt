@@ -262,6 +262,7 @@ reflected; the artifact's identity on GitHub).
 Approvals and intent checks are stamps: `fact = 'approval'` and
 `fact = 'intent_checked'`.
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 | Column | Meaning |
 | --- | --- |
 | `todo_id`, `sequence` | The todo and record order. |
@@ -273,6 +274,19 @@ Approvals and intent checks are stamps: `fact = 'approval'` and
 | `eval_fingerprint` | The published fingerprint copied at write time. |
 | `human_involved` | The audit-only declaration, or `NULL`. |
 | `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp). |
+<!-- change:verification-stamp-and-evidence-store -->
+| Column | Meaning |
+| --- | --- |
+| `todo_id`, `sequence` | The todo and record order. |
+| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `verification_disposition`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
+| `at`, `actor` | Time and acting session, GitHub account or person. |
+| `source_comment` | GitHub decision occurrence, or `NULL` for other stamp forms. Unique per todo when present; retained in reflected stamps so reconstruction does not reapply the same decision. |
+| `role` | The role the acting session played, or `NULL`. |
+| `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
+| `eval_fingerprint` | The published fingerprint copied at write time. |
+| `human_involved` | The audit-only declaration, or `NULL`. |
+| `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp, disposition and follow-up todo). |
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 **`holds`** — the current dispatch hold and the ordered hold audit. Row order
 retains distinct actions even when source timestamps tie. Columns: `todo_id`, `source` (`manual`, `automatic` or `github`),
@@ -299,6 +313,7 @@ workspace and commit directly on its todo branch. Reserving the next role
 captures the current shared head. An unresolved native start blocks admission.
 The orchestrator coordinates work and keeps the workspace clean between roles.
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 | Role | Evidence and release in the same record transaction |
 | --- | --- |
 | Setup | `--role-complete` at the clean shared todo head after setup. |
@@ -307,6 +322,17 @@ The orchestrator coordinates work and keeps the workspace clean between roles.
 | Deferrer | `--deferrals-processed` covering the current dispositions artifact at the captured clean head. |
 | Finalizer | `--role-complete` at the clean, published shared candidate; readiness is a later record-only write against the retained binding. |
 | Failed attempt | Record-only `todo attempt --failed --reason` after native stop evidence and a clean shared tree; no completion stamp. |
+<!-- change:verification-stamp-and-evidence-store -->
+| Role | Evidence and release in the same record transaction |
+| --- | --- |
+| Setup | `--role-complete` at the clean shared todo head after setup. |
+| Builder/fixer, including plan reconciliation | `--build-complete` at the clean shared todo head. |
+| Build reviewer | Verdict bound to the complete findings and current captured shared head. |
+| Verifier | `--verification` disposition bound to the complete `verification-findings` and current captured shared head. |
+| Deferrer | `--deferrals-processed` covering the current dispositions artifact at the captured clean head. |
+| Finalizer | `--role-complete` at the clean, published shared candidate; readiness is a later record-only write against the retained binding. |
+| Failed attempt | Record-only `todo attempt --failed --reason` after native stop evidence and a clean shared tree; no completion stamp. |
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 The stamp or failure, release, new revision and reflection obligation commit
 together. A retry reads that retained outcome. Git refs have no per-role advance

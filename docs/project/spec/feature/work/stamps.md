@@ -134,6 +134,7 @@ worker-ending or approval notice.
 
 ### Stamp forms
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 | Command suffix after `instrukt todo stamp <slug>` | Bound evidence and result |
 | --- | --- |
 | `--verdict approve\|needs_work --phase prd_review\|architecture_review\|plan_review` | Current phase target and complete phase-specific findings digest. |
@@ -152,6 +153,27 @@ Approval forms with `--by` and optional `--session` are owned by the approvals
 spec; build start, finalize readiness, deferral processing and task outcome
 forms are specified here. These forms are the admitted stamp set, rather than
 instructions to infer additional stamps.
+<!-- change:verification-stamp-and-evidence-store -->
+| Command suffix after `instrukt todo stamp <slug>` | Bound evidence and result |
+| --- | --- |
+| `--verdict approve\|needs_work --phase prd_review\|architecture_review\|plan_review` | Current phase target and complete phase-specific findings digest. |
+| `--verdict approve\|changes_requested --phase build_review` | Reviewed commit, complete build findings digest and review round. |
+| `--architecture-skipped <reason>` | Applicable preparation and the recorded skip reason. |
+| `--diagnosis-settled` | Current diagnosis digest; when a diagnoser attempt is bound, verifies the clean read-only shared worktree and releases that attempt atomically without duplicating the stamp on replay. |
+| `--diagnosis-unresolved --reason <text>` | Current diagnosis and the unresolved reason; establishes the dispatch hold. |
+| `--drift-reviewed <artifact> cosmetic\|substantive <reason>` | Artifact, classification, reason and examined evidence anchor. |
+| `--intent-checked` | Current input version, originating conversation and checking session. |
+| `--kickback --reason <text>` | Current input, invalidated plan and review evidence; sets `<r>.cleared_by_substantive_drift` for preparation reviews invalidated by the kickback. |
+| `--task-firing-started` | Particular due occurrence and start; the runner's last-fired accounting. |
+| `--build-complete` | Bound builder/fixer attempt's clean committed todo head; releases the attempt and clears the previous build-review verdict and finalize readiness in one transaction. |
+| `--role-complete` | Bound setup/finalizer or preparation doc-writer attempt, required outputs and clean committed branch head. Records `role_complete` and releases the attempt atomically without build completion or finalization event. |
+| `--verification pass\|fail\|blocked\|tier_0_skip\|hotfix_deferred [--follow-up <slug>]` | Exact candidate commit at the clean shared head and complete `verification-findings` digest; a hotfix deferral also its follow-up todo. From a bound `verifier` attempt it releases the attempt atomically; from the claim-holding orchestrator it is record-only. |
+
+Approval forms with `--by` and optional `--session` are owned by the approvals
+spec; build start, finalize readiness, deferral processing, verification
+disposition and task outcome forms are specified here. These forms are the
+admitted stamp set, rather than instructions to infer additional stamps.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ### Build start, completion and review rounds
 
@@ -227,13 +249,18 @@ behavior of a candidate commit. Its vocabulary is closed: pass, fail, blocked,
 Tier 0 skip and hotfix deferral, with the meanings
 `sdlc/policy/live-verification` gives them. Any other value is refused.
 
-A disposition is commit-bound and report-bound. It names the exact candidate
+`instrukt todo stamp <slug> --verification <disposition>` records one. A
+disposition is commit-bound and report-bound. It names the exact candidate
 commit, which is the clean head of the shared todo worktree when it is
 recorded, and binds the current digest of the complete `verification-findings`
-report. A hotfix deferral also names the tracked follow-up that
-`sdlc/policy/live-verification` requires of it. A disposition with no such
-report, a hotfix deferral that names no follow-up, or a disposition recorded
-over a dirty tree, is refused without a partial record. It counts only for the
+report. A hotfix deferral also names, with `--follow-up <slug>`, the tracked
+follow-up todo that `sdlc/policy/live-verification` requires of it: another
+todo of the same project that the work record knows and that is neither
+delivered nor withdrawn, retained by its durable identity so a rename keeps
+the reference. A disposition with no such report, a hotfix deferral that names
+no follow-up, a follow-up that names this todo or no todo the record knows, a
+follow-up on any other disposition, or a disposition recorded over a dirty
+tree, is refused without a partial record. It counts only for the
 commit and report it names: a later candidate commit carries none until one is
 recorded for it, and a rewritten report leaves the earlier disposition as
 history.
@@ -244,7 +271,9 @@ releases the attempt in the same transaction, as a build-review verdict
 releases its reviewer. A head that moved refuses the disposition and leaves the
 attempt outstanding. Exact replay reports the retained outcome without a second
 release. A disposition recorded by the claim-holding orchestrator is a
-record-only write and releases nothing. Which session may record which
+record-only write and releases nothing; its exact replay, with the same
+disposition, commit, report and follow-up, reports the retained stamp without
+recording a second. Which session may record which
 disposition, which disposition may follow another for the same commit, and
 what finalize readiness requires of it, is workflow's rule in
 `project/instrukt/spec/feature/workflow/delivery-cycle`.

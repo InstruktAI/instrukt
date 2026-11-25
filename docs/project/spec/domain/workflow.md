@@ -10,11 +10,22 @@ Workflow separates **code-owned facts and integrity invariants** from
 **intelligence-owned activity routing** (`general/principle/intelligence-boundaries`,
 `general/principle/trust-and-guardrails`).
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 Code owns a facts-only ledger (`instrukt todo show <slug> [--json]` and
 `instrukt todo work <slug>`), three hard integrity invariants (no interference,
 independent exact-SHA review gate at `integrate`, human-owned approval gates),
 and runner dispatch assignment. Intelligence owns all activity routing in clear
 prose (`sdlc/procedure/lifecycle/overview`).
+<!-- change:verification-stamp-and-evidence-store -->
+Code owns a facts-only ledger (`instrukt todo show <slug> [--json]` and
+`instrukt todo work <slug>`), three hard integrity invariants (no interference,
+independent exact-SHA handoff gate, human-owned approval gates), and runner
+dispatch assignment. The handoff gate admits an exact candidate commit to
+`integrate` only with a current independent build-review approval and a
+current verification disposition that admits handoff, both bound to that
+commit. Intelligence owns all activity routing in clear prose
+(`sdlc/procedure/lifecycle/overview`).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## Canonical fields
 
@@ -26,17 +37,31 @@ prose (`sdlc/procedure/lifecycle/overview`).
 
 ## Ubiquitous language
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Factual ledger:** read-only structured observation of a todo's artifacts, digests, stamps, claims, bindings, workspace/git state, open findings, drift, prerequisites, and gate status.
 - **Hard integrity invariant:** a code-enforced check where restoring state cannot repair the harm (interference lock, independent exact-SHA review gate at `integrate`, human-owned `approvals.prd`/`approvals.task` gates).
 - **Unified orchestrator:** the single `todo-orchestrator` role routing composable primitives in prose inside one `<slug>/work` worktree (or with no worktree for tasks).
 - **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, handed to `integrate` via `--finalize-ready`.
 
 - **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- change:verification-stamp-and-evidence-store -->
+- **Factual ledger:** read-only structured observation of a todo's artifacts, digests, stamps, claims, bindings, workspace/git state, open findings, verification dispositions, drift, prerequisites, and gate status.
+- **Hard integrity invariant:** a code-enforced check where restoring state cannot repair the harm (interference lock, independent exact-SHA handoff gate, human-owned `approvals.prd`/`approvals.task` gates).
+- **Unified orchestrator:** the single `todo-orchestrator` role routing composable primitives in prose inside one `<slug>/work` worktree (or with no worktree for tasks).
+- **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, and a current verification disposition for that SHA that admits handoff, handed to `integrate` via `--finalize-ready`.
+
+- **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## Ownership boundary
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Owns:** flavor manifest schema (`workflow/workflow.yaml`), pure factual ledger derivation (`TodoLedger`), repository observations (worktree cleanliness, heads, grounding drift), exact-SHA independent review readiness check, and runner `WorkflowAssignments` dispatch selection.
 - **Does not own:** activity micro-routing (owned by prose procedures), work-record storage/reflection (owned by `work`), or session/process execution (owned by `runner`).
+<!-- change:verification-stamp-and-evidence-store -->
+- **Owns:** flavor manifest schema (`workflow/workflow.yaml`), pure factual ledger derivation (`TodoLedger`), repository observations (worktree cleanliness, heads, grounding drift), the exact-SHA handoff check (independent review approval and admitting verification disposition), which session may record which verification disposition and which may follow another for a commit (`project/instrukt/spec/feature/workflow/delivery-cycle`), and runner `WorkflowAssignments` dispatch selection.
+- **Does not own:** activity micro-routing (owned by prose procedures), work-record storage/reflection (owned by `work`), or session/process execution (owned by `runner`).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 Workflow also derives the active candidate's review coverage on request, from
 the repository, the independent approvals todo records bind to exact commits,
@@ -72,9 +97,16 @@ the same derivation. The runner consumes both for execution observation
 
 ## Governing designs and decisions
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - `general/principle/intelligence-boundaries` — code owns facts and integrity invariants; prose owns judgment and routing.
 - `general/principle/trust-and-guardrails` — guardrails exist only where state restoration cannot repair harm (interference, contract violation, human-owned gates).
 - `general/policy/human-contract` — human-owned approvals (`approvals.prd`, `approvals.task`) remain enforced where configured.
+<!-- change:verification-stamp-and-evidence-store -->
+- `general/principle/intelligence-boundaries` — code owns facts and integrity invariants; prose owns judgment and routing.
+- `general/principle/trust-and-guardrails` — guardrails exist only where state restoration cannot repair harm (interference, contract violation, human-owned gates).
+- `general/principle/verification-independence` — a pass, fail or blocked disposition, like a build-review approval, comes only from a session that did not produce the change.
+- `general/policy/human-contract` — human-owned approvals (`approvals.prd`, `approvals.task`) remain enforced where configured.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## Use cases
 

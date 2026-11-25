@@ -43,7 +43,8 @@ revocation. These are facts for the configured flow, not hidden phase changes.
 
 <!-- planned:verification-stamp-and-evidence-store -->
 A verification disposition binds the exact candidate commit and the findings
-digest (`project/instrukt/spec/feature/work/stamps`). It is current only while
+digest (`project/instrukt/spec/feature/work/stamps`). Only the latest
+disposition recorded for the todo can be current, and it is current only while
 that commit is the current worktree head and the `verification-findings`
 report is unchanged. A later commit, a clean upstream merge included, or a
 rewritten report leaves no disposition current until one is recorded for the
