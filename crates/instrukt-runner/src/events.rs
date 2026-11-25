@@ -10,7 +10,8 @@ mod _reference;
 #[cfg(test)]
 mod _tests;
 
-use instrukt_core::ids::{CommitSha, ProjectSlug, TodoSlug};
+use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoSlug};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 pub use _catalog::{
@@ -23,9 +24,10 @@ pub use _reference::{EventHome, EventHomeOwner, EventRef, HomeKind, ReferenceKin
 pub use instrukt_core::event_type::{TypePattern, TypePatternError};
 
 // One declaration defines the producer's Rust fields, wire name and catalog.
-// A subject named `Any` declares any reference kind.
+// A subject named `Any` declares any reference kind. Related kinds default to
+// `Session`; an entry lists its own in brackets after the subject.
 macro_rules! acquisition_events {
-    ($($variant:ident, $name:literal, $description:literal, $delivery:ident, $subject:ident {
+    ($($variant:ident, $name:literal, $description:literal, $delivery:ident, $subject:ident $([$($related:ident),+])? {
         $($field:ident: $ty:ty),* $(,)?
     });* $(;)?) => {
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -44,22 +46,24 @@ macro_rules! acquisition_events {
             }
 
             pub fn declaration(&self) -> EventDeclaration {
-                match self { $(Self::$variant { .. } => acquisition_events!(@declaration $name, $description, $delivery, $subject, $($field: $ty),*)),* }
+                match self { $(Self::$variant { .. } => acquisition_events!(@declaration $name, $description, $delivery, $subject, [$($($related),+)?], $($field: $ty),*)),* }
             }
 
             pub fn declarations() -> Vec<EventDeclaration> {
-                vec![$(acquisition_events!(@declaration $name, $description, $delivery, $subject, $($field: $ty),*)),*]
+                vec![$(acquisition_events!(@declaration $name, $description, $delivery, $subject, [$($($related),+)?], $($field: $ty),*)),*]
             }
         }
     };
-    (@declaration $name:literal, $description:literal, $delivery:ident, $subject:ident, $($field:ident: $ty:ty),*) => {
+    (@declaration $name:literal, $description:literal, $delivery:ident, $subject:ident, [$($related:ident),*], $($field:ident: $ty:ty),*) => {
         EventDeclaration {
             name: $name.into(), delivery_kind: instrukt_core::event_type::DeliveryKind::$delivery, version: 1, description: $description.into(),
             subject_kind: acquisition_events!(@subject $subject), home_kinds: vec![HomeKind::Project],
             data_fields: vec![$(DataField::of::<$ty>(stringify!($field).trim_start_matches("r#"))),*],
-            related_kinds: vec![ReferenceKind::Session], state: None,
+            related_kinds: acquisition_events!(@related $($related),*), state: None,
         }
     };
+    (@related) => { vec![ReferenceKind::Session] };
+    (@related $($related:ident),+) => { vec![$(ReferenceKind::$related),+] };
     (@subject Any) => { None };
     (@subject $subject:ident) => { Some(ReferenceKind::$subject) };
 }
@@ -83,6 +87,27 @@ acquisition_events! {
     ReviewNeeded, "runner.review_needed", "A commit is owed an independent review: the current head of an eligible pull request, or an integration candidate.", State, Any {
         project: ProjectSlug, pull_request: Option<u64>, head_branch: Option<String>, base_branch: Option<String>, head: CommitSha, base: CommitSha, request: u64
     };
+    AttentionExecutionStalled, "runner.attention.execution_stalled", "The session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or no session could be started from the model order available.", Occurrence, Todo {
+        project: ProjectSlug, todo: TodoSlug, session: Option<SessionRef>, workflow_state: String, cause: StalledCause, model_order: Vec<String>
+    };
+    AttentionInputWaiting, "runner.attention.input_waiting", "The session holding a todo's execution claim began a wait for input while the todo does not wait on a person.", Occurrence, Todo {
+        project: ProjectSlug, todo: TodoSlug, session: SessionRef, workflow_state: String, wait: u64
+    };
+    AttentionHoldPlaced, "runner.attention.hold_placed", "A change made on this computer placed a dispatch hold on a todo.", Occurrence, Todo {
+        project: ProjectSlug, todo: TodoSlug, source: AttentionHoldSource, reason: String, placed_at: Timestamp
+    };
+    AttentionHoldReleased, "runner.attention.hold_released", "A change made on this computer removed a todo's dispatch hold.", Occurrence, Todo {
+        project: ProjectSlug, todo: TodoSlug, source: AttentionHoldSource, placed_at: Timestamp
+    };
+    AttentionAttemptsFailing, "runner.attention.attempts_failing", "A role's attempt on a todo failed where an earlier attempt of that role on that todo already failed.", Occurrence, Todo {
+        project: ProjectSlug, todo: TodoSlug, role: RoleName, attempt: u32, reason: String
+    };
+    AttentionFleetQuiet, "runner.attention.fleet_quiet", "The project's attention episode ended: its last active todo that is unheld and not a structural holder left active work or was held.", Occurrence, Todo {
+        project: ProjectSlug, todo: TodoSlug, opened_by: String
+    };
+    AttentionRaised, "runner.attention.raised", "An agent raised a condition about active todos of the project it works in.", Occurrence, Todo [Todo, Session] {
+        project: ProjectSlug, todo: TodoSlug, related: Vec<TodoSlug>, obligation: String, raise: String
+    };
 }
 
 impl Event {
@@ -93,7 +118,14 @@ impl Event {
             | Self::MainFailing { project, .. }
             | Self::DependencyFailing { project, .. }
             | Self::WorkflowFinalized { project, .. }
-            | Self::ReviewNeeded { project, .. } => project,
+            | Self::ReviewNeeded { project, .. }
+            | Self::AttentionExecutionStalled { project, .. }
+            | Self::AttentionInputWaiting { project, .. }
+            | Self::AttentionHoldPlaced { project, .. }
+            | Self::AttentionHoldReleased { project, .. }
+            | Self::AttentionAttemptsFailing { project, .. }
+            | Self::AttentionFleetQuiet { project, .. }
+            | Self::AttentionRaised { project, .. } => project,
         }
     }
 
@@ -134,6 +166,72 @@ impl Event {
             Self::ReviewNeeded { head, request, .. } => {
                 return review_request_id(self.project(), head, *request);
             }
+            Self::AttentionExecutionStalled {
+                todo,
+                session,
+                workflow_state,
+                model_order,
+                ..
+            } => {
+                let started = match session {
+                    Some(session) => vec![session.to_string()],
+                    None => model_order.clone(),
+                };
+                key.push(todo.as_str());
+                key.extend(started.iter().map(String::as_str));
+                key.push(workflow_state.as_str());
+                return occurrence_id(&key);
+            }
+            Self::AttentionInputWaiting {
+                todo,
+                session,
+                wait,
+                ..
+            } => {
+                return occurrence_id(&[
+                    self.name(),
+                    self.project().as_str(),
+                    todo.as_str(),
+                    &session.to_string(),
+                    &wait.to_string(),
+                ]);
+            }
+            Self::AttentionHoldPlaced {
+                todo,
+                source,
+                placed_at,
+                ..
+            }
+            | Self::AttentionHoldReleased {
+                todo,
+                source,
+                placed_at,
+                ..
+            } => {
+                return occurrence_id(&[
+                    self.name(),
+                    self.project().as_str(),
+                    todo.as_str(),
+                    &placed_at.to_string(),
+                    source.as_str(),
+                ]);
+            }
+            Self::AttentionAttemptsFailing {
+                todo,
+                role,
+                attempt,
+                ..
+            } => {
+                return occurrence_id(&[
+                    self.name(),
+                    self.project().as_str(),
+                    todo.as_str(),
+                    role.as_str(),
+                    &attempt.to_string(),
+                ]);
+            }
+            Self::AttentionFleetQuiet { opened_by, .. } => key.push(opened_by.as_str()),
+            Self::AttentionRaised { raise, .. } => key.push(raise.as_str()),
         }
         occurrence_id(&key)
     }
@@ -164,6 +262,43 @@ pub enum CiResult {
     /// either (`integration-gate`, "Project without CI"). The integrator
     /// verifies the candidate with the project's local test action.
     NoCi,
+}
+
+/// How the execution behind a stalled todo ended up stalled
+/// (`fleet-attention`, Attention conditions).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StalledCause {
+    /// The session stopped and the recovery its contract provides did not
+    /// move the work.
+    Stopped,
+    /// The session's turn ended failed.
+    Failed,
+    /// The runtime no longer knows the session.
+    Gone,
+    /// No session could be started from the model order available.
+    NeverStarted,
+}
+
+/// The source of a dispatch hold, as fleet attention carries it. Work's own
+/// hold source maps onto it (`dependencies-and-holds`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionHoldSource {
+    Manual,
+    Automatic,
+    #[serde(rename = "github")]
+    GitHub,
+}
+
+impl AttentionHoldSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Automatic => "automatic",
+            Self::GitHub => "github",
+        }
+    }
 }
 
 /// Whether an append added a new event or met its idempotency key.
