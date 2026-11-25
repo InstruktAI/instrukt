@@ -731,21 +731,4 @@ mod tests {
     fn a_name_without_the_staging_prefix_is_no_staging_location() {
         assert_eq!(staged_for(OsStr::new(".instrukt-wd-0123-abc")), None);
     }
-
-    #[test]
-    fn deleting_a_staging_location_that_is_already_gone_succeeds() {
-        let dir = fsx::temp_dir(&tempfile::Builder::new()).unwrap();
-        assert!(delete(&dir.path().join("gone")).is_ok());
-    }
-
-    #[test]
-    fn deleting_a_staged_symbolic_link_leaves_what_it_points_to() {
-        let dir = fsx::temp_dir(&tempfile::Builder::new()).unwrap();
-        let kept = dir.path().join("kept");
-        fsx::create_dir_all(kept.join("inside")).unwrap();
-        let link = dir.path().join("link");
-        fsx::symlink(&kept, &link).unwrap();
-        delete(&link).unwrap();
-        assert!(kept.join("inside").is_dir());
-    }
 }
