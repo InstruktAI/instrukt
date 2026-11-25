@@ -113,7 +113,7 @@ fn recorded_starts(
     };
     let mut stmt = db
         .conn()
-        .prepare("SELECT semantic_key,replaced_session,worktree,kind IN ('todo','work','task','standing') FROM runtime_bindings WHERE runtime=?1 AND session=?2")
+        .prepare("SELECT semantic_key,replaced_session,worktree,kind IN ('todo','work','task','standing','review') FROM runtime_bindings WHERE runtime=?1 AND session=?2")
         .map_err(StateDbError::sqlite(db.path()))?;
     let rows = stmt
         .query_map(
@@ -136,6 +136,34 @@ fn recorded_starts(
     Ok((rows.into_iter().map(|(start, _)| start).collect(), known))
 }
 
+/// The requested reviewer's assignment for a start under a requested-review
+/// key: the runner's own record of the ask
+/// (`project/instrukt/spec/feature/runner/requested-review`).
+fn requested_review_assignment(
+    home: &Home,
+    starts: &[RecordedStart],
+) -> Result<Option<Assignment>, StateDbError> {
+    let mut found = None;
+    for start in starts
+        .iter()
+        .filter(|start| start.semantic_key.starts_with("instrukt:review:"))
+    {
+        let assignment = crate::requested_review::assignment(home, &start.semantic_key)
+            .map_err(|e| StateDbError::invalid(&home.requested_review_db_file(), e.to_string()))?;
+        let Some(assignment) = assignment else {
+            continue;
+        };
+        if found.as_ref().is_some_and(|a| a != &assignment) {
+            return Err(StateDbError::invalid(
+                &home.requested_review_db_file(),
+                "conflicting requested-review assignments; recover the requested reviewer's start key",
+            ));
+        }
+        found = Some(assignment);
+    }
+    Ok(found)
+}
+
 /// Work owns its bindings and the precedence among their attempts; runner
 /// composes those facts with its own standing/start records and supplies
 /// every start it recorded for the caller.
@@ -154,7 +182,10 @@ pub fn resolve(
     let work = work(home, caller, &starts)?;
     let standing = match standing_assignment(home, caller)? {
         Some(standing) => Some(standing),
-        None => company(home, caller)?,
+        None => match requested_review_assignment(home, &starts)? {
+            Some(requested) => Some(requested),
+            None => company(home, caller)?,
+        },
     };
     if work.is_some() && standing.is_some() {
         return Err(StateDbError::invalid(

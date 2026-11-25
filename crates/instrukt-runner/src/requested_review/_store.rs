@@ -100,6 +100,7 @@ pub(super) struct NewAsk<'a> {
 /// A recorded ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Ask {
+    pub project: String,
     pub number: u64,
     pub kind: String,
     pub digest: String,
@@ -114,7 +115,7 @@ pub(super) struct Ask {
     pub accepted_at: Option<Timestamp>,
 }
 
-const COLUMNS: &str = "number, kind, digest, start_key, checkout, delivery, command_id, generation, admitted_at, accepted_at";
+const COLUMNS: &str = "project, number, kind, digest, start_key, checkout, delivery, command_id, generation, admitted_at, accepted_at";
 
 fn ask(row: &Row<'_>) -> instrukt_core::state_db::rusqlite::Result<Ask> {
     use instrukt_core::state_db::rusqlite::Error::FromSqlConversionFailure;
@@ -124,21 +125,22 @@ fn ask(row: &Row<'_>) -> instrukt_core::state_db::rusqlite::Result<Ask> {
             .map_err(|error| FromSqlConversionFailure(index, Type::Text, Box::new(error)))
     };
     Ok(Ask {
-        number: row.get(0)?,
-        kind: row.get(1)?,
-        digest: row.get(2)?,
-        start_key: row.get(3)?,
-        checkout: PathBuf::from(row.get::<_, String>(4)?),
-        delivery: match row.get::<_, String>(5)?.as_str() {
+        project: row.get(0)?,
+        number: row.get(1)?,
+        kind: row.get(2)?,
+        digest: row.get(3)?,
+        start_key: row.get(4)?,
+        checkout: PathBuf::from(row.get::<_, String>(5)?),
+        delivery: match row.get::<_, String>(6)?.as_str() {
             "send" => Delivery::Send,
             _ => Delivery::Start,
         },
-        command_id: row.get(6)?,
-        generation: row.get(7)?,
-        admitted_at: moment(8, row.get(8)?)?,
+        command_id: row.get(7)?,
+        generation: row.get(8)?,
+        admitted_at: moment(9, row.get(9)?)?,
         accepted_at: row
-            .get::<_, Option<String>>(9)?
-            .map(|text| moment(9, text))
+            .get::<_, Option<String>>(10)?
+            .map(|text| moment(10, text))
             .transpose()?,
     })
 }
@@ -204,6 +206,7 @@ pub(super) fn record(home: &Home, new: &NewAsk<'_>) -> Result<Ask, StoreError> {
         )
         .map_err(sql(home))?;
         Ok(Ask {
+            project: new.project.to_string(),
             number,
             kind: new.kind.to_owned(),
             digest: new.digest.to_owned(),
@@ -286,11 +289,7 @@ pub(super) fn asks(
 
 /// The latest ask recorded under `start_key`, accepted or not: the
 /// requested reviewer's assignment resolves from it.
-#[expect(
-    dead_code,
-    reason = "the requested reviewer's assignment resolution reads it"
-)]
-pub(crate) fn latest_for_key(home: &Home, start_key: &str) -> Result<Option<Ask>, StoreError> {
+pub(super) fn latest_for_key(home: &Home, start_key: &str) -> Result<Option<Ask>, StoreError> {
     let Some(conn) = reader(home)? else {
         return Ok(None);
     };

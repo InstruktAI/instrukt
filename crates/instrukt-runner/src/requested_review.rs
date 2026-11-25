@@ -178,6 +178,34 @@ pub fn ask(context: &AskContext<'_>, coordinates: Coordinates) -> Result<Reply, 
     Ok(reply)
 }
 
+/// The assignment of the requested reviewer started under `start_key`, from
+/// the latest ask recorded under it, accepted or not: role
+/// `commit-reviewer`, the project and the registered checkout it was
+/// started in (`roles-and-capabilities`, Caller and object resolution).
+pub(crate) fn assignment(
+    home: &Home,
+    start_key: &str,
+) -> Result<Option<instrukt_core::capabilities::Assignment>, AskError> {
+    let Some(ask) = _store::latest_for_key(home, start_key).map_err(failed)? else {
+        return Ok(None);
+    };
+    Ok(Some(instrukt_core::capabilities::Assignment {
+        worker: false,
+        role: instrukt_core::ids::RoleName::parse(instrukt_core::config::REVIEW_ROLE)
+            .map_err(failed)?,
+        project: Some(ProjectSlug::parse(&ask.project).map_err(failed)?),
+        procedure: Some(
+            instrukt_core::ids::SnippetId::parse(_admission::PROCEDURE).map_err(failed)?,
+        ),
+        todo: None,
+        workspace: Some(ask.checkout),
+        key: start_key.to_owned(),
+        platform: false,
+        company: None,
+        dispatcher: None,
+    }))
+}
+
 /// The project's registered checkout, where the requested reviewer starts.
 fn registered_checkout(home: &Home, slug: &ProjectSlug) -> Result<PathBuf, AskError> {
     instrukt_core::publication::PublishedRecord::load(home, slug)
