@@ -143,10 +143,11 @@ pub(super) fn convert(records: &Connection, earlier: &Earlier) -> Result<Current
 }
 
 /// A runtime conversation: its conversation record's native record as
-/// `thread`, and one text for each of its message records, placed in
-/// `messages`, each record without the members of its composer context that
-/// hold what T3 captured, as `runtime::without_captured_context` names them.
-/// Its run, subagent and turn-item records are not read.
+/// `thread`, and one text for each of its message records but T3's reports
+/// that a background command finished (`runtime::reports_background_command`),
+/// placed in `messages`, each record without the members of its composer
+/// context that hold what T3 captured, as `runtime::without_captured_context`
+/// names them. Its run, subagent and turn-item records are not read.
 fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, ConversionError> {
     let mut statement = records.prepare_cached(
         "SELECT projection,native_id,payload_json FROM history_projection_records WHERE source=?1 AND thread_id=?2 AND projection IN ('conversation','message')",
@@ -172,6 +173,9 @@ fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, 
                 ))?;
         if projection == "conversation" {
             conversation = Some(native);
+            continue;
+        }
+        if crate::runtime::reports_background_command(&native) {
             continue;
         }
         crate::runtime::without_captured_context(&mut native);

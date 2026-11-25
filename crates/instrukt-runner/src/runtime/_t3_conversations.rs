@@ -864,6 +864,21 @@ pub(crate) fn without_captured_context(message: &mut Value) {
     }
 }
 
+/// Whether `message`, a T3 message's native record, is T3's report that a
+/// background command finished: its `notification.source.kind` is `command`,
+/// or `background_command`, the encoding T3 also writes for that source. Its
+/// text is the server's account of the command and its output, so the text
+/// read leaves the message out; every other notification, a subagent's or a
+/// delegated task's among them, is a message like any other.
+pub(crate) fn reports_background_command(message: &Value) -> bool {
+    matches!(
+        message
+            .pointer("/notification/source/kind")
+            .and_then(Value::as_str),
+        Some("command" | "background_command")
+    )
+}
+
 /// What the text read returns of `thread`'s finished rows of [`TEXT`]:
 /// `None` when it found neither the conversation's own record nor a
 /// finished message.
@@ -891,6 +906,9 @@ fn text(
                 });
             }
             Projection::Messages => {
+                if reports_background_command(&row.payload) {
+                    continue;
+                }
                 let updated_at = Some(row_time(&row)?);
                 let created_at = created_at(&row.payload)?;
                 let role = message_role(&row.payload)?;

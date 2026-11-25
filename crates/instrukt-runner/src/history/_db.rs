@@ -795,6 +795,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
         by("Userwordtoken", runtime);
         by("Answertoken", runtime);
         by("Latertoken", runtime);
+        by("Delegatedresulttoken", runtime);
         by("Transcripttitle", transcript);
         by("Transcripttoken", transcript);
         by("Sourcetitle", sources);
@@ -807,7 +808,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
         assert!(
             found(
                 &home,
-                "Commandonlytoken OR Outputonlytoken OR Reasononlytoken OR Subagentonlytoken OR Runonlytoken OR Terminalonlytoken OR Diffonlytoken OR Htmlonlytoken"
+                "Commandonlytoken OR Outputonlytoken OR Reasononlytoken OR Subagentonlytoken OR Runonlytoken OR Terminalonlytoken OR Diffonlytoken OR Htmlonlytoken OR Shelloutputtoken"
             )
             .is_empty()
         );
@@ -874,6 +875,10 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
         assert_eq!(members, ["messages", "thread"]);
         assert_eq!(shown["thread"], runtime.document["thread"]);
         let mut earlier_messages = runtime.document["messages"].as_array().unwrap().clone();
+        // A background command's report is no message history keeps.
+        let before = earlier_messages.len();
+        earlier_messages.retain(|m| m["id"] != "m-command");
+        assert_eq!(earlier_messages.len(), before - 1);
         let captured = earlier_messages
             .iter_mut()
             .find(|m| m.get("context").is_some())
@@ -923,6 +928,30 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
             retained_messages(&home, &runtime.source, "not-retained").unwrap(),
             None
         );
+        // An imported conversation's texts that carry a role come back under
+        // it, in document order; a transcript or a searchable text carries
+        // none.
+        let mirror_messages: Vec<RetainedMessage> = sources.document["sources"][0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["text"].as_str().is_some_and(|text| !text.is_empty()))
+            .map(|m| RetainedMessage {
+                role: serde_json::from_value::<Role>(m["role"].clone()).unwrap(),
+                text: m["text"].as_str().unwrap().to_owned(),
+            })
+            .collect();
+        assert_eq!(mirror_messages.len(), 2);
+        assert_eq!(
+            retained_messages(&home, &sources.source, &sources.native_id).unwrap(),
+            Some(mirror_messages)
+        );
+        for conversation in [transcript, other] {
+            assert_eq!(
+                retained_messages(&home, &conversation.source, &conversation.native_id).unwrap(),
+                Some(Vec::new())
+            );
+        }
         // Each text is retained exactly once: no row's record, and no stored
         // document at a row's place, still holds it.
         let rows: Vec<(String, Option<String>, Option<String>, String)> = db
@@ -932,7 +961,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(rows.len(), 3 + 1 + 3 + 1);
+        assert_eq!(rows.len(), 4 + 1 + 3 + 1);
         for (document, place, record, text) in &rows {
             let document: Value = serde_json::from_str(document).unwrap();
             assert_eq!(

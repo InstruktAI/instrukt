@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/history.rs
-assertion_line: 766
+assertion_line: 772
 expression: document
 ---
 {
@@ -114,6 +114,30 @@ expression: document
         ]
       },
       "text": "Useritemtoken text."
+    },
+    {
+      "id": "delegated-task-report",
+      "threadId": "child",
+      "runId": null,
+      "nodeId": null,
+      "role": "user",
+      "createdAt": "2026-11-08T10:30:00.000Z",
+      "updatedAt": "2026-11-08T10:30:00.000Z",
+      "streaming": false,
+      "attachments": [],
+      "createdBy": "agent",
+      "creationSource": "server",
+      "notification": {
+        "source": {
+          "kind": "delegated_task",
+          "taskIds": [
+            "node-fixture"
+          ]
+        },
+        "outcome": "completed",
+        "summary": "Background work finished"
+      },
+      "text": "Delegatedresulttoken done."
     }
   ],
   "thread": {

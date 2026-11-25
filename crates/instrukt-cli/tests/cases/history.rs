@@ -745,14 +745,20 @@ fn only_conversation_records_and_messages_are_read_and_retained() {
     let env = TestEnv::new();
     let source = fixture::T3Store::new(&env);
     source.native_records();
-    // The messages are found; what only a tool call, a reasoning trace, a
+    source.background_reports();
+    // The messages and a delegated task's report are found; what a
+    // background command's report, a tool call, a reasoning trace, a
     // run, a subagent or captured terminal, diff and page context held is not.
-    for said in ["Useritemtoken", "Assistantitemtoken"] {
+    for said in [
+        "Useritemtoken",
+        "Assistantitemtoken",
+        "Delegatedresulttoken",
+    ] {
         assert_eq!(search(&env, said)["matches"].as_array().unwrap().len(), 1);
     }
     let result = search(
         &env,
-        "Toolitemtoken OR Reasonitemtoken OR Subagenttoken OR Terminalonlytoken OR Diffonlytoken OR Htmlonlytoken",
+        "Toolitemtoken OR Reasonitemtoken OR Subagenttoken OR Terminalonlytoken OR Diffonlytoken OR Htmlonlytoken OR Shelloutputtoken",
     );
     assert_eq!(result["matches"].as_array().unwrap().len(), 0);
     let source_id = search(&env, "Useritemtoken")["matches"][0]["source"]

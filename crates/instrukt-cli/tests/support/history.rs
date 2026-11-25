@@ -167,6 +167,28 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
     pub fn remove_runs_subagents_and_turn_items(&self) {
         self.db.execute_batch("DROP TABLE orchestration_v2_projection_runs; DROP TABLE orchestration_v2_projection_subagents; DROP TABLE orchestration_v2_projection_turn_items;").unwrap();
     }
+    /// T3's server writes two notifications into `child`: its report that a
+    /// background command finished, with the command's output, and a
+    /// delegated task's result.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn background_reports(&self) {
+        let at = "2026-11-08T10:30:00.000Z";
+        for (id, text, source) in [
+            (
+                "background-command-report",
+                "Background command completed (exit 0): make check\n\nOutput tail:\nShelloutputtoken printed",
+                json!({"kind":"background_command"}),
+            ),
+            (
+                "delegated-task-report",
+                "Delegatedresulttoken done.",
+                json!({"kind":"delegated_task","taskIds":["node-fixture"]}),
+            ),
+        ] {
+            let payload = json!({"id":id,"threadId":"child","runId":null,"nodeId":null,"role":"user","text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":"agent","creationSource":"server","notification":{"source":source,"outcome":"completed","summary":"Background work finished"}});
+            self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,'child','user',0,?2,?2,?3)",params![id,at,payload.to_string()]).unwrap();
+        }
+    }
     #[allow(
         dead_code,
         reason = "completed turns are used by the shared relay scenarios"

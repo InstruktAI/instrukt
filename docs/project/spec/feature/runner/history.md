@@ -24,10 +24,11 @@ History is a text-only mirror of what people and agents said: for each
 conversation it retains the conversation's identity, title, parent, archive
 aliases and the source's own record of the conversation, and the conversation's
 messages with their roles, times and text. It retains no tool call, command
-output, file change, reasoning trace, run or subagent record, and none of the
-terminal lines, diff lines or page HTML a message's attached context captured
-(`project/instrukt/spec/feature/runner/session-continuity` names those
-members); those stay with the runtime that produced them. An extract-and-load step reads T3's local state
+output, file change, reasoning trace, run or subagent record, no report a
+runtime writes of a background command it ran, and none of the terminal lines,
+diff lines or page HTML a message's attached context captured
+(`project/instrukt/spec/feature/runner/session-continuity` defines both); those
+stay with the runtime that produced them. An extract-and-load step reads T3's local state
 into instrukt's own history;
 TeleClaude's existing mirrors are imported once, in bounded batches: an import
 that stops continues after the last batch it committed, and a completed import
@@ -287,7 +288,8 @@ store held of it, by the kind of its source:
 - **A conversation of a runtime source**, one whose source identity begins
   `t3:`, takes the native record of its retained conversation record as
   `thread` of its document and one message for each of its retained message
-  records, placed in the document's `messages`. A message takes its record's
+  records but a report of a background command, which the text read leaves
+  out too, placed in the document's `messages`. A message takes its record's
   native id and role, the times its record holds in the fixed form, and the
   text of the native record where the native record has one, otherwise the
   record's own text; its record is the native record without that text and
