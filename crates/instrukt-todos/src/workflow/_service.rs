@@ -379,20 +379,25 @@ fn record_admits(evidence: &TodoEvidence, holder: Option<&SessionRef>) -> bool {
 
 /// What a todo whose record and prerequisites admit it publishes, or `None`
 /// while no claim is held and an approval gate waits for a human: do not
-/// re-dispatch until the approval arrives.
+/// re-dispatch until the approval arrives. An admitted unclaimed record is
+/// never held, so its person wait is exactly that approval gate; a held
+/// record's wait is decided by the hold without reading approval history.
 fn published(
     evidence: &TodoEvidence,
     holder: Option<SessionRef>,
     approvers: Approvers,
 ) -> Option<Published> {
-    let awaiting_human_approval =
-        waiting_for_human_approval(evidence, approvers.prd, approvers.task);
-    if evidence.claim.is_none() && awaiting_human_approval {
+    let shown = crate::work::ShownStatus::of(evidence.status, evidence.hold.is_some());
+    let Ok(waits_on_person) = crate::work::waits_on_person(shown, || {
+        Ok::<_, Infallible>(waiting_for_human_approval(
+            evidence,
+            approvers.prd,
+            approvers.task,
+        ))
+    });
+    if evidence.claim.is_none() && waits_on_person {
         return None;
     }
-    let shown = crate::work::ShownStatus::of(evidence.status, evidence.hold.is_some());
-    let Ok(waits_on_person) =
-        crate::work::waits_on_person(shown, || Ok::<_, Infallible>(awaiting_human_approval));
     Some(Published {
         holder,
         waits_on_person,
@@ -637,6 +642,13 @@ mod tests {
             })
         );
         assert_eq!(admit(&at_prd_approval().build(), Approver::Human), None);
+        assert_eq!(
+            admit(&at_prd_approval().held().claimed().build(), Approver::Human),
+            Some(Published {
+                holder: holder.clone(),
+                waits_on_person: true,
+            })
+        );
 
         let held_and_claimed = todo(TodoKind::Change).held().claimed().build();
         assert_eq!(
