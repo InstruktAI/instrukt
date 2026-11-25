@@ -92,7 +92,12 @@ impl Limit {
 
     /// The part of the limit still left, zero once it has passed.
     pub fn remaining(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
+        self.remaining_at(Instant::now())
+    }
+
+    /// The part of the limit left at `now`, zero once it has passed.
+    fn remaining_at(&self, now: Instant) -> Duration {
+        self.deadline.saturating_duration_since(now)
     }
 
     /// Judges the latest look at the program, giving completion precedence.
@@ -630,12 +635,14 @@ mod limit_tests {
     #[test]
     fn a_limit_has_what_its_window_has_left_and_nothing_once_passed() {
         let limit = Duration::from_secs(10);
-        let passed = Limit::from(limit, Instant::now() - limit * 2);
-        assert_eq!(passed.remaining(), Duration::ZERO);
+        let started = Instant::now();
+        let window = Limit::from(limit, started);
+        let left = Duration::from_secs(6);
+        assert_eq!(window.remaining_at(started + Duration::from_secs(4)), left);
+        assert_eq!(window.remaining_at(started + limit), Duration::ZERO);
+        assert_eq!(window.remaining_at(started + limit * 2), Duration::ZERO);
+        let passed = Limit::from(limit, started - limit * 2);
         assert_eq!(passed.judge(None::<()>), Look::Passed);
-        let elapsed = Duration::from_secs(4);
-        let left = Limit::from(limit, Instant::now() - elapsed).remaining();
-        assert!(left > Duration::ZERO && left <= limit - elapsed, "{left:?}");
     }
 }
 
