@@ -266,6 +266,7 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     enters its awareness only when that event arrives
     (`general/principle/priming`).
 
+<!-- planned-change:native-company-skill-rendering -->
 18. **Company home knowledge.** A company repository's documents anywhere
     under `docs/` carry no taxonomy ID and reference nothing outside the
     company's own documents, so taxonomy placement, snippet schemas,
@@ -290,6 +291,33 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     route the committed worktree head through independent review before
     integration onto the default branch (`general/policy/commits`,
     `general/policy/documentation-discipline`).
+<!-- change:native-company-skill-rendering -->
+18. **Company home knowledge.** A company repository's documents anywhere
+    under `docs/` carry no taxonomy ID and reference nothing outside the
+    company's own documents, so taxonomy placement, snippet schemas,
+    `instrukt docs validate`, and pending markers do not apply; retain
+    ordinary Markdown and relative required reads. The repository's
+    `docs/index.yaml` selects what the company's rendered `AGENTS.md` and
+    the company's plugin hold, each entry a document's path relative to `docs/`: `expanded` names the
+    documents every agent of the company acts on in ordinary work, held in
+    full; `listed` names the documents an agent fetches when they apply, each
+    shown as one line with its `description`. Keep a `listed` document out of
+    the required reads of the `expanded` ones. Give each
+    document under `docs/` frontmatter with a non-empty `description` (and
+    optional `visibility`, `internal` or `public`, `internal` when omitted:
+    the rendering of the company's plugin refuses any other value, and a
+    `public` document that requires or references an `internal` one).
+    Apply Step 0, `general/policy/snippet-value-contract`, and
+    `general/policy/agent-facing-text`. Author routine knowledge updates in
+    documents under `docs/` and in that index inside a separate worktree
+    (keeping the serving company home checkout on the reviewed default
+    branch), render with
+    `instrukt docs render` (or commit through the installed pre-commit hook)
+    and verify the committed worktree with `instrukt docs render --check`, then
+    route the committed worktree head through independent review before
+    integration onto the default branch (`general/policy/commits`,
+    `general/policy/documentation-discipline`).
+<!-- /planned-change:native-company-skill-rendering -->
 
 ## Outputs
 
