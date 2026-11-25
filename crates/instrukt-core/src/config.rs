@@ -31,6 +31,7 @@ mod _root;
 mod _runtime;
 mod _schema;
 mod _secrets;
+mod _thread_retention;
 mod _validate;
 mod _webhooks;
 
@@ -76,6 +77,7 @@ pub use _schema::{
     CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema,
     layer_json_schema,
 };
+pub use _thread_retention::withholds_thread_retention;
 pub use _validate::{
     connector_procedure_finding, connector_role_procedure_finding, validate, validate_local,
 };

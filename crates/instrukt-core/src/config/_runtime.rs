@@ -93,6 +93,13 @@ impl Runtime {
         env.caller_identity(self.name())
             .map(|caller| caller.session)
     }
+    /// Whether the runtime's adapter archives threads, which thread
+    /// retention needs (`project/instrukt/spec/feature/runner/session-continuity`).
+    pub fn archives_threads(self) -> bool {
+        match self {
+            Self::T3 => true,
+        }
+    }
 }
 
 /// Optional runtime capabilities declared by a workflow, never inferred from prose.

@@ -153,6 +153,8 @@ enum Shape {
     Identity,
     /// Paths inside a checkout (`regenerable`).
     Regenerable,
+    /// `off` or a retention window (`runner.archive_finished_after`).
+    RetentionWindow,
 }
 
 enum Node {
@@ -263,6 +265,10 @@ fn schema() -> Node {
                 ("notify", Leaf(GlobalOnly, Shape::Str)),
                 ("runtime", Leaf(GlobalOnly, Shape::Str)),
                 ("autostart", Leaf(Both, Shape::Autostart)),
+                (
+                    "archive_finished_after",
+                    Leaf(GlobalOnly, Shape::RetentionWindow),
+                ),
             ]),
         ),
         (
@@ -606,6 +612,7 @@ fn check_shape(
         },
 
         Shape::Regenerable => super::_regenerable::check(value, path, out),
+        Shape::RetentionWindow => super::_thread_retention::check(value, path, out),
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {
@@ -1078,6 +1085,9 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
         Shape::Regenerable => {
             json!({ "type": "array", "items": { "type": "string", "minLength": 1 } })
         }
+        Shape::RetentionWindow => {
+            json!({ "type": "string", "pattern": super::_thread_retention::WINDOW_PATTERN })
+        }
     }
 }
 
@@ -1101,6 +1111,11 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                 text(DEFAULT_GITHUB_API_URL),
             );
             insert_at(&mut root, &["runner", "autostart"], Value::Bool(false));
+            insert_at(
+                &mut root,
+                &["runner", "archive_finished_after"],
+                text("off"),
+            );
         }
         LayerKind::Project => {
             insert_at(&mut root, &["board"], Value::Bool(false));
@@ -1148,7 +1163,7 @@ mod tests {
     }
 
     const GLOBAL_ONLY: &str = "agents: {claude: {git_author: 'A <a@x>'}}\n\
-        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
+        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true, archive_finished_after: 7d}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
         requires: [todos]\n\
@@ -1310,6 +1325,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_global_schema_reads_the_retention_window_grammar_as_validation_does() {
+        let schema = layer_json_schema(LayerKind::Global);
+        for (window, valid) in [
+            ("off", true),
+            ("7d", true),
+            ("24h", true),
+            ("1s", true),
+            ("90m", true),
+            ("2w", true),
+            ("0d", false),
+            ("07d", false),
+            ("7", false),
+            ("7y", false),
+            ("d", false),
+            ("-1d", false),
+            ("7 d", false),
+            ("'on'", false),
+            ("true", false),
+        ] {
+            let doc = format!("schema_version: 1\nrunner: {{archive_finished_after: {window}}}\n");
+            assert_eq!(
+                check(&yaml(&doc), LayerKind::Global).is_empty(),
+                valid,
+                "{doc}"
+            );
+            assert_eq!(fits(&schema, &as_json(&doc)), valid, "{doc}");
+        }
+    }
+
     /// Read as ECMA-262, each published action pattern admits a value exactly
     /// when `str::trim` leaves something of it, on every Unicode scalar,
     /// including those whose whitespace status ECMA-262 and Rust disagree on.
@@ -1431,6 +1476,7 @@ mod tests {
                 ("ticks", N),
                 ("runner.notify", N),
                 ("runner.runtime", N),
+                ("runner.archive_finished_after", N),
                 ("github.api_url", N),
             ]
         );
