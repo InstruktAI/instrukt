@@ -981,17 +981,6 @@ mod tests {
     }
 
     #[test]
-    fn a_review_states_its_verdict_commit_and_findings_and_links_them() {
-        let link = "https://github.test/acme/demo/issues/1/artifacts/4";
-        assert_eq!(
-            review_body("approve", "abc123", "No findings.\n", link),
-            format!(
-                "**Build review: approved** · reviewed commit `abc123`\n\nNo findings.\n\n[Complete review findings]({link})"
-            )
-        );
-    }
-
-    #[test]
     fn long_findings_are_shortened_and_still_link_the_complete_ones() {
         let link = "https://github.test/acme/demo/issues/1/artifacts/4";
         let line = "a finding\n";

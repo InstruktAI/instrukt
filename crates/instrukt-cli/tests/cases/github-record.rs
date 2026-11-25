@@ -175,8 +175,13 @@ fn commits_landed_on_a_todos_branch_reach_its_pull_request_on_github() {
         .into_iter()
         .filter(|i| i.get("pull_request").is_some())
         .collect();
-    assert_eq!(pulls.len(), 1, "{pulls:?}");
-    assert_eq!(pulls[0]["state"], "open");
+    insta::assert_json_snapshot!(
+        "pull-request-opened-on-the-published-branch",
+        pulls
+            .iter()
+            .map(|pull| serde_json::json!({"title": pull["title"], "state": pull["state"]}))
+            .collect::<Vec<_>>()
+    );
 
     // While GitHub cannot be reached the work goes on; the commit reaches
     // GitHub once it can.

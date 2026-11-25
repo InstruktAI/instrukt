@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "pulls.iter().map(|pull|\nserde_json::json!({\"title\": pull[\"title\"], \"state\":\n    pull[\"state\"]})).collect::<Vec<_>>()"
+---
+[
+  {
+    "title": "nested-lists",
+    "state": "open"
+  }
+]

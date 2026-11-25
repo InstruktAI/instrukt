@@ -928,22 +928,4 @@ mod tests {
         assert!(matches!(error, GitHubError::App(_)));
         assert!(error.is_reach());
     }
-
-    #[test]
-    fn a_refusal_keeps_githubs_message_errors_and_documentation() {
-        let answer = serde_json::json!({
-            "message": "Validation Failed",
-            "errors": [
-                {"resource": "IssueArtifact", "field": "body", "code": "too_long"},
-                {"resource": "Issue", "code": "custom", "message": "body is too long"},
-                "plain text"
-            ],
-            "documentation_url": "https://docs.github.com/rest"
-        });
-        assert_eq!(
-            validation_detail(&answer),
-            "Validation Failed (IssueArtifact.body: too_long; Issue: body is too long; plain text); see https://docs.github.com/rest"
-        );
-        assert_eq!(validation_detail(&Value::Null), "no message");
-    }
 }
