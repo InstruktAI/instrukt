@@ -32,11 +32,11 @@ use std::sync::Arc;
 use instrukt_core::config::RegenerablePath;
 use instrukt_core::fsx;
 use instrukt_core::git;
-use instrukt_core::ids::ProjectSlug;
+use instrukt_core::ids::{ProjectSlug, SessionRef};
 
 use crate::interfaces::{
     DeliveredRelease, ProjectRef, RunnerWiring, SectionAdmission, SectionOutcome, TodoIdentity,
-    WorkInterfaceError, WorktreeReclamation, WorktreeStanding, WorktreeStandings,
+    WorkInterfaceError, WorktreeHolder, WorktreeReclamation, WorktreeStanding, WorktreeStandings,
 };
 use crate::runner::Considered;
 
@@ -490,6 +490,124 @@ impl Deferred {
             }
         }
     }
+}
+
+/// A session's request to reclaim the worktree its todo assignment records
+/// (`instrukt repo reclaim`).
+pub struct Request<'a> {
+    pub project: &'a ProjectSlug,
+    pub todo: &'a TodoIdentity,
+    pub worktree: &'a Path,
+    pub session: SessionRef,
+}
+
+/// What reclaiming on request came to.
+#[derive(Debug)]
+pub enum OnRequest {
+    /// The project is not published on this computer.
+    NotPublished,
+    /// The project declares no regenerable output.
+    NothingDeclared,
+    /// The project's declaration is not admitted on this computer: the
+    /// findings that withhold it.
+    Withheld(Vec<String>),
+    /// Another session holds the worktree.
+    Held(WorktreeHolder),
+    /// The project's work record holds no such todo.
+    NotRecorded,
+    /// Each declared path removed, and each left with why.
+    Reclaimed {
+        removed: Vec<RegenerablePath>,
+        left: Vec<(RegenerablePath, Left)>,
+    },
+}
+
+/// Reclaiming on request could not finish.
+#[derive(Debug, thiserror::Error)]
+pub enum ReclaimError {
+    #[error(transparent)]
+    Admission(#[from] instrukt_core::config::AdmissionError),
+    #[error(transparent)]
+    Config(#[from] instrukt_core::config::ConfigError),
+    #[error(transparent)]
+    Work(#[from] WorkInterfaceError),
+    #[error("the output moved out to {} could not be deleted: {source}", path.display())]
+    Delete {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+/// Reclaims the declared regenerable output of the worktree `request`
+/// names, by the declaration admitted for its project from that project's
+/// checkout on this computer: moved out inside work's section under the
+/// session's admission, then deleted before this returns. It waits on no
+/// runner work; a runner deleting one of the same staging locations meanwhile
+/// only shortens it.
+pub fn on_request(
+    home: &instrukt_core::home::Home,
+    request: &Request<'_>,
+    work: &dyn WorktreeReclamation,
+) -> Result<OnRequest, ReclaimError> {
+    let candidate = instrukt_core::config::Admitted::load(home)?;
+    let Some(project) = candidate
+        .generation
+        .projects()
+        .iter()
+        .find(|project| &project.slug == request.project)
+    else {
+        return Ok(OnRequest::NotPublished);
+    };
+    if !project.reclamation {
+        let document = project
+            .checkout
+            .join(instrukt_core::config::CONFIG_FILE_NAME);
+        return Ok(OnRequest::Withheld(
+            candidate
+                .findings
+                .iter()
+                .filter(|finding| {
+                    finding.document == document
+                        && instrukt_core::config::withholds_reclamation(finding)
+                })
+                .map(ToString::to_string)
+                .collect(),
+        ));
+    }
+    let declared = project.config.regenerable()?;
+    if declared.is_empty() {
+        return Ok(OnRequest::NothingDeclared);
+    }
+    let project = ProjectRef {
+        slug: project.slug.clone(),
+        root: project.checkout.clone(),
+    };
+    let target = Target {
+        project: &project,
+        todo: request.todo,
+        worktree: request.worktree,
+        admission: SectionAdmission::Session(request.session.clone()),
+    };
+    let staged = stage(&target, &declared, work)?;
+    match staged.section {
+        Some(SectionOutcome::Held(holder)) => return Ok(OnRequest::Held(holder)),
+        Some(SectionOutcome::NotRecorded | SectionOutcome::RecordChanged) => {
+            return Ok(OnRequest::NotRecorded);
+        }
+        Some(SectionOutcome::Ran) | None => {}
+    }
+    let mut removed = Vec::with_capacity(staged.moved.len());
+    for (entry, location) in staged.moved {
+        delete(&location).map_err(|source| ReclaimError::Delete {
+            path: location.clone(),
+            source,
+        })?;
+        removed.push(entry);
+    }
+    Ok(OnRequest::Reclaimed {
+        removed,
+        left: staged.left,
+    })
 }
 
 #[cfg(test)]

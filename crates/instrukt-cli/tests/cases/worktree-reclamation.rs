@@ -20,7 +20,7 @@ fn declaring() -> Crew {
             crate::fixtures::work::REPOSITORY
         ),
     );
-    repo.write(".gitignore", "/target\n");
+    repo.write(".gitignore", "/target\n/cache\n");
     repo.commit("declare the regenerable output");
     repo.git(["push", "--quiet", "origin", "main"]);
     crew.project.env.run(crew.root(), ["sync"]).success();
@@ -173,4 +173,43 @@ fn the_runner_reclaims_declared_output_from_an_idle_worktree_only() {
     assert!(between.join("target/debug/app").is_file());
     assert!(working.join("target/debug/app").is_file());
     assert_eq!(crew.runtime.thread_calls(), threads);
+}
+
+// spec: project/instrukt/spec/feature/runner/worktree-reclamation UC-WR2
+#[test]
+fn a_working_session_reclaims_only_its_own_worktrees_declared_output() {
+    let mut crew = declaring();
+    prepared(&mut crew, "own");
+    let (builder, own) = attempt(&crew, "own", "builder", BUILD);
+    output(&own);
+    std::fs::create_dir_all(own.join("cache")).unwrap();
+    std::fs::write(own.join("cache/kept"), "undeclared").unwrap();
+    prepared(&mut crew, "other");
+    let (_, other) = attempt(&crew, "other", "builder", BUILD);
+    output(&other);
+    let before = git_state(&crew, &own);
+    let reclaim = |session: &str| {
+        crew.project
+            .env
+            .instrukt(&crew.project.env.path(""))
+            .env("T3CODE_THREAD_ID", session)
+            .args(["repo", "reclaim"])
+            .assert()
+    };
+
+    let reclaimed = reclaim(builder.strip_prefix("t3:").unwrap()).success();
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&reclaimed.get_output().stdout),
+        @"removed: target"
+    );
+    assert!(!own.join("target").exists());
+    assert_eq!(git_state(&crew, &own), before);
+    assert!(own.join("cache/kept").is_file());
+    assert!(other.join("target/debug/app").is_file());
+
+    let refused = reclaim("unbound").failure();
+    insta::assert_snapshot!(
+        String::from_utf8_lossy(&refused.get_output().stderr),
+        @"instrukt: no todo assignment binds this caller to a worktree; a todo attempt bound to this session would (`instrukt todo bind <slug> --session <session>`)"
+    );
 }
