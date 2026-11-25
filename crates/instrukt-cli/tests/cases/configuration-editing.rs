@@ -1,6 +1,6 @@
 //! `project/instrukt/spec/feature/configuration/configuration-editing`:
 //! `instrukt config init|get|patch` — revision checks, whole-document
-//! validation and atomic writes.
+//! validation and atomic writes — and `instrukt config schema`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -393,4 +393,135 @@ fn switching_on_event_responses_asks_for_the_event_transport_first() {
     let refused = global_patch("redis: null").failure();
     insta::assert_snapshot!("transport-removed-under-events", stderr(&env, &refused));
     assert_eq!(std::fs::read_to_string(&machine).unwrap(), before);
+}
+
+/// Standard output of a finished command.
+fn stdout(assert: &Assert) -> String {
+    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+/// The Slack app manifest the Slack connector's specification gives, as YAML.
+fn specified_slack_manifest() -> Value {
+    let spec = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/project/spec/feature/company/slack-connector.md"),
+    )
+    .unwrap();
+    let (_, app) = spec.split_once("### The Slack app").unwrap();
+    let (_, block) = app.split_once("```yaml\n").unwrap();
+    let (manifest, _) = block.split_once("\n```").unwrap();
+    serde_yaml_ng::from_str(manifest).unwrap()
+}
+
+/// Whether `part`'s lines appear, in order and together, among `whole`'s.
+fn shown_within(part: &str, whole: &str) -> bool {
+    let part: Vec<&str> = part.lines().collect();
+    let whole: Vec<&str> = whole.lines().collect();
+    !part.is_empty() && whole.windows(part.len()).any(|run| run == part.as_slice())
+}
+
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE4
+#[test]
+fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() {
+    let env = TestEnv::new();
+    let here = env.path("");
+    let schema = |path: &[&str]| {
+        let mut args = vec!["config", "schema", "--company", "acme"];
+        args.extend_from_slice(path);
+        env.run(&here, args)
+    };
+
+    // The help of the configuration command names the verb.
+    insta::assert_snapshot!(
+        "config-help",
+        stdout(&env.run(&here, ["config", "-h"]).success())
+    );
+
+    // Every key of a company home, its connector kinds' setup and its
+    // services' fields, with no company home on the computer.
+    let whole = stdout(&schema(&[]).success());
+    insta::assert_snapshot!("company-home-schema", whole);
+    assert!(
+        !env.instrukt_home().join("companies/acme").exists(),
+        "asking reads no home and creates none"
+    );
+
+    // A path shows that key and what lies under it, as the whole shows them.
+    let connectors = stdout(&schema(&["connectors"]).success());
+    let slack = stdout(&schema(&["connectors.slack"]).success());
+    assert!(
+        shown_within(&connectors, &whole),
+        "`connectors` as the whole shows it"
+    );
+    assert!(
+        shown_within(&slack, &connectors),
+        "`connectors.slack` as `connectors` shows it"
+    );
+
+    // The JSON Schema carries the same setup, the specification's manifest in
+    // full, and the token fields a Slack entry requires.
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout(&schema(&["--json", "connectors.slack"]).success())).unwrap();
+    let setup = json["description"].as_str().unwrap();
+    let (_, manifest) = setup.split_once("\nManifest:\n").unwrap();
+    assert_eq!(
+        serde_yaml_ng::from_str::<Value>(manifest).unwrap(),
+        specified_slack_manifest()
+    );
+    assert_eq!(
+        json["required"],
+        serde_json::json!(["app_token", "bot_token"])
+    );
+    let whole_json: serde_json::Value =
+        serde_json::from_str(&stdout(&schema(&["--json"]).success())).unwrap();
+    assert_eq!(
+        whole_json["properties"]["connectors"]["properties"]["slack"],
+        json
+    );
+
+    // What it shows is what validation admits: a Slack entry with exactly the
+    // fields shown is accepted, and one the entry cannot take is refused.
+    env.run(&here, ["config", "init", "--company", "acme"])
+        .success();
+    let company_patch = |yaml: &str| {
+        let revision = stdout(
+            &env.run(&here, ["config", "get", "--company", "acme", "--revision"])
+                .success(),
+        );
+        env.run(
+            &here,
+            [
+                "config",
+                "patch",
+                "--company",
+                "acme",
+                "--revision",
+                revision.trim(),
+                "--yaml",
+                yaml,
+            ],
+        )
+    };
+    // The token fields' values are written as the schema says they are.
+    for name in ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"] {
+        env.instrukt(&here)
+            .args(["secrets", "set", name, "--company", "acme"])
+            .write_stdin("token")
+            .assert()
+            .success();
+    }
+    company_patch(
+        "connectors: {slack: {app_token: '${SLACK_APP_TOKEN}', bot_token: '${SLACK_BOT_TOKEN}', context_messages: 10}}",
+    )
+    .success();
+    let refused =
+        company_patch("connectors: {slack: {signing_secret: '${SLACK_SIGNING}'}}").failure();
+    insta::assert_snapshot!(
+        "company-undeclarable-connector-field",
+        stderr(&env, &refused)
+    );
+
+    // A key a company home cannot declare names the keys it can declare there.
+    let unknown = schema(&["board"]).failure();
+    insta::assert_snapshot!("company-schema-undeclarable-key", stderr(&env, &unknown));
 }

@@ -103,10 +103,19 @@ impl Members {
 /// The editor schema of a company home's `connectors` map: one named entry per
 /// connector, defaulting `kind` to the map key when omitted, plus common
 /// conversation settings (`role`, `admit`, `session_scope`, `reply_mode`) and
-/// the provider fields declared by its kind.
+/// the provider fields declared by its kind. Each kind's own entry carries
+/// the kind's setup, its manifest in full, as its description; a token field
+/// says where its value comes from and how that value is written.
 pub(super) fn connectors_schema() -> serde_json::Value {
-    let reference =
-        serde_json::json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
+    let reference = |source: &str| {
+        serde_json::json!({
+            "type": "string",
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+            "description": format!(
+                "{source}; an exact ${{NAME}} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`"
+            ),
+        })
+    };
     let entry_schema = |declaration: &Declaration, kind_required: bool| {
         let mut properties = serde_json::Map::new();
         let mut required: Vec<&str> = Vec::new();
@@ -155,11 +164,14 @@ pub(super) fn connectors_schema() -> serde_json::Value {
         );
         for field in declaration.fields {
             let schema = match field.rule {
-                Rule::SecretReference { required: needed } => {
+                Rule::SecretReference {
+                    required: needed,
+                    source,
+                } => {
                     if needed {
                         required.push(field.name);
                     }
-                    reference.clone()
+                    reference(source)
                 }
                 Rule::PositiveCount { default, meaning } => serde_json::json!({
                     "type": "integer",
@@ -170,8 +182,17 @@ pub(super) fn connectors_schema() -> serde_json::Value {
             };
             properties.insert(field.name.to_owned(), schema);
         }
+        let description = if kind_required {
+            format!(
+                "a further `{key}` connector under its own name; set it up as `connectors.{key}` shows",
+                key = declaration.key
+            )
+        } else {
+            setup_text(declaration)
+        };
         serde_json::json!({
             "type": "object",
+            "description": description,
             "additionalProperties": false,
             "required": required,
             "properties": properties,
@@ -195,6 +216,16 @@ pub(super) fn connectors_schema() -> serde_json::Value {
         "additionalProperties": additional,
         "properties": kinds,
     })
+}
+
+/// A kind's setup as its schema entry describes it: the setup, then the
+/// manifest in full when the kind has one.
+fn setup_text(declaration: &Declaration) -> String {
+    let setup = declaration.setup.trim_end();
+    match declaration.manifest {
+        Some(manifest) => format!("{setup}\nManifest:\n{}", manifest.trim_end()),
+        None => setup.to_owned(),
+    }
 }
 
 fn finding(path: &str, kind: FindingKind, message: impl Into<String>) -> KeyFinding {
@@ -384,7 +415,7 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
             },
         };
         for field in kind.fields {
-            if matches!(field.rule, Rule::SecretReference { required: true })
+            if matches!(field.rule, Rule::SecretReference { required: true, .. })
                 && !fields.contains_key(field.name)
             {
                 out.push(finding(

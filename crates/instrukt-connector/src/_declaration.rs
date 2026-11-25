@@ -9,6 +9,13 @@ pub struct Declaration {
     /// The most characters one posted part of an answer holds for this kind.
     pub message_chars: usize,
     pub fields: &'static [Field],
+    /// How a company sets the kind up at its provider: what is created
+    /// there, which tokens come from it and the field each one's reference
+    /// goes into, and where the agent has to be made present.
+    pub setup: &'static str,
+    /// The manifest the kind's app is created from at the provider, in full,
+    /// when the kind's specification gives one.
+    pub manifest: Option<&'static str>,
 }
 
 /// One field of a declaration.
@@ -21,8 +28,12 @@ pub struct Field {
 /// What a field's value must be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {
-    /// An exact `${NAME}` reference into the home's secrets file.
-    SecretReference { required: bool },
+    /// An exact `${NAME}` reference into the home's secrets file; `source`
+    /// says where at the provider the value it names comes from.
+    SecretReference {
+        required: bool,
+        source: &'static str,
+    },
     /// A positive whole number, `default` when omitted; `meaning` says what
     /// it is, as its finding and editor schema state it.
     PositiveCount { default: u64, meaning: &'static str },
